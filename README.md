@@ -854,14 +854,14 @@ signs, and a shared secret on GitLab installs older than 19.0. An unverifiable d
 
 ### Provider Coverage
 
-| Provider         | State                    | Exercised Against          |
-| ---------------- | ------------------------ | -------------------------- |
-| GitHub           | verified                 | github.com                 |
-| GitLab           | verified                 | GitLab CE                  |
-| Gitea            | verified                 | Gitea 1.24.6               |
-| Forgejo          | verified                 | Forgejo 13                 |
-| Any HTTPS remote | verified                 | `git upload-pack` directly |
-| Bitbucket        | supported, not exercised | —                          |
+| Provider         | State     | Exercised Against          |
+| ---------------- | --------- | -------------------------- |
+| GitHub           | verified  | github.com                 |
+| GitLab           | verified  | GitLab CE                  |
+| Gitea            | verified  | Gitea 1.24.6               |
+| Forgejo          | verified  | Forgejo 13                 |
+| Any HTTPS remote | verified  | `git upload-pack` directly |
+| Bitbucket        | supported | —                          |
 
 Bitbucket authenticates with one API token and two names: the REST API takes the Atlassian account
 email, and git over HTTPS takes the Bitbucket username, which is case sensitive. Both fields are on

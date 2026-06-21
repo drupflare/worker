@@ -858,7 +858,7 @@ signs, and a shared secret on GitLab installs older than 19.0. An unverifiable d
 | ---------------- | --------- | -------------------------- |
 | GitHub           | verified  | github.com                 |
 | GitLab           | verified  | GitLab CE                  |
-| Gitea            | verified  | Gitea                      |
+| Gitea            | verified  | Gitea 1.24.6               |
 | Forgejo          | verified  | Forgejo 13                 |
 | Any HTTPS remote | verified  | `git upload-pack` directly |
 | Bitbucket        | supported | —                          |

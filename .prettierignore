@@ -1,0 +1,22 @@
+# build inputs and generated artifacts
+vendor/
+node_modules/
+assets/
+drupal-src/
+drupal-min-src/
+.wrangler/
+.edge-assets/
+.trim-assets/
+coverage/
+bun.lock
+
+# husky regenerates these shims on every install
+.husky/
+
+# The findings document uses the compact `| --- |` markdown table style throughout and
+# prettier wants padded tables. Reformatting is a ~1,000-line diff that buries the content,
+# and the file is the project's primary record.
+TECHNICAL_REPORT.md
+
+# probe configs kept for reproduction, not maintained
+experiments/

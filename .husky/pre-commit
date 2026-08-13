@@ -1,0 +1,9 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+bunx lint-staged
+
+# the packed copies of the Drupal modules must not drift from their own repositories; the
+# packed one is what ships, so a divergence means untested code on the edge. Skips silently
+# when the sibling checkouts are absent, which is why it runs here rather than in CI.
+bun scripts/check-module-sync.ts

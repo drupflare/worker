@@ -10,6 +10,9 @@ drupal-min-src/
 coverage/
 bun.lock
 
+# typedoc output; generated HTML makes prettier ENOENT partway through a run
+typedoc/
+
 # husky regenerates these shims on every install
 .husky/
 

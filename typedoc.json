@@ -1,0 +1,18 @@
+{
+	"$schema": "https://typedoc.org/schema.json",
+	"entryPointStrategy": "expand",
+	"entryPoints": ["src"],
+	"exclude": ["**/*.d.ts", "src/probes/**", "src/drupal/*-php.ts", "src/runtime/php-binary*.ts"],
+	"out": "typedoc",
+	"name": "drupflare/worker",
+	"readme": "README.md",
+	"includeVersion": true,
+	"excludeInternal": true,
+	"excludePrivate": true,
+	"validation": {
+		"notExported": true,
+		"invalidLink": true,
+		"notDocumented": true
+	},
+	"treatWarningsAsErrors": false
+}

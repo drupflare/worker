@@ -1,4 +1,3 @@
-# build inputs and generated artifacts
 vendor/
 node_modules/
 assets/
@@ -9,17 +8,7 @@ drupal-min-src/
 .trim-assets/
 coverage/
 bun.lock
-
-# typedoc output; generated HTML makes prettier ENOENT partway through a run
 typedoc/
-
-# husky regenerates these shims on every install
 .husky/
-
-# The findings document uses the compact `| --- |` markdown table style throughout and
-# prettier wants padded tables. Reformatting is a ~1,000-line diff that buries the content,
-# and the file is the project's primary record.
 TECHNICAL_REPORT.md
-
-# probe configs kept for reproduction, not maintained
 experiments/

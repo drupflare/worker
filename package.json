@@ -12,6 +12,8 @@
 		"prettier": "prettier --write .",
 		"prettier:check": "prettier --check .",
 		"prepare": "husky",
+		"postinstall": "bun scripts/restore-artifacts.ts",
+		"restore:artifacts": "bun scripts/restore-artifacts.ts",
 		"test": "vitest run --project=workers --project=node",
 		"test:watch": "vitest",
 		"test:workers": "vitest run --project=workers",

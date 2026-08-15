@@ -428,13 +428,105 @@ class PhpWasmSyncFiber {
  */
 const PW_SERVE_INLINE = String.raw`
 if (!function_exists('cfw_serve')) { eval('
-function cfw_serve($path, $destruct = true) {
+function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "") {
   $kernel = $GLOBALS["__pw_kernel"];
-  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($path, "GET");
+
+  // PHP\x27S HEADER LIST OUTLIVES THE REQUEST ON A PERSISTENT INTERPRETER, and session_start()
+  // emits its Set-Cookie into exactly that list. Without this, visitor B\x27s response carries
+  // visitor A\x27s session cookie -- a session handover, not a stale header. Cleared BEFORE the
+  // request rather than after, so a fragment that never reaches the end still cannot leak one.
+  if (function_exists("header_remove")) { header_remove(); }
+
+  // THE METHOD AND BODY ARE THREADED FROM THE HOST, and before this every call site passed a
+  // literal "GET". No form submission of any kind could work: not login, not a contact form, not
+  // node edit. A CMS that cannot accept a form is not a CMS.
+  //
+  // The parsed parameters are passed to Request::create() rather than only set on $_POST, because
+  // Drupal reads the REQUEST OBJECT and not the superglobal. Setting $_POST alone produces a
+  // request Drupal treats as an empty submission, which returns 200 and looks like it worked.
+  $method = strtoupper($method === "" ? "GET" : $method);
+  $parameters = [];
+  $isForm = stripos($contentType, "application/x-www-form-urlencoded") !== false;
+  if ($method !== "GET" && $body !== "" && $isForm) { parse_str($body, $parameters); }
+
+  $server = [];
+  if ($contentType !== "") { $server["CONTENT_TYPE"] = $contentType; }
+  if ($body !== "") { $server["CONTENT_LENGTH"] = (string) strlen($body); }
+  if ($cookieHeader !== "") { $server["HTTP_COOKIE"] = $cookieHeader; }
+
+  // THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
+  // so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
+  // which is what "the submission does not work" looked like from outside. Parsed by hand rather
+  // than through a helper, because the value arrives as one raw header line from the host.
+  $cookies = [];
+  foreach (explode(";", $cookieHeader) as $pair) {
+    $pair = trim($pair);
+    if ($pair === "") { continue; }
+    $split = strpos($pair, "=");
+    if ($split === false) { continue; }
+    $cookies[urldecode(substr($pair, 0, $split))] = urldecode(substr($pair, $split + 1));
+  }
+
+  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($path, $method, $parameters, $cookies, [], $server, $body);
+
+  // the superglobals follow the request rather than leading it, so a fragment reading $_POST and
+  // one reading the Request agree
+  $_SERVER["REQUEST_METHOD"] = $method;
+  // EVERY input superglobal, not just $_POST. When a CSRF token fails, FormBuilder empties the
+  // request and calls $request->overrideGlobals() to make the globals agree
+  // (FormBuilder.php:1024-1030); on a real SAPI those globals die with the process and here they
+  // do not. Re-initialising all of them is what a SAPI does per request. NOTE: this alone does not
+  // fix the residual defect pinned in tests/integration/csrf.spec.ts -- measured, so not claimed.
+  $_POST = $parameters;
+  $_GET = [];
+  $_FILES = [];
+  $_REQUEST = $parameters;
+  $_COOKIE = $cookies;
+  if ($contentType !== "") { $_SERVER["CONTENT_TYPE"] = $contentType; }
+  if ($body !== "") { $_SERVER["CONTENT_LENGTH"] = (string) strlen($body); }
+  if ($cookieHeader !== "") { $_SERVER["HTTP_COOKIE"] = $cookieHeader; } else { unset($_SERVER["HTTP_COOKIE"]); }
+
+  // THE SESSION HAS TO BE ENDED BEFORE THE NEXT ONE IS READ, and this interpreter is where that
+  // stops being automatic. PHP holds $_SESSION and the active id on the PROCESS, and Symfony
+  // memoises its started flag on a service that outlives the request -- so without this, request 2
+  // is whoever request 1 was. Measured: a second login POST answered
+  // "This route can only be accessed by anonymous users".
+  //
+  // drupflare owns the mechanism because it is the same mechanism drupal_static() and the node
+  // grants need; the hand-rolled resets below are the fallback for a site that has not enabled it.
+  try {
+    $container = \\Drupal::getContainer();
+    if ($container !== null && $container->has("drupflare.request_resetter")) {
+      $GLOBALS["__pw_reset"] = $container->get("drupflare.request_resetter")->reset();
+    } else {
+      if (function_exists("session_status") && session_status() === PHP_SESSION_ACTIVE) {
+        @session_write_close();
+      }
+      $_SESSION = [];
+    }
+  } catch (\\Throwable $e) { $GLOBALS["__pw_reset"] = ["error" => $e->getMessage()]; }
+
+  // AND THE ID HAS TO BE SET FROM THIS REQUEST, not left wherever the last one put it.
+  // session_start() prefers an id already set on the process over the cookie, so an unset id is
+  // not a clean slate -- it is the previous visitor. Always overwrite: the cookie when there is
+  // one, a fresh id when there is not.
+  if (function_exists("session_id")) {
+    $sid = "";
+    foreach ($cookies as $cookieName => $cookieValue) {
+      if (strncmp($cookieName, "SESS", 4) === 0 || strncmp($cookieName, "SSESS", 5) === 0) {
+        $sid = (string) $cookieValue;
+        break;
+      }
+    }
+    if ($sid !== "" && preg_match("/^[A-Za-z0-9,-]{1,128}$/", $sid) === 1) {
+      @session_id($sid);
+    } elseif (function_exists("session_create_id")) {
+      @session_id(session_create_id());
+    }
+  }
 
   try {
     $rp = new \\ReflectionProperty(\\Drupal\\Core\\DrupalKernel::class, "prepared");
-    $rp->setAccessible(true);
     $rp->setValue($kernel, false);
   } catch (\\Throwable $e) {}
 
@@ -502,7 +594,13 @@ function cfw_serve($path, $destruct = true) {
   // test-serve-chain.mjs asserts the semaphore table is empty, so a future leak trips a test
   // rather than stalling a request.
 
-  $response = $kernel->handle($request, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface::MAIN_REQUEST, false);
+  // $catch = TRUE, which is what index.php passes and what this had wrong. With FALSE, HttpKernel
+  // rethrows instead of dispatching KernelEvents::EXCEPTION -- so Drupal\x27s own 403 and 404 pages
+  // never rendered, and a successful login came back as a bare
+  // Drupal\\Core\\Form\\EnforcedResponseException because the redirect a form sets is DELIVERED as an
+  // exception and converted by EnforcedFormResponseSubscriber. Every one of those is a normal
+  // response that was being reported as a render failure.
+  $response = $kernel->handle($request, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface::MAIN_REQUEST, true);
 
   // Nothing had ever completed the request lifecycle, so every needs_destruction
   // service -- theme.registry, library.discovery, library.parsing_cache,
@@ -1023,10 +1121,28 @@ echo json_encode($mark);
  * @param {string[]} bins
  * @param {boolean|string} destruct true, false, or an allowlist to bisect with
  */
+export interface RenderRequest {
+	/** HTTP method; anything other than GET makes this a submission */
+	method?: string;
+	/** the raw request body, forwarded verbatim */
+	body?: string;
+	/** the inbound content type, which decides whether the body is parsed as a form */
+	contentType?: string;
+	/**
+	 * the raw `Cookie` header, which is what makes a request authenticated.
+	 *
+	 * Without it every render is uid 0, so Drupal refuses a create-entity route at the ROUTING
+	 * layer and no form is built at all -- see `tests/integration/submission-wall.spec.ts`, which
+	 * named that wall before this existed.
+	 */
+	cookie?: string;
+}
+
 export function renderPage(
 	path = '/',
 	bins: string[] = ['page', 'dynamic_page_cache'],
-	destruct: boolean | string = false
+	destruct: boolean | string = false,
+	request: RenderRequest = {}
 ): string {
 	const safePath = JSON.stringify(String(path));
 	const safeBins = JSON.stringify(
@@ -1044,6 +1160,20 @@ export function renderPage(
 			: destruct
 				? 'true'
 				: 'false';
+	// JSON-encoded, never interpolated: a body carrying a quote would otherwise close the PHP
+	// literal and change what runs, which is the same hazard the file's backtick rule exists for.
+	const method = String(request.method ?? 'GET').toUpperCase();
+	// an ANONYMOUS GET still emits nothing extra, so every pre-existing caller's source is
+	// byte-identical; a cookie is enough on its own to need the argument list, because an
+	// authenticated GET is exactly the case this exists for
+	const requestArgs =
+		method === 'GET' && !request.body && !request.cookie
+			? ''
+			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})`;
+
 	return String.raw`<?php
 ${FIBER_SHIM}
 ${HOST_HELPERS}
@@ -1098,18 +1228,61 @@ try {
     $rp->setValue($middleware, NULL);
   } catch (\Throwable $e) {}
 
-  $response = cfw_serve($path, ${safeDestruct});
+  $response = cfw_serve($path, ${safeDestruct}${requestArgs});
   $out['destructed'] = $GLOBALS["__pw_destructed"] ?? null;
-  $body = (string) $response->getContent();
+  // sendContent() RATHER THAN getContent(), and the difference is whether forms work at all.
+  // BigPipe replaces the CSRF token with a lazy placeholder and substitutes it during
+  // BigPipeResponse::sendContent(); getContent() returns the pre-substitution HTML, so every form
+  // shipped a big_pipe_nojs_placeholder_attribute_safe marker where its token belonged, and every
+  // submission came back "The form has become outdated".
+  //
+  // Buffered rather than sent, because there is no SAPI here to send to. Safe for a plain
+  // Response, whose sendContent() only echoes what getContent() returns; a throw falls back to it.
+  $body = '';
+  if (method_exists($response, 'sendContent')) {
+    $depth = ob_get_level();
+    ob_start();
+    try {
+      $response->sendContent();
+      $body = (string) ob_get_clean();
+    } catch (\Throwable $e) {
+      while (ob_get_level() > $depth) { @ob_end_clean(); }
+      $out['sendError'] = get_class($e) . ': ' . $e->getMessage();
+      $body = (string) $response->getContent();
+    }
+  } else {
+    $body = (string) $response->getContent();
+  }
   $out['status'] = $response->getStatusCode();
   $out['html'] = $body;
   $out['bytes'] = strlen($body);
   $out['pageCache'] = $response->headers->get('x-drupal-cache');
   $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
   $out['contentType'] = $response->headers->get('content-type');
+  $out['location'] = $response->headers->get('location');
+  // BOTH SOURCES, because Drupal sets a session cookie through neither one consistently:
+  // a logout or a Symfony-managed cookie lands on the Response, while session_start() emits its
+  // own Set-Cookie into PHP's header list, which the Response never sees. Reading one of them
+  // would drop the login cookie silently and leave the session unrecoverable by the browser.
+  $cookies = [];
+  foreach ($response->headers->all('set-cookie') as $line) { $cookies[] = (string) $line; }
+  if (function_exists('headers_list')) {
+    foreach (headers_list() as $line) {
+      if (stripos($line, 'set-cookie:') === 0) { $cookies[] = trim(substr($line, 11)); }
+    }
+  }
+  $out['setCookie'] = array_values(array_unique($cookies));
 } catch (\Throwable $e) {
   $out['error'] = get_class($e) . ': ' . $e->getMessage();
 }
+
+// what the between-request reset actually did, and who Drupal thinks is asking. Both are cheap
+// reads and both were needed to find the session leak; a render that comes back as the WRONG USER
+// is not distinguishable from a correct one by its bytes
+$out['reset'] = $GLOBALS['__pw_reset'] ?? null;
+try {
+  $out['uid'] = (int) \Drupal::currentUser()->id();
+} catch (\Throwable $e) { $out['uid'] = null; }
 
 $out['renderMs'] = round($clock() - $t0, 2);
 echo json_encode($out);
@@ -2077,3 +2250,159 @@ echo json_encode([
   'checks' => $checks,
 ]);
 `;
+
+/**
+ * Where exactly does a form submission stop?
+ *
+ * The method now reaches Drupal, and a submission still does not take effect. "The form does not
+ * submit" is not actionable; this reports which of four walls rejects it, with the value Drupal
+ * actually saw at each stage.
+ *
+ * It builds the request the SAME WAY `cfw_serve()` does rather than calling it, because the whole
+ * point is to hold the Request object and interrogate it -- `cfw_serve()` returns only a Response,
+ * so the two questions that matter first (did Drupal see POST, did it see the values) are
+ * unanswerable through it. The construction is duplicated deliberately and must be kept in step; if
+ * they ever disagree, this probe is measuring something the serve path does not do.
+ */
+export function submissionProbe(options: {
+	path?: string;
+	method?: string;
+	body?: string;
+	contentType?: string;
+}): string {
+	const safe = JSON.stringify(
+		JSON.stringify({
+			path: options.path ?? '/node/add/page',
+			method: (options.method ?? 'POST').toUpperCase(),
+			body: options.body ?? '',
+			contentType: options.contentType ?? 'application/x-www-form-urlencoded'
+		})
+	);
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+${PW_SERVE_INLINE}
+chdir('/drupal');
+
+$opt = json_decode(${safe}, true);
+$out = ['ok' => false, 'wall' => 'unknown'];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = $opt['path'];
+$_SERVER['REQUEST_METHOD'] = $opt['method'];
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+    $out['bootedKernel'] = 1;
+  }
+  $kernel = $GLOBALS['__pw_kernel'];
+
+  // #region wall 1: does Drupal see the POST and its values
+  $parameters = [];
+  $isForm = stripos($opt['contentType'], 'application/x-www-form-urlencoded') !== false;
+  if ($opt['method'] !== 'GET' && $opt['body'] !== '' && $isForm) {
+    parse_str($opt['body'], $parameters);
+  }
+  $server = [];
+  if ($opt['contentType'] !== '') { $server['CONTENT_TYPE'] = $opt['contentType']; }
+  if ($opt['body'] !== '') { $server['CONTENT_LENGTH'] = (string) strlen($opt['body']); }
+
+  $request = \Symfony\Component\HttpFoundation\Request::create(
+    $opt['path'], $opt['method'], $parameters, [], [], $server, $opt['body']
+  );
+
+  $out['methodSeen'] = $request->getMethod();
+  $out['requestKeys'] = array_keys($request->request->all());
+  $out['parsedKeys'] = array_keys($parameters);
+  $out['contentLength'] = strlen($request->getContent());
+  $out['isMethodPost'] = $request->isMethod('POST');
+  // #endregion
+
+  // #region wall 4: is there a session, and is the request treated as cacheable
+  try {
+    $out['hasSession'] = $request->hasSession() ? 1 : 0;
+    $out['hasPreviousSession'] = $request->hasPreviousSession() ? 1 : 0;
+  } catch (\Throwable $e) { $out['sessionError'] = $e->getMessage(); }
+  try {
+    $policy = \Drupal::service('page_cache_request_policy');
+    $verdict = $policy->check($request);
+    // ALLOW means Drupal considers this cacheable, which is only correct for an anonymous GET
+    $out['pageCachePolicy'] = is_string($verdict) ? $verdict : json_encode($verdict);
+  } catch (\Throwable $e) { $out['policyError'] = $e->getMessage(); }
+  try {
+    $out['currentUserId'] = (int) \Drupal::currentUser()->id();
+    $out['isAuthenticated'] = \Drupal::currentUser()->isAuthenticated() ? 1 : 0;
+  } catch (\Throwable $e) { $out['userError'] = $e->getMessage(); }
+  // #endregion
+
+  // #region walls 2 and 3: build id and token, read off what the handler answers
+  try {
+    $rp = new \ReflectionProperty(\Drupal\Core\DrupalKernel::class, 'prepared');
+    $rp->setAccessible(true);
+    $rp->setValue($kernel, false);
+  } catch (\Throwable $e) {}
+  try {
+    $stack = \Drupal::service('request_stack');
+    while ($stack->getCurrentRequest() !== null) { $stack->pop(); }
+  } catch (\Throwable $e) {}
+  if (function_exists('drupal_static_reset')) { drupal_static_reset(); }
+
+  try {
+    $response = $kernel->handle($request);
+    $status = $response->getStatusCode();
+    $content = (string) $response->getContent();
+    $out['status'] = $status;
+    $out['bytes'] = strlen($content);
+    $out['location'] = $response->headers->get('location');
+
+    // the phrases Drupal uses, each of which names a DIFFERENT wall
+    $out['saysOutdated'] = stripos($content, 'form has become outdated') !== false ? 1 : 0;
+    $out['saysTokenInvalid'] = stripos($content, 'security token') !== false ? 1 : 0;
+    $out['saysAccessDenied'] = ($status === 403 || stripos($content, 'Access denied') !== false) ? 1 : 0;
+    $out['saysNotFound'] = $status === 404 ? 1 : 0;
+    $out['hasFormBuildId'] = stripos($content, 'form_build_id') !== false ? 1 : 0;
+    $out['hasFormToken'] = stripos($content, 'form_token') !== false ? 1 : 0;
+
+    if ($out['saysNotFound']) { $out['wall'] = 'route-not-found'; }
+    elseif ($out['saysAccessDenied']) { $out['wall'] = 'access-denied'; }
+    elseif ($out['saysOutdated']) { $out['wall'] = 'form-build-id'; }
+    elseif ($out['saysTokenInvalid']) { $out['wall'] = 'csrf-token'; }
+    elseif ($status >= 300 && $status < 400) { $out['wall'] = 'none-redirected'; }
+    else { $out['wall'] = 'handled-no-effect'; }
+    $out['ok'] = true;
+  } catch (\Throwable $e) {
+    $out['wall'] = 'exception';
+    $out['error'] = get_class($e) . ': ' . $e->getMessage();
+    $out['at'] = $e->getFile() . ':' . $e->getLine();
+  }
+  // #endregion
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+
+echo json_encode($out);
+`;
+}

@@ -1,0 +1,22 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-do-budget-probe",
+	"main": "../../src/probes/budget-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"workers_dev": true,
+	// The experiment. cpu_ms is documented as the ceiling PER INVOCATION, and
+	// limits are only enforced on deployed Workers -- never in local development --
+	// which is the whole reason this config exists separately from the dev ones.
+	// 10 matches the free tier's ceiling so the pass/fail pattern is directly
+	// readable as a free-tier answer.
+	"limits": {
+		"cpu_ms": 10
+	},
+	"observability": {
+		"enabled": true
+	},
+	"durable_objects": {
+		"bindings": [{ "name": "BUDGET", "class_name": "BudgetDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["BudgetDurableObject"] }]
+}

@@ -1,0 +1,18 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway; deleted after measuring. Cannot collide with any production worker.
+	"name": "cfw-canary-probe",
+	"main": "../../src/probes/attribution-probe.ts",
+	// PINNED. The attribution finding is undocumented behaviour, so the date it was
+	// measured under is part of the result rather than a detail.
+	"compatibility_date": "2026-08-01",
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"durable_objects": {
+		"bindings": [{ "name": "ATTR", "class_name": "AttributionDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AttributionDurableObject"] }],
+	// the whole point: cpuTime per invocation is delivered to a Worker instead of to
+	// a human with `wrangler tail` attached, so the canary can be scored unattended
+	"tail_consumers": [{ "service": "cfw-tail-probe" }]
+}

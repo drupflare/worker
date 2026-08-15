@@ -1,0 +1,14 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// local only; never deployed
+	"name": "cfw-sjlj-probe",
+	"main": "../../src/probes/sjlj-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	]
+}

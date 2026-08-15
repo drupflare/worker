@@ -1,0 +1,37 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway. Deployed to measure ONE render per Durable Object invocation, then
+	// deleted; the account carries real production workers and this name collides
+	// with none of them.
+	"name": "cfw-edge-site-probe",
+	"main": "../../src/site.ts",
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		// inline rendering ON: a MISS that renders in the DO is exactly the shape
+		// under test -- one render, alone, in one invocation
+		"RENDER_BUDGET_MS": "8000",
+		"GEN_BUCKET_MS": "5000"
+	},
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	// the point of deploying: cpuTime per invocation, split by executionModel, is the
+	// only authoritative absolute. In-PHP microtime() returns 0 out here.
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	// a 15 MB subset; the full 48 MB assets tree fails to upload
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	}
+}

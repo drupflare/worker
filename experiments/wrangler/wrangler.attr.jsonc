@@ -1,0 +1,13 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway; deleted after measuring. Cannot collide with any production worker.
+	"name": "cfw-attr-probe",
+	"main": "../../src/probes/attribution-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"durable_objects": {
+		"bindings": [{ "name": "ATTR", "class_name": "AttributionDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AttributionDurableObject"] }]
+}

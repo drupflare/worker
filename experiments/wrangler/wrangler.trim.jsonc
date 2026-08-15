@@ -1,0 +1,30 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "drupal-cfw-trim",
+	"main": "../../src/site.ts",
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		"RENDER_BUDGET_MS": "2000",
+		"GEN_BUCKET_MS": "5000"
+	},
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	// .trim-assets/drupal IS the trimmed pack, so the mount's hardcoded `drupal`
+	// prefix picks it up without touching src/site-do.js; hardlinked from
+	// assets/drupal-trim by hand, see the pack-trim section of TECHNICAL_REPORT.md
+	"assets": {
+		"directory": "../../.trim-assets",
+		"binding": "ASSETS"
+	}
+}

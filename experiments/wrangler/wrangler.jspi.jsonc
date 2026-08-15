@@ -1,0 +1,22 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway; deleted after measuring. Cannot collide with any production worker.
+	"name": "cfw-jspi-probe",
+	"main": "../../src/probes/jspi-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"workers_dev": true,
+	// cpuTime per invocation, split by executionModel, is the only authoritative
+	// absolute; the marks answer the survival question on their own
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "JSPI", "class_name": "JspiDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["JspiDurableObject"] }]
+}

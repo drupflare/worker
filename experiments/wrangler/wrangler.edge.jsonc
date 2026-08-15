@@ -1,0 +1,30 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway. Deployed to measure, then deleted; the account carries real
+	// production workers and this name cannot collide with any of them.
+	"name": "cfw-edge-render-probe",
+	"main": "../../src/probes/min.ts",
+	"vars": { "PW_DIAGNOSTICS": "1" },
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	// The whole point of deploying: in-PHP microtime() is not trustworthy on the
+	// edge, so cpuTime per invocation from `wrangler tail` is the only authoritative
+	// absolute. The last local-vs-edge comparison had the edge 2.5x slower
+	// (3,754 ms against ~1,500 ms local), so the local 9 ms cannot be assumed.
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	// A staged 13 MB subset, not ./assets. Uploading the full 48 MB assets tree
+	// (three site packs) failed with a connectivity error after 49 s; only the
+	// minimal pack and the probe are needed here. Deleted at teardown.
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	}
+}

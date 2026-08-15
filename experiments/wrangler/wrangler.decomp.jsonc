@@ -1,0 +1,16 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// A6 only: cpuTime against pass count for DecompressionStream / CompressionStream, with a
+	// byte-sum control. No wasm, no PHP -- the codec is the only variable. Throwaway.
+	"name": "cfw-decomp-probe",
+	"main": "../../src/probes/decomp.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	// only drupal/core.bin.gz is read; the staged subset already carries it
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	}
+}

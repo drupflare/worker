@@ -1,0 +1,11 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "drupal-cfw-blob",
+	"main": "../../src/probes/blob-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"durable_objects": {
+		"bindings": [{ "name": "BLOB", "class_name": "BlobProbeDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["BlobProbeDurableObject"] }]
+}

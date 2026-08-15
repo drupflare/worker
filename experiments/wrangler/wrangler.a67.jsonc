@@ -1,0 +1,32 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// A6 + A7, the two questions that are only answerable where the platform enforces its
+	// limits. Throwaway; deployed, measured, deleted.
+	//
+	// A6: does DecompressionStream bill as CPU? `?roundtrip=1` gunzips the coarse snapshot
+	// back, so the cpuTime delta against the same route WITHOUT it is the answer. From
+	// inside a Worker only wall clock is observable, which is why this needs a deploy.
+	//
+	// A7: the 128 MB isolate ceiling. `/plateau` grows the wasm heap up a ladder while the
+	// glue's own getHeapMax says 512 MB, so the ladder crosses the platform limit and the
+	// outcome field says what happens. `exceededMemory` is the result being looked for.
+	"name": "cfw-heap-probe",
+	"main": "../../src/probes/heapsize.ts",
+	"vars": { "PW_DIAGNOSTICS": "1" },
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	// the streaming pack: this probe mounts through mountDrupalStreaming, not the lazy FS
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	}
+}

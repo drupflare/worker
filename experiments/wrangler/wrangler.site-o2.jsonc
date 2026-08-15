@@ -1,0 +1,41 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// The SHIPPING binary serving the real site. Same worker as wrangler.site.jsonc with
+	// one alias swapped, because the point is to change exactly the interpreter and
+	// nothing else -- every number in TECHNICAL_REPORT.md was taken on `static-free-v1`, which is
+	// 586,923 bytes OVER the free ceiling and can never ship.
+	"name": "cfw-site-o2",
+	"main": "../../src/site.ts",
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		// inline rendering on, so a MISS renders in the DO: one render, alone, in one
+		// invocation, which is the only shape whose cpuTime means anything per request
+		"RENDER_BUDGET_MS": "8000",
+		"GEN_BUCKET_MS": "5000"
+	},
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	// the only authoritative absolute: cpuTime per invocation, split by executionModel.
+	// wrangler tail silently omits every durableObject event, so this is read through the
+	// observability API instead
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	},
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-o2.ts"
+	}
+}

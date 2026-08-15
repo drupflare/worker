@@ -1,0 +1,50 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-bundle-jspisjlj",
+	"main": "../../src/site.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"vars": {
+		"LAZY_MOUNT": "1",
+		"RENDER_BUDGET_MS": "2000",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free"
+	},
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": [
+				"**/*.wasm"
+			],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "SITE",
+				"class_name": "SitePhpDurableObject"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"SitePhpDurableObject"
+			]
+		}
+	],
+	"assets": {
+		"directory": "../../assets",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	},
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-jspi.ts"
+	}
+}

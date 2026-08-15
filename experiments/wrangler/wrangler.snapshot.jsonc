@@ -1,0 +1,21 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "drupal-cfw-snapshot",
+	"main": "../../src/probes/snapshot.ts",
+	"vars": { "PW_DIAGNOSTICS": "1" },
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	// A1b mounts the real per-file pack through the lazy FS, so the probe needs the same
+	// asset binding the Durable Object has; the Gate 2 routes do not touch it
+	"assets": {
+		"directory": "../../assets",
+		"binding": "ASSETS"
+	}
+}

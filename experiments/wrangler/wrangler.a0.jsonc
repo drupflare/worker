@@ -1,0 +1,47 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// A0: the cold-boot cost AFTER the container-cache fix, on the shipping binary and the
+	// shipping mount. Throwaway; deployed, measured, deleted. The pre-fix baseline it is
+	// compared against is 4,019 ms of cpuTime for cold boot + 1 render in one invocation.
+	//
+	// Deliberately identical to wrangler.jsonc except for the three things a measurement
+	// needs: a cfw-* name, PW_DIAGNOSTICS (so /sql can count cache_container rows), and a
+	// render budget large enough that a MISS renders INLINE -- one render, alone, in one
+	// invocation, which is the only shape whose cpuTime is a per-request figure.
+	"name": "cfw-a0-probe",
+	"main": "../../src/site.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		"LAZY_MOUNT": "1",
+		"RENDER_BUDGET_MS": "8000",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free"
+	},
+	// the only authoritative absolute: cpuTime per invocation, split by executionModel.
+	// wrangler tail silently omits every durableObject event, so this is read through the
+	// observability API instead
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	// WITH_PF=1 STREAMING=0 bash scripts/stage-edge-assets.sh -- LAZY_MOUNT=1 reads
+	// drupal-pf and never opens core.bin.gz, so the streaming pair is dead weight here
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	},
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-o2.ts"
+	}
+}

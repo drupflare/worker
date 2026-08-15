@@ -1,0 +1,19 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "drupal-cfw-probe-jspisjlj",
+	"main": "../../src/probes/probe-jspisjlj.ts",
+	"vars": { "PW_DIAGNOSTICS": "1" },
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"assets": {
+		"directory": "../../assets",
+		"binding": "ASSETS"
+	}
+}

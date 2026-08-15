@@ -1,0 +1,33 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "drupal-cfw-site",
+	"main": "../../src/site.ts",
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		// wall-clock a MISS may spend rendering for the visitor; read by the DO,
+		// which compares it against a measured estimate BEFORE starting (a
+		// synchronous wasm render cannot be interrupted once it has). 0 restores
+		// the old always-202 shape, which is what a free-plan profile wants
+		"RENDER_BUDGET_MS": "2000",
+		// window the edge cache discovers the site generation once per; also the
+		// cross-colo invalidation lag, at up to two windows
+		"GEN_BUCKET_MS": "5000"
+	},
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "../../assets",
+		"binding": "ASSETS"
+	}
+}

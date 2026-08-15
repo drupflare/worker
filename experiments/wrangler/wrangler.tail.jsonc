@@ -1,0 +1,14 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway; deleted after measuring. Cannot collide with any production worker.
+	"name": "cfw-tail-probe",
+	"main": "../../src/ops/tail-worker.ts",
+	// PINNED, and it is load-bearing: this is the date the CPU-attribution finding was
+	// measured under, so a canary verdict is only evidence about this date
+	"compatibility_date": "2026-08-01",
+	"workers_dev": false,
+	"observability": { "enabled": true }
+	// CANARY_SINK is deliberately NOT bound. The tail consumer and the producer would
+	// then depend on each other's existence and neither could be deployed first; the
+	// log line is the primary record and the code treats the sink as optional.
+}

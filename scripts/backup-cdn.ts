@@ -22,8 +22,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 /** the bucket and the domain in front of it */
 export const BUCKET = 'drupflare-cdn';
@@ -262,10 +262,53 @@ export function mirrorProblems(root: string, archived: readonly ArchivedEntry[])
 	return problems;
 }
 
+/**
+ * Downloads one key over the public domain and verifies it against the manifest's own digest.
+ *
+ * No credential, same as `--verify`: the bucket is fronted by a custom domain, which is what lets CI
+ * restore a gitignored artifact without a secret. The size and sha256 come from `cdn-manifest.json`,
+ * so a truncated or swapped object fails here rather than as a confusing wasm error later.
+ */
+async function restoreKey(root: string, entry: CdnEntry): Promise<void> {
+	const res = await fetch(`${ORIGIN}/${entry.key}`, {
+		headers: { 'accept-encoding': 'identity' }
+	});
+	if (!res.ok) throw new Error(`${entry.key}: HTTP ${res.status}`);
+	const bytes = new Uint8Array(await res.arrayBuffer());
+	if (bytes.length !== entry.bytes) {
+		throw new Error(`${entry.key}: got ${bytes.length} bytes, manifest says ${entry.bytes}`);
+	}
+	const sha = createHash('sha256').update(bytes).digest('hex');
+	if (sha !== entry.sha256) {
+		throw new Error(`${entry.key}: sha256 ${sha}, manifest says ${entry.sha256}`);
+	}
+	const target = join(root, entry.key);
+	mkdirSync(dirname(target), { recursive: true });
+	writeFileSync(target, bytes);
+}
+
 if (import.meta.main) {
 	const root = resolve(import.meta.dirname, '..');
 	const current = manifestFromDisk(root);
 	const committed = readManifest(root);
+
+	// `--restore=<prefix>` pulls the keys a lane needs. CI uses it for the interpreter the test
+	// pool loads: `vendor/` is gitignored, and without it 34 spec files cannot even import.
+	const restoreArg = process.argv.find((a: string) => a.startsWith('--restore='));
+	if (restoreArg) {
+		const prefix = restoreArg.slice('--restore='.length);
+		const manifest = committed ?? current;
+		const wanted = manifest.keys.filter((e) => e.key.startsWith(prefix));
+		if (wanted.length === 0) {
+			console.error(`no key in ${MANIFEST_PATH} starts with ${prefix}`);
+			process.exit(1);
+		}
+		for (const entry of wanted) {
+			await restoreKey(root, entry);
+			console.log(`restored ${entry.key} (${entry.bytes} bytes, sha256 verified)`);
+		}
+		process.exit(0);
+	}
 
 	if (has('write')) {
 		writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(current, null, '\t') + '\n');

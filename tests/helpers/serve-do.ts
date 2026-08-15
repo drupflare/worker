@@ -108,9 +108,11 @@ export type ServeDo = {
 	handleIndex: (binary: never) => { id: number; add?: (o: object) => number } | null;
 	pinHandles: (binary: never) => number;
 	pinnedHandles?: Set<object>;
-	queueHttp: (url: string, method?: string) => void;
+	queueHttp: (url: string, method?: string, body?: string) => void;
 	httpCacheGet: (
-		url: string
+		url: string,
+		method?: string,
+		body?: string
 	) => { status: number; headers: Record<string, string>; body: string } | null;
 	countOrNull: (table: string) => number | null;
 	drainHttpQueue: (limit?: number) => Promise<{

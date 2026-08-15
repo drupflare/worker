@@ -8,7 +8,7 @@ import { join, relative } from 'node:path';
  * cannot ship a core patch inside that window is a liability regardless of how good
  * the runtime is.
  *
- *   node scripts/security-update.mjs plan   <tree> [--against=<manifest.json>]
+ *   node scripts/security-update.mjs plan   <tree> [--against=<manifest.json>] [--fleet=<url>]
  *   node scripts/security-update.mjs manifest <tree> [--out=<manifest.json>]
  *
  * This is tractable because the PHP tree is baked into a versioned asset pack,
@@ -98,6 +98,20 @@ if (command === 'plan') {
 		process.exit(2);
 	}
 	const previous = JSON.parse(await readFile(against, 'utf8'));
+
+	// the fleet is fetched rather than assumed: a plan that invents its own denominator is the
+	// failure this whole endpoint exists to prevent
+	const fleetUrl = flag('fleet');
+	let fleet = null;
+	if (fleetUrl) {
+		try {
+			const res = await fetch(fleetUrl);
+			if (res.ok) fleet = await res.json();
+			else process.stderr.write(`fleet read failed: HTTP ${res.status}\n`);
+		} catch (e) {
+			process.stderr.write(`fleet read failed: ${e?.message ?? e}\n`);
+		}
+	}
 	const before = new Map(Object.entries(previous.files ?? {}));
 
 	const changed = [];
@@ -121,8 +135,26 @@ if (command === 'plan') {
 		fractionOfTree: files.size ? Number((moved / files.size).toFixed(5)) : 0,
 		rollout: {
 			note: 'assets bind to a Worker version, so blob and index ship atomically; a version has both or neither',
+			// the list the steps below iterate. `/fleet` answers it from D1 without touching a
+			// single object; before that existed, "for each site" named a set nobody could
+			// enumerate and time-to-patch was unmeasurable rather than merely slow
+			sites: fleet
+				? {
+						source: fleetUrl,
+						total: fleet.sites,
+						onTarget: fleet.rollout ?? null,
+						byPackGeneration: fleet.byPackGeneration,
+						// reported separately: a site that has not checked in is evidence of
+						// nothing, and counting it as unpatched would make "100% done" a claim
+						// about sites nobody has heard from
+						stale: fleet.stale
+					}
+				: {
+						source: null,
+						note: 'no --fleet=<url> given, so this plan names no sites; GET /fleet on a deployment that has the D1 binding'
+					},
 			steps: [
-				'for each site: versions.create with only the changed objects (unmodified files are not requested)',
+				'for each site in rollout.sites: versions.create with only the changed objects (unmodified files are not requested)',
 				'deployments.create at 10 percent, watch exceededCpu / exceededMemory / 5xx in Workers Logs',
 				'deployments.create at 100 percent, or roll back to the previous version id'
 			],

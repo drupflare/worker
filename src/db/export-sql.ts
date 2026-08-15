@@ -75,7 +75,29 @@ export interface DumpResult {
 	chars: number;
 	/** rows emitted per table, including the tables that emitted none */
 	tables: Record<string, number>;
+	/**
+	 * The widest single statement, and whether the dump can be replayed at all.
+	 *
+	 * A Durable Object caps statement text at 100,000 characters, and `/export?all=1` happily emits
+	 * a `cache_container` row measured at 960,544. The dump looked fine, stored fine, and would have
+	 * failed mid-restore -- on the one path whose whole job is getting a customer's data back. A
+	 * restore point nobody can replay is worse than none, because it reads as a backup.
+	 */
+	maxStatementChars: number;
+	/** false when any statement exceeds the ceiling, so a caller can refuse before storing it */
+	replayable: boolean;
+	/**
+	 * The tables emitted STRUCTURE-ONLY, resolved rather than described.
+	 *
+	 * `REGENERABLE_TABLES` is a list of regexes in this file, so anything outside it had to restate
+	 * the rule in prose and go stale silently when the list changed. Naming the tables the rule
+	 * actually matched makes an off-boarding report correct by construction.
+	 */
+	structureOnly: string[];
 }
+
+/** the Durable Object ceiling on statement text; see DEEP DIVE B */
+export const DO_MAX_STATEMENT_CHARS = 100_000;
 
 interface MasterRow {
 	type: string;
@@ -224,5 +246,17 @@ export function dumpDatabase(sql: SqlLike, opts: DumpOptions = {}): DumpResult {
 
 	const lines = [...drops, ...tableDdl, ...rows, ...laterDdl];
 	const dump = lines.join('\n');
-	return { sql: dump, statements: lines.length, chars: dump.length, tables: counts };
+	const maxStatementChars = lines.reduce(
+		(n: number, line: string) => Math.max(n, line.length),
+		0
+	);
+	return {
+		sql: dump,
+		statements: lines.length,
+		chars: dump.length,
+		tables: counts,
+		maxStatementChars,
+		replayable: maxStatementChars <= DO_MAX_STATEMENT_CHARS,
+		structureOnly: tables.filter((t) => isRegenerable(t))
+	};
 }

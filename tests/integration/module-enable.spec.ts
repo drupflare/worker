@@ -19,6 +19,45 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * the growing router eight times over. `RowidPlan` in the `cfw_do_sqlite` driver predicts the rowid
  * instead. Measured after: **4,427 rows, 422 router statements over 420 routes**, which is exactly
  * one DELETE and one insert per row.
+ *
+ * **THE 32-SECOND EDGE FAILURE WAS A LOCK, AND THE INSTALL WAS NEVER THE EXPENSIVE PART.** A
+ * deployed enable was read as running out of CPU doing its own work. It was not:
+ * `DatabaseLockBackend` stores `microtime(TRUE) + $timeout` as a lock's expiry and frees the row
+ * when `microtime(TRUE)` passes it, and `microtime()` returns 0 on the edge -- so a row is written
+ * with expire 30, tested against now 0, and never becomes free. `RouteBuilder::rebuild()` then
+ * falls into `wait()`, which polls with `usleep()` for 30 seconds; there is no other thread to
+ * yield to, so that spins and is billed as CPU. `CfwLockBackend` replaces it, because one site is
+ * one Durable Object is one thread and the concurrent writer a lock excludes cannot be constructed.
+ *
+ * Measured on a throwaway `cfw-*` deploy, 2026-08-15, cpuTime from `wrangler tail`:
+ *
+ *   | build          |   n | median cpuTime | outcome                          |
+ *   | database lock  |   6 |     32,500 ms  | `exceededCpu`, identical cap     |
+ *   | CfwLockBackend |   3 |      6,810 ms  | completes, then storage resets   |
+ *
+ * and split one stage per invocation, since microtime() cannot time a phase from inside:
+ *
+ *   | stage (own invocation)     | median cpuTime | delta  |
+ *   | boot only                  |      3,101 ms  | 3,101  |
+ *   | + discovery, requirements  |      3,065 ms  | ~0     |
+ *   | + moduleHandler->loadAll() |      5,240 ms  | +2,175 |
+ *   | + the install itself       |      6,810 ms  | +1,570 |
+ *
+ * So the install is the SMALLEST component and boot is the largest. Rows were never the binding
+ * constraint on this track and neither was the installer.
+ *
+ * THE +2,175 ROW IS RETRACTED, kept above only because the other rows come from the same run.
+ * Timed directly in this lane, where `microtime()` works, `loadAll()` is **6 ms across 30 files**,
+ * a second call is 0 ms, and the stage opens 29 more files than the one before it. A subtraction
+ * of two whole-invocation totals at n=3 is not evidence about a call that measures 6 ms.
+ *
+ * **IT STILL DOES NOT LAND ON THE EDGE**, for a different and now-isolated reason: the invocation
+ * completes the install -- "token module installed." appears in the tail -- and is then reset with
+ * "Internal error in Durable Object storage caused object to be reset". Every row rolls back, so a
+ * site that tried reads back at 420 routes with no `token` config. The per-record limit is not it
+ * (the widest row is the 487,567-byte container, against 2,199,995); the open suspect is the ~4,400
+ * rows and ~970 KB of container blobs landing in ONE implicit transaction, which is what
+ * decomposing across invocations would split.
  */
 
 const REQUEST_TIMEOUT = 600_000;

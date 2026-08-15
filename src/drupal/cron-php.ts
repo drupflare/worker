@@ -44,7 +44,7 @@ class PhpWasmSyncFiber {
 /**
  * The $_SERVER block and the memoized kernel boot, matching renderPage().
  *
- * Identical to the preamble in src/site-php.js on purpose: a cron fragment that
+ * Identical to the preamble in src/site-php.js: a cron fragment that
  * booted differently from the render path would be measuring a different site.
  */
 const KERNEL_BOOT = String.raw`
@@ -157,11 +157,11 @@ echo json_encode($out);
 /**
  * Runs exactly ONE named module's cron implementation, and nothing else.
  *
- * This is the whole point of the decomposition: the free plan caps an alarm
+ * This is what the decomposition is for: the free plan caps an alarm
  * invocation at the same 10 ms of CPU as a request, so the unit of work has to be
  * one hook rather than one cron run.
  *
- * Two deliberate departures from Drupal\Core\Cron::run():
+ * Two departures from Drupal\Core\Cron::run():
  *
  *   1. No 'cron' lock is acquired. The Durable Object gate already guarantees one
  *      caller in the interpreter at a time, and a DatabaseLockBackend lock taken
@@ -311,7 +311,7 @@ ${KERNEL_BOOT}
         $out['suspended'] = true;
         break;
       } catch (\Throwable $e) {
-        // left leased on purpose, exactly as core does, so it retries after the lease
+        // left leased, exactly as core does, so it retries after the lease
         $out['failed']++;
         $out['lastError'] = get_class($e) . ': ' . $e->getMessage();
         break;

@@ -5,6 +5,7 @@ import {
 	alarmRearmDelayMs,
 	classifyAlarmOutcome,
 	heapRestoreChunkBudget,
+	heapSnapshotEnabled,
 	restoreAlarmDecision
 } from '../../../src/site-do';
 import { freshSite, inObject } from '../../helpers/serve-do';
@@ -88,6 +89,28 @@ describe('the per-invocation chunk budget', () => {
 		expect(heapRestoreChunkBudget({ HEAP_RESTORE_CHUNKS: '0' } as never)).toBeUndefined();
 		expect(heapRestoreChunkBudget({ HEAP_RESTORE_CHUNKS: '-4' } as never)).toBeUndefined();
 		expect(heapRestoreChunkBudget({ HEAP_RESTORE_CHUNKS: 'lots' } as never)).toBeUndefined();
+	});
+});
+
+describe('restoring a snapshot is the DEFAULT boot, and turning it off is explicit', () => {
+	it('is on when unset, which is the flip from opt-in', () => {
+		// it shipped as HEAP_SNAPSHOT=1 opt-in with a written precondition: a host call had to be
+		// shown to round-trip through a RESTORED heap first, because the standalone probe ran with
+		// no Durable Object and no vrzno bridge in the image. That is now measured
+		expect(heapSnapshotEnabled(undefined)).toBe(true);
+		expect(heapSnapshotEnabled({} as never)).toBe(true);
+	});
+
+	it('is off ONLY for the exact string "0"', () => {
+		expect(heapSnapshotEnabled({ HEAP_SNAPSHOT: '0' } as never)).toBe(false);
+	});
+
+	it('stays on for every other value, so a typo cannot silently disable it', () => {
+		// the failure this shape avoids: `=== '1'` meant HEAP_SNAPSHOT=true, =yes and =on all read as
+		// OFF, and the only symptom would have been a slower boot nobody attributed to a typo
+		for (const v of ['1', 'true', 'yes', 'on', '', 'no', 'false']) {
+			expect(heapSnapshotEnabled({ HEAP_SNAPSHOT: v } as never)).toBe(true);
+		}
 	});
 });
 

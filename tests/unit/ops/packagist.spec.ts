@@ -34,14 +34,13 @@ const INSTALLED = { 'drupal/core': '11.4.5', 'drupal/core-recommended': '11.4.5'
 
 describe('the URL and the name, because a name becomes a URL', () => {
 	it('sends drupal/* to drupal.org and everything else to Packagist', () => {
-		// the regression. Drupal contrib is not on Packagist at all, so this test previously pinned
-		// the endpoint that 404s for every package the product exists to install -- measured:
-		// repo.packagist.org/p2/drupal/pathauto.json is a 404, packages.drupal.org/8 has it.
+		// A string comparison here can only ever prove the constant did not change. What proves it
+		// is CORRECT is the conformance test below, which reads drupal.org's own `metadata-url`.
 		expect(packagistUrl('drupal/webform')).toBe(
-			'https://packages.drupal.org/8/p2/drupal/webform.json'
+			'https://packages.drupal.org/files/packages/8/p2/drupal/webform.json'
 		);
 		expect(packagistUrl('drupal/pathauto')).toBe(
-			'https://packages.drupal.org/8/p2/drupal/pathauto.json'
+			'https://packages.drupal.org/files/packages/8/p2/drupal/pathauto.json'
 		);
 		// a non-Drupal dependency still resolves against Packagist, which does have it
 		expect(packagistUrl('symfony/yaml')).toBe(

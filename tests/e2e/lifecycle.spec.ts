@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ENDPOINT, e2eGate } from './helpers/endpoint';
 import {
@@ -17,6 +18,7 @@ import {
 	type ServeStats,
 	type Transport
 } from './helpers/lifecycle';
+import { firstDifference, maskNonces } from './helpers/twice';
 
 /**
  * ONE Drupal lifecycle, driven end to end against a running worker: provision, migrate, prefill,
@@ -47,6 +49,25 @@ import {
  */
 
 const skip = await e2eGate();
+
+/**
+ * The packed front page, read from the artifact rather than from a previous render.
+ *
+ * `assets/prefill.json` is what CI rendered with NATIVE php, keyed by path. Reading it here is what
+ * lets step 5 compare a live render against the artifact directly instead of against a digest that
+ * two per-site nonces make unreachable.
+ */
+async function packedHome(): Promise<string> {
+	const { readFile } = await import('node:fs/promises');
+	const { fileURLToPath } = await import('node:url');
+	const here = fileURLToPath(import.meta.url);
+	const root = here.slice(0, here.indexOf('/tests/e2e/'));
+	const raw = await readFile(`${root}/assets/prefill.json`, 'utf8');
+	const packed = JSON.parse(raw) as Record<string, { html: string }>;
+	const home = packed['/']?.html;
+	if (typeof home !== 'string') throw new Error('assets/prefill.json has no "/" entry');
+	return home;
+}
 
 /** the front page, as the packed `assets/prefill.json` holds it and as a live render reproduces it */
 const HOME_SHA1 = '10077de5f0bd93ff065cb3a178edd08422a81689';
@@ -133,7 +154,7 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		expect(r.charLength).toBeLessThan(r.byteLength);
 	});
 
-	it('5. renders the front page for real, and reproduces the packed bytes exactly', async () => {
+	it('5. renders the front page for real, reproducing the packed bytes but for two per-site nonces', async () => {
 		const out = await assemble(t, '/');
 		expect(out.filled).toBe('/');
 		// the four fields that separate a render from a cache hit
@@ -145,10 +166,21 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 
 		const r = await serve(t, '/');
 		expect(r.status).toBe(200);
-		// AND the bytes agree with the artifact rendered by NATIVE php in CI
-		// (scripts/drupal/prefill-cache.php). Two different PHP builds, identical output
+		// the length is exact: both nonces are fixed width, so a length change is real content
 		expect(r.byteLength).toBe(HOME_BYTES);
-		expect(r.sha1).toBe(HOME_SHA1);
+
+		// and the document matches the artifact rendered by NATIVE php in CI
+		// (scripts/drupal/prefill-cache.php) once the per-site nonces are masked. Two different
+		// PHP builds, identical output.
+		const packed = await packedHome();
+		const masked = maskNonces({ first: r.body, second: packed });
+		expect(firstDifference(masked.first, masked.second)).toBeNull();
+
+		// the packed artifact is still pinned by digest, so a change to the PACK is still caught;
+		// what is no longer asserted is that a live render can reproduce it
+		expect(createHash('sha1').update(Buffer.from(packed, 'utf8')).digest('hex')).toBe(
+			HOME_SHA1
+		);
 	});
 
 	it('6. routes a second path to its own render rather than re-serving the first', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dumpDatabase } from '../../src/db/export-sql';
+import { getFile, putFile } from '../../src/db/file-store';
 import { storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
 import { SqlMigrator, readMigrateCursor } from '../../src/db/migrate-sql';
@@ -281,5 +282,289 @@ describe('an export says whether it can actually be restored', () => {
 		return out.then((tables) => {
 			expect(Array.isArray(tables)).toBe(true);
 		});
+	});
+});
+
+describe('the widest value, which is the limit a migration scores against', () => {
+	it('reports both Durable Object ceilings and the widest value per table', async () => {
+		// neither cap had an instrument. A record may not exceed 2,199,995 bytes and statement
+		// text may not exceed 100,000 chars, and until now the only way to find out a dump
+		// breached the second was to attempt the restore
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0', PW_DIAGNOSTICS: '1' };
+			await migrate(site, '?all=1&prefill=0');
+			const res = await site.fetch(new Request('https://do.local/__writes?op=widest'));
+			return (await res.json()) as {
+				ok: boolean;
+				recordCap: number;
+				statementCap: number;
+				widest: { table: string; column: string; bytes: number }[];
+				exportable: boolean;
+				note: string;
+			};
+		});
+
+		expect(out.ok).toBe(true);
+		expect(out.recordCap).toBe(2_199_995);
+		expect(out.statementCap).toBe(100_000);
+		// the shipped pack really does carry a very wide row, so this is a measurement rather
+		// than an empty list that would pass either way
+		expect(out.widest.length).toBeGreaterThan(0);
+		expect(out.widest[0]!.bytes).toBeGreaterThan(0);
+		expect(out.note).toContain('widest value is');
+		// sorted widest first, so the row that decides the verdict is the one a reader sees
+		for (let i = 1; i < out.widest.length; i++) {
+			expect(out.widest[i - 1]!.bytes).toBeGreaterThanOrEqual(out.widest[i]!.bytes);
+		}
+	});
+
+	it('measures BYTES rather than characters, so a multi-byte value is not under-reported', async () => {
+		// length() on TEXT counts characters; a multi-byte string would report narrower than it
+		// stores, and the error would be in the safe-looking direction
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, PW_DIAGNOSTICS: '1' };
+			site.sql.exec('CREATE TABLE cfw_width_probe (v TEXT)');
+			// 10 codepoints, 40 bytes in UTF-8
+			site.sql.exec('INSERT INTO cfw_width_probe (v) VALUES (?)', '𝔘'.repeat(10));
+			const res = await site.fetch(new Request('https://do.local/__writes?op=widest'));
+			const body = (await res.json()) as {
+				widest: { table: string; column: string; bytes: number }[];
+			};
+			return body.widest.find((w) => w.table === 'cfw_width_probe');
+		});
+		expect(out?.bytes).toBe(40);
+	});
+});
+
+describe('a file too wide for one statement, which is any ordinary photo', () => {
+	it('SPLITS the value across appends instead of producing an unreplayable dump', async () => {
+		// cfw_file_chunk stores up to 200,000 bytes per row and a literal costs two hex characters
+		// per byte -- 400,000 against a 100,000 ceiling. So every upload over ~50 KB made the whole
+		// dump unreplayable, on the one path whose job is letting a customer leave with their data
+		const out = await inObject(freshSite(), async (site) => {
+			const sql = seams(site).sql;
+			putFile(sql as never, 'public://big.bin', new Uint8Array(150_000).fill(7), {
+				mime: 'application/octet-stream',
+				nowMs: 1
+			});
+			const dump = dumpDatabase(sql);
+			return {
+				replayable: dump.replayable,
+				splitValues: dump.splitValues,
+				maxStatementChars: dump.maxStatementChars,
+				sql: dump.sql
+			};
+		});
+
+		expect(out.replayable, 'a 150 KB file must not make the dump unreplayable').toBe(true);
+		expect(out.splitValues).toBeGreaterThan(0);
+		expect(out.maxStatementChars).toBeLessThanOrEqual(100_000);
+		// the mechanism is the one the shipped pack already uses
+		expect(out.sql).toContain('|| ');
+	});
+
+	it('BUILDS a blob as text and converts once, because `||` coerces its operands', async () => {
+		// measured on the platform: `typeof(x'41' || x'42')` is `text`. So appending a hex literal
+		// straight onto a blob column silently turns the column into a string -- the restore replays
+		// with no error and the file comes back empty, which is exactly what the first version of
+		// this did. `unhex()` is available (`typeof(unhex('41'))` is `blob`) so the digits accumulate
+		// as an ordinary string and become bytes in one final statement
+		const out = await inObject(freshSite(), async (site) => {
+			const sql = seams(site).sql;
+			putFile(sql as never, 'public://big.bin', new Uint8Array(150_000).fill(7), {
+				mime: 'application/octet-stream',
+				nowMs: 1
+			});
+			return dumpDatabase(sql).sql;
+		});
+
+		expect(out, 'a split blob must be converted back').toMatch(/SET "?\w+"? = unhex\(/);
+		expect(out, 'no append may concatenate a hex literal, which coerces to text').not.toMatch(
+			/\|\| x'/
+		);
+	});
+
+	it('REPLAYS to the identical bytes, which is the only claim that matters', async () => {
+		// a split that produces a valid-looking dump and the wrong bytes is worse than a refusal
+		const source = new Uint8Array(150_000);
+		for (let i = 0; i < source.length; i++) source[i] = (i * 31) % 256;
+
+		const dump = await inObject(freshSite(), async (site) => {
+			const sql = seams(site).sql;
+			putFile(sql as never, 'public://big.bin', source, {
+				mime: 'application/octet-stream',
+				nowMs: 1
+			});
+			return dumpDatabase(sql).sql;
+		});
+
+		const restored = await inObject(freshSite(), async (site) => {
+			const { sql, storage } = seams(site);
+			const id = storeImport(sql, dump, {
+				storage,
+				generation: 'files-1',
+				source: 'test',
+				nowMs: 1
+			}).id;
+			const migrator = new SqlMigrator({
+				sql,
+				storage,
+				now: () => Date.now(),
+				...storedImportLoader(sql, id)
+			});
+			await migrator.step({ maxChunks: Infinity });
+			// read the bytes back through the file store rather than through the dump that wrote
+			// them, so the comparison does not share a mechanism with the mover
+			return getFile(sql as never, 'public://big.bin');
+		});
+
+		expect(restored, 'the file did not survive the round trip').not.toBeNull();
+		expect(restored!.length).toBe(source.length);
+		// every byte, not a sample: a splitter that drops or reorders one interior slice matches at
+		// both ends. Counted rather than deep-equalled because a 150,000-element diff is unreadable
+		let differing = 0;
+		let firstDiff = -1;
+		for (let i = 0; i < source.length; i++) {
+			if (restored![i] !== source[i]) {
+				if (firstDiff < 0) firstDiff = i;
+				differing++;
+			}
+		}
+		expect(differing, `bytes differ from ${firstDiff}`).toBe(0);
+	});
+});
+
+describe('the runtime keeps its own tables in the same database', () => {
+	it('DOES NOT read `_cf_METADATA`, which the authorizer refuses outright', async () => {
+		// not a tidiness filter. `_cf_METADATA` belongs to the Durable Object storage API and the
+		// authorizer refuses to read it, so one `SELECT ... FROM "_cf_METADATA"` fails the WHOLE dump
+		// with `not authorized: SQLITE_AUTH`. It appears the first time the storage API is used --
+		// which a bare generation bump does -- so every site that had ever been written to was
+		// unexportable, on the path whose only job is letting a customer leave
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			// arming the alarm is the whole trigger -- no render, no traffic. Every site arms one on
+			// its first generation bump, which is why this affected all of them and not busy ones
+			await site.ctx.storage.setAlarm(Date.now() + 60_000);
+			const sql = seams(site).sql;
+			const present = sql
+				.exec("SELECT name FROM sqlite_master WHERE type = 'table'")
+				.toArray()
+				.map((r) => String(r.name))
+				.filter((n) => n.startsWith('_cf_'));
+			let error: string | null = null;
+			let statements = 0;
+			try {
+				statements = dumpDatabase(sql).statements;
+			} catch (e) {
+				error = String((e as Error)?.message ?? e);
+			}
+			return { present, error, statements };
+		});
+
+		// the guard is only a guard if the table it guards against is actually there
+		expect(
+			out.present.length,
+			'the runtime table never appeared, so this proves nothing'
+		).toBeGreaterThan(0);
+		expect(out.error).toBeNull();
+		expect(out.statements).toBeGreaterThan(0);
+	});
+});
+
+describe('a dump too big for one invocation, which is any site worth backing up', () => {
+	/** drives `/export?cursor=` to exhaustion the way a client does, and returns what it collected */
+	async function drain(site: ServeDo, query = ''): Promise<{ sql: string; calls: number }> {
+		let cursor = 'start';
+		const parts: string[] = [];
+		let calls = 0;
+		for (;;) {
+			const reply = (await site
+				.fetch(
+					new Request(
+						`https://do.local/__export?body=1&cursor=${encodeURIComponent(cursor)}${query}`
+					)
+				)
+				.then((r) => r.json())) as {
+				ok: boolean;
+				sql: string;
+				nextCursor: string | null;
+			};
+			calls++;
+			expect(reply.ok, 'a chunk refused mid-export').toBe(true);
+			if (reply.sql) parts.push(reply.sql);
+			if (reply.nextCursor === null) break;
+			cursor = reply.nextCursor;
+			// the loop is the thing under test, so a runaway is a failure and not a hang
+			expect(calls).toBeLessThan(500);
+		}
+		return { sql: parts.join('\n'), calls };
+	}
+
+	it('REASSEMBLES to exactly what the one-shot dump produces', async () => {
+		// the one-shot and the chunked path are the same code -- `dumpDatabase` drives `dumpChunk`
+		// to exhaustion -- and this is what pins that. Two implementations agreeing today is how the
+		// chunked half drifts into producing a dump that no longer restores
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			const oneShot = dumpDatabase(seams(site).sql);
+			const drained = await drain(site, '&chunkChars=20000');
+			return { oneShot: oneShot.sql, statements: oneShot.statements, ...drained };
+		});
+
+		expect(out.calls, 'a 20,000-char budget must take more than one call').toBeGreaterThan(3);
+		expect(out.sql.length).toBe(out.oneShot.length);
+		expect(out.sql).toBe(out.oneShot);
+	});
+
+	it('REPLAYS what it reassembled, which the equality above does not prove on its own', async () => {
+		const dump = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			return (await drain(site, '&chunkChars=20000')).sql;
+		});
+
+		const rows = await inObject(freshSite(), async (site) => {
+			const { sql, storage } = seams(site);
+			const id = storeImport(sql, dump, {
+				storage,
+				generation: 'chunked-1',
+				source: 'test',
+				nowMs: 1
+			}).id;
+			const migrator = new SqlMigrator({
+				sql,
+				storage,
+				now: () => Date.now(),
+				...storedImportLoader(sql, id)
+			});
+			await migrator.step({ maxChunks: Infinity });
+			return Number(sql.exec('SELECT COUNT(*) AS n FROM router').toArray()[0]?.n ?? 0);
+		});
+
+		expect(rows, 'the reassembled dump restored no routes').toBeGreaterThan(0);
+	});
+
+	it('REFUSES to splice two different dumps together', async () => {
+		// the cursor is position and the options are shape, and they arrive separately on every
+		// call. Resuming an `?all=1` export with the default options would produce a file that
+		// looks whole and is a mixture of two dumps
+		const status = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			const first = (await site
+				.fetch(new Request('https://do.local/__export?cursor=start&all=1'))
+				.then((r) => r.json())) as { nextCursor: string };
+			const resumed = await site.fetch(
+				new Request(
+					`https://do.local/__export?cursor=${encodeURIComponent(first.nextCursor)}`
+				)
+			);
+			return resumed.status;
+		});
+
+		expect(status).toBe(409);
 	});
 });

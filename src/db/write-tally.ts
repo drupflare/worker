@@ -29,6 +29,8 @@ export function writeTargetTable(sql: string): string | null {
 export type WriteTally = {
 	/** rows written per table, and `?unattributed` for a write whose target could not be parsed */
 	byTable: Record<string, number>;
+	/** distinct statement shapes and their counts, capped at {@link TALLY_SHAPE_LIMIT} */
+	shapes?: Record<string, number>;
 	/**
 	 * write STATEMENTS per table, which rows alone cannot substitute for.
 	 *
@@ -47,7 +49,7 @@ export type WriteTally = {
 };
 
 export function emptyTally(): WriteTally {
-	return { byTable: {}, statementsByTable: {}, statements: 0, rowsWritten: 0 };
+	return { byTable: {}, statementsByTable: {}, statements: 0, rowsWritten: 0, shapes: {} };
 }
 
 /**
@@ -58,9 +60,35 @@ export function emptyTally(): WriteTally {
  * under `?unattributed` rather than being dropped -- if that key ever carries a meaningful share, the
  * parser above is missing a form and the breakdown is not trustworthy.
  */
+/** how many distinct statement SHAPES a tally remembers, per the whole tally */
+export const TALLY_SHAPE_LIMIT = 40;
+
+/**
+ * A statement reduced to its shape: the text with bound values and whitespace normalised away.
+ *
+ * `statementsByTable` answers "how many times" and `byTable` answers "how expensive"; neither
+ * answers WHICH statement, and that is the question a surprising cost actually poses. A router
+ * rebuild that cost 8x its modelled price looked like nine repeats through the counters and was one
+ * dump issuing seven statements per route -- a difference no ratio of the other two can express.
+ */
+export function statementShape(sql: string): string {
+	return sql.replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
 export function tallyWrite(tally: WriteTally, sql: string, rowsWritten: number): WriteTally {
 	tally.statements += 1;
 	const table = writeTargetTable(sql) ?? '?unattributed';
+	// bounded: a tally is armed by a route and lives in the isolate, so an unbounded map keyed by
+	// statement text is a memory leak wearing a diagnostic's clothes
+	if (tally.shapes) {
+		const shape = statementShape(sql);
+		if (
+			tally.shapes[shape] !== undefined ||
+			Object.keys(tally.shapes).length < TALLY_SHAPE_LIMIT
+		) {
+			tally.shapes[shape] = (tally.shapes[shape] ?? 0) + 1;
+		}
+	}
 	// statements are counted even at zero rows; the statement still happened, and the rebuild
 	// shape this reads is a count of statements rather than of rows
 	tally.statementsByTable[table] = (tally.statementsByTable[table] ?? 0) + 1;

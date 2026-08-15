@@ -646,11 +646,30 @@ export function writeHeapSnapshot(
 ): { id: number; rows: number; storedBytes: number; digest: string; keptPages: number } {
 	const pageBytes = opts.pageBytes ?? WASM_PAGE_BYTES;
 	const chunkBytes = opts.chunkBytes ?? DEFAULT_CHUNK_BYTES;
-	const elided = elideZeroPages(opts.heap, pageBytes);
-	// stored, because seq * chunkBytes is how a streaming restore maps a chunk onto the elided
-	// stream; inferring it from DEFAULT_CHUNK_BYTES silently mislocates every byte
-	const chunks = chunkHeap(elided.bytes, chunkBytes);
-	const digest = digestBytes(opts.heap);
+	if (chunkBytes <= 0) throw new RangeError('chunkBytes must be positive');
+	if (chunkBytes >= DO_SQLITE_MAX_RECORD_BYTES) {
+		throw new RangeError(
+			`chunkBytes ${chunkBytes} is not under the ${DO_SQLITE_MAX_RECORD_BYTES}-byte record cap`
+		);
+	}
+
+	const heap = opts.heap;
+	const totalPages = Math.ceil(heap.length / pageBytes);
+	const keep: number[] = [];
+	for (let p = 0; p < totalPages; p++) {
+		const from = p * pageBytes;
+		const to = Math.min(from + pageBytes, heap.length);
+		if (!isZeroRange(heap, from, to)) keep.push(p);
+	}
+	let elidedLength = 0;
+	for (const p of keep) elidedLength += Math.min(pageBytes, heap.length - p * pageBytes);
+	const elided = {
+		byteLength: heap.length,
+		totalPages,
+		pageIndex: keep,
+		bytesLength: elidedLength
+	};
+	const digest = digestBytes(heap);
 
 	const row = sql
 		.exec(
@@ -673,22 +692,48 @@ export function writeHeapSnapshot(
 	const id = Number(row?.id ?? 0);
 	if (!id) throw new Error('snapshot insert returned no id');
 
-	for (const c of chunks) {
+	// one chunk-sized staging buffer, refilled in place. The kept pages are copied into it in
+	// order, so the byte stream is identical to elideZeroPages() + chunkHeap() and a restore reads
+	// it the same way -- `seq * chunkBytes` still locates a chunk in the elided stream
+	const staging = new Uint8Array(chunkBytes);
+	let filled = 0;
+	let seq = 0;
+	const flush = () => {
+		if (filled === 0) return;
+		// sliced to its real length: the last chunk is short, and storing the whole staging
+		// buffer would pad the elided stream with zeroes a restore would then apply
+		const bytes = staging.slice(0, filled);
 		// a digest PER CHUNK, not just for the whole heap: a streaming restore applies bytes as it
 		// reads them, so a whole-image check can only tell you afterwards that the heap is already
 		// wrong. This one refuses the chunk before it lands
 		sql.exec(
 			'INSERT INTO cfw_heap_chunk (snapshot_id, seq, bytes, digest) VALUES (?, ?, ?, ?)',
 			id,
-			c.seq,
-			c.bytes,
-			digestBytes(c.bytes)
+			seq,
+			bytes,
+			digestBytes(bytes)
 		);
+		seq++;
+		filled = 0;
+	};
+	for (const p of keep) {
+		const from = p * pageBytes;
+		const to = Math.min(from + pageBytes, heap.length);
+		let at = from;
+		while (at < to) {
+			const take = Math.min(chunkBytes - filled, to - at);
+			staging.set(heap.subarray(at, at + take), filled);
+			filled += take;
+			at += take;
+			if (filled === chunkBytes) flush();
+		}
 	}
+	flush();
+
 	return {
 		id,
-		rows: chunks.length,
-		storedBytes: elided.bytes.length,
+		rows: seq,
+		storedBytes: elided.bytesLength,
 		digest,
 		keptPages: elided.pageIndex.length
 	};

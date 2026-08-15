@@ -2,7 +2,7 @@
  * The table a write statement targets, or `null` when the statement writes nothing.
  *
  * Deliberately narrow. It recognises the five write forms Drupal's SQL generation actually emits and
- * returns `null` for everything else rather than guessing -- an unattributed write shows up as `null` in
+ * returns `null` for everything else -- an unattributed write shows up as `null` in
  * the tally, which is visible, where a wrong guess would silently move rows onto the wrong table and
  * corrupt the exact number the roadmap depends on.
  */
@@ -79,7 +79,7 @@ export type SqlLike = {
 /**
  * Wraps `ctx.storage.sql` so the HOST's own writes land in the tally too.
  *
- * WHY THIS EXISTS, and it is a correction rather than an addition. `execSql()` is the only path
+ * A correction rather than an addition. `execSql()` is the only path
  * `tallyWrite()` was ever called from, and `execSql()` is the PHP driver's entry point -- so the
  * tally, and `this.rowsWritten` with it, could only ever see **Drupal's** statements. Every write
  * the host makes on its own behalf goes through `this.sql.exec()` directly and was invisible:
@@ -108,7 +108,7 @@ export function countingSql<T extends SqlLike>(
 			const isWrite = writeTargetTable(text) !== null;
 			if (!isWrite) return cursor;
 			const rows = cursor.rowsWritten;
-			// ALWAYS-ON and deliberately separate from the tally above. The tally is a
+			// always on, and separate from the tally above. The tally is a
 			// diagnostic -- it allocates a per-table map and is armed by a route. This is the
 			// product meter: one addition per write statement, no allocation, so the daily
 			// rows-written figure the Limits page shows is a real reading rather than a blank.
@@ -121,7 +121,7 @@ export function countingSql<T extends SqlLike>(
 	// the real object carries members beyond exec() (`databaseSize`, and the internals
 	// `rowidOf`/`changesOf` reach for), so delegate rather than replace.
 	//
-	// `Reflect.get` is called WITHOUT a receiver on purpose. `ctx.storage.sql` is a workerd host
+	// `Reflect.get` is called WITHOUT a receiver. `ctx.storage.sql` is a workerd host
 	// object whose accessors reject a `this` that is not the real object, so forwarding the proxy as
 	// the receiver throws "Illegal invocation" on the first `databaseSize` read -- which is exactly
 	// what 15 integration tests reported. Omitting it makes `target` the receiver.
@@ -176,4 +176,128 @@ export function routerRebuildPasses(
 	const perPass = 1 + Math.ceil(routes / routesPerStatement);
 	const passes = statements / perPass;
 	return Number.isInteger(passes) ? passes : null;
+}
+
+/** One table's charged rows against the statements that caused them. */
+export type Amplification = {
+	table: string;
+	/** write statements aimed at this table, including no-ops */
+	statements: number;
+	/** rows the host CHARGED for those statements */
+	rowsWritten: number;
+	/**
+	 * charged rows per statement.
+	 *
+	 * Above 1 means something other than the row itself is being billed, and on DO SQLite that
+	 * something is index maintenance: every index on a table is another row written per insert.
+	 */
+	factor: number;
+};
+
+/**
+ * Charged rows per write statement, per table, largest factor first.
+ *
+ * The two counters this divides were already being collected, so the factor costs nothing new to
+ * obtain. What it does NOT tell you is which index -- only that a table charges more than it stores,
+ * which is the signal to go and look. A factor of 1.0 on a hot table means there is nothing to win
+ * there, and that is worth knowing before touching a schema.
+ *
+ * A table with statements but zero charged rows reports a factor of 0 rather than being dropped: an
+ * all-no-op table is a finding too, because the statements still cost CPU.
+ */
+export function amplification(tally: WriteTally): Amplification[] {
+	const tables = new Set([
+		...Object.keys(tally.statementsByTable),
+		...Object.keys(tally.byTable)
+	]);
+	return [...tables]
+		.map((table) => {
+			const statements = tally.statementsByTable[table] ?? 0;
+			const rowsWritten = tally.byTable[table] ?? 0;
+			return {
+				table,
+				statements,
+				rowsWritten,
+				factor: statements > 0 ? rowsWritten / statements : 0
+			};
+		})
+		.sort((a, b) => b.factor - a.factor || b.rowsWritten - a.rowsWritten);
+}
+
+/**
+ * The share of a tally's charged rows that is NOT explained by one row per statement.
+ *
+ * **This is not the index share, and it is not an upper bound on it either.** An earlier docblock
+ * here said it was, and the measurement falsified that: the recorded cold fill is 63 statements
+ * against 12 charged rows, so `explained` clamps to 12 and this returns **0** for a fill that
+ * `scripts/measure/index-audit.ts` decomposes as **9 of 12 rows index maintenance**. A write path
+ * with more no-op statements than rows will always read 0 here and look index-free.
+ *
+ * What it does bound is the opposite direction -- rows that arrived from FEWER statements than rows,
+ * which is a multi-row statement (`INSERT ... SELECT`, a `DELETE` clearing a bin) or a heavily
+ * indexed insert. Useful for spotting a burst; useless for pricing an index. Use
+ * `splitChargedRows()` with the schema's factors when the question is how much of a cost is index
+ * maintenance.
+ */
+export function overheadShare(tally: WriteTally): number {
+	if (tally.rowsWritten <= 0) return 0;
+	const explained = Math.min(tally.statements, tally.rowsWritten);
+	return (tally.rowsWritten - explained) / tally.rowsWritten;
+}
+
+/** one table's charged rows divided into what was stored and what was overhead */
+export type ChargeSplit = {
+	table: string;
+	chargedRows: number;
+	/** charged rows one stored row costs, from the schema */
+	chargePerRow: number;
+	dataRows: number;
+	/**
+	 * every charged row that is not the table row.
+	 *
+	 * Index entries, except on an AUTOINCREMENT table where one is the `sqlite_sequence` rewrite.
+	 */
+	indexRows: number;
+	/** false when the charged total is not a whole multiple of the factor, or the factor is unknown */
+	exact: boolean;
+};
+
+/**
+ * Divides measured charged rows into data and index maintenance, given the schema's charge factors.
+ *
+ * The exact answer `overheadShare()` cannot give, and it needs an input that tally alone does not
+ * carry: how many charged rows one stored row costs on each table. That comes from the schema --
+ * `chargePerInsertedRow()` in `scripts/measure/index-audit.ts` derives it and
+ * `tests/unit/db/index-charge-model.spec.ts` measures it against real Durable Object SQL.
+ *
+ * Reports `exact: false` rather than rounding when a table's total is not a whole multiple of its
+ * factor. A non-integer means the writes were not all fresh single-row inserts, and rounding it away
+ * would turn a wrong assumption about the statements into a confident number.
+ */
+export function splitChargedRows(
+	charged: Record<string, number>,
+	chargePerRow: Record<string, number>
+): { rows: ChargeSplit[]; dataRows: number; indexRows: number; indexShare: number } {
+	const rows: ChargeSplit[] = [];
+	for (const [table, chargedRows] of Object.entries(charged)) {
+		const factor = chargePerRow[table] ?? 0;
+		const exactRows = factor > 0 ? chargedRows / factor : 0;
+		const dataRows = Math.floor(exactRows);
+		rows.push({
+			table,
+			chargedRows,
+			chargePerRow: factor,
+			dataRows,
+			indexRows: chargedRows - dataRows,
+			exact: factor > 0 && Number.isInteger(exactRows)
+		});
+	}
+	const dataRows = rows.reduce((n, r) => n + r.dataRows, 0);
+	const total = rows.reduce((n, r) => n + r.chargedRows, 0);
+	return {
+		rows,
+		dataRows,
+		indexRows: total - dataRows,
+		indexShare: total > 0 ? (total - dataRows) / total : 0
+	};
 }

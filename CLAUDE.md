@@ -255,11 +255,16 @@ loading it. `--` inside an XML comment is invalid.
 ## The binary ships pre-compressed, and that is why the size levers are no longer urgent
 
 **The interpreter travels as a zstd frame in a `Data` module and is inflated at module scope**, so
-Cloudflare's gzip measures bytes it cannot compress further. Measured on wrangler's own figure the
-shipping bundle is **2,885,427** (2818.80 KiB, re-measured 2026-08-14 on the canonical config),
-**260,301 under the 3,145,728 ceiling**; the interpreter alone is 2,658,002 with nothing dropped.
-The earlier 2,282,127 was a narrower config and is not what `wrangler deploy` prints today -- run
-`bun run release:check`, which reports the same figure, rather than quoting either number from here.
+Cloudflare's gzip measures bytes it cannot compress further. On 2026-08-15 the shipping bundle is
+**2,898,319**, **247,409 under the 3,145,728 ceiling**; the interpreter alone is 2,658,002 with
+nothing dropped.
+
+**Do not quote that number, run `bun run release:check`.** It has now been stale in THREE documents
+simultaneously -- this file said 2,885,427, `README.md` said 2,881,567 and `TECHNICAL_REPORT.md` said
+2,885,427, none of which was what the tool printed. The bundle moves whenever `src/` does, so any
+figure written down here is a snapshot with a decay rate, and the three disagreeing copies were
+harder to notice than one wrong one.
+
 Consequences for anyone scoring a proposal here:
 
 - **Do not reason about the ceiling from a `gzip` figure on a `.wasm`.** The relevant compressor is

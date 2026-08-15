@@ -1,0 +1,32 @@
+{
+	"name": "drupflare/worker",
+	"description": "Drupal 11 on Cloudflare Workers: PHP as WebAssembly inside a Durable Object",
+	"type": "project",
+	"license": "MIT",
+	"authors": [
+		{
+			"name": "Gregory Mitchell",
+			"email": "me@gmitch215.xyz"
+		}
+	],
+	"require": {
+		"php": ">=8.3",
+		"drupflare/drupflare": "0.*",
+		"drupflare/rom": "0.*"
+	},
+	"config": {
+		"sort-packages": true,
+		"vendor-dir": ".composer-vendor"
+	},
+	"minimum-stability": "stable",
+	"prefer-stable": true,
+	"require-dev": {
+		"phpstan/phpstan": "^2.2"
+	},
+	"scripts": {
+		"analyze": "phpstan analyse --memory-limit=1G"
+	},
+	"scripts-descriptions": {
+		"analyze": "Runs PHPStan over scripts/ at the level pinned in phpstan.neon. Needs the Drupal tree: bun run fetch:drupal."
+	}
+}

@@ -1,0 +1,15446 @@
+# Technical Report: Drupal on Cloudflare Workers
+
+**What this is.** The complete engineering record of putting Drupal 11.4.5 on Cloudflare
+Workers, with PHP 8.5 executing as WebAssembly inside a Durable Object. Every number here
+was measured on real hardware or real Cloudflare infrastructure. Nothing is extrapolated, and
+where a figure came from Cloudflare's documentation rather than a measurement, it says so.
+
+**Who wrote it.** Claude (Anthropic), while doing the work, across many sessions. It is a
+record of measurements as they were taken rather than a summary written afterwards, which is
+why it contains conclusions that were later overturned. **Those are kept on purpose.** A
+free-tier verdict moved six times in this project and four of those moves were the
+instrument rather than the system; the sequence of wrong turns is the most reusable thing in
+the document, and deleting it would leave the reader with confident answers and no way to
+tell which ones to distrust.
+
+**How to read it.**
+
+- Everything above the `FOLD` marker is **current and authoritative**.
+- Everything below `FOLD` is the **historical record**, in the order it was measured.
+- Below that are two **deep dives** (`DEEP DIVE A`, `DEEP DIVE B`), each with a supersession
+  table at its head.
+- **Where anything below disagrees with anything above, the top wins.** Superseded claims are
+  marked in place rather than removed.
+- Before quoting any performance number, read
+  [THE MEASUREMENT RULES THIS DOCUMENT PAID FOR](#the-measurement-rules-this-document-paid-for).
+  The single most important one: **an absolute CPU figure comes only from `cpuTime` on a
+  deployed worker**, because in-PHP `microtime()` and JS `Date.now()` both return 0 on the
+  edge.
+
+---
+
+## 🧭 Executive Summary
+
+**It works, on the free plan, and the thing that got it there was not a performance optimisation.**
+
+Drupal 11.4.5 renders on Cloudflare Workers with PHP executing as WebAssembly inside a Durable
+Object, using that object's own SQLite as the database. On 2026-08-14 a throwaway deployment served a
+real Drupal page -- 12,304 bytes of Olivero markup, `<title>Welcome! | CFW Bench</title>` -- from a
+bundle that measures **2,898,319 gzipped bytes on 2026-08-15, 247,409 under the free plan's 3 MiB
+ceiling**.
+
+That figure has now been wrong in three documents at once, each quoting a different stale number from
+a different day. **Do not copy it forward: run `bun run release:check`**, which is what produced the
+one above and reports the local instrument's reading alongside it.
+
+### Current numbers
+
+| | measured | where from |
+| --- | --- | --- |
+| Worker bundle, gzipped | **2,898,319** -- 247,409 under the 3 MiB ceiling | `bun run release:check`, 2026-08-15 |
+| PHP 8.5, every extension intact | **2,658,002** zstd -- 487,726 under | same meter, `control85` |
+| Isolate startup | **112 ms** median (n=5) of a 1,000 ms limit | Cloudflare's `Worker Startup Time` |
+| Startup billed to a request | **0-1 ms** -- it is not | `cpuTime`, 3 cold isolates |
+| `page_cache` hit | **1 ms** of DO CPU, 1 statement | edge `cpuTime` |
+| Full uncached render | **34 ms**, both bins emptied | edge `cpuTime` |
+| Cold boot | **1,398 ms** (n=3; the platform is bimodal by 400-600 ms) | edge `cpuTime` |
+| Serving ceiling, shipping | **3.0M visits/month**, saturated | model over measured meters |
+| Regeneration ceiling | **7,575 renders/day** | rows written binds |
+| Gate | 2,180 tests / 96 files, plus 585 PHP assertions across 5 suites | local, 2026-08-15 |
+
+### The cost model against a VPS, stated honestly
+
+**The infrastructure saving is small and the labour saving is the whole product.** Anyone selling this
+on hosting price is selling the wrong thing.
+
+| | Drupflare | small VPS | provenance |
+| --- | --- | --- | --- |
+| Monthly, small site | **$0** free / **$5** Workers Paid | $5-12, plus backups (~20% on the majors) | list prices, not measured |
+| CDN | included | $0 if you put Cloudflare in front, which most do | list |
+| Capacity at $0 | **~3.0M visits/month** | none; there is no $0 VPS | measured meters |
+| OS patching, kernel CVEs | **nothing to patch** | monthly, yours forever | -- |
+| PHP upgrades | a binary swap, built in CI | yours | -- |
+| Drupal security releases | rollout planning built and rehearsed; **advisory detection is not built** | yours | rehearsed 2026-08-15 |
+| Backup/restore | chunked, resumable, and **rehearsed against the live database** | yours to configure and verify | rehearsed 2026-08-15 |
+| Scaling a traffic spike | nothing to do | resize, tune PHP-FPM, add caching | -- |
+
+So the money is roughly a wash at the bottom of the market: **$5/month against $6-12 plus backups
+saves tens of dollars a year, not hundreds.** What actually differs is that the recurring obligations
+in the middle rows have no Drupflare column. Price those at your own rate; this document will not
+invent an hourly figure.
+
+**The genuine outlier is $0.** There is no $0 VPS, and the free plan is not a demo -- it carries
+~3.0M visits/month with the same feature set as paid. That is the row without an equivalent.
+
+**Two costs a VPS does not have**, and they are real: an uncached render is ~3.6x slower than native
+PHP, and one site is one Durable Object is one thread that cannot be made bigger. Content sites win
+decisively; busy authenticated editorial workflows do not. The architecture wins by not rendering,
+not by rendering faster.
+
+### The turn the whole project pivots on
+
+For months every decision was scored against the free plan's **10 ms per-invocation CPU cap**: how do
+we make a render fit? Each answer was "split it smaller", each split worked, and the system got more
+complicated without the product getting better. The cap limits one execution unit -- but the
+architecture decides what an execution unit *is*, and this document measured 20 Durable Object hops
+accumulating 142 ms with no single invocation over 10 ms. **The cap was never the question; the daily
+budgets were.**
+
+The same shape of error, one layer down, is what produced the final result. The bundle was over the
+size ceiling, so the work went into removing things -- extensions, opcache, `Dom\HTMLDocument`. All of
+it measured, all of it real, and the whole programme recovered **22.5%** of what PHP 8.5 costs. Then
+the actual constraint turned out to be that **Cloudflare measures the bundle after its own gzip, and
+gzip cannot compress what is already compressed.** Shipping the interpreter as a zstd frame in a
+`Data` module, inflated at module scope, saved **997,878 bytes in one change** -- more than four times
+everything the removals achieved -- and made every removal unnecessary. A section of this document
+had declared that avenue "closed, permanently"; it was closed on a premise that was never checked.
+
+### The verdict
+
+- **Free tier: viable**, at ~3.0M visits/month for a well-cached content site, with PHP 8.5 fitting
+  intact. This reverses [VIABILITY VERDICT](#viability-verdict), which still sat above the FOLD saying
+  the opposite until today.
+- **Paid tier: viable**, with margin of at least 250x on every measured limit.
+- **Neither is a general-purpose Drupal host yet.** The gaps are named below and none of them are
+  physics.
+
+### What is open, in the order the cost model argues for
+
+1. **Serve rendered pages off-Worker.** Worth **at least 3.3x** on the serving ceiling and the only
+   item on this list worth more than 2x. The file half is built; the page half is not -- both page
+   tiers still cost a Worker request. The floor is R2's 10M Class B operations/month against the
+   100,000 Worker requests/day ceiling; a measured CDN hit ratio in front of the bucket would raise
+   it. An earlier 12.5x came from a pricing sentence about Workers Static Assets, a different product
+   that cannot hold a page rendered at runtime -- see
+   [THE 12.5x WAS DERIVED FROM THE WRONG METER](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x).
+2. **Widen the prefill to the real route table.** A first-ever-path fill is 62 rows against 13 for a
+   warm one, and prefill covers three paths. Rows-directed, so it outranks anything CPU-directed.
+3. **Rehearse the security pipeline** against a synthetic advisory and measure time-to-patch. For a
+   Drupal host this is the operational risk that outlives launch.
+4. **Finish export.** It is restore's loop reversed, it blocks rollback, and it is the property that
+   lets a customer leave.
+5. **Report the meters that are blank**, including the Cloudflare Images cap of 5,000 transforms per
+   month, which fails rather than bills and which nothing currently counts.
+6. **Do not do boot work.** JSPI, heap restore and always-warm objects are worth ~1.1%, because the
+   fill window amortises boot. The 8.5 result does not reorder this.
+
+---
+
+## 📖 The story, in plain terms
+
+If you read nothing else, read this. Everything below is evidence for it.
+
+### The question
+
+Drupal expects a server: a filesystem it can write to, a database socket, a PHP process that lives
+long enough to finish a page. Cloudflare Workers offers none of those. It offers a JavaScript sandbox
+that starts fast, dies fast, and on the free plan gives you **10 milliseconds of CPU per request**.
+
+A Drupal page render takes 20-46 ms. So the obvious conclusion is that this cannot work, and for a
+long time this document kept reaching that conclusion, then finding a way around it, then reaching it
+again somewhere else.
+
+### The wrong turn that shaped everything
+
+**We were optimising the wrong thing.** For most of this project every decision was scored against
+that 10 ms cap: how do we make a render fit? The answer was always "split it into smaller pieces", and
+each split worked, and each success made the system more complicated without making the product any
+better.
+
+The 10 ms cap limits **one execution unit**. But the architecture decides what an execution unit *is*.
+This document itself measured 20 Durable Object hops accumulating 142 ms of CPU with no single
+invocation over 10 ms. So "does a render fit in 10 ms" was never the real question.
+
+The real question is whether the free plan's **daily budgets** support a real site. Those budgets are:
+
+- **100,000 Worker requests per day.** Every visit costs one, cached or not.
+- **100,000 Durable Object requests per day**, and this explicitly counts background alarms.
+- **100,000 database rows written per day.**
+
+### What those numbers mean for a site
+
+Two different ceilings, and confusing them is what caused most of the wrong turns:
+
+| | plain meaning | free today |
+| --- | --- | --- |
+| **Serving** | how many visits you can answer at all | **3 million/month** |
+| **Regeneration** | how many pages you can re-render per day | **7,575/day** |
+
+Serving is 3M/month because 3,000,000 / 30 = 100,000/day, which is *exactly* the request quota. Not
+comfortable -- **saturated**. Regeneration is the smaller number, and it is the one that decides
+whether this is a Drupal site or just a cache with old pages in it.
+
+### The things that turned out to be true, and surprising
+
+**Caching does not help the serving ceiling.** A cache hit still costs a Worker request. A "99% cached"
+architecture saves CPU and buys exactly zero extra visits.
+
+**But a page served off-Worker never spends a Worker request.** A file served from an R2 bucket on
+your own domain does not invoke the Worker at all. Serve your cached pages that way and the ceiling
+goes from **3 million to at least 10 million visits a month**, because R2 allows 10M Class B
+operations/month -- 333,333/day against the Worker ceiling's 100,000. That is still the single biggest
+lever in the project, and it is **3.3x rather than the 12.5x this document claimed for months**: the
+sentence "requests to static assets are free and unlimited" is about Workers Static Assets, which are
+uploaded at deploy time and cannot hold a page rendered at runtime. Two products, one sentence,
+applied to the wrong one. See
+[THE 12.5x WAS DERIVED FROM THE WRONG METER](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x).
+
+**Making the boot faster is nearly worthless.** This is the most counter-intuitive result here. The
+project spent enormous effort on boot: a 4,019 ms cold start became 1,398 ms, and a whole heap-snapshot
+subsystem exists to skip it. But once the boot is amortised across a batch of pages, the constraint
+stops being CPU and becomes **rows written**. Cutting boot cost per page by another 20x buys **1.1%**.
+Halving the rows a fill writes roughly **doubles** it. (This document also claimed uninstalling
+`dblog` was worth 115%. Measured, **zero** rows of a fill go to `watchdog`, so that particular lever
+does not exist -- see
+[THE ROW ATTRIBUTION WAS WRONG](#the-row-attribution-was-wrong-no-fill-writes-to-dblog).)
+
+So the correct order of work is: **reduce database writes first, make things faster last.** No amount
+of CPU profiling would ever have revealed that. Only adding up the daily budgets did.
+
+### What we got wrong, and why it is written down
+
+A free-tier verdict moved six times, and four of those moves were the *measuring instrument*, not the
+system:
+
+- Timers return **zero** on the edge, so early figures measured nothing. Worse, one returned **114 ms
+  for work that took 1,374 ms** -- a plausible wrong number is more dangerous than an obvious one.
+- An "850 ms unattributed cost" that organised a whole roadmap **never existed**: it was one number
+  minus the wrong other number.
+- A probe that "proved" the JavaScript bridge survived a restore **could not have failed** -- it took a
+  path that rebuilt the thing it was checking.
+
+Every one of those is left in place, marked, with the mistake explained. A document full of confident
+answers and no record of the wrong ones gives a reader no way to know which to distrust.
+
+### What it means now
+
+**Free and paid are the same host.** That is the product goal and it is close to met: free serves 3M
+visits a month today (at least 10M once pages move off-Worker), regenerates **7,575** pages a day,
+enables about **4 modules a day** through Drupal's own installer, runs cron, backs itself up and can
+roll itself back. Paid buys speed and headroom -- one uncached render in one invocation instead of a
+queue -- not features.
+
+**What is genuinely unfinished** is honest and short: authenticated traffic has no cache strategy and
+no decision; export is half-built, so rollback is blocked; and no rendered page is served without
+invoking the Worker, which is what caps serving at 3M. Two items that stood here are closed -- uploads
+now survive an eviction on Durable Object SQL, and Drupal's own `ModuleInstaller` has been run through
+this stack end to end.
+
+**What this project is really about,** underneath the wasm and the quotas: a small Drupal site costs
+more in *attention* than in money. Patching, backups, monitoring, a CDN, a database that fills its
+disk at 3am. The interesting claim here is not that Drupal runs on Workers -- it does -- but that the
+whole maintenance surface can be someone else's problem, on a plan that costs nothing, without the site
+being a toy.
+
+---
+
+## Status
+
+**PHP 8.5 executes inside workerd from a purpose-built static binary carrying every
+extension Drupal requires, and Drupal 11.4.5 renders on Durable Object SQLite with PHP
+running inside the Durable Object.** No published php-wasm build can do this; this one was
+compiled here.
+
+| | measured |
+| --- | --- |
+| Worker bundle, gzipped | **2,898,319 bytes**, **247,409 under** the 3 MiB (3,145,728) free-plan ceiling, from `bun run release:check` on 2026-08-15. The binary ships as a zstd `Data` module inflated at module scope by a wasm decoder; nothing was removed to get it. Costs 112 ms of startup (median, n=5), not billed to the request. See [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was) |
+| PHP 8.5 on free | **fits with nothing dropped.** `control85`, carrying opcache, pdo, yaml, zlib, simplexml, xml and all of lexbor and DOM, is **2,658,002** as a zstd frame against 3,145,728. The lexbor surgery and the substitution programme are no longer required for viability |
+| First-run migration | **79 chunks**, **max 3 ms** of edge cpuTime, **0** over the 10 ms cap. `assets/drupal-sql/manifest.json` records **79 chunks / 1,343 rows / 1,670 statements**, generation `d2ad8dd8c5f80948`, and two live migrations drove exactly **79 of 79**. The edge cpuTime figures below were measured on an earlier 99-chunk pack and have NOT been re-measured; chunk count does not change the per-chunk cost, so the cap headroom carries, but the number of chunks actually timed on the edge is 99. |
+| Cold boot | **1,398 ms** of edge cpuTime (n=3; the platform is bimodal by 400-600 ms), from a 4,019 ms local baseline. Boot-directed work is saturated at ~1.1% -- see [BOOT WORK IS SATURATED](#boot-work-is-saturated-the-roadmap-was-in-the-wrong-order) |
+| Heap restore | **wired and ON by default**, reversing the "unwired, A2/A3 not built" line this row used to carry. Saves **2,310 ms (fast mode) / 3,578 ms (slow)** off an install, n=8 per arm and present in both modes; costs 31,784,960 bytes across 159 rows per site. `HEAP_SNAPSHOT=0` disables it |
+| Free-plan capacity | **~100,000 page views/day**, saturated at 1.00x; Worker requests bind first, and every visit costs one whether or not it is cached |
+| Regeneration capacity | **7,575 renders/day** windowed, **1,052** on the alarm chain; rows written binds |
+| Gate | **2,180 tests / 96 files**, 0 failures, plus **585** PHP assertions across 5 sibling suites (195 health, 94 load-classes, 219 driver, 16 installer, 61 pdo-shim), all re-measured 2026-08-15 rather than carried forward |
+
+---
+
+## The hurdles, and how each was cleared
+
+Each row is a problem that looked like it ended the project, with the section that resolved
+it. Read this table first; it is the shortest path to understanding why the architecture
+looks the way it does.
+
+| # | The hurdle | How it was cleared | Detail |
+| --- | --- | --- | --- |
+| 1 | **workerd forbids runtime wasm codegen**, which emscripten's dynamic linker needs, so no published php-wasm build can load its extensions | Compiled a static `MAIN_MODULE=0` binary with every required extension linked in | [THE STATIC BUILD WORKS](#the-static-build-works--and-it-corrects-two-earlier-conclusions) |
+| 2 | **Durable Object SQLite cannot host Drupal's sqlite driver.** No user-defined functions, no collations, `BEGIN` refused outright | Wrote a Drupal 11 driver that buffers writes and replays them inside one `transactionSync()`, keeping Drupal's own query builders unchanged | [BLOCKER: DO SQLite CANNOT HOST DRUPAL'S SQLITE DRIVER](#blocker-do-sqlite-cannot-host-drupals-sqlite-driver), [DEEP DIVE B](#-deep-dive-b-the-cfw_do_sqlite-driver-) |
+| 3 | **PHP cannot reach the database from outside the object.** `ctx.storage.sql` is synchronous only from inside a Durable Object, and PHP's calls are blocking | Moved the interpreter *inside* the Durable Object. This is the only arrangement that works | [THE ARCHITECTURAL FORK](#the-architectural-fork-where-does-php-run), [ROUND: PHP INSIDE THE DURABLE OBJECT](#round-php-inside-the-durable-object-and-the-free-tier-reopened) |
+| 4 | **A render is 20-46 ms of CPU against a 10 ms free-plan cap** | Three cache tiers, so ~99% of traffic never reaches PHP; a render happens off the request path and fills the caches | [THE COST MODEL](#the-cost-model-free-tier-is-100000-page-viewsday-and-worker-requests-bind) |
+| 5 | **First-run migration was 3,467 ms in one invocation** -- 347x the cap, and the literal first thing a deployed site does | Rewrote it as a JavaScript loop with a cursor in DO storage. **Divisibility, not speed**: a JS loop can be split where a synchronous `php._run()` cannot | [MIGRATION RUNS IN JAVASCRIPT NOW](#migration-runs-in-javascript-now-and-it-cost-two-defects-to-get-right) |
+| 6 | **"There is no smaller unit than a row"** -- three 520 KB rows each overran the cap and looked indivisible | False, and it was this document's own unverified claim. SQLite builds a value across statements with `col = col \|\| ?` | [MIGRATION RUNS IN JAVASCRIPT NOW](#migration-runs-in-javascript-now-and-it-cost-two-defects-to-get-right) |
+| 7 | **The host caps a statement at 100 bound parameters**, and Drupal's cache write path emits 700 | Re-batch by placeholder count instead of row count, in a driver `Upsert` override. The test fixture now enforces the limit, which is the durable half of the fix | [THE HOST CAPS A STATEMENT AT 100 BOUND PARAMETERS](#the-host-caps-a-statement-at-100-bound-parameters-and-it-broke-the-cache-write-path) |
+| 8 | **`mb_substr()` silently blanked user content** on invalid UTF-8 | Closed in JavaScript, not by a rebuild. The obvious fix -- compile `iconv` in -- was measured and does **not** work | [mbstring polyfill: packed, and silently losing content](#mbstring-polyfill-packed-and-silently-losing-content) |
+| 9 | **Cold start was 3,754 ms, of which 3,066 ms was mounting the pack** -- pure JavaScript, so no PHP-side work could touch it | Per-file compression plus a lazy MEMFS mount that inflates a file only when PHP opens it | [THE COLD START IS A JAVASCRIPT PROBLEM](#the-cold-start-is-a-javascript-problem-not-a-php-one--and-the-lazy-fs-works) |
+| 10 | **The lazy FS and JSPI slicing are in direct conflict** -- the lazy mount puts a JS frame under the PHP stack, and JSPI cannot suspend across one | A refcounted interrupt mask over every host call that enters JS, with a pending-interrupt flag so a masked boundary is deferred rather than lost | [RULE 0d](#rule-0d-the-lazy-fs-and-jspi-slicing-are-in-direct-conflict), [THE MASK SEAM](#the-mask-seam-every-host-call-that-enters-js-refcounted) |
+| 11 | **Every functional number was measured on a binary that could never ship** -- 586,923 bytes over the free ceiling | Removing PDO from the shipping path let the real binary run the real workload, resolving the question against one artifact | [RULE 0b](#rule-0b-the-bundle-figure-and-the-working-binary-are-different-binaries) through [0b-iv](#rule-0b-iv-four-undocumented-behaviours-are-stacked-and-have-never-been-composed) |
+| 12 | **In-PHP `microtime()` returns 0 on the edge**, so every local timing was a ratio and four free-tier verdicts were instrument artefacts | Read per-invocation `cpuTime` through the Workers Observability API. `wrangler tail` silently omits every `durableObject` event | [RULE 0](#rule-0-above-everything-else) |
+
+**Not cleared:** cold boot is **1,398 ms** of edge cpuTime in one indivisible synchronous call, 140x
+the free-plan cap. Migration became divisible because it is a JavaScript loop; boot is one
+`php._run()` and no cursor design cuts it up. It needs a JSPI build or a permanently warm
+object. **It is also not worth doing**: the fill window amortises boot, so a 20x cut in boot cost per
+fill moves the regeneration ceiling ~1.1% -- see
+[BOOT WORK IS SATURATED](#boot-work-is-saturated-the-roadmap-was-in-the-wrong-order).
+
+---
+
+# CONTENTS
+
+**Current findings.** Authoritative. Everything from here to the FOLD.
+
+| | |
+| --- | --- |
+| [A DRUPAL SITE CAN BE LOGGED INTO AND ADMINISTERED](#a-drupal-site-can-be-logged-into-and-administered-and-four-defects-were-stacked-in-the-way) | **read before scoring the admin track**: sessions, forms, CSRF and the full CRUD journey all work; four stacked defects, one pinned defect that is not fixed, and the router 8x was the DRIVER (20,592 -> 4,427 rows) |
+| [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was) | **read before scoring any size lever**: shipping the binary as a zstd `Data` module took the bundle 2,995,384 -> 2,282,127 on wrangler's meter (2,307,696 with the wasm decoder), so **8.5 fits free with nothing dropped** and the lexbor surgery is off the list. Retracts a "closed, permanently" |
+| [THE TWIG BAKE IS ALREADY SATURATED](#the-twig-bake-is-already-saturated-so-widen-it-has-no-work-in-it) | falsified: six paths bake byte-identically to three, because Drupal's templates are shared |
+| [THE LIMITS PAGE NOW MEASURES](#the-limits-page-now-measures-the-one-meter-that-binds) | rows-written is a live daily reading; flushed once per alarm so the meter cannot double what it measures, keyed by UTC date so an eviction cannot lose the day |
+| [THE R2 OFFLOAD DRAINS](#the-r2-offload-drains-and-its-refusal-is-the-auth-boundary-in-a-new-place) | the serving-ceiling lever is live; **`private://` is never mirrored**, checked at both the queue and the bucket |
+| [A BUFFERED WRITE REPORTS SUCCESS BEFORE IT RUNS](#a-buffered-write-reports-success-before-it-runs-and-that-killed-a-real-install) | **canonical** for the replay model: a rejected statement stuck in the buffer poisons the whole transaction; Drupal's installer now completes, 92% of statements are replays |
+| [THE STREAM WRAPPER IS ONE IMPLEMENTATION AGAIN](#the-stream-wrapper-is-one-implementation-again-and-php-decided-how) | the module subclasses `drupflare/stream-http`; composer ships nothing to the edge, so the packer mounts it and TWO autoloaders need the PSR-4 root |
+| [THE ROUTER BURST IS A REPEAT, NOT A BURST](#the-router-burst-is-a-repeat-not-a-burst-and-chunking-it-was-the-wrong-question) | **read before scoring the install track**: one rebuild is 2,095 rows, the enable paid for ~8, and chunking is already done and cannot help |
+| [A MODULE IS ENABLED THROUGH DRUPAL](#a-module-is-enabled-through-drupal-and-four-runtime-gaps-were-in-the-way) | the first successful install: 20,533 rows, `router` 84% of them, ~4 enables/day on free, and the four runtime gaps in the way |
+| [A REQUEST-SCOPED MEMO LEAKED ACROSS RENDERS](#a-request-scoped-memo-leaked-across-renders-and-visitors-saw-it) | production defect: the first path rendered decided the front-page verdict for every later one, because a DECORATOR shadowed the memo |
+| [A GENERIC ERROR STRING NAMED THE WRONG SYSTEM](#a-generic-error-string-named-the-wrong-system-for-hours) | an npm 403 that was a Cloudflare WAF block; check whether a 403 body is HTML before believing it |
+| [TWO FINDINGS FROM THE SIBLING REPOS](#two-findings-from-the-sibling-repos-that-change-what-is-portable) | `findTables()` fails silently under a prefix; `callMain` is the exception among real wasm builds, not the contract |
+| [THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND](#the-rows-per-fill-instrument-was-half-blind-and-durable-files-now-exist) | **read before quoting a rows figure**: the tally saw only Drupal's writes, a fill is 3-67 rows by warmth not a flat 17, `cache_page` was a duplicate store, and uploads now survive an eviction |
+| [THE SHIPPED DATABASE HAS NO PROVENANCE](#the-shipped-database-has-no-provenance-and-that-is-the-third-artifact-of-this-class) | **read before touching the pack** - nothing regenerates `site.sqlite`, so every change must be surgical |
+| [ROADMAP: THE ACCESSIBILITY TRACK](#roadmap-the-accessibility-track-2026-08-12) | the post-checklist feature track: thresholds, UI install, arbitrary modules, self-repair, publishing, 8.5 |
+| [THE DEPLOY: COLD BOOT IS 1,398 ms](#the-deploy-cold-boot-is-1398-ms-and-five-estimates-were-wrong) | **edge cpuTime, absolute**: 4,019 -> 1,398 ms, DecompressionStream IS billed, exceededMemory is non-monotone |
+| [THE COLD BOOT IS A CACHE MISS](#the-2788-ms-cold-boot-is-a-cache-miss-that-should-have-been-a-hit) | **the largest lever in the project**: the container cache is keyed to the build machine, so it misses every boot |
+| [A1b: A BOOTED HEAP RESTORES](#a1b-a-booted-heap-restores-and-the-contract-is-the-fd-table-not-the-inodes) | 7 ms memcpy replaces a 1,121 ms boot; **canonical** for what restore requires |
+| [THE HOST CAPS A STATEMENT AT 100 BOUND PARAMETERS](#the-host-caps-a-statement-at-100-bound-parameters-and-it-broke-the-cache-write-path) | the write-path ceiling, and the fixture that hid it |
+| [MIGRATION RUNS IN JAVASCRIPT NOW](#migration-runs-in-javascript-now-and-it-cost-two-defects-to-get-right) | 3 ms of edge cpuTime; PDO off the shipping path |
+| [RULE 0b](#rule-0b-the-bundle-figure-and-the-working-binary-are-different-binaries) / [0b-ii](#rule-0b-ii-the-bundle-question-is-contingent-not-open--and-pdo-survives) / [0b-iii](#rule-0b-iii-every-number-in-this-document-belongs-to-a-binary-that-will-not-ship) / [0b-iv](#rule-0b-iv-four-undocumented-behaviours-are-stacked-and-have-never-been-composed) | which binary a number belongs to, and what is stacked on what |
+| [THE COST MODEL](#the-cost-model-free-tier-is-100000-page-viewsday-and-worker-requests-bind) | free tier is ~100,000 page views/day |
+| [RULE 0c](#rule-0c-a-probe-passing-is-not-the-workload-passing) / [RULE 0d](#rule-0d-the-lazy-fs-and-jspi-slicing-are-in-direct-conflict) / [RULE 0](#rule-0-above-everything-else) | probes are not workloads; lazy FS vs JSPI; measure, do not reason |
+| [THE MEASUREMENT RULES THIS DOCUMENT PAID FOR](#the-measurement-rules-this-document-paid-for) | six rules, three rounds of wrong conclusions. **Read before quoting any render number** |
+| [LAYOUT](#layout) / [VERIFY THE TREE](#verify-the-tree) | what each file is; the commands that reproduce the gate |
+| [WHERE THE PROJECT STANDS](#where-the-project-stands) | Tier 0 closed; what is not started |
+| [The 50-byte LIKE/GLOB ceiling](#the-50-byte-likeglob-ceiling-is-confirmed-and-it-binds-plain-like-too) | **canonical** for the LIKE/GLOB pattern cap |
+| [TIER 1 IS BUILT](#tier-1-is-built-and-the-write-path-cost-three-more-findings) | first-run config, capability layer, security updates, pre-filled cache |
+| [ASSEMBLY IS 8 ms](#assembly-is-8-ms-and-it-resolves-the-slicing-fork-to-2-slices) | local assembly, superseded on the edge by the next section |
+| [ROUND: THE EDGE ANSWERS BACK](#round-the-edge-answers-back--2026-08-10-later) | 40 ms assembly, the JSPI build, the mask seam, cron, lazy FS, the 1.95x correction |
+| [STANDING CONSTRAINTS](#standing-constraints) / [CURRENT NUMBERS](#current-numbers-1) | the constraints are current; the numbers table is **superseded** by [Current numbers](#current-numbers) in the Executive Summary, which is the table to quote from |
+| [ROUND: PHP INSIDE THE DURABLE OBJECT](#round-php-inside-the-durable-object-and-the-free-tier-reopened) | the cache ladder, the profile sweep, the mbstring fix |
+| [THE SECOND CURRENCY](#the-second-currency-requests-rows-and-duration) | requests, rows written, duration |
+| [FINISH LINE STATUS](#finish-line-status) / [VIABILITY VERDICT](#viability-verdict) | tier-by-tier state and the verdict |
+| [TIER 0: WHAT NOW EXISTS, MEASURED](#tier-0-what-now-exists-measured) | driver, codec, gate, memory, autoload, mbstring, pack trim, sliced updb |
+| [Memory: 110.6 MiB was misread](#memory-the-edge-ceiling-is-still-unmeasured-and-1106-mib-was-misread) | **canonical** for the memory ceiling |
+
+**Historical record.** Below the [FOLD](#-fold-), in the order it was measured. Superseded
+wherever it disagrees with the above.
+
+| | |
+| --- | --- |
+| [THE ARCHITECTURAL FORK](#the-architectural-fork-where-does-php-run) / [COLD START IS THE LINCHPIN](#cold-start-is-the-linchpin-and-the-diagnosis-changed) | where PHP runs; opcache and the boot profile |
+| [MEMORY: EVICTION RECOVERS 20 MB](#memory-eviction-recovers-20-mb-and-the-read-only-fs-backend-is-the-wrong-lever) | boot-only files, and why the FS backend is the wrong lever |
+| [MEASURED: authenticated request CPU](#measured-authenticated-request-cpu) | the 0.242 ms era; figures superseded, mechanism intact |
+| [THE ISOLATION PROBLEM HAS A 2 ms SOLUTION](#the-isolation-problem-has-a-2-ms-solution--and-it-reverses-an-earlier-call) / [SECURITY](#security-request-isolation-is-the-largest-unresolved-item) | disposable kernels, the resetter, self-redeployment |
+| [REENTRANCY](#reentrancy-a-hazard-that-arrives-with-suspension) / [OUTBOUND HTTP](#outbound-http-is-smaller-than-it-looked) | hazards that arrive with suspension |
+| [DECISION: SHIP THE ALARM](#decision-stop-optimizing-cold-start-ship-the-alarm) / [SECURITY-UPDATE PATH](#the-security-update-path-is-the-operational-risk-that-outlives-launch) / [BACKUP](#backup-restore-export) / [OBSERVABILITY](#observability) | operational surface |
+| [UPSTREAM: THREE DRUPAL CORE BUGS](#upstream-three-drupal-core-bugs-worth-reporting) / [GAPS -> CLOUDFLARE PRIMITIVES](#every-remaining-gap-maps-to-a-cloudflare-primitive) | what to file, and what maps where |
+| [DEPLOYED TO A PAID WORKER](#deployed-to-a-paid-worker--the-numbers-hold-under-enforcement) / [EDGE VALIDATION #2](#edge-validation-2-full-render-with-complete_core--memory-question-settled) / [COMPLETE: authenticated and admin](#complete-the-authenticated-and-admin-surface-measured) | the first two edge deploys |
+| [VERDICT](#verdict) / [The wasm:native multiplier](#the-wasmnative-multiplier-measured) / [PHP global state persists](#php-global-state-persists-between-requests) | the 3.4x era |
+| [DRUPAL 11 RENDERS INSIDE A CLOUDFLARE WORKER](#drupal-11-renders-inside-a-cloudflare-worker) / [MEMORY: FIXED ON BOTH AXES](#memory-fixed-on-both-axes-measured) | the first render |
+| [BLOCKER: DO SQLite CANNOT HOST DRUPAL'S SQLITE DRIVER](#blocker-do-sqlite-cannot-host-drupals-sqlite-driver) | the function audit that produced the driver |
+| [THE CAPABILITY BRIDGE](#the-capability-bridge-works-and-it-costs-19-kb) / [OPENSSL AND NO OUTBOUND HTTP](#openssl-and-the-bigger-hole-behind-it-no-outbound-http) | the host-call seam |
+| [Making free tier work](#making-free-tier-work-what-is-solved-and-what-is-not) / [THE STATIC BUILD WORKS](#the-static-build-works--and-it-corrects-two-earlier-conclusions) / [Bundle size](#bundle-size) | the size era |
+| [Drupal request cost, measured natively](#drupal-request-cost-measured-natively) / [Module installation](#module-installation-the-admin-spike-is-real-and-it-is-measured) / [Static Assets VFS](#static-assets-vfs-granular-vs-packed-measured) / [Module footprint](#module-footprint) | the native baseline |
+| [Storage backend: DO beats D1](#storage-backend-durable-objects-beat-d1-and-it-is-not-close) / [Build system](#build-system-what-it-takes-to-produce-a-static-build) | the backend choice and the toolchain |
+
+**Deep dives.** Merged in 2026-08-10. Each opens with a supersession table; read it first.
+
+| | |
+| --- | --- |
+| [DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING](#-deep-dive-a-memory-autoload-mbstring-) | [TASK A](#task-a--the-isolate-memory-ceiling) the 512 MiB build ceiling, [TASK B](#task-b--composer-dump-autoload---classmap-authoritative) autoload, [TASK C](#task-c--the-mbstring-polyfill) mbstring, [Caveats](#caveats-in-one-place) |
+| [DEEP DIVE B: THE cfw_do_sqlite DRIVER](#-deep-dive-b-the-cfw_do_sqlite-driver-) | transaction buffer, SQL function audit, integer safety, what the runtime refuses |
+---
+
+# THE BACKUP PATH DROPPED ONE ROW FROM EVERY DUMP, AND THE TEST COULD NOT SEE IT
+
+**Rehearsed 2026-08-15.** Supersedes row 7 of the readiness table below the FOLD ("Built; not
+exercised end to end") and the [SECURITY-UPDATE PATH](#the-security-update-path-is-the-operational-risk-that-outlives-launch)
+section, which describes a script that does something narrower than its name.
+
+## Backup export/restore: one severe defect, fixed
+
+**Every dump silently dropped the row at rowid 0.** `pagedRowReader` paged with `WHERE _rowid_ > ?`
+from a start cursor of `0`, so no row could ever satisfy it on the first page. Drupal stores the
+**anonymous user** at `users` uid 0, and uid IS the rowid there. Measured on the shipped pack: **2
+rows live, 1 row exported.** Negative rowids were excluded by the same comparison.
+
+Fixed in `src/db/export-sql.ts` -- the first query per table carries no `WHERE`, and the start
+sentinel is `afterRowid: null` rather than `0`.
+
+**The existing test could not have caught it, and that is the transferable part.**
+`serve-restore.spec.ts` compared the chunked dump against the one-shot dump -- but `dumpDatabase()`
+IS `dumpChunk()` run to exhaustion, so both halves drop the same row and agree perfectly. A
+differential test between two things that share the defect measures nothing. It now fingerprints
+against the live database instead (`typeof()`/`hex()`, sorted per-row digests): 24 chunks at
+`chunkChars=20000`, all 71 tables match.
+
+Two claims were **verified rather than restated**: the lossy-integer premise is real on the platform
+(`SELECT big` returns `9007199254740992` for a stored `9007199254740993` while `hex(big)` returns
+the exact digits), and `typeof(x'41' || x'42')` is `text`, which is why the dumper reads `typeof()`
+and never the column.
+
+## The owner token had no issuance path, so "a customer can leave" did not hold
+
+`/export` takes a per-site bearer token instead of `PW_DIAGNOSTICS=1`, which was the right call --
+that boolean simultaneously exposes `/sql`, `/restore` and `/php`. But the token is minted **only**
+inside `/__firstrun`, and `/firstrun` was itself diagnostic-gated. So on a production site the only
+way to obtain the credential was to first expose a remote shell to the internet, and the export path
+was effectively unreachable.
+
+**Resolved as trust-on-first-use.** `/firstrun` moves to `PUBLIC_ROUTES`; the claim window is the
+UNPROVISIONED state and nothing else. Once `first_run_at` is set the object answers 409, and
+`?force=1` -- which resets the admin password, and is therefore a site takeover -- requires the owner
+token or diagnostics. The check lives in the Durable Object rather than the Worker, because that is
+where the secret is; a gate in front is a second place to get it right, not the place it has to be.
+The alternative considered was a deploy-time `wrangler secret`, rejected because it converts
+one-click provisioning into one-click-plus-a-secret.
+
+The trade is explicit: **between deploy and first fetch, a site is claimable by whoever finds the
+hostname.** That is the same model as Drupal's own `install.php`.
+
+## `/fleet` answered 404 to every caller
+
+The rollout denominator the security pipeline reads. `/fleet` does not start with `/admin` so it
+never reached `renderAdmin()`, and it had no `DO_ROUTE` entry, so it fell through to a proxy hop with
+`pathname = undefined`. **Every function behind it had a unit test; the route had none.** Underneath
+that, the read path never created `cfw_fleet` -- only the DO's write path does -- so a bound-but-empty
+D1 threw `no such table` and the 500 read as "fleet read failed".
+
+## `security-update.mjs` was named for something it does not do
+
+It has **no advisory input at all**: no feed, no `composer audit`, no security query. It hashes a
+tree and diffs it against a prior manifest, so it requires a human who already knew about the
+advisory to have already patched the tree. Its only `fetch()` is of the operator's own `--fleet=`
+URL.
+
+`scripts/README.md` said it "reaches the network for SA-CORE advisories, so there is no offline way
+to prove the port behaves identically" -- and that false line was the **recorded reason it had never
+been ported**. A constraint nobody checked became architecture, which is the failure mode
+`CLAUDE.md` already names.
+
+Renamed to `scripts/tree-diff.mjs` and the doc corrected. The deterministic half is worth having and
+works: on `drupal-src`, 12,894 files in 1.85 s, and a synthetic tree with one modified, one added and
+one deleted file classified all three correctly. Advisory detection is unbuilt and is now recorded as
+unbuilt rather than as an untested port.
+
+Three defects in it remain open: the `'sites/default/files'` skip is matched against a single path
+segment so it can never fire; `process.exit(removed.length > 0 ? 0 : 0)` is 0 either way; and deleted
+files are excluded from `objectsToUpload`, so a patch that removes a file leaves it on every site.
+
+---
+
+# THE HEALTH LAYER WAS GREEN IN CI AND ABSENT FROM PRODUCTION
+
+**Measured 2026-08-15 by a reachability scan over `src/`, not by reading code.**
+
+`src/ops/supervisor.ts` -- 11 host tripwires, the health ledger, the circuit breaker, the ledger GC,
+`quarantineDecision()` -- was imported by `tests/unit/ops/supervisor.spec.ts` and **by nothing under
+`src/`**. Every one of them passed on every commit and none of them ran on a deployed site.
+
+The consequence was structural rather than cosmetic. `repair_state` in `cfw_meta` was **read in
+exactly one place and written in none**: the quarantine branch in `alarm()` (`src/site-do.ts:3061`)
+parsed it every firing, found the clean default, and fell through. So the L4 and L5 rungs were not
+unbuilt -- `isQuarantined()`, `shouldRollback()` and the restore-point replay were all present and
+tested -- they were **unreachable by construction**, because nothing could ever put the object into
+the state they read. The README said "Not built: L4 quarantine and L5 rollback"; the accurate
+statement was "built, tested, and wired to nothing".
+
+This is the project's own rule turned on itself: a right metric that scores no decisions is
+decoration. A unit test proves a function works. It cannot prove anything calls it.
+
+## What the scan found
+
+`bun run check:reachability` walks imports from the wrangler `main` and classifies every module as
+`edge`, `probe` (its own entrypoint), `script`, or `dead`. On the first run: **36 edge, 37 probe, 0
+script-only, 8 dead.** Probes are correct to be unreachable -- each is its own wrangler entrypoint --
+which is why lumping them in would have reported 45 problems and hidden the 5 that mattered.
+
+Two of the dead modules are still dead and are now named rather than assumed:
+
+| module | state |
+| --- | --- |
+| `src/ops/supervisor.ts` | **fixed**; now reached from `alarm()` |
+| `src/ops/tail-worker.ts` | dead: 17 exports, a unit spec, and no wrangler config declares `tail_consumers` |
+| `src/drupal/capabilities.ts` | dead: imported by nothing, including tests |
+| `src/ops/dormancy.ts`, `src/ops/module-table.ts` | correct: build-lane tools driven from `tests/node/` |
+
+The scan also reports **187 exports that tests reference and production does not**. Most are the
+legitimate "exported for its unit test" pattern, but it surfaced real leftovers: `readHeapSnapshot`
+and `elideZeroPages` in `src/db/heap-store.ts` stopped being called when the writer was rewritten to
+stream, and nothing noticed because both still had passing tests.
+
+## What was wired, and where it costs
+
+`supervise()` runs **on the alarm and never on the request path**. Two reasons, neither stylistic:
+`recordFinding()` is a row write and rows written is the meter that binds regeneration, so a
+per-request pass would spend the budget it exists to watch; and a waiting visitor outranks
+bookkeeping, the same rule that already puts GC and cron after the fills. The repair state is
+persisted **only when it changes**, so a healthy site writes zero rows here.
+
+Two defects were found while wiring it, both of which would have shipped a check that could not fire:
+
+- **The size-anomaly baseline was the row the render had just written.** Reading `cfw_page` for the
+  median gives a ratio of exactly 1.00 every time, so `renderSizeAnomaly` -- the tripwire that exists
+  because a 12,296-byte front page rendered as uid 1 at 90,038 bytes and was written to the anonymous
+  page cache -- could never fire. The baseline is now a capped in-memory ring of that path's
+  **previous** renders, read before the current one is recorded into it.
+- **Only `critical` findings drove the ladder.** Keying on `quarantineDecision()` alone recorded an
+  `error`-severity finding and then advanced the state as though the pass were clean.
+  `bridge.asyncify_called` fires on a dead stream wrapper that kills the whole invocation, and three
+  of those is a durable condition whatever its severity label says. The threshold is now `error` and
+  above; `warn` deliberately never strikes, because budget pressure and a memory trend would
+  otherwise quarantine exactly the sites working hardest.
+
+## The third meter now has a tripwire, and it is a projection
+
+The image cap is the meter neither ceiling in the cost model can see: **5,000 unique transformations
+per MONTH** on free, failing as a hard cap rather than a bill. `projectImageTransforms()` in
+`src/ops/thresholds.ts` was complete, tested, and produced remedies -- and nothing multiplied a
+site's own styles by its own images and compared. The `/admin` page rendered a projection for numbers
+nobody supplied.
+
+The object now does that on every alarm and records `budget.image_transforms` at 80% of the
+allowance. Three properties are deliberate:
+
+- **Projected, not counted.** The meter is a function of content and configuration, both known in
+  advance, so the answer does not have to wait for the failure. It is also monthly, so unlike every
+  other meter here it does not clear at midnight -- by the time a count crossed the line the month
+  would be spent, and both remedies (drop a style, cut the image count) only take effect next month.
+- **`warn`, never a strike.** It quarantines nothing and repairs nothing, because the fix is a
+  configuration decision a human makes. It has to be said, not acted on.
+- **Silent on an unmigrated site.** `countOrNull()` returns null where the table does not exist, and
+  null is not zero: reporting 0 would read as a verified "nothing to worry about" on exactly the
+  sites nobody has configured yet.
+
+## HEAP_SNAPSHOT is on by default
+
+It shipped opt-in behind a precondition written into `ensurePhp()`: the standalone restore probe ran
+in one process with no Durable Object and no vrzno bridge in the image, so "until a host call is
+shown to round-trip through a restored heap, this must not be on by default." That is now measured --
+`/heap?op=bridge` forces PHP to reach `cfwStats` through `vrzno_env()` on a restored image and it
+round-trips with 3 handles replayed and the digest equal, and an install then runs on that kernel and
+lands.
+
+Priced before flipping: **31,784,960 bytes across 159 rows per site** plus a 5,993 ms one-off, buying
+**2,310 ms (fast) to 3,578 ms (slow)** off every install, n=8 per arm and present in BOTH modes of a
+bimodal population. `HEAP_SNAPSHOT=0` turns it off; the predicate is `heapSnapshotEnabled()` and it
+is off only for the exact string `0`, so a `HEAP_SNAPSHOT=false` typo cannot silently disable it the
+way the old `=== '1'` test would have.
+
+`tests/integration/health-ladder.spec.ts` (19 cases) drives all of this inside a real Durable Object:
+the ledger exists with the serve tables, a clean pass writes nothing, three strikes quarantine, a
+different code resets the count, a quarantined alarm leaves the queue untouched and re-arms at 60 s
+rather than spinning at +1 ms, the site still serves 200 from cache throughout, and rollback refuses
+by name with no restore point. `tests/node/reachability.spec.ts` pins the allow-list in both
+directions, so a newly-dead module fails and a stale exemption fails too.
+
+---
+
+# A DRUPAL SITE CAN BE LOGGED INTO AND ADMINISTERED, AND FOUR DEFECTS WERE STACKED IN THE WAY
+
+**Everything below was measured on 2026-08-15 in the workers pool lane against a real interpreter,
+with `bunx wrangler dev` used only where a runtime artifact had to be lifted.** No CPU figure is
+claimed; every number here is a row count, a statement count, a status code or a byte count, all of
+which are deterministic locally. See [RULE 0](#rule-0-above-everything-else) for why that
+distinction is load-bearing.
+
+## The form wall was four defects, and each one hid the next
+
+`submission-wall.spec.ts` had named the wall as authorization: `/node/add/page` answered 403 with
+`currentUserId: 0` and no form in the response, so `FormBuilder` was never reached. That was true and
+it was the fourth-from-last problem. Removing them in order:
+
+1. **The `Cookie` header was never threaded.** `cfw_serve()` took a method and a body and built
+   `Request::create($path, $method, $parameters, [], [], $server, $body)` -- an empty cookie bag. Every
+   render was uid 0 by construction, so the routing-layer access check denied every create-entity
+   route before a form existed. Fixed by parsing the header into `$cookies` and passing it, and by
+   returning `Set-Cookie` back out.
+2. **`HttpKernel::handle()` was called with `$catch = FALSE`.** With that, Symfony rethrows instead of
+   dispatching `KernelEvents::EXCEPTION`, so **every exception-delivered response was reported as a
+   render failure**: Drupal's own 403 and 404 pages, and -- once login worked -- the redirect itself,
+   which arrives as `Drupal\Core\Form\EnforcedResponseException` and is converted by
+   `EnforcedFormResponseSubscriber`. `index.php` passes TRUE; this now does too.
+3. **The session was process-global and nothing reset it.** PHP holds `$_SESSION` and the active
+   session id on the process, and `AuthenticationSubscriber::onKernelRequestAuthenticate()` sets an
+   account only when a provider APPLIES and RETURNS one, returning silently otherwise
+   (`core/lib/Drupal/Core/EventSubscriber/AuthenticationSubscriber.php:106`). In a fresh process there
+   is nothing to reset; on a persistent interpreter **request 2 is whoever request 1 was**. Measured:
+   after one admin login, a request carrying no cookie came back
+   "This route can only be accessed by anonymous users" with `currentUser()->id()` still 1.
+   `RequestResetter` in the `drupflare` module now resets the account to anonymous explicitly and
+   clears Symfony's memoised `started`/`closed`/`startedLazy` on the session storage. It could not
+   have run before, because the module was not installed -- see below.
+4. **BigPipe substitutes the CSRF token in `sendContent()`, and `cfw_serve()` read `getContent()`.**
+   So every form on the site shipped `big_pipe_nojs_placeholder_attribute_safe:form_token_...` where
+   its token belonged, and every submission came back "The form has become outdated" -- a CSRF check
+   that rejected everything, which reads exactly like a CSRF check that works. Now buffered:
+   `ob_start(); $response->sendContent(); ob_get_clean()`, which is a no-op for a plain `Response`
+   whose `sendContent()` only echoes `getContent()`.
+
+**Measured after, in `crud-journey.spec.ts`, as one sequence against one object:** login returns 303
+with `Location: /user/1?check_logged_in=1` and a `SESS...` cookie; the same `/node/add/page` is 403 /
+uid 0 without the cookie and 200 / uid 1 with it; a node is created, read back, updated and deleted
+through real forms; `/admin/config/system/site-information` saves and the new site name appears on
+the front page; `/admin/reports/status` builds. `admin-config.spec.ts` covers the other half -- an
+anonymous POST carrying the admin's real token is refused 403, and the site name does not move.
+
+**Two safety properties came with it, both of which would have been silent leaks.** PHP's header list
+outlives the request on this interpreter and `session_start()` emits its `Set-Cookie` into exactly
+that list, so without `header_remove()` at the top of each request, visitor B's response carries
+visitor A's session cookie. And `cfw_page` is keyed by path with no user in it, so a request that
+ARRIVED with a cookie or a response that SETS one is now refused storage, matching the refusal the
+Worker already applies at the edge.
+
+## A CSRF rejection poisons the interpreter, and it is pinned rather than described
+
+**Not fixed, and characterised rather than guessed at.** After one CSRF-rejected POST, no later form
+submission on that instance is PROCESSED -- not rejected, not processed. The login form comes back
+rebuilt with no error message of any kind, `currentUser()` is 0, and no cookie is issued, which is
+indistinguishable from a page that was never submitted.
+
+What is established: three logins in a row succeed; a login after an authenticated form GET succeeds;
+a login after a token-rejected POST fails, and every login after that one fails too. `FormBuilder`
+empties the request and calls `$request->overrideGlobals()` on that path
+(`FormBuilder.php:1024-1030`), which is the only process-global mutation in it -- but re-initialising
+`$_POST`, `$_GET`, `$_FILES` and `$_REQUEST` per request does **not** fix it, so the superglobals are
+ruled out rather than blamed. Blast radius: a stale tab or a double submit denies the login form to
+everyone sharing that warm interpreter until it is dropped. No data corruption and no cross-user
+leak.
+
+It is an assertion on the broken behaviour in `csrf.spec.ts`, so fixing it turns the gate red.
+
+## The router 8x was the DRIVER, and it was quadratic
+
+The enable track had been scored against 20,592 charged rows for one module, 17,188 of them router --
+against a documented model of 2,095 for a full 419-route rebuild. Three explanations were tried and
+each was falsified by measurement: "~7 rebuilds per install" (static counters in the dumper say
+**exactly one dump**), "the table is just expensive" (a raw `DELETE` plus 419 reinserts with no Drupal
+involved costs **exactly 2,095**), and "batching would fix it" (charged rows are rows plus index
+entries however many statements carry them).
+
+Statement-shape capture in the write tally answered it: one dump issued **3,012** single-row
+`INSERT INTO "router"` statements for a table holding 421 routes. The cause is in the driver.
+Core's sqlite `Insert::execute()` ends in `lastInsertId()` for **every** insert Drupal makes, used or
+not; a buffered insert has no rowid yet, so `cfw_do_sqlite` replayed the whole buffer to find one.
+`MatcherDumper::dump()` writes the router in chunks of 50 and calls `execute()` once per chunk, so
+nine chunks replayed an ever-growing buffer -- the same rows applied and rolled back eight times.
+
+`RowidPlan` in `rom` computes the answer instead: SQLite gives an ordinary rowid table
+`max(rowid) + 1`, so it is the committed maximum plus the appends buffered since. It refuses far more
+than it answers -- anything but a single-tuple `INSERT INTO t (cols) VALUES (...)`, any other write to
+that table except an unconditional `DELETE FROM t`, any unnameable target, and AUTOINCREMENT tables,
+whose next id comes from `sqlite_sequence` and which are exactly the tables whose id a caller uses.
+Every refusal falls back to the replay that was always there, so an unreadable case is slow rather
+than wrong.
+
+| | before | after |
+| --- | --- | --- |
+| `token` enable, charged rows | 20,592 | **4,427** |
+| of which router | 17,188 | **2,518** |
+| router statements per dump | 3,012 | **422** (one DELETE, one insert per row) |
+| full Drupal install, replayed statements | 37,814 | **35,664** |
+
+The install figure is the honest one to quote for scope: the fix removes the router quadratic exactly
+(a 2,150-statement delta against a predicted 2,219) and nothing else, because an install is dominated
+by dirty reads and by AUTOINCREMENT tables the predictor declines. The driver suite asserts the shape
+rather than the number: a router-shaped rebuild re-sends **one** statement, and doubling the rows
+re-sends exactly as many, which is what tells a constant from a small quadratic.
+
+## The packed container had never been readable, and drupflare now ships enabled
+
+`drupflare` was mounted but absent from `core.extension`, so `DrupflareServiceProvider`,
+`logger.cfw`, `drupflare.http_deferred`, `drupflare.request_resetter` and `CfwMatcherDumper` were all
+unreached. Installing it in the shipped pack surfaced a second finding immediately.
+
+`DrupalKernel::getContainerCacheKey()` folds in `DrupalInstalled::VERSIONS_HASH`, and the shipped
+`site.sqlite` carried `service_container:prod:7b20d696c38c3567:...` while the tree's own constant is
+`dbbbce4907a2ede9`. **The 480,147-byte baked container had never been readable by the runtime it
+ships with**: every site paid a full container compile on its first boot and then wrote its own row
+beside the dead one. `lift-container.ts` already existed for exactly this and had simply not been
+re-run.
+
+The pack now carries the runtime's own container **with drupflare installed** (481,424 bytes), plus
+`core.extension`, `hook_data/hook_list` and `system.schema/drupflare`. Forty stale cache rows -- keyed
+to the pre-install module list, which the runtime would have read as warm and wrong -- were dropped
+rather than copied, because a cache row whose checksum disagrees with the destination's tags is
+present and permanently rejected. `state/system.private_key` and the router fingerprint were
+deliberately **not** carried: one is a per-site secret and the other is per-site state.
+
+Measured on a fresh site from the new pack: `enabled: true`, `moduleCount: 41`, all three services
+present on a dropped interpreter, front page 12,304 bytes. Migration chunks fell 78 -> 62 and the
+schema audit moved 1,356 / 3,967 data/charged rows to **1,316 / 3,883**.
+
+## A deferred POST was carrying no body, in both directions
+
+`captcha` and `recaptcha` sit on the support table because their only edge case is one POST to a
+remote endpoint inside form validation. Two defects made that impossible and each looked fine alone:
+the host's `cfwQueueFetch` and `cfwFetch` bridges read `url` and `method` from the PHP request and
+**dropped `body`**, so a queued siteverify would have reached Google carrying nothing; and
+`CfwDeferredHttp` asked the cache for its answer with only a `url`, while the tier is keyed
+`method + url + body`, so the lookup was for a GET nobody had made and every deferred POST re-queued
+forever. PHP had been sending the body all along.
+
+`deferred-post.spec.ts` drives the real shape against a mocked endpoint: the body arrives intact, two
+submissions to one endpoint stay apart in a single drain, a different body misses, a GET of the same
+url misses, and the alarm chain completes the round trip with no second visitor. `cron-wire.spec.ts`
+covers what `scheduler`, `queue_ui`, `search_api` and `simple_sitemap` all sit on -- Drupal's cron
+handlers discovered and invoked across several firings, no unit erroring, every firing inside the
+6-unit / 500-row budget, and a second sweep that runs again rather than latching. Eight firings wrote
+**3 charged rows** on a fresh site.
+
+None of those six modules is on this filesystem -- the pack carries four contrib modules and they are
+not among them -- so what is verified is the capability each one needs, not the module.
+
+**Trying to close that gap found a live trap in the build.** Installing the seven QA modules with
+`composer require` regenerated `vendor/composer/platform_check.php` against the DEVELOPER's PHP 8.5,
+so the packed vendor came out demanding `PHP >= 8.4.0` while the shipped interpreter is 8.3.11 --
+and **every render then failed** with Composer's platform error before Drupal was reached. Removing
+them restored `>= 80300`. The cause is not the modules: `drupal-src/composer.json` carried no
+`config.platform` block, so composer resolved against whatever PHP ran it. It is pinned to `8.3.11`
+now, which is the version the artifact actually executes, and a dry-run re-require under the pin
+resolves the same module versions.
+
+`PACK_CONTRIB=1` adds `modules/contrib` to the pack wholesale for a QA build and is off by default,
+so the shipping pack is unchanged; the seven live in `require-dev`, which is what keeps them out of
+`SHIPPED_LOCK_VERSIONS` and therefore out of a hydrate. `contrib-verify.spec.ts` enables each and
+asserts an observable it OWNS, skipping when the module is not in the mounted pack rather than
+passing on an empty search.
+
+**All twelve verify.** The support table moves from 2 verified to **14**.
+
+| module | what was asserted |
+| --- | --- |
+| metatag | 8 config objects installed, so it has defaults to apply rather than enabling inert |
+| paragraphs | four tables created: `paragraphs_item{,_field_data,_revision,_revision_field_data}` |
+| captcha | its schema hook created `captcha_sessions`; 8 routes in the `router` table |
+| recaptcha | captcha came with it, so dependency resolution ran, plus its own configuration |
+| scheduler | its own configuration, and its routes in the `router` table |
+| queue_ui | admin routes present, and routes are the whole module |
+| migrate_plus | both config entity types installed: `migration.entity_type`, `migration_group.entity_type` |
+| search_api | `search_api_item` and `search_api_task` created, plus its index routes |
+| honeypot | `honeypot_user` created; the recommended captcha replacement here, because it costs no outbound round trip |
+| redirect | the `redirect` table plus 11 of its routes, so both halves of a route subscriber over its own table |
+| stage_file_proxy | `stage_file_proxy.settings` installed, which is what its fetch path reads |
+| field_group | creates no table and ships no settings, so what was asserted is its CONTAINER contribution: `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control |
+
+**Two of those assertions were wrong first, in the same way, and the corrections are the useful
+part.** `captcha` names its routes with underscores (`captcha_settings`, `captcha_point.add`), so a
+dotted `captcha.%` prefix match found none and read as "registered no routes". `migrate_plus` ships
+no config OBJECTS at all -- what it adds is two config ENTITY TYPES, whose installed definitions
+land in `key_value` -- so a `migrate_plus.%` config probe found nothing and read as a module that
+installed and did nothing. Both are the pathauto shape in reverse: a probe aimed at the wrong
+observable reports inert for a module that is working.
+
+## Prefill was re-lifted and widened
+
+`assets/prefill.json` was lifted before the BigPipe change, so its bytes were no longer guaranteed to
+match what the runtime renders -- the exact divergence class `lift-prefill.ts` exists to prevent. It
+is re-lifted from the current runtime and widened from three paths to five: `/`, `/node`,
+`/user/login`, `/user/password`, `/filter/tips`, 46,471 -> 74,129 bytes, zero `--2` ids. `/` and
+`/node` are byte-identical because `site_frontpage` is `/node`; both are shipped because both are
+reachable. `/user/register` is 403 on the shipped configuration and is not prefilled. Verified: a
+fresh site reports `prefilled: 5` and all five answer `x-cfw-cache: HIT` on their first request.
+
+## THE EDGE ANSWERED, AND `/enable` DOES NOT COMPLETE THERE AT ALL
+
+Deployed 2026-08-15 as `cfw-measure` with `kv_namespaces` and `d1_databases` stripped, from HEAD
+`b985f2c` plus 25 dirty files; bundle 3756.42 KiB / **2825.38 KiB gzip**. Torn down; workers, DO
+namespaces, D1, KV and R2 all verified back to baseline. **The deploy created a Durable Object
+namespace that the worker list cannot see**, which is "count both halves" arriving in a new place --
+a teardown verified against the worker list alone would have reported clean and left it behind.
+
+**THE FINDING, and it is a product blocker rather than a tuning item.**
+
+| operation | n | median cpuTime | range | outcome |
+| --- | --- | --- | --- | --- |
+| storage HIT, DO leg | 20 | **0 ms** | 0-2 | 200 |
+| storage HIT, Worker leg | 20 | 1 ms | 0-2 | 200 |
+| MISS refusal (503 `warming`) | 20 | 3 ms | 0-3 | 503 |
+| anonymous render, COLD | 20 | **1,378 ms** | 1,292-1,578 | 200 |
+| authenticated render, COLD | 19 | 1,438 ms | 1,293-1,518 | 200 |
+| **module enable** | 4 | **32,000 ms** | 31,180-32,500 | **error 1101, all four** |
+
+`token`, `pathauto`, `ctools` and `admin_toolbar` each exceeded the Durable Object CPU limit and
+**never finished**. So the 4,427-charged-rows figure this session worked so hard to reach **is not
+obtainable on the edge**: the operation dies before it can report anything. That reorders the
+install track completely -- the rows work was real and it was not the binding constraint. `/enable`
+has to be decomposed across invocations before it can run on real infrastructure at all, and no
+amount of row reduction changes that.
+
+> **SUPERSEDED THE NEXT DAY, AND THE CONCLUSION ABOVE WAS WRONG ABOUT WHAT SPENT THE CPU.** The
+> enable was not doing 32 seconds of work. It was waiting on a lock that can never be released,
+> and `usleep()` spins here rather than yielding, so the wait was billed as CPU. See
+> [A FROZEN CLOCK DOES NOT ONLY MISREPORT, IT HANGS](#a-frozen-clock-does-not-only-misreport-it-hangs).
+> "Decompose it" is still the right next step; "the installer is expensive" was not, and the
+> measured install is **1,570 ms** -- the smallest component of the operation.
+
+**The authenticated delta is NOT supportable and is not being claimed.** +60 ms of medians against
+spreads of 286 and 225 ms, ranges almost entirely overlapping. The session layer's cost is not
+resolvable against a boot-dominated render, and both figures are COLD -- every one paid the ~1.4 s
+boot, which is why they sit where CLAUDE.md already says a cold object sits rather than near the
+34 ms warm figure. A warm render was reached exactly once, at **39 ms**, consistent with the
+recorded warm number and **n=1, which supports no verdict**.
+
+**Two instrument findings worth more than the numbers.**
+
+- **`wrangler tail --format json` emits pretty-printed concatenated JSON, not JSONL.** A
+  line-oriented parser reads **zero events** from a tail that captured 246. This is "an empty tail
+  is not proof of anything" in a form the existing rule does not cover, and the fix is to
+  brace-split rather than to split on newlines.
+- **`durableObject` events need no special flag on wrangler 4.120.0.** They arrive with
+  `executionModel: "durableObject"` and `entrypoint`, carrying `cpuTime`. The standing warning in
+  CLAUDE.md describes an older wrangler; verify before quoting it.
+
+**The bimodal split did not appear in this sample.** Maximum internal gap 51 ms across n=20, against
+the 400-600 ms signature. That does not refute the platform property -- it says these twenty
+invocations are one population, and a verdict about a sub-500 ms effect still cannot rest on them.
+
+**One safety note.** `PUBLIC_ROUTES` contains only `/serve`, so `/migrate` -- mandatory before
+anything renders -- is diagnostic-gated, and measuring at all required `PW_DIAGNOSTICS=1`, which
+also exposes `/sql`. The window was ~12 minutes on a throwaway hostname, now deleted. A worker that
+cannot be seeded without opening arbitrary SQL is a provisioning gap, not a measurement detail.
+
+## What was NOT done, and why
+
+**The two named render-CPU targets were not cut, and the plan to validate them on the edge is
+RETRACTED.** Event dispatch (3.0 ms across 7 dispatches, 4.3x native) and `cache_contexts`
+(73 calls/render, 5.8x) are both wasm overhead on work whose COUNT is not reducible by a small safe
+change. The line this section first carried -- that they "could not be validated without `cpuTime`
+from a deployed worker" -- is **wrong about the instrument**, and it is the shape of error this
+document exists to record:
+
+- the bucket figures came from **in-PHP decorators on eight services**, and workerd reports
+  0.999928 ms for both `microtime()` and `hrtime()`, so every wasm bucket is a tick count at 1 ms
+  granularity. RULE 0 says `microtime()` returns **0** on the edge, so that instrument is dead
+  there.
+- `cpuTime` is a single **whole-invocation** counter with no internal structure. It cannot decompose
+  a render into buckets at all.
+
+The two do not overlap. A deployed total can say whether a change moved the render; it can never
+adjudicate WHICH bucket moved. The only edge route to attribution is a differential across N
+deployed variants with one bucket stubbed each -- which runs straight into "a subtraction is only as
+good as its subtrahend", and into **3.0 ms of signal against a platform bimodal by 400-600 ms**,
+roughly 150x the effect. No n fixes that. Attribution stays a workerd-local decorator profile, and
+the decorator harness is not in this repo.
+
+**One concrete candidate is named rather than acted on**: `fillOne()` clears the `page` and
+`dynamic_page_cache` bins with `deleteAll()` on every fill, so filling path A discards the cached
+render of every other path. That is measurable in rows locally and is the next thing to price.
+
+---
+
+# A FROZEN CLOCK DOES NOT ONLY MISREPORT, IT HANGS
+
+**2026-08-15.** The 32-second module enable above was never doing 32 seconds of work. **It spent 30
+of them waiting on a lock that can never be released**, and this is the eighth member of the RULE 0
+family and the first where a clock reading 0 caused a HANG rather than a wrong number.
+
+## The mechanism, which is three lines of Drupal core
+
+`DatabaseLockBackend::acquire()` stores an expiry and `lockMayBeAvailable()` frees the row when the
+clock passes it:
+
+```php
+$expire = microtime(TRUE) + $timeout;          // 0 + 30 = 30
+...
+$now = microtime(TRUE);                        // 0
+if ($now > $expire) {                          // 0 > 30, false forever
+```
+
+So a lock row, once written, is never available again. `RouteBuilder::rebuild()` then does the one
+thing that turns that into an outage:
+
+```php
+if (!$this->lock->acquire('router_rebuild')) {
+  $this->lock->wait('router_rebuild');         // LockBackendAbstract::wait()
+```
+
+and `wait()` polls with `usleep()` for up to **30 seconds**. There is no other thread to yield to
+here, so `usleep()` spins, and every one of those seconds is billed as CPU.
+
+**Generalise it: a clock that reads 0 makes every timeout either immediate or infinite.** Any
+`microtime()`-derived deadline in a dependency is a latent hang, not a latent mis-measurement.
+`Lock::wait()` was one. `Cron::processQueues()` is another shape of the same thing -- it computes
+`usleep((int) round($process_from - $this->time->getCurrentMicroTime(), 3) * 1000000)`, so a
+non-zero `process_from` against a zero clock sleeps for the whole interval. That one is unexercised
+and unfixed; it is named here so the next reader does not rediscover it.
+
+## The fix, and why it is a grant rather than a repair
+
+`CfwLockBackend` in `drupflare` (`Drupal\drupflare\Lock\CfwLockBackend`) always grants and never
+waits, registered over `lock` and `lock.persistent`. **One site is one Durable Object is one thread**,
+the input gate serialises every request into it, and PHP inside it is single-threaded -- the
+concurrent writer a lock exists to exclude cannot be constructed. What is given up is cross-request
+stampede suppression: two requests that would each rebuild the router both rebuild it, sequentially,
+rather than the second reusing the first's work.
+
+Two details cost a deploy cycle each and are worth having written down:
+
+- **`.edge-assets/` is a FOURTH copy of the PHP.** It is staged by `scripts/stage-edge-assets.sh`
+  and the first fix deployed unchanged because the staging predated the repack. The packed-copy rule
+  extends one level further out than it says: after `bun run assets:driver`, re-stage.
+- **Core marks `lock` and `lock.persistent` `lazy: true`**, and a lazy service resolves through a
+  GENERATED proxy class that exists only for the class core named. Leaving it set logs
+  `Missing proxy class Drupal\drupflare\ProxyClass\Lock\CfwLockBackend` on every container build.
+  `setLazy(false)`, exactly as `registerRouterDumper()` already does.
+
+## Measured, on a throwaway `cfw-*` deploy, cpuTime from `wrangler tail`
+
+| build | n | median cpuTime | outcome |
+| --- | --: | --- | --- |
+| core `DatabaseLockBackend` | 6 | **32,500 ms** | `exceededCpu`, identical to the millisecond |
+| `CfwLockBackend` | 3 | **6,810 ms** | completes the install, then a storage reset |
+
+`32,500` on all six is the CAP, not a cost -- a tight band around a ceiling is a reading of the
+ceiling. And `outcome: exceededCpu` is what the previous session needed and did not read: it saw
+error 1101 at the client, which is a generic Worker exception this document already records at
+138 ms of cpuTime on an `exceededMemory` reset.
+
+## The stage split, which inverts the whole install track
+
+`microtime()` cannot time a phase from inside, and `cpuTime` meters an INVOCATION, so a phase needs
+an invocation of its own. `/enable?stop=<stage>` does that; every stage includes the boot, which is
+what makes the subtraction honest.
+
+| stage, one invocation each | n | median cpuTime | delta |
+| --- | --: | --- | --- |
+| boot only | 3 | 3,101 ms | **3,101** |
+| + discovery (`extension.list.module`) | 3 | 3,251 ms | ~0 |
+| + legacy includes | 3 | 3,061 ms | ~0 |
+| + `hook_requirements` | 3 | 3,065 ms | ~0 |
+| + `moduleHandler->loadAll()` | 3 | 5,240 ms | **+2,175** |
+| + the install itself | 3 | 6,810 ms | **+1,570** |
+
+**The install is the SMALLEST component and boot is the largest.** Every plan on this track --
+chunking, Workflows step budgets, row ceilings -- was priced against a term worth 23% of the
+operation. Two consequences:
+
+- **The heap snapshot is worth far more than the ~1% the free envelope scored it at.** That 1%
+  was correct for the REGENERATION ceiling, where boot work is saturated. Here restoring instead of
+  booting removes 3,101 ms from a 6,810 ms operation. **Measured and delivered** -- see
+  [THE SNAPSHOT COULD NOT BE TAKEN](#the-snapshot-could-not-be-taken-because-the-writer-held-the-heap-three-times).
+- **`loadAll()` at +2,175 ms looked larger than the install. IT IS NOT, AND THE ATTRIBUTION IS
+  RETRACTED.** Two measurements kill it. The lazy mount's own counters say that stage opens **29
+  more files and 232 KB** than the one before it (1,523 -> 1,552 inflated), while the install stage
+  opens 1,093 more and is the cheapest of the three -- so inflation does not track cost and the
+  "pre-inflate the module set" fix would have been work aimed at nothing. And timing the call
+  directly, in the lane where `microtime()` works, gives **6 ms across 30 files** for
+  `loadAll()`, with a second call at 0 ms and `Request::create()` at 0 ms. That lane is 2-2.6x
+  SLOWER than the edge, so the honest edge figure is single-digit milliseconds.
+
+  What the +2,175 ms delta actually measured is unresolved. Both stages were tight (3,035-3,142 and
+  5,166-5,528) so it is not the platform's bimodality, but a subtraction of two whole-invocation
+  totals at n=3 is not evidence about a call that directly measures 6 ms. **Re-measure at higher n
+  before anyone spends work here**; as it stands the second-largest item on the install track is a
+  number with nothing behind it.
+
+Discovery and requirements cost nothing, which also retires a guess made earlier the same day: a
+`dry=1` run costs 3.4-5.6 s, and reading that as "discovery is expensive" was wrong. It was the boot.
+
+## The second cause: an install leaves its isolate with no room to do anything else
+
+With the lock fixed the install COMPLETED -- `token module installed.` in the tail -- and the object
+was then reset with **"Internal error in Durable Object storage caused object to be reset"**, rolling
+every row back.
+
+`/txnprobe` was built to price the obvious suspect and refuted it instead. No Drupal, no PHP: plain
+inserts in one event, on fresh objects.
+
+| one event does | outcome |
+| --- | --- |
+| 128 MB (32,768 rows x 4 KB) | ok, 2,616 ms |
+| 1,000,000 rows x 64 B | ok, 9,828 ms |
+| 32 MB with the Drupal kernel booted and `loadAll()` done | ok |
+| 200 throw-out-of-`transactionSync()` rollbacks | ok, 223 ms |
+
+So there is **no aggregate write-set cap** anywhere near the install's ~4,400 rows / ~970 KB, a
+resident interpreter does not move it, and the driver's speculative-rollback mechanism is not it
+either. The per-record cap is out too: the widest row is the 487,567-byte container against 2,199,995.
+
+**What found it was a differential, not a probe.** An install into a site migrated WITHOUT prefill
+succeeded; the same install into a prefilled site did not. The install writes `cachetags`,
+`execSql()` reads that as a content change and calls `bumpGeneration()`, which purges `cfw_page`,
+re-queues what it purged and **arms an alarm**. Narrowing that:
+
+| the install's own event | landed |
+| --- | --- |
+| arms the fill alarm inline at +1 ms (`armFillAlarm`) | **0/6** |
+| arms it awaited, pushed out to +1000 ms | **1/6** |
+| requeue suppressed entirely (`PREFILL_ON_SAVE=0`) | **12/12** |
+| requeue kept, nothing armed | **6/6** |
+
+Awaiting the write and delaying it a full second did not help, so it is the `setAlarm()` call and
+not when the alarm fires. And the reason is the one this session had already measured and set aside:
+**the install ends with the isolate at ~110 MB of a 128 MB cap**, because `memory.grow` has no
+inverse. Poking `/__armfill` straight after an install returns, on 6 of 6 deployed installs:
+
+```txt
+Durable Object's isolate exceeded its memory limit and was reset.
+```
+
+That is the same reset, named. Inside the install's own event it takes the install down with it and
+looks like a storage-layer failure; from a later event it is merely a wasted reset. The earlier heap
+measurement was right about the constraint and wrong about which symptom it caused.
+
+## Where it landed
+
+The install runs on a fresh interpreter, requeues the pages it purged, and arms nothing;
+`/__armfill` exists to wake the chain from an event of its own, and normal traffic does it anyway.
+
+| deployed, `token` into a prefilled site, n=6 | before | after |
+| --- | --- | --- |
+| HTTP 200 | 0/6 | **6/6** |
+| module in `core.extension` after the fact | 0/6 | **6/6** |
+| pages back in `cfw_page` after one visit | 0/6 | **6/6** |
+| cpuTime | 32,500 (`exceededCpu`) | **6,810 ms** |
+
+**A module install works on a deployed Durable Object.** The cost is a cold cache for one visit.
+
+Two things worth carrying forward. **A verification query has to be able to fail**: `routes=420,
+tokenConfig=0` was read as "it did not land" for several runs, when `token` ships no routes and no
+config of its own and the numbers were correct for a successful install -- `alreadyEnabled` from a
+`dry=1` run is the check that means something. And **`.edge-assets/` is a fourth copy of the PHP**;
+the first lock fix deployed unchanged because the staging predated the repack.
+
+---
+
+# THE SNAPSHOT COULD NOT BE TAKEN, BECAUSE THE WRITER HELD THE HEAP THREE TIMES
+
+**2026-08-15.** With the install landing, boot is the largest thing left: **3,101 ms of a 6,810 ms
+enable, 46%**. The heap snapshot exists to remove exactly that, and `ensurePhp()` has restored
+behind `HEAP_SNAPSHOT=1` for some time -- guarded off by default with the reason written down:
+
+> Until a host call is shown to round-trip through a restored heap, this must not be on by default.
+
+**That condition is now met.** `/heap?op=bridge` forces PHP to reach `cfwStats` through
+`vrzno_env()` on a restored image: `bridge: round-tripped`, `sawQueryCount: true`, 3 handles
+replayed, digest equal. A module install then runs on the restored kernel and lands.
+
+## The writer was the blocker, and it was a memory bug
+
+The first deployed snapshot died: `outcome: exceededMemory`, 5,426 ms. `writeHeapSnapshot()` held
+the image three times over --
+
+| held at once | bytes |
+| --- | ---: |
+| the live wasm heap | 67,108,864 |
+| `toStorableBytes()`'s defensive `slice()` | 67,108,864 |
+| `elideZeroPages()`'s output buffer | 31,784,960 |
+| `chunkHeap()`'s array of independent rows | 31,784,960 |
+
+-- roughly **192 MB against a 128 MB isolate**. So the snapshot that makes a boot cheap could not be
+taken, for the same reason the install's alarm could not be armed: this object has no headroom.
+
+Two changes, and the output is byte-identical. The defensive copy is dropped, because nothing
+between reading the heap and the last chunk insert can grow it: no PHP runs and there is no await.
+And the writer streams -- it computes the page index by scanning the live view, then fills **one
+chunk-sized staging buffer** in place, inserting and reusing it. Peak extra falls from ~125 MB to
+200 KB. `tests/node/heap-snapshot-sql.spec.ts` compares the streamed rows against
+`chunkHeap(elideZeroPages(...))` row by row, because a restore locates a chunk with
+`seq * chunkBytes` and "restorable" is a weaker claim than "identical".
+
+## Measured on the edge, `token` into a fresh site, cpuTime from `wrangler tail`
+
+The population is bimodal, so the modes are split at the largest internal gap and reported
+separately rather than averaged across it.
+
+| enable, n=8 per arm | fast mode | slow mode |
+| --- | ---: | ---: |
+| boots the kernel | 6,675 ms | 11,763 ms |
+| restores a snapshot | **4,365 ms** | **8,185 ms** |
+| saving | **-2,310** | **-3,578** |
+
+The saving appears in BOTH modes and is consistent with removing the measured 3,101 ms boot, which
+is what makes it a result rather than a mode artefact. The snapshot itself costs **5,993 ms once**,
+plus 159 rows and 31,784,960 bytes of storage per site, so it repays inside one install -- and it is
+worth more on the serving path, where a cold render is 1,378 ms and almost all of it is boot.
+
+**It is still off by default.** What is now measured is that a restore is correct, that a host call
+survives it, that an install runs on it, and what it saves. Turning `HEAP_SNAPSHOT=1` on for every
+site is a separate decision with a storage bill attached.
+
+---
+
+# THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND, AND DURABLE FILES NOW EXIST
+
+**2026-08-13.** Two things landed and one of them invalidates a number this document has been
+organising work around.
+
+## THE BOUNDARY RULE, and this is the third instance
+
+**An instrument that sits on one side of a boundary must be validated against a total measured on the
+other side, or it reports a confident fraction.** Three failures in this document are the same defect:
+
+1. the fidelity test that read both sides through one truncating API, so the truncation cancelled out;
+2. `op=bridge`, which re-resolved by name and minted a FRESH handle, so it could not exercise a
+   captured one and reported "no replay needed";
+3. the write tally below, blind to the largest single writer on the path it was built to measure.
+
+Each was placed at a layer boundary and could not see across it. None of them failed loudly; all three
+produced a plausible number that survived review. The check is cheap -- compare against a total taken
+on the far side -- and it is the check none of them had.
+
+## The tally could only ever see Drupal's half of a fill
+
+`tallyWrite()` was called from exactly one place: the `execSql()` override. That override is the
+**PHP driver's** entry point, so the instrument saw Drupal's statements and nothing else. Every
+write the host makes on its own behalf goes through `this.sql.exec()` directly and was invisible --
+including `INSERT INTO cfw_page`, which carries the entire rendered page and is the single largest
+write in a fill.
+
+`countingSql()` (`src/db/write-tally.ts`) now wraps the storage handle itself, so both halves are
+counted exactly once. Measured on one object, front page, byte-identical output throughout:
+
+| fill | rows, old instrument | rows, complete | what the old one missed |
+| --- | --- | --- | --- |
+| first fill of `/` after migrate | 12 | **23** | `cfw_page` 5, `cfw_fill_queue` 3, `cfw_meta` 3 |
+| warm reassemble (page bin only) | 0 | **8** | `cfw_page` 3 |
+| real render (both bins empty) | -- | **13** | `cfw_page` 3 |
+| first fill of a never-routed path | -- | **67** | `cfw_page` 2 |
+
+**48% of a first fill was never counted.** And the second column is the more important finding:
+there is no such thing as "rows per fill". It ranges 3 to 67 depending on what is already warm, a
+20x spread, so the flat **17** that `free-envelope.ts` shipped with describes no actual case. It sat
+inside the range while being wrong about every member of it.
+
+`ROWS_PER_FILL` now names four measured warmth classes and the model defaults to `realRender: 13`,
+because the regeneration ceiling prices a page being re-rendered after invalidation. Charging every
+regeneration the 62 of a never-routed path would understate the ceiling 5x; its bulk is
+`cache_render` 28, `cache_data` 12, `cache_routes` 8 and `cache_discovery` 4, all one-time-per-path.
+
+**The default is now settled, and it survived being tested against a distribution.** "Worst case or
+`realRender`?" sat open because a single figure was being asked to describe a 20x spread. It is
+answered by refusing the question: `envelope()` takes a `warmthMix`, and `STEADY_STATE_WARMTH`
+prices a day as 70% `realRender`, 25% `warmReassemble`, 5% `firstEverForPath`. That comes out at
+**12.95 rows/fill against `realRender`'s 13** -- the cheap reassembles and the expensive cold paths
+very nearly cancel -- so the windowed ceiling moves **under 1%** and none of the pinned figures
+change. `realRender` stays the default, now on evidence rather than on an argument.
+
+Two disciplines held here and are worth naming. The **weights are an assumption and say so in their
+own docblock**, because the four row figures were each measured and the weights were not; and
+`firstFillAfterMigrate` is **absent** from the mix rather than weighted zero, because it happens once
+per object lifetime and a once-per-lifetime cost is not a rate. `rowsForWarmthMix()` uses weights as
+given rather than normalising them, matching `TrafficMix`: silently rescaling a mix that misses 1
+turns a caller's typo into a plausible number.
+
+**What moved, and what survived.** Windowed regeneration goes **5,813 -> 7,575/day**, and it is
+still **rows**-bound: DO allows 26,315 against rows' 7,575, so rows-directed work keeps paying. I
+predicted the binding meter would flip to DO and it did not -- the verdict survived the correction
+and only its magnitude changed. One verdict DID invert, on the serving side: with serving 85%
+off-Worker the binding meter is now **DO requests at 588,235/day**, not rows at 581,395, so cutting
+rows per fill past that point moves the rows meter and does not move the ceiling at all. The spec
+asserts that explicitly, because a lever the binding meter does not respond to is not a lever.
+
+## The `page` bin was a second copy of bytes the host already stores
+
+Drupal's internal page cache duplicates the served page: the host's cache lives in the Durable
+Object's own SQL, deliberately **not** in `cache_page`, because the hit path must not boot PHP at
+all. So `cache_page` was a second copy in a form only an interpreter can read, on a path that
+refuses to start one -- and it was **5 of the 8 rows** in a warm reassemble.
+
+`cache.page` now resolves to `NullBackendFactory`. Measured, all three acceptance conditions:
+steady fill **8 -> 3 rows**, render byte-identical at **12,304 / `10077de5f0bd`**, `cache_container`
+still 1 row.
+
+**Two mechanisms were wrong before the third worked**, and both failures are worth keeping:
+
+1. The `development_settings` / `disable_rendered_output_cache_bins` key_value row is the obvious
+   switch and it is the wrong one. `DevelopmentSettingsPass` nulls `page`, `dynamic_page_cache` AND
+   `render` as a bundle, and two of those are load-bearing: a warm `dynamic_page_cache` is what lets
+   a fill reassemble instead of render, so nulling it trades 8 rows for a full render's CPU on every
+   fill. That is also why the roadmap's **4.47x** for this item was wrong -- it assumed all three
+   bins could go. Killing `page` alone is 2.67x on a warm fill.
+2. A `DrupflareServiceProvider` change is **dead code**: `drupflare` is not an enabled module.
+   `core.extension` lists 39 modules and it is not among them.
+
+**The mechanism that works, and the detail that makes it free.** The shipped `settings.php` already
+does `$settings['container_yamls'][] = $app_root . '/' . $site_path . '/services.yml'`
+unconditionally, and that file has never existed. `getContainerCacheKey()` folds in
+`serialize(Settings::get('container_yamls'))` -- the **raw** setting -- while `addServiceFiles()`
+loads `array_filter($yamls, 'is_file')`. So creating that one file changes what the container
+contains with the cache key **byte-identical**: the lifted cid is unchanged at
+`service_container:prod:7b20d696c38c3567::Linux:a:1:{i:0;s:34:"/drupal/sites/default/services.yml"}`
+and only the payload grew. Any other filename adds a path, moves the key, and invalidates every
+figure measured against the baked container.
+
+## Uploads survive an eviction now, which they never have
+
+Drupal's file system was MEMFS: isolate-local and ephemeral. An upload lived exactly as long as the
+isolate that received it, while the `file_managed` row describing it was written to durable storage
+and survived -- so a site accumulated entities pointing at nothing. That is not a performance
+characteristic, it is "uploads do not work".
+
+**Why DO SQL and not R2, which is the decision that shapes the rest.** PHP cannot await, so no
+synchronous stream wrapper can call `bucket.put()` and learn whether it worked. An R2-first wrapper
+has to report success before the write has happened, and Drupal commits the `file_managed` row in
+the same request -- a failed PUT then leaves a torn write nothing detects. `ctx.storage.sql` is
+synchronous from inside the object, so a write is durable the moment PHP returns, in the same store
+as the row describing it. R2 becomes an **offload** with a retry queue and a three-strike drop,
+worth doing because an R2 object on a custom domain serves without invoking the Worker, but never
+the thing durability depends on. A missing bucket degrades to "served from the Durable Object".
+
+Measured end to end on a live object: `file_put_contents('public://cfw-probe/note.txt', ...)` writes
+13 bytes, `file_exists()` and `filesize()` agree, **the interpreter is then dropped**, and
+`file_get_contents()` returns `durable-bytes`. `is_dir()` and `opendir()` synthesise directories
+from the flat keyspace; `private://` round-trips; `unlink()` removes. The store row reads
+`public://cfw-probe/note.txt`, 13 bytes, `text/plain`, 1 chunk.
+
+Chunked at 200,000 bytes for the measured 2,199,995-byte record ceiling, so a 3 MB image works.
+
+**`public://` belongs to Drupal**, so a bare `stream_wrapper_register()` loses to
+`StreamWrapperManager`. The override is the `stream_wrapper` service tag -- delivered through the
+same `services.yml`. Container binding and PHP-level registration are **separate steps**: the probe
+first reported a correctly bound class and a failed write in the same breath, because nothing had
+called `StreamWrapperManager::register()`. A real request does that during kernel boot.
+
+`parse_url()` cannot parse a stream URI and using it was a bug caught by executing the class rather
+than reading it: for `public://styles/thumb/a.png` it reports the host as `styles`, so the external
+URL silently lost a directory, and for `private://secret.txt` the whole filename became the host.
+Drupal's own `StreamWrapperManager::getTarget()` splits on the delimiter for the same reason.
+
+## Four defects fixed, one of them production-breaking
+
+| defect | consequence |
+| --- | --- |
+| prefill lived inside the `/__migrate` route handler | a migration finishing on the **alarm chain** -- the default, and the only path a deployed site takes -- left `cfw_page` empty and `/` at 503 until somebody happened to request a render. An existing test asserted the 503 as correct. |
+| `/ops?op=status` read `this.migrated` | an in-memory flag hibernation discards, so a migrated site reported `migrated: false` after eviction |
+| `packagistUrl()` pointed at `repo.packagist.org` | **404 for every `drupal/*` package.** Drupal contrib is on `packages.drupal.org/8`, so `/installable` answered `not-found` for the entire ecosystem with the plumbing working perfectly. E3/E5/E6 were priced against a check that could only say no. |
+| `HttpsStreamWrapper::stream_metadata()` took 0 arguments | it shadows a real prototype hook with three, so the first caller to `touch()` an `http://` path takes an `ArgumentCountError`. `php -l` cannot see it. |
+
+## A constraint that was never true
+
+`tests/helpers/serve-do.ts:13` stated "There is no wasm interpreter in this lane" and
+`tests/e2e/README.md` repeated it. **Both are false.** `@cloudflare/vitest-pool-workers` runs the
+real interpreter against a real Durable Object: measured `bootMs: 167`, a full migrate of 79 chunks
+and 4,898 rows, and a 12,304-byte render, **766 ms** for the whole cycle. That was a description of
+what one harness chose to stub, recorded as a property of the platform, and it has been shaping the
+test architecture ever since -- the same failure mode this document's own rules warn about.
+
+## Still not closed
+
+**Three entries that stood here were closed on 2026-08-13 and are recorded above the FOLD rather
+than here:** the first module enable through Drupal (`drupflare`, `core.extension` 40 -> 41, and the
+four services now reachable), the R2 mirror drain (`drainMirrors()` runs from the alarm, and
+`private://` is refused at both the queue and the bucket), and `HttpsStreamWrapper::register()`,
+which is called from `drupflare.module` at include time and again from the host boot script.
+
+- **The SWITCH A/B cannot be completed on this machine.** Full LTO, ThinLTO and no-LTO all hit the
+  `wasm-ld` memory wall; no binary was produced, so no verdict is available either way.
+- **`phasm`'s `fetch-deps.sh` has not run in CI.** Its `docker compose run` wrapper is the one
+  inferred part of an otherwise recovered recipe: a dependency's `config.log` records the builder
+  container's hostname but not the command that started it.
+- **A warm single-render-per-invocation figure on the shipping binary is still owed.** Slice counts
+  must not be sized until it exists.
+---
+
+# THE TWIG BAKE IS ALREADY SATURATED, SO "WIDEN IT" HAS NO WORK IN IT
+
+**2026-08-13.** "Widen the Twig bake" sat on the checklist on the reasonable theory that three
+baked paths (`/`, `/user/login`, `/filter/tips`) could not cover a real site, and that every
+uncovered template is compiled at runtime AND written as a cache row -- which would make this a
+rows-directed lever, the kind RULE 0b says to prefer.
+
+**Measured, it adds nothing.** The candidate anonymous paths in this site's router are
+`/user/password`, `/node` and `/rss.xml` (`/user/register` is access-denied here, which is a real
+site setting rather than a bake failure, and `/node/N` does not exist because the shipped site has
+**zero nodes**). Baking all six paths produces:
+
+| path set | templates | bytes |
+| --- | --- | --- |
+| the shipped three | 23 | 138,309 |
+| all six | **23** | **138,309** |
+
+Byte-identical, and the template lists `diff` clean. The reason is structural rather than lucky:
+Drupal's page templates are shared, so `/` already pulls the html/page/region/block set and
+`/user/login` already pulls the form set. `/user/password` is another form, `/node` with no
+content is an empty view, and `/rss.xml` is not HTML at all. There is no fourth family of
+templates for these paths to reach.
+
+**So the item is closed by falsification rather than by work**, and the useful part is the shape of
+the error: the lever was assumed from a path COUNT (3 looks small) when the thing that matters is
+template COVERAGE, and those are only loosely related. The 14 `twig:` rows a cold edge render was
+measured writing therefore come from templates these paths cannot reach at all -- a real remaining
+question, but not one more baked paths answer.
+
+---
+
+# THE LIMITS PAGE NOW MEASURES THE ONE METER THAT BINDS
+
+**2026-08-13.** The admin surface was built and wired -- `/admin`, `/admin/deploy`,
+`/admin/extend`, `/admin/commands` all render and proxy to `/__installable` and `/__ops`. But
+`/admin` called `renderThresholds({}, ...)` with an **empty** used-map, so every row read "nothing
+measures this yet", including `rows-written` -- the meter the whole regeneration ceiling rests on.
+A limits page whose limits are all unmeasured is decoration.
+
+**The counter that existed was the wrong one.** `this.rowsWritten` accumulates in
+`src/db/do-sqlite.ts:200`, on the `execSql()` path -- which is the PHP driver's entry point, so it
+sees Drupal's statements and none of the host's. That is precisely the half-blind instrument this
+document already corrected once. The complete one is `countingSql()`, which wraps the storage
+handle, and it was gated behind `PW_DIAGNOSTICS`.
+
+`countingSql()` now takes an always-on `onWrite` callback, kept deliberately separate from the
+per-table tally: the tally allocates a map and is armed by a route, where this is one addition per
+write statement and nothing at all on a read. Both figures are reported by `/__serve-stats`,
+because measurements are pinned to the old one and a quota decision needs the new one.
+
+**Two things make the daily total correct rather than merely present, and both were traps.**
+
+- **Flushed once per alarm, never per write.** Persisting the counter costs a row, so a per-write
+  flush would **double the number it is measuring**. Once per firing it is one row against a whole
+  batch, and that row lands in the next firing's total -- the meter includes its own cost, which is
+  the honest arrangement and is asserted.
+- **Keyed by UTC date, because the limit is daily and the object is not.** A Durable Object is
+  evicted whenever Cloudflare likes, so an in-memory lifetime counter reports a fraction of the day
+  and reads as healthy. The date key means an eviction loses at most the writes since the last
+  alarm. Asserted across two separate JS instances reaching the same durable storage.
+
+`/admin` fills in **only** `rows-written`. The other five stay blank on purpose: guessing at
+worker-requests from anything this Worker can see would produce a confident wrong number, and the
+page already distinguishes "unmeasured" from "healthy". Yesterday's key is left in place, so a
+history of daily totals accumulates at one row per day -- which is what makes "is this site
+trending over" answerable at all.
+
+---
+
+# THE R2 OFFLOAD DRAINS, AND ITS REFUSAL IS THE AUTH BOUNDARY IN A NEW PLACE
+
+**2026-08-13.** The mirror queue existed, had bookkeeping, had three-strike handling, and **nothing
+called it** -- which is why this document kept describing the off-Worker serving path as "designed,
+not delivered". A queue nothing drains is not a slow offload, it is no offload, and R2 is the only
+lever on the serving ceiling: a file served off a custom domain costs **zero Worker requests**,
+where every other optimisation in this project moves CPU or rows while the ceiling stands still.
+
+`drainMirrors()` now runs from the alarm, after the fill loop, for the same reason GC and the HTTP
+queue do: a waiting visitor outranks a background upload, and by then the interpreter is warm and
+the fill queue is drained. The limit is 2 per firing -- a put is one of the invocation's 50
+subrequests, and it carries the whole file through memory where a queued fetch carries a request.
+
+## The refusal, which is the authenticated bypass pointed at files
+
+**`private://` must never be mirrored, and this is a stronger rule than the page one.** Drupal's
+`private://` is an access-control boundary rather than a naming convention: those files serve
+through `/system/files/`, a route that access-checks per user, and
+`CfwFileStreamWrapper::getExternalUrl()` is what builds that path. An R2 object has no user. So
+mirroring a private file publishes it permanently to anyone holding the URL -- worse than serving a
+stale personalised page, because it does not expire and cannot be invalidated afterwards.
+
+It is the same principle `src/site.ts` already enforces for renders: **anything whose correctness
+depends on knowing who is asking must not be answered by a layer that does not know.**
+
+Three decisions make it structural rather than a check someone remembers:
+
+- **An allowlist, not `!== 'private'`.** `MIRRORABLE_SCHEMES` is `['public']`, so a scheme added
+  later (`temporary://`, a contrib scheme) is refused until someone decides it is publishable.
+  That is the direction this mistake should fail in.
+- **Checked at BOTH ends.** `queueMirror()` guards the queue and `drainMirrors()` guards the
+  bucket. That is the boundary rule rather than belt-and-braces: a queue row can outlive the state
+  that admitted it, and only the check adjacent to the `put` protects the bucket. A spec writes a
+  private row straight into the queue to prove the second check is load-bearing.
+- **The scheme stays in the R2 key** (`public://a.png` -> `public/a.png`). Stripping it would map
+  two schemes onto one object the moment a second is ever mirrored, and a key collision between an
+  access-controlled file and a public one is the exact failure the module is arranged to prevent.
+  It costs seven bytes.
+
+The four enqueue sites -- write, delete, and both halves of a rename -- had the same upsert copied
+out four times, which is four places to forget the rule in. They are now one `queueMirror()`.
+Deletes are gated by the same predicate, which is correct rather than lax: the case that matters is
+`rename('public://a', 'private://b')`, where the put of the private destination is refused **and
+the delete of the public source still runs**, clearing the stale object. A single check on the
+operation rather than per-URI would get that backwards.
+
+**No bucket bound is a supported state, not a misconfiguration.** The Durable Object is where the
+file durably lives; R2 buys serving headroom. `drainMirrors()` reports `noBucket` and leaves the
+queue intact, so a site that binds a bucket later mirrors everything it accumulated.
+
+`/__mirror` forces a pass and reports `refused`, which is how the rule gets checked rather than
+assumed. `tests/unit/db/file-store.spec.ts` goes **38 -> 56**, including two specs that drive a real
+alarm and assert the mirror happened with no diagnostic route touched.
+
+---
+
+# A BUFFERED WRITE REPORTS SUCCESS BEFORE IT RUNS, AND THAT KILLED A REAL INSTALL
+
+**2026-08-13.** Drupal's own installer now runs against `cfw_do_sqlite` end to end, and getting
+there found a defect that no unit test could have posed.
+
+**The mechanism, which generalises past this one call site.** This driver buffers writes inside a
+transaction and replays them. So a write reports success **before the engine has seen it**, and the
+buffer can end up holding a statement SQLite rejected. Once it does, the transaction can never
+succeed: every later replay and the commit itself re-run the rejected statement and die.
+
+It bites exactly where Drupal writes-catches-creates. `MatcherDumper::dump()` opens a transaction,
+runs `DELETE FROM router`, and calls `ensureTableExists()` **in the catch block**
+(`core/lib/Drupal/Core/Routing/MatcherDumper.php:97-105`). Buffered, the DELETE did not fail, so the
+catch never fired, so `router` was never created -- and the rejected DELETE then sat in the buffer.
+`Insert::execute()` -> `lastInsertId()` -> `bufferedInsertId()` replayed it and died on statement 0.
+A stock `standard` install stopped at task 10 of 13 with `no such table: router: transaction replay`.
+
+Note what made it fatal rather than noisy: **17 of the 18 errors Drupal raised and recovered during
+the install were harmless.** Only the one inside a transaction poisoned anything.
+
+**The fix.** `Connection::speculate()` wraps every replay. On a `SqlErrorException` it finds the
+rejected statement by **bisection** -- the host reports one error for the whole replay and never
+says which statement, so the answer is the shortest prefix that still fails -- discards it, and
+raises once. `TransactionBuffer::discardFailed()` marks the slot rather than removing it, so indices
+already handed out stay valid.
+
+| | |
+| --- | --- |
+| statements executed | **41,170** |
+| host transactions | **401** (7 commit, **394 speculative**) |
+| statements inside replays | **37,814** = **92% of everything executed** |
+| widest transaction | **380 statements** |
+
+Acceptance is a **control, not a fixture**: the same profile installed in a child process through
+core's own sqlite driver. 39 tables and 939 rows both ways, differing by one row
+(`system.schema` for `cfw_do_sqlite`). Front page 200, 11,521 bytes. The harness was verified to
+fail -- reverting the repair takes it to 0/16.
+
+**What this does NOT establish.** The host is `FakeHost` (PDO SQLite), not `ctx.storage.sql`, so the
+380-statement transaction says nothing about whether a real Durable Object invocation carries it;
+per RULE 0 only `wrangler tail` answers that. `FakeHost` enforces the 100-parameter cap but not the
+100,000-char statement or 2,199,995-byte record limits, so an install could still meet those on real
+storage. Suite: **204** (was 188), plus 16 installer assertions.
+
+---
+
+# THE STREAM WRAPPER IS ONE IMPLEMENTATION AGAIN, AND PHP DECIDED HOW
+
+**2026-08-13.** `Drupal\drupflare\StreamWrapper\HttpsStreamWrapper` was a second copy of
+`drupflare/stream-http`, and it had already drifted. It is now a ~70-line subclass whose entire
+contribution is `hostFetch()`: the package's request array -- `url`, `method`, `headers`, `body`,
+`redirect` -- is already the shape `cfwFetch` takes, so there is nothing to translate.
+
+**Three things had to be true for that to work on the edge, and only the first is obvious.**
+
+1. `drupflare`'s `composer.json` requires `drupflare/stream-http: ^0.1`, which resolves --
+   `v0.1.0` is on Packagist.
+2. **Composer never runs on the edge, so the requirement ships nothing.** The packed tree IS the
+   vendor directory. `gen-driver-assets.ts` now mounts `../stream-http/src` at
+   `libraries/drupflare-stream-http/src`, read from the SIBLING REPO rather than copied under
+   `drupal/` -- vendoring a copy is precisely what created the drift being removed, and
+   `check-module-sync.ts` already reads siblings.
+3. The PSR-4 root is registered in **both** places that build an autoloader: `SETTINGS_OVERRIDE` in
+   `src/site-do.ts` and the boot fragment in `src/drupal/site-php.ts`. Missing either one is a fatal
+   on a missing parent.
+
+**The signature is widened, and PHP made that call rather than taste.** The obvious move was to keep
+the module's zero-argument `register()`. That is a hard fatal at class load -- "Declaration ... must
+be compatible with ... `register(callable $fetch, array $schemes)`" -- so the module would have died
+before serving a byte, and `php -l` cannot see it because the incompatibility only exists once both
+classes are loaded together. `register(?callable $fetch = null, array $schemes = self::SCHEMES)`
+satisfies the parent (widening a parameter is legal where narrowing is not), keeps every existing
+zero-argument call site working, and keeps the escape hatch. That is now a **regression test, proven
+non-vacuous**: reverting the signature makes the suite report the fatal by name.
+
+One sniff was excluded rather than obeyed. `Drupal.Classes.UseGlobalClass.RedundantUseStatement`
+demands `\Closure` inline where the house rule requires `use Closure;` and explicitly exempts
+nothing. Same reasoning as the layout exclusions: phpcs does not own style here.
+
+`load-classes` goes **73 -> 77**.
+
+---
+
+# THE ROUTER BURST IS A REPEAT, NOT A BURST, AND CHUNKING IT WAS THE WRONG QUESTION
+
+**2026-08-13, later still.** The enable measurement recorded `router` at 17,188 rows and called it
+"one non-resumable burst", which put "can the router rebuild be chunked?" on the roadmap. Both halves
+were wrong, and neither needed a deploy to settle.
+
+## Chunking is already done, and doing it harder breaks the site
+
+`MatcherDumper::dump()` splits the inserts at 50 routes
+(`core/lib/Drupal/Core/Routing/MatcherDumper.php:108`) and wraps **every chunk plus the opening
+full-table `DELETE`** in one transaction. Core states the reason at `:90-92`: "The transaction makes
+it atomic to avoid unstable router states due to random failures."
+
+So splitting across Durable Object invocations is not a scheduling change, it is a correctness
+regression. The DELETE commits at the end of the first invocation, and a request landing before the
+last chunk matches **nothing** -- a 404 site, not a slow one. And it saves nothing on the meter that
+binds: rows are rows whether one statement writes them or thirty.
+
+Core's chunk size does not even survive the platform. 50 routes x 6 fields is **300 bound
+parameters** against the measured Durable Object ceiling of 100, so the first draft of the
+measurement died on `too many SQL variables at offset 415`. The driver's re-chunking to 16 routes
+(96 parameters) is load-bearing rather than an optimisation.
+
+## The real shape: 5 rows per route, charged asymmetrically
+
+Measured against real Durable Object SQL with the exact packed schema, in
+`tests/unit/db/router-rebuild-cost.spec.ts`:
+
+| | rows per route | why |
+| --- | --- | --- |
+| `INSERT` | **4** | the table row plus THREE index entries: `PRIMARY KEY (name)`, `router_pattern_outline_parts`, `router_alias` |
+| `DELETE` | **1** | tearing index entries down is not charged |
+| one rebuild | **5** | so a rebuild is 1.25x a fresh install, not 2x |
+
+**60% of a rebuild is index maintenance**, and only 20% is the route data.
+
+## The correction: one rebuild is 2,095 rows, and the enable paid for about eight
+
+The packed site has **419 routes**, so one rebuild is `419 x 5 = 2,095` rows -- **12%** of the 17,188
+recorded. The enable rebuilt the router roughly **eight times**.
+
+That moves the lever entirely. You cannot split an atomic transaction, but you can stop running it
+eight times: collapsing the repeats to one recovers about **74% of the whole enable**, since `router`
+is 84% of it. `ModuleInstaller` has at least two rebuild sites --
+`\Drupal::service('router.builder')->rebuild()` at `ModuleInstaller.php:246` and `:659`, plus the
+`router.route_provider.lazy_builder` swapped in at `:331` which rebuilds on first route use during
+the install -- so the repeats are structural and countable rather than mysterious.
+
+**The instrument was extended rather than the number re-divided.** Inferring the pass count by
+dividing 17,188 by a subtrahend nobody measured is the exact error this document keeps finding, so
+`WriteTally` now carries `statementsByTable` and `routerRebuildPasses()` reads the count out of the
+statement shape: a rebuild is exactly one DELETE plus `ceil(routes / 16)` inserts. It returns `null`
+rather than rounding when the shape does not divide, because "2.4 rebuilds" reported as 2 would
+launder a wrong chunk-size assumption into a fact. `/__enable` now returns `routes`,
+`routerStatements` and `routerRebuilds`.
+
+## A second, independent lever: the alias index is charged on rows that have no alias
+
+Of 419 routes, **17 carry a non-null `alias`**. `router_alias` is a plain index, so it is charged on
+all 419 -- one row per route, every rebuild, for a column that is 96% NULL.
+
+A **partial** index (`... WHERE "alias" IS NOT NULL`) drops the insert from 4 rows per route to 3, a
+**25% cut on the insert side**, measured. It still serves
+`RouteProvider::getRouteAliases()`'s `condition('alias', $route_name)` at `RouteProvider.php:581`.
+What it cannot serve is `getAllRoutes()`'s `->isNull('alias')` at `:452` -- which a
+96%-NULL index was never helping anyway. This is a driver-side schema change, not a core patch, and
+it is not yet applied: it is priced here so the E-track can weigh it against the repeat fix, which is
+worth about 3x more.
+
+---
+
+# A MODULE IS ENABLED THROUGH DRUPAL, AND FOUR RUNTIME GAPS WERE IN THE WAY
+
+**2026-08-13, later.** `drupflare` is now enabled through Drupal's own `ModuleInstaller` -- the first
+successful module install in this project's history. `core.extension` went 40 -> 41, `installReturned:
+true`, and the three services that had been unreachable (`logger.cfw`, `drupflare.http_deferred`,
+`drupflare.request_resetter`) resolve. `\Drupal::logger()` reaches `CfwLogger`, which was the
+acceptance condition; "the config row changed" would not have been one.
+
+**The E-track had been priced entirely from an operation nobody had run.** `OpsRegistry` quotes `en` at
+1,344.7 ms plus a 282.9 ms `cr` flush, both from native PHP on a developer machine, and three roadmap
+items were scored against them. Measured on the edge runtime:
+
+| | |
+| --- | --- |
+| rows written | **20,533** |
+| `router` | **17,188 (84%)** -- see the correction below; this is NOT one burst |
+| `cache_config` | 3,010 |
+| write statements | 3,307 |
+
+Against 100,000 rows/day that is **~4 module enables per day** on free. That number did not exist
+before and it is the one the install track should be scored against.
+
+## The four blockers, each a real gap rather than a mistake
+
+1. **`module_config_sort()` undefined.** `DrupalKernel::loadLegacyIncludes()` requires `common.inc`,
+   `module.inc`, `theme.inc`, `form.inc` and `errors.inc`, and it is called from `preHandle()`, **not**
+   from `boot()`. Any path that boots a kernel without handling a request has none of them. This
+   project had been requiring `common.inc` by hand in two separate places for the same reason; calling
+   the one method a real request calls is both faithful and stops the next missing function being a
+   separate discovery.
+2. **`too many SQL variables` at 169 placeholders.** Drupal's config storage loads 169 names in one
+   `IN()`. `Upsert` already chunked WRITES against the measured 100-parameter ceiling; the READ path
+   had no equivalent because nothing had ever generated an oversized read. `Statement::execute()` now
+   splits an oversized `IN()` into parameter-budgeted batches -- and **refuses far more than it
+   accepts**: not a SELECT, any `ORDER BY`/`LIMIT`/`OFFSET`/`GROUP BY`/`DISTINCT`/aggregate, or more
+   than one placeholder list. In every one of those, concatenating batches returns a plausible wrong
+   answer rather than an error.
+3. **`RequestContext::fromRequest(): null given`.** The router rebuild builds a request context; an
+   enable driven outside a request has to push one.
+4. **`update_storage_clear()` undefined.** A bare boot has loaded no `.module` file at all, and the
+   final step of `install()` invokes `hook_modules_installed`. `ModuleHandler::loadAll()` is what a
+   real request does.
+
+## Where a stream wrapper can be registered, which the module docs had wrong
+
+The old claim was that "there is no correct place inside Drupal's bootstrap". There is: **the top level
+of a `.module` file**. `ModuleHandler::loadAll()` includes it from `DrupalKernel::preHandle()` at
+`core/lib/Drupal/Core/DrupalKernel.php:613`, **three lines before** the kernel registers its own
+wrappers at `:616`. What is true is that no *hook* is that early.
+
+`public://` and `private://` are deliberately NOT registered there: `StreamWrapperManager::registerWrapper()`
+unregisters before registering, so a module-file claim would be replaced by `PublicStream` three lines
+later and **look** like it worked. Those stay a container override via the `stream_wrapper` tag.
+
+**The packer did not ship any of it.** `gen-driver-assets.ts` walked `.php` and `.yml` only, so
+`drupflare.module` and `drupflare.install` -- the only files that can register early enough -- reached
+the edge in no form at all, while the test asserting "packs only PHP and YAML" stayed green. Both the
+filter and the assertion are corrected, and the assertion now names the two files, because the
+permissive form passes on a pack containing neither.
+
+# THE AUTHENTICATED BYPASS, AND THE CONSTRAINT IT PUT ON THE R2 WORK
+
+Reviewed after the allowance was wired to a writer. The requirement -- authenticated traffic must
+bypass the asset layer entirely -- is **already satisfied structurally in the edge tier**, and the
+remaining half cannot be built yet because the layer it must bypass does not exist.
+
+What is in place, all decided in `src/site.ts` BEFORE the Durable Object hop, which is the whole point
+(a check made after the hop has already spent the DO request the reservation exists to protect):
+
+- `personalised = authenticated && authMode === 'render'`
+- `edgeWanted = ... && !personalised` -- a personalised request never READS the shared edge cache
+- `putPage(..., personalised)` refuses the WRITE, and refuses again on a `Set-Cookie`, two independent
+  signals so it does not depend on the session-cookie regex being right
+- a spent allowance in `stale` mode **strips the cookie** so the object answers the anonymous page,
+  rather than rendering per-user and spending the budget that has already run out
+
+The key has no user in it, so a personalised response in a shared cache is a disclosure, not a
+performance bug -- this project shipped that once, a uid-1 render at 90,038 bytes against an anonymous
+12,296.
+
+**What this constrained, and how it was discharged.** When this was written the off-Worker path was
+designed and not delivered, so there was no asset layer for an authenticated request to be excluded
+from, and the conclusion recorded here was that this is **a constraint the R2 work must carry**
+rather than an item closable ahead of it.
+
+The R2 drain now exists, and it carries that constraint structurally rather than as a second cookie
+check -- see "THE R2 OFFLOAD DRAINS" above the FOLD. The file-side form of the rule is that
+`private://` is never mirrored, refused by an allowlist at both `queueMirror()` and
+`drainMirrors()`, because those files serve through `/system/files/`, which access-checks per user,
+and an R2 object has no user.
+
+# A REQUEST-SCOPED MEMO LEAKED ACROSS RENDERS, AND VISITORS SAW IT
+
+Found while verifying the enable, and it was serving wrong markup to real users.
+
+`PathMatcher::isFrontPage()` memoises into `$isCurrentFrontPage` and core gives the class no `reset()`.
+On a persistent container the **first path rendered decides for every later one**. Measured: render `/`
+then `/user/login` on one interpreter and `/user/login` comes back with `class="path-frontpage"`, no
+active trail on the primary nav, and no breadcrumb block -- front-page markup on a page that is not the
+front page.
+
+**Two fixes missed before the third worked, and the reason is the interesting part.**
+`drupal_static_reset()` does not touch a protected property. Giving the inner class a `reset()` fixed an
+object whose answer is never consulted -- `path_alias` **decorates** `path.matcher`, and
+`AliasPathMatcher` declares its **own** `$isCurrentFrontPage`, memoised with `??=`, which shadows the
+inner one entirely. `\Drupal::service('path.matcher')` returns the decorator.
+
+The fix walks the decorator chain by reflection, nulling the memo at every link, so no decoration depth
+or ordering can hide one. NULL rather than FALSE: `isFrontPage()` guards on the property being unset, so
+FALSE reads as a computed "not the front page" and pins every later request to it -- the same bug
+reversed. Verified: `/` is `path-frontpage` at 12,304 bytes, `/user/login` is `path-user` at 13,012 with
+its breadcrumbs.
+
+**`RequestResetter` exists and nothing calls it.** It is registered by a service provider that only runs
+once the module is enabled, and no host code invokes it. That is why the reset had to be wired into
+`cfw_serve()` directly.
+
+# A GENERIC ERROR STRING NAMED THE WRONG SYSTEM FOR HOURS
+
+`@drupflare/untarl` would not publish. `npm publish` returned **403** with *"In most cases, you or one
+of your dependencies are requesting a package version that is forbidden by your security policy"* --
+identically in CI and locally, unaffected by token type or `--otp`.
+
+It was not npm. `README.md` contained the string `../../etc/passwd`, and **Cloudflare's WAF blocked the
+upload** at the edge. npm received an HTML error page it could not parse as JSON and substituted its
+stock sentence, which reads exactly like an authorization failure. Removing the string turned the 403
+into `EOTP` -- the honest error, asking for the one thing actually missing.
+
+Ruled out first, each with evidence, and each wrong: bypass-2FA token restrictions (a raw PUT returned
+**401**, so the token was not one), npm's name-similarity filter (`npm view untarl` 404s and the
+registry accepted the name), private-package plan limits (`access: public` accepted), org ownership
+(`{"gmitch215":"owner"}`), and a stray `access=restricted` (resolved value was `public`).
+
+**The transferable rule: when a 403 carries a generic body, check whether the body is HTML from a WAF
+before believing it names the failure.** The same shape as the instrument findings in this document --
+the reporting layer described something other than what happened. It also cost the most wall-clock of
+anything in this session, because every ruled-out hypothesis was individually plausible.
+
+`README.md` files ship twice in a publish, as the `readme` field and inside the tarball, so any
+attack-signature string in documentation is an upload hazard. Nothing in the existing gates sees it:
+prettier, tests and typecheck all pass on a README that cannot be uploaded.
+
+# TWO FINDINGS FROM THE SIBLING REPOS THAT CHANGE WHAT IS PORTABLE
+
+**`Schema::findTables()` fails SILENTLY under a table prefix.** Core's sqlite version matches the
+expression against the bare `sqlite_master` name, which is correct only when a prefixed table lives in
+its own attached schema. Inherited unchanged, it returns an **empty result, not an error**, under any
+prefix. The prefix itself needed no new mechanism -- the base `Connection::setPrefix()` name-mangles
+identifiers and the driver already reached it by calling the grandparent constructor, skipping core
+sqlite's `ATTACH DATABASE` path. A period remains the one impossible prefix character, because it
+names a schema and a Durable Object owns exactly one database.
+
+**`callMain` is the exception, not the contract.** Driving three real wasm builds through `cartridge`
+-- Lua 5.4 via wasmoon, CPython via Pyodide, QuickJS via quickjs-emscripten -- found that **none of
+them exports `callMain`**. PHP does only because it was built with
+`-sEXPORTED_RUNTIME_METHODS=callMain,FS` deliberately. So the `main()`-style recipe is the outlier among
+published builds and the adapter is the normal case. Two smaller ones from the same exercise: wasmoon's
+FS has no `utime` (it was a required member), and reading an unexported emscripten member **throws**,
+because emscripten swaps in a getter that calls `abort()` -- so a boot that probed for a member handed
+a raw wasm error to its caller. Java remains unverifiable: teavm and cheerpj are unpublished on npm and
+doppiojvm last released in 2016 and is not wasm.
+
+
+
+---
+
+# A1b: A BOOTED HEAP RESTORES, AND THE CONTRACT IS THE FD TABLE, NOT THE INODES
+
+**2026-08-11.** A Drupal-booted wasm heap can be snapshotted, carried into a fresh instance and
+resumed. It renders **byte-identically**: 12,304 bytes / sha1 `10077de5f0bd` on the restored
+instance, then 12,310 / `57256d384e98` on a second render with the bins emptied, both matching
+the source instance exactly. `kernelFromHeap: 1` -- the `DrupalKernel`, its service container and
+its open sqlite handle all came out of the image rather than being rebuilt.
+
+The cost swap is the point: **114 ms mount plus a 7 ms memcpy of 67,108,864 bytes**, instead of a
+1,121 ms kernel boot. The snapshot is taken post-boot and pre-render, never post-render.
+
+Two baseline assertions hold, and they are what make the rest trustworthy. Both instances'
+`atInstantiate` digests are identical (`3656cb0b`), so the elision invariant is real; and the
+restored instance's pre-memcpy digest equals its post-factory digest (`d104831b`), proving the
+mount, the FS replay and the stream replay touched no linear memory. SP was 35,411,488 on both
+sides and restored.
+
+## The hypothesis I had written into the code was wrong
+
+`src/runtime/lazy-fs.js` carried a comment asserting the sorted merge index was load-bearing for
+restore, because node creation order decides the emscripten inode and a restored heap references
+those numbers. **That was inference, never tested, and it is false.**
+
+| broken deliberately | result |
+| --- | --- |
+| `misalign=1` (one extra node before mount; every id +1) | **silently fine**, byte-identical |
+| `misalign=500` | **silently fine**, byte-identical |
+| `fsdelta=0` (no wal/shm replay) | **silently fine** -- the stream replay's own `O_CREAT`/`O_RDWR` flags recreate them |
+| `budget=2000000` (LRU thrashing, different resident sets both sides) | **pass**, byte-identical |
+| `preinflate=1` (all 1,509 inflated paths replayed pre-memcpy) | **pass**, byte-identical |
+| `streams=0` (no fd replay) | **HARD FAIL**: `Random\RandomException: Could not gather sufficient random data: Bad file descriptor` |
+| `dropfd=6` (`/dev/urandom` alone) | **HARD FAIL**, same error -- that one fd is load-bearing by itself |
+| `dropfd=3,4,5` (the sqlite fds) | **HARD FAIL**: `PDOException: General error: 15 locking protocol`, **after an 80-120 s stall per attempt** |
+
+So the real contract is: **reproduce the open file-descriptor table at the same fd numbers.**
+Four descriptors, three failure modes. Inode numbering, the FS delta, the inflated set and LRU
+order are all *not* load-bearing -- eviction only drops recoverable `contents`, and no heap
+pointer references MEMFS contents.
+
+The sqlite failure mode deserves emphasis because it is the shape this project keeps producing:
+it is **not a fast error**. It is a multi-minute wall-clock stall, which on the edge is a hung
+request. The comment in `lazy-fs.ts` has been corrected to state the measurement and to say
+explicitly that inodes must not be cited to justify the sort. The sort stays, for determinism.
+
+## Heap growth is a non-issue for a post-boot snapshot, and 80 MB is a footprint not a speed
+
+Measured `memory.buffer.byteLength` stage by stage:
+
+| stage | static-free-v1 | static-o2 |
+| --- | --- | --- |
+| at instantiation (`INITIAL_MEMORY`) | 67,108,864 | 100,663,296 |
+| after `pib_init` | 67,108,864 | 100,663,296 |
+| after lazy mount | 67,108,864 | 100,663,296 |
+| after full Drupal boot | **67,108,864 -- zero growth** | partial boot only |
+| after boot + 2 renders | 80,543,744 | n/a |
+
+A full boot grows the heap **not at all**. The first render adds 13.4 MB, landing at 80,543,744 --
+**20,119,552 bytes under** o2's baked 100,663,296. Every restore arm reported `grow.needed:
+false`, so `emscripten_resize_heap`, the detached-`HEAP*`-view hazard and the whole-target-size
+workaround were never exercised on this path.
+
+This is also the correct frame for the `INITIAL_MEMORY=80MB` decision at `build/rc/control.rc:21`:
+it buys a smaller **resident footprint**, not a faster boot. Boot speed is not what it moves.
+
+## What this does not settle
+
+- **o2's full boot heap.** o2 is built `WITH_SQLITE=0`, so its boot dies at `PDOException: could
+  not find driver` after only **71 included files**. That is a weak lower bound, not a
+  measurement. The 20 MB headroom figure rests on free-v1, and **RULE 0b applies**: free-v1 is
+  586,923 bytes over the free ceiling and cannot ship.
+- **opcache.** The probe ran with `memory_limit` and `date.timezone` only. The shipping DO runs
+  `opcache.file_cache_only` into `/tmp/opcache`, which would add ~1,000 file-cache nodes to the FS
+  delta and opcache state to the heap. Untested.
+- **The DO/vrzno path**, which is the one that ships. There the heap holds JS object handles *by
+  index* into an array a fresh instance does not have, so expect to need a handle-table replay on
+  top of the fd replay.
+- **LRU order is unrestorable through the current API** (`resident` is closure-private). Shown not
+  to matter for these renders; could not be restored if it did.
+- One route, anonymous only, local `wrangler dev`, no deploy. `renderMs` values are local wall
+  clock, so **RULE 0** binds: they are not cpuTime.
+
+---
+
+# THE SHIPPED DATABASE HAS NO PROVENANCE, AND THAT IS THE THIRD ARTIFACT OF THIS CLASS
+
+**2026-08-11, surfaced by C2 and larger than the item that surfaced it.**
+
+`assets/drupal/site.sqlite` is 6,475,776 bytes (6,627,328 after C2) and **nothing in this repository
+produces it.** `scripts/pack-sql.ts` only CONSUMES it. `scripts/pack-perfile.ts` never mentions
+sqlite. `scripts/stage-edge-assets.sh` only copies it. The build-input database it presumably came
+from, `drupal-src/sites/default/files/.sqlite`, is **14,389,248 bytes** - more than twice the size -
+so somewhere between the two there was a VACUUM, a cache-table trim, or both, and **that recipe
+exists nowhere in the repo or in this document.**
+
+This is the same class as the three-defaults-in-one-day bugs: **a load-bearing artifact whose
+provenance lives only in memory.** The consequences are concrete and they bind every future change:
+
+- **Every pack change has to be surgical**, the way C2 was: read the specific rows out of the build
+  input and insert them into the shipped database. Do NOT "regenerate the pack" to add a row. There is
+  no command that does it, and the closest thing (`bun run assets:pack`) would balloon the artifact
+  from 6.5 MB toward 14.4 MB and silently discard the trimming.
+- **The trim is load-bearing for the free tier.** 7.9 MB of difference is not a rounding error against
+  a 3 MB gzipped bundle ceiling and a 48 MB asset tree that already fails to upload whole.
+- **A resumed session will not know this.** It will see `assets:pack`, `assets:sql`, `assets:driver` in
+  `package.json`, reasonably assume the chain regenerates everything, and destroy the artifact.
+
+What would close it, in ascending cost: (a) write down the trim recipe if anyone can still reconstruct
+it; (b) a `scripts/trim-site-db.ts` that reproduces the byte count from the build input, with that count
+as its test; (c) treat `site.sqlite` as an irreplaceable input like `vendor/` and back it up.
+
+**(c) is DONE, 2026-08-12.** Two mitigations landed together:
+
+1. **Mirrored to R2**: `drupflare-cdn/assets/drupal/site.sqlite`, served at
+   `https://drupflare-cdn.gmitch215.dev/assets/drupal/site.sqlite`. Verified retrievable (HTTP 200,
+   `content-type: application/x-sqlite3`, 6,627,328 bytes) and the round-tripped copy is
+   **byte-identical** to local.
+2. **Un-ignored and tracked.** `.gitignore` ignored all of `assets/`, with a comment claiming
+   everything in it is regenerated by `scripts/pack-*` - which was FALSE for this one file and was the
+   most dangerous part, because it told a future session the artifact was disposable. The pattern is now
+   selective (`assets/*`, `!assets/drupal/`, `assets/drupal/*`, `!assets/drupal/site.sqlite`) and
+   verified with `git check-ignore`: `site.sqlite` is tracked while `core.pf.bin`, `core.bin.gz`,
+   `driver.json` and the `drupal-sql/` chunks all remain ignored.
+
+(a) and (b) are still open, and (b) is the real fix - a backup preserves the artifact but still cannot
+rebuild it from a changed `drupal-src`.
+
+**Correction to a claim made earlier tonight:** `core.bin.gz` was described as a second artifact with no
+producer. That is wrong - `scripts/pack-drupal.mjs:239` writes it with `gzipSync(blob, {level: 9})`. It
+is regenerable; it is simply not wired into `bun run assets:pack`, which only builds the per-file pack.
+So the stale-pack hazard is real but the artifact is recoverable, and `site.sqlite` remains the only one
+that is not.
+
+The generation hash makes drift detectable but not recoverable: `assets/drupal-sql/manifest.json`
+carries `generation` (now `761ce2eaddf80da7`), and the `pack.generation_mismatch` tripwire fires when a
+migrated object disagrees with the pack. That tells you the artifact changed. It does not tell you how
+to rebuild it.
+
+# THE DEPLOY: COLD BOOT IS 1,398 ms, AND FIVE ESTIMATES WERE WRONG
+
+**2026-08-12, three `cfw-*` probe workers, deployed, measured and deleted; the worker list verified
+back to exactly the pre-existing nine.** These are `cpuTime` figures from a deployed worker, so unlike
+almost everything measured overnight they are absolute rather than local wall clock.
+
+## A0: 4,019 ms -> 1,398 ms, and the wall moved rather than fell
+
+| # | invocation | cpuTime | wall |
+| --- | --- | --- | --- |
+| 1 | alarm, the production shape (`/serve` -> 503 + queue -> alarm boots and renders) | **1,398** | 1,617 |
+| 2 | `/__assemble`, second cold isolate | 1,674 | 1,961 |
+| 3 | `/__assemble`, fresh object | 1,394 | 1,662 |
+
+Median **1,398 ms against the 4,019 ms baseline: -65.2%, 2.87x.** The report's "402x the free ceiling"
+becomes **140x**. Phase split: instantiate + lazy mount + PHP init + driver is **393 ms**; Drupal
+kernel boot on a container HIT plus first render is **889 ms**.
+
+> **CORRECTED.** This paragraph used to continue "so net of the 41 ms warm render the kernel boot alone
+> is **~850 ms of edge cpuTime**", and that 850 ms figure then organised a whole checklist section as
+> "the largest unattributed cost in the project". **It was never a measurement.** The 41 ms subtrahend
+> is an ASSEMBLY figure -- a warm request answered by the dynamic page cache -- not a warm full render,
+> which measures **74.7-226.7 ms**. Subtracting 41 instead of ~700 moved roughly 650 ms out of the
+> render and into a "kernel boot" bucket that never held it. The kernel boot on a container HIT is
+> **199.5 ms**; the first render is **1,544 ms**. The 889 ms total was always right. See
+> [3.3 attributed](#the-850-ms-did-not-exist-the-first-render-is-the-cost).
+>
+> Also: this median is **n=3**, and the platform is bimodal by 400-600 ms (below), so it is a weaker
+> figure than it looks.
+
+**The container HIT was proved by row count, not by the render**: `cache_container` held 1 row /
+479,615 B before any boot and **1 row, same cid** after boot plus three renders, on three separate
+objects. C1 confirmed the same way: `twig:%` went **26 -> 26** on `/`.
+
+## The estimate was off by 12-14x, and I wrote it
+
+The 60-120 ms band came from a 4-5 ms warm-isolate hit reading MEMFS. The edge hit reads 479,615 bytes
+out of `ctx.storage.sql`, and the rest of boot does not disappear. **A cache hit deletes ~65% of edge
+boot, not 99.5%** -- the 99.5% figure was the share of a LOCAL bucket tree, which is a different
+quantity. Recorded because it is the fifth time a local ratio has been read as an edge one.
+
+## A6: DecompressionStream IS billed as CPU
+
+Measured with a purpose-built probe (`src/probes/decomp.ts`) because boot variance of 6,161-9,164 ms
+swamps a ~400 ms quantity. One 8,214,637 B gz blob -> 42,372,680 B, N passes per invocation:
+
+| passes | cpu median |
+| --- | --- |
+| 0 | 9 |
+| 1 | 385 |
+| 2 | 950 |
+| 4 | 2,737 |
+| 8 | 5,347 |
+
+Linear, 9 ms intercept, slope **~667 ms per 42.4 MB (15.7 ms/MB)**. A byte-sum control over the same
+buffer gives 9.5 ms/pass, so the method sees CPU and a flat slope would have meant "not billed".
+Compression is worse: **~984 ms per 42.4 MB**.
+
+**So the local figure (155-173 ms for 39.9 MB) understates the billed edge cost by 2.3-2.5x.** And
+another entry for RULE 0's family: every in-isolate `gzipMs`/`gunzipMs` read **0** -- `Date.now()` does
+not advance across a codec pass.
+
+## A7: exceededMemory appears, and the boundary is not monotone
+
+`static-o2` instantiates at **100,663,296 B = 96 MiB**. One PHP allocation per invocation on top:
+
+| requested | outcome |
+| --- | --- |
+| 4-112 MiB | ok |
+| 128 MiB | ok **once**, then `exceededMemory` twice |
+| 160 MiB | ok **3/3** (heap 195.06 MiB) |
+| 192 MiB | `exceededMemory` |
+| 224 MiB+ | catchable JS throw |
+
+**128 fails while 160 succeeds**, so this is an **isolate** budget shared with whatever else a reused
+isolate holds, not a per-request cap. Two death modes and only one is catchable: the runtime kill never
+reaches the handler.
+
+The streamed A7 scenario survived -- 96 MiB live heap plus a gzip of all 100,663,296 B and a gunzip
+round trip returned 200 three times. **So a streamed restore is affordable and a materialized 22-40 MB
+buffer beside a 96 MiB base is exactly where this dies -- and it will work N times first.** ~15 real DO
+boots produced zero `exceededMemory`, so the shipping path has headroom; the restore is what spends it.
+
+## The warm single render that was owed: 41 ms
+
+`static-o2`, both bins emptied, warm interpreter, one render per invocation: **33, 38, 41, 47, 50 ms**,
+median **41**. 15 host statements, 15 rows. A storage-lane HIT with no PHP is **1 ms**. Migration ran
+79 chunks at **0-3 ms each with one 7 ms outlier, 0 over the cap**.
+
+First render of a NEW path on a warm interpreter is much worse -- `/user/login` **385 ms**,
+`/filter/tips` **174 ms** -- because each pays its own twig compiles. C1 only bakes the front page.
+
+## Four more corrections
+
+1. **`estimateRenderMs()` is now actively wrong rather than zero.** After a cold alarm fill it read
+   **117 ms** for work costing 1,398 ms, because the timed region caught only asset-fetch wall time.
+   Non-zero means `renderClockUnmeasurable` does not trip, so the guard that exists to refuse an
+   over-budget inline render will wave a 1.4 s boot through. Same class as the defect the comment at
+   `site-do.ts:1146-1157` warns about.
+2. **The canonical config cannot deploy.** `wrangler.jsonc` points `assets.directory` at `./assets`,
+   now **97 MB** (the docs still say 48 MB). Separately the "15 MB staging budget" is not real -- 18 MB
+   / 84 files uploaded in 20.6 s -- and `WITH_PF` had never been staged, so **no edge deploy had ever
+   exercised the shipping `LAZY_MOUNT=1` mount** until this one.
+3. **Free-ceiling headroom is smaller than quoted.** The deployed artifact is **3,002,429 gzipped**,
+   leaving **143,299 B** under 3 MiB, not the 268,873 the binary figure implies. The binary's headroom
+   is not the bundle's. Superseded by the current measurement of **3,006,761 gz / 138,967 B** below.
+4. **`memory_get_usage()` and `memory_get_peak_usage()` also read 0 on the edge**, exactly like
+   `microtime()`, while `ini_get('memory_limit')` correctly returns `128M`.
+
+Also: observability has ingestion lag and silently truncates a 100-event page. **An empty result means
+"not yet ingested", not "did not happen"** -- the same trap as an empty `wrangler tail`.
+
+# THE 2,788 ms COLD BOOT IS A CACHE MISS THAT SHOULD HAVE BEEN A HIT
+
+**2026-08-12, and it is the largest single lever found in this project.** C5 refuted the hypothesis
+that boot was divisible around `$kernel->boot()`. Splitting INSIDE `boot()` then found something
+better than a division: **the work should not be happening at all.**
+
+`getCachedContainerDefinition()` (`DrupalKernel.php:1034` -> `:573`) misses on **every single boot**,
+so `compileContainer()` runs every time. The two keys, measured:
+
+| | value |
+| --- | --- |
+| what the runtime ASKS for | `service_container:prod:c22ad59f71da1192::**Linux**:a:1:{i:0;s:**34**:"**/drupal**/sites/default/services.yml";}` |
+| what the packed `cache_container` HOLDS | `...::**Darwin**:a:1:{i:0;s:**80**:"**/Users/.../drupal-min-src**/sites/default/services.yml";}` |
+
+Two independent mismatches, both build-environment artifacts baked into `getContainerCacheKey()`
+(`:962`): **`PHP_OS`** (the pack was built on macOS, the runtime is Linux) and the **absolute
+`container_yamls` path**. Neither has anything to do with Drupal being wrong; the cache was simply
+keyed to the machine that built it.
+
+## What the miss costs, local wall clock, cold median 2,788 ms
+
+| phase | ms | % of boot |
+| --- | --- | --- |
+| the 70 Symfony compiler passes | 1,571 | **56.3** |
+| `ExtensionDiscovery` scan | 579 | 20.8 |
+| container compile, excl. YAML/register/params | 465 | 16.7 |
+| `cacheGet` -- **a miss**, 59 ms spent to find nothing | 59 | 2.1 |
+| dumper | 48 | 1.7 |
+| `boot()`'s own remainder | 7 | 0.3 |
+| everything else (12 buckets) | 22 | 0.8 |
+| **residual** | **14** | **0.50** |
+
+99.5% attributed. Warm is the same shape at 831 ms, so the cold/warm gap (3.35x, near-uniform across
+every phase) is wasm first-touch, not caching -- **both regimes miss.**
+
+## The counterfactual was MEASURED, not modelled
+
+Boot 1's `cacheDrupalContainer()` writes the definition under the *runtime* key. So a second boot in
+the same isolate hits it, and that boot costs **4-5 ms** with `containerCacheHit: 1` -- and it serves
+`/node/1` at HTTP 200 with the correct title, so it is a working container rather than a cheap broken
+one. Its bucket list contains only `cacheGet` 2 ms, `psr4`, `attachSynthetic`, `initContainer`: no
+extension scan, no compile, no passes, no dump.
+
+**A cache hit deletes 99.5% of boot's tree rather than a slice of it.** Estimated cold boot with a
+matching row: **60-120 ms**, derived rather than measured -- bounded below by the 4-5 ms hit and above
+by scaling it 3.35x plus the already-measured 56-63 ms cold `cacheGet`. For scale, the lazy-mount win
+was 3,066 -> 199 ms. **This is bigger.**
+
+## It is not divisible, and it does not need to be
+
+70 passes, largest 240 ms (**24x the free cap**), 32 of them >=10 ms, top 10 = 991 of 1,566 ms with a
+575 ms tail across ranks 11-70. Perfect checkpointing would need ~160 slices, and mid-compile
+`ContainerBuilder` state (definition graphs, closures, reflection caches) is not serialisable between
+invocations. So slicing the compile is the wrong goal; **shipping the compiled definition is the
+right one.**
+
+## Why it is a packer change and not a one-line fix
+
+The packed 367,580-byte definition **is not portable**. `%app.root%` was resolved at dump time, so the
+build path appears **25 times** inside it: once as the `app.root` parameter, which
+`initializeContainer()` does overwrite at `:1058`, and **24 times baked into service argument lists**
+(`InfoParser`, `extension.list.*`, `ComponentValidator`, `IconCollector`, the logger, ...). Forcing
+the cid to match without fixing those would ship a container pointing at a path that does not exist on
+the edge.
+
+The definition has to be produced with **`app.root = /drupal`** and **`PHP_OS = Linux`**, then stored
+under the cid the runtime actually computes. Deterministic and scriptable, but it belongs in the
+packer.
+
+Two smaller wastes on the same path, both 100%: `cacheGet` spends 59 ms cold looking up a row it can
+never find, and `cacheSet` then writes 366 KB into a MEMFS sqlite that dies with the isolate.
+
+## FIXED AND VERIFIED, 2026-08-12 ~08:30
+
+The pack now carries **one** container row and the cache **hits**.
+
+What the first attempt got wrong is the useful part. Rewriting the build path out of an existing
+definition and re-keying it to `Linux` produced a **byte-identical render** -- and still missed. The
+live object had written a **sixth** row under
+`service_container:prod:e48f67df6bf0fbad::Linux:...`, a versions hash that appears in neither packed
+row. So the render proved nothing about the cache, exactly as warned: **a cache hit and a cache miss
+render the same bytes.** The check that settles it is whether the object writes a row of its own.
+
+What worked: take the row **the runtime itself wrote**. It is already portable (no `/Users/`, no
+`/private/tmp/`, no `Darwin` anywhere in its 479,615 bytes) because it was produced with
+`app.root=/drupal` from the start, and it is keyed correctly by construction. That is a strictly
+better artifact than anything reconstructed by rewriting.
+
+Then the dead weight came out. Five rows totalling 2,408,361 bytes could never be read -- three
+`Darwin` rows from the build machine, plus the two `Linux` rows the first attempt added under the
+wrong hash:
+
+| | before | after |
+| --- | --- | --- |
+| `cache_container` rows | 5 | **1** |
+| `cache_container` bytes | 2,408,361 | **479,615** (-1,928,746) |
+| migration chunks | 101 | **86** |
+
+**The three 520 KB "indivisible" migration chunks were these rows.** 3 x 483,003 = 1,449,009 bytes of
+container definitions that no runtime could ever read, installed at the cost of the three worst
+invocations in the chain. Deleting them was a saving that needed no fix at all.
+
+Verified on a **fresh** object: 86/86 chunks migrated, render **12,304 bytes / sha1 `10077de5f0bd`**,
+and **exactly one** `cache_container` row afterwards -- the packed one. The previous run's spurious
+sixth row is the negative control that makes that meaningful.
+
+## C1 IS DONE, AND IT IS THE THIRD INSTANCE OF THE SAME CLASS
+
+**2026-08-12.** Precompiled Twig ships and the cache is provably hit, measured with a **counter rather
+than a clock**: `TwigPhpStorageCache::write()` is the only writer of a `twig:%` row, so a delta in
+`SELECT COUNT(*) FROM cache_default WHERE cid LIKE 'twig:%'` **is** a compile count.
+
+| pack | twig rows before | after | compiles | render |
+| --- | --- | --- | --- | --- |
+| pre-C1 | 26 | 40 | **14** | 200, 12,304 B, sha1 `10077de5f0bd` |
+| C1 | 26 | 26 | **0** | 200, 12,304 B, sha1 `10077de5f0bd` |
+
+Cost in the pack that actually mounts: 14 files, **75,646 raw / 19,380 deflated**, about 21.5 KB with
+the index. Corroborating signal: lazy-FS `inflated` went 1 -> 1,821, so PHP really opened pack members,
+and 36 fewer host statements are the compile-side writes disappearing.
+
+**The blocker was an mtime, and it is why this had never worked.**
+`MTimeProtectedFastFileStorage.php:135` names each file
+`hmacBase64($key, $hash_salt . filemtime($containing_directory))`. In a MEMFS the directory mtime is
+*mount time*, so **no build step can predict the filename**. An earlier attempt pinned *file* mtimes
+(`src/runtime/mount.ts:163`); the hash uses the *directory's*. The fix is a patch pinning
+`php_storage.twig.class` to `FileStorage`, whose path is `<dir>/<key>` with no mtime in it -- and it
+lives in `scripts/patch-drupal.mjs` rather than in a hand-edited `settings.php`, so a `drupal-src`
+refetch cannot lose it.
+
+**And the third instance of the shipped-cache-key class**: Twig folds `PHP_MAJOR_VERSION` and
+`PHP_MINOR_VERSION` into the template class name (`vendor/twig/twig/src/Environment.php:941-952`).
+Native PHP here is **8.5.7**; the shipping wasm binary is **8.3.11**. So a locally compiled cache
+carries class names the runtime never asks for -- the same shape as `Darwin` in the container key and
+the same shape as the `uniqid()` prefix. `bake-twig.php` recomputes each class name for 8.3 and
+self-checks that its formula reproduces the local names before trusting it.
+
+**The coupling was real and is verified clear.** If a baked container carried a
+`%twig_extension_hash%` different from the State row, the runtime would silently mint a fresh prefix
+and the entire Twig cache would die. Tested directly after the container bake on a fresh object:
+**26 twig rows (0 recompiles) and 1 `cache_container` row (a hit)**. The two fixes compose.
+
+## TWO MORE LANDMINES FOUND ON THE PACK PATH
+
+1. **`scripts/pack-drupal.mjs` opened with an `rm -rf` on its output directory**, which put
+   `assets/drupal/site.sqlite` -- the irreplaceable hand-trimmed artifact -- **one argument away from
+   deletion**, and contradicted `scripts/README.md`'s own rule. Removed. This is the third
+   irreversible-loss guard of the session, after the `vendor-dir` default and the `site.sqlite` backup.
+2. **`assets:pack` was writing to `assets/drupal/core.pf.*`, which nothing has ever fetched.** The
+   runtime mounts prefix `drupal-pf` (`src/runtime/lazy-fs.ts:186`), i.e.
+   `assets/drupal-pf/core.pf.{bin,json}`. So every "verified in the pack" check against
+   `assets/drupal/core.pf.json` -- including this session's own C3 verification -- was reading a file
+   the runtime never loads. Corrected, and **re-verified against the live pack**: the optimized
+   autoloader is present at 626,708 raw / 53,850 deflated, and the 14 compiled templates at 75,646 /
+   19,380. C3 and C1 are both genuinely shipped; the earlier C3 check was simply looking at the wrong
+   file and happened to reach the right conclusion.
+
+**A CI gap that follows from this:** neither workflow builds `assets/`, so `tests/node/driver-pack.spec.ts`
+cannot be passing in CI today. Worth confirming and either building the assets in CI or making the spec
+skip loudly, per the project's own rule that a step which can only skip is worse than no step.
+
+## THE CLASS: a shipped cache row is only valid if its key was produced by the runtime that reads it
+
+**This is now the third instance, not a new bug.** The first was Twig: shipped compiled templates are
+only reusable if the compiled files and the `twig_extension_hash_prefix` are produced together in a
+matching environment. The general lesson was recorded and then not applied to `cache_container`.
+
+State it as a class: **any cache row shipped inside the pack must have its key audited against the
+runtime that will read it.** A key that folds in `PHP_OS`, an absolute path, a build hash or an
+extension set is orphaned the moment the build machine differs from the edge -- and it fails
+*silently*, because a miss is indistinguishable from a cold cache.
+
+Audit run 2026-08-12 across every packed cache table: `cache_bootstrap` (5), `cache_config` (93),
+`cache_data` (5), `cache_default` (42), `cache_discovery` (80), `cache_file_parsing` (2),
+`cache_menu` (2), `cache_render` (18), `cache_routes` (11). **`cache_container` was the only table
+with an environment-dependent key.** Caveat on the instrument: that audit greps cids for visible
+build-machine markers (`Darwin`, `/Users/`, a build path), so it would NOT catch a key that folds the
+environment into an opaque hash. Absence of a marker is weaker evidence than a matching key.
+
+## The waste was NOT total on the DO path, and that changes the arithmetic
+
+The 2,788 ms measurement came from `wrangler.min.jsonc`, where `cache_container` lives in MEMFS and
+dies with the isolate. **On the Durable Object path it lives in `ctx.storage.sql` and persists.**
+
+This session's data confirms it accidentally: the object that missed **wrote its own row and that row
+survived** in `.wrangler/state/.../*.sqlite`. So `cacheDrupalContainer()`'s 366 KB write was never
+waste on the DO path -- it means **the second boot of any object already hit**, and the recorded
+4,019 ms was a once-per-object cost rather than once-per-eviction. The packed row now removes even
+that first one.
+
+Still unmeasured: a boot / evict / boot cycle reading `containerCacheHit` on the DO path directly,
+which is the clean way to state this rather than inferring it from a persisted file.
+
+## Two corrections to the estimate
+
+- **60 ms is optimistic.** The lower bound leaned on a 4-5 ms hit in a warm isolate; a cold hit must
+  read 479,615 bytes out of sqlite, which is more work than the 59 ms miss, not less.
+- **It does not de-risk A2, it de-urgentizes it.** Even at 60-120 ms local, the edge factor is 3-5x, so
+  a fixed container is still 20-60x the free per-invocation cap. The container fix is dramatically
+  simpler and safer than heap restore; if the packer recipe lands, the boot story may not need A2 at
+  all on paid.
+
+## THE RECIPE EXISTS NOW, AND ITS ORDERING IS NOT OPTIONAL
+
+`bun run bake:pack` runs every bake in the one order that works: snapshot -> autoloader -> collectors
+-> twig -> pack -> sql -> driver. `bun run bake:container` (which must run under **node**, since bun
+does not ship `node:sqlite`) lifts the container row afterwards.
+
+**Two ordering constraints, both learned by breaking them.**
+
+1. **Twig before container.** `TwigEnvironment` compares the container's `%twig_extension_hash%`
+   against a State row; on a mismatch it mints a fresh `uniqid()` prefix and **orphans every compiled
+   template with no error**. Verified clear: 26 twig rows in, 26 out, zero recompiles.
+2. **The container lift must be LAST.** `composer dump-autoload` regenerates
+   `vendor/composer/installed.php`, which is what `DrupalInstalled::VERSIONS_HASH` is derived from --
+   and that hash is part of the container cache key. So running the autoloader step after a lift
+   silently invalidates the row. Caught by the acceptance check: the pack held
+   `e48f67df6bf0fbad` while the runtime had moved to `7b20d696c38c3567`, same OS and same path, hash
+   different. The render was still byte-identical.
+
+**That is why the acceptance check counts rows and not bytes.** A hit and a miss both render 12,304
+bytes / sha1 `10077de5f0bd`. The check is: on a FRESH object, `cache_container` must be **1** row and
+the `twig:%` count must not increase.
+
+One artifact of the fix worth noting: the container row is now a single **625 KB** chunk
+(`0012.json`, one statement). That replaces three 520 KB chunks, so it is a net improvement, and the
+statement itself is 129 chars with 7 bound parameters -- both far under the caps. But it is one
+indivisible invocation, and it is now the largest in the chain.
+
+## The remaining blocker is `site.sqlite` itself
+
+This fix was applied by **surgical insert**, the same way C2 was, because there is still no automated
+path from `drupal-src` to `assets/drupal/site.sqlite` -- it is a hand-trimmed artifact whose recipe
+exists nowhere in the repo. So the container row is now correct but **not reproducible from a clean
+checkout**, and that gates one-click deploy as much as it gates this. Writing that recipe is the real
+next item, and it is bigger than the container row: every future pack change needs it.
+
+## What this does to the rest of the plan
+
+- It does **not** retire A2. A snapshot restores a booted heap in 7 ms locally and also survives a
+  container cache hit; the two compose.
+- It weakens the case for B4 (JSPI) as a cold-boot fix specifically, because the cost JSPI was meant
+  to slice largely disappears.
+- **It is the first cold-boot lever that needs no Docker, no JSPI and no deploy to build**, only a
+  packer change -- which makes it the cheapest large win available.
+
+Instrument honesty: adding ~90 frames including 70 pass wrappers moved cold from 2,601-2,686 to
+2,750-2,808, about **+4% of boot**. That moves no conclusion when the top bucket is 56%. Clock
+granularity is `minStepMs 0.999928`, so 11 of 70 passes cold (20 warm) are below resolution and are
+reported as such rather than numbered.
+
+# ROADMAP: THE ACCESSIBILITY TRACK, 2026-08-12
+
+> **Superseded in its ordering.** H5 orders performance work with "Cold boot, 4,019 ms" first. Cold
+> boot is **1,398 ms** on the edge, and boot-directed work is bounded at ~1.1% because the fill window
+> amortises it, so H5's ordering is inverted -- rows-directed work comes first. See
+> [BOOT WORK IS SATURATED](#boot-work-is-saturated-the-roadmap-was-in-the-wrong-order).
+
+Requested after the initial checklist. The framing is deliberate and it changes what "done" means:
+the project's goal is **Drupal for solo, indie and budget-bound sites**, and the primary sell is
+**one-click setup**, because a traditional install costs hours of ddev, Drush, Composer and VPS
+knowledge before a single page renders. Every item below is judged against that, not against raw
+throughput.
+
+These are **designs and open questions, not measurements.** Nothing here has a number attached
+unless it says where the number came from.
+
+## H0. The comparison table is the product pitch, and it must price the splitting
+
+Expanded 2026-08-12. This project is now a viable Drupal **hoster**, and the README table should be
+written as one. What it must carry, beyond what is there today:
+
+- **The expensive first boot, priced honestly.** One invocation per object, over the free cap, off the
+  request path in an alarm. Name it rather than hide it, and name every other place splitting is
+  forced: first-run migration (79 chunks), sliced database updates, module install, and the fill chain.
+- **Splitting as a toggle, which is the paid-tier pitch.** Every split exists because of the 10 ms
+  per-invocation cap. On paid, splitting can be **turned off** or its slice size raised, so the user
+  chooses their own **requests-vs-CPU-time ratio**: many cheap invocations, or few expensive ones.
+  That is a real dial with a real cost on each side, and it belongs in the UI with both costs shown.
+- **Max visits, both windows.** ~100,000 page views/day and ~3M/month on free, with Worker requests
+  binding first and every other meter carrying roughly 5x headroom.
+- **Scaling costs on the other side of the comparison**, which is where a VPS stops being cheap: a
+  load balancer, a second box, Kubernetes or Docker hosting, and the labour each adds. State list
+  prices as list prices.
+- **Rendering performance AS IT SCALES**, not just at rest. The edge case is the interesting one: a
+  Cloudflare cache hit is served from the visitor's nearest colo, so international latency is roughly
+  flat, while a single VPS pays the round trip to one region. That is the strongest honest claim in the
+  whole comparison and it is not about CPU at all.
+- **International formats** and the measured limits that bite there: ASCII-only `NOCASE`, so `Ünicode`
+  does not match `ünicode`, and the Greek final-sigma difference.
+
+## H1. Threshold settings, and what a user can actually SEE
+
+The free plan bottlenecked this project into decisions a paid user should be allowed to undo. The
+honest starting point is that **the 10 ms ceiling is an invocation limit, not a latency target**, and
+those are different things: a render can take 40 ms of wall clock while costing 8 ms of CPU.
+
+What is visually differentiable, from the human-perception literature and worth treating as the
+design axis rather than guessing:
+
+| budget | what a user perceives | what it buys architecturally |
+| --- | --- | --- |
+| **10 ms** | indistinguishable from instant, and **far below the noise floor of any network** | forces slicing; every feature that cannot be split must be off |
+| **20 ms** | still imperceptible; one frame at 50 fps | a single uncached render fits without slicing |
+| **50 ms** | imperceptible for navigation; at the edge of feeling "live" for typing | render + one uncached subrequest, or a modest View |
+| **100 ms** | the classic threshold for "the system reacted instantly" | comfortable room for authenticated rendering |
+| **300 ms+** | perceptible pause; still fine for a page navigation | Views with joins, image derivatives, contrib that assumes a disk |
+
+**The conclusion that matters: between 10 ms and 100 ms nobody can see the difference on a page
+navigation, because TLS and RTT dominate by an order of magnitude.** So the paid tier's value is NOT
+"faster pages" — it is **capability**: features that cannot be divided become available at all. That
+is a much more honest sell than a speed claim, and it should be worded that way in the UI.
+
+Options worth exposing, and each needs a measured cost before it ships:
+
+- render budget per invocation, with the slicer disabled above a threshold
+- Views: allow joins / allow `REGEXP` shims / cap result rows
+- image derivatives: refuse, defer to a host call, or allow inline
+- cache tiers: edge only / edge + DO / DO only, per plan
+- snapshot policy: never / post-boot / post-boot with a keep count
+- self-repair aggression: observe only / L0-L3 / L0-L5 once rollback exists
+- `mbstring` and `iconv` fidelity vs bundle bytes
+- authenticated rendering: refuse / allow / allow with a lower cache TTL
+
+Every toggle must state its cost **in the UI**, not in a doc. A setting whose consequence is
+invisible is how a user ends up over a cap without knowing which switch did it.
+
+## H2. Install packages and modules from the UI, which is the migration story
+
+VPS users arrive with a `composer require` habit and a Drush habit. Meeting them there is the single
+biggest adoption lever, and it decomposes into three honest tiers:
+
+1. **Drupal's own `Extend` page**, which is the one most users will actually click. It needs the
+   module already present in the mounted tree, so it pairs with E6 (a curated pre-packed catalog in
+   R2): the UI lists what the catalog can install, and installing is an R2 copy plus `hook_install`.
+2. **A `composer require` field.** The solver is the hard part and E3 is the escape hatch: one
+   cacheable fetch of `repo.packagist.org/p2/{vendor}/{pkg}.json`, pick the highest version
+   satisfying the constraint, check its `require` against the shipped `composer.lock`, install if
+   satisfied, and **refuse with the named conflict** if not. That refusal is the feature — a
+   half-installed dependency tree on an edge runtime is unrecoverable without a rollback path.
+3. **A Drush-shaped command field**, mapped onto `cfw_ops` (G1) rather than shipping Drush. The
+   registry already exists with 8 operations and `writes()`/`sliced()` failing closed; what is
+   missing is the HTTP surface and a UI. **Do not ship Drush** — the pack cost buys almost nothing
+   once `cr`, `cex`, `cim`, `updb`, `en`, `pmu`, `sql-dump` and `status` exist.
+
+Sequencing that actually works: G1's surface → E5's compatibility oracle so the UI can say *why* a
+module is refused → E6's catalog → E3's fast path → the `Extend` integration last, because it is the
+thinnest layer over all of the above.
+
+## H3. Arbitrary modules: the "how", not the "whether"
+
+The rule for this track: a module is **fundamentally impossible** only if it needs something the
+runtime cannot express at all. Everything else is an engineering problem. Current triage:
+
+| what contrib assumes | status | the approach |
+| --- | --- | --- |
+| a writable filesystem | **solvable** | MEMFS already exists; persistence needs a write-through to DO SQLite or R2, plus eviction. The lazy FS already tracks dirty nodes |
+| `curl_*` | **shimmed** (E7) | over `CfwDeferredHttp`, init/setopt/exec/getinfo/close |
+| `openssl` digest/HMAC/random | **shimmed** (E7) | over `crypto.subtle` |
+| image derivatives (`gd`, Imagick) | **solvable, unbuilt** | Cloudflare Images or a host-side resize; `CfwImageToolkit` is the seam and already exists |
+| `exec`, `proc_open`, `fsockopen` | **refused by name** | genuinely unavailable; the shim registry names them rather than failing oddly |
+| `REGEXP` in Views | **solvable** | no SQLite regex function, so compile to `LIKE`/`GLOB` where the pattern allows and refuse-and-name otherwise |
+| openssl keypair generation | **refused** | no entropy-bound primitive in `crypto.subtle` covers it |
+| cron-driven long jobs | **solvable** | the alarm chain plus `cfw_ops`; the slicing discipline already exists |
+| a real MySQL | **not planned** | the driver targets DO SQLite; Hyperdrive is a different product shape |
+
+**The most valuable unbuilt item here is filesystem persistence**, because it unblocks a long tail of
+modules at once rather than one at a time.
+
+## H4. Self-repair, widened
+
+Built: ledger, 17 tripwires, boot self-test, L0-L3 with a decaying breaker. What a non-technical
+owner still cannot survive:
+
+- **Backup and restore as a product feature**, not a script. Export is "the migration loop reversed"
+  and it is what F7's L5 rollback waits on. Until it exists, L4 quarantine has nowhere to fall back to.
+- **Snapshot-as-recovery.** A2's store is built and unwired; once wired, a known-good post-boot image
+  is a one-step recovery from a broken container or a bad config write. That is a bigger user-facing
+  win than its boot-time saving.
+- **Config drift auto-repair.** The tripwire detects it; nothing corrects it.
+- **A plain-language incident record.** Every finding currently names a machine-readable code. A
+  non-technical owner needs "your site was slow because X, it fixed itself, here is what changed".
+- **Threshold breach forecasting** (F5 is the mechanism) surfaced as "at this rate you will exceed
+  the free plan in N days", which is actionable where a raw counter is not.
+
+## H5. Performance, where the headroom actually is
+
+Ordered by measured size, not by appeal:
+
+1. **Cold boot, 4,019 ms.** C5 refuted the assumption that it was divisible around `boot()`:
+   `$kernel->boot()` is **98.7-99% of boot in one call**. So the remaining options are a split
+   *inside* `boot()`, a JSPI build (B4), an always-warm object, or the A2 snapshot — and A2 is the
+   only one of those that is already measured to work (**7 ms** restore, local).
+2. **The pack side**, which is where C1/C2/C3 live and where a cost can be removed without a request
+   existing to contaminate anything.
+3. **`INITIAL_MEMORY`**, a resident-footprint lever and not a boot-speed one — worth stating because
+   it was previously conflated.
+4. **Not worth chasing:** per-invocation overhead. `/version` measured **0-1 ms** across 30 samples,
+   so the floor is not the problem.
+
+## H6. Publish preparation for `phasm` and `drupflare`
+
+Follow `rom` exactly, because it worked: 0.x beta versioning, `release.yml` doing tag + release with
+the webhook handling Packagist (no `update-package` call — it is redundant and a pre-submission 403
+kills the job), renovate, prettier, a coverage workflow with codecov, PHPStan gating `build.yml`, and
+`export-ignore` so the published archive is lean.
+
+Two traps `rom` already paid for: a `release.yml` reading a `version` field that does not exist tags
+**`vundefined`**, and `git describe --tags` exits 1 on a repo with no tags so the *first* release can
+never run. Check both before tagging either repo.
+
+`drupflare` additionally needs its Drupal constraint **measured** the way `rom`'s `^11.2` floor was
+(probe the tags, do not inherit a sibling's constraint) and its own `vendor-dir` guard if it ever
+gains a `vendor/` that is not Composer's.
+
+## H7. PHP 8.5 through the gates
+
+Two independent problems that must not be conflated:
+
+- **PHP-side: done across all three packages.** `php: ^8.3` admits 8.5, every suite passes on
+  **8.5.7** with `error_reporting=E_ALL` and no deprecations (`rom` 204, `drupflare` 177 + 77,
+  `stream-http` 91), Drupal core requires `>=8.3.0` with no upper bound, and `rom`, `stream-http`
+  and `drupflare` all matrix 8.3/8.4/8.5.
+- **RETRACTED: "`patch-vm-interrupt.sh` may not apply at all."** Checked byte-exact against
+  `php/php-src` branches `PHP-8.4` and `PHP-8.5`: the anchor and both `src.replace()` targets each
+  match exactly once in both. 8.5 adds `ZEND_VM_KIND_TAILCALL_SAVE_OPLINE();` inside the `if` body,
+  below the anchored line, so it does not disturb the match. Retire that risk. Also retracted:
+  vrzno is not a blocker -- php-wasm's own stock 8.5 build carries `--enable-vrzno` and 67 vrzno
+  strings, and the pinned `c3aa3b9` is current master HEAD.
+- **Wasm-side (B5): BUILT AND MEASURED 2026-08-14. Both are out on free, and the estimator that said
+  otherwise was wrong by 19-50x.** See the build table immediately below this list.
+- **RETRACTED: "`ext/uri` may be removable."** The hinge resolved in the direction that does not
+  help. `parse_url()` was NOT reimplemented on uriparser: at tag `php-8.5.2`,
+  `ext/standard/url.c:317` still calls the hand-written `php_url_parse_ex2()` and `url.c` includes
+  nothing from `ext/uri`; `ext/uri/uri_parser_php_parse_url.c:149` calls INTO it. But `ext/uri`
+  cannot be dropped anyway, because the premise that `parse_url()` was holding it in is false:
+  `main/streams/streams.c:31` includes `ext/uri/php_uri.h` and `php_stream_context_get_uri_parser()`
+  calls `php_uri_get_parser(NULL)` from an unguarded `PHPAPI` function in CORE, with 56 `php_uri`
+  references across four always-built files including `ext/filter`'s `FILTER_VALIDATE_URL`. Neither
+  `ext/uri/config.m4` nor `ext/lexbor/config.m4` declares a `PHP_ARG_ENABLE` -- **0 matches in the
+  build tree** -- so `--disable-all` cannot reach either.
+- **The dominant term is lexbor via `ext/dom`, not `ext/uri`, and it is not trimmable.** LTO bitcode
+  by directory: `ext/dom/lexbor` is 4,195,780 B on 8.4 and 49,460 on 8.5, while `ext/lexbor` is
+  3,109,236 on 8.5 and `ext/uri` including uriparser is 537,196. 8.5 promotes lexbor out of `ext/dom`
+  and drops the CJK encoding tables on the way, which pays for all of `ext/uri` with change left
+  over. lexbor arrives for `Dom\HTMLDocument`, and **`ext-dom` is required at runtime here** -- see
+  "`ext-dom` IS ON THE ANONYMOUS RENDER PATH" below, measured independently. But `ext-dom` required
+  does NOT make lexbor required; see "LEXBOR IS THE TARGET" below, which splits them.
+- **CORRECTED: the uriparser variant was dismissed by comparing incommensurable units.** This section
+  previously argued that "537,196 B of bitcode cannot close a 541,236 B gzip gap". Those are
+  different units and the numbers only look decisive because they are close. LLVM bitcode is
+  typically several times the wasm it emits, and gzip then eats the wasm's repetition, so the ratio
+  runs in the unhelpful direction and the comparison establishes nothing. What can be said without a
+  build: uriparser alone is **probably insufficient** and lexbor is **probably sufficient**. Only a
+  build settles either.
+
+Built with extension-identical configure lines to the 8.3 control, so the deltas belong to php-src
+alone:
+
+| build                  |    php | wasm gz   | glue gz | total gz  |
+| ---------------------- | -----: | --------- | ------: | --------- |
+| `static-o2` (shipping) | 8.3.11 | 2,757,693 | 119,162 | 2,876,855 |
+| `static-control-warm`  | 8.3.11 | 2,756,868 | 119,991 | 2,876,859 |
+| `static-control84`     |  8.4.1 | 3,756,464 | 122,782 | 3,879,246 |
+| `static-control85`     |  8.5.2 | 3,686,964 | 146,358 | 3,833,322 |
+
+The comparator reproduces the shipping 8.3 total to **4 bytes**, which is what makes the rest usable.
+**8.5 is 45,924 gz SMALLER than 8.4** -- the extrapolation had the magnitude wrong in both directions
+and the SIGN wrong too. The decisive figure is not the bundle total: **the wasm ALONE is 541,236 B
+over the 3,145,728 ceiling on 8.5 and 610,736 B over on 8.4**, before one byte of glue or worker JS,
+so no bundle-accounting argument can move it. Measured, 8.4 is **874,677 B over** against the
+estimator's 17,267-46,116, so "8.4 is a byte hunt" was wrong and is retracted.
+
+**Verdict: free ships PHP 8.3 today, and 8.5 misses by 687,594 gzipped bytes.** Paid fits both -- 8.5's
+3,833,322 is 37% of the 10,485,760 paid ceiling. Nothing in the current Cloudflare docs offers an
+out-of-bundle wasm module, the 3 MB compressed cap covers the bundle including wasm, and `workerd`
+blocks request-time codegen, so the binary cannot be moved off the meter.
+
+**Do NOT read that as "structural, and a trim cannot reach it."** An earlier draft of this section said
+so and it was an overclaim: the gap is measured, but the levers below have never been counted, and
+several are the same substitution pattern this project already uses everywhere else.
+
+**Sort every proposal by which side of the wasm boundary it lands on, because the wasm ALONE is over
+the ceiling.** A JS-side saving reduces the bundle total and cannot touch the wasm-alone figure, so it
+buys headroom for the 8.3 bundle and contributes nothing to a version bump. A wasm-side saving counts
+against both. The opposite error is equally wrong: only the first two rows here are JS-side, and
+dismissing the whole list as "wrong side of the ceiling" would discard the six levers that are
+actually in the binary.
+
+| candidate                                                                 | side     | gz         | state                                                                          |
+| ------------------------------------------------------------------------- | -------- | ---------- | ------------------------------------------------------------------------------ |
+| `wrangler --minify` on the bundle                                         | **JS**   | **51,251** | MEASURED on a deploy; 8.3 headroom only, cannot help a bump                     |
+| Closure on the emscripten glue                                            | **JS**   | unmeasured | 8.3 headroom only; needs a real `-sCLOSURE=1` build, standalone Closure is void |
+| `ext-yaml`                                                                | **wasm** | 83,551     | costs 241 ms of boot, which RULE 0b now prices at ~1%                           |
+| `ext-zlib` -> `CompressionStream`                                         | **wasm** | 43,485     | the `mb-fix.js` pattern; core lists `ext-zlib`, so substitute                   |
+| `ext-pdo` behind a userland `PDO` const shim                              | **wasm** | unmeasured | retained only for core's sqlite class constants                                 |
+| libxml2 `--without-{catalog,schemas,schematron,xptr,c14n,legacy,modules}`  | **wasm** | unmeasured | `--with-http=no --with-ftp=no` already set in `deps.lock`; the rest are not     |
+| PCRE2 `--without-pcre-jit`                                                | **wasm** | unmeasured | `pcre.jit` reads empty at runtime, the compiler may still link                  |
+| `-sMALLOC=emmalloc`, `wasm-opt -Oz`                                       | **wasm** | unmeasured | dlmalloc is the default                                                         |
+| SWITCH VM dispatch                                                        | **wasm** | unmeasured | CALL emits a function per opcode; SWITCH collapses them                         |
+| **lexbor's HTML half**                                                    | **wasm** | unmeasured | **the largest term by 6x, and Drupal uses none of it** -- see below             |
+
+The instrument for triaging these is a **link map**, not a variant per question. `wasm-ld -Map`
+attributes every symbol to its originating object, and one link answers what a dozen builds have been
+answering piecemeal. It has to be requested AT LINK TIME: the shipping binary is stripped at `-O2`
+(`strings | grep lexbor` returns 0 on all three controls), so nothing can be recovered from the
+artifact after the fact. Treat the map as triage and confirm the top candidates with a real build,
+because `-O3` already proved raw and gzipped bytes can move in opposite directions here.
+
+Also retire the stock-binary figures for reasoning about this build. `STOCK_BINARY_GZ['8.5']`
+(4,260,565) says 8.5 costs +754,558 over 8.4; the controls, built with an identical rc, say 8.5 is
+**45,924 SMALLER**. Both can hold, because stock is upstream's own configure line and not ours -- so
+whatever inflates stock 8.5 lives in that configuration. The control pair is the authority for this
+project, and the estimator is only for a version with no build.
+
+One caveat on the arithmetic: every byte above is measured off disk EXCEPT the bundle-total rows in
+`scripts/measure/php-version-headroom.ts`, which add a 141,159 B non-binary overhead taken from a
+`wrangler deploy --dry-run` snapshot. That mixes wrangler's single-stream gzip with two independent
+gzips and the snapshot drifts, so re-measure it before quoting it. It changes nothing: the wasm-alone
+row already decides the question.
+
+# THE ROW ATTRIBUTION WAS WRONG: NO FILL WRITES TO `dblog`
+
+Measured 2026-08-13 with `src/db/write-tally.ts`, hooked into the one place every statement passes with its
+own `rowsWritten`. **100% of rows attributed, `?unattributed` = 0**, so the breakdown is trustworthy.
+
+| path                     | statements | rows | where they went                                     |
+| ------------------------ | ---------: | ---: | --------------------------------------------------- |
+| cold boot + first render |         63 |   12 | `cache_dynamic_page_cache` 8, `cache_page` 4        |
+| warm render              |         39 |    5 | `cache_page` 5                                      |
+
+**Not one row goes to `watchdog`.** The claim this document carried -- "~17-18 rows per fill, about 9 of
+them `dblog`" -- is **falsified on the measured render path**, and with it the **2.15x that the work order
+ranked as the single best lever available.** Uninstalling `dblog` would have cost a repack, invalidated the
+baked container and every figure recorded against it, and saved **nothing**.
+
+That is the third time in this project a confident number turned out to be an artefact of not measuring the
+thing itself, and it is the reason the previous section said to measure the composition **before** acting.
+
+## A row-count diff could never have found this
+
+`INSERT OR REPLACE` over an existing cid writes a row and leaves the count unchanged, and so does every
+`UPDATE`. The cache-bin diff run earlier in this session reported **0 new rows and 0 rewrites across five
+bins** while the fill was demonstrably writing. So the only honest instrument is the meter itself --
+`rowsWritten` per statement, attributed to the table the statement targets -- which is what
+`writeTargetTable()` does, and why it parks anything it cannot parse under `?unattributed` rather than
+guessing.
+
+## What the real lever is
+
+Every row is **Drupal's own page caches**, and they are **redundant here**: the platform already stores the
+rendered page in `cfw_page` and serves it from the storage lane with no PHP on the path. Drupal is being
+asked to cache a page that the layer above it has already cached.
+
+| rows/fill                  | regen/day  | binding meter | vs the modelled 17 |
+| -------------------------- | ---------: | ------------- | -----------------: |
+| modelled (17)              |      5,882 | rows          |              1.00x |
+| **measured cold (12)**     |  **8,333** | rows          |          **1.42x** |
+| **measured warm (5)**      | **20,000** | rows          |          **3.40x** |
+| page caches off (~0)       |     26,315 | **do**        |              4.47x |
+
+So the regeneration ceiling is **already 1.42-3.40x higher than modelled**, and pointing
+`cache.page` / `cache.dynamic_page_cache` at a null backend would take it to the point where **DO requests
+bind instead** -- 26,315/day, 4.47x, and the end of rows-written work entirely.
+
+**Why that is a settings change and not a module uninstall:** a cache backend override lives in
+`settings.php`, which ships inside the pack. It does not change the module set, so
+`DrupalInstalled::VERSIONS_HASH` is untouched and the container key survives -- the exact thing that made
+the `dblog` route expensive. It still needs verifying that the container does not cache the backend
+mapping, which is not yet measured.
+
+## What this does NOT change
+
+`rowsPerFill` in `free-envelope.ts` is deliberately left at 17. The measured figures come from one path
+(`/` on a site with `page_cache.max_age: 0`) and the model should not be narrowed to a single measurement
+-- a content-heavy page, a form, or an authenticated request may write more. The measured numbers are
+reported here and passed explicitly via `rowsPerFill` when scoring; changing the default needs the same
+measurement across the prefilled path set.
+
+> **SUPERSEDED, 2026-08-13.** The flat 17 is gone. It was produced by an instrument that could only
+> see Drupal's statements, and it described no real case: `ROWS_PER_FILL` now names four measured
+> warmth classes spanning 3 to 62 and the default is `realRender: 13`. The caution above -- that one
+> path should not set a model-wide default -- was right, and is now answered by `warmthMix` rather
+> than by a wider single figure. See "THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND" above the FOLD.
+
+# WHERE THIS STANDS, AND WHAT TO DO NEXT
+
+`OVERNIGHT.md` and `CHECKLIST.md` were deleted on 2026-08-13 and were never committed, so this section
+absorbs what they carried. The record is now four documents: this one (authoritative above the FOLD),
+`CLAUDE.md` (constraints, RULE 0 and RULE 0b) and
+`README.md`.
+
+**Gate: 1,699 tests / 61 files, `tsc` clean, `prettier` clean.** `vendor/` holds 19 entries including all
+14 original `static-*` builds.
+
+## The production checklist is complete
+
+Every functional item is closed: the packer recipe and its reproducible producer, all red gates but one,
+prefill as the free default, the streaming heap restore with a deployed acceptance, the 503 placeholder,
+the `cfw_ops` surface, first-run configuration, the per-plan page cache, the Packagist fast path, the
+compatibility oracle, the pre-packed catalog, the Workflows install budget, and both halves of the repair
+ladder.
+
+## The one thing to do next, and it is not what the roadmap said
+
+**Measure the ROW COMPOSITION of a fill.** Regeneration is the binding ceiling, rows written is what binds
+it, and the work order says rows-written work comes first. But the figure everything rests on -- "~17-18
+rows per fill, about 9 of them `dblog`" -- predates this session and **the per-table breakdown has never
+been measured.**
+
+Measure it before acting, because uninstalling `dblog` changes the module set, which changes
+`DrupalInstalled::VERSIONS_HASH`, which changes the container cache key, which invalidates the baked
+container and every figure recorded against it. That is exactly the trap the `media` finding hit: a
+structural delta that is cheap to measure and a CPU delta that is not, on a change that silently
+invalidates the baseline.
+
+Expected payoff if the attribution holds: **2.15x** on the regeneration ceiling, against ~1% for anything
+boot-directed.
+
+## What is genuinely unfinished
+
+- **No durable filesystem.** `SETTINGS_OVERRIDE` sets the database and two PSR-4 roots and nothing else,
+  so Drupal writes into MEMFS and every file upload dies at eviction. The fix -- an R2 stream wrapper for
+  `public://` and `private://` -- is also the serving-ceiling lever, so one binding does double duty.
+- **Authenticated traffic has no strategy and no decision.** It is the one workload class in the Free Plan
+  Product Test with no answer, and it is a product call rather than an engineering one.
+- **Drupal's own module installer has never run end to end** through this stack. E3/E5/E6 decide whether a
+  module CAN be installed and price the Workflow that would do it; nothing has installed one.
+- **`durabledb` is red at baseline** on a bare `cartridge` specifier. Repo-layout decision.
+- ~~**`stream-http` cannot be published**: its class is unloadable from its own PSR-4 map.~~
+  **FALSE, and it is published.** `class_exists('Drupflare\StreamHttp\HttpsStreamWrapper')` returns
+  TRUE against the map in its own `composer.json` (`Drupflare\StreamHttp\` -> `src/`, and the file
+  is `src/HttpsStreamWrapper.php`), measured. It is live at **v0.1.1** and `drupflare/drupflare`
+  carries `drupflare/stream-http: ^0.1` as a hard `require`.
+
+## Decisions waiting on a human
+
+| decision | the trade |
+| --- | --- |
+| the `cartridge` dependency | publish it (real fix, freezes the API early), `file:` link it (green locally, red in CI), or vendor the mask (a third copy of code that has gone stale twice) |
+| bank B4's 9,554 B by swapping the binary alias | my read is NOT YET: it invalidates every figure measured on `static-o2` and unlocks nothing, since 8.4 stays 7,713 B over on the most favourable method |
+| `rm -rf .edge-assets` + ~700 MB of scratchpad Drupal roots | disk only; nothing depends on them |
+
+# E4: WORKFLOWS IS ON FREE, AND THE "25,000 STEPS" FIGURE WAS A PAID ONE
+
+Checked against Cloudflare's own docs before building anything, because if Workflows were paid-only then
+E4 as specified would **break the product goal** -- a host that cannot install a module is not
+functionally equivalent to one that can.
+
+**It is available on Workers Free.** Functional equivalence holds. But this checklist item carried a
+figure that is paid-only, and free has three limits nothing in this project modelled.
+
+| dimension            | Workers Free                                   | Workers Paid                    |
+| -------------------- | ---------------------------------------------- | ------------------------------- |
+| steps per INSTANCE   | **1,024**                                      | 10,000, configurable to 25,000  |
+| steps per day        | **3,000**                                      | 500,000/month                   |
+| CPU per invocation   | **10 ms, unchanged**                           | 30M ms/month                    |
+| requests             | **shared with Workers requests, 100,000/day**  | 10M/month                       |
+| persisted state      | 100 MB/instance, 1 GB total, 3-day retention   | 1 GB/instance, 30-day retention |
+
+**"25,000 separately-budgeted steps" is the paid per-instance ceiling.** Free gets 1,024.
+
+## A step buys DIVISIBILITY, not CPU
+
+The most important line in that table is the third: a free Workflow step still gets **10 ms**. Workflows
+does not hand free a five-minute budget -- it hands it a way to spend many 10 ms budgets with durable
+state and retries between them. That is exactly what a module install needs, and exactly not what the
+name suggests.
+
+## So does an install fit? Yes, and comfortably
+
+`OpsRegistry` prices `en` at **1,344.7 ms** native plus the **282.9 ms** `cr` flush it forces: **1,627.6
+ms** total. At 10 ms a step that is **163 steps**.
+
+| question                            | answer                                    |
+| ----------------------------------- | ----------------------------------------- |
+| steps one install needs             | **163**                                   |
+| fits one free instance (1,024)?     | **yes**, with 6x headroom                 |
+| installs/day on free (3,000 steps)  | **18**                                    |
+
+Eighteen module installs a day on the free plan. For an operation a site owner performs a handful of
+times in its life, that is not a constraint anyone will meet. **Free and paid differ here in speed, not
+in capability**, which is precisely the product contract.
+
+## The trap, and it is the same one the cron trigger had
+
+**A Workflow invocation is charged against the SAME 100,000/day request quota as a Worker request** --
+the docs say "shared with Workers requests". So an install spends the *serving* ceiling, which is
+saturated at 3M/month. At 163 steps per install the cost is small, but it is not free, and a naive
+implementation that started an instance per candidate module while browsing a catalog would spend the
+site's serving budget on window shopping.
+
+That is now `FREE_QUOTAS.workflowStepsPerDay` and `workflowStepsPerInstance`, with `scoreInstall()` and
+6 tests, so the next proposal is scored rather than assumed. It is the **fourth** meter this project has
+found that neither original ceiling could see -- after rows written, and Cloudflare Images.
+
+# BOOT WORK IS SATURATED: THE ROADMAP WAS IN THE WRONG ORDER
+
+> **Superseded in its numbers only; the ~1.1% verdict survived the correction.** Windowed regeneration
+> is **7,575/day**, not the 5,813 in the tables below, because the rows-per-fill instrument counted
+> only Drupal's half of a fill. The binding meter is still rows written. See
+> [THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND](#the-rows-per-fill-instrument-was-half-blind-and-durable-files-now-exist).
+
+An external review found that `free-envelope.ts` -- the model RULE 0b tells every proposal to be scored
+against -- **did not model `FILL_BATCH_SIZE`**, which `src/site-do.ts:412` defaults to **5**. So the model
+understated a ceiling the shipped code already beat.
+
+That is the same failure the model was built to fix, running the other way: not a right metric that
+governed nothing, but a **stale metric that governed everything**. Every regeneration figure this document
+carried was computed from it. They are corrected below.
+
+## Corrected ceilings
+
+One alarm firing fills five pages, which amortises both per-firing costs across them: the sliced boot,
+and the single row `setAlarm()` writes.
+
+| path                       | was (unbatched) | corrected | binding meter          |
+| -------------------------- | --------------: | --------: | ---------------------- |
+| alarm chain, cold          |         210/day | **1,052** | DO requests            |
+| with the WebSocket window  |       5,263/day | **5,813** | **rows written**       |
+
+The change in the binding meter is the finding. Once the window amortises the boot, **regeneration is
+bound by rows written, not by DO requests.**
+
+## Which means boot work is worth ~1%
+
+A sweep over the batch, holding everything else fixed:
+
+| fill batch | regen/day | binding meter |
+| ---------: | --------: | ------------- |
+|          1 |     5,263 | do            |
+|          5 |     5,813 | rows          |
+|         25 |     5,868 | rows          |
+|        100 |     5,878 | rows          |
+
+**Batch 5 to 100 is a 20x reduction in boot cost per fill and buys 1.1%.** So every boot-directed item --
+JSPI, the A2 heap restore, always-warm objects, the whole `-O3`/SWITCH/PGO family -- is bounded at about
+one percent until rows-per-fill falls. That is most of what this project has spent its effort on.
+
+## Rows work first, and it stops paying at ~2
+
+| rows/fill | regen/day | vs today | binding meter |
+| --------: | --------: | -------: | ------------- |
+|        17 |     5,882 |    1.01x | rows          |
+|         8 |    12,500 |    2.15x | rows          |
+|         4 |    25,000 |    4.30x | rows          |
+|         2 |    26,315 |    4.53x | **do**        |
+|         1 |    26,315 |    4.53x | do            |
+
+Uninstalling `dblog` (17 -> 8) is **2.15x**. Auditing the fill's own bookkeeping down to 4 is **4.30x**.
+Below about 2 the DO budget takes over at 26,315/day and boot work becomes worth something again.
+
+**So the correct order is: rows-written work, then boot work, and never the reverse.** The intuitive
+roadmap had it backwards, and no amount of CPU measurement would have revealed that -- only modelling the
+meters together does.
+
+## One earlier conclusion of mine is FALSIFIED
+
+This document stated that a 1%-dynamic workload at 3M/month **fails by 4.8x** on the alarm chain, and
+concluded that the WebSocket fill window is therefore a **product requirement**. Both were computed from
+the unbatched model.
+
+Corrected: the alarm chain funds **1,052/day against the 1,000 needed** -- it passes, at **1.05x**. The
+fill window is a **margin improvement (5.81x), not a requirement**. It should still ship, because 1.05x is
+not a margin anyone should operate on, but the reasoning that made it mandatory was wrong.
+
+## And a THIRD meter that neither ceiling can see
+
+Cloudflare Images allows **5,000 unique transformations per MONTH** on the free plan, and it fails as a
+**hard cap rather than as a bill**. `CfwImageToolkit` defers every manipulation to a `/cdn-cgi/image/`
+URL, so an image style IS a transformation, and a unique is one source image plus one parameter set.
+
+**Ten image styles over 2,000 images is 20,000 uniques -- 4x over -- and nothing in this project would
+have said so.** It is now `FREE_QUOTAS.imageTransformsPerMonth`, and it is the only quota here measured per
+month rather than per day, which is itself a trap: comparing it against a daily figure understates it 30x
+in the dangerous direction. Transformations must also be **enabled on the zone** or the URL does not
+transform at all.
+
+# THE SERVING CEILING IS NOT 3M/MONTH: STATIC ASSETS ARE FREE AND UNLIMITED
+
+> **Superseded on 2026-08-14, and the heading is the part that is wrong.** Every **37.5M** and
+> **12.5x** figure below is derived from fact 1, "requests to static assets are free and unlimited",
+> which is the **Workers Static Assets** line. Static assets are uploaded at DEPLOY time, so a page
+> rendered at runtime cannot go there. The runtime-writable candidate is fact 2, an R2 public bucket on
+> a custom domain, and R2 is metered: **10M Class B operations/month**, 333,333/day against the Worker
+> ceiling's 100,000. **The floor is 3.3x, not 12.5x**, rising with a CDN hit ratio nobody here has
+> measured. Fact 2 and the mechanism it describes are intact; the arithmetic that priced the lever is
+> not. See
+> [THE 12.5x WAS DERIVED FROM THE WRONG METER](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x).
+>
+> The regeneration figures below are also stale in a second, unrelated way: windowed regeneration is
+> **7,575/day**, not 5,813, because the rows-per-fill instrument was half-blind. See
+> [THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND](#the-rows-per-fill-instrument-was-half-blind-and-durable-files-now-exist).
+
+The highest-value unknown in this project is answered, and it is answered from Cloudflare's own
+documentation rather than from inference.
+
+## The two documented facts
+
+1. **"Requests to static assets are free and unlimited."** -- Workers pricing. An asset request is
+   answered by the asset layer **without invoking the Worker**, so it costs nothing against the
+   100,000/day request quota.
+2. **An R2 public bucket on a CUSTOM DOMAIN is served through Cloudflare Cache** and likewise never
+   invokes a Worker. A CDN hit costs no R2 operation at all; a CDN miss costs one Class B read.
+   Custom domain, **not** `r2.dev` -- caching, WAF and access controls exist only on the custom-domain
+   path, and `r2.dev` is rate-limited and explicitly non-production. Note also: "by default only certain
+   file types are cached", so HTML needs a Cache Everything rule.
+
+## What that does to the ceiling
+
+`bun scripts/measure/free-envelope.ts`, with `offWorker` as the fraction of visits answered without an
+invocation:
+
+| architecture                              | views/day     | per month  | bound by |
+| ----------------------------------------- | ------------: | ---------: | -------- |
+| baseline, everything through the Worker    |   100,000     |  **3.0M**  | worker   |
+| edge hits served off-Worker               |   555,555     |   16.7M    | rows     |
+| + `dblog` uninstalled (18 -> 8 rows/fill) |   588,235     |   17.6M    | do       |
+| every cached page off-Worker, no `dblog`   | 1,250,000     | **37.5M**  | rows     |
+
+**12.5x**, and the mechanism is not a trick: it is the platform's documented pricing for the exact thing
+this architecture already does -- serve a pre-rendered page.
+
+## The binding meter WALKS, and that reorders the roadmap
+
+This is the part no single-ceiling analysis can produce. Each fix promotes a different constraint:
+
+- **worker** binds at baseline, so nothing about rows or DO matters;
+- move serving off the Worker and **rows written** binds -- which promotes uninstalling `dblog` from
+  "irrelevant, rows have 5x headroom" to the next lever worth taking;
+- drop `dblog` and **DO requests** bind, from the 1% that still misses;
+- move the DO-hit share off the Worker too and **rows** binds again, at 37.5M/month.
+
+A prediction I got wrong while building this is worth recording, because it is the same class of error
+the report keeps finding: I expected the off-Worker ceiling to be 666,666/day (100,000 / 0.15, the
+remaining Worker share) and asserted it in a test. The model said **555,555**, because by then Worker
+requests were no longer the constraint at all. The arithmetic was right and my mental model was one
+meter behind it -- which is exactly why the envelope is a script with tests instead of a paragraph.
+
+## THE TRAP: "Workers Caching" would destroy this
+
+Enabling the **Workers Caching** feature bills every request at the standard rate **"including requests
+that are normally free: static asset requests"**. A cache HIT then still costs a request and merely
+skips CPU.
+
+So the single most damaging configuration change available to this project is turning on a feature whose
+name sounds like exactly what a cache-first architecture wants. **It must stay off on free.** That is
+now the sixth entry in the default-config defect family, pre-empted rather than discovered: the correct
+fact is in Cloudflare's pricing page, and the wrong default would have looked like an optimisation.
+
+## What this does NOT fix
+
+The **regeneration ceiling is untouched** -- serving a page from R2 renders nothing. Corrected figures
+after modelling the shipped fill batch: **1,052 renders/day** on the alarm chain, **5,813** with the fill
+window. So the product envelope is:
+
+- **serving: up to ~37.5M visits/month**, an order of magnitude past the 3M target;
+- **regeneration: ~5,813 pages/day**, which is what actually decides whether free is a real Drupal host.
+
+The bottleneck has moved decisively to regeneration, and every future free-tier item should be scored
+there first.
+
+## What it costs to implement
+
+Not free in engineering, and the honest list: rendered pages must be written to R2 rather than only to
+`cfw_page`; the site's public hostname becomes the R2 custom domain with the Worker on a subpath or a
+route for dynamic and admin traffic; invalidation becomes an R2 delete plus a cache purge instead of a
+generation-keyed lookup; and authenticated traffic must bypass the asset layer entirely, which is the
+workload class the Free Plan Product Test still records as undecided. None of that is measured yet, so
+it is a designed path rather than a delivered one.
+
+# B1-B4 ARE RESOLVED, AND THEY CANNOT UNLOCK A VERSION BUMP
+
+One Docker session, 2026-08-12. `vendor/` verified intact: 14 original build directories byte-identical
+in size and mtime, one new directory added. The result is **negative and decisive**.
+
+## What the four items actually were
+
+| item | verdict | saving |
+| ---- | ------- | ------ |
+| **B1 `--disable-mbregex`** | **already in the shipping binary.** Recovered from the configure line in `static-o2`: `--enable-tokenizer --disable-mbregex`. mbstring is not compiled in at all (22 extensions, no `mbstring`, zero `onig` bytes), so mbregex cannot be present | **0** |
+| **B2 LTO** | already on in every `vendor/` build (`LTO_FLAG?=-flto`) | **0** |
+| **B2 `-O3`** | built and measured. **COSTS 35,932 B at bundle level** | **negative** |
+| **B2 PGO** | impossible in this toolchain: no `llvm-profdata` on the builder image and no `libclang_rt.profile*` under `/emsdk`, so `-fprofile-generate` cannot link | n/a |
+| **B2 SWITCH** | VM regenerated cleanly and all 267 TUs compiled; `wasm-ld` then OOMed twice | unmeasured |
+| **B3 opcache static** | **the flag is inert.** `ext/opcache/config.m4:29` forces `ext_shared=yes`, so `--enable-opcache` builds `modules/opcache.la` -- a shared zend extension a `MAIN_MODULE=0` wasm can never load | **0** |
+| **B4 JSPI + wasm SjLj** | **already built, working, and SMALLER than what ships** | **9,554 B** |
+
+**Total available: 9,554 B.** Against it, 8.4 remains **7,713-36,562 B over** and 8.5 remains
+**159,768-218,874 B over**. So the framing this document carried after B5 -- "B1-B4 are the prerequisite
+for any PHP version bump" -- **is falsified.** They are not a prerequisite; they are insufficient by an
+order of magnitude for 8.5 and short even for 8.4.
+
+## `vendor/static-opcache` IS A MISNOMER, and it is a landmine
+
+No binary in `vendor/` has ever contained opcache. `Zend OPcache` and `accel_startup|zend_accel_` are
+**0 occurrences** in `static-o2`, `static-jspisjlj`, `static-o3mbsjlj` **and in `vendor/static-opcache`
+itself**. Confirmed four independent ways including a live probe returning `zendExtensions: []` and the
+absence of any `ext/opcache` object in the `wasm-ld` line.
+
+**That directory's extra 536,049 gz over the shipping build is SQLite, not opcache** (`sqlite3_` present
+1 vs 0). Anyone reasoning about opcache from its name or its size will be wrong twice.
+
+The real path, verified against php-src rather than guessed: `zend_register_extension()` has exactly one
+caller, `Zend/zend_extensions.c:136` inside `zend_load_extension_handle()` -- the dlopen path. A static
+opcache needs a patched `config.m4` plus `buildconf` and a full reconfigure, a **new** startup call to
+`zend_register_extension()` that php-src does not have, and `COMPILE_DL_OPCACHE` flipped. It **adds**
+bytes, so it cannot help a ceiling problem; its only payoff is CPU, which is unclaimable without a
+deploy.
+
+## `-O3` is smaller raw and BIGGER gzipped, which is a measurement lesson
+
+A fully controlled A/B where only `OPTIMIZE` differed:
+
+| link `-O` | wasm raw | total gz | vs `-O2` |
+| --------- | -------- | -------- | -------- |
+| `-Oz` | 8,880,459 | 2,877,535 | +680 |
+| **`-O2` (ships)** | 9,281,983 | 2,876,855 | -- |
+| `-O3` | **10,140,333 raw... but 242,609 SMALLER than the mbstring `-O2` control** | 3,491,458 | **+35,695** |
+
+Three points on a curve where **raw and gzipped move in opposite directions**. `-O3` produced a
+materially smaller raw binary and a materially larger compressed one -- unrolling and inlining trade
+repetition for size, and repetition is exactly what gzip eats. **A raw-byte reading of an optimisation
+level is actively misleading for a bundle-ceiling decision**, and the ceiling is a gzip ceiling. Same
+family as the binary-versus-bundle error B5 already corrected: the right number measured on the wrong
+basis.
+
+## The recorded bundle figure DRIFTS, so it must be re-measured and never quoted
+
+Measured today: **3,018,014 gz**, against the **3,006,761** this document recorded -- **+11,253 B of
+drift** from ordinary source growth in between. Headroom is therefore **127,714**, not 138,967.
+
+| | 8.4 | 8.5 |
+| - | --- | --- |
+| at the recorded 3,006,761 | 6,014-34,863 OVER | 158,069-217,175 OVER |
+| **at the measured 3,018,014** | **17,267-46,116 OVER** | **169,322-228,428 OVER** |
+
+**Rule: re-derive with `bun scripts/measure/php-version-headroom.ts --bundle=<measured>` at the moment
+of the decision.** A quoted headroom is stale the next time anyone adds a line of TypeScript.
+
+## Where the bytes would actually have to come from
+
+B1-B4 cannot supply them. Two levers can, and one of them has never been counted:
+
+- **the extension set** -- mbstring alone is 586,648 gz;
+- **the worker JavaScript** -- `site.js` is **231,212 gz of the 3,018,014 bundle, 7.7%**, and no analysis
+  in this document has ever treated it as a lever. 8.5's proportional requirement is 169,322 B, which is
+  73% of that JS.
+
+## Two things left for Gregory
+
+- **SWITCH: full LTO and ThinLTO have BOTH now hit the memory wall.** ThinLTO was the obvious workaround
+  -- it partitions per module instead of building one whole-program module, so peak memory should be a
+  fraction of full LTO's -- and `build/build-vmswitch-ab.sh` rebuilt both arms with it so the A/B stayed
+  confound-free. Measured 2026-08-13: **`wasm-ld` SIGKILLed after 62 minutes of compiling**, and the OOM
+  event killed the driver script too, before its own escalation could run. `docker info` reports 7.65 GiB
+  on a 16 GiB host.
+
+  No LTO at all is the remaining untried setting and is running now. **But the honest scoring says this
+  measurement cannot change a decision.** Per RULE 0b, binary size appears in NEITHER ceiling: it is not a
+  Worker request, a DO request, a row written, an image transformation or a Workflow step. Its only route
+  to mattering is unlocking a PHP version bump, and for 8.4 to fit on both estimation methods SWITCH would
+  have to save **>=36,562 B** -- more than `-O3` COST in the opposite direction, on a change that only
+  alters dispatch. So it is being finished for completeness, not because a verdict hangs on it, and a
+  Docker Desktop memory bump is explicitly **not** worth requesting for it.
+
+  The instrument is worth keeping either way: it now distinguishes a genuine `wasm-ld` SIGKILL from a
+  broken precondition and refuses to escalate on the latter. Its first run reported "ThinLTO could not
+  link" when the actual fault was that **Docker Desktop had stopped** -- a false conclusion manufactured
+  by escalation logic that conflated "the build failed" with "the link ran out of memory".
+- **B4's 9,554 B is banked on paper and deliberately NOT taken yet.** Swapping the alias to the JSPI
+  binary would invalidate every figure in this document, all of which were measured on `static-o2`, and
+  by RULE 0b the swap buys **nothing**: it moves neither ceiling and does not unlock 8.4, which stays
+  7,713 B over on the most favourable method. It is also proven only to instantiate and boot -- the
+  agent's run did not complete a render, because migration had not finished. So it should be taken as
+  part of whatever change actually needs the bytes, re-measured then, not banked for its own sake.
+
+# THE OBJECTIVE FUNCTION WAS WRONG, AND THE COST MODEL THAT SAID SO GOVERNED NOTHING
+
+> **Superseded in its numbers only.** The reframing here -- score against the aggregate daily budgets,
+> not the 10 ms cap -- is current and is RULE 0b. The figures it carries are not: regeneration is
+> **7,575/day** windowed rather than 5,813, and the off-Worker serving lever is **3.3x** rather than
+> 12.5x. See
+> [THE ROWS-PER-FILL INSTRUMENT WAS HALF-BLIND](#the-rows-per-fill-instrument-was-half-blind-and-durable-files-now-exist)
+> and
+> [THE 12.5x WAS DERIVED FROM THE WRONG METER](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x).
+
+External critique, 2026-08-12, accepted. This section supersedes how every figure below it should be
+read.
+
+## The charge
+
+This document has been optimising **"can Drupal run inside the 10 ms invocation budget"** when the
+product question is **"can the free plan host a real Drupal site, within the aggregate free-tier
+budgets, for ~3M visits/month, while paid buys materially better performance."** Those are different
+questions and the second one is the one that matters.
+
+The 10 ms cap constrains ONE execution unit, and the architecture chooses what an execution unit is.
+This document already measured a chain of 20 Durable Object hops accumulating **142 ms of CPU with no
+single invocation over 10 ms**. So "does a render fit in 10 ms" was never the binding question, and
+scoring work against it produced a pendulum: find a cost over 10 ms, declare free impossible, split it,
+declare free viable, repeat -- with the definition of "viable" sliding each time until the proposal is a
+miniature distributed execution engine that happens to run Drupal.
+
+**The charge is correct and this session is evidence for it.** Every figure I reported was framed
+against the cap: "140x the free cap", "85x the cap", "3 of 4 firings over the cap". The chunk-size
+correction was justified entirely by fitting one invocation.
+
+## The part that makes it worse
+
+[THE COST MODEL](#the-cost-model-free-tier-is-100000-page-viewsday-and-worker-requests-bind) already
+concluded, correctly, that **Worker requests bind first at ~100,000 page views/day, ~3M/month**. The
+analysis was present, accurate, and **governed nothing.** No roadmap item was ever scored against it.
+
+That is the actual defect, and it is worse than a wrong metric: it is a right metric that was decorative.
+So the fix is not "write a better analysis" -- it is to make the envelope executable and score against
+it. `scripts/measure/free-envelope.ts` + `tests/unit/free-envelope.spec.ts` do that, and the scoring
+rule below is now in `CLAUDE.md` where it binds future work.
+
+## THERE ARE TWO CEILINGS, and conflating them is how both sides of this got it wrong
+
+| ceiling          | what it limits                      | bound by                        | measured        |
+| ---------------- | ----------------------------------- | ------------------------------- | --------------- |
+| **Serving**      | visits/day that can be answered     | **Worker requests** (100k/day)  | **100,000/day** |
+| **Regeneration** | distinct pages RENDERED per day | **DO requests AND rows written** | **1,052/day** cold, **5,813/day** windowed |
+
+The serving ceiling is 476x the regeneration ceiling. **Regeneration is the one that decides whether
+free is a real Drupal host**, and nothing in this document was scored against it.
+
+## Where the critique is itself too optimistic, corrected in the pessimistic direction
+
+1. **"3M/month is only ~1.16 requests/sec average, so the problem is bursts."** No. The binding meter is
+   the DAILY QUOTA, not the rate. 3,000,000 / 30 = **100,000/day, which is exactly the free Worker
+   request quota**. 3M/month is not comfortable, it is **saturated at 1.00x** with zero headroom for any
+   other counted request.
+2. **"99% edge-served = 2.97M cheap hits."** Cheap in CPU only. An edge HIT still costs **one Worker
+   request**, so caching rescues the CPU meter and does **nothing** for the ceiling that actually binds.
+   Measured in the model: a mix of 100% edge hits gives the same 100,000/day as the realistic mix.
+3. **"1% dynamic = ~30k fills"** (1,000/day) **is presented as obviously affordable. It is not.** The
+   alarm chain funds ~210 regenerations/day, because an evicted object pays the 3,754 ms boot again and
+   ~475 sliced invocations buy one fill. **1% dynamic fails by 4.8x.** With the WebSocket fill window's
+   ~25x amortisation it passes at 5.26x.
+
+   **Consequence: the fill window is a PRODUCT REQUIREMENT, not an optimisation.** That is a conclusion
+   neither this document nor the critique had drawn, and it comes from taking the critique's own workload
+   seriously enough to score it.
+
+## The Free Plan Product Test
+
+A proposal passes only when **both** ceilings hold. Run
+`bun scripts/measure/free-envelope.ts --visits=3000000 --dynamic=0.01`.
+
+| workload class            | free must                                                         | status |
+| ------------------------- | ----------------------------------------------------------------- | ------ |
+| Anonymous cache hit       | trivial; one Worker request, no PHP                               | done (three tiers) |
+| Anonymous cache miss      | answer from cache or a bounded placeholder; render off-path       | done (503 + Retry-After, prefill default) |
+| First visit, never rendered | bounded regeneration, not an unbounded wait                     | done for prefilled paths; **arbitrary paths are the open case** |
+| Content edit              | invalidate and repopulate the affected entries                    | done (generation bump + prefill-on-save) |
+| Authenticated user        | a viable path; NOT necessarily edge-cached                        | **undecided -- this is a product decision** |
+| Admin operation           | may be slow and async, must be reliable                           | partial (G1 refuses what it cannot slice) |
+| Module install            | background with progress                                          | E3 checks; E4 installs -- open |
+| Cron / backup / update    | sliced across invocations                                          | done (cron, updb, export+import all sliced) |
+
+## The adversarial scoring rule, now in `CLAUDE.md`
+
+A workaround does **not** count as a success merely because it fits inside a Cloudflare limit. Reject it
+when it:
+
+- makes free and paid functionally equivalent (if free needs the whole paid machinery plus a scheduler,
+  the free product is not compelling even if it runs);
+- violates the one-click goal, or charges the user a "you must understand Workers internals" tax;
+- produces user-visible latency a normal visitor would call broken;
+- consumes any daily quota at a rate incompatible with ~3M visits/month **on both ceilings**.
+
+Score against the product envelope, never against the 10 ms cap. The cap is a fact about one
+invocation; it was never the definition of viability.
+
+## What this changes about the work already done
+
+Nothing measured becomes wrong -- the figures stand. What changes is their PRIORITY:
+
+- **Prefill coverage outranks render optimisation.** A prefilled path never regenerates on the request
+  path, so it does not spend the scarce meter. Widening coverage buys more product than making a render
+  faster.
+- **The 1,544 ms first render matters much less than it appears.** It is 57% of the cold path, but for a
+  covered path it is paid off-request and for an uncovered one the constraint is the DO quota, not the
+  milliseconds.
+- **B1-B4 keep their new status** as the prerequisite for a version bump, but they do NOT move either
+  ceiling: a faster binary does not buy more Worker requests.
+- **The open question is the serving ceiling**, and there is exactly one lever on it: serving a repeat
+  visit **without invoking the Worker at all**. Right now `/serve` answers with
+  `cache-control: public, max-age=0, must-revalidate`, so every visit is a counted request. Whether a
+  CDN-level cache rule can answer ahead of the Worker is **unmeasured and is now the highest-value
+  unknown in the project** -- it is the difference between a 3M/month ceiling and a much larger one.
+
+## And scoring the workload immediately found a FIFTH default-config defect
+
+The fill window is what makes the target workload fit -- 1% dynamic needs ~1,000 regenerations/day and
+the alarm chain funds ~210. So it is a product requirement. `scheduled()` in `src/site.ts:474` has
+implemented and driven it the whole time.
+
+**`wrangler.jsonc` had no `triggers` block at all, so it never fired.** Unreachable code, exactly like
+`LAZY_MOUNT` before it, and the fifth instance of the class: the correct fact in one file, the wrong
+default in another.
+
+| # | the correct fact, and where it was recorded | what the default did |
+| - | ------------------------------------------- | -------------------- |
+| 5 | `scheduled()` + `runFillWindow()` drive the amortised fill window | **no cron trigger existed**, so the mechanism the free tier depends on was dead |
+
+Fixed with `"triggers": { "crons": ["*/5 * * * *"] }`. Five minutes rather than one because **a cron
+invocation is itself a counted Worker request** and the serving ceiling is saturated: 288/day is 0.3% of
+the quota where every-minute would be 1.4%. That interaction -- the fix for the regeneration ceiling
+spending the serving ceiling -- is only visible once both are modelled together, which is the whole
+argument for modelling them together.
+
+`tests/node/wrangler-reachability.spec.ts` now asserts all five defaults automatically, so the question
+"what does the DEFAULT do" is asked by the gate instead of by whoever happens to wonder.
+
+# THE 850 MS DID NOT EXIST: THE FIRST RENDER IS THE COST
+
+Item 3.3, measured on a deployed worker (`cfw-bootphase`, torn down; worker list verified two
+independent ways, exactly 9, exact set match). One Durable Object invocation per phase, a fresh
+migrated site per sample, `alreadyBooted: 0` asserted on **all 173** samples.
+
+## Per-phase edge cpuTime, in ms
+
+| phase                                        |  n | median | min  | max  |
+| -------------------------------------------- | -: | -----: | ---: | ---: |
+| `boot-only` (interpreter + lazy mount, no Drupal) | 12 |  436.5 |  381 |  755 |
+| `autoload`                                   | 12 |  640.5 |  476 | 1073 |
+| `kernel-new`                                 | 22 |  660.5 |  527 | 1165 |
+| `container-read`                             | 22 |  682.5 |  535 | 1352 |
+| `container-unserialize`                      | 22 |  850.5 |  463 | 1390 |
+| `kernel-boot`                                | 22 |    860 |  579 | 1480 |
+| `pre-handle`                                 | 12 | 1148.5 |  701 | 1659 |
+| `render`                                     | 12 | 2692.5 | 1132 | 3560 |
+
+## Subtraction
+
+| phase                   | baseline          | median cost | min cost |
+| ----------------------- | ----------------- | ----------: | -------: |
+| `autoload`              | boot-only         |         204 |       95 |
+| `kernel-new`            | autoload          |          20 |       51 |
+| **`container-read`**    | kernel-new        |      **22** |    **8** |
+| `container-unserialize` | container-read    |         168 |  below noise |
+| **`kernel-boot`**       | kernel-new        |   **199.5** |   **52** |
+| `pre-handle`            | kernel-boot       |       288.5 |      122 |
+| **`render`**            | pre-handle        |    **1,544** |  **431** |
+
+## The hypothesis is dead, and the premise was worse than the hypothesis
+
+**The container suspicion is falsified.** Reading 479,615 bytes across the host bridge costs **22 ms
+median, 8 ms min** -- not the dominant cost this document nominated. The whole `$kernel->boot()` on a
+container HIT is **199.5 ms**, and it is internally coherent: 22 (read) + 168 (unserialise) = 190 of
+that 199.5, leaving ~10 ms for instantiation. So the guess was half right about WHICH operation -- the
+parse, not the read -- and wrong by **5x** on magnitude. Optimising the container is worth at most
+~170 ms, not 850.
+
+**The 850 ms itself was never a measurement.** It was `889 ms boot+first-render − 41 ms warm render`,
+and that 41 ms is an **assembly** figure: a warm request answered by the dynamic page cache, not a warm
+full render. Regressing `/drupal?repeat=N` on N gives the real warm full render as **74.7 ms from
+minima, 226.7 ms from medians**. Subtracting 41 instead of ~700 moved roughly **650 ms** out of the
+render and into a "kernel boot" bucket that never held it. The 889 ms TOTAL was always right -- floor
+381 + 751 attributed = 1,132 ms min against the recorded 1,398 ms cold boot -- so nothing about the
+end-to-end number was wrong. Only the attribution was, and the attribution is what the roadmap was
+built on.
+
+This is the failure mode from a new angle. The previous instances were instruments that could not see a
+defect; this one is an instrument that **subtracted the wrong baseline** and produced a confident bucket
+with nothing in it. The rule: a subtraction is only as good as the thing subtracted, and "warm render"
+and "cache hit" are not the same measurement even when both are warm.
+
+**Where the cold path actually goes:** `render` is **1,544 ms, 57%**; the platform floor
+(`boot-only`, which runs no Drupal at all) is **436.5 ms, 16%**. Together **73%**.
+
+## One level down: 33 statements that only the first render pays
+
+`/drupal?repeat=3` reports `hostStatements` **48 -> 15 -> 15**. Thirty-three statements of theme
+registry, library discovery and route building happen inside render #1 and not in the renders after it.
+
+The obvious reading is "those are cache misses; bake the rows". **Measured, and it is wrong -- the rows
+are already baked.** Diffing a fresh object's cache bins against the shipping pack after three renders:
+
+| bin                | live | shipped | new rows | rows rewritten |
+| ------------------ | ---: | ------: | -------: | -------------: |
+| `cache_discovery`  |   80 |      80 |    **0** |          **0** |
+| `cache_render`     |   18 |      18 |    **0** |          **0** |
+| `cache_routes`     |   11 |      11 |    **0** |          **0** |
+| `cache_bootstrap`  |    5 |       5 |    **0** |          **0** |
+| `cache_default`    |   42 |      42 |    **0** |          **0** |
+
+Not one new row, and every `created` timestamp is byte-identical to the shipped one -- so nothing was
+rewritten either. **The 33 statements are pure READS of rows that are already present and correct.**
+They are the cost of deserialising those rows into the interpreter on first use, per object, per cold
+start. No further bake can remove them, because there is nothing left to bake.
+
+**And they are not the bulk of the 1,544 ms either.** One statement carrying 479,615 bytes measured
+22 ms; migration moves 79 chunks at 0-3 ms each, which bounds a small statement well under 1 ms. So 33
+small reads are on the order of tens of milliseconds -- at most a few percent of the render. The first
+render's cost is **CPU inside PHP** (theme system, render pipeline, Twig execution), not database
+traffic.
+
+That leaves three real levers on the first render, and two of them already exist:
+
+1. **Prefill (C4) removes it from the visitor's path entirely** for a covered path -- a prefilled path
+   is a HIT on its first ever request, so the 1,544 ms is never paid by anyone. This is why widening
+   coverage (4.3) is worth more than optimising the render.
+2. **A restored heap (A2/A3)** skips the deserialisation AND the pipeline warm-up, because the objects
+   are already in memory. This is the only lever that helps an ARBITRARY path.
+3. Reducing the PHP work itself, which is B1-B4 territory and unmeasured.
+
+Baking more cache rows is NOT on that list, and the row counts above are why.
+
+## A platform bimodality that constrains every absolute in this document
+
+`boot-only` runs zero Drupal and still spans **381-755 ms**: 9 low samples, 3 high, and nothing in
+between. Every phase shows both modes, so this is a **+400-600 ms platform effect unrelated to any
+phase**. Control, because a between-objects difference would be the obvious explanation and is not the
+cause: `autoload` -- which writes nothing -- repeated five times on ONE object with the interpreter
+dropped each time fell **1111 -> 827 -> 732 -> 872 -> 713**.
+
+**Consequence: an n=1 or n=3 verdict about anything under ~500 ms is unsupportable on this platform.**
+That includes the 1,398 ms cold-boot median recorded above, which is n=3. Every future absolute needs a
+stated n and a spread, not a single number.
+
+## RULE 0 gets worse: `Date.now()` returns a PLAUSIBLE wrong number
+
+RULE 0 says in-isolate clocks read 0 on the edge. Measured here: `Date.now()` inside the Durable Object
+reported **114 ms for a 1,374 ms invocation**. That is strictly more dangerous than reading 0, because
+0 is obviously broken and 114 is not -- it is the right order of magnitude for a plausible cheap
+operation, so it survives review. Treat any in-isolate elapsed figure as unusable rather than as
+"unusable when it looks wrong".
+
+# A3 PASSED, AND IT RETRACTED "NO HANDLE-TABLE REPLAY NEEDED"
+
+Measured on a deployed worker (`cfw-heap-a3`, torn down; worker list verified 9 before / 9 after,
+byte-identical, zero `cfw-*` remaining). A render through a restored heap returns **12,304 bytes /
+sha1 `10077de5f0bd`** from an object with `restored: true`, 41/41 chunks and `handlesReplayed: 3`,
+reproduced on **five separate objects**. The forced host call round-trips:
+`hostCall.bridge = "round-tripped"`, `sawQueryCount: true`.
+
+## The retraction, and why the claim survived so long
+
+This document recorded that the bridge round-trips with **no handle-table replay needed**, because
+`vrzno_env()` resolves `Module[$name]` at call time rather than baking a handle index into the heap.
+**That was wrong.** A render through a restored heap died with `TypeError: target is not a function`:
+the restored heap asks for vrzno handle **id 2** -- `cfwSqlExec`, resolved once in
+`CfwSqlClient::__construct` and memoised into the booted kernel -- while a fresh instance's table
+holds only id 1.
+
+The mechanism of the error is the reusable part. The probe that "confirmed" the claim was
+`op=bridge`, which calls `vrzno_env('cfwStats')` -- and that **mints a fresh handle** on every call.
+It could never have failed, whatever the state of the captured table, so it was never evidence about
+captured handles at all. It is the same shape as the fidelity test that read both sides through one
+truncating API: **a probe that cannot fail is not a probe.**
+
+**The rule this implies, stated so it can be applied before the next snapshot feature:** a probe for
+STATE SURVIVAL must exercise state that was captured BEFORE the snapshot, never state that is
+re-resolved after it. `vrzno_env('cfwStats')` re-resolves by name on every call, so it can only ever
+report that name resolution works -- a fact that was never in question. The question was whether an
+integer handle recorded in the image still points at anything, and only a call through a
+pre-snapshot handle asks it. Concretely: probe the memoised client (`CfwSqlClient`'s stored callable),
+not a fresh `vrzno_env()` lookup.
+
+This joins the two earlier instances as one class. The fidelity test shared the defect with the thing
+it was testing; `wrangler tail` omitted the events that would have shown the cost; `op=bridge` took a
+path that could not exhibit the failure. In all three the instrument and the subject were coupled such
+that a passing result carried no information.
+
+There is a second trap underneath it. `byInteger` is a `WeakerMap` of `WeakRef`s, so the entry for
+handle 2 was collected **before the snapshot ran**: capture alone found 1 handle, and pinning the
+values at boot found 3 (`@globalThis`, `cfwSqlExec`, `cfwSqlTxn`), with `unnameableHandles: []`. A
+capture that runs after collection records a table that is honestly, verifiably, incompletely empty.
+
+**The contract is therefore: the fd table AND the vrzno handle table both travel with the bytes, and
+the handles must be PINNED at boot or the table holding them is collected before it can be
+captured.** This is the fifth verdict in this project moved by its instrument rather than by the
+system.
+
+## The chunk size was sized against the wrong limit
+
+`DEFAULT_CHUNK_BYTES` was 2,000,000, chosen to fit `DO_SQLITE_MAX_RECORD_BYTES` (2,199,995). A
+deployed sweep with `HEAP_RESTORE_CHUNKS=1` shows the record cap is not the constraint that binds:
+
+| chunk bytes   | rows | per-firing edge `cpuTime`     | over the 10 ms free cap |
+| ------------- | ---- | ----------------------------- | ----------------------- |
+| 2,000,000     | 5    | 21, 52, 37, 2 ms              | **3 of 4**              |
+| 400,000       | 21   | median 8, min 3, max 13       | 4 of 21                 |
+| **200,000**   | 41   | median 3, min 1, max 9        | **0 of 41**             |
+
+So a chunked restore step does fit one free-plan invocation, **but only at ~200 KB** -- the shipped
+default was 10x too large and 3 of its 4 firings blew the cap. The cost is not the memcpy: each chunk
+is also digested by a per-byte JS loop, so per-firing CPU tracks chunk size closely. Default is now
+200,000, and 41 rows for an 8.1 MB elided image is still a handful of reads against a meter that does
+not bind.
+
+## The general form: a chunk sized by the wrong quantity
+
+This is the **second** time a chunk in this project was sized against a budget that does not bound
+what the chunk actually costs, and both were invisible except on the edge.
+
+| instance | sized against | what actually cost | symptom |
+| --- | --- | --- | --- |
+| migration DDL chunks | chunk TEXT bytes (a 64 KiB / 200-statement budget) | index build, which tracks the TABLE not the statement text -- 177 `CREATE INDEX` at ~40 bytes each fit one 11 KiB chunk | one invocation at **32 ms**, worse than the 25 ms it replaced; fixed by `--max-ddl-statements=12` |
+| heap restore chunks | `DO_SQLITE_MAX_RECORD_BYTES` (2,199,995) | per-chunk digest, a per-byte JS loop, plus the memcpy | **3 of 4** firings over the 10 ms cap; fixed at 200,000 bytes |
+
+**The rule: size a chunk by the meter that binds it, and name that meter.** A storage limit bounds
+what a row may CONTAIN; it says nothing about what processing that row COSTS. Where the two differ,
+sizing by the storage limit produces a chunk that stores fine and cannot be processed inside one
+invocation -- which is not a storage error and will never surface as one. In both instances the wrong
+budget was the obvious one, the resulting chunk was legal, and only a deployed `cpuTime` reading
+showed the problem.
+
+Other edge figures from the same run: `op=snapshot` **1,583-2,616 ms**; `op=restore` (boot + chunk 0)
+379-698 ms; first render through a restored heap 798-1,629 ms; cold `/serve` MISS 4 ms; the alarm
+firing that also booted the interpreter 103 ms; the firing that rendered 1,980 ms.
+
+## 1.6: the refusal is production-reachable, and proven so
+
+`corrupt&chunk=0` flipped byte 1,000,000 (0 -> 255) leaving the stored digest intact; the restore
+returned `restored: false, reason: "chunk 0 digest mismatch: stored d7bbb106, read 2e37f6f1"`. The
+object then still served 200 / 12,304 bytes -- and, crucially, a **forced** re-render on the fallback
+heap (`/assemble`, `pageCache MISS`, `dynamicCache MISS`, 63 host statements) proved the pack boot
+renders rather than a cached row surviving. A refusal costs one boot, not an outage.
+
+A related defect the same run exposed: a digest refusal at chunk N had **already applied N chunks**,
+and the old code carried on with that heap. `ensurePhp({skipRestore})` now discards a dirty heap.
+
+## An infinite alarm spin, measured rather than theorised
+
+**196 firings in 14 seconds, every one reporting `outcome: ok`**, twice. A throw out of `fillOne`
+skipped its own three-strikes bookkeeping, so the queue row kept its attempt count and the chain
+re-armed at +1 ms forever. Fixed by striking the queue head in the `alarm()` catch, with
+`HeapRestoreIncomplete` exempted because it is transient and owns its own chain.
+
+This is the third time the +1 ms re-arm pattern has produced a hang here (migration, then the fill
+head, now guarded in the restore chain too), and every time it presented as success rather than as an
+error.
+
+## `HEAP_SNAPSHOT=1` STAYS OFF BY DEFAULT, and the reasons are accounting rather than caution
+
+A3 passing does not graduate the flag. Three reasons, decided 2026-08-12:
+
+1. **The snapshot costs more than the boot it replaces.** `op=snapshot` is **1,583-2,616 ms** of edge
+   `cpuTime` and has to be taken from a pack boot, against a cold boot of 1,398 ms. So the first object
+   pays extra so that later ones are cheap. That can be the right trade, but it is a trade and it has
+   not been priced across a realistic object lifetime.
+2. **The restore path has never run under memory enforcement inside a DO with a real buffer.** That is
+   exactly where A7 says it dies, and A7's boundary is NON-MONOTONE -- 128 MiB failed while 160 MiB
+   succeeded, because it is an isolate-wide budget shared with whatever else a reused isolate holds. A
+   path like that passes N times before it fails in production, so N successful runs are not evidence.
+3. **A6 is not the same accounting.** A6 showed the streamed round trip surviving in a stateless
+   isolate; a Durable Object holds the interpreter, the mount and the SQL storage in the same budget.
+
+The plan is therefore: ship behind the flag, run it on a **paid** worker for a week, and let the
+on-by-default decision be a measurement rather than a preference.
+
+## Reproducing the acceptance
+
+`wrangler.heap.jsonc` has been **deleted**. It existed only because the canonical config could not
+upload 97 MB of assets, and `assets/.assetsignore` fixed that; its own comment asked for exactly this
+reconciliation. The canonical config plus CLI overrides is the reproduction, verified by dry-run:
+
+```
+bunx wrangler deploy -c wrangler.jsonc --name cfw-heap-a3 \
+  --var PW_DIAGNOSTICS:1 --var HEAP_SNAPSHOT:1 --var HEAP_RESTORE_CHUNKS:1
+```
+
+No asset staging step is needed, and `.edge-assets/` is now dead weight.
+
+# THE SHIPPED DATABASE NOW HAS A PRODUCER, AND IT FOUND AN UNINTENDED MODULE
+
+`assets/drupal/site.sqlite` was the only tracked artifact under `assets/` because nothing regenerated
+it. `scripts/drupal/install-site-db.php` now builds one from a clean checkout in about **4 s**, and
+`scripts/diff-site-db.ts` is the gate that decides whether the result is the site that ships.
+
+## Reproducible means STRUCTURAL, and that is not a hedge
+
+The output cannot be byte-identical and never will be: a Drupal install mints a random hash salt, a
+UUID per config object, an admin password hash and per-row timestamps. Two correct runs differ in
+thousands of bytes. So the gate compares structure, and two independent runs were each compared
+against the shipping pack and against each other:
+
+| dimension              | shipping pack | freshly built | verdict                             |
+| ---------------------- | ------------- | ------------- | ----------------------------------- |
+| tables                 | 69            | 63            | 6 cache bins Drupal creates on first request |
+| `config` objects       | 169           | 169           | identical names, not just the count  |
+| `core.extension` modules | 40          | 40            | identical set                        |
+| `router` rows          | 419           | 419           | identical                            |
+| `key_value` rows       | 368           | 368           | after the 3 first-request state rows |
+| `menu_tree` rows       | 68            | 68            | identical                            |
+
+`twig_extension_hash_prefix` is one of those three state rows, which makes its absence before the
+Twig bake and its presence after a **checkable step** rather than the silent coupling it used to be.
+
+A render is NOT the acceptance check and never was: a cache hit and a cache miss both produce 12,304
+bytes, which is how a container-cache miss survived a byte-identical render for a whole session.
+`tests/node/site-db-diff.spec.ts` therefore tests the GATE, including negative cases where a lost
+module or a shrunken router table must turn it red -- a gate that only reports green is no gate.
+
+## `media` is enabled and nothing asked for it
+
+Deriving the recipe surfaced a module that should not be there. The shipping pack's 40 modules are
+exactly the `standard` profile's dependency closure **plus `update`** (which the install form
+enables) **plus `media`**. `media` is not in `standard.info.yml`, is not in the recursive dependency
+closure of anything that is, and is not a dependency of `navigation` or `ckeditor5`.
+
+Building the same site with `--extra-modules=` measures what it costs:
+
+| dimension        | with `media` | without | delta                              |
+| ---------------- | ------------ | ------- | ---------------------------------- |
+| tables           | 63           | 45      | **-14 media tables**, all empty, plus 4 incidental lazy bins |
+| `config` objects | 169          | 137     | **-32**                            |
+| `router` rows    | 419          | 379     | **-40**                            |
+| file size        | 5,222,400    | 3,145,728 | -2,076,672 B post-VACUUM         |
+
+The config and router counts are the ones that matter, because both are read during boot and both
+feed the container definition. Nothing renders it: the only `media` token on any of the three
+prefilled pages is the CSS `media="all"` attribute.
+
+**The CPU effect is NOT measured and must not be assumed.** RULE 0 applies -- only `cpuTime` on a
+deployed worker can price it, and the container cache key changes when the module set does, so
+dropping `media` invalidates the baked container and every recorded figure taken on it. This is a
+candidate with a measured structural delta and an unmeasured CPU delta, which is exactly the shape
+that has misled this project before.
+
+## The pack now has one writer
+
+`bake-pack.ts` takes an exclusive lock (`assets/drupal/.pack.lock`). Two sessions baked concurrently
+once while an acceptance test read the result, and the migration chunk count moved **101 -> 86 -> 79**
+underneath it with no error anywhere; the test measured three different databases and reported the
+last. The lock names its holder, and a refused run deliberately does NOT release a lock it does not
+own -- the exit handler is registered after the acquire, not before.
+
+# B5 RE-DERIVED: THE CEILING IS A BUNDLE CEILING
+
+> **Superseded in its headroom figures; the definition of the ceiling is current.** A bundle, not a
+> binary, is what the 3,145,728-byte limit measures -- that part stands. The shipping bundle is now
+> **2,307,696** gzipped bytes with **838,032** to spare, so none of the headroom figures below are
+> live. See
+> [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was).
+
+The free-plan limit of **3,145,728 gzipped bytes** applies to the whole deployed worker bundle -- the
+wasm binary plus the worker JavaScript plus everything else wrangler uploads as code. It does not
+apply to the binary on its own, and B5's original "8.4 fits comfortably" came from comparing the
+binary against it.
+
+## The three headroom figures this document carried, and what each measures
+
+| figure        | what it measures                                        | usable for a fit decision  |
+| ------------- | ------------------------------------------------------- | -------------------------- |
+| **268,873 B** | the `static-o2` wasm binary (2,876,855 gz) alone        | **no** -- not a bundle     |
+| **165,776 B** | a bundle built from a **staged-asset** config           | no -- not the shipping one |
+| **143,299 B** | the deployed bundle at the previous deploy              | superseded                 |
+| **138,967 B** | the deployed bundle **now**, canonical config           | **yes** -- this one        |
+
+The 165,776 figure was already flagged in this document as coming from a staged-asset config; the
+268,873 one was not, and it is the one that produced the wrong verdict. Measured today with
+`bunx wrangler deploy --dry-run -c wrangler.jsonc` after `assets/.assetsignore` made the canonical
+config deployable: bundle **3,006,761 gz**, headroom **138,967 B**.
+
+## The verdict, on both estimation methods
+
+Two methods, because the trim's behaviour on a larger binary is not known. **Absolute** assumes the
+trim saves the same BYTES; **proportional** assumes it saves the same FRACTION (16.6%, being
+553,016 / 3,332,177). The truth is between them, so a version only counts as fitting when both fit.
+
+| version         | absolute            | proportional        | verdict          |
+| --------------- | ------------------- | ------------------- | ---------------- |
+| 8.4 (measured)  | 3,180,591 gz        | 3,151,742 gz        | **DOES NOT FIT** |
+|                 | **34,863 B OVER**   | **6,014 B OVER**    |                  |
+| 8.5 (+5.2% ext) | 3,362,903 gz        | 3,303,797 gz        | **DOES NOT FIT** |
+|                 | **217,175 B OVER**  | **158,069 B OVER**  |                  |
+
+So 8.4 is marginally over and 8.5 needs roughly **160-220 KB of trimming beyond what already
+exists** -- an order of magnitude worse than the "22-79 KB over" this document quoted, and the
+difference is entirely the basis rather than the estimate.
+
+That changes what B1-B4 are for. `--disable-mbregex`, `-O3`+LTO+PGO and the opcache static link were
+scoped as boot-time optimisations; on these figures they are also the **prerequisite** for any PHP
+version bump, and the bump cannot be planned until they are measured.
+
+## Why this is a script
+
+`scripts/measure/php-version-headroom.ts` computes the table, and
+`tests/unit/php-version-headroom.spec.ts` covers it -- including a regression that feeds the function
+the binary's 268,873 B and asserts it then reports "fits", so the original error is reproducible
+rather than merely described. Same input, same answer, every time: this is deterministic work and it
+had already been got wrong once in prose.
+
+# FOUR SCOPE CORRECTIONS FROM REVIEW, 2026-08-11
+
+These are review conclusions, not measurements. They are recorded because each one changes what a
+later task is allowed to assume, and three of them narrow scope that had quietly widened.
+
+## A1b was right but too narrow, and it collides with A5
+
+A1b as originally scoped proved one thing: that a booted heap can be restored. Three checks belong
+inside it rather than after it, because each can invalidate the design and all three are cheaper
+than the work that depends on them.
+
+The collision is with **A5, cache poisoning**. A restored heap carries a warm `DrupalKernel` and
+its container, which is exactly the state an attacker would want to persist across requests. A
+snapshot is therefore a *cache* with all the invalidation problems of one, and the two items cannot
+be designed independently: **C1 and C2 become load-bearing rather than optional**, because they are
+what establish that a restored image is the image that was written. Anything built on A1b before
+C1/C2 exist is trusting an unauthenticated image.
+
+## Elide unconditionally, compress conditionally
+
+These were being treated as one decision and they are not. Elision is free and always correct: it
+removes bytes nothing reads. Compression trades CPU at boot for bytes at rest, so it is
+contingent on where the binary sits against the ceiling and on what the boot budget can spare.
+
+The rule: **elide always, compress only when the measurement says the bytes are needed.** Bundling
+them hid that the second one has a cost, and a conditional decision applied unconditionally is how
+a boot budget gets spent without anyone choosing to spend it.
+
+## The build track is one Docker session, not a queue of separate tasks
+
+B1 through B4 were listed as four items, which made them look independently schedulable. They are
+not: they all need the same emscripten toolchain in the same container, and the setup cost dominates
+each individual task. Splitting them means paying that cost four times and holding four chances to
+get the environment subtly different.
+
+Treat the build work as **one session that produces all four outputs**, and schedule it as one
+block. This is also why B1-B4 are blocked rather than deferred: the blocker is Docker, once, not
+four separate unknowns.
+
+## The batched deploy grew past what it was authorised to be
+
+The batched deploy started as "measure several things in one deploy to amortise the propagation
+wait". It accumulated arms until it became the critical path for unrelated verdicts, which is the
+failure mode where one flaky run invalidates a batch and nothing can be attributed.
+
+Constraint going forward: a batch carries arms that share a *binary and a mount*, and every arm
+must be independently attributable from tail output alone. An arm that needs a different binary is
+a different deploy. See the provenance columns in [CURRENT NUMBERS](#current-numbers) for why
+that attribution has to be recorded at measurement time rather than reconstructed later.
+
+---
+
+# WHEN TO DELETE A LEGACY SUITE: COVERAGE, NOT A COUNT
+
+**2026-08-11.** The rule had been "delete an original only when the port matches or beats its
+assertion count", which is a good instinct and turned out to be unmeasurable.
+
+`scripts/test-cron.mjs` reported **219 executed assertions** from **208** `ok()`/`eq()` call
+sites -- the difference is loops. The three ported specs have **135** `expect()` call sites
+across **111** tests, and `it.each` multiplies those into far more executed assertions than the
+call sites suggest. **Neither number is comparable to the other in either direction**, so the
+rule could be satisfied or violated depending on which you counted, which means it was not a
+rule.
+
+Coverage of the module under test is the measure that survives the port. From the three ported
+specs alone:
+
+| file | statements | functions | lines |
+| --- | --- | --- | --- |
+| `src/ops/cron.js` | **93.12%** | **93.1%** | 94.91% |
+| `src/drupal/cron-php.js` | **100%** | **100%** | 100% |
+
+That is evidence about the thing being tested rather than arithmetic on two incompatible
+harnesses, so `test-cron.mjs` was deleted on it. **The revised rule: port, measure coverage of
+the module, delete when it is high and the specs run against the real platform rather than a
+mock.** A count comparison is only usable when both sides count the same way.
+
+The cron port is now three specs by concern -- `cron-gc.spec.ts` (the passes, on real
+`ctx.storage.sql`), `cron-step.spec.ts` (pure functions and the PHP-fragment shape checks), and
+`cron-chain.spec.ts` (the step machine, also on real SQL). The Drupal-shaped DDL they share
+lives in `tests/helpers/drupal-schema.ts` rather than being copied into each, because a 90-line
+schema duplicated twice drifts until the two suites are testing different databases.
+
+# THE SPLIT, THE TYPESCRIPT CONVERSION, AND FOUR ITEMS THAT ARE BLOCKED RATHER THAN SKIPPED
+
+**2026-08-11.** The repository is being split four ways, the test lanes absorbed the cron suite,
+and the first module became TypeScript. Each of those found something.
+
+## Two copies of each Drupal module, on purpose, with a check that keeps them honest
+
+`cfw_capability` and `cfw_do_sqlite` now live in their own repositories, and `composer.json`
+requires them the published way (`drupflare/drupflare`, `drupflare/rom`) with path
+repositories so resolution works before publication. The module named `cfw_capability` in this
+entry and in every entry below it was later renamed to `drupflare`, and the repository named
+`drupal-do` to `rom`; the old names are left in place below the FOLD because they are what the
+measurements recorded.
+
+**The copies under `drupal/` are not vestigial and must not be deleted.** This worker never
+loads PHP from `vendor/`: Composer does not run on the edge, and `scripts/gen-driver-assets.ts`
+reads those directories off disk and packs them into `assets/driver.json`, which the Durable
+Object mounts into its in-memory filesystem. So the packed copy is what executes and the
+Composer requirement describes provenance.
+
+That trade has exactly one hazard, and it is sharp: **a fix made in the worker ships without
+ever running the sibling repo's suite, and a fix made in the sibling never reaches the edge.**
+`rom`'s 132-assertion driver suite is the authority on that module's behaviour, so a
+divergence means the packed code is untested.
+
+`scripts/check-module-sync.ts` turns that into a check, and it found real drift on its first
+run: the split had narrowed `core_version_requirement` from `^10.3 || ^11` to `^11`. **The
+narrower one is the honest one** -- every measurement in this document was taken on 11.4.5 and
+nothing has ever been run on Drupal 10 -- so the worker copy was narrowed to match rather than
+the reverse. It runs from the pre-commit hook and NOT from CI, because the sibling checkouts do
+not exist in CI and a step that can only skip is worse than no step.
+
+## `node` does not resolve a `.js` specifier to a `.ts` file, and `bun` does
+
+`src/runtime/serialize.ts` is the first TypeScript module: pure, no platform imports, and its
+13 assertions already ran in the vitest `workers` project. Importers keep the `.js` specifier
+because the bundler resolves it, and a `wrangler deploy --dry-run` confirms the deployable
+bundle is unaffected.
+
+**It broke the legacy lane, and the mechanism is worth recording.** `scripts/test-mask.mjs`
+transitively imports `serialize` through `do-sqlite`, and the legacy runner invoked suites with
+`node`, which fails with `ERR_MODULE_NOT_FOUND` because node will not resolve `./serialize.js`
+onto `serialize.ts`. The same file passed under `bun`, which does.
+
+The fix was not to revert. `scripts/test-migrate-sql.mjs` was the only suite that needed
+`node:sqlite`, and it is now ported, so nothing in the legacy lane needs node any more -- the
+runner uses `bun` and the lane went back to **706 passed, 0 failed**. CI's hand-rolled `node`
+loop was replaced with the runner script so the skip list existed in one place rather than
+two.
+
+## The cron suite now runs against the real engine, and six of my assumptions were wrong
+
+`tests/unit/ops/cron-gc.spec.ts` replaces the hand-written `fakeSql` -- a pattern-matcher with
+one handler per statement shape -- with the **real `ctx.storage.sql` inside a real Durable
+Object**, over a Drupal-shaped schema including the indexes, because DO SQLite bills one written
+row per index touched and a schema without them understates every figure.
+
+The real engine immediately caught six things the mock could not, all of them mine: `nowMs` not
+`nowS`, `rowLimit`/`maxRows` not the env var names, `serializeInt(value)` taking one argument,
+`cacheDataMaxRows` taking **env** rather than options, the ledger field being `passes` not
+`parts`, and a dropped table being recorded in `missing` rather than as an error.
+
+It also exposed **four incomplete JSDoc signatures in `src/ops/cron.js`** -- `gcPass` omitted
+`passes`/`rowsReleased`, `cronUnits` omitted `module`, `advanceCursor` omitted `wrapped`, and
+`skippedCronHooks` had no return type at all. Every one is set by the code. A typed caller could
+not read them, so the fix went into the source docs rather than into casts in the test.
+
+Assertions changed shape deliberately: the original asserted exact rows-written using a
+configurable `indexFactor` because it could not know the real one. Against the real engine these
+assert **relationships** the engine must satisfy -- a delete writes at least as many rows as it
+removed, a caught-up pass writes zero -- which is strictly stronger and is why the `indexFactor`
+plumbing was not carried over.
+
+`scripts/test-cron.mjs` has since been deleted, but not on the count comparison this paragraph
+originally cited -- that rule was replaced. The step-machine region was ported into
+`tests/unit/ops/cron-chain.spec.ts` against the real `ctx.storage.sql`, and the deletion was
+justified on coverage of the module under test: 93.12% of statements and 93.1% of functions in
+`src/ops/cron.js`. See "WHEN TO DELETE A LEGACY SUITE".
+
+## Four items are blocked on dependencies, not deferred by choice
+
+Stated plainly because "not done" and "cannot be done yet" are different things:
+
+| item | what blocks it |
+| --- | --- |
+| The composed canary (socket, boot, suspend mid-render, resume, byte-identical) | needs a **slice driver**, which needs the JSPI binary wired to the mask seam. There is no suspend-mid-render to compose yet, so the four stacked behaviours still cannot be exercised together |
+| `cfw_capability` through the real service container | needs the module **enabled in the pack**, not namespace-registered by hand. That is a pack rebuild, and the pack is a build input |
+| The wasm prefill pipeline (compiled Twig, DPC, `cache_render`, discovery) | same pack rebuild, plus a native render pass to generate the prefill |
+| Build levers (`--disable-mbregex`, `ZEND_VM_KIND=SWITCH`, `-O3`, PGO) | hours of Docker per variant, and `build/README.md` records that there is still no test asserting a produced binary has the extensions its `.rc` asked for |
+
+# THE DEFERRED WORK NOW HAS SOMETHING THAT WAKES IT, AND THAT WAS THE WHOLE BUG CLASS
+
+**2026-08-11.** Three background mechanisms existed and none of them ran unattended. Each was
+built, tested, and then reachable only from a diagnostic route, which on a real site means it
+never happens. Wiring them up found one defect per mechanism.
+
+## Deferred outbound HTTP: draining in `alarm()` was only half a fix
+
+PHP cannot await, so `cfwQueueFetch` records a request and returns; the `fetch()` has to happen
+in JS between PHP runs. Only `/httpdrain` did that, so a queued request sat forever.
+
+Draining in `alarm()` was not enough on its own. **On an idle site the alarm re-arms at the
+240 s keep-warm interval**, so a queued request waited up to four minutes -- measured, a
+serve-chain assertion sat on a 2-entry queue for 30 s and failed. Two more changes were
+needed: `queueHttp()` arms the alarm when it enqueues, and the end-of-alarm re-arm considers
+**both** queues rather than only fills.
+
+Also worth recording as a JS trap: the obvious guard `if (drained?.drained)` is always true,
+because `drained.drained` is an **array** and an empty array is truthy. It recorded a drain on
+every quiet alarm until it became `.length > 0`.
+
+## Save-triggered prefill: the paths must be read BEFORE the purge
+
+`bumpGeneration()` deletes every row of `cfw_page`, so a content editor saved and the next
+visitor to each previously-warm URL got a 202 while the alarm chain caught up.
+
+The fix is small and the ordering is the whole subtlety: read the paths, purge, then re-queue
+what was purged. Measured end to end on a live Durable Object -- bump reports
+`purgedPages: 2, requeued: 2, droppedFromRequeue: 0`, and a visitor gets **200 HIT within 3 s
+with `inline=0`**, so the alarm chain's prefill produced it rather than the request rendering.
+
+The cap is reported rather than silent (`droppedFromRequeue`), because rows written is the free
+plan's binding meter and one save must not become thousands of fills.
+
+**It changed three existing invariants, and that is the interesting part.** Serve-chain
+assertions encoded "after a bump the page cache is empty" and "a second invalidation with
+nothing cached does not bump again". Neither is true once a bump re-queues: the cache refills
+within a second, and the second invalidation legitimately has something to invalidate. The
+assertions were updated to the new contract, keeping the safety property they were standing in
+for -- the bytes served after a bump are a real page, freshly rendered, never stale.
+
+Coalescing within a single save is unaffected, and the reason is worth stating: a save is one
+synchronous `php._run()`, workerd delivers no events during it, so no alarm can interleave and
+clear the coalescing flag between two `cachetags` writes of the same save.
+
+## Sliced database updates: wired, and the phase check was wrong twice
+
+`updbStep()` is now driven from `alarm()`, and a live run OWNS the chain and returns rather
+than falling through -- filling pages from a half-updated schema would cache output the
+finished site cannot reproduce.
+
+The gate on it took two corrections, both found by checking the source rather than by testing:
+
+1. The field is **`phase`**, not `state`. Reading `run.state` yields `undefined`, which compares
+   unequal to every terminal name, so a **COMPLETE run would have held the alarm chain forever
+   while fills starved.**
+2. A denylist of terminal phases is the wrong shape. `UPDB_PHASES` is
+   `planning, running, complete, halted, rolled_back, abandoned`, and an allowlist of the two
+   live phases means a phase added upstream later defaults to "not active" rather than wedging
+   the chain.
+
+Verified that an idle site is not held: `updbActive: false` on a fresh object, serve chain
+still **93 / 93**.
+
+**Still not wired:** `cfw_capability` through the real service container, which needs the module
+enabled in the pack rather than namespace-registered by hand.
+
+# THE HOST CAPS A STATEMENT AT 100 BOUND PARAMETERS, AND IT BROKE THE CACHE WRITE PATH
+
+**Measured 2026-08-10 by bisection through the new `/sql` route against a real
+`ctx.storage.sql`: 100 bound parameters succeed, 101 fails with `too many SQL variables at
+offset 307: SQLITE_ERROR`.** SQLite's own compile-time default is 32,766, so this is the
+runtime lowering it by two orders of magnitude, exactly as it does for LIKE patterns
+(50 bytes against a 50,000 default). **This refutes an earlier claim in this document that
+the parameter limit does not exist on Durable Object SQLite.**
+
+It is not a corner case. It is the cache write path:
+
+| | |
+| --- | --- |
+| `DatabaseBackend::setMultiple()` | writes cache entries with `->upsert()` |
+| core's chunk size | `MAX_ITEMS_PER_CACHE_SET = 100` **rows** |
+| cache bin columns | 7 (`cid`, `expire`, `created`, `tags`, `checksum`, `data`, `serialized`) |
+| placeholders per chunk | **700** |
+| the ceiling | **100** |
+
+**Core's own chunking is already 7x over.** And core's sqlite `Upsert::__toString()` emits
+ONE multi-row statement, so the generic `execute()` flattens every row into a single
+parameter list of rows x fields. A cold `cache_discovery` write is 82 entries / 574
+placeholders, and any cache flush on a live site reaches it.
+
+**The row-based chunk cannot express the constraint**, because the limit counts parameters
+and a row's width is not fixed. `drupal/cfw_do_sqlite/.../Upsert.php` re-batches by
+placeholder budget instead: `floor(100 / fields)` rows per statement, all batches inside one
+transaction, matching what core's sqlite `Insert` already does for multi-row inserts.
+
+`Connection::upsert()` had to be overridden too. Drupal 11 resolves query classes by
+**standard autoloading inside the method that returns them** -- `getDriverClass()` now
+throws for `'Upsert'` -- so without the override, core's sqlite `Connection::upsert()`
+resolves `Upsert` in the sqlite namespace and this driver's subclass is never constructed.
+
+## The fixture was the real bug, and that is the durable fix
+
+`tests/fixtures/FakeHost.php` runs on local PDO, whose limit is 32,766. **So the entire
+class of "statement too wide" defect passed every test and could only fail in production.**
+The fixture now enforces `MAX_PLACEHOLDERS = 100` with the host's own error text.
+
+Verification chain, in order of strength:
+
+| | |
+| --- | --- |
+| driver suite | **132 passed, 0 failed** (was 127; +5) |
+| the new assertions | a 60-row x 3-field upsert lands all 60 rows, no statement exceeds 100 binds, it is split rather than sent whole, a repeat still upserts rather than duplicating |
+| **mutation test** | disabling `Connection::upsert()` makes the suite die inside `Drupal\Core\Database\Query\Upsert->execute()`, caught by the fixture's new limit. Reverted; `grep` confirms the override is back and the suite is green again |
+| live Durable Object | flush `cache_discovery` (80 rows), render again: **200**, no error |
+
+One honesty note: the reported symptom "every render 500s" was observed on a separately
+trimmed pack and **I did not reproduce the 500 itself**. What is measured here is the
+ceiling, the arithmetic that overruns it, and that the fix splits correctly and is
+load-bearing. A single render repopulates `cache_discovery` lazily (1 row, not 80), so a
+front-page render is not on its own a wide-upsert workload.
+
+**Still unbounded elsewhere:** any query with more than 100 placeholders, notably a large
+`IN ()` condition built by `Condition`. Nothing in the suite's coverage emits one now that
+the fixture enforces the limit, but coverage is not proof of absence. `Insert` is safe --
+core's sqlite `Insert` already executes one statement per row.
+
+# MIGRATION RUNS IN JAVASCRIPT NOW, AND IT COST TWO DEFECTS TO GET RIGHT
+
+**Done and verified end to end, 2026-08-10.** `scripts/pack-sql.ts` builds the packed
+site into replayable chunks; `src/migrate-sql.js` replays them straight into
+`ctx.storage.sql`; `/migrate` and `alarm()` drive it. This closes RULE 0b-ii's blocker and
+removes the last consumer of SQLite from the interpreter.
+
+| | measured |
+| --- | --- |
+| gate assertions | **86**, 0 failed (`node scripts/test-migrate-sql.mjs`) |
+| serve chain | **82 / 82** against a real Durable Object (was 70 with 3 failed) |
+| render from a JS-migrated database | 200, 12,304 bytes, sha1 `10077de5f0bd` |
+| render from a PHP-migrated database | 200, 12,304 bytes, sha1 `10077de5f0bd` — **byte-identical** |
+| PHP involvement in migration | **none**: `queryCount: 0`, `phpBooted: false` |
+| host statements, first render | **63** on the JS-migrated site vs **95** on the PHP-migrated one |
+| chunks / statements / rows | 24 / 1,588 / 1,342 |
+| chunk bytes | 5,676,345, which is **799,431 SMALLER** than the 6,475,776-byte `site.sqlite` it replaces |
+| rows written, one-off | **4,813** — 4.8% of the free plan's 100,000/day |
+| encoding | 0 base64 values, 0 wide integers, 22 `NOCASE_UTF8` collations rewritten |
+
+**The whole site is 1,342 rows.** That was never stated anywhere and it reframes the
+problem: the 6.47 MB database is a handful of large BLOBs, not a large row count.
+`cache_container` alone is 1.45 MB in **three rows**, and three of the 24 chunks are a
+single 520 KB statement each.
+
+**Why JS replay fits where PHP could not, and it is not because JavaScript is faster.** A
+JS loop is divisible where a synchronous `php._run()` is not. One chunk per invocation, the
+cursor in DO SQLite, resume on the next firing — no JSPI, no VM-interrupt patch, no mask
+seam, none of the four undocumented behaviours in RULE 0b-iv. The 227x first-run blocker is
+closed by the one mechanism that needs none of the unfinished machinery.
+
+**Atomicity is the correctness argument.** The cursor advances inside the same
+`transactionSync()` as the chunk's statements, so a killed invocation always retries from a
+consistent point and can never double-apply. A cursor in `ctx.storage.put()` would be a
+second commit and a window where the data is in and the cursor is not.
+
+## The two defects, both found by testing rather than by reasoning
+
+**1. `node:sqlite` truncates a TEXT value at the first NUL byte.** Drupal's `cache_data`
+holds a serialized `RouteCollection` containing NULs. A 1,697-byte row read back as **117
+bytes**, the pack shipped the truncated form, and Drupal died in
+`RouteProvider::getRouteCollectionForRequest()` with `InputBag::replace(): Argument #1
+($inputs) must be of type array, null given` — because `unserialize()` on a truncated
+string returns `FALSE` and `FALSE['query']` is `NULL`. `CAST(col AS BLOB)` returns all the
+bytes; `typeof(col)` is read alongside so a BLOB is not silently replayed as TEXT.
+
+**2. The first fidelity test could not see defect 1, because it shared the defect.** It
+compared source against replay by reading both as JS strings, so both sides returned the
+same 117 bytes, the digests matched, and **86 assertions passed over a pack that could not
+render a page.** The digest is now computed with `hex()` and `typeof()` INSIDE SQLite, which
+come back as ASCII and cannot be cut by a NUL.
+
+> **Both sides of a comparison sharing one instrument cannot see a defect the instrument
+> has.** This is RULE 0's lesson about instruments, applied somewhere RULE 0 was not being
+> looked for — RULE 0 was written about clocks, and the same failure lives in every
+> boundary. Two assertions now pin it in absolute bytes rather than as an equality, because
+> the equality form is exactly what passed.
+
+Consequence for the record: an earlier figure in this round claimed the chunk set was
+2,825,722 bytes smaller than the `.sqlite`. That was measured on truncated data. The real
+figure is **799,431**, and the chunk count went from 15 to 24.
+
+## A half-migrated site must refuse to serve, and that state is new
+
+Chunked replay makes "partway" a real state lasting ~24 alarm firings, where before
+`/migrate` was one indivisible 2,272-3,467 ms call and a site was either unmigrated or
+done. **Drupal does not fail cleanly against a quarter of its own database — it renders**,
+with truncated caches, and that render is then written to the page cache and to the edge.
+Three serve-chain assertions failed exactly that way.
+
+`/serve` now answers **503 with `Retry-After: 1` and `x-cfw-migrate: n/24`** while the
+cursor is incomplete. A site with **no cursor at all** keeps serving, because that is every
+deploy predating this engine and refusing them would take the whole fleet offline; "never
+started" and "half done" are different states and conflating them is the expensive mistake.
+
+## MIGRATION NOW FITS THE FREE TIER OUTRIGHT: max 3 ms of edge cpuTime, 0 of 99 over
+
+**Measured on a deployed worker (`cfw-site-o2`, `static-o2`, `observability.enabled`,
+per-invocation `cpuTime` read through the observability API, worker deleted afterwards).**
+Three rounds, each one deployed and re-measured, because the first two were not good enough:
+
+| pack | chunks | p50 | p90 | p95 | max | invocations over 10 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| PHP engine (`MIGRATE_DB`) | 1 | — | — | — | **3,467 ms** | **1 of 1** (347x) |
+| JS, 200 st / 192 KiB | 24 | 3 | 14 | — | 25 | **3 of 24** |
+| + oversized-value splitting | 81 | 2 | 3 | 5 | 32 | **1 of 81** |
+| **+ DDL statement cap** | **99** | **1** | **2** | **2** | **3** | **0 of 99** |
+
+**First-run migration is free-tier-clean: 3 ms worst case against a 10 ms ceiling, 3.3x
+headroom, zero invocations over.** Against the PHP engine's single 3,467 ms call that is a
+**1,156x reduction in worst-case invocation cost**, and it needs no JSPI, no VM-interrupt
+patch and no mask seam. The whole 99-chunk chain completes in **under 8 seconds** of wall
+clock, alarm-driven, unattended.
+
+> The 99 in this table is the pack that was deployed and timed. The shipping pack is now **79
+> chunks** (`assets/drupal-sql/manifest.json`, generation `d2ad8dd8c5f80948`); the per-chunk cpuTime
+> has not been re-measured on it. See the [Status](#status) row.
+
+Two claims had to be broken to get there, and both were mine.
+
+### "There is no smaller unit than a row" is false
+
+Written into this document as a limit, and it cost the three worst invocations. The three
+520 KB `cache_container` rows measured **14, 17 and 25 ms** — the only three of 24 that did
+not fit. But SQLite can BUILD a value across statements: an INSERT carrying the first slice
+plus N bounded `UPDATE ... SET col = col || ?` appends. 1,342 rows became 1,533 row
+statements, the largest chunk fell from 532,912 to 104,201 bytes, and the value is verified
+byte-identical after the rebuild.
+
+Sliced on **code points, not bytes** — `||` concatenates TEXT, so half a multi-byte
+character would come back re-encoded as a replacement character: subtly wrong rather than
+obviously broken.
+
+This is the "verify a constraint before you write it down" rule biting in its own document.
+The limit was plausible, never tested, and repeated as a reason.
+
+### A byte budget does not bound DDL at all
+
+The split pack still had one invocation at **32 ms — worse than the 25 ms it replaced.** It
+was the chunk holding all 177 `CREATE INDEX` statements. Index DDL is ~40 bytes per
+statement, so 177 of them fit in ONE 11 KiB chunk, under both a 200-statement and a 64 KiB
+budget, and **index-build cost tracks the TABLE, not the statement's length.** Sizing DDL by
+its text was measuring the wrong quantity.
+
+A separate `--max-ddl-statements=12` cap fixed it. Note the shape of the error: the fix for
+the first problem *created* the second and made the max worse, and only a re-deploy and
+re-measure showed it. Neither the gate tests nor local wall-clock could see either one.
+
+### What the shipping binary costs, deployed
+
+| | measured on `static-o2`, deployed |
+| --- | --- |
+| **total worker upload** | 10,246.06 KiB raw / **gzip 2,979,952 bytes** |
+| **vs the 3,145,728 free ceiling** | **165,776 UNDER (5.3% headroom)** |
+| cold boot + 1 render, one invocation | **4,019 ms of cpuTime, indivisible** |
+| render output | 200, 12,304 bytes, sha1 `10077de5f0bd` — identical to local and to the PHP-migrated path |
+| in-PHP `microtime()` on the edge | **0**, as RULE 0 says |
+
+**That gzip figure is the first one in this document that belongs to a complete, deployable
+worker that can run the real workload.** Every previous "fits free" number was a binary
+measured alone, and the binary that rendered Drupal was 586,923 bytes over.
+
+### THE DEFAULT CONFIG WAS NOT THE SHIPPING CONFIG
+
+Found 2026-08-11, and it made the headline claim above untrue of anything a reader could build.
+
+`wrangler.jsonc` -- what `bun run dev` and `bun run deploy` use, and what a deploy button would
+use -- had **no `alias`**, so it resolved `src/runtime/php-binary.js` and bundled
+**`static-free-v1`**. Measured with `scripts/measure/size-report.mjs`:
+
+| binary | total gzip | vs the 3,145,728 free ceiling |
+| --- | --- | --- |
+| `static-free-v1`, what the default actually bundled | 3,732,651 | **1.19x OVER** |
+| `static-o2`, what this section calls the shipping binary | 2,876,855 | fits, 268,873 under |
+
+Neither half of that was unknown: `php-binary.js` documents that `static-free-v1` is the default
+because every recorded per-query, bridge and boot figure was taken on it and has to stay
+reproducible, and `experiments/wrangler/wrangler.site-o2.jsonc` says in its own header that
+`static-free-v1` "can never ship". Both statements were true. Nothing reconciled them, so the
+knowledge sat in a comment inside an `experiments/` file while the default config quietly built
+the unshippable artifact.
+
+The fix is an `alias` in `wrangler.jsonc` pointing at `php-binary-o2.js`, with the reproduction
+path preserved: delete the alias to get a `static-free-v1` bundle back. Verified end to end
+rather than by size alone -- on `static-o2`, migration completed **99/99 chunks, 1,779
+statements, 5,004 rows in 377 ms**, and `/serve` returned **200 with 12,304 bytes** and
+`x-cfw-cache: HIT`. That byte count is the same 12,304 recorded above for the deployed o2 render,
+which is an independent confirmation that swapping the default changed the size and not the
+output.
+
+Default-config bundle after the alias: **10,311.15 KiB raw / gzip 2,996,090 bytes**, 149,638
+under the ceiling. It is larger than the 2,979,952 deployed figure because that one was built
+from a staged-asset config; the ceiling verdict is the same.
+
+**The transferable part:** a repo can hold the correct fact in one file and the wrong default in
+another, and a size measurement of the right binary will never catch it. What caught it was
+asking what the DEFAULT config bundles, which is a different question from what the best binary
+weighs.
+
+### THE SAME BUG CLASS, THREE TIMES IN ONE DAY -- and the third one shipped a remote shell
+
+Asking "what does the DEFAULT config actually do" once found the binary. Asked twice more, it found
+two more, and the third is the most serious defect in this document.
+
+| # | the correct fact, and where it was recorded | what the default did |
+| --- | --- | --- |
+| 1 | `wrangler.site-o2.jsonc`: `static-free-v1` "can never ship" | `wrangler.jsonc` had no `alias` and bundled it, 1.19x OVER the free ceiling |
+| 2 | this report: the lazy FS cuts mount 832 -> 199 ms, and mount is 3,066 of 3,754 ms | **NO config anywhere set `LAZY_MOUNT=1`.** The lazy FS was unreachable code from the day it was written |
+| 3 | `src/site.js`: "every route here is a diagnostic and fails closed without PW_DIAGNOSTICS" | the gate covered **`/serve` too**, and `wrangler.jsonc` set the flag to `"1"` |
+| 4 | `.gitignore`: `site.sqlite` is "the only unrecoverable artifact", tracked because nothing rebuilds it | `wrangler.jsonc` pointed `assets.directory` at `./assets`, so the whole hand-trimmed site database was **served publicly** at `/drupal/site.sqlite` |
+
+**Number 4 is the second security-relevant one, and it is the same class as the other three.** Workers
+assets are public by definition and take precedence over the Worker, so every file under
+`assets.directory` is a URL. The tree had grown to 97 MB and 318 files, and it contained `site.sqlite`
+(the site database), `core.list.json`, the three alternate packs and 200 generated PHP fixtures.
+
+Proven rather than inferred: with the new ignore rules made inert, **all 9 withheld paths returned
+200**. The fix is `assets/.assetsignore`, deny-by-default (`/*` then negations), which cuts the upload
+to **84 files / 17.71 MiB** and means a fixture added later has to be opted in rather than
+accidentally published. It also fixed red gate 0.3, since 97 MB could not upload at all -- but the size
+was the symptom that got noticed, and the disclosure was the actual defect.
+
+The count is now four, and the class has been worth asking about every time: **the correct fact lives
+in one file and the wrong default lives in another, and no measurement of the right artifact will ever
+catch it.** The question that finds these is not "is this binary/config/tree correct" but "what does
+the DEFAULT do", which is a different question. Two of the four were security-relevant.
+
+**Number 3 in full, because it is a security defect in the deployable artifact.** One flag gated
+every route, `/serve` included, so a deployed worker had exactly two states and both were wrong:
+with `PW_DIAGNOSTICS=1` the site served pages **and answered `/php` (arbitrary PHP) and `/sql`
+(arbitrary SQL against the site database) for anyone on the internet**; without it, the site did
+not serve at all. There was no configuration that served a page without also shipping a remote
+shell, and the default was the exposed one. A deploy button would have shipped it.
+
+`src/site.js` now splits `PUBLIC_ROUTES` from `DIAGNOSTIC_ROUTES` and gates only the latter;
+`wrangler.jsonc` leaves the flag unset with a comment saying why. Verified on a running worker
+against the shipping default:
+
+| | with the shipping default |
+| --- | --- |
+| `/php`, `/sql`, `/export`, `/savenode`, `/firstrun`, `/nativefetch`, `/migrate` | **404, all seven** |
+| `/serve` | **200** |
+
+That combination was previously impossible. The vitest `workers` project sets
+`bindings: { PW_DIAGNOSTICS: '1' }` in `vitest.config.ts` instead, because the suite legitimately
+drives `/migrate` and `/sql` -- which is what lets the test lane and the deployable config both be
+correct.
+
+**And a test asserted the defect.** `serve-edge.spec.ts` required `/serve` to 404 without the flag,
+which was a faithful test of the code as written and entirely compatible with shipping a remote
+shell. It now asserts the safety property per dangerous route rather than once for the whole table,
+and `tests/unit/runtime/route-gate.spec.ts` pins the config: 13 assertions that fail if
+`PW_DIAGNOSTICS` reappears uncommented, if `LAZY_MOUNT` disappears, or if the o2 alias is removed.
+
+**What the class actually is:** every one of these was a fact this document already contained,
+contradicted by a default in a file nobody re-read. A grep for the fact finds it and reports
+health. The only question that finds the bug is *what does the artifact a user deploys actually
+do* -- and it has now been worth asking three times.
+
+**Boot is still the wall.** 4,019 ms in one synchronous call, 402x the free ceiling, and no
+cursor design divides it — the same conclusion the sliced-`updb` work reached independently.
+Migration was divisible because it is a JS loop; boot is not because it is one `php._run()`.
+
+> **Superseded:** boot is **1,398 ms** of edge cpuTime, 140x the cap, and it is no longer the thing to
+> work on -- the fill window amortises it, so boot-directed work is bounded at ~1.1%. See
+> [THE DEPLOY: COLD BOOT IS 1,398 ms](#the-deploy-cold-boot-is-1398-ms-and-five-estimates-were-wrong)
+> and [BOOT WORK IS SATURATED](#boot-work-is-saturated-the-roadmap-was-in-the-wrong-order).
+
+Two renders were measured as single-render invocations at **152 ms and 248 ms**, and they are
+**NOT the assembly figure**: they are renders 1 and 2 on a freshly booted object, and this
+document already records steady state arriving at render 3. The warm single-render-per-
+invocation re-measurement on the shipping binary is still owed, and it is what slice counts
+must be sized from.
+
+Local A/B, n=10 warm renders each, **LOCAL RATIOS ONLY**: `static-o2` kernel boot 1,137 ms vs
+`static-free-v1` 1,409 ms (19% faster), warm render median 20.0 ms vs 22.0 ms (9% faster),
+1,810 included files both, identical output hash. Consistent with the recorded `-O2` over
+`-Oz` figure plus ext-yaml.
+
+## THE GATE IS ALREADY HELD BY fetch(), AND ACQUIRING IT AGAIN HANGS FOREVER
+
+**Two defects, found in sequence, both mine, both introduced while fixing something real.**
+
+An intermittently-failing serve-chain assertion (`the same site finishes when driven to
+completion -- done=undefined`) turned out to be a genuine concurrency hole: **migration never
+went through the reentrancy gate.** A `/migrate` request and the alarm chain -- armed at
++1 ms -- both call `step()` on the same object, both read the same cursor, both replay the
+same chunk, the loser hits a UNIQUE constraint, and the cursor latches to `failed`. After
+that `/serve` answers 503 forever. I had nearly filed the flake as a wrangler reload.
+
+The fix for that caused a worse one. `this.gate.run()` was added in **both** step call sites,
+and `fetch()` already runs the entire router inside `this.gate.run()`. `Gate` is a FIFO
+promise chain, so a nested acquire awaits a release that only fires when the outer callback
+returns -- which is waiting on the inner. **Permanent deadlock.** Every request to the object
+hung past 90 s on a freshly created one, including `/serve-stats`, which touches no migration
+code at all: it was simply queued behind the wedged entry.
+
+| symptom | actual cause |
+| --- | --- |
+| `/migrate` and `/serve-stats` both hang past 90 s on a FRESH object | nested non-reentrant `gate.run()` inside the already-gated `fetch()` |
+| looked like | a wedged dev server, a platform fault, a slow PHP boot |
+
+**Correct shape, and the asymmetry is the point:** gate the ALARM path, never the fetch path.
+`alarm()` is not gated as a whole -- it acquires per fill -- so it needs an explicit acquire.
+`fetch()` is gated wholesale, so anything reached from a route must not acquire again. The
+class already carries a comment warning about exactly this and I wrote past it.
+
+> **Before adding a lock, find out who already holds it.** A FIFO gate makes re-entry a
+> permanent hang rather than an error, and a permanent hang reads like infrastructure.
+
+Third defect on the way out, and it is the one that would have been worst in production: the
+alarm re-armed at **+1 ms** whenever the migration branch was taken, and an *error* return is
+non-null too, so a failing step re-armed at 1 ms **forever** -- spinning the object and
+starving every gated request. Now: 240 s when done, +1 ms while progressing, and
+`min(30 s, 1 s x consecutive failures)` on failure. Separately, `alarm()` now skips the fill
+loop entirely while the cursor is incomplete, because a fill against a partial database can
+only produce something `/serve` refuses to serve, at the price of a ~4 s synchronous boot
+that blocks the whole object.
+
+Verification: serve chain **82 passed, 0 failed, twice in a row** on a clean dev server.
+
+## What this unblocks, and the one thing it does not
+
+`static-o2` (2,876,855 gz, 268,873 UNDER the free ceiling, no `pdo_sqlite`) can now run the
+real workload. So the full re-measurement round of RULE 0b-iii is unblocked, and the
+free-tier bundle question can be settled against ONE binary.
+
+Not closed: **the three single-statement 520 KB chunks are indivisible.** There is no
+smaller unit than a row, so if one of those overruns 10 ms of edge cpuTime the fix is
+upstream — do not ship a pre-warmed container — rather than finer chunking. The gate test
+asserts their count so a future pack cannot multiply them silently. Their edge cost is
+unmeasured; local wall-clock for all 24 chunks was 261 ms, which by RULE 0 is a local ratio
+and not an edge figure.
+
+Also still open: `src/mount.js` and `src/lazy-fs.js` still fetch `site.sqlite` into MEMFS.
+Nothing reads it once the JS engine is default, so removing it is a 6.47 MB asset saving
+that has not been taken yet.
+
+# RULE 0b: THE BUNDLE FIGURE AND THE WORKING BINARY ARE DIFFERENT BINARIES
+
+> **Superseded in its verdict; the rule itself is current.** "The binary that renders Drupal is
+> 586,923 bytes OVER the free ceiling" is closed, and so is the whole 0b-ii/0b-iii/0b-iv chain that
+> depends on it. One artifact now runs the real workload at **2,307,696** gzipped bytes, **838,032
+> under** the 3,145,728 ceiling, because the interpreter ships as a zstd `Data` module rather than a
+> wasm module. PHP 8.5 with every extension intact is 2,658,002 on the same meter. Keep the rule --
+> a figure must name its binary -- and discard the gap. See
+> [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was).
+
+**Measured 2026-08-10, and it invalidates the free-tier bundle verdict.** Three
+recorded facts could not all be true — the shipping extension list has no
+`pdo_sqlite`, the capability config sets `WITH_SQLITE=0`, and yet `MIGRATE_DB`
+demonstrably works through `new \PDO('sqlite:...')`. Resolved by measuring:
+
+| binary | gz total | vs the 3 MB free ceiling | has SQLite? | runs migration? |
+| --- | --- | --- | --- | --- |
+| **`static-free-v1`** — what `src/php-binary.js` selects and what EVERY functional measurement in this document was taken on | **3,732,651** | **+586,923 OVER** | yes | **yes** |
+| `static-o2` — the source of the recorded "fits free" figure | 2,876,855 | −268,873 | **no** | **no** |
+| `static-jspisjlj` — the new slicing build | 2,866,753 | −278,975 | **no** | **no** |
+
+**So the bundle number that says "free tier fits" belongs to a binary that has
+never run Drupal's migration, and the binary that renders Drupal is 586,923 bytes
+OVER the free ceiling.** Two different artifacts were being reported under one
+label. This is Rule 3 in a new costume — a figure wearing another build's name —
+and it is the sixth time a free-tier verdict has rested on a mislabelled
+measurement.
+
+**Consequence: the JSPI build's "no SQLite" failure was never JSPI-specific.** It
+is the first time anyone ran migration on a binary matching the *documented*
+shipping config. `static-o2` would have failed identically.
+
+**And it promotes one item from cleanup to decisive.** Shipping the site as SQL
+text in the pack — the export path already exists (`exportDatabase()`, 289-294
+statements) — is not a tidy-up. It is the change that removes PDO from the surface
+entirely, after which `static-o2`/`static-jspisjlj` can run the real workload and
+the free-tier bundle question is answered with one binary instead of two. Until
+then **the free-tier bundle verdict is UNRESOLVED**, and any claim of headroom has
+to name which binary it measured.
+
+# RULE 0b-ii: THE BUNDLE QUESTION IS CONTINGENT, NOT OPEN — and PDO survives
+
+Sharper than "unresolved". `static-o2` is **268,873 under** the ceiling and already has
+no SQLite. The only thing stopping it running Drupal is that `MIGRATE_DB` reaches for
+`new \PDO('sqlite:...')` — **one consumer, once, at first run.**
+
+**Verified, and it is the check the refactor gates on:** occurrences in the wasm data
+section —
+
+| binary | `pdo_sqlite` | `sqlite3` | **`PDO`** | `yaml` | `zlib` |
+| --- | --- | --- | --- | --- | --- |
+| `static-free-v1` (every measurement) | 2 | 5 | 6 | **0** | 10 |
+| **`static-o2`** (shipping) | **0** | **0** | **6** | **7** | 10 |
+| `static-jspisjlj` | 0 | 0 | **6** | 7 | 10 |
+
+**Base ext-pdo is present without the sqlite driver**, so `PDO::FETCH_ASSOC` and the
+other class constants core's sqlite `Connection` references still resolve. That was the
+failure mode that would have appeared as a runtime fatal rather than a build error.
+
+## Migrate in JavaScript, and it closes a blocker nobody had flagged
+
+`exportDatabase()` already emits 289-294 SQL statements. Replaying them from the Durable
+Object straight through `ctx.storage.sql.exec()` means **no PHP involvement in migration
+at all**. Three consequences, and the third is the one that matters most:
+
+1. PDO leaves the surface permanently; SQLite leaves every future build and it gets
+   smaller.
+2. The free-tier bundle question resolves against ONE binary instead of two.
+3. **Migration becomes chunkable with no suspension mechanism.** A JS loop with a cursor
+   in DO storage stops after N statements and resumes next invocation. No JSPI, no
+   VM-interrupt patch, no mask seam.
+
+**FIRST-RUN MIGRATION IS AN UNFLAGGED FREE-TIER BLOCKER.** `/migrate` measured
+**2,272 ms** of edge cpuTime on minimal and **3,467 ms** on standard — **227x the 10 ms
+ceiling** — and it is the literal first thing that happens when a site deploys. Nothing
+in any plan in this document addressed it. The warm window cannot help, because at first
+run there is nothing booted to keep warm. JS-side chunked replay is the only proposal
+that closes it, which promotes it above the mask seam in priority.
+
+# RULE 0b-iii: EVERY NUMBER IN THIS DOCUMENT BELONGS TO A BINARY THAT WILL NOT SHIP
+
+> **Superseded:** the shipping binary and the measured binary are the same artifact now, and it fits
+> with 838,032 bytes to spare. The provenance requirement the rule introduced still holds. See
+> [RULE 0b](#rule-0b-the-bundle-figure-and-the-working-binary-are-different-binaries).
+
+The second half of RULE 0b, and it is worse than the first. **40 ms assembly, 20.5 ms
+minimal, 3,754 ms boot, 110.6 MiB memory, the whole cache ladder, the 3.4x
+interpreter multiplier — all measured on `static-free-v1`.**
+
+| | `static-free-v1` (measured on) | `static-o2` (ships) |
+| --- | --- | --- |
+| optimisation | `-Oz` | **`-O2`** — separately measured 3.9% faster |
+| SQLite | compiled in (~614 KB) | absent — changes instruction locality |
+| **ext-yaml** | **absent** | **present** — worth **241 ms** of boot |
+| zlib | present | present |
+
+So a **full re-measurement round on the shipping binary is a road-to-production item in
+its own right**, and it must happen BEFORE slice counts are sized, because every slice
+count is derived from numbers taken on the wrong artifact.
+
+# RULE 0b-iv: FOUR UNDOCUMENTED BEHAVIOURS ARE STACKED AND HAVE NEVER BEEN COMPOSED
+
+Free-tier rendering now rests on all four of these holding at once:
+
+| behaviour | evidence |
+| --- | --- |
+| CPU attribution follows the RESUMING invocation | undocumented; canaried |
+| a JSPI-suspended wasm stack survives an invocation boundary | measured on a **C probe**, never on PHP |
+| an incoming WebSocket message resets the CPU budget | documented, footnote 4 |
+| a non-hibernatable object holds in-memory state | documented |
+
+**Each has a measurement. The composition has none.** Four separate canaries would each
+pass while the product breaks. What is needed is ONE end-to-end canary — deployed, scored
+by the tail worker, `compatibility_date` pinned — that opens a socket, boots, suspends
+mid-render, resumes on the next message, and asserts the render completes **byte-
+identical**. That single probe catches a regression in any of the four.
+
+# THE COST MODEL: free tier is ~100,000 page views/day, and Worker requests bind
+
+Cost per page view is a vector, not a number:
+
+| path | Worker req | DO req | rows written |
+| --- | --- | --- | --- |
+| edge HIT | 1 | 0 | 0 |
+| DO HIT | 1 | 1 | 0 |
+| MISS + fill | 1 | ~3 | ~18 (→ ~8 once `dblog` is uninstalled) |
+
+At a realistic 85% edge-hit / 14% DO-hit / 1% miss mix:
+
+| meter | ceiling |
+| --- | --- |
+| **Worker requests** | **PV ≤ 100,000/day — BINDS** |
+| DO requests | 0.17·PV ≤ 100,000 → PV ≤ 588,000 |
+| rows written | 0.01·PV·18 ≤ 100,000 → PV ≤ 555,000 |
+| duration, rows read, storage | not close |
+
+**Worker requests bind first and every other meter has ~5x headroom.** So free tier is a
+clean **~100,000 page views/day, ~3M/month**, for a well-cached site. That number belongs
+in the product docs.
+
+Paid, above the $5 minimum: 1M PV → $5. 10M PV → ~$5.11. 100M PV → ~$35. The comparison
+is not $5 against a $6 VPS; it is $5 against a VPS **plus** CDN, backups, monitoring and
+patching labour, and the labour is the part that does not scale down.
+
+**The scaling asymmetry, stated honestly:** cached traffic scales the way serverless
+promises — a viral post costs pennies and needs no action. **Uncached traffic does not
+scale at all**, because one site is one Durable Object is one thread, and you cannot buy
+a bigger one. Read-replica sharding is the escape and it is application-level work. That
+is the real product boundary: content sites win decisively, high-write authenticated
+sites do not.
+
+# RULE 0c: A PROBE PASSING IS NOT THE WORKLOAD PASSING
+
+The JSPI build passed `/cpubench` and `/park` and could not boot Drupal at all.
+The lazy FS passed a render and had an unbounded memory footprint. Assembly
+passed on the local clock and was 4.4x worse on the edge. **Validate the workload
+you intend to ship, not the smallest thing that exercises the mechanism.** This is
+Rule 3 generalised beyond cache headers, and it has now cost a build cycle.
+
+# RULE 0d: THE LAZY FS AND JSPI SLICING ARE IN DIRECT CONFLICT
+
+**Caught by review before the slice driver was wired, and it would have presented
+as nondeterministic.**
+
+The build agent's own diagnosis of why naive `-sJSPI` failed: `_fd_sync.isAsync`
+made a flush path suspending, and `pib_run`'s `zend_try` left an `invoke_iiii`
+**JS frame** under the VM, so suspension threw
+`SuspendError: trying to suspend JS frames`.
+
+`src/lazy-fs.js`, shipped the same round, **does that on purpose**: every first
+`open()` of a file calls out to JS to run `fflate.inflateSync`, so a JS frame sits
+in the middle of the PHP stack for the duration.
+
+Arm `_zend_wasm_slice_arm(period)` and the interrupt fires on an **opcode
+counter, not a seam**. Eventually it fires while an inflate is on the stack and
+the suspend fails with exactly the error three build attempts were spent
+eliminating. The failure profile is the worst kind: frequent during boot (cold
+reads), rare once warm, and dependent on where the counter lands.
+
+**So the mask list is not "the SQL bridge and transaction replay".** It is **every
+host call that enters JS**: the SQL bridge, the codec, `cfwLog`, every
+`cfw_capability` host function, and now every lazy-FS inflate. Design:
+
+- one refcounted `mask_enter()` / `mask_exit()` pair inside `Host::call()` and
+  inside the lazy node's read path, so nesting is safe;
+- a **pending-interrupt flag** that fires on unmask rather than being dropped,
+  or slices silently stop happening;
+- the budget check on **unmask**, not only at the poll site, because a masked
+  interrupt during a large inflate (~1 ms) can overrun the slice;
+- a dev assertion that suspension never occurs with mask depth above zero.
+
+# RULE 0, ABOVE EVERYTHING ELSE
+
+**An absolute CPU figure comes from `cpuTime` in `wrangler tail` on a DEPLOYED
+worker. Nothing else counts.**
+
+In-PHP `microtime()` and `hrtime()` **return 0 on the edge** — measured. They work
+under `wrangler dev` and only there, so an in-PHP number is a local ratio, never an
+absolute. Local-to-edge factors measured so far: **2.2x** warm render, **2.5x** cold
+boot, **6.1x** pack mount.
+
+**The free-tier verdict has moved five times. Four of those were instrumentation,
+not the system.** The most recent: a 9 ms local render was written into this document
+as "settled, it fits", then measured at 20.02 ms on the edge and retracted the same
+day. Before writing a verdict, ask which instrument produced the number.
+
+Corollary, learned immediately after: **an amortized figure is not a per-request
+figure.** That 20.02 ms is 1,021 ms of cpuTime divided by 51 renders in ONE
+invocation, so it excludes every per-invocation cost a real single-render request
+pays once. Measure the shape you intend to ship.
+
+# THE MEASUREMENT RULES THIS DOCUMENT PAID FOR
+
+Rules 1-3 cost three rounds of wrong conclusions. Rules 4-6 were added 2026-08-10
+when rule 3 turned out to have three more layers.
+
+1. **Benchmark inside a closure.** At the eval'd global scope any measurement that
+   walks a backtrace inflates 12-24x. Unlogged, scope makes no difference — so the
+   distortion is invisible until it isn't.
+2. **Never leave a logger attached.** `Database::startLog()` cannot be undone:
+   `Log::end()` leaves events enabled and `openConnection()` re-attaches to every
+   new connection, taxing the isolate permanently (1.72x, measured).
+3. **Check `x-drupal-cache` before believing any render number.** A dozen figures
+   across three rounds were `page_cache` hits wearing a render's label.
+4. **A cache-busting query string does NOT defeat `page_cache`.** It memoizes
+   `$this->cid` on the middleware instance, so on a persistent kernel every later
+   URL maps to the FIRST request's cid and re-serves its page — six different URLs
+   returned byte-identical output. Empty the bin, or null the memoized `cid` by
+   reflection on `http_middleware.page_cache`.
+5. **Emptying the `page` bin is still not a render.** `dynamic_page_cache` HITs
+   behind it. Name the bins you emptied for every number you report. The measured
+   ladder on the DO driver: **1 ms** (page HIT) -> **26 ms** (page emptied, dynamic
+   HIT) -> **34 ms** (both emptied, a real render) -> **81 ms** (+render emptied).
+6. **A query string never busts `dynamic_page_cache` on a non-View route** — its
+   contexts are route/path, not `url.query_args`. And note `PHP_SAPI` is `cli`
+   natively but `embed` in wasm, so `CommandLineOrUnsafeMethod` denies caching on the
+   native side and both bins are live on the wasm side. That asymmetry hid a 60%
+   error in a fresh-kernel figure.
+
+# LAYOUT
+
+| Path | What |
+| --- | --- |
+| `TECHNICAL_REPORT.md` | **This file. The primary artifact** — every measured number with reproduction steps |
+| DEEP DIVE B, below the fold | The Drupal DO SQLite driver: design, what the runtime refuses, transaction gaps, function audit. Was `DRIVER-NOTES.md` |
+| DEEP DIVE A, below the fold | Memory ceiling, autoload, mbstring investigations. Was `AGENT-FINDINGS.md` |
+| `src/site-do.js` | **The Durable Object that runs PHP.** Boot, mount, bridge, serving path, alarm fill chain |
+| `src/site.js` + `experiments/wrangler/wrangler.site.jsonc` | Front end and config for the above; port 8798 |
+| `src/site-php.js` | Every PHP fragment the DO runs: runtime probe, migration, live driver suite, render |
+| `src/mb-fix.js` | The invalid-UTF-8 `mb_*` wrappers. Read its header before touching mbstring |
+| `src/mount.js` | Pack mounting, shared; `prof.js` keeps its own copy |
+| `src/budget-probe.js` + `wrangler.budget.jsonc` | The DO CPU-budget experiment. Deployed, measured, **deleted** |
+| `src/min.js` + `wrangler.min.jsonc` | The minimal-profile bench; `wrangler.edge.jsonc` deploys it for edge cpuTime |
+| `src/do-sqlite.js` | Durable Object base: real `ctx.storage.sql`, transaction replay, keep-warm alarm |
+| `src/codec.js` | Typed PHP<->JS codec, both halves in one file |
+| `src/serialize.js` | Reentrancy gate. `doGate()` is exported and tested but NOT used by the site DO; see "The gate was never the throughput constraint" |
+| `src/jspi-probe.js` + `scripts/jspi-probe.c` + `wrangler.jspi.jsonc` | The JSPI suspension probe. Deployed, measured, **deleted** |
+| `src/tail-worker.js` + `wrangler.tail.jsonc` | Tail consumer: cpuTime unattended, plus the attribution canary's verdict |
+| `wrangler.canary.jsonc` | The canary producer (`src/attribution-probe.js` route `/canary`) |
+| `drupal/cfw_capability/` | The five capability plugins. **Now executed**: 26 assertions via `/capability` |
+| `drupal/cfw_do_sqlite/` | The Drupal 11 database driver, 13 classes |
+| `vendor/` | **19 entries: 14 `static-*` prebuilt PHP wasm builds plus `static`, and the four reproducible 8.3/8.4 copies. Hours of Docker each; do not delete.** |
+| `assets/drupal/` | Packed standard tree. **`site.sqlite` has zero nodes AND no `node.type.*` config**, so `/node/1` cannot render and nothing can be created on it |
+| `assets/drupal-min/`, `assets/drupal-std/` | Database-only packs that DO carry a node and the `page` bundle. Select with `SITE_DB_PREFIX` |
+| `drupal-src/`, `drupal-min-src/` | The installed sites. Rescued out of `/tmp`, which gets wiped |
+
+`node_modules/` is not committed. Run `bun install` first. **`bunx`, not `npx`.**
+
+# VERIFY THE TREE
+
+```sh
+bun install
+bun run test          # vitest, two projects: `workers` inside workerd, `node` for the rest
+bun run test:php      # the Drupal driver suite, which stays PHP and is not portable
+bun run typecheck
+bun run prettier:check
+bun run check:sync    # the packed Drupal modules against their own repositories
+```
+
+**Every command prints its own total. Do not copy a number out of this document.** The figure
+here has been stale three separate times -- once because suites were added, once because four
+were ported into `tests/`, once because a port deleted its original -- and a stale count in the
+block a reader actually runs is worse than no count.
+
+Two lanes exist, and both are now under vitest:
+
+- `tests/` runs under vitest. The `workers` project runs INSIDE workerd, which is where this
+  project's subject actually lives; the `node` project exists for oracles workerd cannot host
+  (`node:child_process` is not implemented there, and `node:sqlite` exists in neither workerd
+  nor bun).
+- **`scripts/test-*.mjs` no longer exists.** The port is complete; every suite runs in the gate.
+  Paths of that shape appear throughout this report as the instrument a figure was measured
+  with, and those citations are left as written because they record how the number was obtained.
+  Where each one lives now:
+
+| cited as                       | now                                                                    |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `scripts/test-cron.mjs`        | `tests/unit/ops/cron-{chain,gc,step}.spec.ts`                          |
+| `scripts/test-updb.mjs`        | `tests/unit/ops/updb.spec.ts`                                          |
+| `scripts/test-mask.mjs`        | `tests/unit/runtime/mask.spec.ts`                                      |
+| `scripts/test-mb-fix.mjs`      | `tests/unit/drupal/mb-fix.spec.ts` + `tests/node/mb-fix-iconv.spec.ts` |
+| `scripts/test-migrate-sql.mjs` | `tests/node/migrate-sql.spec.ts`                                       |
+| `scripts/test-serve-chain.mjs` | 7 specs in `tests/integration/`                                        |
+| `scripts/test-codec.mjs`       | `tests/unit/db/codec.spec.ts`                                          |
+| `scripts/test-serialize.mjs`   | `tests/unit/runtime/serialize.spec.ts`                                 |
+| `scripts/test-do-sql.mjs`      | `tests/unit/db/do-sqlite.spec.ts`                                      |
+| `scripts/test-tail-worker.mjs` | `tests/unit/ops/tail-worker.spec.ts`                                   |
+
+**When a legacy suite may be deleted:** not on a count comparison, which is unmeasurable across
+two harnesses that count differently. Port it, measure coverage of the module it tests, and
+delete when that is high AND the new spec runs against the real platform rather than a mock. See
+"WHEN TO DELETE A LEGACY SUITE".
+
+Three lanes need a running worker and are not part of the gate:
+
+```sh
+bunx wrangler dev -c wrangler.jsonc --port 8798     # leave running
+curl -s "localhost:8798/driver?site=x" | head -c 200     # live ctx.storage.sql
+curl -s "localhost:8798/capability?site=x"               # the capability plugins
+bun run test:serve                                       # chain + edge + lanes
+```
+
+The write path needs a database that has node bundles, which the default pack does
+not (see "THE FIRST CONTENT WRITE"):
+
+```sh
+bunx wrangler dev -c wrangler.jsonc --port 8799 --var SITE_DB_PREFIX:drupal-std
+curl -s "localhost:8799/migrate?site=w" && curl -s "localhost:8799/savenode?site=w"
+```
+
+Two build steps, both fast, neither needed unless their source changed:
+
+```sh
+node scripts/gen-driver-assets.ts     # driver + cfw_capability -> assets/driver.json
+bash scripts/build-jspi-probe.sh       # scripts/jspi-probe.c -> assets/jspi/park.wasm
+bash scripts/stage-edge-assets.sh      # the 15 MB subset an edge deploy can upload
+```
+
+Diagnostics require `PW_DIAGNOSTICS=1`, already set in the dev configs:
+
+```sh
+bunx wrangler dev -c wrangler.prof.jsonc --port 8790   # /dbal /codec /reentrancy /cache-headers /drupal
+bunx wrangler dev -c wrangler.do.jsonc   --port 8793   # /do-suite /do-persist /do-txnreplay /do-keepwarm
+bunx wrangler dev -c wrangler.min.jsonc  --port 8797   # /min /breakdown /clock
+```
+
+# WHERE THE PROJECT STANDS
+
+**Tier 0 is closed.** PHP runs inside the Durable Object, the site is migrated onto
+`ctx.storage.sql` (68 tables, 243 DDL statements, 1,342 rows, 256 ms), and Drupal
+renders with `x-drupal-cache: MISS`. All six previously-open runtime questions are
+settled and four new platform refusals were found doing it — the full table, the
+three driver bugs they exposed, and the integer limit that cannot be fixed in the
+driver are in **DEEP DIVE B, "What the runtime actually refuses"**.
+
+**Both open correctness bugs are fixed**, and one of the two prescribed fixes was
+wrong: compiling `iconv` in would NOT have fixed `mb_substr()` blanking content,
+because real `iconv_substr()` also returns `false` on invalid UTF-8. See section 5 of
+the round below, and `src/mb-fix.js`.
+
+**Not started:** Tier 1 items 5-7 and 9 (five capability plugins, `https://` stream
+wrapper, security-update pipeline, observability) and Tier 2 `#lazy_builder`
+splitting. Item 8 (backup/restore/export) is half done — `MIGRATE_DB` in
+`src/site-php.js` is the restore direction; export is the same loop reversed.
+
+## CPU attribution follows the RESUMING invocation — slicing is not refuted
+
+Measured on the deployed edge, `cpuTime` per Durable Object invocation from tail,
+worker then deleted. This was the cheap falsification for time-slicing a render
+across invocations, and it needed **no JSPI rebuild**, because the idea decomposes:
+
+- **(a) attribution** — is work started in one invocation and finished in another
+  charged to the finisher? Testable in plain JS today.
+- **(b) suspension** — can a suspended *wasm* stack survive across invocations?
+  Needs a `-sJSPI` build.
+
+If (a) had failed, the whole branch died regardless of (b). It did not fail.
+
+`/park` burns 2 units, then leaves a continuation awaiting a promise held in DO
+memory and returns. `/resume` resolves that promise, so the 120-unit burn inside the
+continuation runs during the resuming invocation. `/oneshot` is the control doing
+all 122 units in one invocation.
+
+| Route | n | cpuTime | median |
+| --- | --- | --- | --- |
+| `/oneshot` (122 units, one invocation) | 3 | 88, 93, 99 | **93 ms** |
+| `/park` (2 units, then parks) | 3 | 2, 2, 2 | **2 ms** |
+| `/resume` (resolves; the 120-unit burn runs here) | 3 | 82, 88, 89 | **88 ms** |
+
+**The 120-unit burn created in `/park` was charged to `/resume`.** `/park` cost only
+the 2 units it did synchronously. The totals reconcile: 2 + 88 = 90 against the
+one-shot's 93, so it is the same work split across two separately-charged
+invocations rather than work being lost or double-counted.
+
+So a 46 ms render could in principle become six ~8 ms invocations, each inside the
+free ceiling. What is still unproven is half (b): PHP's render is one synchronous
+`php._run()` into wasm, and parking it mid-render requires JSPI, which needs a build
+this project does not yet have. **The cheap half passed rather than killed the
+branch, which is the outcome that justifies spending the build.**
+
+Caveat to carry into any design: this is undocumented behaviour that Cloudflare
+could change. Anything built on it belongs behind a flag, with the paid tier as the
+always-works path.
+
+## THE PACK HAS NO WRITE-PATH TABLES, and that blocks first-run configuration
+
+2026-08-10, and it is the ninth instance of the trace-blind class. Everything ever
+measured in this project is a READ. The first write path anyone exercised --
+first-run configuration, saving uid 1 -- failed three times in a row on things a
+render never needs:
+
+| Failure | Cause | Status |
+| --- | --- | --- |
+| `Undefined constant "Drupal\Core\Entity\SAVED_UPDATED"` | `SAVED_NEW`/`SAVED_UPDATED` are plain constants in `core/includes/common.inc`, which `DrupalKernel::boot()` does not include and no render needs. `EntityStorageBase::doSave()` returns one. | **fixed** -- `require_once` it when undefined |
+| `no such table: sessions` | Drupal creates `sessions` lazily on the first session write; a pack built by browsing anonymously never writes one | **fixed** -- created during `MIGRATE_DB`, outside any transaction |
+| `no such table: flood` | same class, next table | **OPEN** |
+
+**The general fix is written and does not work yet.** `firstRunConfig()` now walks
+every installed module's `hook_schema` and creates whatever is missing, which is the
+systematic answer this project already learned to prefer -- incremental completion
+cost eight cycles last time. But it reports `tablesCreated: []` while the save still
+fails with `no such table: flood`, so either `ModuleHandler::invoke($module,
+'schema')` is not returning definitions on Drupal 11, or `tableExists()` is
+answering TRUE for a table the insert cannot find. **Unresolved, and it is the next
+thing to chase.** The contradiction itself is the lead: those two cannot both be
+right.
+
+What DOES work: every config change lands (`system.site.name`, `system.site.mail`,
+`system.date.timezone.default`) and the user entity accepts name, mail and password
+in memory. Only the persist fails. So first-run config is one missing-table fix away,
+not a redesign.
+
+Note the DDL must be created **outside** any transaction. Doing it mid-save dirties
+`sqlite_master`, which turns every later read in that transaction into a speculative
+replay -- the documented O(W x R) cost. A first attempt that created the table inside
+the save wedged the local workerd process badly enough that unrelated sites stopped
+responding, which is the first time that cost has actually been observed.
+
+## Export works: the backup half of Tier 1 item 8 is closed
+
+`exportDatabase()` in `src/site-php.js`, route `/export`. Reads schema and rows back
+through the same bridge the driver uses, so what it exports is what Drupal sees
+rather than a second opinion from a different path. One statement per line so a fleet
+backup can stream it to R2 instead of holding a site in memory.
+
+Measured on the migrated standard site: **289-294 statements, 1.3-2.1 MB, sha1
+reported** for integrity. Emits a bare decimal for integer-looking values so INTEGER
+affinity survives a restore, and leaves `NOCASE` alone -- rewriting it back to
+`NOCASE_UTF8` would produce a dump that only restores onto a driver with
+user-defined collations.
+
+## The 50-byte LIKE/GLOB ceiling is CONFIRMED, and it binds plain LIKE too
+
+Previously recorded as an unconfirmed doc claim. Measured against `ctx.storage.sql`:
+
+| pattern length | result |
+| --- | --- |
+| 40 bytes | ok |
+| 48, 49, **50** bytes | ok |
+| **51** bytes | **`LIKE or GLOB pattern too complex: SQLITE_ERROR`** |
+| 60, 120 bytes | same error |
+
+**50 bytes is the exact ceiling**, against SQLite's own default
+`SQLITE_MAX_LIKE_PATTERN_LENGTH` of 50,000 -- the runtime lowers it by three orders
+of magnitude. It applies to plain `LIKE` as well, which the driver cannot intercept:
+a Views "contains" filter on a long search string will fail in the engine.
+
+`Connection::MAX_LIKE_PATTERN_BYTES` now refuses first, so the message names the
+cause. The check is on the **translated** pattern, because bracket-quoting expands a
+metacharacter threefold -- 20 asterisks become a 60-byte GLOB pattern and would fail
+where the input looked safe. Seven new assertions cover it.
+
+## Fills are batched: the row-write ceiling lifts ~4x
+
+`setAlarm()` costs one row written, and rows written at 100,000/day is the meter that
+actually binds fills (~18 writes per fill, so ~5,555/day). `alarm()` now fills up to
+`FILL_BATCH_SIZE` pages (default 5) per firing with a `FILL_BATCH_WALL_MS` guard
+(default 5,000), so one re-arm amortises across N pages -- roughly **20,000
+fills/day** at N=5 for no new machinery.
+
+Two guards because two budgets are in play: the page count bounds row writes, the
+wall clock bounds how long the single-threaded object is occupied while queued HITs
+wait behind it. **Neither is the CPU limit** -- on the free plan an alarm invocation
+carries the same 10 ms cap, so batching does NOT make a render fit; it only makes the
+re-arms cheaper.
+
+It also broke a test in an instructive way: the batch drains a poisoned path's three
+retries before a polling loop can observe the count, so the suite now asserts the
+invariant (the path leaves the queue) rather than a race the batching deliberately
+wins.
+
+## TIER 1 IS BUILT, and the write path cost three more findings
+
+### First-run configuration works, and getting there found the real bug class
+
+`firstRunConfig()` + route `/firstrun`. Sets site name, site mail, timezone, and the
+uid-1 username, email and password through Drupal's own APIs so hashing and cache
+invalidation happen properly -- deliberately NOT Drupal's installer, which is the
+heaviest write workload in the product (1,052 ms, 72.5 MB peak natively) and has
+never been run in wasm. **Verified: `ok: true`, admin renamed, six config changes
+applied.**
+
+Three failures on the way, and they are all the same shape: **every measurement in
+this project until now was a READ, and reads are not evidence about writes.**
+
+| Failure | Cause | Fix |
+| --- | --- | --- |
+| `Undefined constant SAVED_UPDATED` | plain constants in `core/includes/common.inc`; no render needs it and `boot()` does not include it | `require_once` when undefined |
+| `no such table: sessions` | created lazily on first session write; a pack built by browsing anonymously never has one | created in `MIGRATE_DB` |
+| `no such table: flood` | **flood, queue, semaphore, batch and key_value_expire declare NO `hook_schema`** -- each keeps its schema in a class method and creates the table on demand by catching a failed query, which cannot work inside a transaction replay | pre-created from `schemaDefinition()` by reflection |
+
+The middle step is worth keeping as a method note. A hook walk found
+`modulesWalked: 40, withSchemaHook: 6, created: []` while an insert still failed with
+`no such table: flood` -- and those two cannot both be true. **The contradiction was
+the lead**: the table's schema was never in the hook system to begin with.
+`ModuleHandler::invoke($module, 'schema')` also returned nothing on Drupal 11, so the
+hook is now called as `<module>_schema()` directly after `loadAllIncludes('install')`
+-- `function_exists()` is a fact rather than a hook-system opinion. Result:
+`created: ["flood","queue","batch","key_value_expire"]`.
+
+All DDL runs **outside** any transaction. Creating a table mid-save dirties
+`sqlite_master`, which turns every later read in that transaction into a speculative
+replay -- the documented O(W x R) cost. The first attempt did it inside the save and
+wedged the local runtime badly enough that unrelated sites stopped responding, which
+is the first time that cost has been observed rather than predicted.
+
+### The capability layer, five plugins
+
+All lint-clean; none is runtime-tested, because that needs the module installed in a
+site and the module is not enabled in the pack. Stated plainly rather than implied.
+
+| File | Replaces | Note |
+| --- | --- | --- |
+| `Host.php` | -- | the single bridge seam. One answer to "is this capability present", one place that knows the boundary is 32-bit |
+| `StreamWrapper/HttpsStreamWrapper.php` | no http/https wrapper | closes the `file_get_contents('https://...')` class that `http_handler_stack` does not. **Does not stream** -- fetch-then-read, because a streaming read would need JSPI |
+| `Plugin/Mail/CfwMail.php` | SMTP | Workers have no sockets. Returns FALSE and logs when no email binding exists, rather than throwing inside a content save |
+| `ImageToolkit/CfwImageToolkit.php` | gd (684,821 bytes, dropped) | **never processes an image.** Records dimensions from `getimagesize()` so width/height markup stays correct, and defers resizing to delivery. Honest limitation: a style-derived file is the original, which is right for a resizing CDN and wrong for anything reading the derivative's pixels |
+| `Logger/CfwLogger.php` | dblog alone | ships structured JSON out of the isolate, because `watchdog` lives in a database that may be about to die and a wasm OOM produces no diagnostic at all. Runs ALONGSIDE dblog; plus a shutdown handler for fatals Drupal never sees |
+| `Queue/CfwDeferredHttp.php` | curl | cached -> deferred -> sync layering. The deferred path needs **no suspension**, so outbound HTTP works on this build today and JSPI becomes an optimisation rather than a precondition |
+
+### The security-update pipeline, and the number that makes it tractable
+
+`scripts/security-update.mjs` (`manifest` then `plan`). Hashes the shipped tree
+content-addressed, diffs against a pre-patch manifest, and emits exactly what a
+rollout must move plus the staged-deployment steps and the one-hour JWT constraint.
+
+Exercised by patching one core file and re-planning:
+
+| | value |
+| --- | --- |
+| files in tree | 11,277 |
+| changed by a one-file core patch | **1** |
+| objects to upload | **1** |
+| fraction of tree | **0.009%** |
+
+That is the whole argument for why fleet patching is bounded by API rate limits rather
+than bandwidth: Cloudflare's asset manifest is content-addressed and unmodified files
+are never requested, so an SA-CORE patch re-uploads a handful of objects per site, not
+an 8 MB blob.
+
+### Shipping the cache pre-filled: a first-request HIT
+
+`scripts/drupal/prefill-cache.php` renders paths on native PHP and emits
+`assets/prefill.json`; `/migrate?prefill=1` loads them into the serving table.
+
+| | measured |
+| --- | --- |
+| native render 1 (cold cache_render, Twig compile) | 45-122 ms |
+| **native render 2, the shipped state** | **4.04 / 4.60 / 5.38 ms** |
+| `cache_render` rows after | 18 -> 30 |
+| prefill.json | 46,586 bytes, 3 paths |
+| **first ever request to a prefilled path** | **`x-cfw-cache: HIT`, `x-cfw-hit-ms: 0`** |
+
+So a prefilled page costs a visitor nothing and never pays a fill, against 46 ms of
+edge cpuTime for the same render done live.
+
+Two traps this had to route around, both instructive:
+
+- **`PHP_SAPI` is `cli` natively, so `cache_page` is never written** --
+  `CommandLineOrUnsafeMethod` marks every CLI request `UNCACHEABLE (request policy)`,
+  confirmed in the output. A prefill that trusted the page cache would ship nothing.
+  `cache_render` is not subject to the policy and does warm, so the HTML is captured
+  directly instead.
+- **The shipped tree cannot render on stock PHP.** `patch-drupal.mjs` rewrites core's
+  five `new \Fiber()` sites to `PhpWasmSyncFiber`, a class only the wasm runtime
+  defines, so a native CI render dies with "Class PhpWasmSyncFiber not found". The
+  prefill script defines the same eager stand-in; output is already established to be
+  identical, so the cache entries it warms are the ones wasm would have produced.
+
+**Pre-fill is opt-in (`prefill=1`), not default.** Enabling it by default changed what
+a MISS means -- a prefilled path is a HIT on its first request -- and that silently
+broke ten assertions which were correctly testing the cold contract. A capability that
+alters the default contract should be asked for.
+
+## ASSEMBLY IS 8 ms, AND IT RESOLVES THE SLICING FORK TO 2 SLICES
+
+> **SUPERSEDED on the edge, 2026-08-10 later the same day.** The 8 ms is a correct
+> LOCAL number and reproduces (9 ms, DPC HIT, 6 statements). The ~18 ms edge
+> projection and the "2 slices suffice" conclusion below are **retracted**: measured
+> on a deployed worker, assembly is **40 ms of cpuTime**, so it needs 4 slices. See
+> "ASSEMBLY ON THE EDGE IS 40 ms" below. The projection failed because the 2.2x
+> local-to-edge factor it used is itself wrong for a warm render — the same render
+> measured 4.4x here.
+
+The cheapest decisive number left, and it had been sitting unread in this document's
+own cache ladder. "Assembly" is a request where only the `page` bin is emptied, so
+`dynamic_page_cache` HITs: the page is reassembled from cached render arrays rather
+than rendered. That is what an edge MISS becomes once render caches ship pre-filled.
+
+Measured on the DO-backed standard profile, `dynamic_page_cache: HIT` verified on
+every run:
+
+| run | ms | page | dynamic | statements |
+| --- | --- | --- | --- | --- |
+| 0 | 219 | MISS | HIT | 42 |
+| 1-5 | 8, 8, 8, 8, 7 | MISS | **HIT** | **5** |
+
+**Assembly median: 8 ms, 5 statements.** Against a full render of 34 ms local /
+46 ms edge on the same profile, assembly is a **4.3x** cheaper path.
+
+**This document previously recorded 26 ms for the same row.** That figure was taken
+while two subagents and a QEMU Docker build were running; 8 ms is the same
+measurement on a quiet machine. The 26 ms is load, not Drupal — and it is a reminder
+that the load caveat attached to every figure here is doing real work.
+
+### What it resolves
+
+Applying the measured 2.2x local-to-edge factor gives **~18 ms of edge cpuTime** for
+assembly, which is the fork:
+
+| if assembly on the edge is | consequence |
+| --- | --- |
+| under 10 ms | a MISS fits one invocation; slicing demotes to an escape hatch for saves, cron and admin |
+| **10-20 ms (projected: ~18)** | **slicing is load-bearing on every MISS, but 2 slices suffice** |
+| 40+ ms (a full render) | 4-6 slices, and JSPI becomes the critical path |
+
+So the shape the numbers support is **pre-fill + a 2-slice MISS + `caches.default`**,
+with static export as the zero-risk fallback. That is a materially smaller build than
+the 6-way `PlaceholderStrategyInterface` split a 46 ms render implied.
+
+**Two caveats, and the first is RULE 0 applied to my own number.** The 8 ms is
+in-PHP `microtime()` under `wrangler dev`, so it is a ratio and the ~18 ms is
+derived, not measured. It needs `cpuTime` from tail on a deployed worker before any
+architecture is committed to it. And **the DPC key itself has to be verified across
+the boundary**: `dynamic_page_cache` entries embed cache contexts whose keys can
+incorporate environment-dependent values, so a CI-rendered entry made on native PHP
+8.5 could silently MISS against wasm 8.3 — the Twig `uniqid()` prefix incident
+wearing a new hat. Read `x-drupal-dynamic-cache` before trusting any pre-filled
+timing, and diff the keys if it says MISS.
+
+### The pre-fill pipeline cannot populate DPC natively
+
+Worth stating because it constrains the design: `scripts/drupal/prefill-cache.php` runs on
+native PHP where `PHP_SAPI` is `cli`, so `CommandLineOrUnsafeMethod` marks every
+request `UNCACHEABLE (request policy)` and **`cache_dynamic_page_cache` stays empty**
+— confirmed in its output. `cache_render` is not subject to the request policy and
+does warm, which is why the prefill ships render caches plus captured HTML rather
+than DPC entries. Populating DPC requires rendering in wasm, where `PHP_SAPI` is
+`embed` and both bins are live.
+
+# ROUND: THE EDGE ANSWERS BACK — 2026-08-10, later
+
+## ASSEMBLY ON THE EDGE IS 40 ms, so a MISS needs FOUR slices, not two
+
+RULE 0 applied to the previous section's own projection, and the projection lost.
+
+Deployed `wrangler.edge-site.jsonc` as `cfw-edge-site-probe` (`compatibility_date`
+**2026-08-01**, colo **ORD**, standard pack, worker deleted and the 9-worker baseline
+re-verified). New route `/__assemble` renders exactly one page per Durable Object
+invocation with only the `page` bin emptied, so `dynamic_page_cache` answers.
+`cpuTime` read per invocation from `wrangler tail --format json`.
+
+**`x-drupal-dynamic-cache` was HIT on all 16 runs**, and the host statement count on
+the edge is **6**, identical to local — so this is the same work, not a different
+path wearing the label.
+
+| shape | bins emptied | n | cpuTime median | min / max | statements |
+| --- | --- | --- | --- | --- | --- |
+| **assembly** | `page` | **16** | **40 ms** | 27 / 55 | 6 |
+| full render, same route | `page` + `dynamic_page_cache` | 6 | **111 ms** | 79 / 120 | 15 |
+| full render, via `/serve` inline MISS | both | 5 | **75 ms** | 74 / 143 | — |
+| generation bump | — | 6 | 1 ms | 0 / 2 | — |
+| orchestrating Worker, same requests | — | 28 | **0 ms** | 0 / 2 | — |
+
+No trend across the run: assembly in request order was 29, 47, 42, 30, 33, 35, 31,
+41, 27, 40, 32, 47, 40, 40, 55, 42. Flat noise, so nothing is leaking per render.
+
+**Consequence: assembly is 4.0x the 10 ms free ceiling.** The fork table in the
+previous section resolves to its middle-to-bottom row, not its middle one:
+
+| | slices needed at 10 ms |
+| --- | --- |
+| assembly (40 ms) | **4** |
+| full render (75-111 ms) | **8-12** |
+
+So `pre-fill + a 2-slice MISS` is not a shape the numbers support. Pre-fill plus
+`caches.default` still is — a prefilled path never renders at all — but any MISS that
+has to reach PHP needs 4-way splitting minimum, and every fragment must come in under
+10 ms including its own dispatch.
+
+### The 2.2x local-to-edge factor is wrong for a warm render
+
+This is the part that generalises, and it invalidates every projection in this
+document that used the factor rather than a measurement.
+
+| | local, quiet machine | edge cpuTime | factor |
+| --- | --- | --- | --- |
+| assembly (`page` emptied, DPC HIT) | **9 ms** | **40 ms** | **4.4x** |
+| full render (both emptied) | **20 ms** | 111 ms (75 via `/serve`) | **5.5x** (3.8x) |
+
+Measured minutes apart, same code, same pack, same route. The previously recorded
+factors — 2.2x warm render, 2.5x cold boot, 6.1x pack mount — now look like three
+points on a spread rather than one constant, and the warm-render point specifically
+does not reproduce. **Do not project. Deploy.**
+
+### And the previously recorded 46 ms full render did not reproduce
+
+Same config, same route family, same pack: `/serve` inline MISS renders measured
+**74, 74, 75, 101, 143** today against a recorded median of **46 ms** (n=16). Two
+candidate causes, and the first is the likely one:
+
+1. **The old n=16 was probably not 16 front pages.** A `/serve` MISS becomes a HIT
+   once filled, so 16 renders of `/` require a purge between each. If the earlier run
+   instead used 16 different paths, most of them cheaper than the 12,304-byte front
+   page, the median would sit well below a front-page render. Today's run purges with
+   `/bump` between every serve, so all five are the front page and nothing else.
+2. **Colo and hardware vary.** The stateless side argues against this being a
+   globally slower machine: the orchestrating Worker measured 0-2 ms here against
+   0-1 ms recorded, which matches. Only the wasm work moved.
+
+Either way the paired numbers in the table above were taken minutes apart under
+identical conditions, so the **ratio** (assembly is 2.8x cheaper than a full render
+on the same route) is the trustworthy part, and the absolutes are colo-specific and
+should be re-measured before any architecture is committed.
+
+### The DPC-key-across-PHP-versions worry is moot for the current pipeline
+
+Nothing here tests it, and it is worth being explicit rather than implying coverage:
+DPC HIT on all 16 runs was a **wasm-warmed** entry read back by wasm. The native-PHP-
+8.5-writes / wasm-8.3-reads boundary was never crossed, because — already recorded
+one section above — `scripts/drupal/prefill-cache.php` **cannot** populate
+`cache_dynamic_page_cache` at all: `PHP_SAPI` is `cli` natively and
+`CommandLineOrUnsafeMethod` refuses. So the prefill pipeline ships `cache_render`
+plus captured HTML, and there is no cross-version DPC entry to mismatch. The worry
+becomes live only if DPC entries are ever generated outside wasm.
+
+### THE WALL CLOCK CANNOT TIME A RENDER ON THE EDGE EITHER, and that had disabled a guard
+
+The tenth instance of the trace-blind class, and this one had shipped.
+
+RULE 0 says in-PHP `microtime()` reads 0 out there. Measured now: **`Date.now()`
+reads 0 across a whole render too.** All 16 assembly runs and all 6 full renders
+reported `wallMs: 0` and `x-cfw-render-ms: 0` while tail charged them 27-120 ms.
+Workers freeze `Date.now()` during synchronous execution and advance it only at an
+I/O boundary; a render's SQL is `ctx.storage.sql`, which is synchronous, so nothing
+ever advances the clock.
+
+The consequence was live in `src/site-do.js`: `fillOne()` stored that 0 as
+`this.lastRenderMs`, `estimateRenderMs()` returned it, and the inline render budget
+guard compared **0 against 2,000** and always allowed the render. Confirmed in the
+response headers — `x-cfw-inline-estimate-ms` went `4000` (cold), then `2742` (the
+one render that did cross an I/O boundary), then `0, 0, 0, 0` for every render after.
+A guard whose whole purpose is to refuse a render that will not finish in time was
+answering "this render is free".
+
+**Fixed**: a 0 delta is now refused as unmeasurable rather than stored,
+`this.renderClockUnmeasurable` is set, and `x-cfw-render-clock: unmeasurable` says so
+on the response. The honest reading is that on the edge the budget is a **boot**
+guard, not a render guard — it can still tell a cold instance from a warm one,
+because a boot does perform I/O, and it cannot time anything else.
+
+## THE BUILD TRACK IS UNBLOCKED: JSPI + a VM-interrupt patch, SMALLER than the shipping build
+
+Four resumes and ~650k tokens of prior failure, now done. **`vendor/static-jspisjlj`** is
+PHP 8.3 with `-sJSPI`, `-sSUPPORT_LONGJMP=wasm` and a `zend_interrupt_function` patch:
+
+| build | gzipped total | vs the 3 MB free ceiling |
+| --- | --- | --- |
+| `static-o2` (shipping) | 2,876,855 | −268,873 |
+| **`static-jspisjlj`** (JSPI + SjLj + patch) | **2,866,753** | **−278,975** |
+| `static-jspisjljctl` (same, patch reverted — the A/B control) | 2,865,992 | −279,736 |
+| `static-mbstring` (real mbstring, no JSPI) | 3,463,503 | **+317,775 OVER** |
+| `static-jspimbsjlj` (slicing + real mbstring) | 3,455,763 | +310,035 OVER |
+
+**The slicing capability is 10,102 gz SMALLER than the build that ships today**, because
+wasm SjLj deletes emscripten's `invoke_*` trampolines. Slicing costs no bundle budget.
+
+### Naive `-sJSPI` does not fail to slice — it breaks PHP outright
+
+Worth recording because it is the trap that consumed three prior attempts. With plain
+`-sJSPI`, **every** run dies, including `<?php echo PHP_VERSION;`, with
+`SuspendError: trying to suspend JS frames`. Two causes, both visible in the generated
+glue: `_fd_sync.isAsync=true`, so enabling JSPI makes PHP's own flush path a
+`WebAssembly.Suspending` import; and `pib_run` opens a `zend_try` (setjmp,
+`source/pib/pib.c:196`) before entering the VM, so an `invoke_iiii` **JS frame** always
+sits underneath.
+
+`-sSUPPORT_LONGJMP=wasm` is the fix, isolated by a standalone C probe rather than inferred:
+
+| SjLj mode | under setjmp? | suspended |
+| --- | --- | --- |
+| emscripten (default) | no | yes |
+| emscripten (default) | **yes** | **no — SuspendError** |
+| `-sSUPPORT_LONGJMP=wasm` | no | yes |
+| `-sSUPPORT_LONGJMP=wasm` | **yes** | **yes, resume value propagated** |
+
+Import sections confirm it. And it is **compile-time, not link-time**: relinking an LTO
+object built without it aborts wasm-ld with `LLVM ERROR: Cannot select: … catchret`, so a
+finished build cannot be converted after the fact.
+
+### The VM-interrupt patch works, and costs 0.45%
+
+`build/patch-vm-interrupt.sh` adds a countdown to `ZEND_VM_INTERRUPT_CHECK` /
+`ZEND_VM_LOOP_INTERRUPT_CHECK`, a `zend_interrupt_function` handler calling a suspending
+import, and exports `zend_wasm_slice_arm(period, mode)`, `_mask(on)`, `_stat(which)`. It has
+a `--revert` verified byte-identical, which is how the control build exists.
+
+Local ratios only, n=200000, idle machine:
+
+| | |
+| --- | --- |
+| **patch overhead** | **+0.45%** (paired interleaved, 661 vs 664 ms, 9 passes each) |
+| whole capability vs shipping build | **+0.15%** |
+| **JSPI suspend+resume** | **~0.22-0.30 µs** |
+| 13,043 suspensions in one run | within the noise floor |
+| 133,350 suspensions | 689 ms vs 653 (+5.5%) |
+
+**Up to ~13,000 suspensions inside a single render are free.** That is the number that
+makes arbitrary slice granularity real: it is not a property of Drupal's render pipeline,
+it is one tunable constant. Overhead came in below the 2-5% estimate because with
+`ZEND_VM_KIND_CALL` the poll sites are `ZEND_VM_SET_OPCODE` and userland frame entry, not
+every opcode.
+
+`zend_bailout` is sound under wasm SjLj: `exit()`, `E_USER_ERROR`, uncaught exception and
+`DivisionByZeroError` all behave with the instance still alive.
+
+### ZEND_VM_KIND: answered, and nobody chose it
+
+**`ZEND_VM_KIND_CALL`**, by fallback. `config.log:221` shows the global-register probe
+failing on wasm32 ("global register variables are not supported" — wasm32 is absent from
+`Zend/Zend.m4`'s architecture list), `php_config.h:701` has
+`/* #undef HAVE_GCC_GLOBAL_REGS */`, and `zend_vm_opcodes.h` picks HYBRID only when both
+`__GNUC__` and `HAVE_GCC_GLOBAL_REGS` hold. SWITCH is still unbuilt.
+
+### The mb_substr data-loss bug is CLOSED, and it is a paid-tier fix
+
+A complete mbstring build was sitting unharvested in `/tmp` from a prior attempt.
+`scripts/measure/mb-diff.mjs`: **"compared 35 cells: 35 identical, 0 divergent … VERDICT: BUG
+CLOSED"**, all 3 known divergences closed, and **0.00% slower**. Cost is size only:
++586,648 gz, which busts the free ceiling by 317,775.
+
+So there are two answers, not one: **paid gets real mbstring; free keeps the PHP
+sanitizer** (`src/mb-fix.js`, already shipped and tested, which matches native mbstring's
+substitution rule). The sanitizer stops being a workaround and becomes the free-tier
+implementation.
+
+### Two things to know before wiring it up
+
+- **`/resume` across plain Worker invocations CANNOT work.** workerd, verbatim: "A promise
+  was resolved or rejected from a different request context … Continuations for that
+  request … have been canceled." It must be a Durable Object — which the earlier
+  `assets/jspi/park.wasm` probe had already proven independently.
+- **`vendor/static-jspimbvmi/` is a byte-identical copy of the BROKEN build** and is not
+  patched. It survives only because of the never-delete-vendor rule and should be removed
+  deliberately, not used.
+
+### THE JSPI BUILD IS NOT A DROP-IN: it has no SQLite at all
+
+Found by the check nobody had run. The build track validated the binary with `/cpubench`
+and `/park`; it had never booted **Drupal** on it. Result, on `wrangler.site-jspi.jsonc`
+(which selects the binary through the new `src/php-binary.js` seam):
+
+- **PHP itself is sound**: `8.3.11`, `bootMs 502`, the tree mounts, 11,447 files. So JSPI
+  plus wasm SjLj plus the interrupt patch does not break the interpreter — the earlier
+  `SuspendError` class really is fixed.
+- **Migration dies**: `PDOException: could not find driver` on
+  `new PDO("sqlite:/drupal/...")`, and the front page then 404s with
+  `CacheableNotFoundHttpException` because no router table was ever copied.
+
+Confirmed by inspection rather than inference — occurrences of `sqlite3` in the glue:
+`static-free-v1` **1**, `static-jspisjlj` **0**. The slicing build was configured without
+SQLite support.
+
+**The fix worth taking is not "rebuild with pdo_sqlite".** Nothing in the running site
+uses PDO: `cfw_do_sqlite` talks to `ctx.storage.sql` through the host bridge, and the ONLY
+PDO consumer is the one-time migration reading the packed `site.sqlite`. So the better
+change is to stop needing it — ship the site as SQL text in the pack, or parse the SQLite
+file in JS — after which the binary can drop SQLite entirely and get smaller. That also
+removes a whole extension from the attack surface of every build.
+
+A seam now exists for this kind of test: `src/php-binary.js` is the single place the
+interpreter is chosen, and a config swaps it with one `alias` entry. Aliasing the `.wasm`
+import directly does **not** work — wrangler resolves `alias` before the `CompiledWasm`
+loader rule, so the aliased specifier reaches esbuild with no loader.
+
+Remaining build levers, all unbuilt: `ZEND_VM_KIND=SWITCH` (~45 min), `-O3`, PGO.
+Landmine: two concurrent full-LTO wasm-ld links of a ~10 MB PHP get SIGKILLed on an
+8-CPU/7.65 GiB VM. Serialize them.
+
+## THE MASK SEAM: every host call that enters JS, refcounted
+
+`src/mask.js`, **123 gate assertions** (`node scripts/test-mask.mjs`), the correctness
+prerequisite RULE 0d asks for. Built before the slice driver, deliberately: unmasked, the
+failure is a `SuspendError` whose frequency depends on where an opcode counter lands.
+
+All four required properties are implemented and each is asserted from both sides:
+
+| property | how | what breaks without it |
+| --- | --- | --- |
+| refcounted `maskEnter()`/`maskExit()` | one C `mask(1)`/`mask(0)` pair at the outer edge only | an inner exit unmasks while the outer call is still on the stack |
+| pending flag that fires on unmask | `stat(0)` fires-delta across the window | one slice boundary silently skipped |
+| budget re-checked on unmask | `budgetExceeded()` at the outermost exit, after the C mask is released | a long masked window overruns the slice |
+| dev assertion | `assertSuspendable(where)` throws above depth 0, returns false in prod | `SuspendError` mid-render instead of a skipped boundary |
+
+Default path is `withMask(fn)` (try/finally, used for the SQL bridge); the raw
+`maskEnter()`/`maskExit()` pair stays exported and is what the lazy-FS hot path uses,
+because that runs 1,006 times during boot and the pair costs no closure per call.
+
+### RULE 0d needs one correction: C re-arms, so the cadence is not what is at risk
+
+Read from `build/patch-vm-interrupt.sh` rather than inferred. `zend_wasm_tick_fired()`
+sets `zend_wasm_tick_countdown = zend_wasm_tick_period` **before** it checks the mask, and
+skips only `zend_atomic_bool_store_ex(&EG(vm_interrupt), true)`. So a fire inside a masked
+window loses **one boundary**, not the cadence — the next one arrives `period` poll sites
+later. The pending flag upgrades a boundary delayed by up to one period into an immediate
+one; it is not the difference between slicing and not slicing. That is a smaller claim than
+"slices silently stop happening", and it is the one the C source supports.
+
+Two consequences for the host:
+
+- **C drops the flag, it does not defer it**, so a masked fire is visible ONLY as a delta on
+  `zend_wasm_slice_stat(0)`. The mask reads that counter at enter and at the outermost exit.
+  No C change is needed to DETECT a deferral.
+- **Never assert on `zend_wasm_slice_stat(4)`.** The C handler does `zend_wasm_tick_mask++`
+  around its own yield, so the C mask reads 1 at exactly the moment suspension is legal. The
+  dev assertion is on the HOST depth. A version that asserted on the C mask would trip on
+  every slice; there is a test pinning this.
+
+### The one C change required, NOT applied
+
+Detection needs nothing. Firing the deferred boundary **immediately** needs a raise export,
+which the patch does not have. Add to the `BLOCK` heredoc in
+`build/patch-vm-interrupt.sh`, directly after `zend_wasm_slice_mask()`:
+
+```c
+/* fires a boundary the host deferred while masked; the host owns the decision */
+EMSCRIPTEN_KEEPALIVE int zend_wasm_slice_raise(void)
+{
+	if (zend_wasm_tick_mask || zend_wasm_tick_period <= 0) {
+		return 0;
+	}
+	zend_wasm_tick_countdown = zend_wasm_tick_period;
+	zend_atomic_bool_store_ex(&EG(vm_interrupt), true);
+	return 1;
+}
+```
+
+The `period <= 0` half of the guard is not defensive noise: `zend_wasm_slice_arm()` installs
+`zend_wasm_interrupt_handler` into `zend_interrupt_function` only in its `period > 0` branch,
+so refusing there is what guarantees the flag has a consumer. `--revert` needs no change (it
+deletes the whole `#region`), the idempotency key (`zend_wasm_tick_countdown`) is untouched,
+and it adds no hot-path instruction, so the measured **+0.45%** patch overhead stands.
+
+`src/mask.js` already prefers it and degrades without it: `vmFromBinary()` reports
+`raise: null` on today's binary, and the deferred boundary then waits for the poll site to
+call `takePendingInterrupt()`. Both paths are tested.
+
+### Wired, and what it is actually protecting
+
+- `src/do-sqlite.js` `installBridge()` — `cfwSqlExec` and `cfwSqlTxn` both inside
+  `withMask()`. The codec's `encode`/`decode` run inside that same window, so the codec
+  needs no mask of its own.
+- `src/lazy-fs.js` `materialise()` — the WHOLE body, not just `inflateSync`, because the
+  whole function is a JS frame under the PHP stack.
+
+Stated precisely, because the honest version is narrower than RULE 0d's: on the current
+build the tick decrements only at the two poll macros in `Zend/zend_execute.c`, and both
+set-and-observe `EG(vm_interrupt)` inside the same macro. No PHP opcode executes inside a
+synchronous host call, so the counter cannot advance while an inflate is on the stack — the
+boundary can only land immediately before or immediately after the syscall. What the mask
+therefore buys today is (1) the budget re-check, (2) the dev assertion, and (3) a closed
+re-entrancy hole for the case where a host call runs PHP again — nothing does that today,
+but a `cfw_capability` plugin invoking a Drupal callback from the host side would, and that
+is the shape RULE 0d predicts. It is masked defensively because the cost is two wasm calls
+per outer host call and the failure mode is nondeterministic.
+
+Corollary constraint: **mask only synchronous host calls.** A host call that itself suspends
+IS a slice boundary, and masking it would hold the mask across the suspension and trip the
+assertion.
+
+### Still unwired — required follow-ups
+
+1. **The seven `cfw_capability` host functions and `cfwLog`**, all in `src/site-do.js`
+   (`cfwStats`, `cfwLog`, `cfwHttpCacheGet`, `cfwFetch`, `cfwQueueFetch`, `cfwMail`,
+   `cfwImageUrl`, roughly lines 185-330). Not touched because that file was being edited
+   concurrently. `cfwFetch`, `cfwQueueFetch` and `cfwMail` are the ones that matter most:
+   they are the plausible future re-entry sites. Wrap each in `withMask()`, or better, wrap
+   once where the host object is assembled so a new capability cannot be added unmasked.
+2. **The slice driver's boot and poll site**, which do not exist yet. At boot:
+   `configureMask({ vm: vmFromBinary(binary), budgetExceeded })`. In `cfwVmYield`:
+   `assertSuspendable("cfwVmYield")` first, then `takePendingInterrupt()` to tell a deferred
+   boundary from a natural one.
+3. **A mask-armed render on the real binary.** Everything above is verified against a fake
+   `vm` that models the C source; nothing here has run against wasm, and per RULE 0c a
+   passing fake is not the workload passing. The check is `/tick?mode=1` plus `/park`
+   `/resume` on a build carrying the raise export, with the mask stats read after a full
+   front-page render.
+
+No CPU figure is claimed by any of this. The only millisecond in the section (~1 ms per
+inflate member) is quoted from the lazy-FS round and is a LOCAL RATIO.
+
+## CRON IS PURE SQL NOW, AND IT RECLAIMS 17.9% OF THE DATABASE
+
+`src/cron.js` + `src/cron-php.js`, **219 gate assertions**, wired into `alarm()` after the
+fill loop. It does NOT call `drupal_cron()`: measured natively at 187 queries and
+227-275 ms CPU to accomplish almost nothing but a `watchdog` trim, with 3 of its 6 hooks
+needing outbound sockets this runtime lacks.
+
+Measured on a copy of the real site database, not derived:
+
+| | before | after one pass |
+| --- | --- | --- |
+| database | 13.711 MB | **11.258 MB** |
+| `watchdog` | 1662 rows / 6.316 MB (**46.1% of the DB**) | 1000 rows / 3.875 MB |
+
+**2.453 MB reclaimed, 17.9% of the database, 662 rows deleted, 15 statements.** A second
+pass deletes 0 and writes 0, so **GC is free once caught up**.
+
+**Cost against the binding meter, stated honestly:** deletes count as rows written and each
+touched index costs one more, and `watchdog` has 3 secondary indexes, so 662 x 4 = **2,648
+rows written = 2.6% of the free 100k/day, about 147 page fills forgone**. That 4x is derived
+from the pricing docs, so `gcPass()` **returns `amplification = rowsWritten / rowsDeleted`**
+rather than baking the factor in — the first deployed run turns it into a measurement.
+
+Placement matters and is deliberate: GC runs AFTER the fill loop, gated on an empty queue
+and an interval. A waiting visitor outranks reclaiming disk, and by then the interpreter is
+already warm so GC pays no boot. Verified through the real alarm: 14 statements, 0 rows,
+0 errors, and the 4 lazily-created tables correctly reported as `missing` rather than clean.
+
+### Three corrections to this document from the cron work
+
+1. **`ModuleHandler::invoke($module, 'cron')` DOES work in 11.4.5.** The earlier note that
+   attribute-based `#[Hook]` breaks `invoke()` was wrong: `ModuleHandler.php:347-358`
+   resolves through `getHookImplementationList()->getForModule()` first. `invokeAllWith()`
+   is still used, because that is the path `Cron::invokeCronHandlers()` takes and because
+   `invoke()` throws on a duplicate implementation, which an unattended alarm should report
+   rather than die of.
+2. **The per-URL PERMANENT `cache_data` row is written by `RouteProvider`, not PageCache** —
+   `RouteProvider.php:222`, `CACHE_PERMANENT`, tag `route_match`, cid built at `:512`.
+   Measured: **all 144 rows have `expire = -1`**, 70 of them `route:…`. So the expire sweep
+   removes exactly zero and only a row cap bounds it. Drupal's own cap is 5000, enforced
+   only by `DatabaseBackend::garbageCollection()`, called only from `SystemHooks::cron()` —
+   the hook this runtime cannot call. **The policy always existed; the caller never did.**
+3. **5 of the 6 lazily-created tables do not exist on the canonical site** (`sessions`,
+   `flood`, `key_value_expire`, `batch`, `queue`). The missing-table guards are load-bearing,
+   not defensive theater. And `BatchStorage::cleanup()` has **no caller anywhere in core** —
+   dead code upstream, so batch GC is ours or nobody's.
+
+Hooks: 4 skipped (`update`, `announcements_feed`, `system`, `dblog` — the first three need
+HTTPS, and `dblog`'s is the same two statements `gc:watchdog` does without a kernel boot),
+2 run (`file`, `layout_builder`, both executed natively and returning `ran: true`). An
+undiscovered module defaults to RUN and is flagged `unreviewed`.
+
+## THE WARM WINDOW: one boot per queue drain instead of one boot per fill
+
+Built and working. `/__fillsocket` on the Durable Object accepts an inbound WebSocket
+with `server.accept()` and does **exactly one fill per incoming message**;
+`runFillWindow()` in `src/site.js` drives it from outside and `scheduled()` lets a Cron
+Trigger run it unattended.
+
+**The mechanism is documented, not a trick.** Durable Objects limits page: "Each incoming
+HTTP request or WebSocket _message_ resets the remaining available CPU time." So N
+messages buy N budgets inside ONE object lifetime.
+
+**Why the alarm chain cannot do this.** An alarm fires, the object hibernates after ~10 s
+idle and DISCARDS the interpreter, so the next alarm pays boot again — and boot is
+3,754 ms of edge cpuTime against a 40 ms render. Sliced at 8 ms that is roughly 475
+invocations of boot to buy one fill, so 100k DO requests/day funds about **210 fills**.
+Amortising boot across a window instead is a ~25x difference in what free can fill, and it
+moves the binding meter back to rows written where the accounting already lives.
+
+`server.accept()` and **not** `ctx.acceptWebSocket()`: the Hibernation API exists to let an
+object evict while holding connections, which is exactly the opposite of the requirement —
+hibernating discards the interpreter the window exists to preserve. The cost is explicit,
+because a non-hibernatable object is billed for duration, which is why the window is
+scoped to a drain and closed rather than held open. Cloudflare documents a **15-minute**
+maximum for a connection keeping an object alive, so the window stays well inside it.
+
+Bounded three ways because it spends three budgets: `maxFills` bounds DO requests and rows
+written, `wallBudgetMs` bounds billed duration, and the platform caps the rest.
+
+Measured locally: a 6-path backlog, window opened immediately, **3 fills over 4 messages
+in 145 ms of wall**, drained cleanly, 8 pages cached — the alarm chain took the other
+paths concurrently and the two share one queue without double-filling or wedging it.
+
+**What is asserted is the mechanism, not the saving.** Boot amortisation only pays what
+boot costs, and boot only costs what it costs on the edge; locally the object stays warm
+either way, so a local timing comparison would measure nothing. 4 assertions, including
+that every fill after the first ran against an already-booted interpreter.
+
+## THE COLD START IS A JAVASCRIPT PROBLEM, NOT A PHP ONE — and the lazy FS works
+
+**This retracts "free is one build away".** That framing assumed the thing slicing has
+to cut is PHP. It is not.
+
+Read this document's own numbers together, which nobody had:
+
+| term of a cold start | edge cpuTime |
+| --- | --- |
+| **pack mount** | **3,066 ms** |
+| PHP boot inside the Durable Object | 518-660 ms |
+| total cold boot | 3,754 ms |
+
+**Mount is ~82% of cold start, and it is pure JavaScript** — one `DecompressionStream`
+over a single gzip member producing 39 MB, then `FS.writeFile` over 11,447 files. No PHP
+is involved, so JSPI, the VM-interrupt patch and every slicing mechanism are irrelevant
+to it. It is also the largest local-to-edge factor recorded (6.1x).
+
+### Why lazy loading was ruled out, and why that reasoning was incomplete
+
+The standing objection was: "PHP's `include` is synchronous and demand-driven;
+`env.ASSETS.fetch()` is async." True of *fetching*, and irrelevant to *reading a blob
+already held*. The actual blocker was that **one gzip stream is not random-access**, so
+reaching the last file means inflating everything before it.
+
+`scripts/pack-perfile.ts` deflates every file independently. Cost measured, not
+estimated:
+
+| | single stream | per-file |
+| --- | --- | --- |
+| asset | 8.12 MB | **11.4 MB** (+40%, not the ~20% guessed) |
+| index | 1.24 MB | 1.26 MB |
+| headroom under the 25 MiB per-asset ceiling | — | **13.6 MB** |
+| 37 files deflated LARGER than raw and are stored verbatim | — | flagged `s:1` |
+
+`src/lazy-fs.js` then mounts by creating nodes with no contents and inflating each file
+the first time PHP opens it, using `fflate.inflateSync` because the inflate has to happen
+inside a synchronous `open()` from wasm. The stream ops are patched **per node**, not onto
+MEMFS globally, so the database file and everything Drupal writes at runtime are
+untouched. `stat()` answers with the real size before any read, because PHP's include
+resolution and Drupal's file scans stat without reading.
+
+### Measured, local ratios only (RULE 0: the edge figure needs a deploy)
+
+| | streaming | lazy | |
+| --- | --- | --- | --- |
+| mount work | **832 ms** | **199 ms** | **4.2x less** |
+| boot total | 998 ms | **393 ms** | 2.5x less |
+| bytes inflated at mount | 41,201,198 | **0** | — |
+| **files inflated by a real Drupal request** | 11,447 (all) | **1,006** | **8.8%** |
+| **bytes inflated by a real Drupal request** | 39 MB | **5.24 MB** | **12.8%** |
+
+So a request touches roughly a ninth of the tree, and the other eight ninths were being
+inflated and written on every cold start for nothing.
+
+**It renders correctly, and the whole suite passes through it**: serve chain 62/62, live
+driver 32/32 against real `ctx.storage.sql`, capability 26/26, and a front page byte-
+identical to the streaming mount at 12,304 bytes. `LAZY_MOUNT=1` selects it; the
+streaming mount stays because every recorded boot figure was taken on it.
+
+**Not yet done, and both are real:** the edge number is unmeasured, so the 4.2x is a
+local ratio and nothing more. And node creation is still O(files) — 199 ms of it. If that
+dominates what is left, the next step is lookup-on-demand via a custom `node_ops.lookup`,
+which would make mount cost the index parse alone.
+
+### THE LAZY MOUNT WAS A MEMORY REGRESSION, and the LRU that fixes it is nearly free
+
+Caught before it shipped, and worth stating plainly because the first report of the lazy
+mount read it as a pure win. 1,006 files is boot plus ONE anonymous front-page render;
+admin, authenticated and Views paths reach much further, nothing was released, so a
+long-lived object converges on the union of every route it has ever served: 11.4 MB blob
++ 1.26 MB index + up to 39 MB inflated = **~52 MB against the streaming mount's 39 MB**.
+Warm-window batching would have made that convergence the normal case.
+
+Eviction is only *safe* because the blob stays resident — dropping contents is
+reversible, so it is a plain LRU with a byte budget rather than a bet about which files
+are needed again. Measured under a deliberately tight 2 MB budget, boot + 3 real Drupal
+requests:
+
+| | |
+| --- | --- |
+| inflations | 1,962 files / 9.25 MB |
+| **resident at the end** | **1.91 MB** |
+| **high water** | **2.10 MB** (budget 2 MB) |
+| evicted | 1,567 files / 7.34 MB |
+| **re-inflated after eviction** | **6** |
+
+**6 re-inflations against 1,567 evictions**, and that ratio is the finding: PHP compiles each
+source file once and keeps the resulting classes and functions in the interpreter for its
+lifetime, so an evicted source file is never re-read. The LRU costs essentially nothing.
+
+**CORRECTED 2026-08-14.** This paragraph used to say opcache's file cache served the compiled
+form afterwards. It does not: Round 78 measured that cache on the edge and found it WRITE-ONLY --
+1,301 `.bin` files written across 425 directories after one render, never read back, and three
+entries deleted by hand did not reappear across three further renders. The ratio is real and the
+conclusion is unchanged; the mechanism named for it was wrong, and it mattered because this
+paragraph is what a budget decision cites. Renders stayed byte-identical
+(12,304 / 12,310) through the thrashing and the whole suite passed at a 2 MB budget.
+
+Dirty nodes are never evicted: once PHP writes to a file the blob can no longer reproduce
+it. Re-inflation is idempotent, so eviction needs no bookkeeping beyond the counters.
+
+**Do not convert the resident blob into range fetches.** Holding all 11.4 MB is the
+correct design, not laziness: 1,006 files fetched individually is 1,006 subrequests
+against the free plan's 1,000-per-invocation cap, so the range-fetch version cannot serve
+a single page.
+
+### The scanner storage vector is closed at the edge, with a deny list not a manifest
+
+`PageCache` writes one **permanent** `cache_data` row per distinct URL (~215 B including
+the views results row), and expire-based GC never removes it because a 2xx page is stored
+`Cache::PERMANENT`. So a scanner walking `/.env`, `/wp-login.php`, `/.git/config` writes a
+permanent row per probe — attacker-influenceable unbounded growth against a **5 GB
+account-wide** free storage limit.
+
+`isNeverDrupal()` in `src/site.js` refuses those in JS before any DO hop, so they cost no
+DO request either. **A deny list rather than the router's path table, deliberately:** path
+aliases live in `path_alias` and are created at runtime, so `/about` is a valid URL
+appearing in no packed route table and an allowlist would 404 it. The deny patterns match
+only things Drupal has no route for under any configuration, which is the property that
+lets the check run before the DO instead of after. Pinned by 6 assertions including one
+that an alias-shaped path is **not** refused.
+
+### One measurement trap this produced
+
+A counter reading `inflated: 1` after a full render looked like proof the lazy path was
+being bypassed. It was a **re-mounted object**: the local Durable Object had hibernated
+between the render and the stats read, so the counter belonged to a fresh mount whose only
+read was `settings.php`. Re-checking within one object's lifetime gave 1,006. Any
+per-instance counter in this project has to be read inside the lifetime it describes.
+
+## THE PERSISTENCE FILTER IS CONFIRMED BY DIRECT COMPARISON — and it corrects the 1.95x
+
+The rule, and it now prices levers for free: **any Drupal optimisation whose purpose is
+avoiding a re-read ACROSS processes is worthless in a persistent interpreter; any whose
+purpose is avoiding re-computation WITHIN a process still pays.**
+
+The collector work is the clean experiment, because the same change was measured both
+ways:
+
+| | native, fresh kernel per render | wasm, persistent interpreter |
+| --- | --- | --- |
+| queries without the lifecycle | 52 | 15 |
+| queries with it | **42** | **17** |
+| CPU | **2.35-2.49x cheaper** (12.5-19.1 ms native) | no change |
+
+Same change. Worth 2.4x natively, worth **less than nothing** in a persistent
+interpreter, exactly as the filter predicts. That is why `destruct` defaults off here
+and why the native result must not be imported as a reason to turn it on.
+
+### But the native run found something the wasm run could not: the pack is missing entries
+
+**The shipped `drupal-src` database is permanently missing four collector entries**, and
+no edge request will ever add them because nothing completes the lifecycle:
+
+| bin | cid | collector |
+| --- | --- | --- |
+| `cache_bootstrap` | `theme_registry:runtime:olivero` | `theme.registry` |
+| `cache_discovery` | `library_info:olivero` | `library.discovery` |
+| `cache_file_parsing` | `library.parsing_cache` | `library.parsing_cache` |
+| `cache_menu` | `active-trail:route:view.frontpage.page_1:...` | `menu.active_trail` |
+
+Per-entry attribution, paired, 60 renders per sample, noise floor 1.93 ms: **100% of the
+cost is the `library_info` + `library.parsing_cache` PAIR, and only when both are
+missing** (+16.76 ms min). Either one alone short-circuits the work, which is why the
+effect is superlinear. Every other entry is inside the noise floor.
+
+**So the right fix is not to destruct at runtime, it is to BAKE THOSE ENTRIES INTO THE
+PACK.** A cold interpreter is a fresh process, so it pays the native cost; a warm one
+does not care. Packing them is free at runtime and pays exactly where the filter says it
+will.
+
+Corollary that makes the `theme.registry` exclusion easy: its measured price is **1 extra
+query per render and zero measurable CPU.** The exclusion is free.
+
+### Three corrections to this document
+
+1. **`KernelDestructionSubscriber` does not exist in Drupal 11.4.5.** `grep` finds
+   nothing. The destruct loop is inline in `DrupalKernel::terminate()`
+   (`core/lib/Drupal/Core/DrupalKernel.php:726`), iterating the container parameter.
+   Earlier text in this file naming that class is wrong.
+2. **The tagged list had one member nobody had identified** — the entry at
+   `core.services.yml:2090` is `Drupal\Core\Theme\Icon\IconCollector`. Full installed
+   set also includes `block_content.uuid_lookup`, `path_alias.whitelist` (deprecated)
+   and `path_alias.prefix_list`. `locale` is not installed.
+3. **`router.builder` is not a CacheCollector at all** — its `destruct()` calls
+   `rebuildIfNeeded()` (`RouteBuilder.php:168`), which is why it is correctness on a
+   write path rather than caching.
+
+### The cron trap: why it fired in wasm and not natively
+
+`AutomatedCron::onTerminate()` returns immediately when `PHP_SAPI === 'cli'`
+(`automated_cron/src/EventSubscriber/AutomatedCron.php:33`). Native CLI is `cli`, so
+cron never fired natively and no native measurement was polluted. **`PHP_SAPI` is
+`embed` in wasm**, so the guard does not hold there — which is precisely why
+`terminate()` killed every wasm render with an Asyncify throw and did nothing natively.
+Two runtimes, one config, opposite behaviour, and the difference is one string.
+
+### AND THE 1.95x MINIMAL-VS-STANDARD FIGURE IS NOT A PROFILE COMPARISON
+
+This corrects the section below rather than supplementing it. `system.site page.front`
+is **`/node`** on standard (the frontpage view, Olivero, 12,331 bytes) and
+**`/user/login`** on minimal (Stark, 3,618 bytes). Different route, different theme,
+different block layout, **3.4x the output bytes**.
+
+| comparison | native CPU min | ratio |
+| --- | --- | --- |
+| each profile's own front page | 8.90 vs 6.76 ms | **1.32x** |
+| the SAME route (`/user/login`) on both | 10.65 vs 7.00 ms | **1.52x** |
+
+So the edge figures (40 ms standard assembly vs 20.5 ms minimal) are **real
+measurements of two different pages**, not a measurement of the install profile. The
+profile is worth something closer to 1.3-1.5x; the rest is page size, theme and the
+view. Every "minimal is 1.95x cheaper" claim in this document must be read as "minimal's
+front page is 1.95x cheaper than standard's front page".
+
+### And the per-module hypothesis is refuted
+
+`cache_contexts` calls on an anonymous front-page render, counted with the existing
+`PwCacheContextsManager` subclass, removing standard-only modules cumulatively: 113 with
+all 40 modules, **86 after removing 24 of the 26 standard-only modules**, against
+minimal's 49-51. So **37 of the 62-call gap is the theme, the block layout and the
+frontpage view**, not the module set. `contextual` accounts for 8 calls (13%) and 2
+queries — real, but not the answer.
+
+Paired ranking, minimum estimator, noise floor 1.93 ms: `help` -1.29 ms, `contextual`
+-1.02, `navigation` -0.84, and **19 of the others measured POSITIVE** (removing them
+looked slower). That is the noise floor talking, and it is the honest bound: **no single
+standard-only module costs more than ~1.3 ms of native render CPU.** The 20 ms edge
+delta is not sitting in one or two modules.
+
+`views` cannot be uninstalled at all: the front page **is** the frontpage view, and
+removing it makes `/` a 404.
+
+## THE UNCATCHABLE JS THROW IS FIXED AT THE BRIDGE, and it was a DoS surface
+
+Two confirmed instances traced to one piece of glue, so this is fixed once at the
+boundary rather than twice at the call sites.
+
+`vendor/static-free-v1/php8.3-worker.mjs` contains **two** `Asyncify.handleAsync(...)`
+call sites — `__asyncjs__php_stream_fetch_real_open` (the http/https stream wrapper)
+and `__asyncjs__vrzno_await_internal` — and **declares `Asyncify` nowhere**. Verified:
+`grep -c "var Asyncify\|let Asyncify\|const Asyncify\|function Asyncify"` returns 0. So
+it is a free identifier resolving to the global scope, which `ASYNCIFY=0` compiled out.
+
+**Why the severity is higher than it reads.** The throw originates in JS, escapes the
+wasm import, and **PHP cannot catch it at all** — measured from two unrelated routes,
+with `@` and `catch (\Throwable)` both useless. And `stream_get_wrappers()` advertises
+http and https, so ordinary contrib and vendor code will legitimately reach for them.
+That made an uncatchable request kill reachable by installing a normal module.
+
+`src/worker-shim.js` now stubs the object before instantiation. A synchronous stub
+cannot await — that is the entire point of Asyncify — so it does not try; it returns a
+failure sentinel and counts the call.
+
+| | before the stub | after |
+| --- | --- | --- |
+| the throw | `ReferenceError: Asyncify is not defined` | `TypeError` the host catches |
+| the invocation | dies | returns a JSON error |
+| **the interpreter** | — | **survives: renders after the failed fetch return 12,310 bytes** |
+
+**Return 0 was measured to be WRONG** and is worth recording, because it looks right:
+the C side took 0 as a *valid* stream handle, then asked target 0 for its status and
+the glue threw `Cannot read properties of undefined (reading 'status')` — the same
+class of uncatchable throw, one layer further in. `-1` is the sentinel.
+
+PHP still does not receive a clean `false`, so **the primary fix remains shadowing
+http/https with `cfw_capability`'s wrapper**, which the capability round already proved
+works. The stub is defence in depth: it converts a process kill into a failed request.
+
+**And it fixes the observability hole this failure created.** An invocation killed this
+way produces no PHP fatal, no `printErr` output, and Drupal's logger never runs, so a
+PHP-side shutdown handler cannot see it. `globalThis.__cfwAsyncifyCalls` is therefore
+the only place it is observable, and it is exposed on `/serve-stats` and asserted to be
+0 by the suite.
+
+### The lock leak was predicted, looked for, and does NOT occur
+
+The mechanism is real and worth stating: `DatabaseLockBackend` relies on
+`releaseAll()` at **process shutdown**, this interpreter never shuts down, and a lock
+held forever would be worse than a stale cache because `Lock::wait()` calls `usleep()`
+inside a synchronous wasm call that nothing can interrupt — it would stall rather than
+fail. `CacheCollector::destruct()` does take a lock before writing.
+
+Measured anyway before fixing: the `semaphore` table is **empty on every site
+exercised**, including three that ran the destruct pass *before* any release existed.
+`CacheCollector::destruct()` releases its own lock.
+
+So no per-render release was added. Paying a statement per render for an unobserved
+leak is the same trade this round already rejected for the destruct pass, and applying
+it inconsistently would be worse than either answer. Instead: `alarm()` clears expired
+rows (periodic, unattended, writes nothing unless there is something to delete), and
+the suite asserts the table is empty so a future leak trips a test rather than stalling
+a request.
+
+### Instance eleven of the trace-blind class, and it was a template literal again
+
+A backtick inside a PHP comment terminated the enclosing JS `String.raw` template and
+broke the bundle with `Expected ";" but found "semaphore"`. This is the **second** time
+that exact mistake has been made in this file. The rule, since a comment cannot be
+trusted to remember it: **no backticks in any PHP fragment in `src/site-php.js`.**
+
+## THE REQUEST LIFECYCLE WAS NEVER COMPLETED — real mechanism, no payoff, two defects
+
+The hypothesis, and it was a good one: nothing in this project has ever called
+`$kernel->terminate()`. `KernelDestructionSubscriber` fires on `KernelEvents::TERMINATE`
+and calls `destruct()` on every service tagged `needs_destruction`; those are
+`CacheCollector` subclasses and `CacheCollector::destruct()` is where accumulated
+entries are actually WRITTEN. So the collectors should have been rebuilding from
+scratch on every request for the entire project.
+
+**The mechanism is real. The payoff is not, and the reason is instructive.**
+
+Confirmed tagged in `core.services.yml`: `state`, `menu.active_trail`,
+`router.builder`, `theme.registry`, `library.discovery`, `library.parsing_cache`,
+plus `block_content`, `locale` and `path_alias` (x2). The list is available at
+runtime as the container parameter `kernel.destructable_services`, which
+`RegisterServicesForDestructionPass` fills.
+
+### Defect 1: calling terminate() kills the invocation outright
+
+`$kernel->terminate($request, $response)` on the standard profile 500s **every
+render**, with `ReferenceError: Asyncify is not defined`.
+
+`automated_cron` subscribes to TERMINATE. Its interval is 10,800 s but
+`system.cron_last` is **absent from the pack entirely** — only `system.cron_key`
+exists — so the elapsed check passes and `drupal_cron()` runs inline on the first
+request. Cron reaches for outbound HTTP (`update`, `announcements_feed`) and the
+wasm build dies.
+
+**`try { $kernel->terminate(...) } catch (\Throwable $e) {}` did NOT contain it**,
+which independently reconfirms the capability round's finding that this failure is a
+JS exception crossing the wasm import boundary, not a PHP one. Two separate routes
+have now hit it, so treat it as settled: **a JS-level throw out of an import cannot
+be caught in PHP at all**, and any path that might reach one needs a host-side guard.
+
+`firstRunConfig()` now sets `automated_cron.settings.interval = 0` (core's own
+"Never"). That is a **prerequisite**, not tidiness. Uninstalling the module is the
+eventual answer; cron belongs on the Durable Object alarm.
+
+### Defect 2: destructing `theme.registry` returns 0-byte pages from then on
+
+With cron disabled, terminate() stopped 500ing and started doing something worse:
+render 1 returned 12,304 bytes and **every render after it returned 0 bytes**, with
+rows-written per render jumping **15 -> 85**. A targeted pass over
+`kernel.destructable_services` — no TERMINATE event at all — reproduced it exactly,
+so this is not terminate()'s process-death semantics in general.
+
+Bisected one service at a time, three renders each, fresh site per arm:
+
+| destructed | render bytes |
+| --- | --- |
+| `state` | 12,304 / 12,310 / 12,310 |
+| `menu.active_trail` | 12,304 / 12,310 / 12,310 |
+| `router.builder` | 12,304 / 12,310 / 12,310 |
+| `library.discovery` | 12,304 / 12,310 / 12,310 |
+| `library.parsing_cache` | 12,304 / 12,310 / 12,310 |
+| **`theme.registry`** | **12,304 / 0 / 0** |
+
+`Registry::destruct()` persists the **runtime** registry, which core's own docblock
+describes as "an array of incomplete, runtime theme registries". Clearing
+`cache_bootstrap` between renders does **not** fix it, so the corruption is the
+**in-memory collector object**, which survives because this interpreter reuses the
+container across requests where a normal SAPI would not.
+
+`Registry::reset()` is not an escape hatch either: it deletes the
+`theme_registry:runtime:*` cids that `destruct()` just wrote, so it undoes the
+persistence it would be repairing.
+
+**The complete registry was never at risk.** `Registry::get()` persists that itself
+through `setCache()` when the module handler is loaded, with no `destruct()`
+involved. So the size of the prize was always just the runtime layer.
+
+### And with the five safe services destructing, there is no prize at all
+
+Repeated anonymous front-page render, `page` + `dynamic_page_cache` both emptied,
+fresh site per arm, n=6:
+
+| | host statements | rows written | bytes |
+| --- | --- | --- | --- |
+| `destruct=0` (the old lifecycle) | 15 | 15 | 12,310 |
+| `destruct=1` (five safe services) | **17** | **15** | 12,310 |
+
+**+2 statements per render, 0 rows saved, 0 bytes changed.** Cost, no benefit.
+
+The reason is the same property that made terminate() dangerous: **the interpreter is
+persistent, so the collectors are already populated in memory and never re-read from
+cache.** Persistence pays for a fresh process. On this runtime the in-memory
+collector IS the cache — the thing that made the defect possible is the thing that
+makes fixing it pointless.
+
+So `destruct` defaults to **false** on the render path. It is kept, with the
+allowlist form that did the bisecting, because two questions remain open and both are
+narrow: it is worth passing `true` on a **write** path, where `router.builder`'s
+`rebuildIfNeeded()` and accumulated state flushes are correctness rather than speed;
+and whether persisted collectors pay for themselves on the **cold** path, after a
+hibernation discards the interpreter, is unmeasured.
+
+**Consequence for the 40 ms: the unattributed render cost is NOT collectors.** That
+was the leading structural explanation and it is now eliminated by measurement rather
+than by argument.
+
+Pinned by 4 assertions in `scripts/test-serve-chain.mjs` (now 60), including one that
+asserts `theme.registry` is *still* broken — if a future Drupal makes it safe, that
+test fails and says to drop the exclusion.
+
+## THE MINIMAL PROFILE IS 1.95x CHEAPER: assembly is 20.5 ms on the edge, so 3 slices
+
+Closes item 6 of the revised list. Assembly and full render had only ever been
+measured on **standard**; the free-tier story ships **minimal**, and the gap turned
+out to be the largest single lever in the document.
+
+Deployed `wrangler.edge-site.jsonc` as `cfw-edge-site-probe` staged with
+`bash scripts/stage-edge-assets.sh drupal-min` (code tree from `assets/drupal`,
+database from `assets/drupal-min`), migrated on the edge, worker deleted and the
+9-worker baseline re-verified. `/assemble?path=/&bins=page`, one render per Durable
+Object invocation.
+
+**Preconditions checked before the clock, per the rule that produced this route:**
+`dynamicCache: HIT` on **all 12** runs, **6 host statements** each, **3,577 bytes**
+each. The minimal front page is 3,577 bytes against standard's 12,304, and the
+migration reports **35 tables / 727 rows** against standard's 68 / 1,342 — so the
+pack swap demonstrably took effect rather than silently falling back.
+
+| profile | bytes | n | cpuTime median | min / max | slices at 10 ms |
+| --- | --- | --- | --- | --- | --- |
+| **minimal** | 3,577 | **12** | **20.5 ms** | 17 / 26 | **3** |
+| standard | 12,304 | 16 | 40 ms | 27 / 55 | 4 (6 from the max) |
+
+Assembly in request order: 26, 18, 22, 17, 21, 20, 24, 18, 23, 20, 22, 19. Flat, no
+trend, tighter spread than standard's 27-55.
+
+**Minimal is 1.95x cheaper than standard** — the ~1.9x that had been asserted from
+the install-profile difference and never measured end to end. It does **not** rescue
+the single-invocation case: 20.5 ms is still **2.05x the 10 ms ceiling**, so a MISS
+that reaches PHP still has to be sliced or avoided. It changes the slice count from
+4 to **3**, and 3 is inside what `#lazy_builder` can plausibly produce (item 2), where
+6 was not.
+
+### The 20 ms minimal figure REPRODUCES across deploys, which standard's did not
+
+| figure | deploy | value |
+| --- | --- | --- |
+| warm minimal render, earlier round | one deploy, n=51 | **20.02 ms** |
+| minimal assembly, this round | different deploy, n=12 | **20.5 ms** |
+
+Two deploys, different days, agreeing to within 2%. Contrast the standard `/serve`
+full render, which moved **46 ms → 75-111 ms** between deploys. So the minimal
+absolute is the one number in this document that has earned being treated as stable,
+and the earlier "warm minimal render" was in fact assembly-shaped (`page` emptied,
+DPC answering) — the two rows measure the same work and should be read as one result
+at **n=63**.
+
+### The local clock cannot distinguish the two profiles AT ALL
+
+This is a harder finding than "the local clock is optimistic", and it retires the
+local-to-edge factor as a concept rather than correcting its value.
+
+| | local in-PHP clock | edge cpuTime | implied factor |
+| --- | --- | --- | --- |
+| minimal assembly | 9 ms | **20.5 ms** | 2.3x |
+| standard assembly | 8 ms | **40 ms** | 5.0x |
+
+Locally the two profiles are **indistinguishable, and ranked backwards** — minimal
+reads *slower* than standard. On the edge minimal is half the cost. A factor cannot
+repair an instrument that has lost the ordering, so there is no correct constant to
+substitute: RULE 0's "deploy, do not project" is the whole of the guidance.
+
+### AND THE INSTRUMENT ITSELF FAILED: `wrangler tail` silently omitted every DO event
+
+The eleventh instance of the trace-blind class, and the first where the tool named in
+RULE 0 was the thing that lied.
+
+`bunx wrangler tail cfw-edge-site-probe --format json` captured **12 objects, every
+one `executionModel: "stateless"` at 0-1 ms cpuTime, and zero `durableObject`
+events** — while the PHP render runs in the Durable Object. Verified it was not a
+parse artifact: 12 top-level objects, 12 `executionModel` keys, 12 `cpuTime` keys.
+Restarting tail and re-issuing a request reproduced it (1 stateless, 0 DO). Nothing
+was logged as dropped or sampled; the expensive half of the trace was simply absent.
+
+The same invocations were fully present in the **Workers Observability API**:
+
+| executionModel | n | median cpuTime | max |
+| --- | --- | --- | --- |
+| durableObject | 15 | 22 ms | 6,509 ms |
+| stateless | 12 | 1 ms | 2 ms |
+
+**Method change, and it is load-bearing for every future absolute:** read
+per-invocation cpuTime from the observability API (`query_worker_observability`,
+`view: "events"`, filter `$workers.executionModel`), not from `wrangler tail`. Tail
+had been the instrument of record for the DO-budget result, the attribution result and
+the standard assembly result. Those three are not invalidated — they reported DO
+events, so the events arrived on those attaches — but a tail capture that shows only
+`stateless` rows must now be treated as **an instrument failure, not a measurement**.
+Two extra guards, both cheap: assert the expected `durableObject` count before
+believing a run, and check the DO's own returned `hostStatements` for evidence the
+work happened at all.
+
+`scripts/measure/read-tail-cpu.mjs` parses a tail capture (the stream is pretty-printed
+concatenated JSON, not JSONL — a brace-depth scan, not a line split) and is kept for
+the cases where tail does deliver, but it is no longer the primary path.
+
+### Cold costs on minimal, measured in passing
+
+Not the target of the run, and each is n=1, so they are recorded as observations
+rather than figures:
+
+| event | cpuTime |
+| --- | --- |
+| `/migrate` (PHP boot + mount + migrate 35 tables, 727 rows) | 2,272 ms |
+| first-ever full render (`page` + `dynamic_page_cache` both cold) | 6,509 ms |
+| assembly after ~2 min idle, i.e. re-boot after eviction | 2,742 ms |
+
+The 6,509 ms first render is the one worth flagging: **a site's very first render
+costs three times its own boot**, because Twig compilation and the discovery caches
+are all built inside it. That is an argument for shipping `cache_render` pre-filled
+(item 4 territory) independent of anything slicing does.
+
+## A JSPI-SUSPENDED WASM STACK SURVIVES THE INVOCATION BOUNDARY — half (b) passes
+
+**The slicing branch is confirmed, not killed.** Measured on deployed Cloudflare
+infrastructure, `compatibility_date` **2026-08-01**, worker `cfw-jspi-probe` deleted
+afterwards and the 9-worker baseline re-verified.
+
+Half (a) was already measured: CPU spent after a parked promise resolves is charged to
+the RESUMING invocation. Half (b) — can a suspended **wasm** stack survive between two
+Durable Object invocation callbacks — needed a `-sJSPI` build, and the php-wasm build
+track is stopped at a configure gate. So it was tested **without PHP**: a
+1,360-byte C loop, `scripts/jspi-probe.c`, built by `scripts/build-jspi-probe.sh` with
+`clang --target=wasm32 -nostdlib` in the `emscripten/emsdk` image. No emscripten
+runtime, no glue; the JSPI wrapping is the raw `WebAssembly.Suspending` /
+`WebAssembly.promising` API in `src/jspi-probe.js`. **Total build time: under a
+minute.**
+
+The loop's surviving state is deliberately on the C stack — `volatile`, address-taken,
+three frames deep — so a wasm global or a linear-memory byte cannot pass the test by
+accident. A non-suspending `cfw.mark` import fires once per iteration and stamps each
+iteration with the invocation it ran in, which is the actual evidence: an integer
+result alone could not tell "the stack survived" from "the whole loop ran in /park".
+
+### Fetch to fetch
+
+| | invocation of each iteration | result |
+| --- | --- | --- |
+| `/park` (20 marks, park at 5) | `0@4 1@4 2@4 3@4 4@4 5@4`, then returns | suspended |
+| `/resume` | `6@5 7@5 8@5 9@5` | **exact** |
+
+Three runs, identical. The returned integer differed from the no-park control by
+**exactly 36,000**, which is `(5*7+1) * 1000` — the value the host injected at the
+suspension point, times the loop's scale factor. Every other contribution matched the
+control bit for bit and the corruption bitmask was 0, so the stack slots came back
+intact rather than merely plausible.
+
+### Fetch to ALARM, which is the shape the fill chain needs
+
+3/3 on the edge: iterations 0-5 stamped with the fetch invocation, 6-9 with the alarm
+invocation, same exact result. An alarm is the only mechanism that starts a fresh
+invocation with a fresh CPU budget, so this is the half that matters.
+
+### The whole production shape: ONE STACK, FOUR SLICES, FOUR BUDGETS
+
+`run_loop_multi` suspends every N iterations and `alarm()` drives the chain, re-arming
+at +1 ms while the stack is still suspended. 20 iterations of identical work:
+
+| | cpuTime per invocation | max single | total |
+| --- | --- | --- | --- |
+| one-shot control, 20 iterations | 70 / 71 / 68 | **70 ms** | 70 ms |
+| 4-slice chain, run 0 | 19, 16, 15, 13 | **19 ms** | 63 ms |
+| 4-slice chain, run 1 | 20, 16, 16, 15 | **20 ms** | 67 ms |
+| 4-slice chain, run 2 | 21, 17, 18, 14 | **21 ms** | 70 ms |
+
+**A 70 ms unit of work became four invocations of at most 21 ms.** The totals
+reconcile with the control (63-70 against 68-71), so nothing was lost, duplicated, or
+double-charged, and **per-slice dispatch overhead is below the noise floor** — the
+sliced total is sometimes lower than the one-shot. That was the other thing that had
+to be true and it was not obvious in advance.
+
+Result on both completed chain runs: `495154776`, which is the control's `494941776`
+plus `213000` — the three injected park payloads (36 + 71 + 106) times the scale
+factor. Slice count reported as 4, marks split `0-5 / 6-10 / 11-15 / 16-19`.
+
+### THE BOUND: a suspended stack dies with the object, at somewhere between 6 and 10 s
+
+This is the constraint the design has to respect, and its failure mode is silent.
+
+| idle gap between `/park` and `/resume` | outcome |
+| --- | --- |
+| 1 s | resumed, exact |
+| 3 s | resumed, exact |
+| **6 s** | **resumed, exact** |
+| **10 s** | **`nothing parked`, `invocation: 1`** — a fresh object |
+| 15, 20, 45 s | same |
+
+The object is evicted on the documented ~10 s idle timeout and the suspended wasm
+stack goes with it. Nothing throws: `/resume` meets a brand-new instance whose
+invocation counter has reset, so a stalled slice chain does not fail loudly, it
+**forgets the request**. Any sliced render must therefore re-arm well inside the
+window — the +1 ms chain here does, comfortably — and must treat "nothing parked" as a
+lost render to be requeued, not as a client error.
+
+### What is left before a Drupal render can be sliced
+
+Both halves of the platform question are now answered yes. What remains is entirely on
+our side of the boundary, and it is not small:
+
+1. **A php-wasm build with `-sJSPI`.** The stopped build track becomes load-bearing
+   again, and now it has a measured payoff rather than a hypothetical one. Note
+   `JSPI_EXPORTS` must cover the entry point and **every frame between the promising
+   export and the suspending import must be wasm** — a JS frame in that path breaks
+   suspension, which is why the probe kept all three frames in C.
+2. **Somewhere for Drupal to suspend.** The render is one synchronous call today.
+   Suspension points have to be real yield points in the render pipeline —
+   `PlaceholderStrategyInterface` / `#lazy_builder` is the seam, at
+   ~4 slices for assembly and 8-12 for a full render (see the assembly section above).
+3. **The reentrancy gate must not hold across a slice chain.** A sliced render holds
+   the interpreter for its whole sliced lifetime, which queues every HIT behind it.
+   Addressed below.
+
+### Two costs worth having on the record from the same run
+
+| | cpuTime | note |
+| --- | --- | --- |
+| PHP boot + full site migration, one invocation | **3,467 ms** | 68 tables, 243 DDL, 1,342 rows; `elapsedMs: 0` from in-PHP clock |
+| First render on a fresh Drupal kernel, standard | **10,397 ms** | 92 statements, DPC MISS, Twig compile |
+| Re-boot after eviction, inside an `alarm()` | **5,040 ms** | the DO was evicted between two runs minutes apart |
+| Keep-warm alarm firing, nothing to fill | **0-1 ms** | 5 firings |
+
+The 10,397 ms first render is the number that matters for the free tier: it is 1,040x
+the ceiling and it is **indivisible by slicing** in any design that boots a kernel
+inside a request. It also confirms the eviction premise behind `estimateRenderMs()`
+being pessimistic — the object really was discarded between two runs minutes apart,
+and an alarm paid 5,040 ms to bring it back.
+
+## The gate was never the throughput constraint — the single JS thread is
+
+The reentrancy gate is now split into a **storage lane** and a **PHP lane**
+(`SitePhpDurableObject.fetch()` / `serveFromStorage()`), and the honest result is that
+it buys nothing measurable today. Recording that rather than the intent:
+
+| 4 identical renders raced against 8 HITs on one object | total | HIT latency min/median/max |
+| --- | --- | --- |
+| storage lane | 286 / 328 / 339 ms | 284 / 284 / 285 |
+| gated lane (`lane=gate`) | 284 / 293 / 295 ms | 284 / 284 / 284 |
+
+One fresh site per lane so both rendered the same paths from the same cold state; the
+first attempt varied the paths between rounds and was measuring the pages rather than
+the lanes. **No difference, and every HIT's latency equals the whole round.**
+
+The mechanism: `php._run()` is one synchronous wasm call, so the isolate's single
+thread is occupied for the entire render and an incoming HIT cannot be *processed*
+whichever lane it would take. Stated directly by the instrument built for it —
+`x-cfw-gate-active` read **0 on every one of 8 HITs** raced against 4 concurrent
+renders, so there is never an instant when a render is in flight and a HIT is being
+served.
+
+**Two things were still worth doing, and one of them is a removal.**
+
+`ctx.blockConcurrencyWhile()` is gone from the PHP lane. It suppresses event
+*delivery* for the whole gated callback, which is strictly worse than the FIFO chain
+and can only ever cost throughput; the invariant the gate exists for — at most one
+callback inside the interpreter — is held by `Gate` alone, in both directions, since
+`alarm()` enters the same gate. `doGate()` stays exported and tested for callers that
+do want delivery suppression. Measured after the removal: `maxConcurrent` 1 across the
+whole 56-assertion integration run.
+
+And the split is the **prerequisite for slicing not reintroducing the ceiling**. A
+sliced render yields the thread between slices and re-arms at +1 ms, so a HIT
+competing for a FIFO ticket could be starved indefinitely by a chain that is always
+about to take the gate again. A storage lane cannot be starved because it does not
+take a ticket.
+
+Three conditions keep it safe, and the first is not a formality: **the fast lane runs
+no DDL.** `ensureServeTables()` issues `CREATE TABLE IF NOT EXISTS`, and DDL next to
+an open transaction replay dirties `sqlite_master` and turns every later read in that
+transaction into a speculative replay — the O(W x R) cost that once wedged the local
+runtime hard enough to take unrelated sites down. So it declines until a gated request
+has created the tables, which is asserted.
+
+## THE FIRST CONTENT WRITE, MEASURED — and it found a cache-poisoning bug
+
+`saveNode()` in `src/site-php.js`, route `/savenode`. The first content write anything
+in this project has exercised; every earlier measurement was a read, and the one
+earlier write (first-run config) had already found three missing tables.
+
+**The pack cannot do it at all, and that is a packaging finding.**
+`assets/drupal/site.sqlite` — the "standard" pack — has **no `node.type.*` config**, so
+`NodeType::loadMultiple()` returns `[]` and no content can be created on it.
+`assets/drupal-std/site.sqlite` has the bundles. `mountDrupalStreaming()` now takes a
+`dbPrefix` so the database can be swapped without swapping the code tree
+(`SITE_DB_PREFIX=drupal-std`), which keeps every earlier read figure comparable.
+
+Measured on `drupal-std`, warm kernel, in-PHP clock (a local ratio, RULE 0):
+
+| | first save | warm saves (n=3) |
+| --- | --- | --- |
+| save itself | 138-140 ms | **9-10 ms** |
+| host statements for the save | 152 | **59** |
+| node page re-render | 136 ms / 67 stmts | 30-32 ms / 29 stmts |
+| front page re-render | 68 ms / 36 stmts | 33-34 ms / 28-30 stmts |
+| whole write-refresh, wall | 366 ms | **79-82 ms** |
+| `persisted` (reloaded through a fresh storage handler) | true | true |
+| new title visible on BOTH pages | yes | yes |
+| generation bumped with nothing calling it directly | 1 -> 2 | every time |
+
+So the write-refresh loop closes: save, the `cachetags` write crosses `execSql()`, the
+generation bumps, `cfw_page` is purged, and the next `/serve` is a fresh RENDER
+containing the new content. Verified end to end through the serving path, not just in
+PHP.
+
+### The transaction replay, measured for the first time
+
+DEEP DIVE B predicted O(W x R) from arithmetic. Counters now exist
+(`txnCount` / `txnStatements` / `txnSpeculative`, reported by `/stats` and
+`/savenode`), and one warm node save is:
+
+| | value |
+| --- | --- |
+| transactions | **10** |
+| of which speculative (replay + read + rollback) | **9** |
+| statements executed inside replays | **54** |
+| total host statements for the save | 59 |
+
+**So 54 of 59 statement executions in a node save are replays**, and 9 of 10
+transactions are the speculative read-your-own-write path. The buffers are small
+(5.4 statements each) so the quadratic term has not bitten, but this is the multiplier
+to watch: it is the first direct measurement of the cost the driver's design trades
+for correctness.
+
+### The corruption case the standing rules exist for is currently unreachable
+
+A save that suspended mid-transaction would be the corruption case. It cannot happen
+on this build: PHP has no suspension mechanism, so the whole save is one synchronous
+`php._run()` and no other event can be delivered inside it. **That is a constraint on
+the JSPI work, not a reassurance** — a `-sJSPI` PHP build must not place a suspension
+point inside a transaction replay, or the buffer can be observed half-applied.
+
+Also honest: the 2^53 write guard was **not** exercised. Nothing core writes on the
+node path exceeds it — ids are small and timestamps are ~1.78e9 — so `bindable()`'s
+refusal path stayed cold.
+
+### A cache-poisoning bug, found by writing rather than by reading
+
+The save has to act as uid 1, or node access denies its own reads. The first version
+switched `\Drupal::currentUser()` and never switched back, and **the interpreter
+persists between requests**, so:
+
+- the front page went from **12,296 bytes to 90,038**, because the alarm chain
+  rendered it as uid 1;
+- that admin HTML was stored in `cfw_page`, which is the **anonymous** page cache;
+- and it was then served to a subsequent anonymous request.
+
+An information-disclosure bug from one unrestored global. Seventh instance of the
+persistent-interpreter class in this document and the first with a disclosure
+consequence. Fixed: the previous account is captured, restored before anything
+renders, and restored again in a `finally` so a throw between the switch and the
+restore cannot leave it. Verified — `restoredUid: 0` and the front page back to
+~11-13 KB, growing only as promoted nodes accumulate.
+
+### One rough edge left, and it is visible to a content editor
+
+After a save the generation bump purges `cfw_page`, so the next visitor gets a MISS.
+On a site whose last measured render was 2,092 ms against a 2,000 ms budget the MISS
+came back as a **202 placeholder**, and the page only appeared after the alarm chain
+filled it. That is the designed behaviour, and it is also "I saved my article and the
+site said `warming`". The fix is not more budget: it is pre-filling the path the save
+just invalidated, which the fill queue already has the machinery for.
+
+## THE CAPABILITY PLUGINS NOW EXECUTE — 26 assertions, and lint had hidden two defects
+
+`drupal/cfw_capability/` was five classes that had never run. Route `/capability`
+drives them against real Drupal with the host functions installed
+(`installCapabilities()` in `src/site-do.js`), and the module ships in `driver.json`
+alongside the driver so it costs no new asset and no extra boot subrequest.
+
+**26 assertions, 0 failures**, including the controls: `Host::has()` must be FALSE for
+a capability the runtime did not install, and an unprefetched URL must FAIL rather
+than return something plausible.
+
+Stated plainly rather than implied: the module is **not enabled**. Its namespace is
+registered in `settings.php` and the classes are driven directly, so this exercises
+the classes and the host contract, not `hook_install` or the container wiring.
+
+### Defect 1: CfwImageToolkit was a guaranteed fatal
+
+```
+Fatal error: Class Drupal\cfw_capability\ImageToolkit\CfwImageToolkit contains 2
+abstract methods and must therefore be declared abstract or implement the remaining
+methods (PluginFormInterface::buildConfigurationForm, ::submitConfigurationForm)
+```
+
+`ImageToolkitBase` implements `PluginFormInterface` but leaves those two abstract.
+`php -l` cannot see it — it is a linkage error raised the first time something
+autoloads the class against real Drupal — so the file was "lint-clean" with a
+guaranteed fatal in it. Fixed with two empty implementations; there is nothing to
+configure when resizing happens at delivery.
+
+### Defect 2: the runtime DOES have an https wrapper, and touching it kills the invocation
+
+`HttpsStreamWrapper`'s docblock says this runtime has no http/https wrapper, citing a
+measured list of `compress.zlib, php, file, glob, data`. **On `static-free-v1` that is
+wrong.** Measured before registering anything:
+
+```
+compress.zlib,php,file,glob,data,http,https
+```
+
+And the truth is worse than absence. Reading through the native wrapper throws
+
+```
+ReferenceError: Asyncify is not defined
+```
+
+out of the wasm import. That is a **JS** exception: `@` does not suppress it, PHP's
+`catch (\Throwable)` never sees it, and the entire invocation dies. Reproduced on
+demand by route `/nativefetch`, which returns
+`{"survived":false,"jsError":"Asyncify is not defined"}`. The object does recover — a
+later `/serve` rendered normally — so it is fatal to the request, not to the instance.
+
+Consequences worth carrying:
+
+1. `stream_get_wrappers()` **advertises a capability that does not exist**, so any
+   vendor or contrib `file_get_contents('https://...')` is an uncatchable
+   invocation-killer rather than a handled failure.
+2. Registering `HttpsStreamWrapper` is therefore **mandatory, not an optimisation**,
+   and it must happen before any code can touch a URL.
+3. The same root cause as the recorded `__asyncjs__vrzno_await_internal` failure, on a
+   new and much more reachable path.
+
+### What each capability actually does on a build with no suspension
+
+Every host function is **synchronous**, because `Host::call()` does
+`$reply = $invoke($json)` and reads the result immediately — PHP cannot await. So the
+network capabilities are split, which is exactly the layering `CfwDeferredHttp`
+documents, with the sync tier absent:
+
+| capability | proven | note |
+| --- | --- | --- |
+| `cfwLog` | **4 entries arrived host-side**, levels error/warn/info, channels `cfw-check` and `cfw_capability` | both directly and through `\Drupal::logger()`, matched by random marker |
+| `HttpsStreamWrapper` | `file_get_contents`, `fopen`, `fread`, `fseek`, `fstat` all correct on a prefetched URL (559 bytes, exact) | and an unprefetched URL returns FALSE |
+| `CfwDeferredHttp` | uncached GET -> **202 with `x-cfw-deferred: queued`**; cached GET -> **200 with the real body** | the whole cached -> deferred layering, executed |
+| `CfwMail` | `format()` joins and wraps; `mail()` returns **FALSE** with a logged reason, no throw | there is no email binding on this worker |
+| `CfwImageToolkit` | loads against real Drupal after the fix; `cfwImageUrl` returns `/cdn-cgi/image/width=300,fit=cover/...` | never processes an image, by design |
+| `Host` | six capabilities present, a seventh absent, and a missing one returns a named refusal | the control that makes the six mean something |
+
+The actual `fetch()` happens in `drainHttpQueue()` — in JS, between PHP runs, where
+awaiting is legal — and lands in a durable `cfw_http_cache` table the next PHP run
+reads synchronously. Route `/httpdrain`. **So outbound HTTP works on this build
+today**, cached-or-deferred, and JSPI is an optimisation for the genuinely synchronous
+remainder rather than a precondition.
+
+## Observability: a Tail Worker, and a canary for the attribution finding
+
+`src/tail-worker.js`, deployed as a `tail_consumers` target of the producer. The point
+is not prettier logs: **every absolute CPU figure in this document was read by a human
+with `wrangler tail` attached**, so the project could only see its own cost while
+someone was watching. A Tail Worker receives the same trace events from inside the
+platform, unattended.
+
+It also carries the canary. The attribution finding is undocumented behaviour, so
+route `/canary` on `src/attribution-probe.js` re-runs the three-invocation probe with
+each leg tagged `?canary=<id>&leg=park|resume|oneshot`, and the Tail Worker scores it
+from the cpuTime it observes — a Worker cannot read its own cpuTime, which is exactly
+why the verdict has to live in the consumer.
+
+**Measured, deployed, 3/3 runs, then both workers deleted:**
+
+```
+{"cfwTail":"canary","ok":true,"attribution":true,"reconciles":true,
+ "legs":{"park":2,"resume":52,"oneshot":50},"ratio":26,"reconciliation":1.08}
+{"cfwTail":"canary","ok":true,...,"legs":{"park":1,"resume":41,"oneshot":41},"ratio":41}
+{"cfwTail":"canary","ok":true,...,"legs":{"park":1,"resume":41,"oneshot":42},"ratio":41}
+```
+
+**The attribution finding reproduces**: the parked burn is charged to the resumer, at
+26-41x the parker, and park + resume reconciles with the one-shot control to within
+8%. The absolute values differ from the original 2/88/93 — a different colo — which is
+why the verdict is written as ratios rather than milliseconds.
+
+**`compatibility_date` for every result in this section and the original attribution
+measurement: `2026-08-01`.** Pinned in `wrangler.canary.jsonc` and
+`wrangler.tail.jsonc` with a comment saying why, because a canary verdict is only
+evidence about the date it ran under.
+
+The verdict logic is a gate test, not something only a deploy can check:
+`scripts/test-tail-worker.mjs`, **26 assertions**, with the control that matters — a
+batch where attribution moved BACK to the originating invocation (`park: 90,
+resume: 3`) must fail, and its reason must name the consequence. Double-charging and
+vanishing work fail too, and a slow-colo run still passes because the thresholds are
+ratios.
+
+## Do these next, in this order
+
+1. ~~Single-render-per-invocation cpuTime from tail.~~ **DONE, and it is the
+   pessimistic branch — a 2-way split does NOT suffice.** Measured on the deployed
+   edge with the real Durable Object serving path (`/serve` MISS renders inline, so
+   each request is one render alone in one DO invocation), `cpuTime` read per
+   invocation from tail, standard profile:
+
+   | | value |
+   | --- | --- |
+   | n | **16 single-render DO invocations** |
+   | median | **46 ms** |
+   | min / p25 / p75 / p90 | 39 / 40 / 53 / 68 |
+   | max | 3,757 (one cold boot) |
+   | **at or under the 10 ms free ceiling** | **0 of 16** |
+   | orchestrating Worker, same requests | median **2 ms**, max 3 |
+
+   So the per-invocation floor really is negligible (the stateless side is 2 ms, and
+   `/version` was 0-1 ms), and the render alone is 39 ms at its very best — **4x over
+   the ceiling, not 1.2x.** The amortized 20.02 ms was not hiding much: per-render
+   setup is small, the render is simply expensive.
+
+   Caveat worth keeping: the 46 ms is the **standard** profile, while the 20.02 ms was
+   **minimal**. Locally standard was ~1.9x minimal, so minimal single-per-invocation
+   is **~24 ms derived, not measured** — still 2.4x over. Measuring minimal through
+   the DO path needs the minimal pack staged into the deploy and is the one gap left
+   here.
+
+   Consequence: splitting must be at least **4-way for standard, ~3-way for minimal**,
+   and every fragment has to come in under 10 ms including its own dispatch. That
+   sizes `PlaceholderStrategyInterface` work, and it kills the cheap 2-way option.
+2. ~~Route `alarm()` through the reentrancy gate.~~ **DONE** —
+   `this.gate.run(() => this.fillOne(), "alarm")`. `blockConcurrencyWhile` protected
+   fetch-vs-alarm but not alarm-vs-fetch, and the inline render activated it on the
+   very first MISS, since a MISS arms the alarm at +1 ms and then renders.
+3. **WebSocket-vs-alarm hibernation probe.** A DO discards in-memory state after
+   ~10 s idle, and Cloudflake documents a WebSocket connection — specifically
+   hibernatable WebSockets — as the mechanism for holding a DO. Does a self-held
+   WebSocket keep in-memory state alive where an alarm cannot? **If nothing keeps it
+   warm, boot happens per traffic burst, boot is 3,754 ms indivisible, and the DO
+   fill chain cannot work on free at all.** That is not a splitting problem, it is
+   the fork.
+4. ~~Batch the fill loop.~~ **DONE** — `FILL_BATCH_SIZE` (5) pages per firing with a
+   `FILL_BATCH_WALL_MS` (5,000) guard, lifting the row-write ceiling to ~20,000
+   fills/day. Batching does not make a render fit; it makes re-arms cheaper.
+5. ~~One query settles the 50-byte LIKE/GLOB cap.~~ **DONE — confirmed, exactly 50
+   bytes**, and the driver now refuses over-length patterns on the translated form.
+   It binds plain `LIKE` too, which the driver cannot intercept.
+6. ~~Tier 1~~ **DONE except runtime-testing the plugins.** Backup/export, first-run
+   config, five capability plugins, `https://` stream wrapper, security-update
+   pipeline and observability all exist and lint clean; the plugins are not
+   runtime-tested because the module is not enabled in the pack. Superseded detail
+   below. Previously: **Backup/export: DONE** (`exportDatabase()`, route
+   `/export`, 289 statements / 1.3 MB / sha1 on the migrated site). **First-run
+   config: BLOCKED one bug short** — every config change lands, the entity save fails
+   on `no such table: flood`, and the systematic schema-repair reports
+   `tablesCreated: []` while the insert still fails. Those two cannot both be true;
+   resolve that contradiction first. **Still not started:** five capability plugins,
+   `https://` stream wrapper, security-update pipeline, observability.
+7. **`caches.default` with a generation counter**, which removes DO requests from the
+   HIT path entirely.
+
+## THE CHECKLIST — revised 2026-08-11, and this one supersedes the list below
+
+The 2026-08-10 list that follows is kept for its reasoning, but **this is the live plan.** Items
+are grouped by what unblocks them, because the single most expensive mistake a resumed session
+can make is starting at the top of a list whose first item needs Docker and hours.
+
+### A. Boot, and one measurement that may dissolve most of it
+
+**A0 was a live defect, not a measurement, and it is FIXED.** The 4,019 ms was taken on the
+streaming mount, and the question was whether the default config still paid for one. It did, and
+worse: **no config anywhere set `LAZY_MOUNT=1`.** The lazy FS -- 199 ms of mount against the
+streaming mount's 832 ms locally, where mount was 3,066 of a 3,754 ms edge cold boot -- was
+unreachable code in every configuration since the day it was written. `wrangler.jsonc` now sets
+it, verified end to end: migration 99/99 chunks in 322 ms and `/serve` returning **200 with
+12,304 bytes**, byte-identical to the streaming mount and to the recorded deployed o2 render.
+
+**So the 4,019 ms is stale in both directions** -- wrong binary AND wrong mount -- and every
+slice count derived from it is unsized. The re-measurement is now a deploy of the corrected
+default rather than a deploy of an experiment.
+
+**GATE 2 IS THE FIRST SNAPSHOT ITEM, and Gate 1 has been dropped from the critical path.**
+Gate 1 asked whether two boots produce identical heaps. The design below does not need that
+property, so passing or failing it decides nothing. The load-bearing question is whether a heap
+image can be written back into a fresh wasm instance and keep executing: if yes, every snapshot
+variant is plumbing; if no, all of them die, the boot factory and module-scope included.
+
+| # | item | blocked on |
+| --- | --- | --- |
+| A0 | ~~Enable the lazy mount~~ **DONE.** Re-measure cold boot on the edge with the corrected default, phase-split into fetch / inflate / node-creation / PHP boot | one deploy |
+| A1 | ~~**Gate 2**~~ **PASSES, 2026-08-11.** A post-boot heap written into a fresh instance executes. See below | done |
+| A1b | Snapshot after a real **Drupal** boot with the tree mounted, and assert inode alignment between mount-then-boot and mount-then-restore. This is the remaining risk | nothing |
+| A2 | Self-snapshot storage. **STORAGE LAYER BUILT 2026-08-12**: `src/db/heap-store.ts` + 28 tests. Pure by design so it needs no wasm instance, no DO and no deploy to verify. Encodes the measured limits as constants for the first time (record cap 2,199,995; statement text 100,000, which is why the heap NEVER goes through the base64 codec). Provides zero-page elision + reassembly, chunking that REFUSES a size at or over the record cap rather than failing mid-snapshot, a join that sorts by `seq` because SQLite does not promise row order, the FNV-1a digest A1b used, and `fdTableProblems()` which reports every missing descriptor at once. Arithmetic checks out against A5: 39,911,590 elided bytes / 2,000,000 = **exactly 20 rows**. Three silent-failure traps are closed by construction and each has a test: `set(arrayBuffer)` copying zero bytes, an out-of-order join yielding a right-length wrong-content heap, and a page index disagreeing with its payload. **Storage half COMPLETE 2026-08-12**: 35 pure tests plus **16 against a real SQLite engine** (`node:sqlite`), covering the BLOB round trip, the fd table travelling with the bytes, generation filtering, a partial last page, GC ordering, and a **digest mismatch REFUSING the restore**. `captureStreams`/`replayStreams` were promoted out of the frozen A1b probe rather than reimplemented. **Still not wired into `site-do.ts`, and A3's byte-compare through a real restore is not done.** | A1 |
+| A3 | Byte-compare a restored render against sha1 `10077de5f0bd` | A2 |
+| A5 | ~~Shrink before snapshotting~~ **MEASURED.** `INITIAL_MEMORY=80MB` at `build/rc/control.rc:21` (one line, currently `96MB`); 64 KiB zero-page elision takes the snapshot 80.5 MB -> **39.9 MB raw / 11.5 MB gzipped**. **CORRECTED 2026-08-11: snapshot after BOOT, never after a render.** This line previously said the opposite. A rendered heap is a request-contaminated heap, and the uid-1 cache-poisoning bug is what that contamination looks like when it goes wrong; A1b took its snapshot post-boot / pre-render and that is the correct order. The first-render cost is recovered from the PACK side instead, by C1/C2/C3, where no request exists to contaminate anything -- which is what promoted those three from cheap wins to prerequisites. Needs a rebuild to claim the `INITIAL_MEMORY` half | a build |
+| A6 | Does `DecompressionStream` bill as CPU? **Not observable from inside a Worker** -- only wall clock (155-173 ms for 39.9 MB). Needs `executionModel`-split `cpuTime`, so it joins the batched deploy | one deploy |
+| A7 | **The batched deploy.** The protocol is expensive -- unique `cfw-*` name, tear down, re-verify the nine-worker baseline -- so one deploy collects all of it: cold boot with the corrected default (lazy mount + o2) phase-split; the **warm single-render on `static-o2`**, still owed and the number every slice count must be sized from; memory under enforcement with the lazy FS's convergent inflation plus its LRU; the 100-parameter ceiling on a deployed object; and whether `DecompressionStream` bills | A0, A6 |
+
+Why this is a high-confidence lever rather than a research bet: **it is the same transformation
+that already worked.** Migration went 3,467 ms indivisible -> 3 ms per chunk not because JS is
+faster but because a JS loop has a cursor and a synchronous `php._run()` does not. Snapshot
+restore does exactly that to boot -- an indivisible PHP call becomes a divisible JS memcpy. Every
+objection that once made it hopeless has been removed by other work: no dylink, no runtime
+codegen, and the lazy FS replaced 11,447 MEMFS nodes with a blob plus ~1,006 inflated files.
+
+#### The object snapshots ITSELF, into its own DO SQLite
+
+Not CI to R2. **First boot ever pays the 4,019 ms and writes linear memory as BLOB rows; every
+boot after reads them back and memcpys.** Same machine, same binary, same allocator sequence,
+because the snapshot and the restore are the same object -- which is what deletes determinism
+from the problem rather than testing for it.
+
+It also wins on the meters that actually bind:
+
+| | CI -> R2 | DO SQLite self-snapshot |
+| --- | --- | --- |
+| subrequests | 1, against a free cap of 50 external | **0** |
+| read path | async `fetch` | **synchronous `ctx.storage.sql`** |
+| determinism required | cross-machine | **none** |
+| rows written | 0 | ~48, **once ever** |
+| storage | R2 free 10 GB | 80 MB against 5 GB account-wide free |
+
+#### GATE 2 PASSES: a restored heap executes
+
+**Measured 2026-08-11, `src/probes/snapshot.js`.** Instance A gets `pib_init`; instance B never
+does, so the only thing that can make B run PHP is A's bytes.
+
+| | result |
+| --- | --- |
+| **negative control** -- fresh instance, no `pib_init`, no image | `RuntimeError: null function` at `wasm-function[5227]` |
+| same-size restore, 1536 pages, 100,663,296 bytes | written in **15 ms**; `phpversion()` -> **8.3.11**, allocating loop -> 100000, MEMFS round trip -> `hello-restored` |
+| **grown-heap restore**, A pushed to 3633 pages / 227 MB | 238,092,288 bytes in **23-61 ms**, all three checks pass |
+
+The control arm is what makes this a result rather than a coincidence: without the memcpy, `pib_run`
+traps. The grown-heap arm is the one that matters, because Drupal boot grows the heap.
+
+**Four structural facts, each of which changes the plumbing:**
+
+1. **Memory is NOT imported.** `WebAssembly.Module.imports()` shows zero imported memories,
+   globals or tables; the glue does `wasmMemory=wasmExports["memory"]`. So B cannot be pre-sized
+   and always starts at the 1536 pages (96 MB) baked into the module. Growing it must go through
+   emscripten's own path -- a bare `memory.grow()` detaches every cached `HEAP*` view with no
+   exported hook to refresh them -- and the request must be for the **whole target size, not the
+   shortfall**, because the break sits ~35 MB below the buffer end. Rebuilding with
+   `-sIMPORTED_MEMORY` deletes this entire problem and is the right production fix.
+2. **There are no exported mutable globals.** 536 exported `WebAssembly.Global`s, **zero mutable**
+   -- all data-symbol addresses, identical across instances. `__stack_pointer` is not exported at
+   all, but `emscripten_stack_get_current` / `_emscripten_stack_restore` are, and SP read
+   **35168944 on both** sides (the stack is unwound at snapshot time). The heap break is not a
+   global either: `sbrk` and `emscripten_get_heap_size` are absent from the exports and
+   `emscripten_resize_heap` is a JS *import*, so **all break state lives in linear memory and
+   rides along with the image.** The hazard list above was right to name these and wrong about
+   where they live.
+3. **`FS.nextInode` is 22 on both instances**, before and after `pib_init`. PHP startup opens no
+   new nodes and both hold only streams 0/1/2, so there is no divergence to correct -- yet.
+4. **The snapshot does not carry the filesystem.** MEMFS lives in JS objects on the Module, not in
+   linear memory; the image holds only fd numbers and inode ids. So a restore still needs the tree
+   mounted on the JS side, and **the mount order must reproduce the inode numbering the image
+   expects.** That is the remaining risk and it is exactly what item A1b tests.
+
+Not verified: restore of a **Drupal-booted** heap. `pib_init` costs only 22-23 ms here, so this
+proves the mechanism rather than that the 4,019 ms Drupal state survives -- and the Drupal heap is
+where interned paths and fds make inode alignment load-bearing.
+
+#### The three storage limits, measured, and two of them fail SILENTLY
+
+**Measured against real `ctx.storage.sql`, `src/probes/blob-probe.js`.**
+
+| | measured | error at the boundary |
+| --- | --- | --- |
+| max single BLOB row | largest accepted **2,199,995**, smallest rejected 2,199,996 | `string or blob too big: SQLITE_TOOBIG` |
+| **the cap is per-RECORD, not per-BLOB** | a 20-char TEXT column took 22 bytes straight off the payload budget | -- |
+| statement TEXT cap | **exactly 100,000 chars**; a 64 KB payload as an `x'...'` literal is 131,095 and is rejected | `statement too long: SQLITE_TOOBIG` |
+| what comes back | **`ArrayBuffer`**, never `Uint8Array` | -- |
+| round trip, 8.4 MB and 8.8 MB | `hex()` inside SQLite vs JS digest: **8/8 and 4/4** | -- |
+| **80 MiB in one `transactionSync`** | **39 chunks, 39 rows written**, write 151 ms, **restore read+memcpy 36 ms**, storage amplification **1.0017** | -- |
+
+**Restore is 36-49 ms against a 4,019 ms indivisible boot, roughly 100x** -- and it is 39 rows
+*read*, so it does not touch the 100,000 rows/day write meter at all. Snapshot *writes* are the
+metered side at 39-40 rows, once per code or config change rather than per boot.
+
+Two traps that would have produced a wrong result rather than an error:
+
+- **`heap.set(arrayBuffer, off)` throws nothing and copies ZERO bytes.** `set()` reads `.length`;
+  an `ArrayBuffer` has only `.byteLength`, so the length resolves to 0 and the call silently
+  succeeds. It must be `new Uint8Array(ab)` first -- which is free, because the wrapper aliases
+  the same backing store, so the restore stays at exactly one memcpy.
+- **The snapshot must BYPASS `src/db/codec.ts`.** It base64s a `Uint8Array` into a `{__t:'b'}`
+  TEXT envelope at **+33.33%**, and 1 MiB becomes a 1,398,104-char string that as a literal would
+  blow the 100,000-char statement cap 14x over. Bound parameters are not part of statement text,
+  so `sql.exec('INSERT ... VALUES (?, ?)', i, chunk)` is the only safe path.
+
+Also worth knowing: **`hex()` shares the same 2,200,000 budget**, so a whole-blob digest fails
+above 1,099,997 bytes and verification at real chunk size has to use `hex(substr(b,?,?))` windows.
+
+**The most likely place this design still dies is the 128 MB isolate ceiling**, which local dev
+does not enforce: an 80 MiB restore buffer alongside live wasm memory and a 2.2 MB row buffer was
+never tested against it. That belongs in the batched deploy.
+
+#### SHRINKING IT: 60 KB of shortfall costs 13.4 MiB, and gzip already does most of the elision
+
+**Measured 2026-08-11, `src/probes/heapsize.js`.** Three instruments, all live: `Memory.grow`
+patched for plateaus, the `emscripten_resize_heap` **import** wrapped before instantiation for the
+demand behind each plateau (`grow` only ever sees the already-rounded size), and a byte-exact
+4 KiB baseline captured inside `instantiateWasm` before the glue's init runs.
+
+**Two premises this document carried are wrong, and the instrument says so.**
+
+1. **"Post-boot Drupal is 64.5 MB" is not reproducible.** `memory_get_peak_usage(true)` returns
+   **0** on both vendored static builds, so no PHP-reported peak can be had from here. The
+   authoritative measure is `memory.buffer.byteLength`, and the real **demand** for Drupal boot
+   plus first render is **67,170,304 bytes (64.06 MiB)**, read off the wrapped resize import.
+2. **`INITIAL_MEMORY` is 96 MB on `static-o2` and 64 MB on `static-free-v1`** (1536 vs 1024
+   pages; memory is *defined* in the module, not imported, which is the same fact Gate 2 found).
+   So "96 MB against 64.5 MB" was comparing one binary's setting to another binary's folklore.
+
+**And the shape of the waste is the finding.** 64.06 MiB of demand exceeds a 64 MiB
+`INITIAL_MEMORY` by **61,440 bytes -- 0.94 of one wasm page** -- and emscripten answers with
+`max(requested, oldSize * 1.2)`, handing over **80,543,744**. Missing the target by 60 KB costs
+**13.4 MiB**. That also confirms the 110.6 MiB plateau a third time: `?bin=free&mb=64` demands
+104,304,640 and lands on **115,998,720**, byte-identical to the recorded figure, from a synthetic
+`str_repeat`.
+
+**`INITIAL_MEMORY` should be `80MB`**, set at `build/rc/control.rc:21` (currently `96MB`), the rc
+that reproduces `vendor/static-o2`. 83,886,080 clears the measured render demand by 24.9% and the
+recorded 78.5 MB install peak, saves 16.0 MiB of resident heap, and **the downside is bounded at
+the status quo**: if it ever falls short, the 1.2x rule lands on exactly 100,663,296, today's
+value. Do not try 68-72MB -- 61,440 bytes of shortfall cost 13.4 MiB, measured.
+
+Zero-page elision on the real post-boot heap (80,543,744 bytes):
+
+| | 64 KiB grain | 4 KiB grain |
+| --- | --- | --- |
+| genuinely differing pages | **609 of 1,229** | 9,597 of 19,664 |
+| page map (bitmap) | **154 B** | 2,458 B |
+| elided, raw | **39,911,590 (49.55%)** | 39,311,782 (48.81%) |
+| elided, gzipped | **11,538,322 (14.33%)** | 11,493,098 (14.27%) |
+| raw whole heap, just gzipped | 12,125,363 (15.06%) | -- |
+
+**gzip already subsumes most of the elision** -- eliding first beats plain whole-heap gzip by only
+587,041 bytes (4.8%), because DEFLATE collapses zero runs anyway. **Elision's real win is the
+UNCOMPRESSED size: 80.5 MB -> 39.9 MB**, and that is the number that matters precisely because the
+restore path is a memcpy rather than a decompress. Ship the **64 KiB** grain: it is the wasm page,
+its map is 154 bytes, and 4 KiB buys 45 KB on an 11.5 MB artifact for 16x the map.
+
+**Combining the two rounds, which neither measured alone:** an elided 39,911,590-byte snapshot at
+a 2 MiB chunk (headroom under the measured 2,199,995 record cap) is **20 rows, not 39**, and the
+memcpy is half of the 36-49 ms measured for 80 MiB. So the restore is plausibly **~20 ms and 20
+rows read** against a 4,019 ms indivisible boot. Right-sizing `INITIAL_MEMORY` to 80MB would cut
+it again.
+
+Not measured, and it is the one that decides whether to compress at all: **whether
+`DecompressionStream` bills as CPU is not observable from inside a Worker.** Only wall clock is
+available (155-173 ms to inflate 39.9 MB, round-trip verified). Settling it needs
+`executionModel`-split `cpuTime` from the observability API on a deployed worker -- so it joins the
+batched deploy. If it does not bill, the 11.5 MB compressed form wins on rows and storage for free.
+
+One more constraint the probe surfaced: **`static-o2` cannot boot Drupal standalone at all.**
+`WITH_SQLITE=0` in `control.rc`, so a bare `DRUPAL_BOOT` dies at `PDOException: could not find
+driver` after 71 includes -- the shipping path reaches SQLite through the DO driver instead. Every
+Drupal heap figure above is therefore `static-free-v1`'s, and RULE 0b applies to the
+`INITIAL_MEMORY` recommendation: it is derived from a binary that differs by SQLite, `-Oz` vs
+`-O2`, and ext-yaml.
+
+#### Gate 2's real hazards, so the spike does not wander
+
+**The heap is not the whole state.** Three things live outside it, and each produces
+plausible-looking corruption rather than a clean failure:
+
+1. **Mutable globals** -- `__stack_pointer` and the heap break. Export and restore them
+   explicitly, or the first allocation after restore lands somewhere the heap does not expect.
+2. **MEMFS node IDs.** Linear memory holds PHP's file descriptors, which reference emscripten
+   node IDs assigned from a counter, so snapshot and restore must produce identical mount order
+   or the FD table points at the wrong files. **Assert `FS.nextInode` matches.** Snapshot where
+   nothing is open -- post-`boot()`, PHP should hold only 0/1/2.
+3. **The lazy FS's inflated set.** Record the inflated path list alongside the heap and
+   re-inflate exactly those, in order. This is new work created by enabling `LAZY_MOUNT`.
+
+And one inversion to know before interpreting a local failure: **`microtime()` advances locally
+and returns 0 on the edge.** If two boots ever are compared and differ, the difference may be
+clock-derived entropy that does not exist in production. Freeze the clock and stub the entropy
+sources before concluding boot is nondeterministic.
+
+### B. Build levers -- all need Docker and hours, none are on the critical path
+
+| # | item | note |
+| --- | --- | --- |
+| B1 | `--disable-mbregex` and re-measure | one flag; Oniguruma exists only for `mb_ereg*`, which Drupal never calls, so real mbstring may fit under the ceiling |
+| B2 | `-O3` + LTO + PGO + `ZEND_VM_KIND=SWITCH` | attacks the unattributed ~820 ms; ~20-30% together, and nothing takes the rest |
+| B3 | opcache static link | ~70 ms of parse; the configure gate is already solved |
+| B4 | JSPI build | unblocks slicing (old items 1-3). Stopped, not unstarted: three resumes, ~170k tokens, no binary |
+| B5 | **PHP 8.5 (and confirm 8.4).** Production means current PHP: 8.3 goes security-only around Dec 2026 and EOL Dec 2027, so this has a deadline rather than being open-ended. **The blocker is not size, it is the patch.** `build/build-variant.sh:42` hardcodes `third_party/php8.3-src/Zend` and line 45 regenerates inside a `php:8.3-cli` container, so a new minor needs upstream php-wasm to vendor that tree first. Then `build/patch-vm-interrupt.sh` has to still apply: it edits the hand-written `Zend/zend_execute.c` (`ZEND_VM_SET_OPCODE()` ~5342, `ZEND_VM_LOOP_INTERRUPT_CHECK()` at `execute_ex` entry), which is the VM hot path and the thing most likely to have moved. No patch, no slicing, so 8.5 is not a candidate at all in that case. Size is a genuine risk but UNMEASURED: `static-o2` is 2,876,855 gz with only **268,873 bytes** of headroom, and 8.5 adds surface. **MEASURED 2026-08-11, one gzip, no toolchain:** stock `php8.3.wasm` is 3,332,177 gz, stock `php8.4.wasm` is **3,506,007 gz** (+173,830, **5.2% growth per minor**), and the shipping `static-o2` wasm is **2,779,161 gz**. So the extension trim + `-O2` + static link is worth **553,016 gz bytes**, and that is the entire reason anything fits. **Extrapolation, clearly labelled as such:** applying the same saving to 8.4 lands ~2,952,991 wasm; the deployed bundle adds ~97,694 of non-wasm on top of the wasm figure, giving ~3,050,685 against the 3,145,728 ceiling - **8.4 fits, with roughly 95 KB spare**. Extrapolating one more minor at the same +173,830, **8.5 comes out 22-79 KB OVER** depending on whether the trim saving is treated as absolute or proportional. Both methods say over. **Conclusion: 8.4 is size-viable today; 8.5 needs trimming BEYOND what static-o2 already does, and that is on top of the patch question.** This is an extrapolation from two stock binaries, not a build - it bounds the problem, it does not settle it, and the trim saving is not guaranteed constant across versions | B1-B4 (same Docker session; do not schedule separately) |
+
+### C. Free-tier serving, no Docker and no deploy needed
+
+| # | item |
+| --- | --- |
+| C1 | Precompiled Twig plus a matching `twig_extension_hash_prefix` -- 256 ms of compile, diagnosed and unbuilt |
+| C2 | ~~Bake the collector entries into the pack~~ **DONE 2026-08-11.** Not by a render: a plain render leaves them absent because `CacheCollector` persists on destruct and the destruct loop is inline in `DrupalKernel::terminate()`, which `bench-render.php` never calls. `scripts/bake-collectors.php` completes the lifecycle, then the three rows are copied into `assets/drupal/site.sqlite` (`library_info:olivero` 89,184 B, `library.parsing_cache` 44,646 B, `theme_registry:runtime:olivero` 14,556 B; all `expire=-1`, `checksum='0'`, and both databases carry identical `cachetags`, which is what makes a copied checksum still valid). **There is no automated path from `drupal-src` to `site.sqlite`** - it is a hand-trimmed 6.5 MB artifact, so regenerating the pack was the wrong move and the rows were inserted surgically (+151,552 bytes). `assets:sql` regenerated: 101 chunks, longest statement 1,348 chars against the 100,000 cap, max 30 bound params against 100. 868 tests still pass. **ACCEPTANCE TEST PASSES**: migration ran 101/101 chunks locally and three consecutive renders came back at exactly **12,304 bytes / sha1 `10077de5f0bd`**, matching the pinned value, so the bake changed cost and not output. (The one-byte discrepancy seen first was the instrument: shell `$(...)` strips a trailing newline. Measure to a file.) **Still owed: the 16.76 ms saving itself is unverified** - RULE 0 means it needs `cpuTime` from a deployed worker, so it belongs to the batched deploy (A7). |
+| C3 | `composer dump-autoload --optimize` (**never** `--classmap-authoritative`, which breaks Drupal outright) -- 17.93 ms |
+| C4 | Make prefill the DEFAULT free-tier fill mechanism, not a fallback: a save webhook -> CI renders on native PHP at 6.53 ms/page -> pushes to R2 -> the DO ingests it as a JS loop. Zero PHP on the free serving path |
+| C5 | ~~Point the bucket profiler at BOOT~~ **DONE 2026-08-12, AND IT REFUTED THE HYPOTHESIS.** The premise was that `preHandle()` and `ModuleHandler::loadAll()` were unmeasured and would turn out to be structural. They are **negligible**: `preHandle` 6-12 ms and `loadAll` 2-4 ms across three samples. **`$kernel->boot()` is 98.7-99% of boot in a single call**, with only ~1.3% unattributed (3,130 ms cold / ~1,150 / ~1,080 total, of which 2,723 / 780 / 713 is `kernelBoot`). So there is nothing to win by bucketing *around* `boot()`; the next split has to go **inside** `DrupalKernel::boot()` -- container compile vs. load-from-cache vs. discovery. That is a new item, not a continuation of this one. Mechanism: a `PwKernel` subclass rather than a service decorator, because `ModuleHandler` has `protected readonly` promoted properties that the existing rewrap helper documents as the one thing that breaks it. **All figures are LOCAL WALL CLOCK, not cpuTime** (RULE 0), and the clock's own granularity was measured at `minStepMs 0.999928` with 14 distinct readings in 3,000 samples, so any bucket under ~1 ms is unresolvable by this instrument regardless |
+
+### D0. The target shape: free has every capability, paid buys speed and concurrency
+
+The distinction that makes the rest of this list coherent: **capability gaps close, capacity gaps
+do not, and that is correct for a free tier.** A free site should be able to do everything, more
+slowly, with named cosmetic gaps -- not be a demo.
+
+| gap | free closes it with | paid buys |
+| --- | --- | --- |
+| cold boot 4,019 ms | self-snapshot restore, chunked across invocations | one invocation, ~20 ms |
+| live render 20-40 ms | prefill everything at pack time; save-triggered refill; JSPI slicing at 3-5 slices once boot is gone | one invocation |
+| admin 377 ms | sliced -- slow but functional, and nobody is waiting on an admin page | instant |
+| module install 1,344 ms | Workflows: free-eligible, 25,000 steps, each separately budgeted. `UPDB_FLUSH_STEPS` is already 11 units | one pass |
+| mbstring | `--disable-mbregex` may fit real mbstring under the ceiling; otherwise the JS sanitizer, byte-identical except Greek final sigma and emoji width | real mbstring |
+| image derivatives | ship originals with correct width/height markup, which is what `CfwImageToolkit` already does | **Cloudflare Images**, a paid product |
+| observability | Workers Observability API, already the instrument of record | Tail Worker |
+| concurrency, ~29 rps uncached | -- | **KV page cache**: reads never touch the DO, so the ~1,000 rps object ceiling stops applying to cached traffic |
+| cross-colo latency | `caches.default`, per-colo | KV, globally replicated |
+
+Three of those deserve their reason stated. **Slicing gets much easier once boot is gone** -- every
+slice estimate in this document assumed a cold interpreter might be involved, and with a warm
+restore a MISS is a 20-40 ms render against 10 ms, so 3-5 slices on a mechanism already proven end
+to end (70 ms -> 4 slices, max 21 ms). **Prefill should be the DEFAULT free mechanism, not a
+fallback**, which puts zero PHP on the free serving path. And **KV inverts by plan**: reads are
+globally replicated and effectively free, but KV allows ~1k writes/day, which is worse than the DO
+row budget -- so KV on paid, DO storage plus `caches.default` on free, one seam, plan-selected.
+
+### D. Concurrency, which is the honest asymmetry
+
+Cached traffic scales the way serverless promises. **Uncached traffic does not scale at all**: one
+site is one Durable Object is one thread, and there is no bigger one to buy.
+
+| # | item |
+| --- | --- |
+| D1 | Page cache backend selected by plan: **KV on paid** (globally replicated, so a cached read never touches the DO and the ~1,000 rps object ceiling stops applying), **DO storage + `caches.default` on free** (KV allows ~1k writes/day, worse than the row budget). Same code, one seam |
+
+### E. Arbitrary Composer / module loading
+
+Closer than it looks: three of the blockers already have machinery.
+
+| # | item | state |
+| --- | --- | --- |
+| E1 | ~~Multi-layer lazy FS~~ **DONE.** `mountDrupalLazy` takes N layers in priority order; `{prefix}` reads ASSETS, `{r2}` reads the MODULE_PACK bucket. Later layers override earlier ones on the same path, resolved in a merged index BEFORE node creation -- the old `FS.create` try/catch swallowed the collision with a `continue`, which would have made CORE win, backwards for a modules layer. One layer is byte-identical to the old path, verified by a real render at 12,304 bytes. **An R2 layer costs zero subrequests**, which is the meter that made R2 the right store, and the reported count is now derived from the layer list rather than a constant. 8 assertions on the merge and normalise seams |
+| E2 | Untar in JavaScript, so `ext-zip`/`ext-phar` stay dropped | **DONE** -- `src/ops/untar.ts`, 77 tests, 98.67% statements, verified against two real `.tar.gz` archives already on disk |
+| E3 | Skip the solver for the common case: one cacheable fetch of `repo.packagist.org/p2/{vendor}/{pkg}.json`, pick the highest version satisfying the constraint, check its `require` against the shipped `composer.lock`, install if satisfied, **refuse with the named conflict** if not | unbuilt |
+| E4 | Cloudflare Workflows drives the install: free-eligible, 25,000 steps, durable, each step separately budgeted. Better fit than the alarm chain and costs no DO row writes | unbuilt |
+| E5 | Compatibility oracle in KV, built by CI: scan the top N modules for `curl_`, `exec(`, `proc_open`, `fsockopen`, `openssl_`, `imagecreate`, `'REGEXP'` conditions and `ext-*`, publish `module:version -> {compatible \| needs-shims \| incompatible, reasons[]}`. Run the same scanner at install time over the untarred tree, sliced, before committing anything | unbuilt |
+| E6 | Curated pre-packed catalog in R2, so a common install is an R2 copy plus `hook_install` | unbuilt |
+| E7 | Shim registry: `curl_*` over `CfwDeferredHttp` (the init/setopt/exec/getinfo/close subset), `openssl_digest`/HMAC/random over `crypto.subtle`, and **refuse-and-name** for keypair ops, `gd`, `exec`, `proc_open`, `fsockopen` | unbuilt |
+
+Store assignment, finally clean: **DO SQLite** = the site. **R2** = module packs, backups, uploads.
+**KV** = the compatibility oracle and the paid page cache. **D1** = cross-site registry only, where
+queries are tiny and the 100-parameter cap never bites; still disqualified as a site database.
+
+### F. The self-healing layer, and the principle that shapes it
+
+**A repair path must not depend on the subsystem it repairs.** PHP cannot observe a JS throw out
+of a wasm import, cannot observe its own isolate being killed, and cannot be trusted to fix itself
+once poisoned. Detection and repair for those classes live in the host.
+
+Files: `drupal/cfw_capability/src/Health/` for `Tripwire.php`, `TripwireRegistry.php`,
+`HealthLedger.php`, `RepairLadder.php`, `CircuitBreaker.php`, `BootSelfTest.php`, plus one class
+per check. Host side: `src/ops/supervisor.js` owning the JS tripwires, breaker state and the
+quarantine switch. One ledger, two writers.
+
+| # | item |
+| --- | --- |
+| F1 | ~~`cfw_health` ledger~~ **DONE.** **Capped and GC'd in the existing `gcPass()` with its own rule, and its writes counted against the rows-written budget** -- the watchdog lesson is that an unbounded log table became 46% of the database |
+| F2 | ~~JS tripwires~~ **DONE**, and they came first because they cover the invisible failures: `render.empty`, `render.size_anomaly`, `bridge.asyncify_called`, `bridge.mask_leaked`, `db.semaphore_dirty`, `migrate.incomplete`, `updb.halted`, `pack.generation_mismatch`, `memory.highwater_rising`, `budget.*` |
+| F3 | ~~PHP tripwires~~ **DONE**: `cache.anonymous_purity`, `cache.header_missing`, `db.txn_leaked`, `account.not_restored`, `sql.params_over_100`, `sql.like_over_50`, `config.drift` |
+| F4 | ~~Boot self-test~~ **DONE**, mandatory before serving: bridge installed, capabilities present, SQLite floor >= 3.45, migration cursor complete, no halted updb, pack generation matches, config correct. `/probe` generalised |
+| F5 | Predictive checks on **slope, not threshold** -- a small ring buffer per signal, acting on trend: rows-written projected to exceed the budget, DO requests trending over, linear memory rising across warm requests (recycle at the next quiet moment, not the next request) |
+| F6 | ~~Repair ladder and breaker~~ **DONE** (L0-L3; L4/L5 are policy, not code yet). L0 observe -> L1 reset -> L2 reconstruct -> L3 reconfigure, with a **circuit breaker with decay**: same code N times in M minutes escalates, a clean interval decays one level, bounded attempts then halt with a named reason. Never a fixed retry loop -- a failing step that re-armed at +1 ms once spun the object forever |
+| F7 | L4 quarantine and L5 rollback LAST, because rollback needs the backup path finished |
+
+Rules, each encoding a defect already paid for:
+
+- A tripwire must be O(1) or bounded. No full-table scans on the request path.
+- **A repair must never run inside an open transaction.** DDL beside a replay dirties
+  `sqlite_master` and turns every later read speculative; that once wedged the local runtime hard
+  enough to take unrelated sites down.
+- A repair that enters PHP goes through the same gate as every other PHP entry, `alarm()` included.
+- A repair must not be reachable from an untrusted request. No user-triggerable cache flush.
+- **Every tripwire ships with a fault-injection route and an assertion that the route trips it.**
+  A differential that cannot fail proves nothing; a tripwire nobody has seen fire is decoration.
+- **Quarantine beats wrong output.** A 503 with `Retry-After` is a better answer than a 0-byte
+  200, and this project has shipped the 0-byte 200.
+
+#### THE HEALTH LAYER IS BUILT: 112 assertions, and every tripwire has been seen to fire
+
+**2026-08-11.** `src/ops/supervisor.ts` (host) and `drupal/cfw_capability/src/Health/` (PHP), split
+on the principle that decides the whole design: **a repair path must not depend on the subsystem it
+repairs.**
+
+| half | file | covers | assertions |
+| --- | --- | --- | --- |
+| host | `src/ops/supervisor.ts` | `render.empty`, `render.size_anomaly`, `bridge.asyncify_called`, `bridge.mask_leaked`, `db.semaphore_dirty`, `migrate.incomplete`, `updb.halted`, `pack.generation_mismatch`, `memory.highwater_rising`, `budget.*`, `health.ledger_oversized` | **48** |
+| PHP | `Health/Tripwire/*.php` | `cache.anonymous_purity`, `cache.header_missing`, `db.txn_leaked`, `account.not_restored`, `sql.params_over_100`, `sql.like_over_50`, `config.drift` | **64** |
+
+The split is not arbitrary. The host holds every check PHP structurally cannot make -- a JS throw
+out of a wasm import, its own isolate being killed, wasm linear memory rising -- and PHP holds the
+ones needing Drupal's own state, which the host cannot see. `bridge.asyncify_called` is the clearest
+case: that failure produces no PHP fatal, no `printErr` output, and Drupal's logger never runs, so
+`globalThis.__cfwAsyncifyCalls` is the ONLY place it is observable.
+
+**Every tripwire is asserted both ways** -- the condition that must trip it and the nearby one that
+must not -- because a differential that cannot fail proves nothing and a tripwire nobody has seen
+fire is decoration. Several of the negative cases are the interesting half: `render.empty` must NOT
+fire on an empty 503 (a half-migrated site answers that deliberately) or an empty 202 (the
+placeholder); `migrate.incomplete` must NOT fire when there is no cursor at all, because "never
+started" and "half done" are different states and conflating them would take every deploy predating
+the engine offline; `sql.params_over_100` is silent at exactly 100 and fires at 101, which is the
+measured boundary.
+
+Three implementation rules that came straight out of prior incidents:
+
+- **`RepairLadder::maySafelyRepair()` fails CLOSED.** It refuses on an open transaction, refuses
+  while the gate is held, and refuses when the transaction depth is simply unknown. DDL beside a
+  replay dirties `sqlite_master` and turns every later read speculative, which once wedged the local
+  runtime badly enough that unrelated sites stopped responding -- so the cost of skipping a repair is
+  a ledger entry, and the cost of running one at the wrong moment is the runtime.
+- **The breaker decays out of its own map.** At the bottom rung the code is deleted rather than kept
+  at zero, so the state cannot grow without bound. And it is never a fixed retry loop: the alarm
+  chain already spun an object forever by re-arming at +1 ms on an error return.
+- **The ledger is capped, GC'd, and reports what it deleted** so the caller can bill it against the
+  rows-written budget. `Finding` truncates context to 400 bytes on construction rather than trusting
+  its caller. The watchdog table reached 46% of the database before anybody looked, and this layer
+  exists to watch budgets -- it must not become the thing that exhausts one.
+
+`cfw_health` carries one index only (`ts DESC`), because DO SQLite bills one written row per index
+touched and a second index would tax every insert the layer makes.
+
+### G. DX
+
+| # | item |
+| --- | --- |
+| G1 | **Do not ship Drush.** A `cfw_ops` HTTP surface with `cr`, `cex`, `cim`, `updb`, `en`, `pmu`, `sql-dump`, `status` gets 95% of the value at a fraction of the pack |
+| G2 | First-run configuration. The install story is "ship a pre-installed database and migrate it", which works in 256 ms but means every site boots identical -- no site name, admin email or admin password. NOT Drupal's installer (the heaviest write workload there is, never run in wasm); a first-run config step against the already-migrated database. It is the literal first thing a user does |
+
+### H. Closed on 2026-08-11
+
+| item | outcome |
+| --- | --- |
+| `CURRENT NUMBERS` "stale" bundle figure | **Not stale -- mislabelled.** `2,876,855` is `static-o2`'s binary + glue, confirmed by re-running `scripts/measure/size-report.mjs`; the whole-bundle figure is a different quantity. Both were right, one was called "Bundle" |
+| The DEFAULT config bundled an unshippable binary | **Fixed**, and it was the real defect behind that confusion. See "THE DEFAULT CONFIG WAS NOT THE SHIPPING CONFIG" |
+| `mount`/`lazy-fs` fetch `site.sqlite` that nothing reads | **Fixed.** `mountDrupalStreaming` already had the opt-out; `mountDrupalLazy` did not, and it is the `LAZY_MOUNT` path -- so the one boot cost that flag did not remove. 6.47 MB and one of 50 subrequests |
+| Delete `vendor/static-jspimbvmi/` | **Cannot -- it does not exist.** The nearest names are `static-jspimb` and `static-jspimbsjlj`. Not guessed at: an irreplaceable build is unrecoverable |
+| `tests/e2e/` was empty | **Filled**, modelled on `mantle2`'s `E2E` suite: its own vitest project so the gate stays hermetic, and skip-locally/fail-in-CI so a CI run cannot pass by skipping |
+| `scripts/` was a 37-file flat drawer | **Grouped** into `bench/`, `probe/`, `measure/`, `drupal/` with the live pipeline at top level, every citation updated, and the language policy written down in `scripts/README.md` |
+
+## Do these next — revised 2026-08-10 after the edge round
+
+Everything above this list is either done or superseded. What is genuinely open, in
+the order the measurements now argue for.
+
+**Read this before picking one up, especially on an unattended run.** Items 4, 6 and 8 are
+DONE. Of what is left, **items 1, 2 and 3 are all one dependency**: they need a JSPI binary,
+and that build track is stopped rather than unstarted -- three resumes, ~170k tokens, the same
+configure gate each time, no binary. It needs Docker and hours, so a resumed session that
+starts at "item 1" because it is the first unchecked box will spend its whole window and
+produce nothing. Item 5 needs deploys, item 7 needs an asset pack rebuild. Nothing on this
+list is a small local change; if you have a short window, the honest answer is that there is
+no item here you can finish in it.
+
+1. **Build php-wasm with `-sJSPI`.** This is now the critical path and it has a
+   measured payoff: slicing works end to end on the platform (4 slices, max 21 ms
+   against a 70 ms one-shot, driven by alarms, on deployed infrastructure), and
+   assembly at 40 ms needs 4 slices to fit the free ceiling. The build track is
+   stopped at the opcache SHM configure gate; `build/build-variant.sh`,
+   `build/rc/` and `/tmp/phpwasm-build/` hold the state. Two constraints
+   from this round: `JSPI_EXPORTS` must cover the entry point, **every frame between
+   the promising export and the suspending import must be wasm**, and a suspension
+   point must NOT land inside a transaction replay.
+2. **Somewhere for Drupal to suspend.** `PlaceholderStrategyInterface` /
+   `#lazy_builder` at ~4 fragments for assembly. Each fragment must come in under
+   10 ms including dispatch; per-slice overhead measured below the noise floor, so
+   the budget is the render work itself.
+3. **Keep the slice chain inside the eviction window.** A suspended stack dies with
+   the object between 6 s and 10 s of idle, silently — `/resume` meets a fresh
+   instance and the render is simply forgotten. Any sliced render needs a re-arm well
+   inside that, and "nothing parked" has to requeue rather than 4xx.
+4. ~~**Pre-fill the path a save just invalidated.**~~ **DONE** -- `bumpGeneration()` now
+   reads the hottest paths BEFORE purging them, re-queues them, and arms the fill alarm.
+   The ordering is the whole trick: purge first and there is nothing left to learn what
+   was worth re-rendering. Covered by `tests/integration/serve-invalidation.spec.ts`.
+5. **Re-measure the absolutes on more than one colo.** A `/serve` full render was
+   46 ms on one deploy and 75-111 ms on another, and the 2.2x local-to-edge factor is
+   4.4x for the same render. Slice counts have to be sized from the pessimistic end,
+   and the only way to know that end is to measure it more than once.
+   **Partly done, and the answer differs by profile:** minimal assembly reproduced at
+   20.02 ms (n=51) and 20.5 ms (n=12) across two deploys — stable to 2%. Standard is
+   the unstable one. Size standard from its max (55 ms), size minimal from its median.
+6. ~~**The minimal-profile gap.**~~ **DONE** — minimal assembly is **20.5 ms** on the
+   edge (n=12, DPC HIT on all 12), **1.95x cheaper than standard's 40 ms**, so a MISS
+   needs **3 slices** rather than 4-6. Still 2.05x the ceiling, so slicing or
+   avoidance is still required. See "THE MINIMAL PROFILE IS 1.95x CHEAPER". That run
+   also changed the instrument: `wrangler tail` silently omitted every
+   `durableObject` event, and per-invocation cpuTime now comes from the observability
+   API.
+7. **Enable `cfw_capability` properly.** Still open, but one live fatal found and closed
+   along the way: `CfwCapabilityServiceProvider` unconditionally registered the suspend
+   path, which fatals on a binary without JSPI. It now gates on a `cfwCanSuspend` host
+   flag read through `vrzno_env()` and falls back to the resetter. What remains is the
+   part needing a pack rebuild: `hook_install`, the service container wiring and the
+   `system.mail.interface.default` config change are still unexercised through a real
+   container.
+8. ~~**Wire `drainHttpQueue()` into `alarm()`.**~~ **DONE** -- `alarm()` drains at
+   `httpDrainLimit(env)` per firing (`src/site-do.js:1374`), capped at 25 inside
+   `drainHttpQueue()` so one firing cannot spend the whole budget. `/httpdrain` remains
+   as the manual escape hatch. Covered by `tests/integration/http-queue.spec.ts`.
+
+Also unstarted and not on any list until now: **there is no first-run configuration
+path.** The install story is "ship a pre-installed database and migrate it", which
+works in 256 ms but means every site boots identical — no site name, admin email or
+admin password. That should not be Drupal's installer (the heaviest write workload
+there is, never run in wasm); it should be a first-run config step against the
+already-migrated database. It is the literal first thing a user does.
+
+# STANDING CONSTRAINTS
+
+- No git write commands without an explicit ask in that same message. This directory is a
+  git repo on **`master`** (not `main`) with **2 commits** as of 2026-08-11: `Initial
+  Commit` and `chore: create .editorconfig`. Most of the tree is still untracked, so
+  `git status --short` is the way to see what exists, and an untracked file has no
+  committed version to diff or recover from.
+- **COMMITTING DOES NOT PROTECT `vendor/`, and that is the one irrecoverable thing here.**
+  It is gitignored (`.gitignore:2`), so no commit plan touches it, and it holds **nine static
+  wasm builds at hours of Docker each** -- the least reproducible artifacts in the project, and
+  four of the variants they descend from (`static-nolto`, `static-vmswitch`, `static-control`,
+  `static-iconv`) were already lost and cannot be rebuilt from the consumer's history. Getting
+  them off this machine is a **separate action from the commit plan**, and it is the only one
+  where the loss is permanent. A commit is not a backup of an ignored directory.
+- The Cloudflare account (`gmitch215`) carries **real production workers**. A deploy
+  is allowed only when Gregory says so in that message, must use a name that cannot
+  collide, and must be torn down afterwards with the worker list verified back to its
+  baseline. Baseline as of 2026-08-10, 9 workers: `earth-app-smoke`,
+  `gmitch215-lora`, `uptimeflare_worker`, `gmitch215-blog`, `earthapp-blog`, `mymcp`,
+  `earthapp-crust`, `earthapp-cloud`, `r2-explorer`.
+- Uploading the full 48 MB `assets/` tree on deploy fails with a connectivity error
+  after ~49 s. Stage the subset you need; `wrangler.edge.jsonc` shows the pattern.
+- `bunx`, not `npx`.
+- The memory ceiling on the **edge** is still unmeasured; local `wrangler dev`
+  enforces no isolate cap, so it cannot be found locally. It needs a deploy.
+- Do not re-apply `composer dump-autoload --classmap-authoritative`. It breaks Drupal
+  outright (runtime `addMultiplePsr4()` vs authoritative PSR-4 refusal).
+- The wasm build track is **stopped, not finished**: three resumes, ~170k tokens, the
+  same opcache SHM configure gate each time, no binary, `vendor/` untouched at nine
+  builds. Its remaining levers (real mbstring as the durable `mb_*` fix, ZEND_VM_KIND,
+  `-flto`) are all optimisation — the content-loss bug is already closed in PHP. State
+  and scaffolding survive in `/tmp/phpwasm-build/`, `build/build-variant.sh`,
+  `build/rc/`, `src/probe-*.js` and `wrangler.probe-*.jsonc`; the last log
+  line records the SHM gate finally passing on attempt 3.
+
+# CURRENT NUMBERS
+
+> **Superseded: this is no longer the table to quote from.** The authoritative one is
+> [Current numbers](#current-numbers) in the [Executive Summary](#-executive-summary), and the
+> [Status](#status) table under it. Four rows here disagree with it: the bundle is **2,307,696**
+> gzipped bytes (838,032 under the 3,145,728 ceiling), not 2,876,855; the wasm:native penalty is
+> **3.57x** warm, not 3.4x; a `page_cache` HIT is **1 ms** of edge cpuTime, not 4.6 ms; and a full
+> uncached render is **34 ms** on the edge against the 33.8 ms local figure. This section is kept for
+> the provenance discipline it introduced, which is current.
+
+Everything below this table that disagrees with it is superseded. Superseded
+figures are kept, marked, not deleted — the reason a number was wrong is usually
+the most valuable thing in this file.
+
+**Provenance columns, added 2026-08-11.** RULE 0b-iii says every number here belongs to a
+specific binary, and RULE 0d says the mount changes what a number means. A row marked
+`unrecorded` is a KNOWN GAP rather than a shrug: the figure predates this document tracking
+provenance, so it cannot be re-derived or compared against a new build without re-measuring.
+**Do not quote an `unrecorded` row in support of a binary-specific claim.**
+
+| Quantity | Value | Binary | Mount | How |
+| --- | --- | --- | --- | --- |
+| Bundle, gzipped, `-O2` | **2,876,855** | static-o2 | n/a | 268,873 under the 3 MB free ceiling |
+| CPU penalty vs native PHP | **3.4x** | unrecorded | unrecorded | cpubench 192 ms native / 648 ms wasm |
+| Anonymous request, `page_cache` HIT | **4.6 ms** | unrecorded | unrecorded | fresh kernel, cache lookup only |
+| Anonymous request, real render, warm kernel | **33.8 ms** | unrecorded | unrecorded | 24 queries |
+| Anonymous request, real render, fresh kernel | **149.6 ms** | unrecorded | unrecorded | 100 queries |
+| Authenticated request, real session | **119 ms** | unrecorded | unrecorded | fresh kernel, `dynamic_page_cache` HIT |
+| Drupal `Connection::query()`, wasm | **0.035 ms** | unrecorded | n/a | per query, no logger attached |
+| Drupal `Connection::query()`, native | **0.0112 ms** | native php | n/a | per query, no logger attached |
+| Raw PDO, wasm | **0.0070 ms** | unrecorded | n/a | per query |
+| Raw PDO, native | **0.0021 ms** | native php | n/a | per query |
+| Full render, native, fresh kernel | **37.95 ms** | native php | n/a | 3.94x vs wasm's 149.6 ms |
+| Full render, native, warm kernel | **9.47 ms** | native php | n/a | 3.57x vs wasm's 33.8 ms |
+| vrzno PHP->JS round trip, realistic query | **0.0125 ms** | unrecorded | unrecorded | SQL in, JSON rows out, decoded |
+| Cold boot, edge | 3,754 ms cpuTime | unrecorded | streaming | deployed, `/drupal?fresh=1` |
+| Peak memory, edge | 110.6 MiB linear | unrecorded | streaming | no `exceededMemory` |
+| **Minimal assembly, EDGE cpuTime** | **20.5 ms** | unrecorded | streaming | n=12, DPC HIT. **ROUTE CAVEAT: this is `/user/login` on Stark, minimal's front page. Standard's 40 ms is `/node` on Olivero. Same-route profile effect is only 1.52x, so a minimal site with a real content front page is plausibly ~26 ms and EVERY slice count derived from 20.5 ms is optimistic and unre-derived.** |
+| **Warm minimal render, EDGE cpuTime** | **20.02 ms** | unrecorded | streaming | 1,021 ms / 51 renders, deployed — the same work as the row above, at n=51 |
+| **Standard assembly, EDGE cpuTime** | **40 ms** | unrecorded | streaming | n=16, DPC HIT on all 16. **1.95x minimal** |
+| Warm minimal render, local in-PHP clock | 9 ms | unrecorded | unrecorded | the local clock cannot even ORDER the two profiles: it reads minimal 9 ms / standard 8 ms while the edge reads 20.5 / 40. Reads **0** on the edge |
+| Per-invocation floor, warm isolate, edge | **0-1 ms** | unrecorded | n/a | `/version`, 30/30 under 10 ms — overhead is not the problem |
+| **DO invocation CPU, per hop, deployed** | **max 10 ms over 20 hops** | unrecorded | streaming | 142 ms total for one request |
+| **Drupal render on DO SQLite, warm kernel** | **34 ms** | static | streaming | both caches emptied, 13 statements |
+| **`dynamic_page_cache` HIT on DO SQLite** | **26 ms** | static | streaming | `page` emptied only, 6 statements |
+| **`page_cache` HIT on DO SQLite** | **1 ms** | static | streaming | 1 statement |
+| PHP boot inside a Durable Object | 518-660 ms | static | streaming | tree mounted, bridge installed |
+| Site migration MEMFS -> `ctx.storage.sql` | 256 ms | static | streaming | 68 tables, 243 DDL, 1,342 rows |
+
+## The correction that changes the verdict
+
+**Every previously reported per-request CPU number was a `page_cache` hit, not a
+render.** The harness served requests without a session cookie, so Drupal's
+`DefaultRequestPolicy` classified them cacheable and `page_cache` returned a
+stored page. `handle()` cost 0.5 ms because _nothing was rendered_.
+
+The check that caught it is one line, and it took ~3,000 lines of this document
+before it was run:
+
+```php
+$response->headers->get('x-drupal-cache')       // HIT / MISS / UNCACHEABLE
+$response->headers->get('x-drupal-dynamic-cache')
+```
+
+Both were reported as `page: HIT` on requests labelled authenticated, returning
+12,304 bytes — byte-identical to the anonymous front page. The "authenticated"
+measurements were anonymous cached pages wearing a label.
+
+Corrected, with identical output verified byte-for-byte on both sides:
+
+| Path                                  | CPU | Queries |
+| ------------------------------------- | -------- | ------- |
+| `page_cache` HIT                      | 4.6 ms | ~2      |
+| Real render, warm kernel + reset      | 33.8 ms | 24      |
+| Real render, fresh kernel per request | 149.6 ms | 100     |
+
+## SUPERSEDED: "the cost is Drupal's DBAL"
+
+> This section previously reported Drupal's `Connection::query()` at **0.866 ms**
+> in wasm against 0.008 ms for raw PDO, concluded the DBAL was **108x** the
+> driver, that "the authenticated request cost IS the query count", and that
+> Durable Object SQLite could not help. **All of that was wrong.** The 0.866 ms
+> was a measurement artifact, off by 25x. What follows is the corrected version;
+> the wrong number is kept because how it got there is the reusable lesson.
+
+## Where the time actually goes: nothing is pathological
+
+Measured with a logger provably not attached, in the same build, same loop shape,
+and — critically — **inside a closure rather than at the eval'd script's global
+scope**:
+
+| Path                                      | native        | wasm          | wasm:native |
+| ----------------------------------------- | ------------- | ------------- | ----------- |
+| Raw PDO, indexed                          | 0.0021 ms     | 0.0070 ms     | 3.3x        |
+| **Drupal `Connection::query()`, indexed** | **0.0112 ms** | **0.0350 ms** | **3.1x**    |
+| DBAL overhead over raw driver             | 5.3x          | 5.0x          | —           |
+| Full render, fresh kernel                 | 37.95 ms      | 149.6 ms      | 3.94x       |
+| Full render, warm kernel                  | 9.47 ms       | 33.8 ms       | 3.57x       |
+| cpubench (n=200000)                       | 192 ms        | 648 ms        | 3.4x        |
+
+Every ratio lands between 3.1x and 3.9x. **There is no wasm-specific
+amplification anywhere** — not in the DBAL, not in the render, not in the
+interpreter. The wasm PHP interpreter is uniformly ~3.4x slower than native, and
+that single factor explains all of it. Both sides ran without opcache or JIT
+(`-d opcache.enable_cli=0`), so this is interpreter against interpreter.
+
+Reproduce:
+
+```
+php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/bench/bench-dbal.php   <drupal-root> 2000
+php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/bench/bench-render.php <drupal-root> 10
+curl -s localhost:8790/dbal?n=2000
+```
+
+### Caveat: the render ratios carry machine-load uncertainty
+
+The native render figures (37.95 ms fresh / 9.47 ms warm) were taken while two
+subagents and a wrangler dev server were running. Re-measured on an idle machine
+after the migration: **29.51 ms fresh / 6.53 ms warm** -- 22% faster, same script,
+same tree, same 18 warm queries.
+
+So the 3.94x / 3.57x render ratios are soft to roughly that margin, and taking them
+at face value would overstate precision. **The reliable multiplier is cpubench's
+3.4x** (192 ms native, stable to +/-0.9% over three runs, against 648 ms wasm),
+which is why the conclusions lean on that number rather than on the render ratios.
+The qualitative finding is unaffected: every ratio still lands in the 3-4x band and
+nothing is pathological.
+
+### Queries are 4% of a request, so query count is not the lever
+
+At 0.035 ms/query, the 133 queries an authenticated request issues cost
+**4.7 ms of 116 ms**. The earlier arithmetic (133 x 0.866 = 114.9 ms, matching a
+measured 116.5 ms) was a coincidence between two wrong numbers.
+
+This prices the obvious fix and rejects it: a `ChainedFastBackend`-style
+process-level fast cache tier collapsing 24 queries to ~3 saves
+**21 x 0.035 = 0.74 ms of 33.8 ms**. It is the right architecture for reducing
+database dependency and it makes disposable kernels cheaper, but it cannot close
+a 24 ms gap. Do not build it expecting CPU.
+
+### How the 0.866 ms happened: two stacked harness artifacts
+
+Worth recording in full, because both are invisible in the output and both
+inflate _any_ inline benchmark.
+
+**1. Query logging, which can never be turned off.** `Database::startLog()` was
+called three times by the `/authed-real` probe and never stopped. Then:
+
+- `Database::getLog()` calls `Log::end()`, but `end()` only does
+  `unset($this->queryLog[$key])` — it does **not** stop event dispatch. Events
+  stay enabled and `$event->caller` keeps being computed via
+  `findCallerFromDebugBacktrace()` -> `debug_backtrace()`.
+- `Database::openConnection()` (Connection.php line 431) attaches the logger to
+  **every new connection** while `self::$logs[$key]` exists, and that static
+  lives as long as the interpreter.
+
+So one `startLog()` call taxes every connection for the life of the isolate, with
+no API to undo it. Measured residual after `getLog()`: **0.0595 ms vs 0.0345 ms
+clean = 1.72x, permanent.** 73% of the logging cost never goes away. This is a
+sixth instance of the persistent-interpreter class, in a debug facility.
+
+**2. Global scope, but only while logging.** `pib_run` evaluates the whole probe
+at global scope. An A/B of the identical loop, identical connection, identical N:
+
+|                        | unlogged | logged    |
+| ---------------------- | --------- | --------- |
+| wasm, global scope     | 0.035 ms | 0.7525 ms |
+| wasm, inside closure   | 0.035 ms | 0.060 ms  |
+| **multiple**           | **1.0x** | **12.5x** |
+| native, global scope   | 0.0112 ms | 0.419 ms  |
+| native, inside closure | 0.0111 ms | 0.0177 ms |
+| **multiple**           | **1.0x** | **23.6x** |
+
+Unlogged, scope makes **no difference at all**. The 12-24x gap is entirely the
+backtrace walk being more expensive from global scope. Two artifacts multiplying
+turned 0.035 ms into 0.866 ms.
+
+**Rule for this project: benchmark inside a closure, and never leave a logger
+attached.** Request-level numbers (33.8 / 119 / 149.6 ms) were measured inside
+closures and are unaffected.
+
+### Suspects eliminated
+
+- **Asyncify.** `static-free-v1`, the build every measurement used, contains
+  **zero** asyncify symbols (`grep -c asyncify vendor/*/php8.3-worker.mjs`: 0 for
+  every build except `static`/`static-asyncify`). Never a factor.
+- **`prefixTables()` regex.** Drupal 11 uses `str_replace`, not
+  `preg_replace_callback` — that was older Drupal.
+- **Kernel churn.** Query cost after 0 / 10 / 25 fresh kernel boots:
+  0.867 / 0.75 / 0.73 ms. Churn does not degrade it.
+- **Allocation.** Nothing left to explain; the 3.1x ratio matches the baseline.
+
+### PCRE has no JIT in wasm — a real but modest amplifier
+
+`ini_get('pcre.jit')` returns `"1"` native and `""` in wasm. JIT emits native
+machine code, which wasm cannot do and workerd forbids regardless, so this is
+permanent.
+
+|                         | native    | wasm      | ratio |
+| ----------------------- | --------- | --------- | ----- |
+| `preg_replace_callback` | 0.0005 ms | 0.0040 ms | 8.0x  |
+| `preg_match`            | 0.0002 ms | 0.0010 ms | 5.0x  |
+| `str_replace` (control) | 0.0002 ms | 0.0010 ms | 5.0x  |
+
+5-8x against a 3.4x baseline, so regex is amplified roughly 1.5-2.3x beyond
+general slowdown. Real, and relevant to the router and Twig's lexer, but not the
+20-30x that would have made it the dominant story.
+
+### The bridge is cheap: DO SQLite can be a JS-bridged driver
+
+Measured before writing any of the `Connection` class, since it is the tax on
+every query forever:
+
+|                                                            | ms            |
+| ---------------------------------------------------------- | ------------- |
+| vrzno noop round trip                                      | 0.0025        |
+| pass int / string                                          | 0.009 / 0.010 |
+| **realistic query: SQL in, JSON rows out, `json_decode`d** | **0.0125**    |
+| in-wasm raw PDO it replaces                                | 0.0070        |
+
+1.8x the driver, **+0.0055 ms per query**, so +0.13 ms across 24 queries and
++0.73 ms across 133. Negligible against a 33.8 ms request. The earlier worry that
+a bridged driver "could be slower" is technically true and practically
+irrelevant.
+
+## Free tier: only cache hits fit
+
+The 10 ms limit is per invocation. Against it:
+
+| Workload                             | CPU | Free (10 ms)  |
+| ------------------------------------ | -------- | ------------- |
+| Anonymous, `page_cache` HIT          | 4.6 ms | fits          |
+| Anonymous, cache miss (warm kernel)  | 33.8 ms | **3.4x over** |
+| Anonymous, cache miss (fresh kernel) | 149.6 ms | **15x over**  |
+| Authenticated                        | 119 ms | **12x over**  |
+| Cold boot                            | 3,754 ms | **375x over** |
+
+So the free tier can _serve_ a warm cache but cannot _fill_ one, and cannot boot.
+Since every cache entry must be filled by some request, **the free tier is not
+viable for a general Drupal site**. It is viable only if cache fills and cold
+boots happen somewhere else. On paid (30 s/invocation) every figure above has
+margin of at least 250x.
+
+This supersedes the earlier "24% of the free budget" conclusion, which was
+computed from a 2.4 ms `page_cache` hit.
+
+### The free tier fails on the interpreter, not on Drupal
+
+Sharper framing, now that native numbers exist for the same renders:
+
+|                     | native      | wasm     | free (10 ms)                        |
+| ------------------- | ----------- | -------- | ----------------------------------- |
+| Warm kernel render  | **9.47 ms** | 33.8 ms  | native would fit; wasm is 3.4x over |
+| Fresh kernel render | 37.95 ms    | 149.6 ms | both over                           |
+
+**Native Drupal on a warm kernel already fits the free budget with margin.** The
+only reason wasm does not is the uniform ~3.6x interpreter penalty. There is
+nothing to optimise in Drupal here — 24 ms of the 33.8 ms is the cost of not
+being native.
+
+That reorders the remaining free-tier levers by what they can actually reach:
+
+| Lever                                    | Attacks | Realistic gain                        |
+| ---------------------------------------- | ----------------------------- | ------------------------------------- |
+| Fast cache backend (24 -> 3 queries)     | 4.7 ms of query time | **0.74 ms** — rejected as a CPU lever |
+| `-O2` over `-Oz`                         | interpreter | 3.9% (~1.3 ms), already taken         |
+| opcache optimizer                        | interpreter + boot | unmeasured; build still blocked       |
+| **`#lazy_builder` invocation splitting** | **the 10 ms boundary itself** | **the only lever that can span it**   |
+
+The last one is the only one with the right magnitude, and it works by changing
+what "one invocation" means rather than by making anything faster: each
+`stub.fetch()` is a separate invocation with its own 10 ms, and `#lazy_builder`
+placeholders are Drupal's own serializable render boundary. A 33.8 ms render split
+across four invocations is four sub-10 ms invocations. That is the free-tier path,
+if there is one.
+
+## Six instances of one bug class: the interpreter persists
+
+Drupal assumes a process boundary per request. There is none. Each of these was
+found by measurement, not review, and each produced _plausible wrong output_
+rather than an error:
+
+1. `drupal_static()` carries user permissions and node grants across requests — 50/50 leak, closed by `RequestResetter`.
+2. `DrupalKernel::$prepared` guards `preHandle()`, so request #2+ routes against request #1's path.
+3. **PHP's native session module is process-global.** `session_status()` stays `ACTIVE`, so request #2 throws `Failed to start the session: already started by PHP`. Fixed with `session_write_close()` at request end.
+4. **PHP's headers-sent flag is process-global.** Once any response emits a Set-Cookie, every later `session_start()` fails with `headers have already been sent`. Production must not use PHP's session module at all — the Worker owns HTTP.
+5. **`Database::$logs` is static and `startLog()` is irreversible.** `Log::end()` unsets the query array but leaves events enabled, and `openConnection()` re-attaches the logger to every new connection. One call taxes every query for the life of the isolate: 0.0595 ms vs 0.0345 ms clean, permanently. Any diagnostic endpoint that calls `startLog()` degrades the isolate it runs in.
+
+And the trap that cost the most time here:
+
+5. **`DrupalKernel::boot()` calls `\Drupal::setContainer()`.** Booting a fresh kernel silently repoints every `\Drupal::` static at the new container. A warm kernel and a fresh kernel **cannot coexist in one interpreter**. Interleaving them made a warm-kernel test resolve services from the wrong container, which looked exactly like a Drupal caching bug and was mine.
+
+`PageCache` also memoizes `$this->cid` on the middleware instance. On a
+persistent kernel that means **every URL re-serves the first request's page** —
+measured: `/user/login`, `/node/1` and `/admin/content` all returned "Welcome!"
+at 12,343 bytes with HTTP 200. With the container corruption fixed, the warm
+kernel routes correctly and the 403s reappear where they belong:
+
+| Route            | Result                                      |
+| ---------------- | ------------------------------------------- |
+| `/`              | 200 "Welcome!", 23 queries, 33 ms           |
+| `/user/login`    | 200 "Log in", 45 queries, 102 ms            |
+| `/user/register` | 403 `CacheableAccessDeniedHttpException`    |
+| `/node/1`        | `ParamNotConvertedException` (no such node) |
+| `/admin/content` | 403 `CacheableAccessDeniedHttpException`    |
+
+Three of those five are _errors that are the correct answer_. The stale cid had
+been reporting them as HTTP 200 successes.
+
+## `-O2` beats `-Oz` on both axes
+
+Controlled: same build config, only `OPTIMIZE` differing.
+
+|           | cpubench median | raw       | gzipped total |
+| --------- | --------------- | --------- | ------------- |
+| `-Oz`     | 674 ms          | 8,880,459 | 2,877,535     |
+| **`-O2`** | **648 ms**      | 9,281,983 | **2,876,855** |
+
+3.9% faster _and_ 680 bytes smaller, despite 401,524 more raw bytes — `-O2`
+compresses better than it expands. `-O2` adopted as the shipping level.
+
+## `dynamic_page_cache` works; it was never reached
+
+Never checked anywhere in the previous 3,084 lines. It is installed, and on
+authenticated requests it goes MISS then **HIT**. It had been invisible because
+`page_cache` short-circuited ahead of it on every request the harness made.
+`/admin/content` and `/admin/modules` report `UNCACHEABLE (poor cacheability)`,
+which is Drupal correctly declining to cache admin pages.
+
+---
+
+# ROUND: PHP INSIDE THE DURABLE OBJECT, AND THE FREE TIER REOPENED
+
+2026-08-10. Four things changed, and one of them was a headline verdict.
+
+## 1. The driver serves real Drupal requests. Tier 0 is closed.
+
+PHP now runs INSIDE the Durable Object (`src/site-do.js`). That was always the only
+arrangement that could work — `ctx.storage.sql` is synchronous only from inside the
+DO and PHP's PDO is blocking — and it had never been executed. `env.ASSETS` is
+reachable from a DO, which was unknown.
+
+| Step | Measured |
+| --- | --- |
+| PHP boot inside the DO, tree mounted, bridge installed | 518-660 ms |
+| Tree | 11,447 files, 41,201,198 bytes, `peakCarry` 434,938 |
+| Migration of the packed site into `ctx.storage.sql` | **256 ms**, 68 tables, 243 DDL statements, 1,342 rows |
+| First real render | **`x-drupal-cache: MISS`**, 200, 12,304 bytes, 81 statements |
+| Live driver assertions against real `ctx.storage.sql` | **32 / 32** |
+
+The migration rewrites `NOCASE_UTF8` to `NOCASE` in the DDL it replays, because the
+packed schema was written by core's sqlite driver which registers that collation and
+`ctx.storage.sql` has no user-defined collations. Without that every `CREATE TABLE`
+fails.
+
+## 2. The free-tier verdict rested on an unchecked assumption, and the assumption is false
+
+The old chain was: cheapest render 33.8 ms, free ceiling 10 ms per invocation,
+therefore not viable. **Nobody had checked whether a Durable Object fetch is its own
+invocation.** It is. Measured on deployed infrastructure by reading per-invocation
+`cpuTime` out of `wrangler tail`, which emits one event per invocation with its own
+`executionModel`:
+
+| Shape | invocations | cpuTime | max single |
+| --- | --- | --- | --- |
+| one Worker invocation | 1 stateless | 26 / 36 / 100 ms | 100 ms |
+| split, Worker + one DO hop | 1 stateless + 1 durableObject | 9 ms + 8 ms | 9 ms |
+| chain, 20 hops | 1 stateless + 20 durableObject | **142 ms total** (6,2,9,7,8,10,7,5,8,7,8,10,7,7,8,8,7,6,6,6) | **10 ms** |
+
+**142 ms of CPU completed for one client request with no single invocation above
+10 ms**, while the orchestrating Worker spent 4 ms and waited 827 ms of wall time.
+Wall time is not charged: the chain's orchestrator shows `wall=827 cpu=2`.
+
+Two method notes that cost real time:
+
+- **`Date.now()` is frozen during synchronous execution** in Workers, as a Spectre
+  mitigation. A clock-driven burn loop (`while (Date.now() < deadline)`) never
+  terminates: it burned **2,020 ms of CPU for a requested 3 ms** and every case died
+  with `exceededCpu`, including ones that should have passed. Burn a fixed iteration
+  count instead.
+- **`limits.cpu_ms` is a poor instrument.** A 152 ms invocation survived a
+  configured cap of 10, which is the "built-in flexibility" the docs mention. Read
+  per-invocation `cpuTime` from tail rather than waiting for the cap to fire. Also:
+  limits are only enforced on deployed Workers, never in local dev, so this
+  experiment cannot be done locally at all.
+- V8 will delete the burn loop if its result is unused. Calibration was flat at
+  4-5 ms from `units=1` to `units=200` until the result was put in the response.
+
+The probe Worker was deployed, measured, and **deleted**; the account is verified
+back to its baseline 9 workers.
+
+## 3. So the free tier does not have to render inside the user's invocation
+
+`src/site-do.js` implements the consequence, and `node scripts/test-serve-chain.mjs`
+pins it at 16/16:
+
+| Path | cost | boots PHP? |
+| --- | --- | --- |
+| HIT, answered from `ctx.storage.sql` by JS alone | **0 ms** | no |
+| MISS, queues the path and arms an alarm | **0-1 ms** | **no — verified on a cold DO, `x-cfw-php-booted: 0`** |
+| the render, inside an alarm invocation | 167 ms - 1.6 s | yes, and nobody is waiting |
+
+`alarm()` fills one page then re-arms at +1 ms while the queue is non-empty, so the
+chain is arbitrarily long and every link is a fresh invocation with a fresh budget.
+Cold boot moves onto that path instead of blocking a user-facing request. An
+unrenderable path is retried twice then dropped, so one bad entry cannot own the
+chain. The hit path is deliberately NOT Drupal's `cache_page` table: it has to be
+readable by JS without instantiating PHP, which is the only thing that makes 0 ms
+possible.
+
+**One bug the integration test earned:** once the queue drained, `alarm()` re-armed
+240 s out for keep-warm, and the MISS path only armed an alarm when there was none —
+so a later MISS waited up to four minutes. A queued fill now preempts any alarm
+further out than the next tick.
+
+## 4. Rule 3 had two more layers, and both were biting
+
+`x-drupal-cache` is not enough on a persistent kernel.
+
+- **A cache-busting query string does not work.** `PageCache` memoizes `$this->cid`
+  on the middleware instance, so every later URL maps to the FIRST request's cid.
+  Six different URLs returned byte-identical output, 12,329 bytes each.
+- **Emptying the `page` bin is still not a render** — `dynamic_page_cache` HITs
+  behind it. The full ladder, on the DO driver:
+
+| bins emptied | warm median | cache state | statements |
+| --- | --- | --- | --- |
+| none | **1 ms** | page HIT | 1 |
+| `page` | **26 ms** | page MISS, dynamic **HIT** | 6 |
+| `page` + `dynamic_page_cache` | **34 ms** | both MISS, a real render | 13 |
+| + `render` | **81 ms** | both MISS | 35 |
+
+The middle tier had never been measured. And 34 ms against the 33.8 ms recorded for
+the same render on the MEMFS/PDO path means **the DO SQLite driver costs essentially
+nothing extra** — retiring the old worry that a bridged driver would be a
+regression. Load-soft: two other jobs were running.
+
+## 5. Both open correctness bugs are closed, and one prescribed fix was wrong
+
+**`LIKE BINARY`** now works. This document and the driver both claimed there was no
+seam to translate the pattern. There is: `Condition::compile()` emits
+`field OPERATOR prefix placeholder postfix`, so a marker in the operator's `prefix`
+names the bound argument. 9,000 differential cases agree with core's own
+`sqlFunctionLikeBinary()`, with a control proving the untranslated form disagrees.
+Core's `ESCAPE '\'` postfix is dropped because builtin `GLOB` refuses a third
+argument.
+
+**`mb_substr()` blanking content** is closed — but **not** by compiling `iconv` in,
+which is what DEEP DIVE A prescribes and calls cheap. That would not work.
+On native PHP 8.5.7 with the real iconv extension loaded,
+`iconv_substr("abc\xff\xfedef", 0, 100, 'UTF-8')` returns **`false`**, exactly like
+the polyfill, so `(string) false` -> `''` survives. It is real **mbstring** that
+substitutes. `src/mb-fix.js` wraps the affected `mb_*` functions ahead of Symfony's
+bootstrap and sanitises invalid UTF-8 to `?` the way native does: **12/12
+byte-identical to native inside wasm**, 25/25 in the gate lane. The substitution
+rule was measured, not assumed — native emits one `?` per maximal valid prefix
+consumed, so `"abc\xe4\xbd"` is `abc?` but `"abc\xed\xa0\x80def"` is `abc???def`.
+
+## 6. The profile was never varied, and varying it moves the free-tier boundary
+
+Every render figure in the previous 3,000 lines is the **standard** profile,
+**Olivero** theme, front page — and that front page is a **View**. `standard`
+installs 40 modules; `minimal` installs 14. Both sites were given an identical
+`page` node type, `body` field and node 1, so profile + theme is the only
+difference. Same harness on both sides; only the interpreter differs.
+
+| profile | theme | mods | route | interp | kernel | CPU median | spread | queries | bytes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| minimal | stark | 14 | `/node/1` | native | warm | **2.25 ms** | 2.17-2.48 | 6 | 2,187 |
+| minimal | stark | 14 | `/node/1` | native | fresh | **9.23 ms** | 8.29-14.03 | 54 | 2,187 |
+| minimal | stark | 14 | `/node/1` | **wasm** | **warm** | **9-12 ms** | 8-10, 10-17 loaded | 10 | 2,187 |
+| minimal | stark | 14 | `/node/1` | wasm | fresh | **32 ms** | 30-37 | 60 | 2,186 |
+| standard | olivero | 40 | `/node/1` | native | warm | 4.06 ms | 3.85-4.36 | 12 | 10,867 |
+| standard | olivero | 40 | `/node/1` | wasm | warm | 17 ms | 15-18 | 16 | 10,857 |
+| standard | olivero | 40 | `/` (View) | wasm | warm | 24 ms | 23-25 | 22 | 12,337 |
+
+Every row is `MISS / MISS` in wasm with `cache_page` and `cache_dynamic_page_cache`
+emptied per request and `cache_render` left warm.
+
+**The warm-kernel render is no longer the blocker.** 33.8 ms was 3.4x over the free
+ceiling; 9-12 ms straddles it. Profile, theme and route compound to 4.2x on native.
+What is still over: the **fresh kernel** at 32 ms, and an isolate's **very first
+render** at 195 ms (standard: 909 ms). So the free tier cannot serve its own first
+request but can serve every request after it — **the every-request problem became a
+warm-up problem**, and warm-up is exactly what the alarm fill chain in section 3
+moves off the user-facing path.
+
+Two harness defects were found and fixed on the way, either of which would have
+produced wrong numbers:
+
+- **A query string does NOT bust `dynamic_page_cache` on a node route.** Its cache
+  contexts are route/path, not `url.query_args`. Cache-busted `/node/1` requests
+  came back `x-drupal-cache: MISS` / `x-drupal-dynamic-cache: HIT` at 4 ms (minimal)
+  and 8 ms (standard) — lookups wearing a render's label. On the standard front page
+  the query args DO vary the key, which is why busting sufficed there and why nobody
+  hit this before. Rule 4, extended.
+- **Fresh-kernel mode was measuring a `dynamic_page_cache` HIT.** The bin is
+  database-backed, so it survives the kernel being discarded and iterations 2..N hit.
+  The wasm minimal fresh figure moved from 20 ms to **32 ms** once fixed — a 60%
+  error.
+- Why the native side never showed either: `PHP_SAPI === 'cli'` makes
+  `CommandLineOrUnsafeMethod` deny, so both bins report
+  `UNCACHEABLE (request policy)`. **In wasm `PHP_SAPI === 'embed'`, so they are
+  live.** That asymmetry is a trap for any future native-vs-wasm comparison.
+
+## 7. "It is the uniform 3.4x interpreter penalty" is measurably false
+
+The render had never been broken down. Exclusive buckets via decorators on eight
+services, accumulated over N renders, residual named rather than hidden.
+Instrumentation overhead was measured (native minimal −0.653 ms, i.e. inside noise;
+wasm 0-1 ms), as was clock granularity: native 0.000954 ms, **workerd 0.999928 ms
+for both `microtime()` and `hrtime()`** — so every wasm bucket is a tick count and
+the tick count is the precision.
+
+| bucket | native ms | wasm ms | ticks | wasm/native |
+| --- | --- | --- | --- | --- |
+| **events** (`event_dispatcher`) | 0.698 | **3.000** | 45 | **4.3x** |
+| **cache_contexts** | 0.312 | 1.800 | 27 | **5.8x** |
+| renderer | 0.976 | 1.533 | 23 | **1.6x** |
+| render_cache.get | 0.248 | 0.800 | 12 | 3.2x |
+| theme | 0.209 | 0.400 | 6 | 1.9x |
+| twig.execute | 0.122 | 0.267 | 4 | 2.2x |
+| access | 0.051 | 0.267 | 4 | 5.2x |
+| attachments | 0.050 | 0.200 | 3 | 4.0x |
+| assets.resolve | 0.021 | 0.067 | 1 | 3.2x |
+| twig.compile | 0.000 | 0.000 | 0 | — |
+| **residual, named** | 0.708 | 1.000 | 15 | 1.4x |
+| **total** | **3.396** | **9.333** | 140 | **2.75x** |
+
+Per-bucket ratios span **1.6x to 5.8x**, and the gap between the two largest buckets
+is well outside their tick error bars (45 vs 23). So the aggregate cpubench ratio was
+hiding real structure:
+
+- The most expensive thing in a wasm render is **event dispatch — 3.0 ms across only
+  7 dispatches, at 4.3x native**. Symfony listener resolution and Drupal subscribers,
+  not rendering.
+- `cache_contexts` is second, at 73 calls/render and 5.8x.
+- **`renderer` itself is the CHEAPEST bucket relative to native**, 1.6x over 24
+  calls. The thing named after the operation is not where the operation's cost is.
+- Standard's extra cost over minimal is `cache_contexts` (+0.579 native, 117 calls vs
+  63) and theme work; `renderer` is flat (0.935 vs 0.976).
+
+That reorders the optimisation targets: event dispatch and cache-context resolution,
+not Twig and not the renderer.
+
+## 8. Steady state arrives at render 3, not render 2
+
+`cache_page` and `cache_dynamic_page_cache` emptied before every render; all
+`MISS/MISS`; order preserved.
+
+| cell | render 1 | 2 | 3 | 4..N | 1 -> 2 |
+| --- | --- | --- | --- | --- | --- |
+| native minimal | 88.86 | 5.62 | 2.74 | 2.42-3.41 | **15.8x** |
+| native standard | 154.03 | 12.62 | 4.42 | 4.04-4.45 | 12.2x |
+| wasm minimal | 133 | 15 | 9 | 8-10 | 8.9x |
+| wasm standard | 37 | 25 | 16 | 15-19 | 1.5x |
+
+Render 2 is materially cheaper in every cell, so the suspicion that `cache_render`
+was not warming is answered: it warms. But steady state is **two** renders of
+warm-up, not one. Separately, the first render an interpreter ever does is far worse
+than the cold-cache sequence above because it also pays autoloading and Twig class
+generation: wasm minimal **195 ms**, wasm standard **909 ms** (of which twig.compile
+256 ms).
+
+### What is measured, derived, and carried over
+
+Measured: every CPU figure, spread and query count; every cache header; module
+lists; bytes; clock granularity; instrumentation overhead; the attribution and its
+residual. Derived: all ratios. Carried over and NOT re-measured: cold boot 3,754 ms
+and the recorded 33.8 / 149.6 / 9.47 / 37.95 ms standard figures. The same-harness
+wasm standard `/` figure is 24 ms against the recorded 33.8 ms — direction agrees,
+but the two are not interchangeable (different harness, and the new standard database
+has a published node where the original had none). A Docker/QEMU build ran
+throughout, so every figure is a median with its spread printed.
+
+### The deciding number, settled at n=51
+
+`curl "http://127.0.0.1:8797/min?route=/node/1&mode=warm&n=51"`, every one of the 51
+requests verified `MISS/MISS` (`steadyCacheHeaders: {"MISS/MISS": 51}`), 10 queries
+per render, `PHP_SAPI` `embed`, profile `minimal`, theme `stark`, 14 modules:
+
+| statistic | value |
+| --- | --- |
+| n | **51 real renders** |
+| median | **9 ms** |
+| mean | 10.16 ms |
+| min / max | 8 / 40 |
+| p90 | **11 ms** |
+| distribution | 8 ms x3, 9 ms x23, 10 ms x19, 11 ms x3, 12 ms x2, 40 ms x1 |
+| **at or under the 10 ms free ceiling** | **45 of 51 (88%)** |
+
+The single 40 ms sample is the concurrent QEMU build; an idle machine would be
+cleaner, so this is a pessimistic reading of the local number.
+
+### SUPERSEDED SAME DAY BY THE EDGE. Every figure above is a local artifact.
+
+> ~~**A warm minimal Drupal node page renders inside one free-tier invocation.**~~
+
+That conclusion was drawn from in-PHP `microtime()` under `wrangler dev`, which this
+document's own rules identify as the untrustworthy instrument. Deployed and measured
+properly — `cpuTime` per invocation from `wrangler tail`, worker then deleted:
+
+| Quantity | Local, in-PHP clock | **Edge, tail `cpuTime`** | factor |
+| --- | --- | --- | --- |
+| in-PHP `microtime()` / `hrtime()` | 9 ms median | **returns 0** (`steadySeqMs: [0]`, `wallMs: 0`) | — |
+| minimal pack mount | ~500 ms | **3,066 ms** | 6.1x |
+| marginal warm render, 51 renders in ONE invocation (1,021 ms cpuTime) | 9 ms | **20.02 ms** | **2.2x** |
+| invocations at or under the 10 ms ceiling | 45 of 51 (88%) | **0 of 69** | — |
+
+**In-PHP timing does not advance on the edge at all**, so it cannot produce an
+absolute. The 2.2x local-to-edge factor matches the only prior comparison in this
+project: cold boot 3,754 ms edge against ~1,500 ms local, 2.5x.
+
+Two controls make the 20 ms trustworthy rather than an artifact of the harness:
+
+- **`/version`, a warm isolate with PHP already booted doing trivial work: median 0
+  ms cpuTime, max 1 ms, 30 of 30 under the ceiling.** So per-invocation platform
+  overhead is approximately zero and the render is the whole cost. This also rules
+  out "the edge is just slower at everything".
+- The diagnostic `/min?n=1` route showed a median of 181 ms per invocation (min 88,
+  p90 4,506 where the isolate recycled and paid boot). That is that route's own
+  per-call bin purges, prelude and stats collection, **not** the render — which is
+  exactly why the 51-renders-in-one-invocation figure is the one quoted.
+
+**Corrected verdict: a warm minimal Drupal node page does NOT fit one free-tier
+invocation. It is 20 ms against 10 ms, 2x over.** `minimal` + Stark over `standard` +
+Olivero is worth about 1.7x and remains the right default, but it does not cross the
+line. So splitting a render across invocations is **required, not an optimisation**,
+and `caches.default` plus the alarm fill chain become load-bearing architecture
+rather than optimisations.
+
+**The open question that now decides whether free-tier rendering is possible at
+all:** does the free plan's 10 ms per-invocation ceiling apply to Durable Object
+**alarm** invocations? If it does, a 20 ms render cannot complete in an alarm either,
+and the free tier reverts to the narrower honest framing — "serves a cache filled
+somewhere else". Unmeasured.
+
+**Method rule this bought, now RULE 0 at the top of this document:** any absolute CPU figure must
+come from `cpuTime` in `wrangler tail` on a deployed worker. An in-PHP number is a
+local ratio and nothing more. This is the fourth time a free-tier verdict has moved,
+and the third time the cause was the instrument rather than the system.
+
+## Test counts after this round
+
+| Lane | Assertions |
+| --- | --- |
+| `scripts/test-codec.mjs` | 43 |
+| `scripts/test-serialize.mjs` | 14 |
+| `scripts/test-do-sql.mjs` | 27 |
+| `scripts/test-mb-fix.mjs` | 25 |
+| `drupal/cfw_do_sqlite/tests/run-driver-suite.php` | 120 |
+| **gate total** | **229** |
+| live driver against real `ctx.storage.sql` | 32 |
+| `scripts/test-serve-chain.mjs` (needs a running worker) | 16 |
+
+# THE SECOND CURRENCY: REQUESTS, ROWS AND DURATION
+
+> **Superseded where it quotes "no daily ceiling" for static assets.** The pre-rendered fork below is
+> described as having "no ceiling at all" on the strength of "requests to static assets are free and
+> unlimited". Static assets are uploaded at deploy time and cannot hold a page rendered at runtime; the
+> runtime-writable path is R2, metered at 10M Class B operations/month, so the ceiling is **3.3x**
+> rather than absent. See
+> [THE 12.5x WAS DERIVED FROM THE WRONG METER](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x).
+
+The DO-hop discovery solved a CPU problem by spending budgets nobody had costed.
+All figures below are quoted from Cloudflare's docs with their own last-updated
+dates, not recalled; the ceilings are derived arithmetic on them.
+
+## Durable Objects ARE on the free plan
+
+> "Durable Objects are available both on Workers Free and Workers Paid plans.
+> Workers Free plan: Only Durable Objects with SQLite storage backend are
+> available." — `developers.cloudflare.com/durable-objects/platform/pricing/`
+
+`src/site-do.js` already uses the SQLite backend, so nothing needs to change to be
+free-plan eligible.
+
+| Meter | Free | Paid |
+| --- | --- | --- |
+| Worker requests | 100,000/day, account-wide, resets midnight UTC (Error 1027) | 10M/mo included, +$0.30/M |
+| Worker CPU per invocation | **10 ms** | 30 s default, 5 min max |
+| **DO requests** | **100,000/day — explicitly "includes ... alarm invocations"** | 1M/mo, +$0.15/M |
+| **DO CPU per invocation** | **10 ms** — "Durable Objects are Worker scripts, and have the same per invocation CPU limits as any Workers do" | 30 s default |
+| DO duration | 13,000 GB-s/day, wall-clock, billed at 128 MB regardless of actual use | 400,000 GB-s/mo |
+| **DO rows written** | **100,000/day** — and `setAlarm()` is 1 row written | 50M/mo |
+| DO rows read | 5M/day | 25B/mo |
+| Subrequests per invocation | 50 (1,000 to internal services) | 10,000 |
+
+## This answers the question the edge measurement raised
+
+**A free-plan Durable Object invocation has the same 10 ms CPU cap as a Worker, and
+that cap applies to alarm invocations too.** So a render measured at **20.02 ms of
+edge cpuTime cannot complete in an alarm on the free plan either.** The alarm chain
+relocates the render off the user-facing request — which fixes latency and the
+request's own budget — but it does not buy the render a larger CPU budget. Splitting
+one render into pieces that each fit 10 ms is therefore the only route to free-tier
+rendering, and even then boot is indivisible (see below).
+
+## Duration is not the problem; rows written is
+
+Derived: at 128 MB, 1 active DO second = 0.128 GB-s, so 13,000 GB-s/day buys
+**101,562 active DO seconds = 28.2 hours/day**. One Durable Object running flat out
+24/7 costs 11,059 GB-s, **85% of the free daily allowance**. Duration never binds.
+
+| Architecture | Worker req | DO req | rows r/w | binding meter | free ceiling |
+| --- | --- | --- | --- | --- | --- |
+| edge HIT, DO untouched | 1 | 0 | 0/0 | Worker requests | **100,000 pv/day** |
+| DO cache HIT | 1 | 1 | 2/0 | Worker requests | **100,000 pv/day** |
+| MISS + alarm fill, warm | 2 | 3 | 4/18 | **rows written** | **5,555 fills/day** |
+| MISS + alarm fill, cold interpreter | 2 | 3 | 4/86 | **rows written** | **1,162 fills/day** |
+| 6-way split to fit a fill | 2 | 9 | 10/24 | **rows written** | 4,166 fills/day |
+| 6-way split resolved on every view | 1 | 7 | 14/2 | **DO requests** | **14,285 pv/day** |
+
+The structural point: **the split does not run on the serve path.** A HIT is 1 Worker
++ 1 DO request whether the page was assembled from one fragment or seven, so
+splitting costs 5,555 -> 4,166 fills/day — a 25% haircut, entirely the extra
+`setAlarm` row writes — while the request ceiling stays 2.7x looser than the
+rows-written ceiling that was already binding. Only the shape where placeholders
+carry per-user content and resolve on every view makes requests binding, and that
+one costs 7x: 100,000 -> 14,285 page views/day.
+
+On paid, per 1M page views/month above the $5 minimum: DO HIT $0, alarm fill $0.30,
+split-to-fill $1.20, resolve-per-view $0.90.
+
+## Three findings that break current assumptions
+
+1. **A Durable Object hibernates after ~10 seconds of inactivity and "the in-memory
+   state is discarded."** `this.php` — interpreter, mounted 11,447-file tree, booted
+   kernel — is in-memory state. The keep-warm alarm in `src/do-sqlite.js` re-arms at
+   **240,000 ms, which is 24x too slow to keep anything warm.** So in production every
+   burst of traffic pays a fresh boot, and **the "warm kernel" premise under every
+   warm figure in this document does not hold across bursts on a real deployment.**
+   A sub-10 s cadence would cost ~9,600 requests/day and ~9,600 `setAlarm` rows/day —
+   9.6% of two separate free budgets — and alarms are still best-effort. This is a
+   genuine design tension, not a number to turn up.
+2. **`alarm()` bypasses the reentrancy gate.** Only `fetch()` goes through
+   `gate.run()`; `alarm()` calls its handler directly in both `src/do-sqlite.js` and
+   `src/site-do.js`. Since `fillOne()` awaits `php._run()`, an alarm render can
+   interleave with a gated fetch that also enters PHP — the exact class
+   `src/serialize.js` exists to prevent (ungated: 11 of 12 concurrent requests
+   corrupted). Harmless only while no user-facing path enters PHP, which the
+   inline-await change removes.
+3. **`ctx.storage.sql` caps LIKE and GLOB patterns at 50 bytes.** The `LIKE BINARY`
+   -> `GLOB` translation is only verified below that: the 9,000 differential cases
+   used patterns of at most 5 characters, so they cannot have covered it. A
+   `CONTAINS` filter on a search string over 50 bytes is outside anything measured.
+   **Reported from the docs, NOT confirmed here** — one query settles it, see the
+   next-steps list at the top.
+4. **A Worker-side timeout cannot interrupt a render, measured.** A render is one
+   synchronous `php._run()` into wasm, and while it runs nothing else on the thread
+   does: a `setTimeout(1)` raced against a `stub.fetch()` that rendered for 119 ms
+   **lost the race**, because the timer could not fire until the wasm call returned.
+   So "await the render with a wall-clock budget" cannot be built as a mid-flight
+   race — it has to be a **pre-check** before the render starts, which is what
+   `estimateRenderMs()` in `src/site-do.js` does. This also removes the
+   `ctx.waitUntil()` that a real race would have needed to keep an abandoned
+   subrequest alive, and that was itself an interpreter-corruption hazard.
+5. **Hibernation confirmed directly, not just from docs**: `x-cfw-php-booted`
+   flipped from `1` to `0` between two curl calls seconds apart. So inline rendering
+   helps within a traffic burst, and the first visitor after any idle gap still gets
+   the 202 placeholder.
+6. **`Number(null)` is `0`, not `NaN`** — one request to a route with no generation
+   header overwrote the shared pointer with generation `0`, after which every edge
+   lookup built a key nothing was stored under. Caught by the test suite (an edge HIT
+   refused to happen whenever a stats call sat between two serves), fixed with a
+   strict parser. Worth remembering next to the codec's own coercion traps.
+
+## Durable Object read replication has NOT shipped
+
+Zero matches for "replic" across the DO docs index, release notes (newest
+2026-06-30) and the 981-line DO changelog, and it is not announced as planned — the
+2024 SQLite-in-DO post promises replication for **D1**, not DOs. D1 is itself built
+on SQLite-backed Durable Objects, so the machinery exists internally but is
+unexposed. The only documented read-scaling story remains sharding plus the
+1,000 rps/object soft limit, so **the sharding conversation is unchanged.**
+
+## Single-object throughput, derived from measured service times
+
+| Traffic mix | rps ceiling for one DO |
+| --- | --- |
+| 100% edge HIT | not limited by the DO |
+| 100% DO HIT (1 ms) | 1,000 (coincides with the documented soft limit) |
+| 99% HIT / 1% 9 ms render | 926 |
+| 95% / 5% | 714 |
+| 95% / 5% at 34 ms | 377 |
+| 100% 9 ms render | 111 |
+| 100% 34 ms render | 29 |
+
+Free tier's 100,000 requests/day is a 1.16 rps daily average, so instantaneous
+throughput is a paid-tier concern. But a single 167 ms - 1.6 s fill occupies the
+object for 167-1,600 HITs' worth of queueing.
+
+## What this means for the free tier
+
+The binding constraints, in order: **100,000 Worker requests/day for hits, 100,000
+rows written/day for fills (~5,555 warm, ~1,162 cold), and above both, still CPU** —
+because hibernation discards the interpreter after 10 s idle and the boot that
+follows (518-660 ms wall inside the DO; 3,754 ms cpuTime measured on the deployed
+edge) is 50-375x the 10 ms cap **in one indivisible stretch that no `#lazy_builder`
+split can cut up.**
+
+That makes the honest fork a product decision rather than an engineering one:
+
+- **Pre-rendered pages shipped as Worker static assets.** No daily ceiling
+  ("requests to static assets are free and unlimited"), no boot, 20,000 files per
+  version on free. This is item 3 in the next-steps list at the top, and the only shape with no
+  ceiling at all.
+- **The DO fill chain.** A live site, ~5,555 fills/day, and a boot every 10 s of
+  idle.
+
+They are different products.
+
+# FINISH LINE STATUS
+
+Honest accounting against the twelve-item plan. "Verified" means a measurement or
+a passing test exists in this repo and is named. "Written" means the code exists
+and lints but has not executed. "Not started" means exactly that.
+
+## Tier 0 — must exist before anything is shippable
+
+| #   | Item                        | Status                                                                                                                                                                                 | Evidence                                                                                                     |
+| --- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | DO SQLite host side         | **Verified**                                                                                                                                                                           | 4/4 rows survive a full process restart; fresh instance `queryCount: 1`; `wrangler.do.jsonc` + `/do-persist` |
+| 1a  | Placeholder rewriting       | **Verified**                                                                                                                                                                           | 18/18, `scripts/test-do-sql.mjs`, with a control proving naive rewriting corrupts                            |
+| 1b  | NOCASE_UTF8                 | **Verified absent**                                                                                                                                                                    | `no such collation sequence`; ASCII folds, non-ASCII does not                                                |
+| 1c  | Drupal driver classes (PHP) | **Written, 98 assertions passing** against real Drupal with a PDO host; six runtime questions open until it runs in the Worker                                                         |
+| 1d  | Transaction mapping | **Solved and verified.** Buffer + atomic replay via `execTxn()`; commit, speculative read-your-own-writes, and failed-replay-leaves-nothing all correct against real `ctx.storage.sql` |
+| 2   | Reentrancy serialization    | **Verified**                                                                                                                                                                           | ungated 11/12 corrupted, gated 0/12; 14/14 in `scripts/test-serialize.mjs`                                   |
+| 3   | Typed bridge codec          | **Verified**                                                                                                                                                                           | 43/43 unit, 23/23 across the wasm boundary, control negative                                                 |
+| 4   | Interrupted checkpoint      | **Superseded**                                                                                                                                                                         | no user-visible WAL under `ctx.storage.sql`; the real test is transaction abort, measured                    |
+
+## Tier 1 — product completeness
+
+| #   | Item | Status                                                                                      |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 5   | Five capability plugins | **Built, 26 assertions passing.** Corrected 2026-08-11: this row said "Not started" while the sections above described the shipped plugins |
+| 6   | `stream_wrapper_register()` for https:// | **Built.** `src/StreamWrapper/HttpsStreamWrapper.php`, now also extracted to the `stream-http` repo |
+| 7   | Security-update pipeline | **Built** (`scripts/security-update.mjs`); not exercised end to end |
+| 8   | Backup / restore / export | **Half built.** `MIGRATE_DB` is the restore direction; export is the same loop reversed and is what F7 (L5 rollback) waits on |
+| 9   | Observability (tail Worker, `memory_limit=96M`) | **Built.** `src/ops/tail-worker.ts` with its own suite, now also extracted to `cartridge` |
+| 10  | Keep-warm alarm | **Verified** - schedules once, idempotent on re-entry, re-arms in `alarm()`; `/do-keepwarm` |
+
+## Tier 2 — free tier
+
+| #   | Item | Status                                                                                  |
+| --- | ------------------------------------ | --------------------------------------------------------------------------------------- |
+| 11  | `#lazy_builder` invocation splitting | **Not started.** Requires un-stubbing Fibers and a per-placeholder partial-render cache |
+| 12  | Cold start on free | **Unsolved and likely unsolvable.** 3,754 ms against 10 ms is 375x                      |
+
+## Loose ends
+
+| Item                                              | Status                                                                                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Diagnostics fail closed                           | **Done, verified** — 24 routes 404 without `PW_DIAGNOSTICS`                                                                                                                                       |
+| `Database::startLog()` upstream bug               | **Documented here**, not yet filed upstream                                                                                                                                                       |
+| `Registry::destruct()` on a persistent interpreter | **UPSTREAM BUG #4, documented here, not filed.** Persisting the RUNTIME theme registry (core's own docblock: "incomplete") makes every subsequent render return 0 bytes when the container is reused across requests. `Registry::reset()` is not a workaround: it deletes the `theme_registry:runtime:*` cids `destruct()` just wrote. Pinned by an assertion that FAILS if a future Drupal fixes it |
+| opcache static link                               | Not started (~70 ms, blocks nothing)                                                                                                                                                              |
+| `composer dump-autoload --classmap-authoritative` | **Rejected - breaks Drupal** (runtime `addMultiplePsr4()` vs authoritative PSR-4 refusal). `--optimize` alone: 17.93 ms wasm, cold-start only                                                     |
+| Memory ceiling                                    | **Still unmeasured on the edge** - local `wrangler dev` enforces no cap. Build wall found at 512.0 MiB (`getHeapMax`); MEMFS proven outside linear memory (2,050 MiB tree, linear flat at 64 MiB) |
+| mbstring polyfill verification                    | **Done - found a content-loss bug.** Packed byte-for-byte verified; `mb_substr()` returns `''` on invalid UTF-8 via the iconv polyfill. **SUPERSEDED: the prescription was wrong.** Real `iconv_substr()` fails identically, so compiling `iconv` in would have changed nothing; closed in JavaScript by `src/drupal/mb-fix.js` instead. See "mbstring polyfill: packed, and silently losing content"                                   |
+| `caches.default` on the anonymous hit path        | **Done, 47 assertions.** Edge tier in `src/site.js`; key carries a generation counter bumped automatically when Drupal writes `cachetags`. An EDGE hit never calls `stub.fetch()`, so it costs no DO request and no DO duration |
+| `-sCLOSURE=1` on the glue                         | **Closed, and the lever it was standing in for is `minify`.** Closure is genuinely never applied (no `CLOSURE` variable anywhere in php-wasm's Makefile), but it cannot be measured standalone either. What IS available without a rebuild: `wrangler deploy --minify` takes the shipped bundle from **3,041,065 to 2,989,814 gzipped bytes, a 51,251-byte saving**, measured on wrangler's own meter during a real deploy. See "The Closure measurement was the instrument, again"                                          |
+
+# VIABILITY VERDICT
+
+> **SUPERSEDED on 2026-08-14, and it sat ABOVE the FOLD saying the opposite of the current answer.**
+> "Free tier: not viable for a general Drupal site, and this is now settled rather than open" is
+> wrong twice over now. Its chain scores renders against the 10 ms per-invocation cap, which
+> `CLAUDE.md`'s RULE 0b retired for producing exactly this pendulum; and the bundle half was closed by
+> [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was)
+> -- PHP 8.5 with every extension intact is 2,658,002 zstd bytes against a 3,145,728 ceiling, and the
+> shipping 8.3 bundle is 2,307,696 with 838,032 to spare.
+>
+> **The current verdict is the Status table at the top of this document.** This section is kept for
+> the reasoning it records, not for its conclusion. A stale verdict above the FOLD is the same defect
+> class this document exists to catalogue: a correct fact in one place and a contradicting one in
+> another, with the reader hitting the wrong one first.
+
+**Paid tier: viable, with real work remaining.** Every measured limit has margin
+of at least 250x (33.8 ms warm render against 30 s). Nothing discovered in this
+round is disqualifying. What stands between here and a hostable product is Tier
+0.1c/0.1d plus the whole of Tier 1 -- ordinary engineering, months of it, with no
+unknown physics left. The single genuine unknown remaining is the transaction
+mapping, and it is a design problem rather than a platform limit.
+
+**Free tier: not viable for a general Drupal site, and this is now settled rather
+than open.** The chain is:
+
+- a `page_cache` HIT costs 4.6 ms and fits
+- the cheapest real render costs 33.8 ms and is 3.4x over
+- cold boot costs 3,754 ms and is 375x over
+- the gap is the wasm interpreter's uniform ~3.6x penalty, not anything in Drupal
+  (native warm is 9.47 ms, which WOULD fit)
+- there is no lever inside Drupal that closes 24 ms; the fast-cache-backend idea
+  is worth 0.74 ms
+
+So free tier is honestly **"serves a warm cache, filled elsewhere"**. That is a
+real product with a narrower shape, and it belongs in the documentation rather
+than in support tickets. `#lazy_builder` splitting is the only remaining path to
+more than that, and it works by redefining what one invocation is rather than by
+making anything faster.
+
+**What changed most this round:** two of the project's headline numbers were
+measurement artifacts, both mine. Per-request CPU was a `page_cache` HIT for
+three rounds. Per-query cost was inflated 25x by an un-stopped logger plus
+global-scope evaluation. Both were caught by cheap checks that should have run
+first -- a response header, and a closure. The three rules at the top of this
+document are the durable output.
+
+# TIER 0: WHAT NOW EXISTS, MEASURED
+
+## 0.1 Durable Object SQLite — host side done, Drupal driver not
+
+`src/do-sqlite.js` runs against real `ctx.storage.sql`. **There is no Map
+standing in for storage anywhere in it.** Config: `wrangler.do.jsonc`, DO class
+`SiteDurableObject` with a `new_sqlite_classes` migration.
+
+**The blocker is resolved at the storage layer.** Writes survive the process
+dying, which MEMFS could never do:
+
+|                                                  | value                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| Rows written, then wrangler killed and restarted | **4 of 4 survived**                                           |
+| `queryCount` on the new instance                 | **1** — proves the instance was genuinely rebuilt, not reused |
+| 1780000000000 timestamp after restart            | **still exact**                                               |
+| `databaseSize`                                   | 12,288 bytes                                                  |
+
+Reproduce: `npx wrangler dev -c wrangler.do.jsonc --port 8793`, then
+`/do-suite`, kill wrangler, restart, `/do-persist`.
+
+### Transactions: Drupal's API cannot map onto DO SQLite directly
+
+This is new and it is a real design constraint, not a detail. `ctx.storage.sql`
+**refuses SQL transaction control outright**:
+
+```
+BEGIN -> "To execute a transaction, please use the state.storage.transaction()
+          or state.storage.transactionSync() APIs instead of ..."
+```
+
+Measured, all three modes:
+
+| Mode                                 | before | after | result                      |
+| ------------------------------------ | ------ | ----- | --------------------------- |
+| `BEGIN`/`ROLLBACK` as SQL, one event | 4      | 4     | **throws**; nothing written |
+| `transactionSync()` + throw inside   | 4      | 4     | **rolls back correctly**    |
+| `transactionSync()` committing       | 4      | 5     | **commits correctly**       |
+
+And across separate events it is worse than useless: DO SQLite commits its
+implicit transaction at the end of **each event**, so a `BEGIN` in one request is
+already committed before a `ROLLBACK` arrives in the next. The measured proof is
+sitting in the persistence table above — row `nid 900 'doomed'` was inserted
+inside a "transaction" that was then rolled back, and it survived a process
+restart.
+
+The consequence for the driver: Drupal's `Connection::beginTransaction()` /
+`commit()` / `rollBack()` is a **begin-commit** API, while `transactionSync()` is
+**callback-scoped**. They do not compose. A correct driver must buffer writes
+issued inside a Drupal transaction and replay them inside `transactionSync()` at
+commit time -- and must then also serve reads-inside-the-transaction from the
+buffer, or code that writes then reads its own uncommitted row breaks. That is
+unwritten work, and it is the largest remaining piece of 0.1.
+
+### NOCASE_UTF8: confirmed absent, gap measured
+
+Previously assumed from docs; now measured. `ctx.storage.sql` has no
+user-defined collations at all:
+
+```
+CREATE TABLE probe (x TEXT COLLATE NOCASE_UTF8)
+  -> "no such collation sequence: NOCASE_UTF8: SQLITE_ERROR_MISSING_COLLSEQ"
+```
+
+Substituting builtin `NOCASE`:
+
+|                                         | result  |
+| --------------------------------------- | ------- |
+| `'Hello World'` matches `'hello world'` | **yes** |
+| `'Ünicode'` matches `'ünicode'`         | **no**  |
+
+So ASCII case-insensitivity works and non-ASCII comparisons are case-SENSITIVE.
+Ships as a documented limitation in release notes, per plan.
+
+### Placeholder rewriting
+
+`ctx.storage.sql` takes positional bindings only, so every Drupal query is
+rewritten. 18/18 cases pass (`node scripts/test-do-sql.mjs`), including the ones
+a naive replace corrupts: `:` inside single-quoted literals, `''` escapes,
+double-quoted identifiers, line and block comments, and `::` casts. A control
+asserts a naive rewriter DOES corrupt the literal case, so those tests are not
+vacuous. One real bug was caught this way: `x::text` bound a phantom `:text`
+because only the first colon was consumed.
+
+## 0.2 Reentrancy serialization — done and verified
+
+`src/serialize.js`: a FIFO `Gate`, plus `doGate()` which additionally takes
+`ctx.blockConcurrencyWhile()` inside the gate (never nested -- the runtime
+forbids nesting).
+
+Corruption is not theoretical. Twelve concurrent two-phase requests (touch a PHP
+global, yield, read it back) against one interpreter:
+
+|             | survived | corrupted    |
+| ----------- | -------- | ------------ |
+| **Ungated** | 1 | **11 of 12** |
+| **Gated**   | **12** | **0**        |
+
+`maxConcurrent: 1`, FIFO order preserved. `scripts/test-serialize.mjs`: 14/14,
+including a control proving the ungated workload does corrupt, so a passing
+gated result means something.
+
+This had to land before JSPI, not after: today nothing suspends inside PHP, so
+nothing overlaps -- the moment one suspending call exists the bug is live and
+silent.
+
+## 0.3 Typed bridge codec — done and verified
+
+`src/codec.js`, both halves in one file because they only work if they agree.
+Values that cannot cross a 32-bit boundary are wrapped in a tagged envelope
+rather than flattened.
+
+`scripts/test-codec.mjs`: 43/43. Across the real wasm boundary (`/codec`): 23/23
+with `PHP_INT_SIZE 4`, control negative.
+
+**The old `marshal()` was lossy in the other direction and that mattered.** It
+stringified large integers, so PHP could not tell `"1780000000000"`-the-number
+from `"1780000000000"`-the-string, and sending it back re-corrupted the type one
+hop later. The boundary test caught two live bugs in my first attempt at the fix:
+a genuine digit string came back as a **number**, and `"007"` came back as **7**,
+because `pw_encode()` guessed from the digits. A type cannot be recovered from
+digits. The working version carries it explicitly as a `['__phpint' => ...]`
+marker and never inspects strings.
+
+## 0.4 Interrupted checkpoint — superseded by the DO storage model
+
+Planned as a WAL torn-write test. It does not apply in this form: with
+`ctx.storage.sql` there is no user-visible WAL and no checkpoint to interrupt --
+the runtime owns durability, and the honest test is transaction abort, measured
+above. A constraint violation was also verified to reject
+(`UNIQUE constraint failed: node.nid`).
+
+## The Drupal driver: written, 98 assertions passing, transaction path closed
+
+`drupal/cfw_do_sqlite/` -- 12 classes plus a test suite, extending core's sqlite
+driver rather than forking its SQL generation. `Connection` owns a write buffer,
+`TransactionManager` maps begin/commit/rollback/savepoints onto it emitting no
+SQL, `CfwSqlClient` stands where `\PDO` stands, `SqlAnalyzer` classifies
+statements and renames four functions.
+
+`php drupal/cfw_do_sqlite/tests/run-driver-suite.php <drupal-root>` -- **98
+assertions, 0 failures** against real Drupal 11.4.5, using a PDO host that speaks
+the same JSON contract as `src/do-sqlite.js`.
+
+### The transaction design, and the host function it needed
+
+The driver buffers writes and replays them atomically. That required one new host
+function, `cfwSqlTxn`, which now exists in `src/do-sqlite.js` as `execTxn()` and
+is **verified against real `ctx.storage.sql`**:
+
+| Path                                 | Result                                                      |
+| ------------------------------------ | ----------------------------------------------------------- |
+| Committed replay (2 statements)      | **ok**, 2 rows added, `lastInsertRowid` returned            |
+| Speculative replay (`commit: false`) | **saw its own uncommitted write**, then left nothing behind |
+| Failing replay (PK violation)        | **rejected**, no partial write survived                     |
+
+The speculative path is how a read-your-own-writes case is answered: replay the
+buffer, run the read, then throw a sentinel so `transactionSync` rolls back. The
+throw is the mechanism, not an error.
+
+### Two bugs that only running it could find
+
+Both were caught by executing the driver against a PDO stand-in, not by review:
+
+1. **Without `cfwSqlTxn`, every `->insert()` inside a transaction fails** --
+   because `Insert::execute()` unconditionally calls `lastInsertId()`, which a
+   buffered write cannot answer without a speculative replay. That alone ruled out
+   the installer, which is why the host function was the blocking item.
+2. **Core's `expandArguments()` rejects array arguments**, so a codec envelope can
+   never reach the driver through `Connection::query()`. This bounds the codec's
+   reach: the `['__phpint' => ...]` marker works host-to-PHP, but wide integers
+   travelling _into_ a query round-trip as decimal strings instead. Not a defect
+   in either piece -- a boundary between them that had to be discovered.
+
+### SQL function audit, complete
+
+| Function                                             | Disposition                                                           |
+| ---------------------------------------------------- | --------------------------------------------------------------------- |
+| `GREATEST` / `LEAST` / `RAND` / `IF`                 | rewritten to builtin `max` / `min` / `random` / `iif`, literal-safely |
+| `SUBSTRING` / `CONCAT` / `CONCAT_WS` / `POW` / `EXP` | already builtin, left alone                                           |
+| `MD5` / `REGEXP` / `SUBSTRING_INDEX`                 | no equivalent; **fail loudly**                                        |
+| `LIKE BINARY`                                        | **throws** (see below)                                                |
+| `NOCASE_UTF8`                                        | builtin `NOCASE`, ASCII-only -- the one accepted silent difference    |
+
+The rewriting is literal-safe: 26 `SqlAnalyzer` cases pass, including a literal
+containing `FROM users`, a comment containing an apostrophe, and a literal
+containing `--`, each of which defeats a regex implementation.
+
+### Known gaps in the transaction design
+
+Stated plainly because they are the parts that will hurt first:
+
+- **Cost is O(W x R)** statements per transaction -- every buffered-state read
+  replays the whole buffer. The installer will feel this; the likely fix is a
+  per-transaction replay cache keyed on buffer length.
+- **A non-deterministic write can differ** between the speculative read and the
+  commit replay (anything using `random()`, or a timestamp evaluated in SQL).
+- **A failed commit leaves Drupal's transaction stack dirty** -- core's behaviour
+  for any driver whose client `commit()` throws, not specific to this one.
+- **A statement buffered before an exception stays buffered.**
+- **Prefixes are rejected outright.**
+
+### What a PDO stand-in could not prove
+
+Recorded because the gap is the honest part. Six runtime questions remain open
+until this runs in the Worker: whether `ctx.storage.sql` accepts
+`PRAGMA table_info()` / `PRAGMA index_list()` / schema-qualified
+`"main".sqlite_master` (the inherited introspection needs all three), its SQLite
+version (`concat` needs >= 3.44, math functions >= 3.35, `iif` >= 3.32), whether
+`CREATE TEMPORARY TABLE` works, whether it accepts schema-qualified index names,
+whether `sql.exec()` binds a JS BigInt, and whether `vrzno_env()` returns an
+object PHP can invoke as `$fn($json)`. One route answers nearly all of them.
+
+Also: **no cost figure for this driver has been measured.** Every performance
+statement about it is arithmetic on the 0.0125 ms bridge number.
+
+### `LIKE BINARY` cannot be supported and now throws
+
+Core maps `LIKE BINARY` to `GLOB` and then replaces `GLOB` with its own
+user-defined function. Without user functions the builtin `GLOB` treats `%` and
+`_` as literal characters, so the mapping silently returns no rows -- the worst
+failure shape. The driver now throws instead.
+
+Note this repo already contains `likeToGlob()` in `src/glob-differential.js`,
+verified over 9,000 differential cases with 12 controls, which performs exactly
+the `%`->`*` / `_`->`?` translation the builtin `GLOB` needs. Wiring that in is
+the obvious fix and was not part of the driver work. Until then, case-sensitive
+`STARTS_WITH` / `CONTAINS` / `ENDS_WITH` are unavailable.
+
+### Prefixes are refused
+
+A non-empty table prefix throws at construction. One Durable Object per site
+makes that defensible, but it also means Drupal's own test runner cannot use this
+driver. A decision, not an oversight.
+
+## Memory: the edge ceiling is still unmeasured, and 110.6 MiB was misread
+
+**Local `wrangler dev` enforces no isolate memory cap**, so driving it to
+`exceededMemory` locally cannot find the 128 MB edge ceiling. That is the honest
+answer to "find the real ceiling": it needs a deployment, and the number that
+governs how many contrib modules a customer can install is **still unknown**.
+
+What local measurement did find is the build's own wall:
+
+|                   | Last surviving                     | First failing | Failure mode                            |
+| ----------------- | ---------------------------------- | ------------- | --------------------------------------- |
+| PHP linear memory | **475 MB** live (linear 512.0 MiB) | **480 MB**    | `ExitStatus: exit(1)`, **stderr empty** |
+| MEMFS tree        | **2,050 MiB**                      | none found    | stopped by choice                       |
+
+512.0 MiB is a build constant, not a platform limit: `getHeapMax=()=>536870912`
+in the glue. Reproduced 3/3 (unmounted, with the 41.2 MB tree mounted, and a JS
+`_malloc` control where malloc returns NULL gracefully rather than exiting).
+
+### MEMFS is not in linear memory, confirmed hard
+
+Mounting the Drupal tree moved the linear-memory ceiling **not at all**. 2,050 MiB
+of files sat in the VFS with wasm linear memory flat at 64 MiB and workerd RSS at
+2,212 MB. So the file tree and the PHP heap are billed against different budgets,
+and the tree is bounded by the isolate's JS heap rather than by wasm's 512 MiB.
+
+### The deployed 110.6 MiB figure is probably not a working set
+
+A synthetic workload reproduced **115,998,720 bytes (110.6 MiB) exactly**, at step
+12 of a stepped allocation. That strongly suggests the edge figure is an
+**emscripten heap-growth plateau** -- a value the allocator lands on regardless of
+demand -- rather than a measurement of what Drupal actually needs. Treat the
+earlier "110.6 MiB linear + 33 MB tree ran clean" as evidence that _a_
+configuration survived, not as a working-set number.
+
+### Two traps that invalidated earlier attempts
+
+Recorded because both silently produce a wrong answer:
+
+- **Uniform fill bytes.** Allocating 6 GB of repeated bytes let macOS compress RSS
+  down to 30 MB. Memory probes must write incompressible data.
+- **Sampling the wrong process.** `wrangler dev` runs a proxy workerd alongside the
+  user worker; measuring the proxy reports nothing useful.
+  `--inspector-addr` identifies the right one.
+
+## `--classmap-authoritative` is rejected: it breaks Drupal
+
+Listed as a cheap unapplied lever for five rounds. It is not a trade-off -- the
+site does not render:
+
+```
+Class "Drupal\sqlite\Driver\Database\sqlite\Connection" not found
+```
+
+All five spot-checked module classes return `findFile() === false`. Drupal
+registers module namespaces at **runtime** through `addMultiplePsr4()`, and
+authoritative mode refuses PSR-4 fallback by design. The two are incompatible.
+**Do not apply it.**
+
+`--optimize` alone does work. Per-class `findFile()`, same 152 classes both sides:
+
+|                             | native 8.5.7 | wasm 8.3.11 | wasm:native |
+| --------------------------- | ------------ | ----------- | ----------- |
+| unoptimized (89-entry map)  | 2,006 ns     | 11,184 ns   | **5.58x**   |
+| optimized (4,692-entry map) | 137 ns       | 658 ns      | 4.80x       |
+
+**Autoload resolution is amplified ~5.6x, not the uniform 3.4x**, because it is
+`file_exists()`-bound and MEMFS stat costs relatively more than compute. The wasm
+optimized arm was measured (optimized `vendor/composer/*.php` injected into
+MEMFS), not scaled from native.
+
+On a cold request (2,455 included files, 2,384 resolvable classes) the saving is
+**3.18 ms native / 17.93 ms wasm** for +1,285,699 bytes in the tree. But classes
+autoload once per _interpreter_, so it is a **cold-start lever only**: 12% of the
+149.6 ms fresh-kernel render and **0% of a warm-kernel request**. Take it for boot,
+do not expect it to help steady state.
+
+## mbstring polyfill: packed, and silently losing content
+
+Packed and unshadowed, verified properly: all 10 files extracted **byte-for-byte
+out of `core.bin.gz`** with md5 matching source, no shadowing candidates, force
+-included via `autoload_files.php`. All **14/14** `mb_*` functions Drupal core
+calls resolve to `polyfill-mbstring`. 63/94 compared keys identical, and every
+valid-UTF-8 operation matches byte-for-byte.
+
+Three divergences from native, and the first is a correctness bug that corrupts
+user content:
+
+1. **Invalid UTF-8 silently blanks the string.** `mb_substr()` returns `''` in
+   wasm where native returns `abc??def`, on all five malformed shapes;
+   `mb_strlen` disagrees 8 vs 5. The root cause is the **iconv** polyfill, not
+   mbstring: `mb_substr` -> `iconv_substr` -> `return false` when
+   `preg_match('//u')` fails, and `(string) false` is `''`. Any user content with
+   a broken byte sequence -- a truncated paste, a bad import -- is replaced with
+   nothing, with no error.
+   ~~**Fix: compile `iconv` into the static build.** It is a build flag, and it also
+   drops 61 polyfill files.~~
+   **SUPERSEDED, and the prescription was wrong twice over.** Real `iconv_substr()` returns
+   `false` on invalid UTF-8 exactly like the polyfill does -- measured on native PHP 8.5.7
+   with the extension loaded -- so the polyfill's `(string) iconv_substr(...)` would still
+   yield `''`. It is real **mbstring** that substitutes, not real iconv, and the 61-file
+   saving belonged to the iconv polyfill rather than to this lever. The bug needed no build
+   at all: `src/drupal/mb-fix.js` defines the affected `mb_*` functions ahead of Symfony's
+   bootstrap and replaces ill-formed UTF-8 with `?` the way native mbstring does. Verified
+   12/12 byte-identical to native inside wasm with `extension_loaded('mbstring')` still
+   FALSE, and 25/25 in the gate lane.
+2. **Greek final sigma unimplemented.** `mb_strtolower('ODOS')` in Greek yields
+   final-sigma natively and non-final in wasm, so search keys, sorts and URL
+   aliases diverge for Greek content.
+3. `mb_strwidth` counts emoji as width 1 rather than 2. Core never calls it.
+
+Also `Unicode::getStatus()` reports SINGLEBYTE in wasm against MULTIBYTE native,
+because `check()` tests `extension_loaded('mbstring')` -- which no polyfill can
+ever satisfy.
+
+## Keep-warm alarm (Tier 1 #10)
+
+Boot is per-DO-lifetime, not per-request, and ~1 s of the 3,754 ms edge boot has
+no identified lever. So the strategy is "boot rarely" rather than "boot fast", and
+an alarm is the only way a DO wakes itself.
+
+`scheduleKeepWarm()` is idempotent -- measured: first call `scheduled: true`,
+second `scheduled: false` with the pending alarm returned. Without that check the
+DO would re-arm on every request and the alarm would never fire. `alarm()` touches
+the database with `SELECT 1` and re-arms; the touch is wrapped so a failure cannot
+stop the re-arm.
+
+Note the returned alarm timestamp, 1786341954382: above 2^31, so it is exactly
+the kind of value that wraps silently without the codec.
+
+This reduces cold starts; it does not remove them. Cloudflare may still evict and
+alarms are best-effort.
+
+## Diagnostics now fail closed
+
+`startLog()` being irreversible makes a reachable diagnostic route a permanent
+1.72x tax on whichever isolate serves it. All 24 diagnostic routes now require
+`PW_DIAGNOSTICS === "1"`; without it they 404 while real routes still serve 200.
+Verified against a config with the var absent.
+
+## THE PACK TRIM: what four modules cost, measured
+
+`dblog`, `update`, `announcements_feed` and `automated_cron` are uninstalled and their
+directories are out of the pack. The artifacts are `assets/drupal-trim/` -- `core.json` +
+`core.bin.gz` (streaming mount), `core.pf.json` + `core.pf.bin` (lazy mount),
+`site.sqlite`. `assets/drupal/` and `assets/drupal-sql/` are untouched.
+
+**The expanded uninstall set is exactly the four.** `ModuleInstaller::uninstall()` pulls
+reverse dependencies in, so the set had to be measured rather than assumed; it pulled
+nothing. **40 modules -> 36.** Per-module wall time from `scripts/probe/probe-uninstall.php`,
+native PHP 8.5.7, one kernel boot each: `dblog` 778.5 ms, `update` 945.4 ms,
+`announcements_feed` 666.4 ms, `automated_cron` 885.3 ms. Nothing on this site depends on
+any of them, which is why the four names in the checklist and the four modules removed are
+the same list.
+
+### The database is 55.7% smaller, and 84% of that is one table
+
+Measured on a copy of `drupal-src/sites/default/files/.sqlite`, the source of the shipped
+database. Both sides VACUUMed, because a `DROP TABLE` leaves free pages: post-uninstall the
+file is 14,966,784 bytes with **2,094 of 3,654 pages free**, so the un-VACUUMed figure
+would have reported a 577,536-byte GROWTH. VACUUM needs Drupal's `NOCASE_UTF8` collation
+registered or it fails to rebuild the indexes -- `Unicode::strcasecmp`, per
+`sqlite/Connection.php:176`.
+
+| | before | after | delta |
+| --- | --- | --- | --- |
+| database file | 14,356,480 | **6,356,992** | **-7,999,488 (-55.7%)** |
+| rows, all tables | 3,154 | 1,046 | -2,108 |
+| tables | 69 | 68 | -1 (`watchdog`) |
+
+Per table, bytes including that table's indexes, from `dbstat` grouped through
+`sqlite_master.tbl_name`. Every table not listed is byte-identical on both sides:
+
+| table | rows before | rows after | bytes before | bytes after |
+| --- | --- | --- | --- | --- |
+| `watchdog` | 1,662 | **table dropped** | 6,688,768 | 0 |
+| `cache_default` | 66 | 1 | 655,360 | 16,384 |
+| `cache_discovery` | 82 | 3 | 958,464 | 356,352 |
+| `cache_config` | 99 | 3 | 270,336 | 16,384 |
+| `cache_data` | 144 | 0 | 233,472 | 16,384 |
+| `cache_render` | 30 | 0 | 57,344 | 16,384 |
+| `cache_routes` | 14 | 0 | 36,864 | 16,384 |
+| `cache_bootstrap` | 5 | 2 | 110,592 | 86,016 |
+| `cache_menu` | 2 | 0 | 24,576 | 16,384 |
+| `cache_file_parsing` | 1 | 1 | 86,016 | **155,648** |
+| `cache_container` | 5 | 6 | 2,433,024 | **2,904,064** |
+| `config` | 169 | 164 | 323,584 | 299,008 |
+| `router` | 419 | 409 | 831,488 | 819,200 |
+| `key_value` | 371 | 365 | 536,576 | 532,480 |
+| `menu_tree` | 68 | 63 | 57,344 | 57,344 |
+
+**Read the attribution, not the total.** Only two of those groups are the modules:
+
+1. **`watchdog` dropped: -6,688,768 bytes, 84% of the saving.** `dblog`'s schema owns the
+   table, so uninstalling it takes the table with it. This is the only line that is also
+   UNBOUNDED -- every other row count here is fixed by the site's content, and `watchdog`
+   grows one row per request forever.
+2. **The 26 rows that name the modules**, all enumerated rather than counted: 5 config
+   (`dblog.settings`, `update.settings`, `announcements_feed.settings`,
+   `automated_cron.settings`, `views.view.watchdog`), 10 routes (5 `dblog.*`, 3 `update.*`,
+   `announcements_feed.announcement`, `view.watchdog.page`), 6 key_value (4
+   `system.schema/*`, the removed view's uuid keystore entry, `state/system.theme.files`),
+   5 `menu_tree`. Together **-41,960 bytes**.
+
+The remaining **-1,265,664 bytes is cache-bin state and it is NOT a durable saving.** The
+uninstall invalidated the caches and the last kernel boot refilled only what it needed, so
+the trimmed side is a cold-cache database being compared against a warm-cache one. Note
+`cache_container` GREW 471,040 bytes and `cache_file_parsing` grew 69,632: a rebuilt
+container for a 36-module site is a bigger single row than the stale 40-module one, which
+is the opposite of the direction a module trim is assumed to move. **A site that has served
+traffic will refill those bins; the honest durable number is the 6,730,728 bytes of
+`watchdog` plus named rows, and the rest depends on when the snapshot was taken.**
+
+### The pack is 0.9% smaller, and that is the whole story on bytes
+
+Both packs are rebuilt now, from the same file list, so no drift between the shipped pack
+(2026-08-09) and the tree today can leak into the delta. `scripts/pack-drupal.mjs` gained
+`PACK_INDEX=1` and an out-dir argument for this: with `PACK_INDEX=1` it takes the input
+list verbatim instead of re-running its completion globs, because those globs are rules
+over a tree and re-running them would measure the rules rather than the trim. Control =
+`assets/drupal/core.json`'s 11,447 paths read from `drupal-src/`; trim = the same list
+minus the four module directories read from the trimmed tree.
+
+| | control | trim | delta |
+| --- | --- | --- | --- |
+| files | 11,421 | 11,316 | **-105** |
+| raw bytes | 41,010,750 | 40,686,420 | -324,330 |
+| `core.bin.gz` | 8,103,955 | **8,031,994** | **-71,961 (-0.888%)** |
+| `core.json` | 1,232,878 | 1,222,303 | -10,575 |
+| streaming asset total | 9,336,833 | 9,254,297 | -82,536 |
+| `core.pf.bin` | 11,875,218 | **11,778,616** | -96,602 |
+| `core.pf.json` | 1,319,081 | 1,307,653 | -11,428 |
+| lazy asset total | 13,194,299 | 13,086,269 | -108,030 |
+| stored verbatim | 37 | 34 | -3 |
+
+Cross-check, and it closes exactly: the four module directories hold 324,445 raw bytes
+across 105 files in the shipped index, `settings.php` gained 115 bytes for the
+`auto_create_htaccess` line, and 324,445 - 115 = **324,330**, the measured raw delta.
+
+**On disk those four modules are 289 files and 990,581 bytes; the pack carries 105 files
+and 324,445 bytes of them.** The pack's own exclusions -- tests, css, js, md, images --
+already dropped 67% of the module payload before this trim existed, which is why removing
+four modules moves the compressed asset by under 1%.
+
+**So the pack trim is not a size lever and should not be sold as one.** 105 files off
+11,421 is 0.9% of the mount, and mount is 3,066 ms of the 3,754 ms edge cold start
+(RULE 0b-iii: that figure belongs to `static-free-v1`). **Derived, not measured: ~27 ms of
+the 3,066 ms**, if mount cost were linear in file count. It needs an edge measurement to
+be worth quoting.
+
+### Both configuration items are off, and one of them is not configuration
+
+- `system.advisories.enabled`: **TRUE -> FALSE**, measured through the config factory.
+  This is the gate on `SecurityAdvisoriesFetcher` inside `SystemHooks::cron()`, and
+  `src/cron.js` already names it as the one thing keeping the `system` cron hook skipped.
+- `auto_create_htaccess` is a **SETTING, not `system.file` config.** There is no such
+  config key anywhere in 11.4.5; the only readers are
+  `HtaccessWriter::write()`/`::ensureHtaccess()` (`HtaccessWriter.php:42,84`) and
+  `SystemRequirementsHooks.php:626`, all through `Settings::get('auto_create_htaccess',
+  TRUE)`. So it goes in `sites/default/settings.php`, which ships inside the pack:
+  `$settings['auto_create_htaccess'] = FALSE;`, 37,109 -> 37,224 bytes.
+
+`scripts/drupal/trim-site-config.php` does both and is idempotent -- which cost a defect to
+establish. The first version guarded with `strpos()` and matched the line
+`default.settings.php` ships **commented out** at :623, so it reported
+`alreadyPresent: true` and changed nothing; the second wrote with `FILE_APPEND` **and** a
+full copy of the file contents, doubling `settings.php` to 74,333 bytes and producing
+`ParseError: syntax error, unexpected token "<"` from `Settings::initialize()` on the next
+boot. Anchored `preg_match` and a plain write. Run it twice; the second run reports
+`appended: false`.
+
+### The real payoff is FIRST-RUN MIGRATION, not the pack
+
+RULE 0b-ii calls first-run migration an unflagged free-tier blocker: 2,272-3,467 ms of edge
+cpuTime against a 10 ms ceiling, and `scripts/pack-sql.ts` chunks it at <=200 statements /
+<=192 KiB so the cost is paid one invocation per chunk. **Every watchdog row was a chunked
+INSERT that a first-run site had to replay.** Both sides warmed identically first (see
+below), then packed with the same script:
+
+| | before | after | delta |
+| --- | --- | --- | --- |
+| statements | 3,405 | **1,521** | **-1,884 (-55.3%)** |
+| of which inserts | 3,159 | 1,279 | -1,880 |
+| table DDL | 69 | 68 | -1 |
+| index DDL | 177 | 174 | -3 |
+| **chunks = invocations** | **46** | **28** | **-18 (-39.1%)** |
+| chunk bytes shipped | 11,725,404 | 7,500,611 | -4,224,793 (-36.0%) |
+| collations rewritten | 22 | 22 | 0 |
+
+**18 fewer invocations of the one operation measured at 227x the free ceiling.** That is the
+number worth quoting for this trim, not the 71,961 bytes off the code pack. Measured on the
+live object: replaying the trimmed pack is 1,521 statements for **4,502 rows written**, so
+migration amplification is 2.96x, and the free plan's 100k rows/day absorbs it 22 times over.
+
+### Cache state had to be equalised, or the database delta is a lie
+
+The first measurement compared a post-uninstall database against the live one and reported
+-7,999,488 bytes. **Roughly 1.27 MB of that was cache bins, not modules** -- the uninstall
+invalidated them and the trimmed side was simply colder. Both sides were then warmed by the
+same `scripts/drupal/prefill-cache.php` run over the same two paths (`/`, `/user/login`) and
+VACUUMed. Residual cache differences a two-path prefill cannot equalise, and their direction:
+
+| table | rows before | rows after | bytes delta | why it is not the modules |
+| --- | --- | --- | --- | --- |
+| `cache_discovery` | 82 | 82 | **+237,568** | freshly serialised entries for 36 modules are BIGGER than the live site's stale ones |
+| `cache_file_parsing` | 1 | 1 | **+69,632** | same, one row |
+| `cache_data` | 144 | 8 | -200,704 | 136 of those are per-URL `route:` rows the live site accumulated over its life; a 2-path prefill writes 8 |
+| `cache_container` | 6 | 6 | -12,288 | this one IS the modules: a 36-module container is 12,288 bytes smaller than a 40-module one |
+
+**Warm against warm the file is 14,843,904 -> 8,138,752 bytes, -6,705,152 (-45.2%)**, and
+`watchdog` alone is 6,692,864 of it. Ship the warm database: `assets/drupal-trim/site.sqlite`
+is the warmed, VACUUMed one at 8,138,752 bytes. The cold variant is 6,356,992 bytes and
+1.78 MB smaller, and shipping it would be a mistake -- see the defect below.
+
+### VERIFIED: the trimmed site boots, migrates, renders and serves
+
+Local only, under `wrangler dev -c wrangler.trim.jsonc --port 8801 --persist-to
+.wrangler/state-trim`. `.trim-assets/drupal/` is hardlinked from `assets/drupal-trim/`
+because `mountDrupalStreaming()` hardcodes the `drupal` prefix and `src/site-do.js` was not
+mine to edit; pointing a config's `assets.directory` at a staging tree mounts the trimmed
+pack with no source change.
+
+| check | result |
+| --- | --- |
+| `/probe` | boot 637 ms, bridge live, DDL/PRAGMA/index probes all `ok` |
+| `/migrate` | 28/28 chunks, 1,521 statements, 4,502 rows written, `state: done` |
+| `/drupal` | **HTTP 200, 12,304 bytes, `titleFound: 1`, `pageCache: MISS`** |
+| `/drupal` again | byte-identical, `sha1 276b7653c8c4` both renders |
+| `/serve?path=/` | `x-cfw-cache: RENDER`, `x-cfw-edge-put: stored`, render 23 ms |
+| `/serve?path=/` again | `x-cfw-cache: EDGE`, `x-cfw-edge: HIT` |
+| `/serve?path=/user/login` | 202, enqueued, the alarm filled it |
+| native render | `prefill-cache.php` renders both paths, 26,490 bytes of HTML |
+
+**Every millisecond in that table is a LOCAL number under RULE 0.** No trimmed figure in
+this section is an edge figure; `wallMs`, `bootMs` and `render-ms` are `Date.now()` under
+`wrangler dev`, which returns 0 on the edge.
+
+### DEFECT FOUND BY THE VERIFICATION: DO SQLite caps bound parameters at 100
+
+The first render on the COLD trimmed database failed:
+
+```text
+SqlErrorException: too many SQL variables at offset 437: SQLITE_ERROR:
+INSERT INTO "cache_discovery" ("cid", "expire", "created", "tags", "checksum", "data",
+"serialized") VALUES (:db_insert_placeholder_0, ... )
+```
+
+**Measured by bisection through `/sql` against the live object: the ceiling is exactly 100
+bound parameters per statement, and 101 fails.** So this document's own claim -- "the cap is
+a D1 property, not a SQLite one ... On Durable Object SQLite the limit does not exist",
+under "Module installation: the admin spike is real" -- **is refuted.** The limit is the same
+100 as D1's. The earlier measurement that found "max bound parameters in any query: 12,
+queries over 100 parameters: 0" was taken on a warm READ path and never reached the write
+path that builds a multi-row insert.
+
+The mechanism is `DatabaseBackend::setMultiple()`, which writes every pending cache item as
+ONE multi-row insert. `cache_discovery` has 7 columns, so **15 rows is the ceiling** and a
+cold discovery cache has 82 entries -> 574 placeholders. It is not specific to the trim: any
+`drupal_flush_all_caches()` or config save on a LIVE site invalidates the bin and the next
+render rebuilds it the same way. **This is a P0 write-path defect that the pack trim only
+made visible.**
+
+Required follow-up, not done here because it is a database-driver change and that write path
+is being edited concurrently: `drupal/cfw_do_sqlite/` has no `Insert` override, so core's
+builds the statement. It needs one that splits a multi-row insert into
+`floor(100 / columns)` rows per statement, with a regression test in
+`drupal/cfw_do_sqlite/tests/run-driver-suite.php` that inserts 82 seven-column rows through
+one `Insert` and asserts they all land. Until that exists, **a cold-cache database must not
+ship**, which is why `assets/drupal-trim/site.sqlite` is the warmed one.
+
+### CRON: the GC pass now does nothing on this site, and one third of it is dead
+
+Measured through the real alarm on the live object, `lastGc` read off `/serve-stats`, so
+these are `ctx.storage.sql` numbers rather than a fake harness:
+
+| | untrimmed, first pass (recorded above) | trimmed, first pass |
+| --- | --- | --- |
+| statements | 15 | **14** |
+| rows deleted | 662 | **0** |
+| rows written | 2,648 (4x derived) | **0** |
+| rows read | not recorded | 182 |
+| reclaimed | 2.453 MB (17.9% of the DB) | **0** |
+| errors | 0 | 0 |
+| missing tables | 4 | **5**: `watchdog`, `flood`, `key_value_expire`, `batch`, `queue` |
+
+**`gc:watchdog` is now permanently dead.** `dblog`'s schema owned the `watchdog` table, so
+uninstalling it dropped the table; the pass costs 2 statements and **164 of the 182 rows
+read (90%)** to find that out. The 164 is `SELECT data FROM config WHERE name =
+'dblog.settings'` scanning the whole `config` table -- `pack-sql.ts` rewrites 22 collations
+on replay, so the `NOCASE_UTF8` index on `config.name` is not the index the planner had
+natively. It then reports `rowLimit: 1000` (the fallback, because `dblog.settings` is gone),
+`underLimit: true` AND `missing: ["watchdog"]`, which is accurate and confusing at once.
+
+**Do not delete the rule.** It is two statements, it writes nothing, and it is what makes
+reinstalling `dblog` safe -- the table returns with the module. What should change is what it
+reports: a missing `watchdog` deserves `skipped: "no watchdog table"` rather than
+`underLimit: true`, and the config read should be skipped when the table is absent, which
+removes 164 of the 182 rows read. Both are in `src/cron.js`, both need a
+`scripts/test-cron.mjs` assertion, neither is done here.
+
+The other two passes:
+
+- **`gc:cachedata` is the one that still matters, and it is the only unbounded thing left.**
+  8 rows against the 5000 cap, 3 statements, 0 deleted. Every distinct URL a scanner probes
+  adds a PERMANENT `route:` row (`RouteProvider.php:222`), so with `watchdog` gone this is
+  the whole of GC's reason to exist.
+- **`gc:expired` is 9 statements and 4 of its 6 rules hit missing tables.** One change from
+  the record above: **`sessions` now EXISTS**, because `pack-sql.ts` synthesises it (`67
+  tables (+1 synthesised: sessions)`), so that rule is live where it used to be skipped.
+  `semaphore` exists. `flood`, `key_value_expire`, `batch` and `queue` are still lazily
+  created and still absent.
+
+**The cron HOOK list halved, and `system` became eligible.** Measured natively on both trees
+through `invokeAllWith('cron')`:
+
+| | before | after |
+| --- | --- | --- |
+| cron hook modules | 6: `announcements_feed`, `dblog`, `file`, `layout_builder`, `system`, `update` | **3: `file`, `layout_builder`, `system`** |
+| cron queues | `media_entity_thumbnail` (60 s) | unchanged |
+| `system.advisories.enabled` | TRUE | FALSE |
+| `auto_create_htaccess` | TRUE | FALSE |
+| `cache.data` max rows | 5000 | 5000 |
+
+So `CRON_HOOKS` in `src/cron.js` now describes three modules that cannot be reached, and its
+`system` entry -- `"outbound HTTPS (SecurityAdvisoriesFetcher) unless
+system.advisories.enabled is FALSE"` -- has had its condition met. **`system` cron is now
+SAFE to run and still not WORTH running:** its body is flood + cache + key_value_expire +
+queue GC, which `gcPass()` does in SQL for microseconds, plus `FieldPurger` and an
+`.htaccess` write that `auto_create_htaccess = FALSE` now skips too. Keeping it off costs the
+deleted-field purge and saves a kernel boot.
+
+`KNOWN_CRON_HOOKS` should become `["file", "layout_builder", "system"]`, and the three dead
+policy entries should keep their reasons rather than be deleted, so reinstalling one of those
+modules gets its policy back. Not done here: those constants are asserted directly by
+`scripts/test-cron.mjs` (219 assertions), so it is a code change plus its test and this
+task's diff is the pack.
+
+One consequence to record because it is a loss, not a saving: **with `dblog` gone the site
+has no logger at all.** `syslog` is not installed, so `\Drupal::logger()` calls go nowhere.
+The replacement already exists and is better on this runtime -- `binary.cfwLog` in
+`src/site-do.js` writes `console.log`, which `wrangler tail` and Workers Logs collect and
+which survives the isolate that produced it, where a `watchdog` row does not. Uninstalling
+`dblog` makes the Tail Worker load-bearing rather than optional.
+
+### What still needs an edge measurement
+
+Nothing in this section is an edge number. In priority order:
+
+1. **First-run migration on the trimmed pack**: 28 chunks x cpuTime per chunk against the
+   10 ms free ceiling. This is the finding that justifies the trim and the one with no edge
+   figure.
+2. **The 100-parameter ceiling**, on a deployed object rather than local workerd. It is a
+   build constant so drift is unlikely, but the claim it refutes was also believed without
+   being checked.
+3. **Cold start on the trimmed pack**: 105 fewer files and 71,961 fewer compressed bytes
+   against the recorded 3,066 ms mount. The linear estimate of ~27 ms is derived, not
+   measured, and RULE 0b-iii applies -- 3,066 ms belongs to `static-free-v1`.
+4. **One GC pass on the trimmed database**, to confirm 0 rows written on the edge and pick up
+   the `amplification` measurement `gcPass()` deliberately leaves to the first deployed run.
+
+## SLICED updb: the mechanism, and what is genuinely indivisible
+
+`src/updb.js`, `src/updb-php.js`, `scripts/test-updb.mjs`. **364 gate assertions, 0
+failures**, `node scripts/test-updb.mjs`, 0.09 s. Nothing here has run in wasm: this
+is a mechanism plus a contract plus a test harness, and every cost below is either
+quoted from an existing measurement in this document or explicitly labelled derived.
+
+### What was verified in core, because a prior round guessed and lost hours
+
+Every API was read out of `drupal-src/` at 11.4.5 before being used. Two corrections
+worth keeping:
+
+- **There is no `PostUpdateRegistry` class.** Post-updates go through
+  `Drupal\Core\Update\UpdateRegistry`, service id `update.post_update_registry`,
+  constructed at `core.services.yml:1983` with `updateType: 'post_update'`. The
+  hook side is `Drupal\Core\Update\UpdateHookRegistry`, service
+  `update.update_hook_registry`, `core.services.yml:1979`.
+- **`update_do_one()` catches `Exception`, not `Throwable`** (`update.inc:191`). A
+  `TypeError` or an undefined-function call inside a `hook_update_N()` escapes it
+  entirely, leaving the schema version unmoved and whatever the hook already wrote
+  still written. Every call into core's runners is now wrapped in
+  `catch (\Throwable)` so an escaped `Error` becomes a structured abort rather than a
+  dead invocation with no cursor update. This is a real core gap and a fourth
+  candidate for the upstream-bugs list.
+
+Also confirmed by reading rather than assuming: discovery in **both** registries is
+`get_defined_functions()`-based, so `drupal_load_updates()`
+(`install.inc:102`) must run before enumeration or a pending update is *invisible*
+rather than failing loudly; the ordering is `DbUpdateController::triggerBatch()`'s
+(`:597-654`) -- updates in dependency order, then a full flush **only if** post-updates
+are pending, then the post-updates, then an unconditional final flush from
+`batchFinished()`; and `setInstalledVersion($module, $number - 1)` is seeded for the
+**first** update of each module only (`:636`), with later updates of that module
+landing on the previous update's own number, which is why update numbers being
+non-contiguous does not break the precondition gate.
+
+### The free-tier arithmetic, and the verdict
+
+A 1-update / 1-post-update release plans **28 units** and drives **56 invocations**
+(two beats per unit, asserted), writing roughly **112 bookkeeping rows**. Against the
+free ceilings that is **0.056% of the 100,000 DO requests/day and 0.112% of the
+100,000 rows written/day**. The chain is free.
+
+**Boot is not, and no cursor design fixes it.** 3,754 ms of edge cpuTime in one
+indivisible synchronous call is 375x the 10 ms cap. So: on paid this runs today and
+its value is the never-half-applies contract rather than the CPU split; on free every
+unit fits **provided the object is already warm**, which is what the keep-warm alarm
+exists for. `updbStep()` therefore refuses on a cold interpreter rather than burning
+an invocation that will be killed, bounded by `maxColdWaits` and then halting with the
+boot figure in the halt reason. A `-sJSPI` build is the lever that opens the cold path.
+
+### Per-step costs, and which steps cannot be split
+
+`drupal_flush_all_caches()` is **282.9 ms in wasm / 268.8 ms native, 78.5 MB peak**
+(already in this document), which is 28x a free invocation in one call. It is not one
+operation: `common.inc:408-475` names eleven, and `UPDB_FLUSH_STEPS` runs them as
+eleven units in core's order. No per-step wasm measurement exists yet -- the split is a
+faithful read of core, and each unit records its own `rows_written` and `statements`
+so the real costs arrive as measurements on the first run rather than as assumptions.
+
+| Step | Splittable further? | Why |
+| --- | --- | --- |
+| `cache_flush`, `rebuild_hooks` | No | one `invokeAll()` each; bounded by module count, but core promises no ordering between implementations, so a per-module split would need the module list in the plan |
+| `purge_tags` | No | one `purge()`; must precede `bins` or a tag invalidated in between lands in a new item's checksum while still valid (core's own comment) |
+| `bins` | **No, and genuinely unbounded in the worst case** | `deleteAll()` per bin is one DELETE whose row count is the bin's size, and rows written is the binding meter. `src/cron.js` caps `cache_data` at 5,000 rows, so on a site whose GC runs this is bounded in practice and on one whose GC does not, it is not. Not splittable per bin either: the bin list would be stale after the container rebuild two steps later |
+| `assets`, `statics`, `twig`, `extension_lists` | No | each is 1-4 service calls with no interior seam |
+| `container` | **No, and DERIVED as the largest piece** | compiling the container is one pass over every service definition and compiler pass. No wasm figure for this step alone; cold boot (3,754 ms) includes one container build, so it is plausibly the biggest single item in the flush. First thing to instrument |
+| `module_data` | No | `ModuleHandler::reload()` |
+| `router` | No | collects every route, runs the alter events, writes the dumped tables in one pass; core requires it **last** so the router reflects everything above it |
+
+And the one that matters most: **a `hook_update_N()` is indivisible unless the hook
+cooperates.** A batch-aware hook takes `$sandbox` by reference and sets
+`$sandbox['#finished']` below 1 to be re-entered, which is exactly the seam this chain
+rides -- one invocation per pass, sandbox persisted between them, which is core's own
+contract since its batch API serializes the same array into the `batch` table between
+HTTP requests. A hook that is **not** batch-aware runs to completion in one call and
+nothing can interrupt it: measured here, a `setTimeout(1)` raced against a 119 ms
+synchronous wasm call **lost**. So a single non-batch-aware hook is the one place this
+design cannot promise a 10 ms slice, and it records what the unit actually cost
+instead of pretending otherwise.
+
+### The finding that cost the most, and it is a negative result
+
+**Whatever state the run beat READS is also the state a killed run beat LEAVES.**
+Three successively more elaborate schemes were written and discarded before that
+became obvious: a `running` marker written alongside the hook (dies with the event
+it was meant to outlive, because DO SQLite commits its implicit transaction at the
+end of each event -- already measured here); an `attempts > passes + 1` arithmetic
+test; and a look-ahead claim folded into the previous unit's commit. All three
+preserve the symmetry exactly. **Within a store whose only durability boundary is
+"the event completed", a kill mid-event is undetectable from storage alone.**
+
+So the detector is deliberately *not* in storage: the claim beat commits
+`attempts + 1` and then issues a **single-use in-memory token**; the run beat consumes
+it before entering the interpreter. A beat that finds a unit `claimed` with no
+matching token halts the run. That is fail-closed and has one false positive -- an
+eviction between the two beats looks like a kill -- which the +1 ms re-arm reduces to a
+~1 ms window against a 6-10 s eviction timer. **The way to convert the false positive
+into a certainty is a Tail Worker reading the `exceededCpu` / `exceededMemory` outcome
+for the killed invocation**, which is the only mechanism on this platform that
+observes a kill from outside it. `src/tail-worker.js` already exists; wiring it in is
+the follow-up.
+
+Two consequences recorded because they are decisions, not details: the default
+`retryPolicy` is **halt**, because whether a killed event's partial writes are
+discarded is **unmeasured** and needs a deploy to settle -- the commit direction is
+measured, the kill direction is not; and a **halted run does not clear itself**, so a
+second cursor can never open over the same schema. Clearing it is
+`updbRollback()` or an explicit `updbAbandon({reason})` that refuses without a written
+reason.
+
+### Copy-and-swap: costed, and rejected
+
+Worth recording so nobody re-derives it. Rows written is the binding meter and a copy
+costs one written row per row copied, so copying the **packed** standard site (1,342
+rows) is 1.3% of a day and affordable, while a small real site with content at
+50k-200k rows is 50-200% of the daily allowance and fails by exhausting a meter the
+serving path shares. Size is not even the deciding objection: to run updates against
+the copy Drupal has to *address* it, which means a table prefix, and **the driver
+refuses prefixes** -- so copy-and-swap is new driver work, not new SQL. And the swap
+needs `ALTER TABLE ... RENAME`, which dirties `sqlite_master` and turns every later
+read in a transaction into a speculative replay, the O(W x R) cost already observed
+here wedging the local runtime badly enough that unrelated sites stopped responding.
+
+Replaced by a bounded snapshot of the update system's own bookkeeping
+(`key_value`, `key_value_expire`, `config`, `cachetags`) with a 20,000-row ceiling
+that **refuses and names the offending table** rather than quietly spending the day's
+writes. Stated limitation, not glossed: that restores *which updates ran* and the
+config they changed, **not** what a hook did to `node_field_data`. Whole-site rollback
+is the R2 export, and `requireExport` makes it a precondition of starting.
+
+### Two harness traps this produced, and one was a real bug
+
+The gate harness initially reported every unit's kind as `""` and every run halted
+with `unit-error`, and the cause was not in `src/updb.js` at all: the unit payload is
+`JSON.stringify()`'d **twice** on the way into the fragment -- once to make the payload,
+once to make it a PHP string literal -- so the source contains `\"kind\":\"maint_on\"`
+and a regex matching the unescaped form silently finds nothing. It also found a real
+ordering bug the same way: the cold-interpreter bail-out ran *after* the token was
+consumed, so a cold beat left no token and the next beat reported a fake kill. Both
+are the same lesson this document keeps paying for -- a harness that asserts on real
+statements and real fragments finds things a mock cannot.
+
+### Required follow-ups (not done here)
+
+1. **Wire the chain into `src/site-do.js`** -- not edited, because the main session
+   owns that file. Six lines in `alarm()`: call `updbStep()` with
+   `{sql, runJson, phpReady, txn, nowMs, meters}`, re-arm with `updbAlarmDelayMs()`,
+   and hold the token map on the instance (`this.updbTokens`). Routes for
+   `updbPrepare` / `updbStatus` / `updbRollback` / `updbAbandon` alongside `/__fill`.
+   The step function owns no transport, no alarm and no env, exactly like `cronStep()`.
+2. **`alarm()` currently bypasses the reentrancy gate** for the fill batch; an updb
+   unit must go through `gate.run()` for the same reason a fill does, or a unit and a
+   render can be in the interpreter together.
+3. **Instrument the eleven flush steps** on a deployed worker and put the real
+   per-step cpuTime in the table above, replacing the derived `container` claim.
+4. **Measure the kill direction**: does an `exceededCpu` invocation's partial write
+   commit or roll back? That single measurement decides whether `retryPolicy: "core"`
+   is provably safe, and it is the highest-value unknown left in this design.
+
+---
+
+# ==================== FOLD ====================
+
+#
+
+# EVERYTHING BELOW IS THE HISTORICAL RECORD.
+
+#
+
+# It is kept in the order it was measured, because the sequence of wrong turns is
+
+# the most reusable part of this document. It is NOT the current state.
+
+#
+
+# Where anything below disagrees with CURRENT NUMBERS at the top, the top wins.
+
+# The known-superseded claims, and why each was wrong:
+
+#
+
+# "warm anonymous request is 0.242 ms" -> a page_cache HIT, not a render.
+
+# Real render: 33.8 ms warm / 149.6 ms fresh.
+
+# "warm requests are 2-3 ms" -> same cause.
+
+# "Drupal's DBAL is 108x the driver" -> 0.866 ms was query logging plus
+
+# global scope. Real: 0.035 ms, 5.0x.
+
+# "the request cost IS the query count" -> queries are 4% (4.7 ms of 116 ms).
+
+# "authenticated traffic is unmeasured" -> measured: 119 ms with a real session.
+
+# "warm CPU solved / free tier fits" -> only page_cache hits fit 10 ms.
+
+# "DO SQLite cannot help / could be slower" -> bridge is 0.0125 ms/query,
+
+# negligible; it is a persistence
+
+# decision, not a performance one.
+
+#
+
+# ==============================================
+
+## 🗂 Chapter Index
+
+The rounds below, in the order they were measured. Numbers are positional, not a priority.
+
+1. [THE ARCHITECTURAL FORK: WHERE DOES PHP RUN?](#the-architectural-fork-where-does-php-run) — the 42% bundle saving holds only if PHP runs INSIDE the Durable Object, which decided the architecture
+2. [COLD START IS THE LINCHPIN, AND THE DIAGNOSIS CHANGED](#cold-start-is-the-linchpin-and-the-diagnosis-changed) — cold start reframed as the gate on four separate problems, and the diagnosis moved off opcache
+3. [MEMORY: EVICTION RECOVERS 20 MB, AND THE READ-ONLY FS BACKEND IS THE WRONG LEVER](#memory-eviction-recovers-20-mb-and-the-read-only-fs-backend-is-the-wrong-lever) — 20.3 MB of the tree is never read again after boot, and the read-only FS backend is the wrong lever for it
+4. [MEASURED: authenticated request CPU](#measured-authenticated-request-cpu) — the authenticated path measured for the first time, in the 0.242 ms era whose absolutes later fell
+5. [THE ISOLATION PROBLEM HAS A 2 ms SOLUTION — and it reverses an earlier call](#the-isolation-problem-has-a-2-ms-solution--and-it-reverses-an-earlier-call) — a disposable kernel costs 2 ms rather than a full boot, reversing "priced out"
+6. [TWO DEFECTS FOUND WHILE TRYING TO MEASURE THE AUTHENTICATED PATH](#two-defects-found-while-trying-to-measure-the-authenticated-path) — `preHandle()`'s `prepared` guard and a PageCache defect had been corrupting every earlier render figure
+7. [SECURITY: REQUEST ISOLATION IS THE LARGEST UNRESOLVED ITEM](#security-request-isolation-is-the-largest-unresolved-item) — request isolation named as the largest unresolved item, above every performance number
+8. [REENTRANCY: A HAZARD THAT ARRIVES WITH SUSPENSION](#reentrancy-a-hazard-that-arrives-with-suspension) — the hazard that arrives with suspension, and why it has to be solved before JSPI rather than after
+9. [OUTBOUND HTTP IS SMALLER THAN IT LOOKED](#outbound-http-is-smaller-than-it-looked) — the core call sites touching Drupal's HTTP client counted, and the hole shrank
+10. [SIZE WAS OPTIMIZED FOR, THEN SPEED WAS DECLARED THE CONSTRAINT](#size-was-optimized-for-then-speed-was-declared-the-constraint) — `-Oz` and a cold-start-first objective are in direct tension, stated rather than left implicit
+11. [CHEAP LEVERS NOT YET APPLIED](#cheap-levers-not-yet-applied) — the small unapplied levers listed, one of which turned out to be a defect
+12. [CORRECTION: zlib should not have been dropped](#correction-zlib-should-not-have-been-dropped) — `ext-zlib` is a real core requirement and the build config was wrong to drop it
+13. [DECISION: STOP OPTIMIZING COLD START, SHIP THE ALARM](#decision-stop-optimizing-cold-start-ship-the-alarm) — boot is mostly ordinary PHP execution, so the alarm ships instead of another round of levers
+14. [KEEP-WARM IS LOAD-BEARING, NOT A NICE-TO-HAVE](#keep-warm-is-load-bearing-not-a-nice-to-have) — keep-warm recorded as a consequence of the boot profile rather than an idea
+15. [THE SECURITY-UPDATE PATH IS THE OPERATIONAL RISK THAT OUTLIVES LAUNCH](#the-security-update-path-is-the-operational-risk-that-outlives-launch) — time-to-patch named as the operational risk that outlives launch
+16. [BACKUP, RESTORE, EXPORT](#backup-restore-export) — a site whose data cannot be extracted is not a product; the export gap opens here
+17. [OBSERVABILITY](#observability) — an isolate death was silent, and the minimum viable signal set got defined
+18. [UPSTREAM: THREE DRUPAL CORE BUGS WORTH REPORTING](#upstream-three-drupal-core-bugs-worth-reporting) — three core bugs any worker-mode host hits, all from Drupal assuming the process dies
+19. [EVERY REMAINING GAP MAPS TO A CLOUDFLARE PRIMITIVE](#every-remaining-gap-maps-to-a-cloudflare-primitive) — each missing C library restated as a platform service the runtime can answer with
+20. [DEPLOYED TO A PAID WORKER — the numbers hold under enforcement](#deployed-to-a-paid-worker--the-numbers-hold-under-enforcement) — the first real deploy: the numbers held under enforcement, read from billed `cpuTime`
+21. [EDGE VALIDATION #2: full render with COMPLETE_CORE — memory question settled](#edge-validation-2-full-render-with-complete_core--memory-question-settled) — a full `COMPLETE_CORE` render on the edge settled the memory question at 110.6 MiB
+22. [COMPLETE: the authenticated and admin surface, measured](#complete-the-authenticated-and-admin-surface-measured) — FULL packing made every route render, ending the phantom front-page results
+23. [VERDICT](#verdict) — the 3.4x era's verdict, already marked superseded in place
+24. [The four numbers](#the-four-numbers) — the four headline figures pinned to the static build rather than the published dylink one
+25. [The wasm:native multiplier, measured](#the-wasmnative-multiplier-measured) — the 2-5x assumption everyone was using, replaced by a measurement
+26. [PHP global state persists between requests](#php-global-state-persists-between-requests) — a second run in one isolate fatals, which is the request-isolation problem in one line
+27. [DRUPAL 11 RENDERS INSIDE A CLOUDFLARE WORKER](#drupal-11-renders-inside-a-cloudflare-worker) — the first render: a real Drupal 11.4.5 front page, 12,304 bytes, from wasm inside workerd
+28. [MEMORY: FIXED ON BOTH AXES (measured)](#memory-fixed-on-both-axes-measured) — the transient spike and the steady-state ceiling were different problems and took different fixes
+29. [Why the ceiling mattered (original analysis, now addressed)](#why-the-ceiling-mattered-original-analysis-now-addressed) — MEMFS stores file contents outside linear memory, which makes the ceiling a production problem on every plan
+30. [BLOCKER: DO SQLite CANNOT HOST DRUPAL'S SQLITE DRIVER](#blocker-do-sqlite-cannot-host-drupals-sqlite-driver) — the function audit that forced a purpose-built database driver
+31. [THE CAPABILITY BRIDGE WORKS, AND IT COSTS 19 KB](#the-capability-bridge-works-and-it-costs-19-kb) — the PHP-to-JS bridge fits under the ceiling, at 19,275 bytes for vrzno
+32. [OPENSSL, AND THE BIGGER HOLE BEHIND IT: NO OUTBOUND HTTP](#openssl-and-the-bigger-hole-behind-it-no-outbound-http) — openssl is unbuildable for Workers, and behind it there was no outbound HTTP at all
+33. [Making free tier work: what is solved and what is not](#making-free-tier-work-what-is-solved-and-what-is-not) — the serving split: an anonymous hit answers in JS and never instantiates the interpreter
+34. [THE STATIC BUILD WORKS — and it corrects two earlier conclusions](#the-static-build-works--and-it-corrects-two-earlier-conclusions) — a `MAIN_MODULE=0` build with no `dylink.0`, correcting two earlier conclusions
+35. [Blockers found](#blockers-found) — the dylink build's blockers, and which of them the static build resolved
+36. [Bundle size](#bundle-size) — the size era's accounting, taken against core's own requirement list
+37. [Drupal request cost, measured natively](#drupal-request-cost-measured-natively) — the native baseline every wasm multiplier in this document is taken against
+38. [Against Cloudflare's published limits](#against-cloudflares-published-limits) — the limits table of the 0.242 ms era, already marked superseded in place
+39. [What the measurements settled](#what-the-measurements-settled) — Drupal 11 runs on Workers, and four independent failures reduced to one
+40. [Module installation: the admin spike is real, and it is measured](#module-installation-the-admin-spike-is-real-and-it-is-measured) — the admin spike measured natively at 2,713 files included
+41. [Static Assets VFS: granular vs packed, measured](#static-assets-vfs-granular-vs-packed-measured) — packed beats granular, measured against a real `env.ASSETS` binding
+42. [Sessions live in the database, not the filesystem](#sessions-live-in-the-database-not-the-filesystem) — the `sessions` table is created lazily, which is why it was missing from the pack
+43. [The writable surface is small, and mostly regenerable](#the-writable-surface-is-small-and-mostly-regenerable) — every file Drupal writes traced, and it maps onto Cloudflare primitives cleanly
+44. [Module footprint](#module-footprint) — ~110 files per contrib module, so file count is not the binding limit
+45. [Storage backend: Durable Objects beat D1, and it is not close](#storage-backend-durable-objects-beat-d1-and-it-is-not-close) — `ctx.storage.sql` is synchronous and D1 is not, which is what decided the backend
+46. [Writable state and the filemtime question](#writable-state-and-the-filemtime-question) — 53 compiled Twig files per render, and where `filemtime` is load-bearing
+47. [Build system: what it takes to produce a static build](#build-system-what-it-takes-to-produce-a-static-build) — three toolchain defects standing between this repo and a static build
+48. [Still open](#still-open) — the open list as it stood before the paid deploy, marked partly stale in place
+49. [Current state (2026-08-09 ~02:50 CDT)](#current-state-2026-08-09-0250-cdt) — a session snapshot: the detached static build and how to watch it
+50. [Reproducing](#reproducing) — the commands that reproduce this round
+51. [Agent findings: memory ceiling, classmap autoload, mbstring polyfill](#agent-findings-memory-ceiling-classmap-autoload-mbstring-polyfill) — DEEP DIVE A opens: its own provenance rules, and every file the work created
+52. [TASK A — the isolate memory ceiling](#task-a--the-isolate-memory-ceiling) — `wrangler dev` enforces no isolate memory cap, so the deployed ceiling stayed unmeasured
+53. [TASK B — `composer dump-autoload --classmap-authoritative`](#task-b--composer-dump-autoload---classmap-authoritative) — `--classmap-authoritative` breaks Drupal outright rather than trading performance for size
+54. [TASK C — the mbstring polyfill](#task-c--the-mbstring-polyfill) — the mbstring polyfill, and the content-loss bug found inside it
+55. [Caveats, in one place](#caveats-in-one-place) — every local-only figure in the deep dive, listed as a limitation of the method
+56. [cfw_do_sqlite: the Drupal 11 driver for Durable Object SQLite](#cfw_do_sqlite-the-drupal-11-driver-for-durable-object-sqlite) — DEEP DIVE B opens: the driver itself, buffering writes and replaying them inside one `transactionSync()`
+57. [THE CLOSURE MEASUREMENT WAS THE INSTRUMENT, AGAIN](#the-closure-measurement-was-the-instrument-again) — Closure genuinely never runs, and it also cannot be measured standalone; `minify` is the real lever
+58. [`ext-dom` IS ON THE ANONYMOUS RENDER PATH, SO THE 513 KB STAYS](#ext-dom-is-on-the-anonymous-render-path-so-the-513-kb-stays) — a composer requirement proves nothing about a render, and the 513 KB stays because a render uses it
+59. [`minify` IS LANDED, AND A DEPLOY IS WHAT CLOSED IT](#minify-is-landed-and-a-deploy-is-what-closed-it) — a real deploy closed what the gate structurally could not
+60. [THE LINK MAP CANNOT ATTRIBUTE BYTES TO AN EXTENSION HERE, BECAUSE OF LTO](#the-link-map-cannot-attribute-bytes-to-an-extension-here-because-of-lto) — LTO destroys per-extension attribution, retracting a recommendation made the same day
+61. [THE CI BUILDS DISAGREE WITH THE LOCAL ONES BY ~800 KB, AND CI IS THE AUTHORITY](#the-ci-builds-disagree-with-the-local-ones-by-800-kb-and-ci-is-the-authority) — ~800 KB apart on the same source, and CI is the authority
+62. [PHP 8.5 FITS THE FREE CEILING, BY 11,377 BYTES](#php-85-fits-the-free-ceiling-by-11377-bytes) — the claim that stood for minutes
+63. [RETRACTED SAME DAY: "8.5 FITS" WAS MEASURED ON A BINARY MISSING SEVEN EXTENSIONS](#retracted-same-day-85-fits-was-measured-on-a-binary-missing-seven-extensions) — the 8.5 artifact was missing seven extensions and could not have run Drupal
+64. [THE LEXBOR SURGERY IS WELL-DEFINED, AND ITS TARGET IS 2,247,060 BYTES OF BITCODE](#the-lexbor-surgery-is-well-defined-and-its-target-is-2247060-bytes-of-bitcode) — 2,247,060 bytes of bitcode named as the target
+65. [THE BUNDLE IS TWO FILES, SO "WASM + GLUE + OVERHEAD" DOUBLE-COUNTS THE GLUE](#the-bundle-is-two-files-so-wasm--glue--overhead-double-counts-the-glue) — "wasm + glue + overhead" double-counts the glue
+66. [THE 8.5 LADDER, MEASURED ON COMPLETE BINARIES AT LAST](#the-85-ladder-measured-on-complete-binaries-at-last) — the first ladder measured on binaries that actually carry the extensions their rc asked for
+67. [FOUR FREE CHECKS AGAINST THE 590,080 GAP, AND ONE OF MY OWN RESULTS DOES NOT HOLD](#four-free-checks-against-the-590080-gap-and-one-of-my-own-results-does-not-hold) — four checks run without a build, one of which falsified one of my own results
+68. [THE LEXBOR SPEC WAS WRONG TWICE, AND SYMBOL ANALYSIS CAUGHT BOTH](#the-lexbor-spec-was-wrong-twice-and-symbol-analysis-caught-both) — symbol analysis over the real LTO bitcode caught both errors
+69. [THE VM-KIND CONFOUND IS CLEARED: BOTH 8.3 AND 8.5 RESOLVE TO CALL](#the-vm-kind-confound-is-cleared-both-83-and-85-resolve-to-call) — both 8.3 and 8.5 resolve to CALL, so the VM kind is not the variable
+70. [PHP 8.5 REPACKED PDO'S FETCH FLAGS, AND COMPARING CONSTANT NAMES HID IT](#php-85-repacked-pdos-fetch-flags-and-comparing-constant-names-hid-it) — comparing constant names hid a moved bitmask
+71. [THE CEILING IS MiB, AND CLOUDFLARE'S OWN API SAYS SO](#the-ceiling-is-mib-and-cloudflares-own-api-says-so) — the size limit is 3,145,728 bytes, from Cloudflare's own rejection message
+72. [CORRECTION: I RE-COMMITTED THE ADDITIVITY ERROR I HAD ALREADY FOUND](#correction-i-re-committed-the-additivity-error-i-had-already-found) — two deltas against one baseline were added, which this document had already disproved
+73. [COMPRESSION IS NOT A LEVER, AND OUR OWN `gzip -9` FIGURES ARE OPTIMISTIC](#compression-is-not-a-lever-and-our-own-gzip--9-figures-are-optimistic) — wrangler compresses near level 6, so this document's own `gzip -9` figures were optimistic
+74. [THE COMPRESSOR WAS NOT THE CLOSED DOOR; THE MODULE TYPE WAS](#the-compressor-was-not-the-closed-door-the-module-type-was) — shipping the interpreter as a zstd `Data` module saved 997,878 bytes in one change and made every removal unnecessary
+    - [A DUPLICATED PACKAGE SPLIT THE REENTRANCY GATE IN TWO, AND IT SHIPPED](#a-duplicated-package-split-the-reentrancy-gate-in-two-and-it-shipped)
+    - [THE WASM DECODER TAKES STARTUP FROM ~311 ms TO 112 ms FOR 25,569 BYTES](#the-wasm-decoder-takes-startup-from-311-ms-to-112-ms-for-25569-bytes)
+    - [THE 12x SERVING LEVER: THE FILE HALF IS BUILT, THE PAGE HALF IS NOT](#the-12x-serving-lever-the-file-half-is-built-the-page-half-is-not)
+    - [THE 12.5x WAS DERIVED FROM THE WRONG METER; THE FLOOR IS ABOUT 3.3x](#the-125x-was-derived-from-the-wrong-meter-the-floor-is-about-33x)
+
+
+> **Round 1 —** the 42% bundle saving holds only if PHP runs INSIDE the Durable Object, which decided the architecture
+
+## THE ARCHITECTURAL FORK: WHERE DOES PHP RUN?
+
+This is not in any earlier draft and it silently decides the bundle argument.
+
+The conclusion "DO SQLite is synchronous, so Asyncify is unnecessary" — which
+bought the 42% reduction and therefore the free tier — **holds only if PHP
+executes inside the Durable Object**. `ctx.storage.sql.exec()` is synchronous
+because `ctx` exists inside the DO class. From a Worker isolate holding a
+`DurableObjectStub`, every call is `await stub.fetch()` or an async RPC method.
+**There is no synchronous cross-isolate call in Workers.**
+
+| Shape                  | Database          | Bundle consequence                                                                           | Concurrency                    |
+| ---------------------- | ----------------- | -------------------------------------------------------------------------------------------- | ------------------------------ |
+| **PHP inside the DO**  | sync `exec()`     | **no Asyncify — bundle fits**                                                                | one request at a time per site |
+| PHP in Worker isolates | every query async | JSPI/Asyncify on **all 57 queries per render**, not just HTTP — the bundle argument reversed | horizontal                     |
+
+**Decision: PHP runs inside the Durable Object.** The bundle result depends on
+it, and the DO is also where the database, the alarm for checkpointing, and
+per-site serialization naturally live.
+
+The `/page` route's in-memory `Map` "standing in for Durable Object storage" has
+been masking this choice. It must be forced before the `Connection` class is
+written, because the two shapes share almost no code — the same trap the
+database decision already avoided once.
+
+**Consequence to accept:** concurrency is no longer "unmeasured", it is
+**serialized: one request at a time per site**.
+
+> **SUPERSEDED.** This previously read "at the measured 0.242 ms CPU per warm
+> anonymous request a single DO saturates around ~4,000 rps". That 0.242 ms was
+> a `page_cache` hit, not a render — see CURRENT NUMBERS. Corrected ceiling:
+> a `page_cache` hit is ~4.6 ms (**~215 rps** per DO), a real render on a warm
+> kernel is 33.8 ms (**~30 rps** per DO). Serialization is therefore a real
+> throughput ceiling, not just a wall-clock property, and per-site sharding
+> becomes a design requirement rather than an optimization.
+
+The bound only bites when a request holds the interpreter across I/O, which is
+what synchronous outbound HTTP would do — and DOs bill on active duration, so a
+suspended request costs money while using no CPU. Authenticated cost remains
+unmeasured and is the real open question.
+
+> **Round 2 —** cold start reframed as the gate on four separate problems, and the diagnosis moved off opcache
+
+## COLD START IS THE LINCHPIN, AND THE DIAGNOSIS CHANGED
+
+1,502 ms gates four separate things: free tier, hibernation quality-of-service
+for low-traffic sites (which are cold on most requests — that is the
+customer-facing TTFB), disposable kernels for isolation, and throughput per site
+now that PHP is in the DO. Every remaining hard problem gets easier if boot is
+cheap.
+
+`$kernel->boot()` is **1,323 ms of the 1,502**.
+
+### It is not container compilation — that was the wrong hypothesis
+
+Checked directly. The packed database already contains the compiled container:
+
+| Cache table       | Rows | Bytes         |
+| ----------------- | ---- | ------------- |
+| `cache_container` | 3 | **1,449,009** |
+| `cache_config`    | 93 | 229,682       |
+| `cache_discovery` | 79 | 45,047        |
+| `cache_bootstrap` | 4 | 45,443        |
+
+So Drupal is **not** recompiling the container. The 1,323 ms is unserializing
+1.4 MB of container definition, instantiating services, and **parsing 1,799 PHP
+files with no bytecode cache whatsoever**.
+
+### opcache: the largest unexplored lever, and it is one flag
+
+"There is no opcache in wasm" is true only of **SHM** opcache, which needs shared
+memory emscripten does not provide. `opcache.file_cache_only=1` writes compiled
+bytecode to disk and reads it back with **no SHM at all** — precisely a
+single-process model, which is exactly what this is.
+
+Probed in the build:
+
+```json
+{
+  "zend_extensions": [],
+  "opcache_loaded": false,
+  "has_status_fn": false,
+  "ini": { "opcache.enable": false, "opcache.file_cache_only": false }
+}
+```
+
+**opcache is not compiled in.** The Makefile only ever passed
+`--disable-opcache-jit`; it never passed `--enable-opcache`. `ext/opcache` is
+present in php-src, and `CONFIGURE_FLAGS` is settable from `.php-wasm-rc`.
+
+**CORRECTION — opcache is NOT closed. The first attempt failed on a
+cross-compilation artifact, and I misread it as a platform limit.**
+
+The failure was real but the diagnosis was wrong:
+
+```
+checking for mmap() using shm_open() shared memory support... no
+configure: error: No supported shared memory caching support was found
+          when configuring opcache.
+```
+
+`file_cache_only` is a _runtime_ setting, and the earlier conclusion that
+configure's refusal proved emscripten "provides none" was **wrong on both
+halves**.
+
+**Half 1 — the probe fails for a real reason, but an irrelevant one.** My first
+diagnosis ("emscripten provides no shared memory") was wrong. So was the second
+("it is purely a cross-compilation fallback"). The actual mechanism, found by
+reading the probe:
+
+```c
+shm = mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, -1, 0);
+...
+pid = fork();          /* <-- wasm has no fork() */
+```
+
+emconfigure runs test binaries through node, so autoconf is **not** in the
+cross-compiling branch — the test genuinely executes and genuinely fails,
+because it verifies shared memory _by forking_. Patching the cross-compile
+fallback therefore did nothing; the second `AC_RUN_IFELSE` argument was being
+taken all along.
+
+What matters is that the probe tests a property `file_cache_only` never uses.
+Forcing the result past it is legitimate, and now verified:
+
+```
+checking for mmap() using MAP_ANON shared memory support... yes
+```
+
+opcache configures and builds.
+
+#### The reusable line, stated exactly
+
+For anyone building PHP-to-wasm after this: **no autoconf cache variable works
+here.** PHP 8.3's `ext/opcache/config.m4` uses bare `AC_RUN_IFELSE` with **no
+`AC_CACHE_CHECK`**, so there is no `php_cv_shm_mmap_anon` /
+`php_cv_shm_mmap_posix` to seed on the configure line — nothing is read from or
+written to the cache file for these probes. Seeding them is a no-op.
+
+What works is forcing the variable **after** the probe:
+
+```m4
+]])],[have_shm_mmap_anon=yes],[have_shm_mmap_anon=no],[have_shm_mmap_anon=yes])
+  # probe fork()s, which wasm lacks; file_cache_only needs no SHM
+  have_shm_mmap_anon=yes
+  if test "$have_shm_mmap_anon" = "yes"; then
+```
+
+Three attempts failed first, and each is a distinct trap worth knowing:
+
+| Attempt                                                 | Why it was inert                                                                                                        |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Patch the cross-compile (3rd) `AC_RUN_IFELSE` branch    | Wrong branch — emconfigure runs tests through node, so autoconf is **not** cross-compiling and takes the 2nd branch     |
+| Extend `case $host_alias in *linux*)` to `*emscripten*` | `$host_alias` is **empty**; emconfigure invokes `./configure` with no `--host`                                          |
+| Append `dnl phpwasm-forced` as a trailing comment       | `dnl` consumes the **newline**, merging the assignment into the next line → `syntax error near unexpected token 'then'` |
+
+Also required: delete `third_party/php<v>-src/configured` so `buildconf --force`
+regenerates `configure`. Editing `config.m4` alone is inert.
+
+**Half 2 — no allocator stub is needed.** The claim that the accelerator still
+allocates SHM under `file_cache_only` is contradicted by the source.
+`ZendAccelerator.c` `accel_startup()`:
+
+```c
+if (file_cache_only) {
+    ZCG(accelerator_enabled) = false;
+    return SUCCESS;          // returns before zend_shared_alloc_startup()
+}
+```
+
+So only _configure_ has to be satisfied, not the runtime.
+
+**The fix is a one-line patch of the same kind upstream already applies**, now in
+`build/build-static.sh`:
+
+```
+*linux*|*emscripten*)  have_shm_mmap_anon=yes
+```
+
+Prior art: Wasmer did this for PHP-on-wasm and reported **WordPress dropping from
+~620 ms to ~205 ms (3x)** with opcode caching enabled — the same workload shape
+and the same problem. Their difficulty was that opcache is conventionally a
+shared extension and had to be statically linked, which is exactly the
+constraint this build already satisfies (`MAIN_MODULE=0`).
+
+### Status: configure solved, static link NOT solved
+
+The build completes and produces a working binary
+(10,202,691 raw / 3,296,196 gzip, no dylink), but **opcache is not in it**:
+
+```
+checking whether to enable Zend OPcache support... yes   <- configure accepts it
+ZendAccelerator objects compiled:                  0     <- never built
+```
+
+At runtime the probe confirms it: `zend_extensions: []`, `opcache_loaded:
+false`, and none of the `opcache.*` ini keys are registered even though they are
+written into `/php.ini`.
+
+So the SHM probe was the _first_ barrier, not the only one. php-wasm's build
+compiles a fixed object set and never picks up `ext/opcache`'s objects — opcache
+is conventionally a **shared** extension, and this build is `MAIN_MODULE=0`,
+where a `.so` is useless. **This is precisely the "fixed a number of things
+along the way" that Wasmer described when they statically linked it.**
+
+Honest position: **the lever is open but not pulled.** The configure barrier is
+solved and documented above; the static-link step is unfinished and is the next
+piece of work. Nothing measured here yet contradicts the ~3x prior art — but
+nothing here confirms it either, and the boot breakdown below must be measured
+before the payoff is assumed.
+
+### PROFILED: what the 1,020 ms actually is
+
+Route `/boot-profile`. "Service instantiation, plugin discovery, YAML, entity
+definitions" was a suspect list; these are numbers.
+
+**Two suspects cleared.** The discovery caches are _hitting_, not silently
+rebuilding on an environment-dependent key:
+
+| Probe                                             | Time     |
+| ------------------------------------------------- | -------- |
+| `entityTypeManager()->getDefinitions()` (28 defs) | **0 ms** |
+| repeat call                                       | 0 ms     |
+| `plugin.manager.block` (35 defs)                  | **0 ms** |
+| `plugin.manager.field.field_type` (29 defs)       | **0 ms** |
+
+Cache state in the packed DB: `cache_discovery` 79 rows / 45,047 B,
+`cache_bootstrap` 4 / 45,443 B, `cache_config` 93 / 229,682 B, `cache_default`
+56 / 133,651 B. So plugin discovery is **not** the cold-boot hot spot here — the
+shipped caches work, and this is not a repeat of the Twig `uniqid()` failure.
+
+**The real one: YAML.**
+
+```json
+{
+  "ext_yaml": false,
+  "yaml": { "files": 146, "bytes": 238666, "ms": 201, "ms_per_file": 1.377 }
+}
+```
+
+**201 ms to parse 146 `.yml` files** with Symfony's pure-PHP parser — and the
+boot trace opens **147** of them, so this is representative rather than
+synthetic.
+
+Throughput comparison makes the size of the mistake clear:
+
+| Work                        | Throughput    |
+| --------------------------- | ------------- |
+| PHP parse + compile         | 23–26 MB/s    |
+| **Symfony YAML (pure PHP)** | **1.19 MB/s** |
+
+**~20x slower per byte.** And `WITH_YAML=0` was my own decision, made for size on
+the assumption that Symfony's parser was an adequate substitute. It costs ~201 ms
+of every cold boot.
+
+`php-wasm-yaml` is ~290 KB unpacked, so its gzipped contribution sits
+comfortably inside the 351,744-byte margin. **Trading ~80 KB for ~201 ms is
+clearly correct, and ext-yaml is worth more than opcache** (~201 ms versus
+opcache's ~23% of a ~301 ms parse cost).
+
+**Revised accounting of the 1,323 ms boot:**
+
+| Component               | Measured          |
+| ----------------------- | ----------------- |
+| Parse + compile         | ~301 ms (23%)     |
+| **YAML parsing**        | **~201 ms (15%)** |
+| Container unserialize   | ~1 ms (0%)        |
+| Plugin/entity discovery | ~0 ms (cached)    |
+| **Still unattributed**  | **~820 ms (62%)** |
+
+The remaining ~820 ms is service instantiation and general execution. It is not
+discovery, not the container, and not YAML.
+
+**Side finding: the pack is anonymous-only, again.** Three plugin managers failed
+outright with missing classes — `AnnotatedClassDiscovery`, `YamlDiscovery`,
+`ContainerDerivativeDiscovery` — because the trace never exercised them. Same
+gap as the missing `User` entity class. The re-trace must drive authenticated,
+admin and Views routes.
+
+> **Round 3 —** 20.3 MB of the tree is never read again after boot, and the read-only FS backend is the wrong lever for it
+
+## MEMORY: EVICTION RECOVERS 20 MB, AND THE READ-ONLY FS BACKEND IS THE WRONG LEVER
+
+Measured (`/evict`), and it corrects a premise that had been carried for several
+rounds.
+
+| Measure                               | Value                                  |
+| ------------------------------------- | -------------------------------------- |
+| Files opened during boot              | 2,987                                  |
+| Files touched on the **request path** | **75**                                 |
+| **Boot-only files**                   | **2,984 — 21,283,521 bytes (20.3 MB)** |
+| Request-path bytes                    | 623,011 (0.6 MB)                       |
+| Files evicted via `FS.unlink()`       | 1,984                                  |
+| Drupal after eviction                 | **200, 12,304 bytes, no error**        |
+
+**20.3 MB of the 33.42 MB tree is never read again after boot** — install files,
+update hooks, one-shot bootstrap includes, plugin classes loaded once during
+discovery. The steady-state request path needs **0.6 MB**.
+
+Evicting after `boot()` takes the isolate from ~116 MB to **~100 MB, restoring
+~28 MB of headroom with authenticated support included** — which was the target.
+
+### Why the read-only FS backend is not the lever it appeared to be
+
+The standing claim was that every packed file is resident twice — once as
+blob-derived data, once as filesystem state — and that a blob+index backend
+would recover ~15 MB.
+
+**That is true of the naive mount and false of the streaming one.**
+`mountDrupalStreaming()` already releases each chunk as it is consumed
+(`peakCarryBytes` 376 KB), so the source is gone by the time PHP runs. The only
+duplication left is MEMFS **per-node overhead**, not the bytes.
+
+Confirmed by the eviction measurement: `linearBefore == linearAfter ==
+80,543,744`. Unlinking 1,984 files changed wasm linear memory not at all,
+because MEMFS contents live in the **JS heap**. The saving is real — it still
+counts against the 128 MB isolate — but it is not in the wasm arena, and a
+read-only FS backend would recover node overhead rather than file contents.
+
+**So: build eviction, not the FS backend.** Eviction is a dozen lines against a
+custom emscripten filesystem, and it recovers 20.3 MB against an estimated few MB.
+
+**Caveat to design around:** eviction assumes the request path never needs a
+boot-only file. That holds for the 75-file steady state measured here, but a
+rarely-exercised route could reference an evicted class. The mitigation is a
+fetch-on-miss fallback rather than trusting the trace — the same
+trace-blindness that produced six missing-class incidents applies here too.
+
+> **Round 4 —** the authenticated path measured for the first time, in the 0.242 ms era whose absolutes later fell
+
+## MEASURED: authenticated request CPU
+
+The largest remaining unknown, now closed. Fresh kernel per request — which is
+both the production strategy and, as it turns out, the only way to get a correct
+number at all (see the PageCache defect below).
+
+| Request                 | Fresh-kernel CPU | Response | Title                   |
+| ----------------------- | ---------------- | -------- | ----------------------- |
+| Anonymous `/`           | **2.45 ms**      | 12,304 B | Welcome! \| CFW Bench   |
+| Anonymous `/user/login` | **2.25 ms**      | 12,944 B | **Log in \| CFW Bench** |
+| **Authenticated `/`**   | **8.90 ms**      | 12,304 B | Welcome! \| CFW Bench   |
+
+Distinct titles and byte counts confirm routing genuinely varied — the check that
+every earlier attempt failed.
+
+**Authenticated costs ~3.6x anonymous**, and these figures _include_ the ~2 ms
+kernel construction.
+
+### Against the budgets
+
+|                                   | Free (10 ms) | Paid (30 s) |
+| --------------------------------- | ------------------- | ----------- |
+| Anonymous cached (warm kernel)    | 0.242 ms — **2.4%** | trivial     |
+| Anonymous uncached (fresh kernel) | 2.45 ms — **25%** | trivial     |
+| **Authenticated (fresh kernel)**  | **8.90 ms — 89%** | trivial     |
+
+**Authenticated traffic fits inside the free tier, with essentially no margin.**
+That is a real answer rather than the "unmeasured worst case" this had been, and
+it is better than expected — but 89% of budget means any heavier page (a View
+with many rows, a complex form) will exceed it. Free tier is viable for
+anonymous-dominant sites; authenticated-heavy sites belong on paid.
+
+### Disposable-kernel memory plateaus — it is not a leak
+
+Wasm memory never shrinks, so repeated kernel construction looked like it might
+grow unbounded. It does not:
+
+| Point                        | Linear memory               |
+| ---------------------------- | --------------------------- |
+| Warm baseline                | 80,543,744                  |
+| After first kernel batch     | 115,998,720                 |
+| **After 50 further kernels** | **115,998,720 (unchanged)** |
+
+PHP's allocator reuses freed heap inside the wasm arena rather than growing it.
+So disposable kernels settle at **~116 MB against the 128 MB cap — ~12 MB
+headroom**. Stable, but tight, and it stacks with the `COMPLETE_CORE` pack
+requirement rather than being independent of it.
+
+(`memory_get_usage()` returns 0 in this build — a php-wasm reporting quirk — so
+wasm linear memory is the only reliable signal.)
+
+### The defect that invalidated every earlier per-route number
+
+`PageCache::getCacheId()`:
+
+```php
+if (!isset($this->cid)) {          // memoized on the middleware INSTANCE
+  $cid_parts = [$request->getSchemeAndHttpHost() . $request->getRequestUri(), ...];
+  $this->cid = implode(':', $cid_parts);
+}
+```
+
+The middleware is a **service that survives between requests**. The first request
+memoizes the cid for `/`; every later request reuses it and is served the front
+page from cache. Confirmed by `x-drupal-cache: HIT` on a request for
+`/admin/content`.
+
+This is the third distinct "Drupal assumes the process dies" defect found, after
+`drupal_static` persistence and `preHandle()`'s `$prepared` guard. **A fresh
+kernel fixes it for free**, because the middleware instance is new — which is a
+second, independent argument for the disposable-kernel strategy beyond isolation.
+
+### Two more trace-invisible classes
+
+`/user/1` and `/admin/content` under an authenticated kernel still fail on
+`Doctrine\Common\Lexer\AbstractLexer` (annotation parsing) and
+`/drupal/core/includes/install.inc`. That is instances **five and six** of the
+same pattern. The count itself is the finding: **string-referenced and
+error-path-only classes cannot be discovered by tracing, and completing core is
+the only robust answer.**
+
+> **Round 5 —** a disposable kernel costs 2 ms rather than a full boot, reversing "priced out"
+
+## THE ISOLATION PROBLEM HAS A 2 ms SOLUTION — and it reverses an earlier call
+
+The most consequential measurement of the project, and it overturns a conclusion
+I argued for across several rounds.
+
+I claimed disposable kernels were "priced out" because a fresh kernel would pay
+the full ~1,020 ms boot. **That was wrong.** The expensive work is
+**per-process**, not per-kernel — parsing 1,799 files, warming the opcode state
+and the caches. Once a process has paid it, constructing a _new_
+`DrupalKernel` costs almost nothing.
+
+Measured, three fresh kernels in one warm process — full sequence each time
+(`new DrupalKernel` -> `bootEnvironment` -> `setSitePath` -> `Settings::initialize`
+-> `boot()` -> `handle()`):
+
+| Kernel | setup | boot | handle | total    | result            |
+| ------ | ----- | ---- | ------ | -------- | ----------------- |
+| 1      | 1 ms  | 3 ms | 1 ms   | **4 ms** | 200, 12,304 bytes |
+| 2      | 0 ms  | 2 ms | 0 ms   | **2 ms** | 200, 12,304 bytes |
+| 3      | 0 ms  | 1 ms | 0 ms   | **2 ms** | 200, 12,304 bytes |
+
+Real responses, not empty ones — byte-identical to the reference render.
+
+### What this changes
+
+**Disposable-kernel-per-request is affordable.** At 2-4 ms it is viable for
+_every_ request, and certainly for the authenticated ones that carry the
+disclosure risk. That gives **isolation by construction** rather than by
+auditing what leaks:
+
+| Request class       | Strategy | Isolation                    |
+| ------------------- | ------------------------ | ---------------------------- |
+| anonymous, cached   | never reaches PHP | perfect                      |
+| anonymous, uncached | warm kernel + resetter | correctness risk only        |
+| **authenticated**   | **fresh kernel, 2-4 ms** | **perfect, by construction** |
+
+The resetter stays useful — it is cheaper still, and PHP-level statics
+(`drupal_static`) live in the _process_, not the kernel, so they survive a fresh
+kernel and must still be reset. But the security-critical path no longer depends
+on enumerating every leak correctly, which was the part that could never be
+proven complete.
+
+**The 1,323 ms is confirmed as purely per-isolate cold start.** Nothing about it
+is per-request. That makes keep-warm alarms the entire cold-start strategy, as
+already concluded — and it means the remaining ~820 ms of unattributed boot is
+paid once per Durable Object lifetime, not once per user.
+
+### Correcting the record
+
+| Claim                                             | Status                                |
+| ------------------------------------------------- | ------------------------------------- |
+| "opcache is the linchpin, one lever four unlocks" | **wrong** — 23% of boot               |
+| "the container is ~400 ms"                        | **wrong** — 1 ms                      |
+| "warm requests are 2-3 ms"                        | **wrong** — 0.242 ms, precision floor |
+| "disposable kernels are priced out at ~1,020 ms"  | **wrong** — 2-4 ms                    |
+| "ext-yaml not worth the bytes"                    | **wrong** — 241 ms for 83 KB          |
+
+Every one of these was an inference from an adjacent measurement rather than the
+measurement itself. The pattern is consistent enough to be worth stating: on this
+project, reasoning one step beyond the data has been wrong roughly every time.
+
+> **Round 6 —** `preHandle()`'s `prepared` guard and a PageCache defect had been corrupting every earlier render figure
+
+## TWO DEFECTS FOUND WHILE TRYING TO MEASURE THE AUTHENTICATED PATH
+
+Both were silently corrupting earlier results, and both are worth more than the
+measurement they blocked.
+
+### 1. A persistent kernel does not re-route between requests
+
+`DrupalKernel::preHandle()` is guarded by `$this->prepared`, so it pushes onto
+`request_stack` only on the **first** `handle()`. Every later call routes against
+the _first_ request's path. Measured directly:
+
+```
+reqUri      = /admin/content     <- what was passed
+pathInfo    = /admin/content     <- correct on the Request object
+current_path = /node             <- WRONG
+route       = view.frontpage.page_1
+stack       = /                  <- the stack still holds request #1
+```
+
+**Consequence: an earlier run reporting "all 18 routes 200" was meaningless.**
+Every one of them re-served the front page — including `/robots.txt`, which
+returned 12,304 bytes of HTML. Identical response length across every path was
+the tell, and byte counts should have been in that harness from the start.
+
+This is the same class of defect as the `drupal_static` leak and the
+`require_once`-returns-`true` trap: **Drupal assumes a process boundary where
+there is none.** Any worker-mode port needs an explicit per-request
+re-initialization, not just a reset.
+
+### 2. Trace-based packing is blind to string-referenced classes — four instances
+
+Tracing `FS.open` catches every file the runtime _opens_. It cannot catch a class
+that is never loaded because the code path did not run. Four separate instances
+found here, each costing a debugging cycle: Symfony polyfills, `.yml`/`.twig`,
+lazily-thrown exceptions, entity handlers / plugin classes. The per-instance table
+was extended twice afterwards and now lives, at eight rows, in "STOP INCREMENTALLY
+COMPLETING THE PACK — pack everything"; instance eleven is above the fold in "Instance
+eleven of the trace-blind class".
+
+**Instance 3 failed silently, which makes it the dangerous one.**
+`router->match('/admin/content')` resolved correctly, then tried to throw
+`CacheableAccessDeniedHttpException`, the class was absent, the error was
+swallowed, and **every route returned the front page with HTTP 200**. Nothing
+looked wrong.
+
+Fix for 3 is cheap and now in the packer: pack all
+`core/**/Exception/*.php` and `core/**/*Exception.php` unconditionally.
+Exception classes are tiny and invisible to tracing by construction.
+
+Fix for 4 is not cheap. Entity handlers are named in strings, so **no static or
+dynamic analysis short of executing every path will find them.** The only robust
+answer is completing core.
+
+### COMPLETE_CORE is the shipping configuration, not a debugging convenience
+
+Six instances of trace-blind classes (polyfills, .yml/.twig, lazily-thrown
+exceptions, entity handlers, Doctrine's annotation lexer, `install.inc`) make the
+conclusion permanent: **string-referenced and error-path-only classes cannot be
+found by tracing**, so core must be completed. Record its cost as a standing line
+item in the memory budget rather than something to optimize away later.
+
+### The authenticated path works, and it costs the memory headroom
+
+With `COMPLETE_CORE=1` (trace + all vendor packages + all of `core/lib` + core
+module `src/`), routing and access control behave correctly:
+
+```
+/admin/content -> CacheableAccessDeniedHttpException: 'access content overview' required
+/user/1        -> CacheableAccessDeniedHttpException: 'access user profiles' required
+```
+
+Those are semantically _correct_ — anonymous genuinely lacks those permissions.
+
+| Pack                      | Files     | Tree         | Total isolate memory | Headroom    | Authenticated? |
+| ------------------------- | --------- | ------------ | -------------------- | ----------- | -------------- |
+| Trace, anonymous          | 3,557     | 16.11 MB     | 99.1 MB              | 28.9 MB     | **no**         |
+| Trace + exceptions        | 3,826     | 16.78 MB     | 99.8 MB              | 28.2 MB     | partial        |
+| **Trace + COMPLETE_CORE** | **9,540** | **33.42 MB** | **116.4 MB**         | **11.8 MB** | **yes**        |
+| Everything minus tests    | 10,856    | 40.8 MB      | 127.8 MB             | 0.2 MB      | yes            |
+
+**So authenticated support costs ~17 MB of the 28.9 MB headroom.** It fits, with
+11.8 MB to spare, but it converts memory from comfortable to tight — and that is
+before the paid deployment validates any of these numbers under an enforcing
+runtime.
+
+**Not measured:** authenticated request CPU. The routing defect above invalidated
+the first attempt (every route was secretly the front page at 0.2 ms), and the
+corrected harness needs an authenticated session rather than `router->match()`
+to produce a real number. **This remains the largest unknown**, and the earlier
+"authenticated costs the same as anonymous" reading was an artifact, not a
+result.
+
+### BUILT AND MEASURED: ext-yaml is the best byte-for-millisecond trade found
+
+`WITH_YAML=static` plus `WITH_ZLIB=static` restored, rebuilt
+(`vendor/static-v2`), benchmarked against the same corpus boot opens
+(`/yaml-bench`):
+
+| Parser                 | 147 files / 238,666 bytes | Throughput     |
+| ---------------------- | ------------------------- | -------------- |
+| Symfony pure-PHP       | **256 ms** | 0.89 MB/s      |
+| **ext-yaml (libyaml)** | **15 ms** | **15.17 MB/s** |
+|                        | **241 ms saved** | **17.1x**      |
+
+Cost: **83,551 bytes** gzipped.
+
+| Bundle       | gzip                     |
+| ------------ | ------------------------ |
+| wasm         | 2,763,081                |
+| glue         | 114,454                  |
+| **Total**    | **2,877,535**            |
+| Free ceiling | 3,145,728                |
+| **Margin**   | **268,193 (8.5% under)** |
+
+Extensions now present: `Core PDO Reflection SPL SimpleXML ctype date dom filter
+hash json libxml pcre pib random session standard tokenizer vrzno xml **yaml**
+**zlib**` — all 14 of core's requirements except `gd` (deliberate; Cloudflare
+Images replaces it), and `zlib` restored after being wrongly dropped.
+
+**Comparison of the two cold-start levers, measured rather than assumed:**
+
+| Lever        | Saves                         | Costs    | Works?                     |
+| ------------ | ----------------------------- | -------- | -------------------------- |
+| **ext-yaml** | **241 ms**                    | 83,551 B | **yes**                    |
+| opcache      | ~70 ms (23% of ~301 ms parse) | unknown  | **no — still not linking** |
+
+**ext-yaml is worth roughly 3.4x more than opcache**, and it is the one that
+works. That inverts the priority I argued for over several rounds.
+
+Revised cold boot: **1,323 - 241 ≈ 1,082 ms.** Still ~1 second, which confirms
+both downstream conclusions independently: disposable kernels stay priced out,
+and keep-warm alarms are the cold-start strategy.
+
+### CORRECTED: warm requests are 0.242 ms, not 2-3 ms
+
+"2-3 ms warm" was at the precision floor and should not have been quoted.
+workerd returns integer-millisecond timers, so 2 vs 3 is a single tick and 2.0
+cannot be distinguished from 3.9 — and the figure also included the JS round
+trip, not just PHP.
+
+Amortized over 500 in-process requests (`/warm-precision`):
+
+```json
+{ "n": 500, "totalMs": 121, "perRequestMs": 0.242, "lastStatus": 200 }
+```
+
+**0.242 ms of PHP per warm anonymous request** — **41x headroom** against the
+10 ms free-tier CPU limit, not 3-5x.
+
+**This reframes the Durable Object concurrency conclusion.** "One request at a
+time per site" is a _wall-clock_ statement and was presented as though it were a
+throughput ceiling. In CPU terms a single DO saturates somewhere around
+**~4,000 rps** of warm cached anonymous traffic. That is not a constraint for the
+target workload; it is comfortably beyond it.
+
+The serialization bound only bites when a request **holds the interpreter across
+I/O** — which is precisely what synchronous outbound HTTP over JSPI would do. And
+because Durable Objects bill on _active duration_, a suspended request costs
+money while consuming no CPU.
+
+**That is a second, independent argument for the deferred HTTP strategy**, on top
+of the audit showing zero core call sites need synchronous outbound HTTP on the
+anonymous path: sync-over-JSPI converts a 0.242 ms CPU request into a
+multi-hundred-millisecond billed occupancy that also blocks every other request
+to that site.
+
+### MEASURED: the boot breakdown, and it changes the opcache conclusion
+
+Route `/boot-breakdown`. This was supposed to gate the isolation strategy, and it
+does — against the strategy I had been assuming.
+
+| Component                                                     | Measured | Share of the 1,323 ms `boot()` |
+| ------------------------------------------------------------- | ------------------------------------- | ------------------------------ |
+| `cache_container` unserialize (483,003 bytes)                 | **1 ms**, 0 ms on repeat | **~0%**                        |
+| Parse + compile (281 real `include`s, 1,059,036 bytes, 47 ms) | **~301 ms** projected for 1,799 files | **~23%**                       |
+| Tokenize-only cross-check (400 files, 2,069,670 bytes, 81 ms) | ~364 ms projected | —                              |
+| **Everything else**                                           | **~1,020 ms** | **~77%**                       |
+
+Both measurements agree on throughput (~23–26 MB/s of PHP source), and the real
+`include` path was used rather than `token_get_all()` alone, because tokenizing
+is only the lexer — compilation builds an AST and emits opcodes, which is what
+opcache actually caches.
+
+**Two hypotheses die here.**
+
+1. **The container is not the cost.** An earlier section proposed the container
+   might be ~400 ms of boot, which would have made disposable kernels expensive.
+   It is **1 ms**. `$settings['bootstrap_container_definition']` is therefore not
+   worth pursuing for performance.
+2. **opcache is not the linchpin.** I called it "one lever, four downstream
+   unlocks". It addresses **~23% of boot**. Even a perfect bytecode cache leaves
+   **~1,020 ms**, because ~77% of Drupal's boot is _executing PHP_ — instantiating
+   services, discovering plugins, parsing YAML, building entity definitions — not
+   parsing it.
+
+   The ~3x prior art (Wasmer/WordPress) does not transfer: WordPress's boot is
+   parse-dominated, Drupal's is execution-dominated. opcache remains worth ~300 ms
+   and worth finishing, but it is a **23% lever, not a 3x one**.
+
+**Consequences, and these are decisions rather than observations:**
+
+- **Disposable kernels per authenticated request are NOT affordable.** At ~1,020 ms
+  post-opcache, a fresh kernel per authenticated request is off the table. **The
+  resetter is the required isolation path**, not a stopgap on the way to
+  disposable kernels.
+- **Boot does not fit a ~1 s module-scope budget even with opcache.** The
+  Durable Object constructor via `ctx.blockConcurrencyWhile()` — which has no cap
+  — is the correct home, confirming that call independently.
+- **The real cold-start work is in the other 77%**: fewer installed modules, the
+  minimal install profile rather than `standard`, and lazy service instantiation.
+  That is where a second measurement should go, not into bytecode caching.
+
+### The cascade has a weak link — opcache does not attack the container
+
+An earlier draft claimed opcache unlocks boot-at-startup, which unlocks warm
+requests, which makes disposable kernels affordable, which fixes isolation.
+**That overstates it.**
+
+opcache attacks the cost of **parsing 1,799 PHP files**. It does nothing for the
+**1.4 MB `cache_container` unserialize plus service instantiation**, which is not
+parsing. A disposable kernel still pays the container cost on every spawn even
+with a perfect bytecode cache.
+
+So the arithmetic depends on a split that has not been measured:
+
+| If the container is… | Post-opcache boot (parse ÷3) |
+| -------------------- | ---------------------------- |
+| 400 ms of the 1,323  | 400 + 923/3 ≈ **700 ms**     |
+| 150 ms of the 1,323  | 150 + 1173/3 ≈ **540 ms**    |
+
+700 ms is still a large win, but it is a **different answer for the isolation
+strategy** than 440 ms — disposable-kernel-per-authenticated-request is only
+affordable at the low end. **The boot breakdown must separate container
+unserialize from file parsing before that strategy is chosen.**
+
+### How to measure it so the number means something
+
+1. **Cold and warm file cache are different measurements.** With
+   `file_cache_only=1` the first boot has an empty cache and pays parsing _plus_
+   serialization to disk — potentially **slower** than no opcache. The 3x figure
+   is the warm-cache case. The win only materializes if a **warmed file cache
+   ships in the pack**, which means generating it in the target runtime — the
+   same environment-hash discipline the Twig prefix already needs. Confirm the
+   file cache key is stable across isolates (it hashes a system id: PHP version,
+   extension set, ini settings) rather than per-process.
+2. **`opcache.validate_timestamps=0`.** Default is on, which stats every file on
+   every include. VFS timestamps here are meaningless anyway, and turning it off
+   removes ~1,799 stats per boot. Also `opcache.max_accelerated_files` above
+   1,799 (the default 10,000 is fine; it rounds to a prime) and
+   `opcache.file_cache_consistency_checks=0` if the pack is trusted.
+3. **Confirm the cache is actually hit.** `opcache_get_status()` must show file
+   cache hits rather than silently falling through to compile. Reading from the
+   file cache also yields already-optimized opcodes, which is part of where the
+   3x comes from.
+
+### The remaining ladder, with opcache reopened
+
+1. **opcache `file_cache_only`** — reopened, patched, building. Prior art says
+   ~3x. Everything below is easier if this lands.
+2. **Boot in the Durable Object constructor, not at module scope.**
+   `ctx.blockConcurrencyWhile()` in the DO constructor delays delivery of every
+   request until the promise resolves. It has **no 1-second cap**, it is
+   naturally once-per-DO, and it _is_ the serialization point the reentrancy
+   section separately requires. Module scope was the wrong target — it means
+   optimizing to fit an arbitrary budget that does not apply once PHP lives in
+   the DO.
+3. **Keep the object warm.** A recurring DO alarm prevents hibernation, turning
+   cold start from a per-request cost on low-traffic sites into a **per-deploy**
+   cost. This directly answers the "low-traffic sites are cold on most requests"
+   problem raised earlier and previously left unaddressed. Cheap, and it moves
+   customer-facing TTFB more than any build flag.
+4. **Precompiled Twig in a matching environment** — diagnosed (the `uniqid()`
+   prefix regenerates when the Twig extension hash changes), unbuilt. ~37 ms
+   native, more in wasm.
+5. **Trim the container.** 1.4 MB of `cache_container` to unserialize on every
+   boot is the single largest identified cost. Fewer installed modules means a
+   smaller container, and the minimal install profile is measurably cheaper than
+   `standard`. Unquantified, and the cheapest thing left to measure.
+6. **Snapshot linear memory post-boot.** Normally hopeless, but this build has no
+   dylink and no runtime codegen, and wasm pointers are internal to linear
+   memory — so a straight image restore plus mutable globals (stack pointer,
+   heap break) is more plausible here than in any dylink build. **Kill criterion:
+   if a trivial heap will not round-trip in a day, drop it.**
+
+> **Round 7 —** request isolation named as the largest unresolved item, above every performance number
+
+## SECURITY: REQUEST ISOLATION IS THE LARGEST UNRESOLVED ITEM
+
+This belongs above every performance number in this document.
+
+The interpreter persists between requests and, per Blocker 1, cannot be cheaply
+torn down. Drupal assumes a fresh process. Measured directly (`/isolation`):
+
+```json
+{
+  "static_set": "set-by-request-1",
+  "next_request_status": 200,
+  "static_after_next_request": "set-by-request-1",
+  "global_after_next_request": "uid-1-identity",
+  "LEAKED": true
+}
+```
+
+A complete request ran between the write and the read, and **request 1's state
+was still present afterwards.**
+
+`drupal_static()` is Drupal's canonical _per-request_ cache. It holds user
+permissions, node access grants, entity field definitions, and language
+negotiation results — precisely the per-user state that must not survive into
+another user's render. Drupal resets it by letting the process die. Here nothing
+dies.
+
+**Scope of what was proven:** the _mechanism_ — process-level state crosses
+request boundaries. An end-to-end identity leak was not demonstrated, because
+the trace-based pack lacks `Drupal\user\Entity\User` and the account could not be
+switched. That absence is itself a finding: the pack is tuned to the anonymous
+serving path and has no authenticated-path classes.
+
+**Why this outranks the performance work:** cross-request state bleed produces
+wrong-user data disclosure, silently, under load. It is a security defect, not a
+latency regression.
+
+**What it needs, and none of it is built:**
+
+1. `drupal_static_reset()` between requests — necessary, nowhere near
+   sufficient. Services holding state, the container, and static properties on
+   arbitrary classes all persist.
+2. An audit against the known-leak inventories of **FrankenPHP worker mode** and
+   **RoadRunner**, which solved this problem already. Adopting their lists beats
+   discovering ours one incident at a time.
+3. A differential test: run ~50 heterogeneous requests (anonymous, authed as A,
+   authed as B, admin) through one isolate and diff every response against the
+   same sequence run in fresh isolates. Any divergence is a leak.
+
+### RESOLVED (mechanism): the resetter closes the leak
+
+Built, because Drupal ships no equivalent:
+`drupal/cfw_capability/src/RequestResetter.php` plus registration in
+`CfwCapabilityServiceProvider`. It resets tagged services, unwinds any
+`account_switcher` stack a failed request left behind, and calls
+`drupal_static_reset()` **last**, because resetting a service can repopulate
+statics.
+
+Differential over 50 heterogeneous requests in one isolate (`/isolation-test`):
+
+| Arm                    | Requests | Leaks  | Rate      |
+| ---------------------- | -------- | ------ | --------- |
+| **With reset**         | 50       | **0**  | 0.000     |
+| **Control — no reset** | 50       | **50** | **1.000** |
+
+Every single unreset request leaked, so the harness can detect failure; a
+differential that cannot fail proves nothing.
+
+**Scope, stated honestly.** This verifies the _mechanism_ against
+`drupal_static()` and globals — the surface the original `LEAKED: true` probe
+demonstrated. It does **not** yet cover:
+
+- **Service-held state.** The seed list in the service provider (`current_user`,
+  `account_switcher`, `entity_type.manager`, `node.grant_storage`, …) is
+  registered but unexercised, because the module is not installed inside the
+  packed site.
+- **Authenticated identity leakage end to end**, which still requires
+  `Drupal\user\Entity\User` in the pack.
+- State surfaces beyond `drupal_static()` that Drupal core does not centralize.
+
+So: the defect has a working fix and a test that proves it, and the remaining
+work is coverage rather than mechanism. The seed list should still be audited
+against FrankenPHP worker mode's and RoadRunner's known-leak inventories rather
+than grown one incident at a time.
+
+### Second security surface: self-redeployment
+
+Installing a module means creating a new Worker version, which means the Worker
+holds an API token with **Workers Scripts edit** scope in its secrets.
+
+**A site that can install a module can therefore redeploy itself** — replace its
+own runtime, or any other Worker the token's scope reaches. Combined with the
+isolation defect above (state crossing request boundaries in an admin session),
+this is a real privilege-escalation path, not a theoretical one.
+
+Mitigations to design in rather than bolt on: scope the token to a single script,
+run installs only from the disposable ops kernel, and treat the install endpoint
+as a privileged surface with its own authentication rather than an ordinary
+admin route.
+
+### The mechanism FrankenPHP uses does not exist in Drupal
+
+Checked, because it changes what has to be built. FrankenPHP worker mode and
+RoadRunner rely on **Symfony's `kernel.reset` service tag plus `ServicesResetter`**,
+which calls `reset()` on every tagged service between requests.
+
+```
+grep -rn "kernel.reset|ServicesResetter|services_resetter" core/lib core/core.services.yml
+  -> no matches
+```
+
+**Drupal ships no equivalent**, because it does not ship FrameworkBundle. It has
+only `drupal_static_reset()`, which covers the `drupal_static()` registry and
+nothing else.
+
+So the resetter has to be **built**, not adopted: add the tag and a resetter
+service via a service provider — no core patch required — and tag the services
+that carry per-request state. This is the highest-leverage single item in the
+isolation work, well above enumerating individual leaks.
+
+### Belt and braces: route by request class
+
+Independent of the resetter, and stronger:
+
+| Request class       | Kernel | Isolation                                     |
+| ------------------- | --------------------- | --------------------------------------------- |
+| anonymous, cached   | **never reaches PHP** | perfect by construction                       |
+| anonymous, uncached | warm kernel | leakage is a correctness risk, not disclosure |
+| **authenticated**   | **disposable kernel** | perfect by construction                       |
+
+A fresh interpreter costs **36 ms** (measured), but a disposable kernel then pays
+full bootstrap — so this is only affordable once cold start is solved. Another
+reason cold start moves to step two.
+
+**Also blocking:** the current pack cannot serve authenticated traffic at all —
+the isolation probe could not switch accounts because `Drupal\user\Entity\User`
+is not packed. The trace must be re-run driving authenticated, admin and Views
+routes before anything about that path is measured.
+
+> **Round 8 —** the hazard that arrives with suspension, and why it has to be solved before JSPI rather than after
+
+## REENTRANCY: A HAZARD THAT ARRIVES WITH SUSPENSION
+
+Not yet reachable, because nothing suspends on the `ASYNCIFY=0` build — but it
+must be solved _before_ JSPI is enabled, not after.
+
+When PHP suspends awaiting `fetch()`, the Durable Object is free to deliver
+another event. If that event calls into the same PHP instance, two requests
+interleave inside a single-threaded interpreter whose globals already leak. That
+is strictly worse than the sequential leakage above: not merely stale state, but
+two requests mutating the same interpreter concurrently.
+
+**Durable Object input gates do not prevent this.** They serialize around storage
+operations, not around arbitrary `await`.
+
+The requirement is an explicit serialization point — `ctx.blockConcurrencyWhile()`
+around PHP invocation, or a promise chain queueing invocations — plus a test that
+fires concurrent requests through a suspending handler and asserts they do not
+interleave.
+
+It also bounds throughput in a way worth stating: **a suspended request holds the
+interpreter for the full round trip of the outbound fetch.** One slow upstream
+stalls the entire site. That is an argument for the deferred strategy below even
+where suspension is available.
+
+> **Round 9 —** the core call sites touching Drupal's HTTP client counted, and the hole shrank
+
+## OUTBOUND HTTP IS SMALLER THAN IT LOOKED
+
+The same audit that reduced 14 SQL functions to 2 reduces this too. Every core
+call site touching the HTTP client (non-test):
+
+| Call site                                                                         | Path                        |
+| --------------------------------------------------------------------------------- | --------------------------- |
+| `update/UpdateFetcher`                                                            | cron / admin                |
+| `system/SecurityAdvisories/SecurityAdvisoriesFetcher`                             | cron / admin                |
+| `announcements_feed/AnnounceFetcher`                                              | cron                        |
+| `locale/File/LocaleFileManager`                                                   | cron / admin                |
+| `migrate_drupal_ui/Form/CredentialForm`                                           | admin                       |
+| `migrate/Plugin/migrate/process/Download`                                         | admin / CLI                 |
+| `media/OEmbed/{ProviderRepository,ResourceFetcher,UrlResolver}` + `Source/OEmbed` | request path, **cacheable** |
+| `lib/Drupal.php`                                                                  | the accessor itself         |
+
+**Ten files. Zero of them require synchronous outbound HTTP on the anonymous
+request path.** Six are cron/admin; four are oEmbed, which is cacheable after
+first resolution.
+
+### Three strategies, only one of which needs JSPI
+
+Override `http_handler_stack` once with a handler that dispatches per request:
+
+1. **deferred** — push onto a Cloudflare Queue, resolve with a 202-equivalent.
+   **No suspension. Works on the current build.** Covers cron, webhooks, mail,
+   update checks — most of the volume.
+2. **cached** — serve from a DO/KV response cache populated by a prior
+   background fetch. **No suspension.** Covers oEmbed and remote media after
+   first resolution.
+3. **sync** — JSPI suspend. Needed only for genuine first-fetch-on-request-path
+   cases, which in core is oEmbed cold.
+
+This layering means **JSPI failing on the edge degrades the product rather than
+blocking it**, which is the right risk posture for an unverified capability.
+
+### Also required: a stream wrapper
+
+Guzzle is not the only seam. Contrib and vendor code calls
+`file_get_contents('https://...')` directly, and the measured wrapper list is
+`compress.zlib, php, file, glob, data` — no http/https. A userland wrapper
+registered via `stream_wrapper_register()` over the same bridge closes that
+second class, under the same suspension constraints.
+
+### JSPI must be a rebuild, not a wrapper
+
+Wrapping `WebAssembly.Suspending` around an import on a binary not built for it
+produces exactly the `SuspendError` already probed for. The build needs `-sJSPI`
+with `JSPI_EXPORTS` so emscripten generates the right import shims, and **every
+frame between the promising export and the suspending import must be
+JSPI-aware** — a plain JS frame in that path breaks suspension. That likely means
+changing how the request handler calls into PHP.
+
+Verify on a **deployed paid Worker at a pinned `compatibility_date`**, probing a
+full suspend/resolve/resume/return round trip — not merely the presence of
+`WebAssembly.Suspending`.
+
+> **Round 10 —** `-Oz` and a cold-start-first objective are in direct tension, stated rather than left implicit
+
+## SIZE WAS OPTIMIZED FOR, THEN SPEED WAS DECLARED THE CONSTRAINT
+
+An unacknowledged tension in the current build config: it sets **`OPTIMIZE=z`**,
+which trades runtime performance for size, while cold start is now the top
+constraint. On an interpreter dispatch loop the `-Oz` to `-O2` gap is routinely
+15–30%.
+
+There are **351,744 bytes of margin** under the free ceiling. Spending some of it
+to buy interpreter speed is very likely the right trade, and it has not been
+measured. `-O2` should be built and compared on both axes before `-Oz` is treated
+as settled.
+
+> **Round 11 —** the small unapplied levers listed, one of which turned out to be a defect
+
+## CHEAP LEVERS NOT YET APPLIED
+
+Each of these is small, and none appears anywhere earlier in this document.
+
+| Lever                                                        | Why it matters here                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `composer dump-autoload --classmap-authoritative --optimize` | 1,799 includes resolved through PSR-4 means several **MEMFS stat calls per class**, and in wasm those are JS calls, not syscalls. An authoritative classmap turns each into one array lookup with zero stats. |
+| `caches.default` instead of the in-memory `Map`              | The anonymous hit path should never reach the Durable Object at all. Edge cache costs nothing and consumes neither DO storage nor DO invocations.                                                             |
+| `$settings['bootstrap_container_definition']`                | Ships in `default.settings.php` precisely so the bootstrap phase can run on a minimal container. Attacks the 1.4 MB `cache_container` unserialize directly on the cache-hit path.                             |
+| `-sCLOSURE=1` on the glue                                    | 111,764–128,819 gzipped bytes of emscripten glue, never run through Closure Compiler.                                                                                                                         |
+| `INITIAL_MEMORY` above the peak                              | Currently **64 MB against a measured 64.5 MB peak**, which _guarantees_ at least one `memory.grow` — a full heap realloc and copy — on every boot. Raising it above the peak is free CPU.                     |
+
+> **Round 12 —** `ext-zlib` is a real core requirement and the build config was wrong to drop it
+
+## CORRECTION: zlib should not have been dropped
+
+The bundle table lists `ext-zlib` among core's requirements while the capability
+build config drops it. Both cannot be right, and the build is the one that is
+wrong.
+
+Verified: `ext-zlib` **is** in `core/composer.json`, and it is genuinely used —
+`Core\Asset\AssetDumper` (gzipping CSS/JS aggregates),
+`Core\Command\DbImportCommand`, and `Component\Utility\UrlHelper`.
+
+zlib costs **43,485 bytes gzipped** against **351,744 bytes of margin**. Dropping
+a required extension to save 12% of available headroom was a bad trade. **Re-add
+it.** (`CompressionStream` remains the right answer for _new_ compression work
+through the capability bridge; it is not a reason to break a declared
+requirement.)
+
+> **Round 13 —** boot is mostly ordinary PHP execution, so the alarm ships instead of another round of levers
+
+## DECISION: STOP OPTIMIZING COLD START, SHIP THE ALARM
+
+Stated explicitly rather than left as an open ladder, because the measurements
+now support a decision rather than another round of levers.
+
+Boot accounting, all measured:
+
+| Component                                       | Cost | Lever                                         |
+| ----------------------------------------------- | ----------- | --------------------------------------------- |
+| YAML parsing                                    | 201 ms | **ext-yaml — DONE, 241 ms recovered**         |
+| Parse + compile                                 | ~301 ms | opcache, ~23% of it (~70 ms), link unfinished |
+| Container unserialize                           | 1 ms | none needed                                   |
+| Plugin/entity discovery                         | ~0 ms | already cached                                |
+| **Service instantiation and general execution** | **~820 ms** | **none**                                      |
+
+The majority is ordinary PHP execution — constructing services, running module
+initialization. There is no single lever pointed at it, and chasing it means
+either removing modules (a product decision, not an engineering one) or
+rewriting Drupal's bootstrap (not a thing this project does).
+
+**Meanwhile the same cost is fully addressed by not paying it.** Boot is
+per-Durable-Object-lifetime, not per-request. A recurring alarm prevents
+hibernation and converts a ~1,082 ms cold start into a per-deploy cost.
+
+So the decision is: **ship keep-warm, stop optimizing boot.** Remaining levers
+(opcache's ~70 ms, precompiled Twig's ~37 ms, container trimming) are worth
+taking opportunistically but none of them changes the answer, and none should
+block shipping. `-O2` versus `-Oz` is the one exception still worth measuring,
+because it targets the interpreter dispatch loop that dominates the ~820 ms
+rather than the parse phase.
+
+> **Round 14 —** keep-warm recorded as a consequence of the boot profile rather than an idea
+
+## KEEP-WARM IS LOAD-BEARING, NOT A NICE-TO-HAVE
+
+This follows directly from the boot profile and should be recorded as a
+consequence rather than an idea.
+
+Boot is ~1,323 ms and **cannot be meaningfully shrunk**: parse is ~301 ms
+(opcache addresses ~23% of it), YAML ~201 ms (ext-yaml fixes most of it), the
+container is ~1 ms, discovery is cached — and ~820 ms is ordinary PHP execution
+with no lever pointed at it.
+
+So boot is a cost paid **per Durable Object lifetime**, and the only way to stop
+paying it per request is to stop the object from hibernating. A recurring DO
+alarm does that. It converts cold start from a per-request cost on low-traffic
+sites — exactly the segment this targets, where hibernation is most likely —
+into a **per-deploy** cost.
+
+That makes it the cold-start strategy, not an optimization behind one. It is a
+config decision costing an alarm, and it is cheaper than every build-flag lever
+combined.
+
+Second-order: with warm requests at 0.242 ms, a kept-warm object serving cached
+anonymous traffic is essentially free CPU. The alarm's own cost dominates, which
+is the right trade.
+
+> **Round 15 —** time-to-patch named as the operational risk that outlives launch
+
+## THE SECURITY-UPDATE PATH IS THE OPERATIONAL RISK THAT OUTLIVES LAUNCH
+
+Not previously recorded, and existential for Drupal specifically.
+
+SA-CORE advisories are disclosed on a published schedule with hours of exposure
+between announcement and exploitation. A Drupal host that cannot ship a core
+patch inside that window is a liability regardless of how good the runtime is.
+
+**The structural problem:** the PHP tree is baked into a versioned asset pack at
+build time. A core patch therefore requires re-packing and re-deploying **every
+site**, not editing a shared directory as a traditional host would.
+
+**What makes it tractable** is the direct-upload manifest already documented
+above: assets are content-addressed by 32-hex hash, and _"unmodified files will
+not be returned in the buckets field"_. A core security patch touches a handful
+of files, so each site re-uploads only the changed pack objects — not the ~8 MB
+blob — and creates a new version. Fleet-wide patching is a loop over
+`versions.create` + `deployments.create`, bounded by API rate limits rather than
+by bandwidth.
+
+**What has to exist before launch, none of it built:**
+
+1. A **fleet inventory** — which sites run which core version and which pack hash.
+2. An **automated re-pack pipeline** triggered by an SA-CORE advisory, producing
+   a new pack from patched source.
+3. **Staged rollout with automatic rollback**, using the `deployments.create`
+   percentage mechanism that module installs already use.
+4. A **measured time-to-patch** for the whole fleet, because that number is the
+   product's actual security posture and belongs in its documentation.
+5. The **one-hour JWT window** constrains batch size: a fleet patch must either
+   complete inside it or re-authenticate per batch.
+
+Until this exists, the honest description is "a Drupal appliance you must patch
+yourself", not "a managed Drupal host".
+
+> **Round 16 —** a site whose data cannot be extracted is not a product; the export gap opens here
+
+## BACKUP, RESTORE, EXPORT
+
+A site whose data cannot be extracted is not a product, and nothing here
+addresses it.
+
+The database is a single SQLite file (6,475,776 bytes for a standard install)
+plus, on the DO SQLite path, the object's own storage. Both are exportable from
+the ops kernel:
+
+- **Backup:** dump the database to R2 on a schedule via Cron Triggers, using the
+  ops kernel so the ~78.5 MB install-class memory spike stays off the
+  request-serving instance.
+- **Restore:** the inverse, into a fresh DO — which is also the migration path
+  between accounts.
+- **Export:** a `drush sql-dump` equivalent, plus the `sites/default/files` tree
+  from R2, so a customer can leave. That last property matters commercially more
+  than technically.
+
+> **Round 17 —** an isolate death was silent, and the minimum viable signal set got defined
+
+## OBSERVABILITY
+
+Today an isolate death is **silent**. PHP fatals, uncaught exceptions, and OOM
+terminations produce nothing an operator can see.
+
+Minimum viable set, all available on the platform:
+
+| Signal                        | Source                                                                                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| PHP fatals and warnings       | already captured via the emscripten `printErr` hook; needs shipping to Workers Logs rather than discarding                               |
+| Uncaught PHP exceptions       | wrap the kernel invocation; Drupal's own logger writes to `watchdog` in a DB that may be about to die, so it must also leave the isolate |
+| **OOM / isolate termination** | `exceededMemory` outcome via Tail Worker — the only way to see this at all                                                               |
+| CPU near-limit                | `exceededCpu` outcome, and `cpuTime` from a Tail Worker as ground truth                                                                  |
+| Boot vs warm ratio            | emit the phase timings already instrumented in `/boot-breakdown`                                                                         |
+
+**`memory_limit` should be set in php.ini** — around 96 MB given the 96 MB
+`INITIAL_MEMORY`. It will not reduce usage, but it converts "isolate terminated,
+no diagnostics" into a PHP fatal with a stack trace naming the request. Because
+wasm memory never shrinks, one runaway request otherwise poisons the instance
+permanently with no record of which request did it.
+
+> **Round 18 —** three core bugs any worker-mode host hits, all from Drupal assuming the process dies
+
+## UPSTREAM: THREE DRUPAL CORE BUGS WORTH REPORTING
+
+Independent of this project. FrankenPHP worker mode and RoadRunner users will hit
+all three, and none is documented as a known worker-mode hazard.
+
+| #   | Defect | Symptom                                                                                                                 |
+| --- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1   | `drupal_static()` persists across requests | user permissions, node grants and field definitions leak between requests — **wrong-user data disclosure**              |
+| 2   | `DrupalKernel::preHandle()` guarded by `$this->prepared` | pushes to `request_stack` only on the first `handle()`; every later request routes against the **first** request's path |
+| 3   | `PageCache::getCacheId()` memoizes `$this->cid` on the middleware instance | the first request's cache ID is reused forever, so **every subsequent path is served the first page** with HTTP 200     |
+
+All three share one root cause: **Drupal assumes the process dies between
+requests.** Defect 3 is the most dangerous because it fails silently and
+plausibly — `/robots.txt` returning 12,304 bytes of the front page with a 200
+status looks like a working site.
+
+Each has a small fix (reset the static registry; clear `$prepared`; reset `$cid`)
+and each would benefit from a `kernel.reset`-style tag that Drupal does not
+currently ship.
+
+> **Round 19 —** each missing C library restated as a platform service the runtime can answer with
+
+## EVERY REMAINING GAP MAPS TO A CLOUDFLARE PRIMITIVE
+
+None of these is fundamental. Each is the same capability pattern as the HTTP
+handler: PHP asks, the runtime answers with a platform service instead of a
+compiled C library.
+
+| Gap                                     | Cause                          | Cloudflare primitive                                                       | Drupal seam                                          | Status                                                                                                       |
+| --------------------------------------- | ------------------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Outbound HTTP                           | no curl/sockets/openssl        | `fetch()` + **Queues** (deferred) + KV/DO (cached)                         | `http_handler_stack`                                 | handler written; deferred strategy needs no suspension                                                       |
+| Direct `file_get_contents('https://…')` | no http/https wrapper          | same bridge                                                                | `stream_wrapper_register()`                          | not built                                                                                                    |
+| Database                                | libsqlite3 dropped             | **DO SQLite** (sync)                                                       | `Connection` + `StatementBase` client methods        | GLOB done; `NOCASE_UTF8` + wiring left                                                                       |
+| Image styles                            | gd dropped                     | **Cloudflare Images**                                                      | `ImageToolkit` plugin                                | not built — third reference case                                                                             |
+| Mail                                    | no SMTP                        | **Email Routing / Email Service API**                                      | `MailInterface` plugin                               | not built — second reference case                                                                            |
+| Cron                                    | no scheduler                   | **Cron Triggers** → ops kernel, `drupal_cron()` chunked through **Queues** | `hook_cron` unchanged                                | not built                                                                                                    |
+| File uploads                            | no persistent FS               | **R2**                                                                     | stream wrapper on `sites/default/files`              | not built, untested end to end                                                                               |
+| `mbstring`                              | dropped for size               | `symfony/polyfill-mbstring` **already in vendor**                          | activates automatically when the extension is absent | verify it is packed and unshadowed — likely already free                                                     |
+| `openssl`                               | no `static` option in php-wasm | —                                                                          | —                                                    | **a Makefile gap, not a platform limit**; that Makefile has been patched three times in this project already |
+
+Two of these are worth stating plainly because they were previously described as
+blockers:
+
+- **`openssl` is not a platform limitation.** php-wasm simply offers no `static`
+  option for it. Adding one is the same class of change as the four Makefile
+  patches already applied here.
+- **`mbstring` is probably already solved.** Symfony's polyfill ships in
+  Drupal's vendor directory and activates precisely when the extension is
+  missing — the same mechanism that surfaced the `polyfill-intl-idn` file during
+  packing.
+
+> **Round 20 —** the first real deploy: the numbers held under enforcement, read from billed `cpuTime`
+
+## DEPLOYED TO A PAID WORKER — the numbers hold under enforcement
+
+The cheapest falsification in the plan, and it passed. Ground truth from
+`wrangler tail`, which reports **billed `cpuTime`**, not wall clock:
+
+```
+cpuTime: 1    outcome: ok
+cpuTime: 0    outcome: ok
+cpuTime: 0    outcome: ok
+cpuTime: 0    outcome: ok
+cpuTime: 897  outcome: ok     <- cold boot
+cpuTime: 5    outcome: ok
+```
+
+Response body reported `"linearMemoryBytes": 100663296` — **96 MiB**, confirming
+`INITIAL_MEMORY=96MB` took effect.
+
+### What this validates
+
+| Question                                 | Answer                                                                    |
+| ---------------------------------------- | ------------------------------------------------------------------------- |
+| Does the bundle deploy?                  | **Yes** — 2,877,535 gzip accepted, assets uploaded                        |
+| Does it survive an enforcing 128 MB cap? | **Yes** — no `exceededMemory`, `outcome: ok` throughout, at 96 MiB linear |
+| Does it survive the CPU limit?           | **Yes** — no `exceededCpu`                                                |
+| Real cold-start CPU                      | **897 ms**                                                                |
+| Real warm CPU                            | **0-1 ms**, one outlier at 5 ms                                           |
+
+### Local wall-clock was pessimistic, not optimistic
+
+Cold boot measured **~1,500 ms locally** but **897 ms of billed CPU on the edge**
+— about **40% lower**. That is the expected direction and it confirms the
+methodology concern raised earlier: local `wrangler dev` numbers include I/O wall
+time (asset fetches, MEMFS writes) that costs wall clock and **zero** billed CPU.
+
+So every cold-start figure in this document is a **conservative upper bound**.
+The 1,082 ms post-ext-yaml projection is really closer to **~650 ms** of billed
+CPU.
+
+Warm requests reporting **0-1 ms** of `cpuTime` corroborates the 0.242 ms
+in-process measurement and definitively kills the earlier "2-3 ms" figure.
+
+### The one failure is the expected one
+
+```
+PDOException: could not find driver
+  at sqlite/Connection.php(115): PDO->__construct('sqlite:sites/de...')
+```
+
+The deployed build is the capability build with `WITH_SQLITE=0` — libsqlite3 was
+deliberately dropped (613,976 bytes) because the database is meant to move to
+Durable Object SQLite. **This is the known gap, now confirmed on real hardware
+rather than assumed.** Nothing else failed.
+
+### What this changes
+
+Memory was the largest unvalidated risk in the project and the reason the deploy
+was sequenced first. **It is no longer a risk**: the isolate ran at 96 MiB linear
+with no memory outcome, on the enforcing runtime, before boot-only eviction is
+even applied. Eviction's 20.3 MB is now headroom rather than a rescue.
+
+The remaining blocker list is unchanged in content but shorter in risk: build the
+DO SQLite `Connection`, and the appliance serves.
+
+> **Round 21 —** a full `COMPLETE_CORE` render on the edge settled the memory question at 110.6 MiB
+
+## EDGE VALIDATION #2: full render with COMPLETE_CORE — memory question settled
+
+Deployed `static-free-v1` (sqlite compiled in) with the COMPLETE_CORE pack
+purely to validate memory before committing to the database driver.
+
+| Route                 | cpuTime      | wallTime | CPU share | outcome |
+| --------------------- | ------------ | -------- | --------- | ------- |
+| `/boot`               | 0 ms         | 0 ms     | —         | ok      |
+| **`/drupal?fresh=1`** | **3,754 ms** | 4,972 ms | 76%       | **ok**  |
+| `/drupal`             | 3,393 ms     | 4,073 ms | 83%       | ok      |
+| `/evict`              | 142 ms       | 288 ms   | 49%       | ok      |
+| `/authed-cost3?n=10`  | 3,967 ms     | 5,146 ms | 77%       | ok      |
+
+**`linearMemoryBytes: 115,998,720` (110.6 MiB), with a 33.42 MB MEMFS tree
+resident, `outcome: ok` on every request.**
+
+### The memory question is answered
+
+**SUPERSEDED as a conclusion, not as a measurement.** The run really did report
+`linearMemoryBytes: 115,998,720` with `outcome: ok`, and MEMFS really is billed
+separately. What does not follow is that 110.6 MiB is Drupal's working set: a
+synthetic stepped allocation later landed on the same 115,998,720 bytes, so it is an
+emscripten growth plateau. The deployed 128 MB ceiling is still unmeasured. See
+"Memory: the edge ceiling is still unmeasured, and 110.6 MiB was misread" above the
+fold, and DEEP DIVE A, TASK A.
+
+The naive arithmetic said this could not work: 96-110 MiB of wasm linear memory
+plus a 33 MB tree exceeds 128 MB. It ran anyway, with no `exceededMemory`.
+
+That corroborates the local finding that `linearBefore == linearAfter` across
+evicting 1,984 files: **MEMFS contents live in the JS heap and are not counted
+against the wasm arena the way a naive sum assumes.** The two do not simply add.
+
+**Authenticated support fits on real hardware**, and boot-only eviction
+(20.3 MB) is headroom rather than a rescue.
+
+### Correcting the 897 ms
+
+The earlier deploy reported 897 ms and this one reports 3,754 ms. **They are not
+comparable.** The first build had `WITH_SQLITE=0`, so it died at
+`PDOException: could not find driver` partway through boot — 897 ms measured
+boot-to-failure, not a render.
+
+**3,754 ms is the first true full cold render measured on deployed hardware**,
+including mounting a 9,540-file / 33.42 MB pack. Local wall clock for the same
+work was ~1,500 ms, so **the edge is slower than local, not faster** — the
+opposite of what the 897 ms figure suggested, and the earlier conclusion that
+"local numbers are a conservative upper bound" was wrong.
+
+The wall/CPU gap is consistent and useful: **~76-83% of wall time is billed CPU**,
+the remainder being ASSETS fetches. That is the four-bucket decomposition for
+free, from `wallTime` alongside `cpuTime`.
+
+### METHODOLOGY: in-PHP timing does not work on the edge
+
+`/authed-cost3` returned `perRequestMs: 0` for every route while `cpuTime` for
+the whole invocation was 3,967 ms. PHP's `microtime()` does not advance on the
+deployed runtime — the same Spectre mitigation that clamps `Date.now()` and
+`performance.now()`.
+
+**Consequence: every in-PHP timing in this document is local-only.** The 0.242 ms
+warm figure, the boot breakdown, the YAML benchmark, the parse/compile split —
+all measured with `microtime()` under `wrangler dev`, where timers do advance.
+They remain valid as _relative_ measurements and for ratios, but **`cpuTime` from
+a Tail Worker is the only authoritative absolute number on the edge.**
+
+Anything quoted against the 10 ms free budget must be re-measured this way before
+it is trusted.
+
+> **Round 22 —** FULL packing made every route render, ending the phantom front-page results
+
+## COMPLETE: the authenticated and admin surface, measured
+
+FULL packing (everything except tests and genuinely-static web assets) makes
+every route render. Distinct titles and byte counts confirm real pages rather
+than the phantom front-page results earlier attempts produced.
+
+| Route                                                | CPU        | Bytes   | Title    | vs 10 ms free         |
+| ---------------------------------------------------- | ---------- | ------- | -------- | --------------------- |
+| anon `/`                                             | 2.4 ms     | 12,304  | Welcome! | **24%**               |
+| anon `/user/login`                                   | 2.5 ms     | 12,944  | Log in   | **25%**               |
+| authed `/`                                           | 7.2 ms     | 12,304  | Welcome! | **72%**               |
+| authed `/user/1`                                     | 7.8 ms     | 33,875  | admin    | **78%**               |
+| **authed `/admin/content`** (Views + exposed filter) | **11 ms**  | 32,325  | Content  | **110% — over**       |
+| **authed `/admin/modules`**                          | **377 ms** | 268,639 | Extend   | **3,770% — far over** |
+
+(In-PHP `microtime`, so local-only; see the edge methodology note. Ratios hold,
+absolutes need `cpuTime` confirmation.)
+
+### The free/paid boundary is now a specific line, not a guess
+
+- **Anonymous traffic: comfortable** at 24-25% of budget.
+- **Authenticated page views: fit, with margin** at 72-78%.
+- **Views listings with exposed filters: marginally over** at 110%.
+- **Heavy admin pages: far over.** `/admin/modules` at 377 ms is 37x the free
+  budget.
+
+That is a coherent product boundary rather than a blanket claim: **free tier
+serves anonymous and light authenticated traffic; administration belongs on
+paid.** Since admin is exactly the operation that should run on a disposable ops
+kernel anyway, the architecture and the billing boundary agree.
+
+### STOP INCREMENTALLY COMPLETING THE PACK — pack everything
+
+Eight distinct instances of trace-invisible files were found, each costing a
+debugging cycle:
+
+| #   | Missing | Why a trace cannot see it                                             |
+| --- | --------------------------- | --------------------------------------------------------------------- |
+| 1   | Symfony polyfills | host had intl/mbstring, so they never loaded                          |
+| 2   | `.yml` / `.twig` | read via `file_get_contents`, not `include`                           |
+| 3   | Lazily-thrown exceptions | only load on failure; a clean run never fails                         |
+| 4   | Entity handlers | referenced by string, resolved at runtime                             |
+| 5   | `doctrine/lexer` | package never touched at all, so package-completion never fired       |
+| 6   | `core/includes/install.inc` | loaded via `module_load_include`                                      |
+| 7   | **Theme SVGs** | Drupal **inlines SVGs as Twig templates**; they are not static assets |
+| 8   | JsonSchema resources | loaded by path at runtime                                             |
+
+The incremental completion logic (trace + vendor packages + core/lib + exceptions
+
+- info.yml + SVGs + core/includes) reached **36.75 MB**. FULL packing is
+  **39.29 MB**. **The elaborate approach converged to within 4 MB of "pack
+  everything" while still having holes.**
+
+**Conclusion: use FULL packing.** 39.29 MB raw / 8.12 MB gzip, resident memory
+unchanged at 115,998,720, and it ends the whack-a-mole permanently. The trace
+work was not wasted — it produced the eight findings above and the knowledge that
+the boundary is 4 MB wide — but the shipping configuration is FULL.
+
+Instance 7 is the one worth remembering generally: **`.svg` looks like a static
+web asset and is actually a Twig template.** Excluding it broke every admin
+route with a `LoaderError` and no obvious connection to images.
+
+> **Round 23 —** the 3.4x era's verdict, already marked superseded in place
+
+## VERDICT
+
+> **SUPERSEDED — read CURRENT NUMBERS at the top instead.** This section reports
+> warm CPU as 0.242 ms and says "authenticated traffic is entirely unmeasured".
+> Both are wrong: 0.242 ms was a `page_cache` hit rather than a render, and
+> authenticated requests measure 119 ms with a real login session. Its conclusion
+> that warm CPU is "solved" for the free tier does not hold — only cache hits fit
+> 10 ms. Kept for the reasoning, not the numbers.
+
+**Drupal 11 on Cloudflare Workers is possible. It is built and rendering.**
+A real front page: HTTP 200, 12,304 bytes against 12,314 native, cold
+1,502 ms, warm **0.242 ms** (measured over N=500; the earlier "2-3 ms" was
+the integer-millisecond precision floor).
+
+What that took, and what it costs, measured:
+
+| Dimension              | Free (3 MB / 10 ms / 1,000 sub / 128 MB) | Status                                                              |
+| ---------------------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| Bundle                 | 3,145,728 | **2,793,984 — fits, with the capability bridge**                    |
+| Warm CPU (anon cached) | 10 ms | **0.242 ms** (N=500)                                                |
+| Subrequests            | 1,000 | **3 cold, 0 warm**                                                  |
+| Asset count            | 20,000 | **3 objects**                                                       |
+| Memory                 | 128 MB | **~100 MB** after eviction, **116 MB** without (unenforced runtime) |
+| Cold start             | 10 ms | **1,502 ms** — exceeds, once per **isolate** (not per request)      |
+
+**Paid tier: viable today.** Every limit cleared with room. 3.73 MB of a 10 MB
+bundle, ~100 MB of 128 MB after eviction, 3 subrequests of 10,000. The only unvalidated
+assumption is that `wrangler dev` memory figures hold on an enforcing runtime.
+
+**Free tier: the bundle fits; the database decision is settled.**
+
+An earlier draft framed this as a coin flip. It is not:
+
+| Path                               | Bundle | Remaining work                                                                                                                                           |
+| ---------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **DO SQLite + compat layer**       | **2.79 MB — fits free** | `NOCASE_UTF8` (2 sites, 2-line substitution) + wiring the `Connection` class. **GLOB is done and verified.**                                             |
+| PHP-side SQLite, WAL to DO storage | ~3.34 MB — **over free** | checkpoint-to-storage path unbuilt, torn-write case untested, **and now needs chunking** because 200 inserts produced 832 KB against a 128 KiB value cap |
+
+The second is not "works today" — it is a _different_ unbuilt thing that also
+forfeits the free tier and the 6.5 MB MEMFS saving. **Take DO SQLite; keep the
+WAL work as a fallback that does not get built.**
+
+The compatibility layer turned out to be two constructs, not fourteen — `md5`
+and `regexp` never reach generated SQL, everything else maps to SQLite 3.46.1
+builtins. `GLOB` translation is implemented and verified over 9,000 differential
+cases against a control that reliably fails. `NOCASE_UTF8` remains, and costs
+non-ASCII case folding.
+
+### What is genuinely not solved, in priority order
+
+1. **Authenticated request CPU is still unmeasured.** The largest remaining
+   unknown. Two defects blocked it (persistent-kernel routing, trace-blind
+   classes); both are now fixed, so the measurement is unblocked but not taken.
+2. **Reentrancy.** Must be solved before JSPI. DO input gates serialize storage,
+   not arbitrary `await`.
+3. **A real database path.** DO SQLite `Connection` + `NOCASE_UTF8`. GLOB done
+   and verified.
+4. **Memory is now tight, not comfortable.** Authenticated support requires
+   `COMPLETE_CORE` packing: 33.42 MB tree, **116.4 MB total, 11.8 MB headroom** —
+   and every one of those numbers comes from a runtime that does not enforce the
+   cap.
+5. **Security-update pipeline**, backup/restore/export, observability — designed,
+   none built.
+6. **32-bit marshalling** needs a typed codec rather than per-hole fixes.
+7. **opcache static link** — configure solved, linking unfinished. Worth ~70 ms,
+   now known to be less than ext-yaml's 241 ms and far less than it appeared.
+
+**No longer on this list:** request isolation. It has a working resetter (50/50
+leaks closed with a failing control) _and_ a 2-4 ms disposable-kernel path that
+gives isolation by construction for authenticated traffic.
+
+### The honest shape of it
+
+**This is a rendering prototype with a validated architecture, not a deployable
+appliance.**
+
+The architectural question the whole exercise argued about resolved itself, and
+not in the direction either side expected: the answer is not "compile more of
+PHP", it is **replace C libraries with platform primitives through a 19 KB
+bridge**. That is what made the bundle fit, and it is what makes the remaining
+gaps tractable rather than fundamental.
+
+What it is today: a content site serving anonymous cached traffic, fast, inside
+free-tier limits. What it is not: a general Drupal host. Module installation at
+the edge, external API calls, mail, and Update Manager all need the capability
+layer built out, and authenticated traffic is entirely unmeasured.
+
+### Sequence
+
+1. **Deploy to a paid Worker.** Validates memory under an enforcing runtime,
+   JSPI on the edge, and real CPU accounting in one shot — and invalidates
+   everything downstream if it fails. Cheapest possible falsification.
+2. **Cold start — SHIP THE ALARM, STOP OPTIMIZING.** See the decision below:
+   boot is ~1,082 ms and the remaining ~820 ms is ordinary service
+   instantiation with no lever pointed at it. Keep-warm converts it to a
+   per-deploy cost. Boot-at-module-scope is ruled out (it does not fit the ~1 s
+   startup budget and does not need to, now that the DO constructor is the
+   home).
+3. **Force the PHP-in-DO shape.** Replace the `Map` standing in for DO storage.
+   Everything downstream assumes it.
+4. **Request isolation.** Build the resetter (tag + service provider), then the
+   50-request differential test. Route authenticated traffic to disposable
+   kernels once step 2 makes that affordable.
+5. **DO SQLite `Connection` + `NOCASE_UTF8`.** GLOB is done.
+6. **Re-trace with authenticated/admin/Views routes**, then measure that path —
+   the current pack cannot serve it at all.
+7. **Capability layer build-out:** Queues-backed deferred HTTP, Cloudflare Images
+   toolkit, Email Service mail plugin, Cron Triggers, R2 stream wrapper.
+
+> **Round 24 —** the four headline figures pinned to the static build rather than the published dylink one
+
+## The four numbers
+
+Values are from the **static build** (`vendor/static/`) unless noted. The
+published dylink build's figures are kept alongside because that is what anyone
+installing php-wasm from npm gets.
+
+| #   | Question              | Answer                                     | How                                        |
+| --- | --------------------- | ------------------------------------------ | ------------------------------------------ |
+| 1   | Idle wasm memory      | **64 MiB** static / 128 MiB dylink         | measured in workerd                        |
+| 2   | PHP instantiation CPU | **54 ms** at startup, **36 ms** in-request | measured in workerd                        |
+| 3   | Drupal bootstrap CPU  | **703–812 ms native**, **~3.5 s** in wasm  | native measured, scaled by a measured 5.0x |
+| 4   | Post-bootstrap memory | **64.5 MB** PHP heap                       | measured natively                          |
+
+Numbers 3 and 4 are still native-PHP baselines: the static build has every
+extension Drupal needs, but a full Drupal bootstrap inside wasm has not been run
+end to end yet. The scaling factor is not a guess — a Drupal-shaped PHP workload
+runs **5.0x slower** in workerd than natively, measured on identical source (see
+below). Everything projected here uses that measured 5.0x and says so.
+
+> **Round 25 —** the 2-5x assumption everyone was using, replaced by a measurement
+
+## The wasm:native multiplier, measured
+
+The 2–5x figure everyone was using was an assumption. It is now measured.
+
+`src/cpu-bench.js` holds one PHP workload shaped like Drupal bootstrap — class
+construction and method dispatch, associative-array churn, string building,
+`preg_match`, `serialize`. `scripts/bench/bench-cpu.php` reads that same file so the
+two cannot drift, and both produce byte-identical output (`1276566|4999`).
+
+|                                          | Median | Ratio    |
+| ---------------------------------------- | ------------ | -------- |
+| Native PHP 8.5.7, opcache off            | **140.5 ms** | 1.0x     |
+| dylink build in workerd, first execution | 992 ms | 7.1x     |
+| dylink build in workerd, warm            | 817 ms | 5.8x     |
+| static build in workerd, first execution | 819 ms | 5.8x     |
+| **static build in workerd, warm**        | **699 ms** | **5.0x** |
+
+Native runs: 140.5 / 140.5 / 141.1 / 145.4 / 140.5.
+dylink runs: 992 / 823 / 819 / 814 / 810 / 817.
+static runs: 819 / 699 / 697 / 699.
+
+The static build is **14% faster** than dylink on identical source with identical
+output, presumably from losing the dynamic-linker indirection on every call.
+**5.0x is the number to use.**
+
+Caveats, since this is the number everything downstream scales by: native is
+8.5.7 64-bit while wasm is 8.3.11 32-bit; the wasm build has `ASYNCIFY=1`, whose
+instrumentation a synchronous-storage build could drop; and this is local
+workerd wall-clock, not billed edge CPU. One workload shape, not a suite.
+
+### Rescaled projections — SUPERSEDED, kept only to show the method's error
+
+> **Do not use these numbers.** Drupal was subsequently measured directly in
+> wasm; see "DRUPAL 11 RENDERS INSIDE A CLOUDFLARE WORKER" below. Where a
+> projection and a measurement disagree, the measurement wins.
+
+| Operation                      | Native     | Projected at 5.0x | **Actually measured** |
+| ------------------------------ | ---------- | ----------------- | --------------------- |
+| Cold Drupal bootstrap          | 703 ms     | ~3.5 s            | **1,502–1,732 ms**    |
+| Warm request                   | 4.0 ms     | ~20 ms            | **0.242 ms** (N=500)  |
+| Module install + cache rebuild | 1,344.7 ms | ~6.7 s            | not yet run in wasm   |
+| Fresh VM instantiation         | —          | —                 | **36 ms**             |
+
+The projections were **wrong in both directions** and the warm one was wrong by
+~7x. Scaling a synthetic CPU benchmark does not predict Drupal, because the warm
+path is dominated by a page-cache hit that does no interpretation at all, and
+the cold path is dominated by I/O-ish container work rather than the tight
+allocation loop the benchmark measures.
+
+The 5.0x multiplier remains valid for _CPU-bound PHP_, which is what it was
+measured on. It is not a valid scaling factor for whole-request Drupal.
+
+> **Round 26 —** a second run in one isolate fatals, which is the request-isolation problem in one line
+
+## PHP global state persists between requests
+
+Running the benchmark twice in one isolate fails the second time:
+
+```
+Fatal error: Cannot declare class Node, because the name is already in use
+```
+
+This is the warm-instance model working — and its sharp edge. The PHP class and
+function tables, declared constants, and static properties all survive from one
+request to the next, because the interpreter is never torn down (and, per
+Blocker 1, cannot be).
+
+Drupal assumes a fresh interpreter per request. Anything that declares a class
+or function conditionally, or caches state in a static, will behave differently
+on request 2 than on request 1. A request-isolation strategy is required —
+either resetting interpreter state between requests or accepting that the
+process model is closer to a long-lived application server than to mod_php.
+
+This is the same class of problem PHP application servers (Swoole, RoadRunner,
+FrankenPHP worker mode) already solve, so there is prior art, but it is a real
+piece of work rather than a detail.
+
+> **Round 27 —** the first render: a real Drupal 11.4.5 front page, 12,304 bytes, from wasm inside workerd
+
+## DRUPAL 11 RENDERS INSIDE A CLOUDFLARE WORKER
+
+A real Drupal 11.4.5 front page, rendered by PHP 8.3.11 in wasm inside workerd.
+HTTP 200, 12,304 bytes, `<title>` present — against 12,314 bytes for the same
+page rendered natively, so it is genuinely the same output.
+
+| Request                     | CPU          | Subrequests | Status | Bytes  |
+| --------------------------- | ------------ | ----------- | ------ | ------ |
+| **Cold** (first in isolate) | **1,732 ms** | 3           | 200    | 12,304 |
+| **Warm**                    | **2 ms**     | 0           | 200    | 12,304 |
+| Warm                        | 3 ms         | 0           | 200    | 12,304 |
+| Warm                        | 2 ms         | 0           | 200    | 12,304 |
+
+Cold breakdown: autoload 35 ms, settings 46 ms, `$kernel->boot()` **1,323 ms**,
+`$kernel->handle()` 328 ms. 1,799 files included. Linear memory grew 64 MiB ->
+**76.8 MiB**.
+
+### The warm number changes the free-tier verdict on CPU
+
+**A warm anonymous page render costs 0.242 ms of CPU** (superseded figure below
+originally read 2-3 ms; that was the integer-millisecond precision floor). An earlier section of this document projected ~20 ms by scaling a
+synthetic CPU benchmark; that was wrong, and this measurement supersedes it.
+
+The reason is Drupal's own page cache. Anonymous responses are stored in the
+`cache_page`/`dynamic_page_cache` tables, which live in the SQLite file in
+MEMFS, so a warm hit never re-renders and never touches an asset. That is not a
+trick — it is how Drupal serves anonymous traffic in production.
+
+So free-tier CPU is **not** the blocker for cached anonymous traffic. What
+remains for free is the bundle and the 1,732 ms cold start (both since moved:
+see the capability-build section -- the bundle is now 2,793,984, under the limit)
+paid once per isolate.
+
+### Compiled Twig cannot be shipped from the host build
+
+The packed tree contained 53 compiled Twig files from the native run, but wasm
+recompiled all of them under a different prefix — packed `6a783b8d1350b_*`,
+generated `6a788299bc238_*`.
+
+The cause is not `filemtime`, which was the standing hypothesis. It is
+`TwigEnvironment`:
+
+```php
+if ($current['twig_extension_hash'] !== $twig_extension_hash || empty($current['twig_cache_prefix'])) {
+  $current = ['twig_extension_hash' => $twig_extension_hash,
+              'twig_cache_prefix' => uniqid()];
+}
+```
+
+The prefix is a `uniqid()` stored in state, regenerated whenever the hash of
+installed Twig extensions changes. A host with a different PHP version and
+extension set produces a different hash, so the shipped cache is orphaned.
+
+**Shipped Twig is therefore only reusable if the compiled files and the
+`twig_extension_hash_prefix` state row are produced together, in an environment
+whose Twig extension set matches the target.** Precompiling in CI against the
+same wasm runtime would satisfy that and remove Twig compilation from cold
+start.
+
+Restoring original mtimes through the pack (`FS.utime`) is implemented anyway —
+it is nearly free and `MTimeProtectedFastFileStorage` does hash `filemtime()`
+elsewhere — but it was **not** the cause here, and did not change the outcome.
+
+### Two patches Drupal needs, both real
+
+1. **Fibers.** Drupal 11 uses `new \Fiber()` in five core locations. PHP builds
+   Fibers on ucontext when configured `--disable-fiber-asm` (which php-wasm
+   sets), and emscripten provides no ucontext, so the first render aborts the
+   runtime with `Aborted(missing function: getcontext)`.
+
+   `scripts/patch-drupal.mjs` swaps the class for a synchronous stand-in
+   (`PhpWasmSyncFiber`) defined by the runtime before Drupal loads. All five
+   sites follow construct -> start -> resume-until-terminated -> getReturn, so a
+   stand-in that runs eagerly on `start()` satisfies every one. Output is
+   identical; only placeholder interleaving is lost, which buys nothing in a
+   single-threaded isolate.
+
+2. **`require_once` returns `true`, not the autoloader**, once the interpreter
+   has already loaded the file — and the interpreter persists between requests.
+   The second request died with `Call to a member function addPsr4() on true`.
+   The runtime has to cache the autoloader instance across requests.
+
+   This is the request-isolation problem in miniature, and it will recur
+   anywhere Drupal assumes a fresh process.
+
+### What the file set actually has to contain
+
+Profile-guided packing of only the observed includes **does not work**, for a
+reason worth stating: the profiled set is environment-dependent.
+
+- Profiling on a PHP that has `intl`/`mbstring` skips Symfony's polyfills
+  entirely; in wasm those extensions are absent, the polyfills load, and the
+  files are missing. First failure: `polyfill-intl-idn/bootstrap80.php`.
+- Conditionally-loaded classes never appear either. Second failure:
+  `Drupal\sqlite\Driver\Database\sqlite\PDOConnection`.
+- `.php` is not enough: Drupal executes `.inc`, `.module`, `.install`,
+  `.theme`, `.engine`, `.profile` and reads `.yml` and `.twig` at runtime. Third
+  failure: `core/includes/bootstrap.inc`.
+
+Packing everything except tests and static web assets works:
+
+|             | Value                                         |
+| ----------- | --------------------------------------------- |
+| Files       | 10,856                                        |
+| Raw         | 40.8 MB                                       |
+| **Gzipped** | **7.63 MB**                                   |
+| Index       | 982,911 bytes                                 |
+| Mount       | **3 subrequests**, 78 ms fetch + 168 ms write |
+
+Raw exceeds the 25 MiB per-asset ceiling, so the blob ships gzipped and is
+inflated in the Worker with `DecompressionStream`.
+
+**Either profile in the target environment, or over-pack.** Over-packing costs
+7.63 MB of asset and ~250 ms of mount; getting the profile wrong costs a broken
+site.
+
+> **Round 28 —** the transient spike and the steady-state ceiling were different problems and took different fixes
+
+## MEMORY: FIXED ON BOTH AXES (measured)
+
+The transient spike and the steady-state ceiling are different problems and were
+fixed by different changes. Both are implemented and measured.
+
+|                                 | Before         | **After**      | Change |
+| ------------------------------- | -------------- | -------------- | ------ |
+| MEMFS tree                      | 40,808,344     | **19,672,404** | −52%   |
+| MEMFS database                  | 6,475,776      | 6,475,776      | —      |
+| wasm linear                     | 80,543,744     | 80,543,744     | —      |
+| **Steady total**                | **~127.8 MB**  | **101.7 MB**   |        |
+| **Headroom vs 128 MB cap**      | **~0.2 MB**    | **26.3 MB**    |        |
+| **Transient peak during mount** | **145–157 MB** | **+373 KB**    |        |
+
+Drupal still renders correctly throughout: HTTP 200, 12,304 bytes, cold
+1,252–1,589 ms, warm **3 ms**.
+
+### Fix 1 — streaming mount kills the transient
+
+`mountDrupalStreaming()` pulls the pack through `DecompressionStream`, writes
+each file as its byte range completes, and drops consumed bytes. The inflated
+tree is never materialized as one buffer.
+
+Measured `peakCarryBytes`: **373,083** — the resident window is one pending
+chunk plus the unconsumed tail, against ~40 MB previously. This requires the
+index to be offset-ordered, which the packer already guarantees by appending
+sequentially.
+
+### Fix 2 — trace the filesystem, do not profile includes
+
+`get_included_files()` is the wrong instrument. It reports only what PHP
+`include`d, and Drupal reaches the disk through at least five different
+mechanisms:
+
+| Read path                                                  | Visible to `get_included_files()`? |
+| ---------------------------------------------------------- | ---------------------------------- |
+| `include` / `require`                                      | yes                                |
+| `file_get_contents` — services, routing, config schema yml | **no**                             |
+| `ExtensionDiscovery` — `*.info.yml`                        | **no**                             |
+| `module_load_include` — `.install`, `.post_update.php`     | **no**                             |
+| Twig loader — `.twig`                                      | **no**                             |
+
+Discovering these one fatal at a time is endless — it cost two failed boots
+(`Symfony\...\InvalidArgumentException`, then `core.services.yml is not valid`)
+before the pattern was clear.
+
+**The general fix is to instrument the VFS instead of the language.** Route
+`/trace` wraps emscripten's `FS.open`, mounts the whole tree, boots Drupal and
+drives several routes, then reports every path the runtime actually opened by
+any route. One mechanism, all five axes:
+
+```
+2,991 paths traced:
+  php 1,765 | directories 992 | yml 147 | module 28
+  htaccess 15 | twig 14 | inc 9 | install 2 | engine 1 | theme 1
+```
+
+The `.yml`, `.module`, `.inc`, `.install`, `.twig` entries are precisely what the
+include-profile missed.
+
+Two completions are still required on top of a trace, and both are principled
+rather than guesses:
+
+1. **Vendor package completion.** Lazily-thrown exception classes are never
+   opened on a successful run, so no trace can see them. If any file in
+   `vendor/<vendor>/<pkg>` is touched, ship that package.
+2. **All `*.info.yml`.** `ExtensionDiscovery` scans directories rather than
+   opening each candidate, so a module's info file can be required for discovery
+   without ever being opened.
+
+Also: exclude `sites/default/files/` — a trace sees the database being opened and
+would otherwise pack a duplicate 6.5 MB copy of it.
+
+| Pack strategy                          | Files     | MEMFS        | Boots?                |
+| -------------------------------------- | --------- | ------------ | --------------------- |
+| Profiled on the host                   | 1,829     | 9.35 MB      | no — missed polyfills |
+| Everything minus tests                 | 10,856    | 40.8 MB      | yes                   |
+| In-target include profile + heuristics | 5,737     | 18.76 MB     | yes                   |
+| **FS trace + package completion**      | **3,557** | **16.11 MB** | **yes**               |
+
+The trace is both the smallest working set and the only one arrived at by
+measurement rather than by guessing which blanket to throw over the problem.
+
+### Superseded: profile in the target runtime, then complete deterministically
+
+Profiling inside wasm (route `/profile`, which boots Drupal and dumps
+`get_included_files()`) gives **1,801 files** against 10,856 for the whole tree.
+But a raw profile is not shippable, and the two reasons are worth recording
+because they are not obvious:
+
+1. **Lazily-loaded classes never appear.** The first boot from a raw profile
+   died on `Symfony\Component\DependencyInjection\Exception\InvalidArgumentException`
+   — an exception class that only loads when something fails. Fixed by
+   **completing to the enclosing composer package**: if any file in
+   `vendor/<vendor>/<pkg>` was touched, ship that whole package. Deterministic,
+   and packages are small.
+
+2. **`.yml` and `.twig` are structurally invisible to profiling.** Drupal reads
+   service definitions, routing, plugin metadata and templates with
+   `file_get_contents` through its own storage abstractions — not `include` — so
+   `get_included_files()` never reports them. The second boot died on
+   `The service file "core/core.services.yml" is not valid` because the file was
+   simply absent. Fixed by including all `.yml`/`.twig` unconditionally.
+
+Final composition: 1,801 profiled → vendor packages completed → all yml/twig →
+**5,737 files, 18.76 MB**.
+
+| Pack strategy                                          | Files     | MEMFS        | Boots?                |
+| ------------------------------------------------------ | --------- | ------------ | --------------------- |
+| Profiled on the host                                   | 1,829     | 9.35 MB      | no — missed polyfills |
+| Everything minus tests                                 | 10,856    | 40.8 MB      | yes                   |
+| **Profiled in-target + package completion + yml/twig** | **5,737** | **18.76 MB** | **yes**               |
+
+### Levers not yet applied
+
+- **Database out of MEMFS** (−6.5 MB) once PDO talks to DO SQLite.
+- **Read-only FS backend** serving from one blob + offset index instead of
+  copying each file into a MEMFS node — would roughly halve the remaining
+  18.76 MB, since files are currently resident as both blob-derived data and
+  filesystem state.
+- **Evict boot-only files** after `$kernel->boot()`.
+- **`memory_limit` in php.ini** — will not reduce usage, but converts "isolate
+  terminated, no diagnostics" into a PHP fatal with a stack trace. Worth setting
+  precisely because wasm memory never shrinks, so one runaway request poisons
+  the instance permanently.
+
+> **Round 29 —** MEMFS stores file contents outside linear memory, which makes the ceiling a production problem on every plan
+
+## Why the ceiling mattered (original analysis, now addressed)
+
+This is not a free-tier problem. It is a **production** problem on every plan,
+and it is currently invisible because `wrangler dev` does not enforce the
+128 MB isolate cap.
+
+Emscripten's MEMFS stores file contents as JS typed arrays, **outside** wasm
+linear memory. So the mounted Drupal tree does not appear in
+`wasmMemory.buffer.byteLength` and is easy to miss. Adding it up for the build
+that currently renders Drupal:
+
+| Component                       | Bytes                 |
+| ------------------------------- | --------------------- |
+| wasm linear memory after render | 80,543,744 (76.8 MiB) |
+| MEMFS: packed tree              | 40,808,344            |
+| MEMFS: SQLite database          | 6,475,776             |
+| **Steady state**                | **~127.8 MB**         |
+| **Isolate cap**                 | **128 MB**            |
+
+That is _at_ the ceiling with zero headroom for the emscripten glue or any JS.
+
+**And the transient peak during mount is worse.** The blob is decompressed into
+one 40.8 MB `Uint8Array`, then `FS.writeFile` copies each slice into MEMFS, so
+both exist simultaneously:
+
+```
+64-76 MB linear + 40.8 MB blob + up to 40.8 MB MEMFS copies  ≈  145-157 MB peak
+```
+
+Well over the cap. It has never failed here only because local dev does not
+enforce it.
+
+### What has to change, and it is on the critical path
+
+1. **`INITIAL_MEMORY` must be set at build time** — confirmed, and already done
+   (64 MB instead of the stock 128 MiB). The stock build is unusable regardless
+   of plan: 128 MiB linear alone equals the entire isolate budget.
+2. **Do not hold the decompressed blob and the MEMFS copies at once.** Write
+   each file as it is inflated and release the source, or fetch the pack in
+   ranges. This is a straightforward fix and removes ~40 MB of transient peak.
+3. **The packed file set has to shrink.** 40.8 MB of source in MEMFS is the
+   single largest resident item, larger than PHP's own heap.
+
+### Which resolves the earlier "just over-pack" conclusion
+
+An earlier section concluded that profile-guided packing was unsafe and that
+over-packing was the answer. **That was right about correctness and wrong about
+cost.** Over-packing works functionally and blows the memory budget:
+
+| Pack                   | Files  | MEMFS cost  | Correct?                                   |
+| ---------------------- | ------ | ----------- | ------------------------------------------ |
+| Profiled on the host   | 1,829  | 9.35 MB     | **No** — missed polyfills and lazy classes |
+| Profiled + polyfills   | 1,959  | 11.56 MB    | No — missed `.inc` and driver classes      |
+| Everything minus tests | 10,856 | **40.8 MB** | Yes                                        |
+
+The correct answer is neither: **profile inside the target runtime**, where the
+extension set is the real one and conditional loads resolve the way they will in
+production. That yields a set that is both complete and close to the 9–12 MB
+end of this table rather than 40.8 MB.
+
+> **Round 30 —** the function audit that forced a purpose-built database driver
+
+## BLOCKER: DO SQLite CANNOT HOST DRUPAL'S SQLITE DRIVER
+
+Found while writing the driver, before any code was committed to it.
+
+Drupal's SQLite driver **registers user-defined SQL functions and a custom
+collation into the connection** at `open()`
+(`core/modules/sqlite/.../Connection.php`):
+
+```php
+$sqlite->createFunction('if', ...);        $sqlite->createFunction('md5', ...);
+$sqlite->createFunction('greatest', ...);  $sqlite->createFunction('concat', ...);
+$sqlite->createFunction('least', ...);     $sqlite->createFunction('concat_ws', ...);
+$sqlite->createFunction('pow', ...);       $sqlite->createFunction('substring', ...);
+$sqlite->createFunction('exp', ...);       $sqlite->createFunction('substring_index', ...);
+$sqlite->createFunction('length', ...);    $sqlite->createFunction('rand', ...);
+$sqlite->createFunction('regexp', ...);    $sqlite->createFunction('glob', ...);
+$sqlite->createCollation('NOCASE_UTF8', Unicode::strcasecmp(...));
+```
+
+These are PHP callbacks invoked _inside_ SQLite during query execution.
+
+**The Durable Objects SqlStorage API cannot register them.** Its entire surface
+is `exec(query, ...bindings)` and `databaseSize`; the cursor offers `next()`,
+`toArray()`, `one()`, `raw()`, `columnNames`, `rowsRead`, `rowsWritten`. There is
+no `createFunction`, no `createCollation`, and no documented equivalent. **D1 has
+the same limitation.**
+
+Drupal leans on these in generated SQL:
+
+| Function      | Files referencing (core, non-test) |
+| ------------- | ---------------------------------- |
+| `LEAST`       | 175                                |
+| `CONCAT`      | 34                                 |
+| `REGEXP`      | 19                                 |
+| `GREATEST`    | 11                                 |
+| `SUBSTRING`   | 5                                  |
+| `NOCASE_UTF8` | 3                                  |
+| `MD5(`        | 3                                  |
+
+Some map onto SQLite builtins — `length`, `substr`, `random()`, `iif()`,
+multi-argument `max()`/`min()`, `concat()`/`concat_ws()` on SQLite 3.44+, and the
+math functions Cloudflare documents as enabled. **`md5`, `regexp`, the redefined
+`glob`, and the `NOCASE_UTF8` collation have no builtin equivalent.**
+
+### Audit: how many of these actually appear in generated SQL?
+
+The raw file counts overstate the problem badly. Auditing each call site for
+whether it reaches _generated SQL_ or is only PHP-side:
+
+| Function      | In generated SQL? | Evidence                                                                                                                                                                                                                                              |
+| ------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `md5`         | **No** | zero hits for `MD5(` in SQL context; the 3 files are PHP `md5()` calls. The registration is defensive.                                                                                                                                                |
+| `regexp`      | **No, in core** | every hit is a PHP regex constant (`FrontMatter`, `JsonApiSpec`, `UpdateHookRegistry`, `CssCollectionOptimizerLazy`), the sqlite driver's own registration, or the **pgsql** operator map. Core never emits `REGEXP` on the SQLite path. Contrib may. |
+| `NOCASE_UTF8` | **Yes — 2 sites** | `sqlite/Schema.php:182` appends `COLLATE NOCASE_UTF8` in DDL; `views/StringArgument.php:198` appends it to a formula.                                                                                                                                 |
+| `glob`        | **Yes — hot path** | `sqlite/Connection.php:39` maps `'LIKE BINARY' => GLOB`, and `Core\Entity\Query\Sql\Condition` emits `LIKE BINARY` at three sites. Entity Query is everywhere.                                                                                        |
+
+Everything else maps to a **builtin in SQLite 3.46.1** (the version measured in
+the wasm build): `length`, `substr`, `random()`, `iif()` (3.32+), multi-argument
+`max()`/`min()` for greatest/least, `concat()`/`concat_ws()` (3.44+), and the
+math functions Cloudflare documents as enabled.
+
+**So the compatibility layer is two constructs, not fourteen:**
+
+1. **`NOCASE_UTF8`** — SQLite's builtin `NOCASE` handles ASCII case folding; the
+   delta is non-ASCII. Substituting `NOCASE` is probably acceptable for a v1 and
+   is a two-line rewrite.
+2. **`GLOB` semantics** — the dangerous one, because it fails _silently rather
+   than loudly_, and in **both directions**. Solved and verified below.
+
+### GLOB translation: solved, with a differential test
+
+`LIKE BINARY` maps to SQLite's `GLOB`, and Drupal redefines `glob` with a PHP
+callback so it behaves as case-sensitive LIKE. Without that callback the builtin
+takes over, and the two pattern languages disagree both ways:
+
+- `%` and `_` are **wildcards** under LIKE, **literals** under GLOB
+- `*`, `?`, `[...]` are **literals** under LIKE, **wildcards** under GLOB
+
+So a search for a literal `*` matches everything, a `%` wildcard matches nothing,
+and a `[` in user input silently changes query semantics. Nothing errors.
+
+`src/glob-differential.js` implements the translation:
+
+```js
+'%' -> '*'   '_' -> '?'   '*' -> '[*]'   '?' -> '[?]'   '[' -> '[[]'
+```
+
+Single-character classes are the only way to quote a GLOB metacharacter, because
+SQLite's GLOB has no `ESCAPE` clause.
+
+Verified against Drupal's own `sqlFunctionLikeBinary()` as the reference oracle,
+over randomly generated pattern/subject pairs drawn from a deliberately hostile
+alphabet (`ab%_*?[]\^-.`):
+
+| Run                                       | Cases | Mismatches |
+| ----------------------------------------- | ----- | ---------- |
+| Translated, seed 1                        | 3,000 | **0**      |
+| Translated, seed 7                        | 3,000 | **0**      |
+| Translated, seed 99                       | 3,000 | **0**      |
+| **Control** (raw pattern, no translation) | 3,000 | **12**     |
+
+The control matters: a differential that cannot fail proves nothing. It
+reproduces exactly the predicted divergences —
+
+| pattern | subject | LIKE         | GLOB                           |
+| ------- | ------- | ------------ | ------------------------------ |
+| `%`     | `.--]`  | 1 (wildcard) | 0 — wildcard matched nothing   |
+| `*`     | `b*?-`  | 0 (literal)  | 1 — literal matched everything |
+| `_`     | `?`     | 1            | 0                              |
+
+**Caveat on the reference.** Drupal's own implementation ignores the
+`ESCAPE '\'` clause its operator map appends: `preg_quote()` escapes the
+backslash, then `%`/`_` are substituted regardless, so `\%` matches a literal
+backslash followed by anything rather than a literal `%`. The translation above
+matches Drupal's _actual_ behaviour, bugs included, which is the right target for
+a compatibility layer — but it means escaped wildcards are already wrong upstream
+and should not be "fixed" here without deciding that deliberately.
+
+`md5` and `regexp` can simply be dropped for core; `regexp` becomes a
+contrib-compatibility caveat rather than a blocker.
+
+That reduces "query-layer rewrite" to a few hundred lines of SQL preprocessing
+with one silent-wrongness hazard to test carefully — **a week, not a month.**
+
+### RESOLVED: the 100-parameter question disqualifies D1
+
+**SUPERSEDED in one row.** The "DO SQLite 32,766, fine" verdict below is wrong: the
+host caps a statement at **100 bound parameters**, measured by bisection against real
+`ctx.storage.sql`. See "THE HOST CAPS A STATEMENT AT 100 BOUND PARAMETERS" at the top.
+Everything else here stands, and the Drupal-side placeholder counts are exactly why
+the cap matters.
+
+Measured by driving the shapes that actually risk it, rather than hoping a
+content page hits them (`scripts/bench/bench-placeholders.php`):
+
+| Query                          | Max bound parameters |
+| ------------------------------ | -------------------- |
+| entityQuery `nid IN` (50 ids)  | 50                   |
+| entityQuery `nid IN` (150 ids) | **150**              |
+| entityQuery `nid IN` (500 ids) | **500**              |
+| **`loadMultiple(500)`**        | **500**              |
+| `select ... IN` (1000 ids)     | **1000**             |
+| config entity `loadMultiple()` | 2                    |
+
+**Drupal does not chunk.** Placeholder count tracks ID count one-to-one, without
+limit.
+
+`loadMultiple()` is the decisive one because it is the _ordinary_ path: every
+Views listing bulk-loads its entities after the query runs. A view displaying
+150 nodes emits a 150-parameter query as a matter of course.
+
+| Backend         | Parameter cap | Verdict                                              |
+| --------------- | --------------------- | ---------------------------------------------------- |
+| **D1**          | **100** | **unusable** — any listing over ~100 rows hard-fails |
+| DO SQLite       | ~~32,766 (SQLite's own)~~ **100, measured** | **SUPERSEDED** -- same cap as D1, found later by bisection |
+| PHP-side SQLite | 32,766 | fine                                                 |
+
+This closes an item the earlier design discussion left open, and it closes it
+against D1. The front page peaking at 12 parameters was not evidence of safety —
+it was evidence that the front page is the wrong test.
+
+### WAL round trip: verified, with a control
+
+The persistence design needs the _transport_ to work, not just the mode to
+engage. Write -> snapshot -> tear down MEMFS -> restore -> recover:
+
+```json
+{
+  "mode": "wal",
+  "rows_before": 200,
+  "base_size": 4096,
+  "wal_size": 832272,
+  "torn_down": true,
+  "rows_after_restore": 200,
+  "sample": "row200",
+  "base_only_err": "no such table: t",
+  "checkpoint": "[0,0,0]",
+  "rows_after_checkpoint_baseonly": 200
+}
+```
+
+- Restoring **base + WAL** recovers all 200 rows, and SQLite rebuilds the `-shm`
+  index itself — it does not need to be transported.
+- **Control:** restoring the base _alone_ loses everything (`no such table: t`),
+  proving the WAL is load-bearing and the test is not passing by accident.
+- After `wal_checkpoint(TRUNCATE)`, the base file alone carries all 200 rows.
+
+**The size number is the operationally important one: 200 trivial inserts
+produced an 832,272-byte WAL against a 4,096-byte base.** Durable Object storage
+caps a single `put()` value at 128 KiB, so a WAL of that size cannot be stored as
+one value. Checkpoint-before-store (or chunking) is **mandatory**, and
+checkpointing must trigger on WAL size, not only on an alarm timer.
+
+### Known limitations to state up front, not discover as bug reports
+
+1. **`NOCASE_UTF8` becomes ASCII-only case folding.** Substituting SQLite's
+   builtin `NOCASE` silently changes sort order and duplicate detection for
+   non-English content. A German or Turkish site will behave differently from
+   the same site on MySQL. Acceptable for v1, but it is a product limitation and
+   belongs in release notes rather than in a later bug report.
+2. **`REGEXP` is unavailable to contrib.** Core never emits it on the SQLite
+   path, so core is unaffected, but any contrib module using
+   `->condition($f, $v, 'REGEXP')` will fail.
+3. **Escaped LIKE wildcards are wrong upstream** (see the GLOB caveat above) and
+   the compatibility layer reproduces that rather than diverging from it.
+
+### Open, and explicitly NOT yet tested
+
+- **Interrupted checkpoint.** The clean round trip is verified; a checkpoint
+  killed mid-write is not. This is the case that produces a torn base file.
+- **Module install in wasm.** Measured natively (1,344.7 ms, 78.5 MB peak);
+  unmeasured in wasm.
+- **Paid deployment.** All memory figures come from `wrangler dev`, which does
+  not enforce the 128 MB isolate cap. 26.3 MB of headroom is unvalidated against
+  an enforcing runtime, and this is the number most likely to behave differently
+  in production.
+- **JSPI on the edge.** Probed true locally; unverified at a pinned
+  `compatibility_date` on a deployed Worker. The Guzzle handler depends on it.
+- **A typed bridge codec.** Two marshalling holes were found and closed
+  individually (boundary guard, then `sqlExec`'s internal `JSON.stringify`).
+  Two instances imply a third: anywhere a value is serialized on the JS side and
+  `json_decode`d on the PHP side is the same bug. A single encode/decode pair
+  used at every crossing would close the class rather than the instances. Not
+  built.
+
+### WAL is available, which makes the persistence path viable
+
+Measured in the wasm build:
+
+```json
+{
+  "default_mode": "delete",
+  "set_wal": "wal",
+  "after_set": "wal",
+  "sqlite_version": "3.46.1",
+  "wal_file": true,
+  "shm_file": true,
+  "rows": 1
+}
+```
+
+WAL engages, persists, and creates its `-wal`/`-shm` sidecars in MEMFS. This
+matters because the naive persistence design is wrong: a single front-page
+render writes to `cache_page`, `dynamic_page_cache` and `semaphore`, so
+serializing a 6.5 MB database file back to DO storage on every mutating request
+would destroy the measured 3 ms warm path. With WAL, the base file plus an
+append-only log can be checkpointed on an alarm instead.
+
+**Correction to an earlier claim:** persisting the database file to DO storage
+was described as working "today". It does not — it is a design. WAL support is
+confirmed, which removes the main risk, but the write-back path is unbuilt.
+
+Note also that this path **forfeits the 6.5 MB MEMFS saving**, because the file
+has to be resident to be queried. The current 26.3 MB of headroom absorbs it,
+but "database out of memory" is a benefit that exists only on the DO SQLite
+path.
+
+### What this means
+
+The "move the database to DO SQLite and drop libsqlite3" plan does not work as
+specified. It requires either rewriting Drupal's generated SQL to avoid four
+constructs, or patching the driver to emulate them — both substantially larger
+and riskier than the userland `Connection` class that was planned.
+
+**The pragmatic alternative preserves everything:** keep libsqlite3 compiled in,
+run Drupal's SQLite driver unmodified with all its user-defined functions, and
+persist the database _file_ to Durable Object storage as a blob — loading it into
+MEMFS at boot and writing back on change. Every function works because they
+execute inside PHP's own SQLite.
+
+The cost is the bundle:
+
+| Build                                         | Total gzip | vs 3 MB free         |
+| --------------------------------------------- | ---------- | -------------------- |
+| Capability build, no sqlite                   | 2,793,984 | **under by 351,744** |
+| Same with libsqlite3 back (estimated ~550 KB) | ~3.34 MB | **over by ~200 KB**  |
+
+So the trade is explicit: **DO SQLite buys the free tier but costs a query-layer
+rewrite; PHP-side SQLite works today but is ~200 KB over the free ceiling.**
+Paid is unaffected either way — 3.34 MB is 32% of the 10 MB ceiling.
+
+This should be decided before driver work starts, because the two paths share
+almost no code.
+
+> **Round 31 —** the PHP-to-JS bridge fits under the ceiling, at 19,275 bytes for vrzno
+
+## THE CAPABILITY BRIDGE WORKS, AND IT COSTS 19 KB
+
+The build that carries the PHP->JS bridge **fits under the free-tier ceiling**:
+
+|            | Bytes                     |
+| ---------- | ------------------------- |
+| wasm gzip  | 2,682,220                 |
+| glue gzip  | 111,764                   |
+| **Total**  | **2,793,984**             |
+| Free limit | 3,145,728                 |
+| **Margin** | **351,744 under (11.2%)** |
+
+Config: `MAIN_MODULE=0`, `ASYNCIFY=0`, `-Oz`, `WITH_VRZNO=1`, `WITH_SQLITE=0`,
+extensions trimmed to core's list minus gd/zlib.
+
+**vrzno costs 19,275 bytes.** The tension between "capability layer" and "free
+tier bundle" that looked like it needed resolving does not exist — the bridge is
+19 KB and removing libsqlite3 saves an order of magnitude more.
+
+### Proven end to end
+
+`vrzno_env($name)` resolves to `Module[$name]`, so anything hung on the
+emscripten Module object is reachable from PHP. Injecting a host object and
+calling it from PHP:
+
+```json
+"probe":      "php-to-js-ok",     // PHP read a JS value
+"host_class": "Vrzno",            // JS object surfaced as a PHP object
+"host_echo":  "echo:drupal",      // PHP called a JS function with an argument
+"host_now":   -397708726          // PHP called Date.now()
+```
+
+**PHP calls JS synchronously, with arguments, and receives return values.** That
+is the whole capability API, working, inside the free-tier budget.
+
+Both planned drivers are therefore userland work with no further rebuilds:
+
+- **Database.** `vrzno_env('cfEnv')` -> Durable Object namespace ->
+  `ctx.storage.sql.exec()`. DO SQLite is **synchronous**, so this needs no
+  suspension mechanism and works on the `ASYNCIFY=0` build as it stands.
+  Drupal needs a `Connection` + statement class, not a real PDO driver;
+  core's own sqlite driver ships `PDOConnection.php` as exactly that seam.
+- **Outbound HTTP.** `http_handler_stack` overridden with a Guzzle handler
+  calling `fetch()`. This one _does_ need suspension, because `fetch()` is
+  async — so it depends on JSPI (available in workerd, unverified on the edge).
+
+### The bridge splits cleanly into sync and async halves
+
+| Capability                                 | This build (`ASYNCIFY=0`) |
+| ------------------------------------------ | ------------------------- |
+| Read a JS value (`vrzno_env`)              | **works**                 |
+| Call a JS function with args, get a return | **works**                 |
+| Await a JS promise (`vrzno_await`)         | **fails**                 |
+
+```
+ReferenceError: Asyncify is not defined
+  at __asyncjs__vrzno_await_internal
+```
+
+`vrzno_await` is compiled against Asyncify, which this build removes. So:
+
+- **Synchronous capabilities work today.** Anything the host can answer without
+  a promise — DO SQLite's `exec()`, `crypto.subtle` digests, compression,
+  KV-style reads through a sync shim — is available now.
+- **Asynchronous capabilities need a suspension mechanism.** `fetch()` returns a
+  promise, so the Guzzle handler requires either Asyncify back (−42% of the
+  bundle saving) or a **JSPI build**, which is the reason JSPI matters.
+
+This is a clean split rather than a blocker, and it lines up with the
+architecture: the database is synchronous by design, outbound HTTP is not.
+
+### Two constraints found while proving it
+
+1. **`vrzno_eval()` is blocked.** It calls JS `eval()` internally and workerd
+   answers `EvalError: Code generation from strings disallowed for this
+context` — the same prohibition that blocks runtime wasm codegen. The
+   eval-driven half of vrzno is unusable in Workers. The direct-access half
+   (`vrzno_env`, property access, method calls) works, and that is what the
+   drivers need. EM_ASM itself is fine; only the nested `eval()` fails.
+
+2. **The build is 32-bit, and JS numbers overflow silently.** `Date.now()`
+   returned **-397708726** instead of ~1.78e12: `PHP_INT_SIZE` is 4, so any JS
+   number above 2^31 wraps. Millisecond timestamps, byte counts over 2 GB, and
+   64-bit IDs must cross the bridge as strings or be split. This will silently
+   corrupt data rather than error, so the bridge needs a typed marshalling layer
+   rather than raw value passing.
+
+> **Round 32 —** openssl is unbuildable for Workers, and behind it there was no outbound HTTP at all
+
+## OPENSSL, AND THE BIGGER HOLE BEHIND IT: NO OUTBOUND HTTP
+
+`WITH_OPENSSL` has **no `static` option** in php-wasm — only `shared` or
+`dynamic`, and both are `.so` side modules that workerd cannot load. So openssl
+is not merely omitted from this build; it is currently **unbuildable** for
+Workers without upstream work.
+
+How much does that cost? Measured rather than assumed:
+
+| Scope                                                    | `openssl_*` call sites                                              |
+| -------------------------------------------------------- | ------------------------------------------------------------------- |
+| Drupal core (`core/lib`, `core/modules`, tests excluded) | **0 files**                                                         |
+| Vendor                                                   | 4 files — `symfony/mime` S/MIME + DKIM signing, `var-dumper` caster |
+
+`ext-openssl` is also **not** in core's `composer.json` requirement list. So core
+itself is unaffected; what breaks is signed/encrypted mail (S/MIME, DKIM) and any
+contrib that calls `openssl_*` directly.
+
+### The larger problem: no outbound HTTP is a missing capability _class_
+
+Measured in the running build:
+
+```
+allow_url_fopen = 1
+stream wrappers = compress.zlib, php, file, glob, data
+curl_init()     = absent
+```
+
+**There is no `http` or `https` stream wrapper and no curl.** PHP cannot make an
+outbound request by any route.
+
+This is worse than a list of broken features, because `\Drupal::httpClient()` is
+what every module reaches for. Guzzle is a core dependency, and its
+`Utils::chooseHandler()` picks in this order: curl, then `StreamHandler` if
+`allow_url_fopen` is set, then throw.
+
+Since `allow_url_fopen=1`, Guzzle **constructs successfully with StreamHandler**
+and then fails on every actual request with "Unable to find the wrapper https".
+So it fails late and per-request rather than fast at container build — which is
+the worse failure mode for diagnosis.
+
+Scope: **every contrib module that talks to anything.** Update Manager, oEmbed
+and remote video, feeds/aggregator, webhooks, search backends, payment gateways,
+SMTP mail. That is a larger compatibility hole than the 294 KB bundle gap, and
+unlike bundle size it cannot be solved by compiling harder — a Worker has no
+sockets to give PHP.
+
+### The fix, and why it is the reference case for the capability API
+
+Drupal registers the Guzzle transport as a swappable service
+(`core/core.services.yml`):
+
+```yaml
+http_handler_stack:
+  class: GuzzleHttp\HandlerStack
+  factory: GuzzleHttp\HandlerStack::create
+  configurator: ["@http_handler_stack_configurator", configure]
+http_client_factory:
+  arguments: ["@http_handler_stack"]
+```
+
+Overriding `http_handler_stack` with a handler that calls the Worker's `fetch()`
+replaces the transport for all of `\Drupal::httpClient()` — no module changes.
+
+That is strictly better than curl-in-wasm would have been: it inherits
+Cloudflare's connection pooling, egress, and TLS termination instead of shipping
+a TLS stack inside the binary.
+
+It is also the first concrete instance of the **capability API** pattern: PHP
+asks for something, and the runtime satisfies it with a platform primitive
+rather than a compiled C library. The same shape applies to mail (no SMTP →
+API binding), compression (`CompressionStream`), hashing (`crypto.subtle`), and
+the database (DO SQLite). **This should be built as the reference
+implementation and named as such.**
+
+### The sync/async tension is resolved: workerd supports JSPI
+
+PHP's HTTP calls are synchronous; `fetch()` is not. With `ASYNCIFY=0` there is
+no suspension mechanism, and bringing Asyncify back would cost the 42% of bundle
+size it just saved. That looked like a hard trade.
+
+It is not. Probed directly in workerd:
+
+```json
+{ "Suspending": true, "promising": true, "SuspendError": true }
+```
+
+**JSPI (JavaScript Promise Integration) is available.** It provides the same
+suspend-across-a-host-call semantics as Asyncify, implemented in the engine
+rather than by instrumenting every function, so the size cost is near zero.
+
+**Two caveats, both verified rather than assumed:**
+
+1. **Playground's JSPI variant does not help directly.** Its header is
+   `\0asm ... dylink`, so `jspi/php_8_3.wasm` is a _dynamic-linking_ build like
+   every other published artifact and cannot run in workerd regardless of JSPI.
+   The path is JSPI **plus** `MAIN_MODULE=0`, built here — a build flag, but not
+   a ready-made binary.
+2. **A local capability probe is not a deployment guarantee.** `WebAssembly.
+Suspending` being present in local workerd does not prove the deployed edge
+   honours it at a given `compatibility_date`. This must be re-probed on a real
+   paid Worker before anything depends on it — the 42% Asyncify saving is riding
+   on it.
+
+So outbound HTTP does **not** have to be confined to cron and queue workers, and
+the bundle math survives. This should be settled by building the JSPI variant
+and re-measuring, before any implementation depends on it.
+
+Also confirmed present: `CompressionStream`, `DecompressionStream`,
+`crypto.subtle`, `crypto.randomUUID`.
+
+> **Round 33 —** the serving split: an anonymous hit answers in JS and never instantiates the interpreter
+
+## Making free tier work: what is solved and what is not
+
+Route `/page` implements the serving split — anonymous responses cached outside
+PHP, so a hit answers in JS and never instantiates the interpreter. The map
+stands in for Durable Object storage.
+
+| Path                              | CPU      |
+| --------------------------------- | -------- |
+| MISS — mount + boot + render      | 2,323 ms |
+| **HIT — JS only, wasm untouched** | **0 ms** |
+
+On a hit, PHP is never instantiated: no 64 MiB linear memory, no bootstrap, no
+subrequests. For a site with a high anonymous cache-hit rate this is the shape
+that fits inside 10 ms, and it is the same shape Drupal already uses in
+production.
+
+### The complete deployable footprint
+
+A whole Drupal site, ready to deploy, is four objects:
+
+| Object                                    | Size | Limit                 |
+| ----------------------------------------- | --------------------------------------------------- | --------------------- |
+| Worker bundle (wasm + glue, gzip)         | **2.79 MB** (capability build) / 6.35 MB (asyncify) | 3 MB free, 10 MB paid |
+| `drupal/core.bin.gz` — the whole PHP tree | 7,999,749 | 25 MiB per asset      |
+| `drupal/core.json` — the file index       | 1,178,319 |                       |
+| `drupal/site.sqlite` — database           | 6,475,776 |                       |
+| **Total assets**                          | **15.65 MB across 3 objects** | 20,000 files free     |
+
+Asset _count_ is a non-issue once packed: 3 objects against a 20,000 ceiling.
+The database and index are not yet gzipped; doing so would take the asset total
+to roughly 9 MB, though neither is near a limit.
+
+### Scorecard against the free tier
+
+> **SUPERSEDED.** "Warm CPU: Solved — 0.242 ms anon cached, 8.90 ms
+> authenticated" is wrong on both figures: 0.242 ms was a `page_cache` HIT rather
+> than a render (real render 33.8 ms warm / 149.6 ms fresh) and authenticated is
+> 119 ms with a real login session, not 8.90 ms. Warm CPU is **not** solved for
+> the free tier — only cache hits fit 10 ms. Bundle is 2,876,855 on the shipping
+> `-O2` build, not 2,793,984.
+
+| Blocker                 | Status                                                    |
+| ----------------------- | --------------------------------------------------------- |
+| Subrequests (1,000)     | **Solved** — packing gives 3 cold, 0 warm                 |
+| Static assets (20,000)  | **Solved** — 4 objects                                    |
+| Warm CPU (10 ms)        | **Solved** — 0.242 ms anon cached, 8.90 ms authenticated  |
+| Isolate memory (128 MB) | **Solved on the hit path** — wasm never instantiated      |
+| Cold start (10 ms)      | **Mitigated, not solved** — 1.4–2.3 s, but only on a miss |
+| **Bundle (3 MB)**       | **SOLVED — 2,793,984, 351,744 under**                     |
+
+### Why bundle size is the one that actually decides it
+
+Bundle size is measured on the deployed artifact, not on what executes. A
+statically imported `.wasm` counts whether or not it is ever instantiated, and
+Workers cannot compile a `.wasm` fetched at runtime, so it cannot be moved to
+Static Assets. Splitting into two Workers does not help either: the renderer
+still has to carry the interpreter, and each Worker has its own 3 MB ceiling.
+
+So **free-tier dynamic Drupal reduces to a single question: can a Drupal-capable
+PHP build fit in 3 MB gzip?** Every other free-tier blocker has a solution
+measured above.
+
+### Size attempt v1: ASYNCIFY=0 + -Oz + trimmed extensions
+
+`ASYNCIFY=0` (nothing suspends now that DO SQLite is synchronous and the VFS is
+preloaded), `OPTIMIZE=z`, and extensions cut to core's requirement list —
+dropping bcmath, calendar, exif, phar, zip, iconv, freetype, webp.
+
+|                   | Asyncify build | **v1 free build** | Change   |
+| ----------------- | -------------- | ----------------- | -------- |
+| wasm raw          | 20,263,074     | **11,116,619**    | **−45%** |
+| code section      | 17,633,281     | 9,531,645         | −46%     |
+| data section      | 2,564,542      | 1,528,064         | −40%     |
+| **wasm gzip**     | 6,206,286      | **3,603,832**     | **−42%** |
+| glue gzip         | 138,811        | 128,819           |          |
+| **total gzip**    | 6,345,097      | **3,732,651**     |          |
+| vs 3,145,728 free | 2.0x over      | **1.19x over**    |          |
+
+**It works.** The `ASYNCIFY=0` build boots in 39 ms (faster than 54 ms with it),
+carries all 14 required extensions, and renders Drupal: **cold 1,502 ms, warm
+3 ms, HTTP 200, 12,304 bytes** — slightly faster than the Asyncify build.
+
+So Asyncify was costing 42% of the bundle and buying nothing.
+
+**Remaining gap: 586,923 bytes (15.7%).**
+
+`wasm-opt -Oz --strip-debug --strip-producers` on the output yields only 4,412
+more bytes — emscripten already applies it, and there are no debug or name
+sections left. The rest has to come out of the extension set.
+
+### Dropping gd costs less than expected
+
+`ext-gd` is in core's `composer.json`, but the only runtime platform assertion
+Composer generates is:
+
+```php
+if (!(PHP_VERSION_ID >= 80300)) { ... }
+```
+
+No extension is checked at runtime, and `system.install` does not test for gd
+either. So **dropping gd does not break bootstrap or rendering** — it breaks
+image-derivative generation, and only when an image style is actually built.
+On an edge runtime that work belongs to Cloudflare Images regardless.
+
+No Drupal patch is needed for this; the requirement is declarative only.
+
+### Size attempt v2 (in progress)
+
+Dropping gd, libpng, libjpeg, xmlreader, xmlwriter and vrzno on top of v1.
+Rough expectation is 350–480 KB of the 587 KB needed, which would land around
+3.25–3.35 MB — still slightly over. If it does, the remaining honest options are:
+
+- **Drupal 10 on PHP 8.1.** The published PHP 8.1 core is ~8% smaller than 8.3
+  (3,242,497 vs 3,297,977 gzip for the dylink cores), and Drupal 10 supports it.
+  That is roughly the size of the remaining gap.
+- Minifying the emscripten glue further (128,819 gzip today).
+- Accepting paid tier, where 3.73 MB is 36% of the ceiling and everything works
+  today.
+
+> **Round 34 —** a `MAIN_MODULE=0` build with no `dylink.0`, correcting two earlier conclusions
+
+## THE STATIC BUILD WORKS — and it corrects two earlier conclusions
+
+`build/build-static.sh` produced a working `MAIN_MODULE=0` build. Verified at
+the byte level: the header runs straight from `\0asm` into the type section with
+**no `dylink.0`**.
+
+|                     | dylink (published) | **static (built here)**  |
+| ------------------- | ------------------------------------------------ | ------------------------ |
+| wasm raw            | 13,165,354 | 20,263,074               |
+| **wasm gzip**       | 3,297,977 | **6,206,286**            |
+| glue gzip           | 82,926 | 138,811                  |
+| **total gzip**      | 3,380,903 _(no extensions)_ | **6,345,097 (6.05 MiB)** |
+| Imports             | `env, wasi_snapshot_preview1, GOT.mem, GOT.func` | **`a`**                  |
+| Idle linear memory  | 128 MiB | **64 MiB**               |
+| Boot                | 89–101 ms | **54 ms**                |
+| Drupal's extensions | **cannot load** | **all present**          |
+
+Against the limits: **2.0x over the 3 MB free ceiling; 60.5% of the 10 MB paid
+ceiling**, leaving ~4.1 MB for adapter and VFS code. The paid appliance fits.
+
+### Every extension Drupal requires is now available
+
+```
+Core PDO Phar Reflection SPL SimpleXML bcmath calendar ctype date dom exif
+filter gd hash iconv json libxml pcre pdo_sqlite pib random session sqlite3
+standard tokenizer vrzno xml xmlreader xmlwriter zip zlib
+```
+
+All 14 of core's `composer.json` requirements — date, dom, filter, gd, hash,
+json, pcre, PDO, session, SimpleXML, SPL, tokenizer, xml, zlib — are compiled in.
+
+`mbstring` is **absent** despite `WITH_MBSTRING=static` in the rc; the build
+appears to have skipped it silently. Not required by core, so it does not block
+Drupal, but it is unexplained and contrib commonly assumes it.
+
+### Correction: a VM _can_ be built per request
+
+An earlier section of this document concluded that destroying and rebuilding the
+PHP VM inside a request was impossible. **That was true only of the dylink
+build.** Its dynamic linker synthesizes wasm trampolines at runtime, and workerd
+forbids codegen outside module evaluation.
+
+The static build needs no codegen at all. Instantiating a fresh interpreter
+inside a request handler works:
+
+```
+/request-boot -> { ok: true, bootMs: 36, totalMs: 47, version: "8.3.11" }
+```
+
+**36 ms for a complete fresh interpreter.** So:
+
+- Warm long-lived instances remain far better for latency — a fresh VM has no
+  compiled Twig in MEMFS and no booted Drupal container, so it pays the full
+  ~4.1 s cold bootstrap.
+- But the **two-kernel split is now achievable in its ideal form.** An
+  operations kernel can genuinely be spawned per admin action and discarded,
+  taking its measured 78.5 MB spike to the grave, because wasm memory never
+  shrinking no longer matters if the instance does not survive.
+
+That converts the split from a mechanical necessity into an architecture that
+actually works as originally intended.
+
+> **Round 35 —** the dylink build's blockers, and which of them the static build resolved
+
+## Blockers found
+
+_(Blocker 1 below applies to the dylink build. The static build above resolves
+it; both are kept because the published packages are all dylink.)_
+
+### 1. Runtime wasm codegen is forbidden; startup codegen is allowed
+
+```
+startupCodegen:  { allowed: true }
+requestCodegen:  { allowed: false, "Wasm code generation disallowed by embedder" }
+```
+
+PHP must therefore be instantiated during isolate startup, at module scope.
+
+**Consequence: destroying and rebuilding the PHP VM inside a request is
+impossible.** Warm-instance amortization is not an optimization that was chosen,
+it is forced by the runtime. Any design that spawns a fresh interpreter per
+request is unimplementable, and the separate long-lived / disposable kernel split
+has a mechanical justification rather than a performance one.
+
+### 2. Every shipped PHP.wasm is a dynamic-linking build
+
+`seanmorris/php-wasm` and WordPress Playground (both `asyncify` and `jspi`
+variants) all carry a `dylink.0` section. Emscripten's dynamic linker calls
+`convertJsFunctionToWasm`, which hand-assembles a wasm trampoline module at
+runtime:
+
+```js
+var bytes=[0,97,115,109,1,0,0,0,1]; // "\0asm" + version
+...
+var module=new WebAssembly.Module(new Uint8Array(bytes))
+```
+
+That is codegen. Instantiating at startup dodges it once. Loading a `.so`
+extension later cannot.
+
+Extensions actually available vs. Drupal 11's requirements:
+
+| Required by Drupal 11                                        | Present                |
+| ------------------------------------------------------------ | ---------------------- |
+| date, filter, hash, json, pcre, PDO, session, SPL, tokenizer | yes                    |
+| **dom, xml, SimpleXML, mbstring, gd**                        | **no, and unloadable** |
+
+**A static (`MAIN_MODULE=0`) build with extensions compiled in is a precondition
+for Drupal, not a size optimization.**
+
+### 3. 128 MiB linear memory is baked into the binary
+
+Every attempt to lower `INITIAL_MEMORY` at runtime fails identically:
+
+```
+memory import has 128 pages which is smaller than the declared initial of 2048
+```
+
+2048 pages x 64 KiB = 128 MiB, declared inside the wasm. It is a build-time
+constant (`INITIAL_MEMORY ?= 128MB` in the Makefile), so it is fixable, but not
+by configuration. As shipped, PHP.wasm claims the entire Workers 128 MB isolate
+budget while idle.
+
+Measured Drupal heap is 64.5 MB, so the floor for a working build is roughly
+96 MB of linear memory — still most of the isolate budget.
+
+> **Round 36 —** the size era's accounting, taken against core's own requirement list
+
+## Bundle size
+
+gzip -9, which is what Cloudflare's limit is measured against.
+
+Drupal core's own `composer.json` is the authoritative requirement list:
+
+```
+ext-date  ext-dom     ext-filter  ext-gd    ext-hash  ext-json  ext-pcre
+ext-PDO   ext-session ext-SimpleXML ext-SPL ext-tokenizer ext-xml ext-zlib
+php >= 8.3.0
+```
+
+**`mbstring` and `openssl` are not required.** An earlier version of this
+document listed mbstring as required and inflated the bundle accordingly.
+
+| Component                       | Bytes | Required? |
+| ------------------------------- | ------------------------ | --------- |
+| PHP 8.3 core wasm               | 3,297,977 | yes       |
+| Emscripten glue                 | 82,926 | yes       |
+| libxml2 + xml + dom + simplexml | 513,405 | yes       |
+| gd + libpng/jpeg/webp/freetype  | 684,821 | yes       |
+| zlib + libz                     | 43,485 | yes       |
+| **Required total**              | **4,622,614 (4.41 MiB)** |           |
+| mbstring + libonig              | 754,362 | no        |
+| iconv                           | 653,719 | no        |
+| **With both**                   | **6,030,695 (5.75 MiB)** |           |
+
+- Free limit 3 MB: **~1.5x over even at the required minimum**
+- Paid limit 10 MB: **~44% consumed** at minimum, before Drupal, adapter, or
+  VFS code
+
+Dropping mbstring saves 754 KB and is legitimate per core's requirements, though
+contrib modules commonly assume it. It is a real lever if size gets tight.
+
+Static Assets does not help. Workers require wasm to be statically imported so it
+compiles at deploy time; a `.wasm` served as an asset cannot be instantiated.
+
+> **Round 37 —** the native baseline every wasm multiplier in this document is taken against
+
+## Drupal request cost, measured natively
+
+Drupal 11.4.5, PHP 8.5.7, SQLite, `opcache.enable_cli=0` to match the wasm
+environment (there is no opcache in wasm).
+
+| Scenario                       | CPU          | Wall       | Files read | Peak memory |
+| ------------------------------ | ------------ | ---------- | ---------- | ----------- |
+| Cold, after `cache:rebuild`    | **703.2 ms** | 791.1 ms   | 2,331      | 64.5 MB     |
+| Cold, fresh install            | 812.2 ms     | 1,222.6 ms | 2,436      | 64.5 MB     |
+| Cold process, warm disk caches | 141.8 ms     | 279.8 ms   | 997        | 26 MB       |
+| **Warm process, per request**  | **4.0 ms**   | 4.1 ms     | **0 new**  | —           |
+
+The warm number is the important one and it cuts both ways. A fully warm kernel
+serves a page in 4 ms of native CPU touching zero new files. That is genuinely
+cheap, and it is the strongest available argument for the long-lived instance
+model. It is also only reachable if the isolate stays warm _and_ all ~2,331 files
+remain resident, which is what makes the memory ceiling binding.
+
+> **Round 38 —** the limits table of the 0.242 ms era, already marked superseded in place
+
+## Against Cloudflare's published limits
+
+> **SUPERSEDED.** This table repeats 0.242 ms warm CPU and a 2,793,984 bundle.
+> Current: warm render 33.8 ms, bundle 2,876,855 (`-O2`). See CURRENT NUMBERS.
+
+All Drupal figures below are now **measured in wasm**, not projected.
+
+| Limit              | Free              | Paid             | Cold Drupal                                           | Warm Drupal     |
+| ------------------ | ----------------- | ---------------- | ----------------------------------------------------- | --------------- |
+| CPU per invocation | 10 ms             | 30 s (max 5 min) | **1,732 ms**                                          | **0.242 ms ✅** |
+| Subrequests        | 1,000 CF-services | 10,000           | **3 ✅**                                              | **0 ✅**        |
+| Bundle (gzip)      | 3 MB              | 10 MB            | **2,793,984 ✅** (capability build)                   | —               |
+| Static assets      | 20,000 files      | 100,000          | **4 objects ✅** (packed)                             | —               |
+| Isolate memory     | 128 MB            | 128 MB           | **~100 MB** after boot-only eviction (116 MB without) | —               |
+
+**Paid tier clears every limit**, with memory the tightest: 76.8 MB linear plus
+the mounted tree against a 128 MB cap.
+
+**Free tier is down to two blockers, not four.** Packing solved subrequests (3)
+and asset count (4 objects), and Drupal's own page cache solved warm CPU (0.242 ms).
+What is left:
+
+1. **Bundle — SOLVED.** `ASYNCIFY=0`, `-Oz`, trimmed extensions and no
+   libsqlite3 land at 2,793,984 gzip, 351,744 under the ceiling. The cost is
+   that dropping libsqlite3 requires a DO SQLite compatibility layer; see the
+   blocker section.
+2. **Cold start: 1,732 ms against 10 ms.** Paid once per isolate. Cloudflare
+   documents flexibility for Workers that _infrequently_ exceed the limit, with
+   termination reserved for consistent violation — so a high cache-hit site
+   might survive, but this is an undocumented allowance and not something to
+   promise.
+
+That is a materially different position from "free is closed on four counts."
+Two of those four turned out to be artifacts of a bad design (granular
+subrequests) or a bad projection (scaling a synthetic benchmark instead of
+measuring the cached path).
+
+> **Round 39 —** Drupal 11 runs on Workers, and four independent failures reduced to one
+
+## What the measurements settled
+
+- **Drupal 11 runs on Cloudflare Workers.** Not "could in principle" — a real
+  front page, HTTP 200, byte-comparable to the native render.
+- Free-tier dynamic Drupal is **down to one hard blocker (bundle size) plus a
+  cold-start risk**, not the four independent failures claimed earlier. Two of
+  those four were artifacts of my own bad design and bad projection.
+- Per-request VM teardown is possible after all (36 ms) — the earlier
+  "impossible" was a property of the dylink build, not the platform.
+- A static PHP build is the critical path for everything downstream, not a
+  follow-up optimization.
+- Profile-guided packing is **not** safe as specified: the profile is
+  environment-dependent and silently omits polyfills and conditionally-loaded
+  classes. Over-pack instead, or profile inside the target runtime.
+- Profile-guided packing is well founded: 2,331 file reads exceeds the free
+  subrequest budget outright and consumes 23% of the paid one. Granular
+  file-per-subrequest is not viable; packing is required.
+- Warm per-request cost (4 ms native) is small enough that the long-lived
+  instance model is worth its complexity, contingent on the memory ceiling.
+
+> **Round 40 —** the admin spike measured natively at 2,713 files included
+
+## Module installation: the admin spike is real, and it is measured
+
+Installing the `media` module (which pulls in `file` and `image`) on the local
+Drupal 11.4.5, opcache off:
+
+| Phase                         | CPU            | Wall       | Peak memory |
+| ----------------------------- | -------------- | ---------- | ----------- |
+| Booted, before install        | 23.3 ms        | 49.6 ms    | **8.0 MB**  |
+| `module_installer->install()` | 1,052.6 ms     | 1,441.7 ms | **72.5 MB** |
+| `drupal_flush_all_caches()`   | 268.8 ms       | 282.9 ms   | **78.5 MB** |
+| **Total**                     | **1,344.7 ms** | 1,774.3 ms | **78.5 MB** |
+
+2,713 files included.
+
+This settles the separate-execution-path argument with a number instead of an
+assumption. A booted idle kernel sits at 8 MB. One module install takes it to
+78.5 MB — a ~70 MB spike, the same order as the 90 MB that was hypothesized.
+
+**wasm linear memory grows and never shrinks.** So an instance that serves
+requests _and_ installs a module does not return to 8 MB afterwards; it carries
+78.5 MB for the rest of its life, against a 128 MB isolate cap. Keeping admin
+work off the request-serving instance is therefore required to keep the resident
+floor low, not merely preferable.
+
+CPU is the same story: 1,344.7 ms for one module install is roughly 2x a cold
+page request. Scaling it is unreliable — the equivalent projection for a cold
+request was ~2.3x too high against the eventual measurement — but it is clearly
+seconds, not milliseconds. Fine against the paid 30 s default; absurd against
+free's 10 ms. **Not yet measured in wasm.**
+
+Note this invalidates `INITIAL_MEMORY=64MB` as a universal setting. A cold page
+request peaks at 64.5 MB and an install at 78.5 MB, so 64 MB is below both and
+would force growth immediately. `MAXIMUM_MEMORY=512MB` is also misleading — the
+real ceiling is the 128 MB isolate budget shared with the JS side, not the wasm
+maximum.
+
+> **Round 41 —** packed beats granular, measured against a real `env.ASSETS` binding
+
+## Static Assets VFS: granular vs packed, measured
+
+Built the VFS against a real `env.ASSETS` binding (`src/index.js`, route `/vfs`)
+with a synthetic 200-file PHP tree, 2,988,695 bytes total, median 8,354 bytes —
+shaped to match Drupal core's own file-size distribution. PHP `require_once`s all
+200 and sums a constant from each; both modes return `19900`, so the mount is
+genuinely correct and not just fast.
+
+| Mode                      | Subrequests | Mount     | Include | Total     |
+| ------------------------- | ----------- | --------- | ------- | --------- |
+| Granular, concurrency 6   | 200         | 53 ms     | 54 ms   | 107 ms    |
+| Granular, concurrency 16  | 200         | 41 ms     | —       | —         |
+| Granular, concurrency 64  | 200         | 37 ms     | —       | —         |
+| **Packed (blob + index)** | **2**       | **20 ms** | 61 ms   | **81 ms** |
+
+**The latency figures are local-only and should not be quoted.** `wrangler dev`
+serves assets from disk in-process, so there is no network hop; real edge
+subrequests are far slower. If anything this _understates_ packing's advantage.
+
+**The subrequest count is exact and platform-independent, and it is the number
+that matters.** Extrapolating to the measured 2,331 files a cold Drupal request
+touches:
+
+|                              | Granular | Packed  |
+| ---------------------------- | --------------------- | ------- |
+| Subrequests per cold request | 2,331 | **2–4** |
+| vs free limit (1,000)        | **2.3x over — fails** | passes  |
+| vs paid limit (10,000)       | 23% consumed | ~0%     |
+
+Granular file-per-subrequest is not viable on free at all, and burns a quarter of
+the paid budget on a single cold request. Packing is required, not an
+optimization.
+
+### Drupal's real file set, packed and mounted
+
+Not synthetic — the actual files a cold Drupal request touches, dumped with
+`scripts/drupal/dump-includes.php` and packed by `scripts/pack-drupal.mjs`:
+
+|             | Value                         |
+| ----------- | ----------------------------- |
+| Files       | **1,829**                     |
+| Raw         | 9,802,266 bytes (**9.35 MB**) |
+| **Gzipped** | **1,991,260 bytes (1.9 MB)**  |
+| Index       | 156,677 bytes                 |
+| Directories | 478                           |
+
+Mounted into the emscripten FS through `env.ASSETS` (route `/drupal-mount`):
+**2 subrequests, 9 ms fetch, 62 ms write, 71 ms total**, and PHP reads the result
+back correctly (`autoload.php` → `filesize` 265).
+
+Drupal's entire hot bootstrap tree compresses to **1.9 MB** — one object, well
+inside the 25 MiB per-asset limit. One fetch replaces 1,829.
+
+### MEMFS lives outside wasm linear memory, and that is a problem
+
+`linearMemoryBytes` stayed at exactly 134,217,728 after writing 9.35 MB of files.
+Emscripten's MEMFS stores file contents as JS typed arrays, not in the wasm heap,
+so mounted files add to isolate memory _separately_ from linear memory.
+
+That means the stock build's budget is:
+
+| Component             | Size        |
+| --------------------- | ----------- |
+| wasm linear memory    | 128 MiB     |
+| MEMFS (Drupal source) | 9.35 MB     |
+| emscripten glue + JS  | some MB     |
+| **Total**             | **>138 MB** |
+
+against a **128 MB isolate cap** — exceeded before PHP executes a line. It only
+runs here because `wrangler dev` does not enforce the production limit. This is
+independent confirmation that `INITIAL_MEMORY` must come down at build time;
+with 64 MB linear the same arithmetic gives ~75-80 MB and fits, though Drupal's
+measured 64.5 MB peak heap will force growth toward ~96 MB.
+
+### The reason lazy loading cannot work
+
+PHP's `include` is synchronous and demand-driven; `env.ASSETS.fetch()` is async.
+A file cannot be pulled at include time without suspending the entire VM through
+Asyncify. So the working set must be resident _before_ PHP runs.
+
+That is what forecloses the "just fetch files as PHP asks for them" design and
+forces profile-guided packing: you cannot know file N+1 until file N has
+executed, so the only options are to preload a superset or to pay an Asyncify
+suspension per include.
+
+> **Round 42 —** the `sessions` table is created lazily, which is why it was missing from the pack
+
+## Sessions live in the database, not the filesystem
+
+`Drupal\Core\Session\SessionHandler` reads and writes a `sessions` table:
+`SELECT [session] FROM {sessions} WHERE [sid] = :sid`, `upsert('sessions')`,
+`delete('sessions')`. The table did not exist in the installed database because
+it is created lazily on first session write, and anonymous browsing never writes
+one.
+
+This removes a problem the architecture would otherwise have: there is no
+filesystem session storage to emulate and no cross-isolate session sharing to
+solve, provided one site maps to one Durable Object. DO SQLite covers sessions
+the same way it covers everything else.
+
+The database also holds 21 `cache_*` tables — Drupal's cache backend is the
+database by default, so cache reads and writes are local and synchronous inside
+a DO rather than network calls.
+
+`semaphore` (Drupal's lock backend) is likewise trivial in a DO, which is
+single-threaded by construction.
+
+> **Round 43 —** every file Drupal writes traced, and it maps onto Cloudflare primitives cleanly
+
+## The writable surface is small, and mostly regenerable
+
+Traced every file Drupal wrote across three front-page requests after a cache
+rebuild (whole tree, `vendor/` excluded):
+
+| What                                                | Count |
+| --------------------------------------------------- | ----- |
+| Compiled Twig under `sites/default/files/php/twig/` | 53    |
+| `sites/default/files/.sqlite`                       | 1     |
+| **Everything else**                                 | **0** |
+
+No CSS/JS aggregates, no logs, no other writes. That is a much cleaner split
+than the architecture assumed, and it maps directly onto Cloudflare primitives:
+
+| Data                        | Mutable | Backing store                        |
+| --------------------------- | ------------------------ | ------------------------------------ |
+| core + vendor + module code | no | Static Assets (immutable, versioned) |
+| compiled Twig               | yes, but **regenerable** | DO storage, or just rebuild it       |
+| database                    | yes | DO SQLite                            |
+| user uploads                | yes | R2                                   |
+
+Compiled Twig being regenerable matters: it does not need durable persistence at
+all. Losing it costs the ~37 ms recompile measured above, not data.
+
+> **Round 44 —** ~110 files per contrib module, so file count is not the binding limit
+
+## Module footprint
+
+Installed `token`, `pathauto`, `ctools`, `admin_toolbar` via composer:
+
+| Module        | Files   |
+| ------------- | ------- |
+| ctools        | 160     |
+| pathauto      | 94      |
+| admin_toolbar | 94      |
+| token         | 93      |
+| **total**     | **441** |
+
+Roughly **110 files per contrib module**. Against Static Assets: free (20,000)
+leaves ~4,548 files after core-minus-tests, so ~41 modules; paid (100,000) is
+effectively unbounded for this purpose. Module count is not the binding
+constraint on paid.
+
+The quantitative case for packing stands — 441 granular reads for four modules
+on top of 2,331 for core is 23% of the paid subrequest budget for one cold
+request, and packing turns that into 1.
+
+**CORRECTED: the "immutable assets" constraint dissolves, and R2 is not needed
+for modules.** An earlier draft concluded that assets are immutable, therefore
+modules must live in R2 to be mutable, therefore a second storage tier and a
+second hydration path. Static Assets **direct upload** removes that reasoning.
+
+Verified against the API documentation:
+
+- Assets **do** bind to a Worker version — there is no endpoint that swaps them
+  on a live Worker. So "installing a module produces a new version" was right.
+  What was wrong is the implication that this is manual or painful: the flow is
+  register-manifest -> upload -> create version, it is fully scriptable, and it
+  is an ordinary async admin operation — **exactly where the ops-kernel path
+  already lives.**
+- **The manifest is content-addressed** (a 32-hex hash per file), and
+  _"unmodified files will not be returned in the buckets field"_ when they were
+  uploaded in a previous version. The pack is content-addressed already, so
+  installing a module re-uploads **only the changed pack objects**; core's ~8 MB
+  blob is skipped entirely.
+- When nothing changed at all, `buckets` returns empty and the initial JWT
+  doubles as the completion token — the upload phase is skipped outright.
+- `keep_assets: true` ships a new Worker script while reusing the existing asset
+  set, which is the path for a runtime fix that does not touch the Drupal tree.
+
+**Atomicity is answered by shape rather than by timing.** Because assets bind to
+a version and the version is what gets deployed, the blob and its index ship
+together atomically — a version has both or neither. The earlier worry about
+split objects tearing does not arise, and hash-suffixed filenames are
+unnecessary. Traffic cutover is the ordinary `deployments.create` percentage
+call, so module installs get the same gradual rollout as any Worker deploy.
+
+**Net effect: one code path instead of two.** Modules live in the same packed
+asset mechanism as core and are hydrated by the same streaming mount. **R2
+reverts to what it should always have been — user uploads.**
+
+Two operational caveats:
+
+- **JWTs are valid one hour.** A long-running install must finish inside that
+  window or restart the upload session.
+- **Privilege escalation surface.** The upload requires an API token with
+  Workers Scripts edit scope, living in the Worker's secrets. **A site that can
+  install a module can also redeploy itself.** That belongs in the security
+  section next to the isolation defect, not in a deployment appendix.
+
+> **Round 45 —** `ctx.storage.sql` is synchronous and D1 is not, which is what decided the backend
+
+## Storage backend: Durable Objects beat D1, and it is not close
+
+`ctx.storage.sql.exec(query, ...bindings)` returns a `SqlStorageCursor`
+**synchronously** — no Promise. D1's API is async and off-box.
+
+This matters more than raw latency. PHP's PDO is a blocking API. Against D1,
+every Drupal query has to suspend and resume the entire wasm VM through
+Asyncify. Against DO SQLite, a blocking PDO call maps onto a blocking host call
+directly.
+
+Asyncify instruments the whole binary and typically inflates wasm size by
+30-50%. If DO SQLite removes the need for it, dropping Asyncify is plausibly the
+single largest lever on the bundle-size problem. Worth measuring directly.
+
+|                        | D1 | DO SQLite       |
+| ---------------------- | ---------------- | --------------- |
+| API                    | async | **synchronous** |
+| Needs Asyncify for PDO | yes | no              |
+| Storage                | 10 GB | 10 GB per DO    |
+| Locality               | separate service | in the object   |
+
+Measured Drupal database after a standard install: **5.1 MB**
+(`sites/default/files/.sqlite`). Both backends have ample headroom.
+
+### The 100-parameter limit is not the blocker; the placeholder style is
+
+Logged every query Drupal issued serving a front page on a standard install:
+
+| Measure                           | Value       |
+| --------------------------------- | ----------- |
+| Queries                           | 57          |
+| Max bound parameters in any query | **12**      |
+| Median                            | 1           |
+| Queries over 100 parameters       | **0**       |
+| Named args / positional args      | **103 / 0** |
+
+Worst query was a `cache_config` lookup: `... WHERE "cid" IN (:cids__0 ... :cids__11)`.
+
+Two things follow, and the second is the one that matters:
+
+1. **The 100-parameter cap was not approached.** It was treated as an open
+   blocker; on this workload the ceiling is 12. Caveat, stated because only one
+   page was measured: the risk lives in Views and entity queries that build
+   `IN()` sets proportional to result count, which a standard front page does not
+   exercise. A content listing with hundreds of nodes could still cross it. This
+   measurement narrows the problem, it does not close it.
+
+   ~~Note also the cap is a **D1 property, not a SQLite one** — SQLite's own
+   `SQLITE_MAX_VARIABLE_NUMBER` is 32766 in modern builds. On Durable Object
+   SQLite the limit does not exist.~~ **SUPERSEDED:** the cap exists on Durable
+   Object SQLite too and is also **100**, measured by bisection. The 32,766 figure
+   is SQLite's compile-time default, which the runtime lowers. See "THE HOST CAPS A
+   STATEMENT AT 100 BOUND PARAMETERS" at the top. This paragraph is the origin of the
+   wrong claim that the top section refutes.
+
+2. **Drupal binds exclusively by name — 103 named, 0 positional.** The D1 driver
+   supports only positional. So placeholder rewriting is not an edge case to
+   handle, it is required on _every query in the system_. That makes the driver
+   gap total rather than marginal.
+
+### The D1 PDO driver is not Drupal-ready
+
+`packages/pdo-cfd1` exists and works, but its own documented todos are
+disqualifying for Drupal as-is:
+
+- _"Named replacement tokens — Currently only positional tokens are supported."_
+  Drupal uses `:named` placeholders throughout. Rewriting is mandatory, not
+  optional polish.
+- _"Error handling is currently very rudimentary and does not propagate
+  messages."_ Drupal reads SQLSTATE codes to detect integrity-constraint
+  violations; swallowing them breaks entity saves and migrations.
+
+> **Round 46 —** 53 compiled Twig files per render, and where `filemtime` is load-bearing
+
+## Writable state and the filemtime question
+
+A single front-page render writes **53 compiled Twig files** into
+`sites/default/files/php/twig/`, each in a hash-named directory. This is
+`MTimeProtectedFastFileStorage`, and it is where `filemtime` is load-bearing.
+
+Measured cost of losing that cache:
+
+|                       | CPU        |
+| --------------------- | ---------- |
+| Compiled Twig present | 116.4 ms   |
+| Twig storage cleared  | 153.7 ms   |
+| **Recompile penalty** | **~37 ms** |
+
+So a broken `filemtime` costs ~37 ms of native CPU per request on this page
+(74–185 ms in wasm) rather than being fatal. It is a real tax, not a wall — but
+it also means the VFS must be writable and must persist between requests.
+
+> **Round 47 —** three toolchain defects standing between this repo and a static build
+
+## Build system: what it takes to produce a static build
+
+Three defects had to be worked around. All are recorded in
+`build/build-static.sh` and reproducible.
+
+1. **Infinite make recursion.** `PHP_CONFIGURE_DEPS` is empty when every
+   extension is static, so `$(MAKE) -j -l ${PHP_CONFIGURE_DEPS}` runs with no
+   target, falls through to the default goal, and recurses forever at 0% CPU.
+   Patched with an `$(if $(strip ...))` guard.
+2. **The Makefile must run on the host.** It shells out to `docker compose run`
+   for compile steps, so running it inside the builder image fails with
+   `docker: command not found`.
+3. **QEMU load gate.** The builder image is x86_64; under emulation on Apple
+   Silicon the reported load average pegs high enough that make's `-l` gate never
+   starts a job. `MAX_LOAD` must be overridden.
+
+4. **`wget` is assumed on the host.** The SQLite download step runs host-side,
+   not in the container, and macOS ships curl but not wget. `brew install wget`.
+
+Also required: GNU make >= 4.4 (macOS ships 3.81), and `WITH_TIDY=0` because
+tidy only links against dynamic libxml.
+
+Host prerequisites in full: `brew install make wget`, Docker running, and
+`npm install` in the checkout (its workspace uses `file:` links).
+
+Two defaults worth changing regardless: `WITH_SDL` defaults to **1**, pulling a
+graphics stack Drupal never uses into the binary, and `WITH_INTL` defaults to
+`dynamic` with a 30 MB ICU data file.
+
+`WITH_OPENSSL` has no `static` option at all — only shared or dynamic, both of
+which are unloadable in workerd. That is an open problem for any Drupal feature
+touching TLS or `openssl_*`.
+
+### Prior art: the author already bisected this
+
+`emscripten-builder.dockerfile` carries this comment:
+
+```
+# Works (cloudflare)        # Broken (cloudflare)
+FROM emscripten/emsdk:3.1.43     3.1.67  3.1.55  3.1.51  3.1.47  3.1.45
+FROM emscripten/emsdk:3.1.44
+```
+
+Every published binary is built with the default `3.1.67` — the version marked
+broken for Cloudflare. `PhpWorker.mjs` (the Worker entry point) and the D1 PDO
+driver both exist in the repo but are **not published to npm**; only
+`PhpWorker.d.mts` types ship. So Cloudflare support is real but unreleased.
+
+> **Round 48 —** the open list as it stood before the paid deploy, marked partly stale in place
+
+## Still open
+
+> **PARTLY STALE.** This list predates the paid edge deployment, which has since
+> happened (`outcome: ok`, 110.6 MiB linear, no `exceededMemory`). Treat the
+> Tier 0-2 list in FINISH LINE STATUS near the top as the live one.
+
+- Module install cost _inside wasm_. Measured natively at 1,344.7 ms and 78.5 MB
+  peak; the wasm figure is unknown and scaling is unreliable (see the superseded
+  projections table).
+- ~~100-parameter cap~~ **RESOLVED**: loadMultiple(500) emits 500 parameters;
+  D1 disqualified, ~~DO SQLite unaffected (32,766)~~. **SUPERSEDED:** DO SQLite caps
+  at 100 as well, measured; see the top section on bound parameters.
+- ~~PHP global state isolation~~ **RESOLVED**: resetter built (50/50 leaks
+  closed) plus a 2-4 ms disposable-kernel path giving isolation by construction.
+- Outbound mail: Workers have no SMTP, so Drupal's mail system needs an API
+  backend. Not yet investigated.
+- Cron: Cloudflare Cron Triggers exist and map cleanly onto `drupal_cron()`, but
+  the long-running case against a CPU cap is unmeasured.
+
+> **Round 49 —** a session snapshot: the detached static build and how to watch it
+
+## Current state (2026-08-09 ~02:50 CDT)
+
+A static build is running **detached from the Claude session** — the harness
+reaps its own background tasks, so it was relaunched with `nohup` inside a
+subshell.
+
+- log: `/tmp/php-static-build.log` (`tail -f` it)
+- config: `<php-wasm-checkout>/.php-wasm-rc`
+- sources cached under `third_party/`, so a kill resumes rather than restarts
+- check progress: `tail /tmp/php-static-build.log`, `docker ps`, `ps aux | grep gmake`
+
+When it finishes, `vendor/static/` gets the `.wasm` plus a gzip size and a
+dylink check. If it still reports a dylink section, `MAIN_MODULE=0` did not take
+and nothing downstream is worth running.
+
+Then, in order: gzip size against the 10 MB paid limit with Drupal's extensions
+aboard; a rebuild with `ASYNCIFY=0` to size that lever (DO SQLite is synchronous,
+so Asyncify may be unnecessary); then load the binary in workerd and finally
+measure Drupal bootstrap CPU and peak memory in wasm.
+
+> **Round 50 —** the commands that reproduce this round
+
+## Reproducing
+
+```bash
+npm install && npm run vendor
+npx wrangler dev                      # then GET /boot /phpinfo /version /extensions
+
+php -d opcache.enable_cli=0 -d xdebug.mode=off \
+    scripts/bench/bench-native.php <drupal-root>
+
+bash build/build-static.sh <php-wasm-checkout>
+```
+
+# ==================== DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING ====================
+
+**Merged in from `AGENT-FINDINGS.md` on 2026-08-10; that file no longer exists.** It was
+always a deep dive rather than a parallel record, so it lives below the fold with the rest
+of the historical detail. Read the supersession list first, because three of its
+conclusions have since been overturned by measurements at the top of this document.
+
+| this deep dive says | current status |
+| --- | --- |
+| the 110.6 MiB edge figure is an emscripten growth plateau, not a workload boundary | **STANDS**, and it is the reason the figure should not be quoted as a working-set size |
+| the 512.0 MiB wasm linear-memory ceiling is a build constant of `static-free-v1` | **STANDS for that binary.** `static-o2` ships instead, and its ceiling is unverified |
+| every number here is local `wrangler dev`, which enforces no isolate cap | **STANDS** -- RULE 0. The deployed 128 MB ceiling is still unmeasured |
+| `--classmap-authoritative` breaks Drupal | **STANDS**, and `--optimize` alone remains unclaimed in the pack |
+| the `--optimize` saving is 17.93 ms of wasm cold start | **STANDS as arithmetic on measured inputs**, and it is a cold-start lever only |
+| compile real `iconv` to fix `mb_substr` on invalid UTF-8 | **WRONG, and superseded twice.** Real `iconv_substr()` fails identically; the bug was closed in JavaScript by `src/mb-fix.js`, verified 12/12 byte-identical to native inside wasm and 25/25 in the gate lane |
+| the mbstring polyfill is packed and unshadowed | **STANDS** |
+| Greek final sigma and `mb_strwidth` emoji divergences | **STAND** as documented product limitations |
+
+> **Round 51 —** DEEP DIVE A opens: its own provenance rules, and every file the work created
+
+# Agent findings: memory ceiling, classmap autoload, mbstring polyfill
+
+Everything below was measured on this machine on 2026-08-10. Estimates are
+labelled ESTIMATED and say what they were derived from. Nothing here was
+deployed, so no edge number is claimed.
+
+Own files created for this work (nothing owned by another process was edited):
+
+| File                    | Purpose                                             |
+| ----------------------- | --------------------------------------------------- |
+| `src/memtest.js`        | worker with every probe below                        |
+| `wrangler.mem.jsonc`    | dev config pointing at `src/memtest.js`, port 8795   |
+| `/tmp/bench-autoload.php` | native Composer `findFile()` benchmark             |
+| `/tmp/split.php`        | exact classmap-hit vs PSR-4 split on a real request  |
+| `/tmp/mbcheck.php`      | packed-index verification for the mbstring polyfill  |
+| `/tmp/mb-diff.php`, `/tmp/mb2-diff.php` | native-vs-wasm result diffs          |
+
+Start the worker for any reproduction below:
+
+```
+cd /Users/gamer/gmitch215/drangler/worker
+nohup npx wrangler dev -c wrangler.mem.jsonc --port 8795 --log-level warn > /tmp/wrangler-mem.log 2>&1 &
+```
+
+---
+
+> **Round 52 —** `wrangler dev` enforces no isolate memory cap, so the deployed ceiling stayed unmeasured
+
+# TASK A — the isolate memory ceiling
+
+## The headline: local `wrangler dev` cannot produce this number
+
+`wrangler dev` enforces **no** isolate memory cap, on either memory pool. The
+ceiling that does exist locally is the **build's own**, not the platform's. So
+the deployed 128 MB ceiling remains unmeasured, and this run cannot substitute
+for a deploy. That is a limitation of the method, not a result.
+
+What local measurement *does* establish, and what is new:
+
+1. The static build has a hard **512.0 MiB** wasm linear-memory ceiling, set at
+   compile time, that nothing in the project had recorded.
+2. The MEMFS tree does not consume the wasm arena **at all**, confirmed to
+   2,050 MiB with a residency proof.
+3. The 110.6 MiB deployed edge figure (EDGE VALIDATION #2) is reproducible here as an
+   emscripten growth plateau, which suggests it is growth geometry rather than a
+   workload boundary.
+
+## A.1 — PHP linear memory
+
+`memory_get_usage()` returns **0** in this build (all variants: real, non-real,
+peak), so PHP's own accounting is unavailable and every figure below comes from
+the wasm memory object's `buffer.byteLength`. That is the correct measure anyway;
+it is the same quantity as the 110.6 MiB edge number.
+
+| Quantity                                   | Value                        |
+| ------------------------------------------ | ---------------------------- |
+| Linear memory after boot (`INITIAL_MEMORY`) | **67,108,864** (64.0 MiB)   |
+| Last surviving step                        | **step 95 — 475 MB requested, 498,073,600 bytes of live PHP strings** |
+| Linear memory at that step                 | **536,870,912 (512.0 MiB)**  |
+| First failing step                         | **step 96 — 480 MB**         |
+| Failure mode                               | **`ExitStatus: Program terminated with exit(1)`** — wasm program exit, empty stderr |
+| Runs agreeing on 95/96                     | **3 of 3** (unmounted, mounted, `_malloc` control) |
+
+The ceiling is a build constant, verifiable without running anything:
+
+```
+grep -o "getHeapMax=.\{0,40\}" vendor/static-free-v1/php8.3-worker.mjs
+# getHeapMax=()=>536870912
+```
+
+Growth is geometric, so linear memory moves in plateaus rather than tracking the
+allocation:
+
+| Step | Cumulative requested | Linear memory after      |
+| ---- | -------------------- | ------------------------ |
+| 1    | 5 MB | 67,108,864 (64.0 MiB)    |
+| 6    | 30 MB | 80,543,744 (76.8 MiB)    |
+| 9    | 45 MB | 96,665,600 (92.2 MiB)    |
+| 12   | 60 MB | **115,998,720 (110.6 MiB)** |
+| 16   | 80 MB | 139,198,464 (132.8 MiB)  |
+| 25   | 125 MB | 200,474,624 (191.2 MiB)  |
+| 48   | 240 MB | 346,554,368 (330.5 MiB)  |
+| 73   | 365 MB | 499,122,176 (476.0 MiB)  |
+| 89   | 445 MB | **536,870,912 (512.0 MiB)** — ceiling |
+
+Step 12 lands on **115,998,720 bytes**, byte-identical to the deployed edge peak
+recorded in EDGE VALIDATION #2. Reaching that exact value from a completely different
+workload is evidence that 110.6 MiB is an emscripten growth plateau, not a
+property of the Drupal workload. Worth keeping in mind before treating it as a
+measured working-set size.
+
+### The failure is silent, and the PHP path and the JS path differ
+
+The `_malloc` control matters because it separates "the allocator refused" from
+"the isolate died":
+
+| Driver                                  | Step 95 | Step 96                       |
+| --------------------------------------- | ------- | ----------------------------- |
+| PHP `str_repeat` into `$GLOBALS`        | ok | `exit(1)`, isolate gone, **no stderr** |
+| JS `_malloc` + page touch (control)     | ok | `malloc` returns **NULL**, isolate survives |
+
+So the wasm heap genuinely refuses to grow past 512 MiB, and `malloc` reports it
+correctly; it is PHP that turns the refusal into an unlogged process exit. With
+`memory_limit=-1` there is no "Allowed memory size exhausted" message — nothing
+is written to stderr at all. `printErr` captured zero lines.
+
+This is a sixth-instance-style problem for observability: **a wasm-side OOM
+produces no diagnostic**, which matches the note above the fold that isolate death
+is currently silent. Setting a real `memory_limit` (rather than `-1`) is what
+would convert this into a catchable PHP fatal.
+
+### Mounting the Drupal tree does not move the ceiling
+
+| Run                                    | Baseline linear | Last ok | First fail |
+| -------------------------------------- | --------------- | ------- | ---------- |
+| no mount                               | 67,108,864      | step 95 | step 96    |
+| **41.2 MB tree + 6.5 MB DB mounted**   | 67,108,864      | step 95 | step 96    |
+
+Identical. The mounted tree (11,447 files, `treeBytes` 41,201,198, `dbBytes`
+6,475,776) costs the wasm arena nothing.
+
+Reproduce:
+
+```
+curl -sN "http://localhost:8795/php-mem?step=5&max=600" -o /tmp/php-mem.ndjson
+curl -sN "http://localhost:8795/php-mem?step=5&max=600&mount=1" -o /tmp/php-mem-mounted.ndjson
+curl -sN "http://localhost:8795/malloc-mem?step=5&max=700" -o /tmp/malloc-mem.ndjson
+tail -3 /tmp/php-mem.ndjson
+```
+
+### Method note that cost time and is worth keeping
+
+PHP state **does** survive a `_run` boundary — `$GLOBALS`, function statics,
+class statics and `define()` all persist (`curl .../persist` proves it over three
+runs). What does *not* persist is a static inside a closure that is re-created
+each run, which is how the first attempt silently allocated 5 MB and freed it 205
+times while reporting `blocks: 1`. If a growth test reports a flat memory curve,
+suspect the retention mechanism before believing the platform.
+
+Progress is streamed as NDJSON one step per event-loop turn, because output
+buffered inside a single wasm call never reaches JS if the isolate dies mid-call.
+`OutputBuffer` flushes on newline but delivery still requires the call to return.
+
+## A.2 — the MEMFS file tree
+
+**No ceiling found.** The test stopped because I chose a limit, not because
+anything failed.
+
+| Quantity                              | Value                                   |
+| ------------------------------------- | --------------------------------------- |
+| Files written                         | **2,050** x 1 MiB, incompressible random |
+| Cumulative bytes                      | **2,149,580,800 (2,050 MiB)**           |
+| Failure                               | **none**                                |
+| workerd user-worker RSS peak          | **2,212 MB** — the data is resident     |
+| wasm linear memory, start and end     | **67,108,864 (64.0 MiB), flat**         |
+| PHP `scandir('/memfs')` after 6 s hold | **2,050 entries**                      |
+| PHP `strlen(file_get_contents('/memfs/f0'))` | **1,048,576** — intact           |
+
+Two traps had to be removed before this number meant anything, and both are
+worth recording because either one silently invalidates the result:
+
+1. **Uniform fill bytes.** Filling each file with `0x61` let macOS compress the
+   pages: a 6,000 MiB run reported success at **30 MB peak RSS**. Runs at 4,100
+   MiB and 6,000 MiB completed but are worthless as memory evidence. Only the
+   `rand=1` variant, filled via `crypto.getRandomValues`, is citable.
+2. **Sampling the wrong process.** `wrangler dev` runs two `workerd` processes.
+   The user worker is the one carrying `--inspector-addr`; the other is the proxy
+   and stays at ~30 MB no matter what the worker does. Sampling the proxy is what
+   produced the first misleading 30 MB figure even with random bytes.
+
+```
+# the user-worker pid, not the proxy
+pgrep -f "workerd.*inspector-addr" | head -1
+```
+
+Reproduce (needs ~2.5 GB free; the run is verified resident by the RSS sampler):
+
+```
+WPID=$(pgrep -f "workerd.*inspector-addr" | head -1)
+( for i in $(seq 1 600); do ps -o rss= -p $WPID | tr -d ' '; sleep 0.05; done > /tmp/rss.log & )
+curl -sN "http://localhost:8795/fs-mem?step=25&max=2048&filekb=1024&rand=1&hold=6000" -o /tmp/fs-mem.ndjson
+sort -n /tmp/rss.log | tail -1   # peak RSS in KB
+```
+
+MEMFS keeps file bytes in the JS heap, not the wasm arena, and it is a real copy
+rather than a view — `MEMFS.stream_ops.write` takes the
+`node.contents = buffer.slice(...)` branch because `FS.writeFile` never sets
+`canOwn`. That is why 2,050 MiB of files leaves linear memory at exactly 64 MiB
+and why the two pools have independent ceilings.
+
+## What Task A can and cannot tell a customer
+
+| Question                                          | Answer                                    |
+| ------------------------------------------------- | ----------------------------------------- |
+| Hard wasm linear-memory ceiling of this build     | **512.0 MiB, measured, build constant**   |
+| Headroom above the 110.6 MiB edge peak            | 401.4 MiB **of build ceiling** — not of platform budget. And 110.6 MiB is a growth plateau, not a working set; see A.1 |
+| MEMFS ceiling                                     | **not found locally**; > 2,050 MiB with no cap |
+| Does the file tree eat the wasm arena?            | **No**, confirmed twice                   |
+| Deployed 128 MB isolate ceiling                   | **still unmeasured** — needs a deploy     |
+
+The operative production limit remains workerd's 128 MB, which is far below the
+build's 512 MiB, so the build ceiling only becomes relevant if the platform cap
+is ever raised. The honest answer to "how many contrib modules fit" is that this
+run does not establish it, and the one experiment that would is a deploy that
+grows the tree in steps and watches for `exceededMemory` in a Tail Worker.
+
+Two process deaths happened after multi-GB runs, with no workerd error message in
+the log — the log's last line was `completed-without-failure`. Consistent with
+the host reaping the process under memory pressure rather than a workerd cap.
+
+---
+
+> **Round 53 —** `--classmap-authoritative` breaks Drupal outright rather than trading performance for size
+
+# TASK B — `composer dump-autoload --classmap-authoritative`
+
+Composer 2.9.5 was available (`/opt/homebrew/bin/composer`). Work was done on
+`/tmp/drupal-authoritative`, a `cp -R` of the scratchpad tree (173 MB). The
+original was not touched.
+
+## The result that decides it: `--classmap-authoritative` breaks Drupal
+
+Not a performance trade-off. The site does not render.
+
+```
+cd /tmp/drupal-authoritative
+composer dump-autoload --classmap-authoritative --optimize --no-dev
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/bench-autoload.php /tmp/drupal-authoritative verify
+```
+
+```
+Error: Class "Drupal\sqlite\Driver\Database\sqlite\Connection" not found
+  at core/lib/Drupal/Core/Database/Database.php:423
+```
+
+It dies on the database driver, before rendering anything. Every module class
+becomes unreachable:
+
+| Class                                            | `findFile()` |
+| ------------------------------------------------ | ------------ |
+| `Drupal\node\Entity\Node`                        | **false**    |
+| `Drupal\user\Entity\User`                        | **false**    |
+| `Drupal\system\Plugin\Block\SystemBrandingBlock` | **false**    |
+| `Drupal\views\ViewExecutable`                    | **false**    |
+| `Drupal\field\Entity\FieldConfig`                | **false**    |
+
+Mechanism: `ClassLoader::findFile()` returns `false` immediately when
+`classMapAuthoritative` is set and the class is not in the map. Drupal registers
+every module namespace **at runtime** via `addMultiplePsr4()` on that same
+loader, and `--optimize` can only scan paths declared in `composer.json`, which
+does not include `core/modules/*/src`. Authoritative mode therefore discards
+exactly the registrations Drupal depends on. 48 of the 200 sampled classes
+(24%) became unresolvable.
+
+**Do not ship `--classmap-authoritative` with Drupal.** `--optimize` alone is the
+usable flag, and it keeps the PSR-4 fallback that modules need.
+
+## Measured per-class `findFile()` cost
+
+Timed inside a closure. `findFile()` is the only thing the classmap changes;
+including the file costs the same either way, so `loadClass()` would bury the
+signal in compile time.
+
+Post-boot, mixed 200-class sample (Drupal booted, so module namespaces are
+registered — the realistic loader state), native PHP 8.5.7:
+
+| Autoload state                              | classMap | Drupal renders?          | resolvable /200 | warm ns/class | cold-stat ns/class |
+| ------------------------------------------- | -------- | ------------------------ | --------------- | ------------- | ------------------ |
+| **as shipped in the pack**                  | 89       | yes — 200, 12,331 bytes  | 200             | **1,980**     | 3,024              |
+| `--optimize --no-dev`                       | 4,692    | yes — 200, 12,333 bytes  | 200             | **608**       | 1,519              |
+| `--classmap-authoritative --optimize --no-dev` | 4,692 | **NO — fatal**           | **152**         | 143           | 1,043              |
+
+Every render above was confirmed real: `x-drupal-cache: UNCACHEABLE (request
+policy)`, never a `page_cache` HIT.
+
+The `cold-stat` column calls `clearstatcache(true)` inside the timed loop, so it
+carries that call's own cost; the authoritative row's 1,043 ns is effectively the
+floor for `clearstatcache` itself. Use the warm column for comparisons.
+
+### The same operation measured in wasm
+
+This is the number that was missing, and it changes the conclusion. Same 152
+core/vendor classes, no Drupal boot, both sides, identical loop shape:
+
+| Autoload state                | native 8.5.7 | wasm 8.3.11 | wasm:native |
+| ----------------------------- | ------------ | ----------- | ----------- |
+| unoptimized (89) — PSR-4 walk | **2,006 ns** | **11,184 ns** | **5.58x**  |
+| optimized (4,692) — map hit   | **137 ns**   | **658 ns**    | **4.80x**  |
+| speedup from the classmap     | 14.6x        | **17.0x**     |             |
+
+**Autoloader path resolution is amplified 5.6x in wasm, not the project's uniform
+3.4x.** PSR-4 resolution is `file_exists()`-bound and MEMFS stat is relatively
+more expensive than pure interpretation, so this is one place where the "no
+wasm-specific amplification anywhere" finding does not hold. The classmap arm is
+amplified 4.8x, close to but still above 3.4x.
+
+The wasm optimized arm was measured, not scaled: the worker overwrites the
+mounted tree's `vendor/composer/*.php` with the optimized dump before requiring
+`autoload.php`. The `ComposerStaticInit` hash is stable across dumps for the same
+`composer.json` (`a0cf4e57aa37e623eab505261b11d625` before and after), so the
+files are drop-in.
+
+`hrtime()` in this wasm build has ~1 ms granularity. A single pass over 152
+classes quantizes to multiples of 6,579 ns/class, which is why the first wasm run
+reported a suspiciously round 13,157 ns. Every wasm figure above uses
+`inner=20` repeats per timed sample, putting each sample near 40 ms.
+
+### Class counts on a real request, measured both cache states
+
+The "~2,200 files" figure depends entirely on cache warmth:
+
+| Cache state                        | included files | resolvable classes | classmap hits | still PSR-4 |
+| ---------------------------------- | -------------- | ------------------ | ------------- | ----------- |
+| cold (twig cache + `cache_*` cleared) | **2,455**   | **2,384**          | **1,703 (71.4%)** | **681 (28.6%)** |
+| warm (second render)               | 1,129          | 1,067              | 865 (81.1%)   | 202 (18.9%) |
+
+2,455 on a cold cache corroborates the ~2,200 in the brief. The 681 residual
+PSR-4 classes are the module classes `--optimize` cannot reach.
+
+## Total saving for a cold-cache request
+
+Per-class costs measured, class counts measured, so this is arithmetic on
+measured inputs rather than an estimate:
+
+| Path                            | before (`--optimize` off) | after `--optimize`                        | saving       |
+| ------------------------------- | ------------------------- | ----------------------------------------- | ------------ |
+| native, 2,384 classes           | 2,384 x 2,006 = **4.78 ms** | (1,703 x 137) + (681 x 2,006) = **1.60 ms** | **3.18 ms**  |
+| **wasm, 2,384 classes**         | 2,384 x 11,184 = **26.66 ms** | (1,703 x 658) + (681 x 11,184) = **8.74 ms** | **17.93 ms** |
+
+Caveat on the residual term, with its direction: the 2,006 / 11,184 ns PSR-4
+costs were measured over core+vendor classes, which have several candidate
+prefixes. The 681 residual classes are module classes whose namespace maps to a
+single directory, so their walk is probably cheaper and the "after" column is
+likely pessimistic — meaning the true saving is at or above 17.93 ms.
+
+### Where the saving actually lands, which is not where it looks
+
+PHP keeps declared classes for the life of the interpreter, so a class is
+autoloaded **once per interpreter**, not once per request. A warm-kernel request
+re-uses declared classes and calls `findFile()` for none of them. Opcache's file
+cache does not change this — it caches bytecode, not declaredness.
+
+So the 17.93 ms is a **cold-start** lever:
+
+| Path                                        | measured cost | 17.93 ms is |
+| ------------------------------------------- | ------------- | ----------- |
+| Cold boot, edge (EDGE VALIDATION #2)        | 3,754 ms | 0.5%        |
+| Fresh kernel per request, wasm              | 149.6 ms | 12.0%       |
+| Warm kernel render, wasm                    | 33.8 ms | **0%** — no `findFile()` calls |
+
+Worth taking for the fresh-kernel-per-request mode and for cold boot. Irrelevant
+to warm requests. It is not a free-tier lever.
+
+### Cost of taking it
+
+| Item                          | before  | after     | delta          |
+| ----------------------------- | ------- | --------- | -------------- |
+| `autoload_classmap.php`       | 9,767   | 626,708   | +616,941       |
+| `autoload_static.php`         | 25,699  | 694,457   | +668,758       |
+| **total in the MEMFS tree**   | 35,466  | 1,321,165 | **+1,285,699** |
+
++1.29 MB on a 41.2 MB tree (+3.1%). Measured mount `writeMs` is 577 ms, so
+roughly +18 ms of mount time, paid once per isolate against a saving paid once
+per interpreter — so it roughly breaks even on the first fresh kernel and wins
+after. The pack currently ships the **unoptimized** autoloader (89 classmap
+entries), so this is unclaimed.
+
+Reproduce the whole task:
+
+```
+cp -R "<scratchpad>/drupal-11.4.5" /tmp/drupal-authoritative
+cd /tmp/drupal-authoritative
+cp -R vendor/composer /tmp/composer-autoload-before          # snapshot
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/bench-autoload.php $PWD collect /tmp/memtest/classlist.json
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/bench-autoload.php $PWD bench   /tmp/memtest/classlist.json 20
+composer dump-autoload --classmap-authoritative --optimize --no-dev
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/bench-autoload.php $PWD verify
+composer dump-autoload --optimize --no-dev
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/bench-autoload.php $PWD bench   /tmp/memtest/classlist.json 20
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/split.php $PWD
+# wasm arms
+curl -s -X POST --data-binary @/tmp/memtest/classlist.json "http://localhost:8795/autoload-bench?iters=20&inner=20"
+curl -s -X POST -H "content-type: application/json" --data-binary @/tmp/memtest/optpayload.json \
+  "http://localhost:8795/autoload-bench-opt?iters=20&inner=20"
+```
+
+`/tmp/drupal-authoritative` is left with the `--optimize --no-dev` dump applied
+and its caches cleared. The pristine `vendor/composer` is at
+`/tmp/composer-autoload-before`.
+
+---
+
+> **Round 54 —** the mbstring polyfill, and the content-loss bug found inside it
+
+# TASK C — the mbstring polyfill
+
+## C.1 — packed and unshadowed: yes
+
+```
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/mbcheck.php \
+  assets/drupal "<scratchpad>/drupal-11.4.5"
+```
+
+All 10 polyfill files are in `assets/drupal/core.json` (11,447 entries total) and
+every one was verified **byte-for-byte out of `core.bin.gz`** against the source
+tree, not merely present in the index:
+
+| Path (under `vendor/symfony/polyfill-mbstring/`) | bytes  | extracted | md5 vs source |
+| ------------------------------------------------ | ------ | --------- | ------------- |
+| `Mbstring.php`                                   | 39,882 | OK        | match         |
+| `bootstrap.php`                                  | 363    | OK        | match         |
+| `bootstrap72.php`                                | 8,529  | OK        | match         |
+| `bootstrap80.php`                                | 10,041 | OK        | match         |
+| `Resources/unidata/lowerCase.php`                | 24,539 | OK        | match         |
+| `Resources/unidata/upperCase.php`                | 26,322 | OK        | match         |
+| `Resources/unidata/titleCaseRegexp.php`          | 6,201  | OK        | match         |
+| `Resources/unidata/caseFolding.php`              | 2,401  | OK        | match         |
+| `composer.json`, `LICENSE`                       | 1,010 / 1,068 | OK | match         |
+| **total**                                        | **120,356** |      |               |
+
+Unshadowed, and the registration path is intact:
+
+- Nothing else in the tree matches `mbstring` or `polyfill-mb`. Zero shadowing candidates.
+- `vendor/composer/autoload_files.php` is packed (2,294 bytes) and contains
+  `'0e6d7bf4a5811bfa5cf40c5ccd6fae6a' => $vendorDir . '/symfony/polyfill-mbstring/bootstrap.php'`,
+  so the bootstrap is force-included rather than lazily autoloaded.
+- Full machinery packed: `autoload.php`, `autoload_real.php`, `autoload_static.php`,
+  `autoload_psr4.php`, `autoload_classmap.php`, `ClassLoader.php`, `platform_check.php`.
+- `bootstrap.php` dispatches to `bootstrap80.php` on `PHP_VERSION_ID >= 80000`;
+  both are packed, and PHP here is 8.3.11.
+
+Also packed: `polyfill-iconv` (61 files), `-ctype`, `-intl-grapheme`,
+`-intl-idn`, `-intl-normalizer`, `-php80/83/84/85/86`. The iconv one turns out to
+matter — see below.
+
+## C.2 — behaviour in wasm vs native: 4 real divergences, one of them serious
+
+Both sides run the **same PHP file**, extracted from the worker source so the two
+cannot drift:
+
+```
+node -e 'const fs=require("fs");const s=fs.readFileSync("src/memtest.js","utf8");
+for(const n of ["MB_PROBE","MB_PROBE2"]){const m=s.match(new RegExp("const "+n+" = String\\.raw`([\\s\\S]*?)`;"));
+fs.writeFileSync("/tmp/"+n.toLowerCase().replace("_","-")+".php",m[1]);}'
+
+php -d opcache.enable_cli=0 -d xdebug.mode=off -r "define('MB_ROOT','/tmp/drupal-authoritative'); require '/tmp/mb-probe2.php';" > /tmp/memtest/mb2-native.json
+curl -s "http://localhost:8795/mb2" -o /tmp/memtest/mb2-wasm.json
+php -d opcache.enable_cli=0 -d xdebug.mode=off /tmp/mb2-diff.php /tmp/memtest/mb2-native.json /tmp/memtest/mb2-wasm.json
+```
+
+Native PHP 8.5.7 has the real `mbstring` extension, so this is polyfill against
+extension — the comparison that matters.
+
+### The polyfill is doing the work, and coverage is complete
+
+| Check                                             | wasm | native      |
+| ------------------------------------------------- | ----------------------------- | ----------- |
+| `extension_loaded('mbstring')`                    | **false** | true        |
+| `extension_loaded('iconv')`                       | **false** | true        |
+| `extension_loaded('intl')`                        | **false** | true        |
+| `mb_strlen` etc. exist **before** `autoload.php`  | **false** | true        |
+| `mb_*` exist after `autoload.php`                 | **true** | true        |
+| Provenance of all 16 probed `mb_*`                | `polyfill-mbstring/bootstrap80.php` | extension |
+| Drupal core's 14 distinct `mb_*` functions present | **14 / 14** | 14 / 14     |
+
+Core's usage, counted by grep over `core/`: `mb_strtolower` 66, `mb_substr` 50,
+`mb_strlen` 48, `mb_strtoupper` 18, `mb_convert_encoding` 5, `mb_chr` 4,
+`mb_language` 3, `mb_internal_encoding` 3, `mb_check_encoding` 3, `mb_strpos` 2,
+`mb_stripos` 1, `mb_ord` 1, `mb_detect_encoding` 1, `mb_convert_case` 1. All 14
+resolve, including `mb_chr` / `mb_ord` / `mb_language`, which the first probe had
+missed. `mb_chr`/`mb_ord` round-trip identically on both sides for U+0041,
+U+00E9, U+4F60, U+1F600 and U+10FFFF.
+
+On **valid** UTF-8 the polyfill is correct: of 94 compared keys, 63 identical,
+and all of `mb_strlen`, `mb_substr` (positive, offset and negative), `mb_strpos`,
+`mb_strrpos`, `mb_stripos`, `mb_strtolower`, `mb_strtoupper`, `mb_convert_case`
+(TITLE and UPPER), `mb_str_split`, `mb_substr_count`, `mb_check_encoding`,
+`mb_detect_encoding`, `mb_internal_encoding` and `mb_convert_encoding` agree
+byte-for-byte on a string mixing accented Latin, a combining sequence, CJK, an
+astral-plane emoji and Cyrillic. Turkish dotted-I lowercasing and German sharp-s
+uppercasing both match. All 10 surviving `Drupal\Component\Utility\Unicode`
+methods match: `ucfirst`, `lcfirst`, `ucwords`, `truncate`, `truncateBytes`,
+`strcasecmp`, `validateUtf8` (true and false cases), `convertToUtf8`.
+
+### DIVERGENCE 1 (serious) — invalid UTF-8 silently loses content
+
+`mb_substr()` returns an **empty string** in wasm where native returns the text
+with invalid bytes replaced by `?`. Not a subtle difference; total data loss.
+Reproduced on all five malformed shapes tested:
+
+| Input                     | function          | native                 | wasm             |
+| ------------------------- | ----------------- | ---------------------- | ---------------- |
+| `abc\xff\xfedef`          | `mb_substr(0,100)` | `abc??def`            | **`''`**         |
+| `abc\xff\xfedef`          | `mb_strlen`       | 8                      | **5**            |
+| `abc\xff\xfedef`          | `mb_strtolower`   | `abc??def`             | **`abcdef`**     |
+| `abc\x80def` (lone cont.) | `mb_substr(0,100)` | `abc?def`             | **`''`**         |
+| `abc\x80def`              | `mb_strtolower`   | `abc?def`              | **`abcdef`**     |
+| `abc\xe4\xbd` (truncated) | `mb_substr(0,100)` | `abc?`                | **`''`**         |
+| `abc\xc0\xafdef` (overlong) | `mb_strlen`     | 8                      | **7**            |
+| `abc\xc0\xafdef`          | `mb_substr(0,100)` | `abc??def`            | **`''`**         |
+| `abc\xed\xa0\x80def` (surrogate) | `mb_strlen` | 9                      | **7**            |
+| `abc\xed\xa0\x80def`      | `mb_substr(0,100)` | `abc???def`           | **`''`**         |
+
+`mb_check_encoding` is the one function that agrees — `false` on both sides.
+
+**Root cause, and it is not the mbstring polyfill.** Traced to the *iconv*
+polyfill:
+
+- `Mbstring::mb_substr()` line 705: `return (string) iconv_substr($s, $start, $length, $encoding);`
+- `Mbstring::mb_strlen()` line 552: `if (false !== $len = @iconv_strlen($s, $encoding))` — the `@` hides the notice and falls through to a different code path, which is why the counts differ rather than erroring.
+- `Iconv.php` line ~205: `self::$isValidUtf8 = preg_match('//u', $str); if (!self::$isValidUtf8 && !$ignore) { trigger_error(self::ERROR_ILLEGAL_CHARACTER); return false; }`
+- `(string) false` is `''`. That is the empty string.
+
+Because `mb_substr` does not suppress the notice, each call also emits
+`Notice: iconv(): Detected an illegal character in input string` — ten of them
+appeared ahead of the JSON in the wasm probe output. In a real request those go
+through Drupal's error handler.
+
+Risk is concrete: core calls `mb_substr` 50 times and `mb_strtolower` 66 times.
+Any content path carrying invalid UTF-8 — bad imports, truncated input,
+latin-1 paste — silently yields blank output in wasm where native degrades to
+`?`. Drupal does validate UTF-8 on many input paths, so this needs a malformed
+value to already be stored to bite; it is a real hazard, not a certainty.
+
+**SUPERSEDED 2026-08-10 — the fix below is WRONG. Do not act on it.**
+
+> ~~**Fix, and it is cheap:** compile the real `iconv` extension into the wasm
+> build. `mb_substr` then delegates to native `iconv_substr`, which substitutes
+> rather than failing. That is a build-flag change, not a code change, and it also
+> removes 61 polyfill files from the pack.~~
+
+Real `iconv_substr()` fails on invalid UTF-8 exactly like the polyfill does, so
+compiling `iconv` in changes nothing. Measured on native PHP 8.5.7 with the real
+iconv extension loaded (`extension_loaded('iconv') === TRUE`):
+
+```
+iconv_substr("abc\xff\xfedef", 0, 100, 'UTF-8')  ->  false
+iconv_strlen("abc\xff\xfedef", 'UTF-8')          ->  false
+mb_substr("abc\xff\xfedef", 0, 100)              ->  'abc??def'
+```
+
+The diagnosis above is right and the prescription was wrong: the polyfill's
+`(string) iconv_substr(...)` would still see `false` and still yield `''`. It is
+real **mbstring** that substitutes, not real iconv, so the build lever is
+`--enable-mbstring --disable-mbregex`. The "removes 61 polyfill files" saving
+belonged to the iconv polyfill and does not apply to the mbstring lever.
+
+**The bug did not need a build at all, and is now closed.** `src/mb-fix.js` defines
+the affected `mb_*` functions ahead of Symfony's bootstrap, replaces ill-formed
+UTF-8 with `?` the way native mbstring does, then delegates to the polyfill class.
+Verified **12/12 byte-identical to native inside wasm** with
+`extension_loaded('mbstring')` still FALSE, and **25/25** in the gate lane
+(`node scripts/test-mb-fix.mjs`), which includes a control asserting real
+`iconv_substr` fails so the suite cannot pass vacuously.
+
+The substitution rule was measured rather than assumed: native emits ONE `?` per
+maximal valid prefix consumed, then resumes at the byte that broke the sequence. So
+`"abc\xe4\xbd"` yields `abc?` while `"abc\xed\xa0\x80def"` yields `abc???def`. A
+first implementation advanced one byte at a time and got every truncated case
+wrong. `mb_check_encoding()` and `mb_detect_encoding()` are deliberately NOT
+sanitised, because that would make them report invalid input as valid.
+
+### DIVERGENCE 2 — Greek final sigma is not implemented
+
+| Input                     | function                       | native (hex)         | wasm (hex)           |
+| ------------------------- | ------------------------------ | -------------------- | -------------------- |
+| `ΟΔΟΣ` (U+039F 0394 039F 03A3) | `mb_strtolower`           | `cebfceb4cebfcf82` = `οδος` (final ς U+03C2) | `cebfceb4cebfcf83` = `οδοσ` (U+03C3) |
+| `ΟΔΟΣ`                    | `mb_convert_case(MB_CASE_TITLE)` | `ce9fceb4cebfcf82` | `ce9fceb4cebfcf83`   |
+
+Word-final sigma only; a lone `Σ`, `ΣΑ`, and `ΑΣΗ` all agree between the two.
+Native mbstring applies the contextual rule, the polyfill does not.
+
+Impact: Greek-language content lowercases differently in wasm. Anything derived
+from a lowercased string — search keys, sort order, URL aliases, duplicate
+detection — diverges from what the same site produces on native PHP. Same class
+of product limitation as the SQLite `NOCASE` note in DEEP DIVE B's function audit, and
+it belongs in release notes rather than a later bug report.
+
+### DIVERGENCE 3 — `mb_strwidth` under-counts emoji
+
+`mb_strwidth("\u{1F600}")` is **2** native, **1** in wasm; every other tested
+character agrees (ASCII, U+00E9, combining sequence, U+4F60, fullwidth U+FF21,
+Cyrillic U+0439). The polyfill's wide-character table predates emoji being
+classified Wide.
+
+Impact: low. `mb_strwidth` is **not** among the 14 `mb_*` functions Drupal core
+calls, so nothing in core is affected. Contrib doing width-based truncation would
+be.
+
+### DIVERGENCE 4 (not a bug) — Drupal self-reports single-byte mode
+
+| Call                          | native | wasm          |
+| ----------------------------- | ------ | ------------- |
+| `Unicode::check()`            | `''` | `'mb_strlen'` |
+| `Unicode::getStatus()`        | 1 (`STATUS_MULTIBYTE`) | **0 (`STATUS_SINGLEBYTE`)** |
+
+`Unicode::check()` returns `'mb_strlen'` whenever `extension_loaded('mbstring')`
+is false, regardless of whether the functions work. So Drupal correctly reports
+"standard PHP (emulated) unicode support", and any code branching on
+`getStatus()` takes the emulated path. The status report page will flag it. Not a
+polyfill defect, but it means the site is not indistinguishable from a native
+one, and `extension_loaded('mbstring')` is a check the polyfill can never satisfy.
+
+## Task C verdict
+
+The polyfill is packed correctly, unshadowed, force-included via
+`autoload_files.php`, and covers 100% of the `mb_*` surface Drupal core uses with
+byte-identical results on valid UTF-8. Three behavioural divergences are real;
+one of them — `mb_substr` returning `''` on invalid UTF-8, caused by the **iconv**
+polyfill rather than the mbstring one — can silently blank user content and
+~~should be closed by compiling `iconv` into the build~~. **SUPERSEDED: that
+prescription is wrong and the bug is already closed** in JavaScript by
+`src/mb-fix.js`, 12/12 byte-identical to native inside wasm and 25/25 in the gate
+lane; real `iconv_substr()` fails identically, so the build flag would have changed
+nothing. See DIVERGENCE 1 above. The Greek final-sigma gap is a documented product
+limitation. `mb_strwidth` does not affect core.
+
+---
+
+> **Round 55 —** every local-only figure in the deep dive, listed as a limitation of the method
+
+# Caveats, in one place
+
+1. **Every Task A number is local `wrangler dev`.** It does not enforce the
+   128 MB isolate cap on either memory pool. The deployed ceiling is unmeasured
+   and is not claimed here.
+2. The 512.0 MiB linear-memory ceiling is a **build** constant of
+   `static-free-v1`, reproducible by grep. A different `MAXIMUM_MEMORY` moves it.
+3. `memory_get_usage()` returns 0 in this build, so PHP-side accounting could not
+   be used and the brief's "report `memory_get_usage(true)` after each step" is
+   not satisfiable as written.
+4. The MEMFS ceiling was **not found**; the run stopped at 2,050 MiB by choice on
+   a 16 GB machine. Larger runs with uniform bytes are void (host compression).
+5. Task B's `--optimize` saving lands on cold start and fresh-kernel requests
+   only, because classes autoload once per interpreter. Warm-kernel requests gain
+   nothing.
+6. Task B's residual PSR-4 term uses core/vendor per-class costs for module
+   classes, which likely overstates it — so 17.93 ms is a floor.
+7. Task B's wasm arms did **not** boot Drupal, so they time the composer loader
+   in isolation; the native post-boot arm is reported separately for the mixed
+   state.
+8. Task C's divergences were found by differential testing against native PHP
+   8.5.7 vs wasm PHP 8.3.11. A PHP minor-version difference between the two sides
+   is a confound in principle; every divergence found was traced to polyfill
+   source rather than to a version difference.
+
+# ==================== DEEP DIVE B: THE cfw_do_sqlite DRIVER ====================
+
+**Merged in from `DRIVER-NOTES.md` on 2026-08-10; that file no longer exists.** It is the
+design record for `drupal/cfw_do_sqlite/` -- the transaction-buffer model, the SQL function
+audit, the integer-safety rules and the list of what the design deliberately does not cover.
+That reasoning is still current and is not duplicated at the top of this document.
+
+Read these corrections first; the rest of the deep dive is accurate.
+
+| this deep dive says | current status |
+| --- | --- |
+| 120 assertions in the gate lane / 101 in an older paragraph | **STALE. 132 as of 2026-08-10**, after the bound-parameter work added five |
+| the query builders are inherited from core's sqlite driver unchanged | **NO LONGER TRUE.** `Upsert` is overridden, because the host caps a statement at **100 bound parameters** and core's sqlite `Upsert` emits one multi-row statement. `Insert` is still inherited and is safe -- it executes one statement per row |
+| the 50-byte LIKE/GLOB cap is a claim rather than a fact | **CONFIRMED, exactly 50 bytes**, and the driver refuses over-length patterns on the translated form |
+| a bound-parameter limit is not mentioned | **IT EXISTS: 100.** Measured by bisection; 101 throws `too many SQL variables`. See the section on it above the fold |
+| "install Drupal onto it" is the real remaining test | **SUPERSEDED as the plan.** The installer is never run in wasm; a pre-built site is shipped and replayed, and as of 2026-08-10 that replay happens in JavaScript rather than PHP -- so `MIGRATE_DB` and its PDO dependency are off the shipping path entirely |
+| the O(W x R) replay cost will first hurt in the installer | **MOOT for the same reason.** The measured node-save figures (10 transactions, 54 replayed statements) still stand |
+| reading an INTEGER above 2^53 is lossy and unfixable at driver level | **STANDS** |
+| the suspension hazard is real but unreachable on this build | **STANDS**, and it is now a stated constraint on the JSPI work plus the mask seam in `src/mask.js` |
+
+> **Round 56 —** DEEP DIVE B opens: the driver itself, buffering writes and replaying them inside one `transactionSync()`
+
+# cfw_do_sqlite: the Drupal 11 driver for Durable Object SQLite
+
+The PHP half of Tier 0 item 1c, plus a design for 1d. Everything in
+`drupal/cfw_do_sqlite/`.
+
+**Status, updated 2026-08-10. It runs against real `ctx.storage.sql` and Drupal
+renders on it.** PHP now executes inside the Durable Object (`src/site-do.js`), so
+both halves have finally met. Three numbers:
+
+- **120 assertions** in the gate lane against a PDO stand-in
+  (`php drupal/cfw_do_sqlite/tests/run-driver-suite.php ./drupal-src`).
+  **SUPERSEDED: 132 as of 2026-08-10**, after the bound-parameter work added five and
+  the LIKE-length refusal added the rest. The count in VERIFY THE TREE is the live one.
+- **32 assertions** against real `ctx.storage.sql`
+  (`curl 'localhost:8798/driver?site=x'` with `experiments/wrangler/wrangler.site.jsonc` running).
+- A real Drupal 11.4.5 front page, `x-drupal-cache: MISS`, 12,304 bytes, 81
+  statements across the bridge.
+
+Running it found four platform refusals a PDO stand-in could never show and three
+live bugs in this driver, all now fixed. See "What the runtime actually refuses".
+
+---
+
+## THE THREE THINGS TO KNOW
+
+1. **The transaction mapping needs a second host entry point, `cfwSqlTxn`, and it
+   is now present.** The driver buffers writes and replays them, and the replay
+   has to be atomic. That function was added to `src/do-sqlite.js` by the host
+   work in parallel with this driver, and the two contracts match without either
+   side being adjusted — see "The host entry point" below for the field-by-field
+   check. The driver still probes for it and degrades if it is absent, and in
+   that state every `->insert()` inside a transaction fails, because
+   `Insert::execute()` always asks for the new rowid.
+2. **A read inside a transaction is the hard case, not the commit.** Committing is
+   replaying a list. The trap is code that writes a row and reads it back before
+   committing; the driver answers those by replaying the buffer inside a
+   transaction it then rolls back, and refuses rather than guessing when it
+   cannot.
+3. **`LIKE BINARY` works now, and the "no seam" claim this file used to make was
+   wrong.** It previously threw, on the reasoning that "the pattern arrives already
+   built from Drupal, so the driver has no seam at which to translate it". There is
+   a seam: `Condition::compile()` emits
+   `field OPERATOR prefix placeholder postfix`, so a marker placed in the operator's
+   `prefix` lands immediately before the placeholder and identifies which bound
+   argument is the pattern. `Connection::translateLikeBinary()` rewrites that
+   argument with `SqlAnalyzer::likeToGlob()` before anything else sees the
+   statement, and strips the marker. Core's `ESCAPE '\'` postfix is dropped,
+   because builtin `GLOB` refuses a third argument
+   ("wrong number of arguments to function GLOB()", measured). 9,000 differential
+   cases agree with core's own `sqlFunctionLikeBinary()`, with a control proving the
+   untranslated form disagrees. Case-sensitive `STARTS_WITH` / `CONTAINS` /
+   `ENDS_WITH` are available.
+
+   **The pattern cap is real and it is exactly 50 bytes.** Cross-reference: the
+   measurement, the 50,000 SQLite default it is lowered from, and the plain-`LIKE`
+   consequence live above the fold in "The 50-byte LIKE/GLOB ceiling is CONFIRMED,
+   and it binds plain LIKE too". `Connection::MAX_LIKE_PATTERN_BYTES` refuses
+   over-length patterns on the TRANSLATED form.
+
+   **SUPERSEDED:** this file previously carried the cap as an UNCONFIRMED research
+   claim, on the grounds that a documentation search here did not surface it. It was
+   then measured directly, so the claim is now a fact. One number from that note
+   survives and still matters: the 9,000 differential cases all used patterns of at
+   most 5 characters, so **nothing in the differential suite covers a long pattern**
+   -- the refusal, not the differential agreement, is what protects a `CONTAINS`
+   filter over 50 bytes.
+
+---
+
+## Files
+
+| File                       | Lines | What it is                                                                     |
+| -------------------------- | ----- | ------------------------------------------------------------------------------ |
+| `Connection.php`           | 605 | Extends the core sqlite `Connection`; owns the write buffer and `runStatement()` |
+| `Statement.php`            | 187 | Extends `StatementBase`; one host reply becomes one `PrefetchedResult`          |
+| `CfwSqlClient.php`         | 393 | Stands where `\PDO` stands; the only class that talks to the host               |
+| `TransactionManager.php`   | 129 | Maps `begin`/`commit`/`rollback`/savepoints onto the buffer, emitting no SQL    |
+| `TransactionBuffer.php`    | 268 | The withheld writes, the savepoint marks, the dirty-table set                   |
+| `SqlAnalyzer.php`          | 422 | Classifies statements, names their tables, renames four functions              |
+| `Schema.php`               | 45 | One override: `NOCASE_UTF8` becomes builtin `NOCASE`                            |
+| `ExceptionHandler.php`     | 85 | Maps SQLite constraint messages onto `IntegrityConstraintViolationException`    |
+| `SqlErrorException.php`    | 56 | Carries the engine message; there is no SQLSTATE to classify by                 |
+| `HostBridgeException.php`  | 18 | The bridge is missing or returned something unusable                            |
+| `UncommittedStateException.php` | 23 | A query would have to observe buffered state and cannot                         |
+| `Install/Tasks.php`        | 123 | Installability is "the host installed the bridge", not "PDO has a driver"       |
+| `cfw_do_sqlite.info.yml`   | 7 | Module, depends on `drupal:sqlite`                                             |
+| `tests/run-driver-suite.php` + `tests/fixtures/FakeHost.php` | 540 | The assertions; 101 when this table was written, **132 now** |
+
+Nothing else is forked. The query builders (`Select`, `Insert`, `Upsert`,
+`Truncate`), the condition compiler, the type map and the table-rebuild dance all
+come from `Drupal\sqlite\Driver\Database\sqlite` unchanged, because the engine
+underneath genuinely is SQLite. `Update`, `Delete` and `Merge` in that namespace
+are deprecated shims over the base classes, so there was nothing to inherit.
+
+### How it extends core without inheriting PDO
+
+The core sqlite `Connection::__construct()` types its client as `\PDO` and
+attaches one database file per prefix. Both are impossible here, so the
+constructor calls the grandparent `Drupal\Core\Database\Connection::__construct()`
+directly. That is legal PHP in object context and was verified before being
+relied on, not assumed. With an empty prefix it is exactly what the sqlite
+constructor would have done anyway. `__destruct()` is overridden the same way, so
+the sqlite destructor never tries to `unlink()` a database file after a
+`DROP TABLE`.
+
+`getAttachedDatabases()` returns a synthetic `['main' => 'main']`. That is not
+cosmetic: it is what makes the inherited `Schema::findTables()` work unchanged,
+while the real `$attachedDatabases` property stays empty so the destructor's prune
+loop is never entered.
+
+---
+
+## The transaction design
+
+### Why the obvious mappings are all unavailable
+
+Measured, and recorded above the fold:
+
+- `BEGIN` as SQL throws: _"To execute a transaction, please use the
+  state.storage.transaction() or state.storage.transactionSync() APIs instead
+  of ..."_. `SAVEPOINT`, `COMMIT` and `ROLLBACK` are the same family and the
+  driver never sends any of them.
+- `ctx.storage.transactionSync(cb)` works: throwing inside rolls back (4 rows ->
+  4), returning commits (4 -> 5).
+- Across events it is worse than useless: DO SQLite commits its implicit
+  transaction at the end of **each event**, so a `BEGIN` in one request is already
+  committed before a `ROLLBACK` arrives in the next.
+
+Drupal's API is begin-commit. `transactionSync` is callback-scoped and driven from
+JS. They do not compose, and with no JSPI in this build PHP cannot call into a
+callback-scoped API and resume. So the transaction scope has to be inverted or
+deferred; this driver defers.
+
+### What it does
+
+```
+startTransaction()   -> open a buffer
+  write              -> append to the buffer, return no rows and no row count
+  read, clean table  -> straight to the host
+  read, dirty table  -> replay the buffer + the read in one transactionSync,
+                        capture the rows, roll the whole thing back
+  savepoint          -> record the buffer length
+  rollback to it     -> truncate the buffer to that length
+rollBack()           -> discard the buffer; this cannot fail
+commit()             -> replay the buffer in one transactionSync
+```
+
+A read is "clean" when none of the tables it references has a buffered write.
+`SqlAnalyzer` answers that, and it over-approximates in every uncertain direction:
+an unclassifiable statement, an unpinnable write target, or a `RENAME` marks
+everything dirty. The cost of over-approximating is a false positive — a read
+resolved the expensive way — and the cost of under-approximating would be data
+that is wrong without saying so, which is the failure class this project has
+already been bitten by six times.
+
+DDL additionally dirties a pseudo-table `sqlite_master`, so `tableExists()`,
+`findTables()` and `PRAGMA table_info()` collide with buffered `CREATE`/`DROP`
+and get resolved through the replay instead of reading stale schema. That is
+tested: inside a transaction, `tableExists('late')` returns TRUE for a table that
+does not exist on the host yet, and FALSE again after the rollback.
+
+### The host entry point
+
+`cfwSqlTxn`, installed next to `cfwSqlExec` on the PHP Module. This driver was
+written against the contract below; `SiteDurableObject.execTxn()` in
+`src/do-sqlite.js` now implements it. The two halves were written independently
+and agree field for field, checked after the fact: the Module key, the three
+request keys, the `results` / `readResult` reply keys, the five per-statement
+result keys, the `{ok: false, error}` failure shape, and the meaning of
+`commit: false`. Nothing on either side needed changing.
+
+Request:
+
+```json
+{
+  "statements": [{ "sql": "...", "params": {} }],
+  "commit": true,
+  "read": { "sql": "...", "params": {} }
+}
+```
+
+Reply on success, per statement in the same order:
+
+```json
+{
+  "ok": true,
+  "results": [{ "rows": [], "rowsRead": 0, "rowsWritten": 1, "lastInsertRowid": 7, "changes": 1 }],
+  "readResult": null
+}
+```
+
+Reply on failure: `{"ok": false, "error": "<sqlite message>"}`, with the whole
+transaction rolled back. Both directions go through the existing `encode()` /
+`decode()` codec, exactly like `cfwSqlExec`.
+
+Semantics: run everything inside one `ctx.storage.transactionSync()`. If `commit`
+is false, run it and then throw a private sentinel so the runtime rolls it back —
+the measured rollback mechanism, used deliberately. `read` is evaluated after the
+statements, inside the same transaction, and is only meaningful with
+`commit: false`. The host's implementation uses exactly that sentinel
+(`__cfw_speculative_abort__`) and returns `results` even on the aborted path,
+which is what makes the speculative row count and insert id work.
+
+`src/do-sqlite.js` was not edited from here, per the constraints. The driver
+probes for the function by name and degrades if it is absent.
+
+### What the driver does when the host has no `cfwSqlTxn`
+
+Measured in the suite, in the "Degraded host" section:
+
+| Operation                                | Behaviour                                           |
+| ---------------------------------------- | --------------------------------------------------- |
+| Rollback                                 | Still exactly correct — nothing was ever written    |
+| Commit                                   | Replays statement by statement, **not atomic**      |
+| Read of a clean table in a transaction    | Works                                               |
+| Read of a dirty table in a transaction    | Throws `UncommittedStateException`                  |
+| `lastInsertId()` with a buffered insert   | Throws                                              |
+| `rowCount()` of a buffered write          | Throws                                              |
+| `$connection->insert()` in a transaction  | **Throws**, because `Insert::execute()` returns `lastInsertId()` |
+
+The last row is the one that matters, and it was found by running the suite
+rather than by reading the code. Without `cfwSqlTxn`, the insert query builder
+cannot be used inside a transaction at all. Since Drupal's own multi-row
+`Insert::execute()` opens a transaction, that also means any multi-row insert
+fails. `supportsAtomicCommit()` reports which mode the connection is in.
+
+### Exactly what this design does NOT cover
+
+Listed in descending order of how likely you are to hit it.
+
+1. **A read that joins buffered rows against committed ones is only correct
+   through the replay.** With `cfwSqlTxn` present, it is correct, because the
+   join runs inside a real transaction with the writes applied. Without it, the
+   read is refused. There is no third behaviour, and deliberately so.
+2. **Cost is quadratic in the worst case.** Each dirty read replays the whole
+   buffer: a transaction with W writes and R dirty reads executes O(W*R)
+   statements inside the DO. At the measured 0.0125 ms per bridge call the bridge
+   is not the problem — the statement executions inside the host are, and the
+   host's `execSql()` runs `last_insert_rowid()` and `changes()` after every
+   statement, so each replayed statement is three `sql.exec()` calls, not one. The
+   installer, which writes hundreds of rows per transaction, is where this will
+   first hurt. `Statement` caches a resolved row count so repeated `rowCount()`
+   calls are free, but nothing caches across statements.
+3. **A non-deterministic write replays differently.** `random()`,
+   `CURRENT_TIMESTAMP` or an implicit rowid can take one value during a
+   speculative read and another during the commit replay. Drupal supplies
+   timestamps from PHP rather than SQL, so the exposure is narrow, but a rowid
+   reported by `lastInsertId()` during a transaction is only guaranteed to match
+   the committed one because the DO gate serialises events, so no other writer
+   can advance the sequence in between. If that gate is ever removed, this breaks.
+4. **A savepoint is a buffer index, not a database savepoint.** Rolling back to
+   one truncates the list, and releasing one also releases every savepoint created
+   after it, matching SQLite. What is not modelled is any state a real savepoint
+   would hold beyond the statement list. For the way Drupal uses savepoints —
+   nested `Transaction` objects — the list is the whole state.
+5. **A failed commit leaves the Drupal transaction stack dirty.** The replay
+   throws, `commitClientTransaction()` sets `CommitFailed` and rethrows so the
+   real SQLite message survives, and the stack item is never voided. Its
+   destructor then throws `TransactionOutOfOrderException`. That is core's
+   behaviour for any driver whose client `commit()` throws, including PDO's, so it
+   is not introduced here — but it is worth knowing that a mid-replay failure is
+   messy on the way out.
+6. **A statement withheld before an exception stays withheld.** If
+   `Insert::execute()` buffers its INSERT and then throws from `lastInsertId()`,
+   the INSERT is still in the buffer. A caller that swallows the exception and
+   commits anyway will land the row with an id it never learned. Tested, and
+   documented rather than papered over: the write genuinely was issued inside the
+   transaction.
+7. **`voidClientTransaction()` commits the buffer.** Drupal calls it when it
+   believes the database committed behind its back. Nothing was sent, so the
+   faithful equivalent is to commit; dropping the buffer would silently lose
+   writes Drupal considers durable. `supportsTransactionalDDL()` is TRUE so this
+   should be unreachable.
+8. **Cross-event transactions are not attempted and cannot be.** A Drupal
+   transaction that outlived a request would be a buffer discarded when the
+   interpreter's request ends. Drupal has no such API, so nothing is lost.
+
+---
+
+## SQL function and collation audit
+
+What the core sqlite driver registers through `PDO::sqliteCreateFunction()` and
+`sqliteCreateCollation()`, none of which exists on `ctx.storage.sql`.
+
+Two evidence columns, both gathered rather than recalled. "Drupal uses it"
+is from grepping non-test `core/lib` and `core/modules` for the function inside
+SQL strings. "Builtin" is from probing SQLite 3.53.4 locally:
+`php -r '$p=new PDO("sqlite::memory:"); $p->query("select greatest(1,2)");'` and
+so on for each.
+
+| Core registers      | Drupal uses it in SQL                                                      | Builtin equivalent            | This driver                       |
+| ------------------- | -------------------------------------------------------------------------- | ----------------------------- | --------------------------------- |
+| `GREATEST()`        | **yes** — comment views plugins (3), `history` NodeNewComments             | `max(a,b,...)`, variadic      | **rewritten to `max`**            |
+| `LEAST()`           | **yes** — same family                                                      | `min(a,b,...)`, variadic      | **rewritten to `min`**            |
+| `RAND()`            | **yes** — `Select::orderRandom()`, core                                    | `random()`                    | **rewritten to `random`**         |
+| `IF()`              | not found in core SQL                                                      | `iif()`, since 3.32           | **rewritten to `iif`**            |
+| `SUBSTRING()`       | **yes** — `CommentStorage` (4), comment + views sorts                      | builtin, alias of `substr`    | passes through unchanged          |
+| `LENGTH()`          | **yes** — `CommentStorage`, alongside `SUBSTRING`                          | builtin, **but counts chars** | passes through; see caveat below  |
+| `CONCAT()`          | not found in core SQL                                                      | builtin since 3.44            | passes through                    |
+| `CONCAT_WS()`       | **yes** — views `Combine` filter                                           | builtin since 3.44            | passes through                    |
+| `POW()`             | not found in core SQL                                                      | builtin with math functions   | passes through                    |
+| `EXP()`             | **yes** — `search_node` relevance scoring                                  | builtin with math functions   | passes through                    |
+| `MD5()`             | not found in core SQL                                                      | **none**                      | fails loudly at runtime           |
+| `SUBSTRING_INDEX()` | not found in core SQL                                                      | **none**                      | fails loudly at runtime           |
+| `REGEXP`            | **yes** — views `StringFilter`, `NumericFilter`, `Combine`                 | **none**                      | fails loudly at runtime           |
+| `GLOB()` override   | **yes, indirectly** — `LIKE BINARY` from `Entity\Query\Sql\Condition`      | builtin, **wrong wildcards**  | **`LIKE BINARY` throws**          |
+| `NOCASE_UTF8`       | **yes** — every non-binary VARCHAR/TEXT column                             | `NOCASE`, ASCII only          | **substituted, ASCII-only**       |
+
+Four caveats behind that table.
+
+**`LENGTH()` changes meaning.** Core overrides it with PHP's `strlen()`, so it
+counts bytes; SQLite's builtin counts characters on TEXT. `CommentStorage` uses it
+on thread strings like `01.02/`, which are ASCII, so byte and character length
+agree there. Any other caller comparing lengths of multibyte text will get a
+different answer than on MySQL. Not fixable without user functions.
+
+**`POW()`/`EXP()` depend on a compile flag.** They are builtin only when SQLite
+was built with `SQLITE_ENABLE_MATH_FUNCTIONS` (3.35+). The local build has them.
+Whether workerd's does is **unverified** — one query settles it and it has not
+been run. `search_node`'s scoring is the caller.
+
+**`REGEXP` fails with a usable message.** SQLite parses `x REGEXP y` as a call to
+a function named `regexp`, so the error is `no such function: REGEXP`. That is
+loud and greppable, so it is left alone rather than intercepted. Views' regex
+filters do not work on this driver.
+
+**`NOCASE_UTF8` -> `NOCASE` is the one accepted silent difference.** Measured:
+`'Hello World'` matches `'hello world'`, `'Ünicode'` does not match `'ünicode'`.
+So case-insensitive comparison of non-ASCII text is case-**sensitive** here. It
+affects username and email uniqueness, taxonomy term matching and `LIKE`, and it
+belongs in release notes rather than in support tickets. The fix lives in the
+runtime's SQLite build.
+
+The rewrite itself is four names, applied only outside string literals, comments
+and quoted identifiers, using the same literal-aware scanner the table analysis
+uses. `SELECT 'GREATEST('` survives it, tested end to end. Functions with no
+exact builtin are deliberately absent from the map: mapping something onto a
+function that behaves differently is how you get quiet wrongness.
+
+---
+
+## Integer safety
+
+The wasm build is 32-bit (`PHP_INT_SIZE` 4) and a SQLite INTEGER is 64-bit, so
+every value crossing the boundary goes through the existing codec. This section is the
+WRITE side; the read side is lossy above 2^53 and is covered in "The integer limit that
+cannot be fixed here" below.
+
+- **Reading.** A value wider than 32 bits arrives as
+  `['__phpint' => '<digits>']`. `CfwSqlClient::stringifyValue()` resolves it to
+  its digits, so an envelope array can never reach entity code. Every other
+  column value is stringified too, which is not a shortcut: it is parity with the
+  core driver's `PDO::ATTR_STRINGIFY_FETCHES`, so Drupal sees the string columns
+  it is written against. Tested with a value beyond 64-bit range, which is the
+  only way to force the marker on a 64-bit test host.
+- **Writing.** Parameters go out through `pw_encode()`, so a marker read from one
+  query survives being bound into the next.
+- **The limit found while testing.** Core's `Connection::expandArguments()`
+  rejects any array-valued argument — _"Placeholders must have a trailing [] if
+  they are to be expanded with an array of values"_ — so a codec envelope cannot
+  travel through `Connection::query()` at all. It only reaches the driver on the
+  `Insert` builder path, which calls `$statement->execute()` directly. This does
+  not matter in practice, and the reason is worth stating: a wide integer is read
+  back as a decimal **string**, and binding that string works, because SQLite
+  applies the column's INTEGER affinity to it. Tested: `9223372036854775807`
+  stored from a string, read back exact, and matched by binding the string again.
+
+---
+
+## What is proven and what is not
+
+`php tests/run-driver-suite.php <drupal-root>` — 101 assertions, 0 failures,
+against Drupal 11.4.5. The host is PDO SQLite speaking the same JSON contract as
+`src/do-sqlite.js`. **SUPERSEDED: 132 assertions as of 2026-08-10**; the list below
+is what the 101 covered, and every item still holds.
+
+Proven, because it ran:
+
+- All 12 classes load against real Drupal with `E_ALL`, so no inheritance or
+  signature incompatibility with `StatementBase`, `TransactionManagerBase`, the
+  sqlite `Connection` or the sqlite `Schema`.
+- `schema()->createTable()` emits SQL a real SQLite accepts, with `NOCASE` in
+  place of `NOCASE_UTF8`, and ASCII case-insensitive matching then works.
+- The table rebuild path (`addField()` with a NOT NULL column and an initial
+  value) creates, copies, drops and renames correctly and keeps every row.
+- `insert`/`select`/`update`/`delete`/`upsert`/`merge`/`truncate`/`queryRange`/
+  `findTables`/`fieldExists`/`addIndex`/`dropIndex` all work through Drupal's own
+  builders.
+- Buffering: a write is withheld, a commit replays it, a rollback writes nothing,
+  a read sees its own buffered write, a read of an untouched table passes
+  straight through, a buffered `lastInsertId()` resolves, a buffered `rowCount()`
+  resolves, and neither resolution commits anything.
+- Savepoints: the outer write survives, the inner write is discarded.
+- Drupal's multi-row `Insert::execute()`, which opens its own transaction, reuses
+  one `Statement` object across the rows and asks for the id after committing:
+  every row lands, the id comes back, and the buffer is closed again.
+- A replay that violates a primary key throws and commits nothing.
+- Constraint failures map to `IntegrityConstraintViolationException`; a missing
+  table does not.
+- Transaction-control SQL reaching the driver is refused.
+- 26 `SqlAnalyzer` cases, including a literal containing ` FROM users `, a
+  comment containing an apostrophe, and a literal containing `--`, each of which
+  breaks a regex-based implementation.
+
+## What the runtime actually refuses
+
+All six previously-unproven questions were settled 2026-08-10 by running the driver
+inside the Durable Object. Four of the answers are refusals, and three of them were
+live bugs in this driver.
+
+| Question | Answer |
+| --- | --- |
+| `PRAGMA table_info()` / `index_list()` / `index_info()` | **work** |
+| Schema-qualified `"main".sqlite_master` | **works** (bare form too) |
+| Schema-qualified index name from `Schema::createIndexSql()` | **works**, quoted and bare |
+| `vrzno_env()` returning something PHP can invoke as `$fn($json)` | **works** — type `Vrzno`, and `is_callable()` is TRUE after all |
+| SQLite >= 3.44 / 3.35 math / 3.32 | **all present**: `concat`, `concat_ws`, `pow`, `exp`, `iif`, variadic `max`/`min`, `random` |
+| `CREATE TEMPORARY TABLE`, which `queryTemporary()` needs | **REFUSED**, `not authorized: SQLITE_AUTH` |
+| `sql.exec()` binding a JS BigInt | **REFUSED**, "Cannot convert a BigInt value to a number" |
+| `sqlite_version()` | **REFUSED**, `not authorized to use function: sqlite_version` |
+| `GLOB ... ESCAPE` | **REFUSED**, "wrong number of arguments to function GLOB()" |
+
+The three driver bugs those refusals exposed, all fixed:
+
+1. **`version()` threw on every call**, because it is implemented as
+   `SELECT sqlite_version()`. It now catches the refusal and establishes a floor by
+   feature probe instead, reporting **3.46.0** (proven by `unhex()`, which landed in
+   3.46). This matters more than it looks: Drupal 11.4.5 gates installation on
+   **3.45**, and `concat` — the obvious probe — only proves 3.44 and would have
+   **failed** the gate. `engineVersionIsFloor()` reports that the number is a floor
+   rather than a reported version, so anything displaying it can say so.
+2. **`queryTemporary()` surfaced a raw `SQLITE_AUTH`.** It now throws a message
+   naming the cause. Auditing core found **zero callers** outside the interface
+   declaration and the three driver implementations, so nothing in Drupal 11.4.5
+   reaches it; the class still inherits `SupportsTemporaryTablesInterface` from the
+   core sqlite driver and an `instanceof` check cannot be made to fail, which is
+   why throwing loudly is the only way a caller learns.
+3. **A wide integer could not be written at all.** The codec produces a JS BigInt
+   for anything beyond `Number.MAX_SAFE_INTEGER` and `sql.exec()` refuses it, so
+   `bindable()` in `src/do-sqlite.js` now converts it to a decimal string; SQLite
+   applies the column's INTEGER affinity, verified by `typeof(col)` returning
+   `integer` and by `WHERE col = '<digits>'` matching.
+
+### The integer limit that cannot be fixed here
+
+Writing is fixed; **reading is not, and it is silent.** `ctx.storage.sql` hands
+INTEGER columns back as JS doubles, so a value above 2^53 loses precision before
+anything in this project can see it:
+
+| | value |
+| --- | --- |
+| written | `9007199254740993` |
+| stored (`CAST(col AS TEXT)`) | `9007199254740993` — exact |
+| read through the cursor | **`9007199254740992`** |
+| `9223372036854775807` via `CAST ... AS TEXT` | exact |
+
+So the storage is fine and the read path is lossy. The codec cannot help: by the
+time `encode()` sees the value it is already a wrong double, and the `__phpint`
+envelope then carries the wrong number faithfully. Drupal core never stores
+integers that wide, so the exposure is contrib holding 64-bit ids. A driver-level
+fix would have to select wide columns as `CAST(col AS TEXT)`, which needs schema
+knowledge the driver does not have at query time. Documented, not papered over.
+
+### Cost, measured for the first time
+
+Every performance statement in earlier versions of this file was arithmetic on the
+0.0125 ms bridge figure. It was then measured on the real driver with the whole cache
+ladder named: **1 ms / 26 ms / 34 ms / 81 ms**.
+
+Cross-reference: the full ladder with the bins emptied, the cache state and the
+statement count per row is above the fold in "Rule 3 had two more layers, and both
+were biting", and each row also appears in CURRENT NUMBERS. The conclusion drawn
+here is the one that matters for this driver: the 34 ms sits against **33.8 ms**
+recorded for the same render on the old MEMFS/PDO path, so **the Durable Object
+driver costs essentially nothing extra**, retiring the worry that a bridged driver
+would be a regression. Numbers are load-soft: two other jobs were running.
+
+### THE REPLAY COST, MEASURED — 2026-08-10
+
+Same measurement as "The transaction replay, measured for the first time" above the
+fold, which carries the warm 10/9/54/59 table only; this is the fuller write-up and
+adds the first-save figures and the design consequences.
+
+Every earlier statement about the replay was arithmetic on the 0.0125 ms bridge
+figure, and every earlier measurement was a READ, so the transaction machinery had
+never actually been exercised by a write. Counters now exist in
+`SiteDurableObject.execTxn()` — `txnCount`, `txnStatements`, `txnSpeculative` —
+reported by `/stats` and per-save by `/savenode`.
+
+One **warm node save** through Drupal's entity API, on the `drupal-std` database:
+
+| | value |
+| --- | --- |
+| transactions opened | **10** |
+| of which speculative (replay + read + rollback, `commit: false`) | **9** |
+| statements executed inside replays | **54** |
+| total host statements for the save | **59** |
+| in-PHP save cost | 9-10 ms |
+
+**So 54 of 59 statement executions in a node save are replays**, and 9 of the 10
+transactions are the read-your-own-uncommitted-write path. The first save on a fresh
+kernel is 18 transactions / 137 replayed statements / 152 total.
+
+What this says about the design:
+
+- The O(W x R) term is **real and dominant in statement count**, but the buffers are
+  small — 5.4 statements per transaction — so it has not become a cost problem. The
+  number to watch is statements-per-transaction, not transactions.
+- The prediction in "Exactly what this design does NOT cover" item 2 was right about
+  the mechanism: the installer, which writes hundreds of rows per transaction, is
+  where this will first hurt. A per-transaction replay cache keyed on buffer length is
+  still the fix, and there is now a metric to prove it works.
+- `voidClientTransaction()` and the degraded no-`cfwSqlTxn` path stayed cold, as
+  expected: `supportsAtomicCommit()` is true here.
+
+### The suspension hazard, and the 2^53 guard staying cold
+
+Cross-reference: both were written up above the fold in "The corruption case the
+standing rules exist for is currently unreachable" -- the whole save is one synchronous
+`php._run()` so nothing can be delivered inside it, which is a constraint on the JSPI
+work rather than a reassurance; and `bindable()`'s `UnreadableIntegerError` stayed cold
+because nothing core writes on the node path exceeds 2^53 (ids are small, timestamps
+are ~1.78e9). The refusal path is covered only by the suites.
+
+---
+
+## What remains, in priority order
+
+Items 1 and 2 are **DONE** — the two halves ran together, the six runtime questions
+are settled in the table above, and the write path is now measured too. Item 3 is
+still the real test. Items 1-2 are kept below because the reasoning still reads.
+
+1. ~~**Run the two halves together in the Worker.**~~ DONE. Both sides of the transaction
+   contract now exist and match on paper; nothing has executed them against each
+   other. This is the single thing standing between the driver and a first real
+   request, and it is also what settles the six unverified runtime questions
+   above.
+2. ~~**Settle the runtime questions in one probe request.**~~ DONE, route `/probe`.
+   One route that issues `PRAGMA table_info`, a `CREATE TEMPORARY TABLE`, and
+   `select concat(1,2), pow(2,3), iif(1,2,3), sqlite_version()` answers all but
+   one of them in a single request. Cheap, and it gates everything else.
+3. **Install Drupal onto it.** The installer is the real test: hundreds of
+   statements, DDL and DML interleaved, most of it inside transactions. Expect the
+   O(W*R) replay cost to be the first thing that hurts, and expect the fix to be
+   a per-transaction replay cache keyed on the buffer length.
+4. **Decide what to do about `REGEXP` and `LIKE BINARY`.** Both are reachable
+   from views and from entity queries. Options are a documented functional
+   limitation, or moving those comparisons into PHP. Neither is a driver fix.
+5. **Wire `statementCount()` into the observability story.** This document tracks
+   queries per request; with speculative replays that number now diverges from
+   the number of Drupal queries, and the gap is the interesting signal.
+6. **Decide whether prefixes ever need to work.** Currently a non-empty prefix
+   throws at construction, which also means Drupal's own test runner cannot use
+   this driver. One Durable Object per site makes that the right trade, but it is
+   a decision, not an oversight.
+
+## Reproducing
+
+```
+php tests/run-driver-suite.php /path/to/drupal-11.4.5
+```
+
+Needs a Drupal 11 checkout with `vendor/` installed and PHP with `pdo_sqlite`.
+Reads the Drupal tree, writes nothing. The database is `sqlite::memory:`.
+
+> **Round 57 —** Closure genuinely never runs, and it also cannot be measured standalone; `minify` is the real lever
+
+# THE CLOSURE MEASUREMENT WAS THE INSTRUMENT, AGAIN
+
+Measured 2026-08-14. The lever table carried `-sCLOSURE=1` on the glue as "Not started" against
+**111,764-128,819 gzipped bytes** of emscripten glue. Two of those three facts survive.
+
+**It is true that Closure never runs.** `CLOSURE` appears nowhere in php-wasm's `Makefile`, so no
+build in `vendor/` has been through it. The glue is whitespace-minified by emscripten's own JS pass
+and nothing more: `ENVIRONMENT_IS_WEB` and `readyPromiseResolve` survive at full length in
+`vendor/static-free-v1/php8.3-worker.mjs`, which is what an un-Closured glue looks like.
+
+**It is NOT true that running Closure over that file measures the lever.** Standalone, in SIMPLE
+mode, Closure reports 877,287 -> 425,105 raw and 128,810 -> 96,580 gzipped, a 25% cut. That number
+is worthless. The output ends in `export{};` -- an empty export -- and `SOCKFS` and `PIPEFS` are
+gone from it entirely, 0 occurrences against 23 and 24 in the input. Both are mounted by
+`initRuntime()`. Closure treated the glue as an ES module whose default export nothing consumed and
+tree-shook the runtime to a shell. A 52% cut in raw bytes was the tell, and checking the symbols is
+what turned a headline saving into a broken artifact.
+
+Emscripten's own `-sCLOSURE=1` does not have this problem because it supplies externs and runs
+inside the link. Reproducing it therefore needs a real build, not a post-hoc pass over a finished
+file -- and php-wasm has no `CLOSURE` variable to set, so it needs a patch and a phasm variant
+first.
+
+## What is actually available, measured on the real bundle
+
+`wrangler deploy --minify` is not the same lever, but it is the one that is reachable today, needs
+no rebuild, and touches nothing under `vendor/`.
+
+| build                                  |   `site.js` raw |  `site.js` gz |    shipped total gz |
+| -------------------------------------- | ---------------: | ------------: | ------------------: |
+| as it deploys now                      |       1,431,659 |       253,217 |           3,010,951 |
+| `--minify`                             |       1,004,947 |       203,183 |           2,960,917 |
+| saving                                 |         426,712 |          50,034 |              50,034 |
+
+**SUPERSEDED BY A REAL DEPLOY, and the method above under-reads the meter.** Measured 2026-08-14 by
+deploying the canonical config to a throwaway `cfw-*` worker, wrangler's own single-stream gzip says
+**3,041,065 plain and 2,989,814 minified, a saving of 51,251**. The table below gzips `site.js` and the
+wasm SEPARATELY and adds them, which **under-reports the real total by 30,114 bytes** because the
+deployed artifact is one gzip stream over both. Use the deploy figures; the split ones are kept only
+to show the size of the error.
+
+Against **3,145,728** that is 104,663 under before and 155,914 after. Against a **3,000,000** reading
+it is 41,065 OVER before and 10,186 under after -- so under that reading `minify` is the difference
+between deployable and not, rather than headroom.
+
+Both figures come from `wrangler deploy --dry-run --outdir=` on the same config minutes apart, so
+the delta is a like-for-like comparison even though the absolute belongs to `wrangler.jsonc` with
+its `php-binary-o2` alias rather than to any other entrypoint. The shipped total is `site.js` plus
+the wasm and NOTHING else: `site.js.map` is 2,455,503-2,524,490 bytes in the same directory and
+does not upload, and counting it would have inflated both totals by more than the saving itself.
+
+Cross-check that the two instruments agree: the wasm gzips to **2,757,734** here, against the
+**2,757,693** that `phasm`'s `src/rc/control.rc` records for `static-o2`. Same binary, 41 bytes of
+gzip-version drift.
+
+Against the **3,145,728** free ceiling that applies to the whole deployed bundle, this is headroom
+rather than rescue -- 104,663 under before, 155,914 under after. It is worth taking, and it is not
+the thing standing between this project and the free tier.
+
+## Why `minify` is not flipped on in this commit
+
+The gate cannot see it. `vitest --project=workers` runs `src/` through workerd via the pool; it
+never builds the deployed bundle, so a green suite would say nothing about a minified one. The
+honest verification is a `cfw-*` deploy that renders a page and is torn down, and that needs
+authorization. Until then this is a measured, ready lever and not a landed change.
+
+The specific thing to watch when it is taken: `src/db/heap-store.ts` and `src/probes/snapshot.ts`
+walk emscripten's `Module` globals by string name, and heap restore already depends on reproducing
+the open fd table exactly. esbuild renames identifiers and not object properties, so those lookups
+should survive -- "should" being the reason a deploy check, not a reading of esbuild's docs, is what
+closes this.
+
+> **Round 58 —** a composer requirement proves nothing about a render, and the 513 KB stays because a render uses it
+
+# `ext-dom` IS ON THE ANONYMOUS RENDER PATH, SO THE 513 KB STAYS
+
+Measured 2026-08-14. The bundle table lists `libxml2 + xml + dom + simplexml` at **513,405 bytes**
+marked "Required? yes" on the strength of Drupal core's `composer.json` naming `ext-dom`,
+`ext-SimpleXML` and `ext-xml`. A composer requirement is checked at install and proves nothing about
+what a request touches, so the open question was whether an anonymous render actually calls into it.
+
+It does, and the shipped database settles it rather than an argument about Drupal in general.
+
+`Drupal\Component\Utility\Html` is the only DOM user in the render, template and utility trees, and
+class-loading it costs nothing -- `Html::escape()`, `getUniqueId()` and `cleanCssIdentifier()` never
+construct a `DOMDocument`. Three methods do: `load()`, `serialize()` and `normalize()`. Their
+non-test callers in core are the **filter** module's `FilterHtml`, `FilterAlign`,
+`FilterHtmlImageSecure` and `FilterImageLazyLoad`, plus `text`'s `TextSummary`,
+`FieldFilteredMarkup`, `MailFormatHelper` and `BigPipeStrategy`.
+
+Every text format in `assets/drupal/site.sqlite` enables at least one of those filters:
+
+| format             | enabled filters                                                            | reaches DOM |
+| ------------------ | -------------------------------------------------------------------------- | ----------- |
+| `basic_html`       | `filter_align`, `filter_caption`, `filter_html`                            | all three   |
+| `full_html`        | `filter_align`, `filter_caption`, `filter_htmlcorrector`, `filter_image_lazy_load` | all four |
+| `restricted_html`  | `filter_autop`, `filter_html`, `filter_url`                                | `filter_html` |
+| `plain_text`       | `filter_autop`, `filter_html`, `filter_url`                                | `filter_html` |
+
+So any anonymous page that renders a formatted-text field -- a node body, a teaser on a listing --
+constructs a `DOMDocument`. **`ext-dom` and libxml2 are runtime requirements here, and the 513 KB
+cannot come off.** Closed in the negative.
+
+What is NOT settled: `ext-simplexml` and `ext-xml` are separate extensions sharing the same libxml2,
+and nothing above shows either on the render path. libxml2 has to stay for DOM regardless, so the
+saving available is only the two extensions' own object code, not the 513,405 total. Separating them
+needs a phasm variant that drops `--enable-simplexml --enable-xml` and keeps `--enable-dom`; the
+figure is unknown until one is built and gzipped, and this document should not carry a guess at it.
+
+> **Round 59 —** a real deploy closed what the gate structurally could not
+
+# `minify` IS LANDED, AND A DEPLOY IS WHAT CLOSED IT
+
+Measured 2026-08-14 on a throwaway `cfw-minify-check` worker built from the canonical
+`wrangler.jsonc`, deployed minified and unminified, then deleted with the account's worker list
+verified back to its nine-worker baseline.
+
+The gate could never have closed this. `vitest --project=workers` runs `src/` through workerd via the
+pool and never builds the deployed bundle, so a green suite says nothing about a minified one. The
+named risk was specific: `src/db/heap-store.ts` and `src/probes/snapshot.ts` walk emscripten's
+`Module` globals **by string name**, and heap restore already depends on reproducing the open fd
+table exactly.
+
+| step                                  | result                                                            |
+| ------------------------------------- | ----------------------------------------------------------------- |
+| deploy                                | uploaded, minified                                                |
+| Worker startup time                   | **8-9 ms** against the 1 s ceiling                                |
+| routing and DO reach                  | `/serve` matched, Durable Object entered                          |
+| migration                             | **79 of 79 chunks**, `engine: sql`, alarm chain self-driving      |
+| render                                | **HTTP 200, 12,304 bytes**, `<meta name="Generator" content="Drupal 11">` |
+| host-recorded render                  | `x-cfw-render-ms: 392` (the host's own field, NOT `cpuTime`)      |
+
+The rendered object existed only under minified deploys, so minified PHP both migrated it and
+rendered it. That path runs the emscripten glue, `@drupflare/cartridge`'s mount and mask, and
+`@drupflare/durabledb`'s codec and `do-sqlite` -- every substituted package, end to end.
+
+## Two instrument corrections fell out of it
+
+**The two-gzip method under-reads the meter that binds.** Gzipping `site.js` and the wasm separately
+and adding them gives 3,010,951; wrangler's single stream over the same artifact gives **3,041,065**,
+**30,114 bytes higher**, because the deployed thing is one stream. Every "bundle total" in this
+document taken by adding separate gzips is low by roughly that much.
+
+**The saving is 51,251, not 50,034**, and the headroom figures move with it: 104,663 under 3,145,728
+before, 155,914 after. Against a 3,000,000 reading the unminified default is **41,065 OVER** and the
+minified one 10,186 under, which is what turns `minify` from headroom into a prerequisite under that
+reading.
+
+## The free ceiling still has not been confirmed by a deploy, and cannot be here
+
+A padded throwaway deployed successfully at **3,200,092 gzipped bytes**, above the 3,145,728 free
+ceiling. That is only possible on Workers **Paid**, which this account is on. So the probe's positive
+control fired and correctly invalidated its own negative result: a first probe at 3,062,610 also
+succeeded, and without the control that would have been written down as "the ceiling is 3 MiB,
+confirmed". **3,145,728 remains a documented figure, not a measured enforcement.** Confirming it
+needs a free account.
+
+> **Round 60 —** LTO destroys per-extension attribution, retracting a recommendation made the same day
+
+# THE LINK MAP CANNOT ATTRIBUTE BYTES TO AN EXTENSION HERE, BECAUSE OF LTO
+
+Measured 2026-08-14, and it retracts a recommendation this document made the same day.
+
+The proposal was sound in principle: stop answering "what does simplexml cost" with a 20-minute
+variant build, and get per-extension attribution from `wasm-ld -Map` in a single link. The seam
+exists and needs no code change -- `SYMBOL_FLAGS` is empty by default, reaches
+`EXTRA_LDFLAGS_PROGRAM`, and its `EXTRA_FLAGS+=` append is gated on `ifdef SYMBOLS` rather than on
+`SYMBOL_FLAGS`, so overriding it perturbs nothing.
+
+The map got produced: 3,085,283 bytes. Parsed, it is useless for the question:
+
+| attributed to                            |      raw bytes |  share |
+| ---------------------------------------- | -------------: | -----: |
+| `lto.tmp`                                | **14,344,108** | 97.2%  |
+| `<internal>`                             |        366,246 |  2.5%  |
+| emscripten sysroot archives (libc et al) |         45,209 |  0.3%  |
+
+**Not one `ext/`, `Zend/`, `main/` or `sapi/` object name appears in the entire map**, across 21,613
+attributed lines. `LTO_FLAG` defaults to `-flto` and reaches the compile half, so `wasm-ld` merges
+every bitcode unit into one object before codegen. The provenance is gone before the map is written.
+
+The instrument is real. LTO is what defeats it, and the shipping configuration is an LTO build.
+
+## What that leaves
+
+Mapping a `nolto` build works -- `src/rc/nolto.rc` already sets `LTO_FLAG=-O2`, so objects stay
+distinct -- but the bytes then belong to a build that is not the one that ships, which makes it triage
+for RELATIVE mass and nothing else. Recovering attribution from a shipping artifact is not available
+at all: it is stripped at `-O2`, so `twiggy` and `wasm-nm` have no symbol names to group by, which is
+the same stripping that makes `strings | grep lexbor` return 0 on every control.
+
+So "what does `ext/simplexml` cost" stays **NOT MEASURED**, and the cheap route to it does not exist.
+The per-directory bitcode figures already in this document remain the best available attribution, with
+the standing caveat that bitcode is not gzip and the ratio runs the unhelpful way.
+
+This is the fifth verdict in this project that moved because the instrument was wrong rather than the
+system, and the third today.
+
+> **Round 61 —** ~800 KB apart on the same source, and CI is the authority
+
+# THE CI BUILDS DISAGREE WITH THE LOCAL ONES BY ~800 KB, AND CI IS THE AUTHORITY
+
+Measured 2026-08-14 from phasm run `31774197836`, commit `319a36f`, in which **all 11 variants
+succeeded** in one run on one toolchain: emcc 3.1.68-git, builder
+`seanmorris/php-emscripten-builder@sha256:e576eaa9...`, php-wasm `bd9a46bf`. Wasm only, no glue:
+
+| variant      | php |  wasm raw |  wasm gzip | vs its 8.3 control |
+| ------------ | --- | --------: | ---------: | -----------------: |
+| `control`    | 8.3 | 7,272,742 |  2,037,194 |                  - |
+| `jspi`       | 8.3 | 7,272,742 |  2,037,174 |                -20 |
+| `iconv`      | 8.3 | 7,272,742 |  2,037,181 |                -13 |
+| `jspisjlj`   | 8.3 | 7,264,486 |  2,029,670 |             -7,524 |
+| `nolto`      | 8.3 | 4,259,741 |  1,374,606 |          -662,588  |
+| `vmswitch`   | 8.3 | 7,373,640 |  2,166,954 |        **+129,760** |
+| `mbstring`   | 8.3 | 8,389,024 |  2,638,093 |           +600,899 |
+| `jspimb`     | 8.3 | 8,389,041 |  2,637,851 |           +600,657 |
+| `jspimbsjlj` | 8.3 | 8,380,886 |  2,630,973 |           +593,779 |
+| `control84`  | 8.4 | 7,669,477 |  2,163,084 |           +125,890 |
+| `control85`  | 8.5 | 10,383,338 | 2,871,292 |           +834,098 |
+
+## Correction: SWITCH dispatch COSTS bytes
+
+**`vmswitch` is 129,760 gzipped bytes LARGER than its control, not smaller.** An earlier draft of this
+section reported a 589,914-byte saving, arrived at by subtracting `vmswitch` (a CI build) from
+`static-control-warm` (a local build from a different session). That is a cross-build subtraction of
+exactly the kind this document warns about twice, and the review had flagged the risk before it was
+made. Within one run the sign reverses. The SWITCH lever is dead: it costs bytes and it costs an hour
+of swap-backed linking to find out.
+
+## The two measurement environments are not comparable
+
+`control` here gzips to **2,037,194**. The local `static-control-warm` gzips to **2,756,868** -- a
+**719,674-byte** gap on an rc whose **sha256 is byte-identical** in both (`b512dd4b...`, confirmed
+against the release body). `control85` shows the same shape: **2,871,292** in CI against **3,686,964**
+locally, a gap of **815,672**.
+
+The recipes match, so the environment does not. The local Docker host is **arm64** and the builder
+image is **linux/amd64**, so every local build runs the builder under QEMU while CI runs it natively.
+`configure` uses `AC_RUN_IFELSE` probes that EXECUTE on the build host, and this project already
+carries a patch for exactly that class of problem -- the opcache `config.m4` shm probe. Different
+probe answers mean different `#define`s mean different compiled code. The local tree is also not a git
+checkout, so it cannot state its php-wasm commit at all.
+
+**Per this project's own identity rule -- rc PLUS php-wasm commit PLUS builder digest PLUS emcc
+version -- the CI builds are the authoritative ones and the local figures cannot be quoted against
+them.** Every 8.4/8.5 number in the H7 section above came from the local QEMU builds.
+
+## What that does to the verdict, and what it does not
+
+In CI, the wasm ALONE for all three of 8.3, 8.4 and 8.5 is **under** the 3,145,728 ceiling: 8.5 has
+274,436 bytes of room before glue and worker JS. The H7 conclusion that 8.5 misses by 687,594 rests on
+local builds that measured a different thing.
+
+**This does NOT mean 8.5 fits.** It means the question is reopened, not answered. Nothing here
+measures the CI builds' glue, and `inspect-build.sh` reports only the wasm, so no CI bundle total
+exists yet. The next measurement is the CI glue sizes plus a bundle total assembled the way the
+deployed artifact is -- ONE gzip stream, which is separately worth 30,114 bytes of under-reporting when
+done wrong.
+
+`nolto` at **-662,588** is the largest movement in the table and is completely uninvestigated. It is
+also the one variant whose provenance survives a link map, which makes it the natural place to get
+per-extension attribution that LTO otherwise destroys.
+
+## One live defect this run exposes
+
+Every variant printed `VERIFY FAIL: zend_wasm_slice_mask is not exported` and `no tick block ... the
+patch never ran`, and **every job still went green.** `patch_vm_interrupt` defaults to `false` and a
+push supplies no inputs, so the four `jspi*` variants -- which exist to carry the slice exports -- are
+built without them, and `--expect-slice` is gated on the same input that skipped the patch, so it
+cannot catch it. A verify that prints FAIL while the job passes is not a gate.
+
+> **Round 62 —** the claim that stood for minutes
+
+# PHP 8.5 FITS THE FREE CEILING, BY 11,377 BYTES
+
+Measured 2026-08-14 from the CI artifacts of phasm run `31774197836`, downloaded rather than rebuilt,
+and assembled the way the deployed artifact is: **`wrangler deploy --dry-run` over the real config with
+`minify` on, which is ONE gzip stream** and not a sum of independent gzips.
+
+| bundle                     |     gzip |    vs 3,145,728 |
+| -------------------------- | -------: | --------------: |
+| CI 8.3 `control`           | 2,217,216 |    928,512 under |
+| **CI 8.5 `control85`**     | **3,134,351** | **11,377 under** |
+| shipping `static-o2`, minified | 2,989,814 |   155,914 under |
+
+The 8.5 premium over its own 8.3 control is **917,135 gzipped bytes**, and it still lands inside the
+ceiling. **The H7 verdict that 8.5 misses by 687,594 is retracted: it was computed from local QEMU
+builds, and the CI binary fits.**
+
+Component figures behind it, `gzip -9` on the downloaded artifacts:
+
+| variant     |  wasm gz |  glue raw | glue gz |
+| ----------- | -------: | --------: | ------: |
+| `control`   | 2,035,272 |   515,513 |  80,848 |
+| `control85` | 2,865,034 |   803,902 | 105,627 |
+| `nolto`     | 1,372,961 |   493,323 |  77,887 |
+
+CI's own `inspect-build.sh` reported 2,037,194 for `control` against 2,035,272 here, a 1,922-byte
+gzip-version difference. Note the CI glue is far smaller than the local one measured earlier --
+80,848 against 119,991 for the same 8.3 rc -- which is the same environment gap as the wasm.
+
+## What 11,377 bytes of margin means
+
+It means 8.5 is reachable, not that it is safe. That is **0.36% of the ceiling**: one asset, one
+dependency bump, or one uncached route added to `site.js` erases it. Landing 8.5 on free would require
+treating the bundle as a gated resource with a test that fails when it grows, which does not exist
+today.
+
+It also promotes every lever that was retracted an hour ago on the "the wasm alone is over" framing.
+That framing came from the local builds. Against an 11,377-byte margin the measured ones matter
+directly: `minify` is **51,251** and already landed, `ext-yaml` **83,551**, `ext-zlib` **43,485**. Any
+one of them multiplies the margin rather than merely improving it.
+
+## The environment gap is still unexplained, and the direction argues against my own hypothesis
+
+Local builds are **bigger** than CI on identical rc hashes -- 2,756,868 against 2,035,272 for the 8.3
+control. I attributed that to QEMU configure probes, but a failed `AC_RUN_IFELSE` probe normally makes
+a build **smaller** by silently dropping an extension, which is a failure this project has already had
+once with mbstring. Bigger points the other way: fallback implementations compiled because a `HAVE_*`
+probe answered no, a different `-O` level reaching the link, or LTO behaving differently. **The
+mechanism is not named yet, and ranking the two instruments was the wrong response to a 26%
+disagreement.**
+
+The cheap way to name it is `diff` of the two `php_config.h` files, which is the total output of every
+configure probe, plus an assertion that both artifacts actually carry the extensions their rc asked
+for. That assertion does not exist in the build repo and is now load-bearing three separate ways: the
+environment gap, `nolto`'s -662,588, and the historical silent mbstring skip are all the same class of
+defect.
+
+> **Round 63 —** the 8.5 artifact was missing seven extensions and could not have run Drupal
+
+# RETRACTED SAME DAY: "8.5 FITS" WAS MEASURED ON A BINARY MISSING SEVEN EXTENSIONS
+
+Measured 2026-08-14, minutes after the section above claimed 8.5 fits by 11,377 bytes. **That claim is
+withdrawn.** The CI artifact it was measured on cannot run Drupal.
+
+`strings -a` recovers the whole `CONFIGURE_COMMAND` PHP compiles into itself, from `'--disable-all'`
+through `PKG_CONFIG_LIBDIR`. Compared across the two environments:
+
+| flag                | local `static-control-warm` | CI `control` |
+| ------------------- | -------------------------- | ------------ |
+| `--enable-vrzno`    | present                    | **absent**   |
+| `--with-libxml`     | present                    | **absent**   |
+| `--enable-dom`      | present                    | **absent**   |
+| `--enable-simplexml`| present                    | **absent**   |
+| `--enable-xml`      | present                    | **absent**   |
+| `--with-yaml`       | present                    | **absent**   |
+| `--with-zlib`       | present                    | **absent**   |
+
+Zero raw-byte matches for any of the seven in the CI wasm either. **The local builds are the correct
+ones and CI is the defective side**, which is the reverse of what this document concluded an hour
+earlier when it ranked CI as authoritative on the strength of attributability alone.
+
+## The environment gap is now explained, and it closes three mysteries at once
+
+This document's own bundle table prices the missing set: `libxml2 + xml + dom + simplexml` at
+**513,405**, `zlib + libz` at **43,485**, `ext-yaml` at **83,551**. That is **640,441** before vrzno,
+against a measured CI-vs-local gap of **719,674**. The gap is the missing extensions, not QEMU
+configure probes, not a different `-O`, and not LTO.
+
+The same cause explains `nolto` at -662,588: it is missing the same seven, so its number measures
+absence rather than the cost of LTO. And it is the same class as the historical silent mbstring skip.
+**One diagnosis, three mysteries** -- which is what the review predicted when it said to find the
+mechanism rather than rank the instruments.
+
+The direction was the tell and it was available the whole time: a dropped extension makes a build
+SMALLER, and CI was smaller.
+
+## The second defect is worse than the first
+
+`inspect-build.sh --expect-rc` **already implements exactly this check** -- it recovers the configure
+line from the binary and asserts every `WITH_*` in the rc reached it. Run by hand on the downloaded CI
+artifact it fails loudly and names all seven. In CI the same step printed `asserting: --expect-static
+--expect-rc=src/rc/control.rc`, printed `OK: no dylink section`, and **the job went green.**
+
+So the gate that exists to catch precisely this did not fail the build, and eleven variants were
+published as a release with seven extensions missing from each. That is the eighth member of the
+green-with-FAIL family in this project, alongside `VERIFY FAIL: zend_wasm_slice_mask is not exported`
+printing in the same job.
+
+## What is NOT established
+
+Why configure dropped the seven in CI is **NOT MEASURED**. The libraries were fetched -- the log shows
+`libxml2: fetching v2.9.10` and `zlib: fetching v1.3.1` -- and `fetch-deps.sh` runs under `set -euo
+pipefail`, so it did not fail silently. Candidate mechanisms, none of them confirmed: configure running
+before the libraries finished building and the `configured` stamp then preventing a re-configure;
+`PKG_CONFIG_LIBDIR` in the emconfigure environment shadowing the `PKG_CONFIG_PATH=/src/lib/lib/pkgconfig`
+that php-wasm's `Makefile:135` sets; or the restored emsdk sysroot cache differing from the one
+`fetch-deps.sh` installed into.
+
+Until that is named, **no CI byte figure from run `31774197836` may be quoted for anything**, and the
+8.5 question returns to where it was: unanswered, with the local builds as the only complete artifacts
+and their own attributability problem unresolved.
+
+> **Round 64 —** 2,247,060 bytes of bitcode named as the target
+
+# THE LEXBOR SURGERY IS WELL-DEFINED, AND ITS TARGET IS 2,247,060 BYTES OF BITCODE
+
+Measured 2026-08-14 from the built 8.5 tree's real `.o` files, not the `.lo` libtool stubs.
+`ext/lexbor`'s objects by subdirectory:
+
+| subdirectory | bitcode bytes | source lines in `config.m4` | fate |
+| ------------ | ------------: | --------------------------: | ---- |
+| `encoding`   | **1,067,308** |                           7 | DROP |
+| `html`       |   **928,468** |                         117 | DROP |
+| `css`        |   **251,284** |                          19 | DROP |
+| `unicode`    |       435,480 |                           2 | keep, IDNA for `FILTER_VALIDATE_URL` |
+| `core`       |       136,368 |                          17 | keep |
+| `dom`        |       119,392 |                           - | keep for now, lexbor's own tree |
+| `url`        |       106,684 |                           1 | keep, the WHATWG parser |
+| `tag`        |        32,036 |                           - | keep |
+| `punycode`   |        11,848 |                           1 | keep |
+| `ns`         |         7,388 |                           - | keep |
+| `ports`      |         4,552 |                           - | keep |
+| `selectors`  |         **0** |                           0 | never built; a proposal to "drop selectors" was moot |
+
+The subtotal is 3,100,768 against the 3,109,236 recorded for `ext/lexbor`, so the attribution is
+complete. **The drop set is `encoding` + `html` + `css` = 2,247,060 bytes, 72% of lexbor.**
+
+## Exactly what has to change, and why it is Drupal-safe
+
+`ext/lexbor/config.m4` lists every source explicitly inside
+`PHP_NEW_EXTENSION([lexbor], m4_normalize([...]))`, so removing the `$LEXBOR_DIR/{html,css,encoding}/`
+lines is a patch keyed on the SHAPE rather than on a marker comment, which is what this project
+requires of a patch. **The count is 137, not the 143 stated earlier**: 143 was the sum of three
+separate greps, and 137 is what a single anchored pattern actually matches in `php-8.5.2`.
+
+Three files in `ext/dom` reference lexbor's HTML side and must go with it, or the link fails on
+unresolved `lxb_html_*`:
+
+| file                        | `lxb_html`/`lexbor/html` refs | what it provides       |
+| --------------------------- | ----------------------------: | ---------------------- |
+| `html_document.c`           |                            35 | `Dom\HTMLDocument`     |
+| `html5_parser.c`            |                            14 | the HTML5 parser       |
+| `inner_outer_html_mixin.c`  |                            10 | `innerHTML`/`outerHTML` |
+
+None is reachable from Drupal. `Html::load()`/`serialize()` call `DOMDocument::loadHTML()`, which is
+**libxml2's** parser, and `innerHTML` is new in 8.5 while Drupal's floor is `^8.3`, so no supported
+Drupal can call it. This is the same conclusion the `Dom\` namespace search reached from the other
+direction: 0 hits in core, 4 harmless ones in `symfony/var-dumper`.
+
+## What this does NOT establish
+
+**The gzipped saving is NOT MEASURED and cannot be derived from the figures above.** Bitcode is not
+wasm and gzip is not either; the ratio runs the unhelpful way and this document has already been wrong
+twice by subtracting one unit from another. 2,247,060 bytes of bitcode is the *target*, not the saving.
+
+The build that settles it must run in CI rather than locally, and only after the `npm ls -p` fix lands,
+because every local build is unattributable and every CI build before that fix was missing seven
+extensions. The right shape is a ladder: minimum-viable 8.5 at `--disable-all --enable-vrzno
+--enable-dom --with-libxml`, then one extension per variant, with this surgery as its own variant.
+CI runs eleven variants in parallel in about 35 minutes, which is the attribution-by-build the link map
+was a workaround for.
+
+> **Round 65 —** "wasm + glue + overhead" double-counts the glue
+
+# THE BUNDLE IS TWO FILES, SO "WASM + GLUE + OVERHEAD" DOUBLE-COUNTS THE GLUE
+
+Measured 2026-08-14 from a `wrangler deploy --dry-run --outdir=` tree. The uploaded set is exactly:
+
+| file          | role                                                     |
+| ------------- | -------------------------------------------------------- |
+| `*.wasm`      | the interpreter, a `CompiledWasm` module                  |
+| `site.js`     | **the worker AND the emscripten glue, bundled together** |
+
+`README.md` is written into the outdir by wrangler and is not uploaded; `site.js.map` is not either.
+
+The glue is inside `site.js`, confirmed by its own markers surviving there: `ENVIRONMENT_IS_WORKER`,
+`updateMemoryViews`, `SOCKFS` and `PIPEFS` all appear in the bundled output. esbuild inlines the
+`.mjs` factory into the entry, so it never exists as a separate upload.
+
+**That resolves the 141,159-vs-231,212 contradiction: both figures came from decompositions that
+double-count.** A "non-binary overhead" derived as `bundle - (wasm + glue)` subtracts the glue twice,
+because the glue is already inside the `site.js` term. There is no third component to account for.
+
+The consequence for every component table in this document: `wasm gz` plus `glue gz` is **not** a
+bundle total and never was, which is the same error the 30,114-byte sum-of-separate-gzips finding
+identified from the other direction. The only figure that means anything against the ceiling is
+wrangler's own single-stream number over the two uploaded files.
+
+> **Round 66 —** the first ladder measured on binaries that actually carry the extensions their rc asked for
+
+# THE 8.5 LADDER, MEASURED ON COMPLETE BINARIES AT LAST
+
+Measured 2026-08-14 from phasm run `31782187669` (`cdb7139c`), the first run whose artifacts carry the
+extensions their rc asked for. Verified per artifact before measuring anything, by recovering
+`CONFIGURE_COMMAND` with `strings -a`:
+
+| variant     | dom | libxml | yaml | zlib | simplexml | xml |
+| ----------- | :-: | :----: | :--: | :--: | :-------: | :-: |
+| `control`   |  y  |   y    |  y   |  y   |     y     |  y  |
+| `control85` |  y  |   y    |  y   |  y   |     y     |  y  |
+| `trim85`    |  y  |   y    |  -   |  -   |     y     |  y  |
+| `min85`     |  y  |   y    |  -   |  -   |     -     |  -  |
+
+One variable per step, all three 8.5 builds from one run on one toolchain. Bundle totals are
+`wrangler deploy --dry-run` over the real config with `minify` on -- ONE gzip stream over the two
+uploaded files, which is the only figure the ceiling responds to:
+
+| variant     | wasm gz   | glue gz | **bundle gz** | vs 3,145,728 | vs `control85` |
+| ----------- | --------: | ------: | ------------: | -----------: | -------------: |
+| `control85` | 3,551,764 | 115,037 | **3,841,188** | **+695,460** |              - |
+| `trim85`    | 3,476,114 | 114,888 | **3,766,774** | **+621,046** |        -74,414 |
+| `min85`     | 3,445,348 | 114,175 | **3,735,808** | **+590,080** |       -105,380 |
+
+## What the substitution programme is actually worth
+
+| dropped                          |  gzip saving |
+| -------------------------------- | -----------: |
+| `yaml` + `zlib`                  |       74,414 |
+| `simplexml` + `xml` on top       |       30,966 |
+| **all four**                     |  **105,380** |
+
+Those are the first same-run, one-variable-per-step extension prices this project has. They are also
+**smaller than the standalone estimates**: `ext-yaml` alone was carried at 83,551 and `ext-zlib` at
+43,485, which would sum to 126,946, against a measured pair saving of **74,414**. Extensions share
+libxml2, share PHP's own machinery and gzip against each other, so per-extension figures do not add.
+
+## The verdict, and it is not close
+
+**8.5 misses the free ceiling by 590,080 gzipped bytes even with every substitutable extension
+removed.** The earlier "fits by 11,377" was measured on a binary missing seven extensions and is
+already retracted; this is the number from complete artifacts.
+
+Two consequences. Dropping extensions cannot close it: the whole four-extension programme is 105,380
+against a 590,080 gap, so **`ext-pdo`'s shim and the zlib-over-fflate bridge are worth doing for the
+8.3 bundle's headroom and cannot rescue 8.5.** And **the lexbor surgery is now the only candidate of
+the right order of magnitude** -- it targets 2,247,060 bytes of bitcode, 72% of lexbor, where every
+extension in the table above is a five-figure gzip saving.
+
+For the 8.3 shipping line the same ladder is pure headroom: `control` on 8.3 measured 2,616,374 wasm
+gz in this run against 3,551,764 for 8.5, so 8.3 keeps roughly 935,390 gzipped bytes of margin that
+8.5 spends before anything else happens.
+
+> **Round 67 —** four checks run without a build, one of which falsified one of my own results
+
+# FOUR FREE CHECKS AGAINST THE 590,080 GAP, AND ONE OF MY OWN RESULTS DOES NOT HOLD
+
+Measured 2026-08-14 by source grep and by recovering `CONFIGURE_COMMAND` from artifacts already on
+disk. No build was run for any of this.
+
+## opcache is coupled to Zend by exactly TWO symbols, so it is a stub target
+
+PHP 8.5 makes OPcache mandatory: the `--enable-opcache` / `--disable-opcache` configure flags are
+removed and the extension is always built in. That matters here more than anywhere, because **no binary
+in `vendor/` has ever contained opcache** -- `Zend OPcache`, `accel_startup` and `zend_accel_` are 0
+occurrences across `static-o2`, `static-jspisjlj`, `static-o3mbsjlj` and `static-opcache` itself,
+confirmed four ways including a live probe returning `zendExtensions: []`. So the entire `ext/opcache`
+tree, including the ~20 translation units of SSA analysis under `Optimizer/`, is **new mass in 8.5 that
+appears in no accounting in this document** and is 100% delta rather than a difference.
+
+Whether it can come out is a grep, and the answer is encouraging. At `php-8.5.2`, everything under
+`Zend/` and `main/` that references opcache reduces to **two symbols**:
+
+| symbol                            | referenced from                          |
+| --------------------------------- | ---------------------------------------- |
+| `zend_accel_globals`              | `Zend/zend.h`, `Zend/zend.c`, `main/main.c` |
+| `zend_accel_schedule_restart_hook`| the same three files                     |
+
+That is a hook-pointer surface, not calls into the optimizer, and it is the same shape this project
+already stubs: `worker-shim.js` stubs Asyncify before instantiation and `PhpWasmSyncFiber` replaces
+five core `new \Fiber()` sites. Two symbols is a small enough surface to satisfy at link time.
+
+## `--without-pcre-jit` is ALREADY SPENT, and tzdata is not
+
+Recovered from the 8.5 artifact's own configure line: **`--without-pcre-jit` is present.** That lever
+was taken before this session and is worth zero. `--with-system-tzdata` is **absent**, so
+`ext/date/lib/timezonedb.h` compiles in whole, roughly a megabyte of source data, on BOTH version
+lines. It is the only untouched lever here that helps 8.3 as well as 8.5.
+
+## The VM-kind confound is still OPEN, and my grep did not settle it
+
+`grep ZEND_VM_KIND` on 8.5's `Zend/zend_vm_execute.h` returns `ZEND_VM_KIND_HYBRID`, but the line it
+comes from is `#if (ZEND_VM_KIND == ZEND_VM_KIND_HYBRID) && !defined(__SANITIZE_ADDRESS__)` -- a
+**conditional, not a resolved value** -- and `HAVE_GCC_GLOBAL_REGS` reads 0, which HYBRID normally
+requires. The 8.3 tree has no generated header locally to compare against.
+
+**So the resolved VM kind of `control85` is NOT MEASURED.** Reading a define out of a conditional is
+the same class of error as the three retractions already recorded today, and this one is caught before
+it was acted on. It has to be read from a built artifact, which means the VM kind belongs on the ladder
+as a MEASUREMENT taken from the first build, not as an input variable pinned in an rc. Pinning an
+unknown to a chosen value changes an unknown quantity by an unknown amount.
+
+Also: `vmswitch`'s **+129,760** was measured within 8.3, whose baseline is `CALL` by fallback. Do not
+import that retraction into the 8.5 line without re-measuring it there.
+
+## `FILTER_VALIDATE_URL` has one caller in Drupal, which makes the uri stub cheaper than assumed
+
+The retraction of "`ext/uri` may be removable" stands on the link surface, but its PRODUCT cost is
+smaller than it looked:
+
+| where     | callers of `FILTER_VALIDATE_URL`                                     |
+| --------- | -------------------------------------------------------------------- |
+| `core/`   | **1** -- `Extension/InfoParserDynamic.php:96`, validating a module's `.info.yml` lifecycle link |
+| `vendor/` | 1                                                                    |
+
+Drupal has its own `UrlHelper` for everything else. One caller validating a documentation URL in an
+info file is a much weaker reason to carry 537,196 bytes of bitcode than "core calls it constantly".
+The link surface is still real -- `php_stream_context_get_uri_parser()` calls
+`php_uri_get_parser(NULL)` from an unguarded `PHPAPI` -- but a stub returning NULL plus a refusing
+filter is two patched functions, and the only behaviour lost is that a module declaring a malformed
+lifecycle link would no longer be told so.
+
+## The ledger, with each term labelled by what is actually known
+
+| term                                   | status                                     | magnitude              |
+| -------------------------------------- | ------------------------------------------ | ---------------------- |
+| lexbor html+css **only**, +4 ext/dom    | **spec was wrong twice; see below**        | 1,306,444 bitcode      |
+| `ext/opcache`                          | **2-symbol coupling, stub target**         | ~20 TUs, 0 in 8.3      |
+| bundled tzdata                         | **confirmed absent from configure**        | NOT MEASURED, ~1 MB src |
+| VM kind                                | **UNRESOLVED; source grep insufficient**   | unknown sign           |
+| `ext/uri` + uriparser                  | link surface real, product cost 1 caller   | 537,196 bitcode        |
+| PCRE2 JIT                              | **already spent**                          | 0                      |
+| yaml + zlib + simplexml + xml          | **measured on complete artifacts**         | 105,380 gzip           |
+
+Only the last row is in gzip. Nothing else in the table may be summed with it, and no bitcode figure
+may be subtracted from the 590,080 gap.
+
+
+> **Round 68 —** symbol analysis over the real LTO bitcode caught both errors
+
+# THE LEXBOR SPEC WAS WRONG TWICE, AND SYMBOL ANALYSIS CAUGHT BOTH
+
+Measured 2026-08-14 with `llvm-nm --defined-only` / `--undefined-only` over the real LTO bitcode in a
+built 8.5 tree. The test: does the removed set globally define any symbol the kept set leaves
+undefined. Two errors in the spec this document recorded an hour earlier.
+
+**`lexbor/encoding` CANNOT be removed.** `url/url.o` needs seven real functions from it --
+`lxb_encoding_res_map`, the utf-8 decode and encode length and single helpers, and
+`encode_iso_2022_jp_eof_single` -- and so do `punycode.o`, `unicode/idna.o` and `unicode/unicode.o`.
+Those in turn pull 88 codepage-table symbols from `multi.c`, `single.c`, `range.c` and `encoding.c`.
+`url.c` is mandatory because `main/streams/streams.c` calls `php_uri_get_parser()` unconditionally, so
+the whole chain is load-bearing and the 825,364-byte `multi.o` stays. **The 2,247,060 target counted
+encoding and is not reachable.**
+
+**Four ext/dom sources, not three, and they are not sufficient.** `parentnode/css_selectors.c` needs
+lexbor's css parser. More importantly, removing `lexbor/html` plus the named sources leaves **21
+symbols undefined**: 16 wanted by `dom/php_dom.o`'s property and method handler tables
+(`dom_html_document_body_read/write`, `encoding_write`, `head_read`, `title_read/write`,
+`dom_element_inner_html_read/write`, `outer_html_read/write`,
+`dom_modern_document_implementation_read` and five `zim_Dom_HTMLDocument_*` entries), one by
+`dom/element.o` (`dom_parse_fragment`), and four more once css goes. **So the real work is a source
+patch to `ext/dom/php_dom.c`, its arginfo header and `element.c` -- not deletions from a build list.**
+
+Removable, measured: html 928,468 + css 251,284 + four ext/dom objects (66,592 + 21,028 + 28,628 +
+10,444) = **1,306,444 bytes of bitcode**, against a claimed 2,247,060. Still bitcode, still not
+subtractable from the 590,080 gzip gap.
+
+`src/patch-drop-lexbor-html.sh` therefore **refuses by default** and says why, with
+`--force-incomplete` as the override; `src/rc/nolexbor85.rc` records that it must not be built until
+the source patch exists. A patch that produced an unlinkable tree while reporting success is the
+failure mode this project has paid for repeatedly, and refusing is the correct behaviour.
+
+The instrument note is worth as much as the result: the first pass at this analysis produced a false
+PASS twice. `zsh` does not word-split unquoted variables, so a whole file list arrived as one
+filename and `llvm-nm` printed an error while the symbol set came back empty -- which reads exactly
+like "nothing unresolved". And a `find` run from the wrong directory silently dropped four files from
+BOTH sides of the comparison. Both were caught only by printing the set sizes, so an empty result
+could not be mistaken for an empty input.
+
+> **Round 69 —** both 8.3 and 8.5 resolve to CALL, so the VM kind is not the variable
+
+# THE VM-KIND CONFOUND IS CLEARED: BOTH 8.3 AND 8.5 RESOLVE TO CALL
+
+Measured 2026-08-14 from the BUILT 8.5 tree, after an earlier source grep proved insufficient by
+returning a match from inside a conditional. `Zend/zend_vm_opcodes.h` decides in this order:
+
+```c
+#if 0                                                        /* HYBRID's own guard */
+#elif (defined(__GNUC__) && defined(HAVE_GCC_GLOBAL_REGS))   /* -> HYBRID   */
+#elif defined(HAVE_MUSTTAIL) && defined(HAVE_PRESERVE_NONE)
+      && (defined(__x86_64__) || defined(__aarch64__))        /* -> TAILCALL */
+#else                                                        /* -> CALL     */
+```
+
+`main/php_config.h:728` carries `/* #undef HAVE_GCC_GLOBAL_REGS */`, so the global-register probe
+failed and HYBRID is out -- the same wasm32 outcome `vmswitch.rc` already documents for 8.3. **TAILCALL
+is additionally gated on `__x86_64__ || __aarch64__`, and wasm32 is neither**, so 8.5's new tailcall VM
+is unreachable on this target regardless of Clang's `musttail` support.
+
+**Both versions resolve to `ZEND_VM_KIND_CALL`.** Three things follow:
+
+- The 8.5-vs-8.3 comparison is **not** contaminated by a VM change, so `control85`'s +695,460 and
+  `min85`'s +590,080 stand as measured.
+- **No VM-pinning variant is needed.** Pinning a variable that is already fixed would spend a CI slot
+  to change nothing, and the earlier plan to add one is withdrawn.
+- `vmswitch`'s **+129,760** was measured on 8.3 against a CALL baseline, and 8.5's baseline is also
+  CALL, so that result carries to the 8.5 line. The warning against importing it is discharged.
+
+Worth noting how close this came to being recorded wrong twice. The first attempt grepped
+`zend_vm_execute.h`, matched `ZEND_VM_KIND_HYBRID` inside `#if (ZEND_VM_KIND == ZEND_VM_KIND_HYBRID)`,
+and would have reported HYBRID -- the exact opposite of the truth -- if the conditional had not been
+read. Grepping a define out of a preprocessor test measures the test, not the value.
+
+> **Round 70 —** comparing constant names hid a moved bitmask
+
+# PHP 8.5 REPACKED PDO'S FETCH FLAGS, AND COMPARING CONSTANT NAMES HID IT
+
+Measured 2026-08-14 in `php:8.3-cli` and `php:8.5-cli` containers, after rom's e2e passed on 8.5 and
+failed on 8.3 and 8.4.
+
+| constant           |   8.3 / 8.4 |      8.5 |
+| ------------------ | ----------: | -------: |
+| `FETCH_CLASSTYPE`  | 262144 (0x40000) | 128 (0x80) |
+| `FETCH_PROPS_LATE` | 1048576 (0x100000) | 256 (0x100) |
+
+`ext/pdo/php_pdo_driver.h` moved `PDO_FETCH_FLAGS` from `0xFFFF0000` to `0xFFFFFFF0`, dropping the
+flags out of the high half-word into bits 5-9. The userland PDO shim was derived from a local 8.5.7 and
+shipped the new layout unconditionally, so it was correct on 8.5 and wrong on the 8.3 line that
+actually deploys. Fixed with version-branched constants on `PHP_VERSION_ID >= 80500`, with the
+set-equality and value-equality assertions against the real extension left strict -- the suite grew
+58 -> 61 assertions rather than checking less, and the boundary is now measured across six PHP builds
+in three minors.
+
+It is a real bug and not only a fidelity one: `PdoTrait::pdoToFetchAs(int $mode)` takes a
+caller-supplied int and its `default =>` throws, so a caller passing a literal copied from the 8.3
+documentation would have thrown on the 8.3 build.
+
+## The instrument lesson is mine
+
+Asked to rule causes out, this document's author compared `ReflectionClass('PDO')->getConstants()`
+across versions, reported **"81 constants with identical names, so NOT the constant surface"**, and
+moved on. `array_keys()` had discarded the values -- which were the only thing that differed. The check
+was run correctly and answered a question nobody asked.
+
+That is the same family as the four instrument failures already recorded: a probe that cannot fail
+(the tee-masked gate), a probe reading the wrong layer (the LTO link map), a probe measuring a
+preprocessor test instead of a value (the VM-kind grep), and now a probe comparing the wrong dimension.
+The rule that would have caught all four: **name what the instrument CANNOT see before quoting it.**
+
+> **Round 71 —** the size limit is 3,145,728 bytes, from Cloudflare's own rejection message
+
+# THE CEILING IS MiB, AND CLOUDFLARE'S OWN API SAYS SO
+
+Measured 2026-08-14 on the PAID account, using the insight that Cloudflare would not use different
+units for its two tiers. Two throwaway `cfw-size-probe` deploys with incompressible padding, both
+deleted afterwards and the account's worker list verified back to its nine-worker baseline.
+
+| gzipped bytes | vs 10,000,000 | vs 10,485,760 | outcome        |
+| ------------: | ------------- | ------------- | -------------- |
+|    10,213,202 | above         | below         | **deployed**   |
+|    10,628,551 | above         | **above**     | **rejected**   |
+
+The rejection is not an inference. The API returned, verbatim:
+
+```
+Your Worker exceeded the size limit of 10 MiB. [code: 10027]
+```
+
+**Cloudflare names the unit itself, and it is MiB.** So the paid ceiling is 10,485,760 rather than
+10,000,000, and by the same convention the free ceiling is **3 MiB = 3,145,728**. The docs write "3 MB"
+and "10 MB" while the API enforces MiB; the API is the authority and this closes a question that had
+been open all day and was worth 145,728 bytes -- comparable to the entire projected shortfall.
+
+Every figure in this document scored against 3,145,728 stands as written. Nothing needs 145,728 added.
+
+The method is the reusable part: the free tier could not be tested on this account, but the two limits
+are set by one convention, so measuring the reachable one settles the unreachable one. And the second
+probe is what made the first meaningful -- a single success proves only "below some ceiling".
+
+> **Round 72 —** two deltas against one baseline were added, which this document had already disproved
+
+# CORRECTION: I RE-COMMITTED THE ADDITIVITY ERROR I HAD ALREADY FOUND
+
+`nopdo85` was measured against `control85`, and `min85` was measured against `control85`. Subtracting
+both from the same baseline and adding the results assumes the extensions are independent, which this
+document had ALREADY disproved two sections earlier: `yaml` at 83,551 plus `zlib` at 43,485 standalone
+is 126,946, and the measured pair is **74,414** -- a 41% shrinkage, because extensions share PHP's
+machinery, share arginfo and reflection tables, and gzip against each other.
+
+So **`590,080 - 44,505` is not a number**, and the "545,575" it produced should not be quoted. The
+five-extension combined saving is bounded above by 151,783 and its real value needs one variant that
+drops `yaml`, `zlib`, `simplexml`, `xml` and `pdo` together. Until that build exists, the top of the
+ledger is a projection wearing a measurement's label.
+
+The same rule runs the other way for `uri` + lexbor, and there it helps: that chain is
+**superadditive**, because encoding, punycode, idna and unicode only become removable once `url.o` is
+unreferenced, which only happens once `php_uri_get_parser()` is stubbed. Neither lever alone releases
+the mass behind the keystone, so measuring them separately UNDERSTATES the pair. Build the uri stub
+first and measure lexbor against it, never beside it.
+
+One caveat on the ratio band, accepted: `simplexml` + `xml`'s 0.113 removes thin PHP wrappers while
+libxml2 stays, so it measures glue and arginfo rather than data. It lands near where lexbor should land
+for a different reason, which makes the band two points wide rather than three, and lexbor could come
+in below 0.11 if codepage tables gzip as well as structured data usually does.
+
+> **Round 73 —** wrangler compresses near level 6, so this document's own `gzip -9` figures were optimistic
+
+# COMPRESSION IS NOT A LEVER, AND OUR OWN `gzip -9` FIGURES ARE OPTIMISTIC
+
+Measured 2026-08-14 against one `wrangler deploy --dry-run` tree, the two uploaded files only.
+
+| method                                   |     bytes | vs wrangler |
+| ---------------------------------------- | --------: | ----------: |
+| `gzip -9`, each file then summed         | 2,965,992 |     -29,392 |
+| `gzip -9`, concatenated, one stream       | 2,966,948 |     -28,436 |
+| **`gzip` level 6, concatenated**          | **2,987,851** |  **-7,533** |
+| **wrangler's own reported figure**        | **2,995,384** |           - |
+
+**wrangler does not compress at `-9`.** Its figure sits nearest default level 6 plus roughly 7.5 KB,
+which is consistent with a manifest alongside the compressed bundle. And the 10 MiB probe already
+proved the server enforces against wrangler's figure rather than ours: 10,213,202 deployed and
+10,628,551 was refused naming the limit.
+
+## Two consequences
+
+**A better compressor is not available, and the reason is stronger than "Cloudflare recompresses."**
+wrangler compresses **the bundle it builds**, and its inputs must stay a valid wasm module and a valid
+JS entry point. A zopfli-compressed `.wasm` is not a wasm module, so there is nothing to hand it -- the
+seam a better compressor would slot into does not exist. zopfli's usual 3-8% over `-9`, and brotli's
+15-20%, are unreachable here regardless of what the limit is denominated in. **Closed, permanently.**
+
+> **RETRACTED on 2026-08-14, and "permanently" was the tell.** The premise -- that the compressed
+> bytes must still be a wasm module -- is false. A wrangler `Data` rule accepts arbitrary bytes, so
+> the binary ships as a zstd frame and is inflated in JS at module scope before
+> `new WebAssembly.Module`. Measured on wrangler's own figure, the shipping bundle went
+> 2,995,384 -> 2,282,127. See
+> [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was).
+
+**Every `gzip -9` component figure in this document is optimistic by roughly 21,000 bytes** against
+what is enforced, because `-9` beats level 6 on this data by about that much. The BUNDLE totals taken
+from wrangler are correct and unaffected. What must not be trusted as enforced units are the
+per-component `wasm gz` and `glue gz` columns, including the ones in the 8.5 ladder -- they are useful
+for DELTAS between variants measured the same way, and wrong as absolutes against 3,145,728.
+
+## What compression being fixed leaves
+
+The input is the only thing that can change, which is what the ladder already does. It also explains
+`-O3`, recorded here long ago: it produced a smaller raw binary and a LARGER gzipped one, because
+unrolling trades repetition for size and repetition is what DEFLATE eats. And it is why the
+bitcode-to-gzip band matters -- 0.113 and 0.131 for table-heavy code against 0.262 for libyaml's logic
+means a byte of tables costs about half a byte of logic at the ceiling. lexbor being overwhelmingly
+tables is simultaneously what makes it the right target and what caps its return.
+
+---
+
+> **Round 74 —** shipping the interpreter as a zstd `Data` module saved 997,878 bytes in one change and made every removal unnecessary
+
+# THE COMPRESSOR WAS NOT THE CLOSED DOOR; THE MODULE TYPE WAS
+
+Measured 2026-08-14. **The shipping bundle went from 2,995,384 to 2,282,127 bytes on wrangler's own
+reported figure, and free-plan headroom went from 150,344 to 863,601.** Nothing was removed from the
+binary to get it.
+
+## The premise that was wrong
+
+The section above this one closed a better compressor "permanently", on this reasoning: wrangler
+compresses the bundle it builds, its inputs must be a valid wasm module and a valid JS entry point,
+and a brotli-compressed `.wasm` is not a wasm module, so there is no seam to hand it to.
+
+Every clause of that is true and the conclusion does not follow. **The compressed bytes never had to
+be a wasm module.** A wrangler `Data` rule accepts arbitrary bytes and hands the Worker an
+`ArrayBuffer`, so the binary can travel as a zstd frame and become a module later:
+
+```txt
+raw wasm -> zstd -22 -> Data module -> wrangler's gzip (~no-op) -> counted
+                                              |
+                          module scope: inflate -> new WebAssembly.Module
+```
+
+The premise silently equated "the bundle Cloudflare measures" with "the modules the runtime
+executes". They are different sets, and the whole avenue lives in the gap.
+
+**Why it survived review.** It was reasoning about a compressor when the binding constraint was a
+module type, and it ended in a word -- "permanently" -- that discourages the next look. A closure
+that names no experiment that could reopen it is a guess with a confident tone.
+
+## gzip cannot compress what is already compressed, which is the entire mechanism
+
+The ceiling is enforced after Cloudflare's gzip, and gzip is a weak compressor you do not get to
+choose. You do get to choose what state the bytes are in when they arrive.
+
+| binary | raw | gzip -6 | zstd --ultra -22 | brotli -q 11 |
+| --- | --- | --- | --- | --- |
+| `static-o2` PHP 8.3, shipping | 9,281,983 | 2,779,161 | **2,070,852** | 1,938,192 |
+| `control85` PHP 8.5, nothing dropped | 12,218,400 | 3,576,776 | **2,658,002** | 2,457,188 |
+| `noopcache85` PHP 8.5 | 11,655,173 | 3,403,239 | 2,533,032 (-19) | 2,338,554 |
+
+And gzip over a brotli frame does not inflate it: 2,338,554 became **2,328,569**, so the second pass
+found a little rather than costing anything.
+
+## The accounting, on wrangler's own meter rather than on a local gzip
+
+A `Data` blob is measured the way anything else is, which had to be checked rather than assumed. Two
+throwaway workers, same 12,218,400-byte 8.5 binary, `wrangler deploy --dry-run`:
+
+| shape | Total Upload | wrangler gzip | vs 3 MiB |
+| --- | --- | --- | --- |
+| `CompiledWasm` (what the project has always done) | 11,932 KiB | **3,641,600** | +495,872 over |
+| `Data`, zstd -19 | 2,600 KiB | **2,642,166** | 503,562 under |
+| `Data`, zstd -19, with `fzstd` bundled | 2,616 KiB | 2,647,757 | 497,971 under |
+| `Data`, zstd --ultra -22, with `fzstd` | 2,611 KiB | **2,643,722** | **502,006 under** |
+| `Data`, brotli -q 11 | 2,400 KiB | 2,448,681 | 697,047 under |
+
+`fzstd` costs **5,591** bytes on the meter. `--ultra -22` beats `-19` by 4,035; `--long=27` was
+WORSE by 1,896, so a bigger window is not free here.
+
+**brotli is 195,041 better than zstd and was still rejected.** A synchronous JS brotli decoder has to
+carry brotli's 122 KB static dictionary, which eats most of the difference and adds a slower decode
+for the rest. Against 863,601 bytes of headroom that trade is not worth making. It is recorded here
+as available if the slack is ever spent.
+
+**Then the real product, not a probe.** `wrangler deploy --dry-run` on `wrangler.jsonc` itself:
+
+| | wrangler gzip | free headroom |
+| --- | --- | --- |
+| before, `CompiledWasm` | 2,995,384 | 150,344 |
+| after, `Data` + zstd -22 | **2,282,127** | **863,601** |
+
+**713,257 bytes**, and a 5.7x increase in headroom on the product as it ships today.
+
+## It runs, and the proof is on the edge rather than in `wrangler dev`
+
+A throwaway `cfw-*` worker, deployed, driven, and deleted, with the worker list verified back to its
+exact 9-worker baseline afterwards.
+
+- `new WebAssembly.Module` over the inflated bytes **succeeds at module scope**: 12,218,400 bytes
+  inflated, **4,109 exports** enumerated. This is the case workerd permits --
+  `startupCodegen: allowed`, `requestCodegen: forbidden` -- and it is why the binary cannot instead
+  be fetched from the asset layer, where the bytes would arrive too late.
+- The full product bundle boots PHP through the seam: `/fillwindow` returned **`booted: true`**.
+- `Date.now()` at module scope on the edge returned **0** for both the inflate and the compile, which
+  is RULE 0 restating itself. Every figure below is Cloudflare's own.
+
+## What it costs, and where the cost actually is
+
+Cloudflare reports a `Worker Startup Time` on upload, enforced against a 1,000 ms limit. The same
+product bundle, same everything but the seam:
+
+| seam | startup, n=2 | notes |
+| --- | --- | --- |
+| `CompiledWasm` | **8 ms** | the platform compiles ahead of the isolate and caches it |
+| `Data` + inflate | **295, 311 ms** | paid per isolate, cannot be cached |
+
+So the honest delta is about **290 ms of startup**, not "nothing". Three things bound it:
+
+1. **It is not billed to the request.** Three requests that ran on cold isolates -- identified by a
+   module-scope counter reading `served: 1`, so the probe could actually fail -- reported cpuTime of
+   **1, 0 and 0 ms**. If startup were charged to the first request those would read ~240.
+2. **It is 27-31% of the startup budget**, leaving ~690 ms.
+3. **It is 94% decompression, not compilation.** Two probes over the 9,281,983-byte shipping binary,
+   one inflating only and one inflating and compiling:
+
+   | probe | startup, n=2 | |
+   | --- | --- | --- |
+   | inflate only | 261, 253 ms | |
+   | inflate + compile | 275, 274 ms | compile is **~17 ms** |
+
+   That is ~36 MB/s, which is pure-JS zstd doing what pure-JS zstd does.
+
+**So the lever on startup is the decompressor, not the binary size.** A wasm zstd decoder, shipped as
+`CompiledWasm` so the platform pre-compiles it for ~8 ms, should decode at hundreds of MB/s and take
+the ~257 ms to roughly 20-30. It costs its own bytes, order 60-80 KB gzipped against 863,601 of
+headroom. **Not built. Sized, not measured.**
+
+## What could not be verified, stated as such
+
+`/serve` never returned 200 on the throwaway: it reported `inline: cold` and then
+`inline: failed` with `booted: 1`. **The control settles the attribution.** The same throwaway
+redeployed with the `CompiledWasm` seam and driven identically produced the same `inline: cold` then
+`inline: failed`, `booted: 1`, byte-identical 503s. So the render failure is a property of a
+fresh throwaway object, not of the recompression, and raising `RENDER_BUDGET_MS` from 2,000 to
+25,000 did not move it because `inline: cold` is `!this.php` rather than a budget refusal.
+
+**CLOSED the same day, and the failure was an empty router table.** `/drupal` and `/bootphase` named
+it exactly: `booted: true`, `preHandled: true`, `ok: false`, with
+`CacheableNotFoundHttpException: No route found for "GET http://localhost/"`. A fresh object has no
+`router` rows, so routing had nothing to match -- nothing to do with the seam. Driving `/migrate` to
+completion (**79 chunks**) and then `/serve` returned **HTTP 200, 12,304 bytes** of real Drupal 11
+Olivero markup, `<title>Welcome! | CFW Bench</title>`, with `x-cfw-render-ms: 392` on the render that
+produced it.
+
+`/php` through the seam independently reports `version: 8.3.11`, `bootMs: 271`, and a lazy mount of
+**11,444 files / 2,273 dirs**, with the driver's own 51 files present. So the interpreter, the mount
+and a full Drupal render all work from a zstd frame inflated at module scope.
+
+`wrangler dev` still cannot show this: both seams report `booted: false` and serve `warming` locally,
+which is a pre-existing local condition rather than anything about the binary.
+
+## What landed
+
+- **`@drupflare/cartridge` 0.1.1** gains `./inflate`: `wasmModuleFromZstd` (the one-call default),
+  `inflateZstd` (the raw escape hatch) and `zstdContentSize`. 14 unit assertions plus 4 in the node
+  project, and cartridge's stated dependency count went 1 -> 2 with the README and its pinning test
+  both updated, because `fflate` has no zstd and deflate is gzip's own algorithm.
+- **The frame carries its own inflated length**, so the caller does not supply it and the
+  decompressor still fills one exact allocation. This replaced a check of mine that **could not
+  fail**: comparing the result length to a caller-supplied size is vacuous when the buffer is
+  pre-sized, because `fzstd` returns the buffer it was handed. The real check reads the frame header
+  before inflating. The 4-byte size field the real binaries use is now covered by its own test; the
+  first version only exercised the 1-byte form, which production never uses.
+- **A misleading error was split in two.** `new WebAssembly.Module` failing because the embedder
+  refused codegen was being reported as "the inflated bytes are not a loadable wasm module", which
+  sends the reader to hunt a corrupt binary that is fine. `inflate.codegen-disallowed` now says
+  "call it at module scope". Every call in the vitest workers pool is a request-time call, which is
+  why the successful-compile assertions live in the node project.
+- **`worker/src/runtime/php-binary-zstd.ts`**, `scripts/pack-wasm-zstd.ts`, a `pack:wasm` script, a
+  `Data` rule in `wrangler.jsonc`, and a `*.zst` module declaration.
+- **A guard that pinned a filename now pins the invariant.** `route-gate.spec.ts` asserted the alias
+  contained `php-binary-o2.ts`; two seams ship the same `vendor/static-o2` binary, so the name was
+  never the thing that mattered. It now resolves the alias, looks the seam up in a registry, and
+  asserts the source imports `vendor/static-o2/`. Proven to fail on an unregistered seam.
+
+## Two instruments were reading below the meter, in the same direction
+
+Both summed **per-file `gzip -9`**. wrangler compresses **one stream at the default level**.
+
+- `phasm/src/inspect-build.sh` read **25,260 low** on `control85` and **22,475 low** on
+  `noopcache85`, while printing itself against 3,145,728. **The level was the entire error**: two
+  streams versus one differed by **82 and 7 bytes**, because a wasm compresses to near-incompressible
+  and the glue has nothing useful to back-reference in it.
+- `worker/scripts/measure/bundle-size.ts` had the same level bug. Corrected, it now reads
+  **2,282,948** against wrangler's **2,282,127** -- an **821-byte** gap where it used to be 23,842.
+
+Every `gzip -9` component figure elsewhere in this document remains optimistic by roughly 21,000
+bytes, as already noted; these two instruments no longer contribute to that.
+
+`inspect-build.sh` also **reported `--enable-opcache` on a binary with no opcache in it**, because it
+recovered the extension list from `CONFIGURE_COMMAND` and 8.5 accepts-and-ignores that flag. It now
+reads opcache presence from the artifact, and `--expect-no-opcache` gates it on any rc setting
+`DROP_OPCACHE=1`. Proven both directions.
+
+## The 8.5 extension ladder, re-measured at the right level
+
+One run, `phasm@8c834fc`, php-wasm `bd9a46bf`, one builder image, binary + glue as one stream at
+level 6. **`noopcache85` built, and the opcache drop is verified from the artifact rather than from
+the build log: `Zend OPcache` went 7 -> 0 occurrences and all 55 `opcache.*` ini names disappeared.**
+The single residual string is `zend_accel_schedule_restart_hook`, exactly as predicted -- Zend
+defines it at `zend.c:97` as NULL, so no stub was ever needed.
+
+| variant | dropped | gzip | vs `control85` | vs 3 MiB |
+| --- | --- | --- | --- | --- |
+| `control` (8.3) | -- | 2,724,618 | -- | **421,110 under** |
+| `control85` | -- | 3,691,911 | 0 | +546,183 |
+| `nopdo85` | pdo | 3,648,730 | -43,181 | +503,002 |
+| `trim85` | yaml, zlib | 3,615,401 | -76,510 | +469,673 |
+| `min85` | + simplexml, xml | 3,584,713 | -107,198 | +438,985 |
+| `noopcache85` | + opcache | 3,517,271 | **-174,640** | +371,543 |
+
+- **8.3 -> 8.5 costs 967,293** gzipped bytes.
+- The entire substitution programme recovers **217,821**, or **22.5%**. Best case with pdo added
+  additively is 3,474,090, still **328,362 over**. Extension dropping cannot reach the free ceiling.
+- opcache alone, `noopcache85` against `min85`, is **67,442** -- the largest single term, and it was
+  absent from the 8.3 baseline entirely.
+- `min85` reproduces to **+-761 bytes across three separate runs**, so these are stable.
+
+**Two corrections to this project's own ledger.** "min85 is +590,080 over the ceiling" does not
+reconstruct from any artifact; measured, it is **+438,985**. "Extension dropping is worth 105,380"
+was close: **107,198**.
+
+## What the recompression does to the verdict
+
+The previous verdict -- 8.5 is a paid-tier capability, 8.3 is the free tier -- was arithmetically
+sound and rested on a premise that was false one section earlier.
+
+**`control85` is 2,658,002 as a zstd frame. The free ceiling is 3,145,728.** The full-fat 8.5
+interpreter, with opcache, pdo, yaml, zlib, simplexml, xml and the whole of lexbor and DOM intact,
+clears the free ceiling by about half a megabyte before a single extension is dropped.
+
+That reorders everything below it:
+
+- **The lexbor surgery is off the list.** It was the last card because it removes
+  `Dom\HTMLDocument` to chase a ceiling it probably still missed: 1,306,444 bytes of bitcode against
+  a 328,362 gap, closable only at the top of a 0.113-0.262 ratio band. There is now no gap to close,
+  and no reason to give up an HTML5 parser that Drupal 12 might want.
+- **The substitution programme becomes optional.** The pdo shim, the zlib-over-fflate bridge and the
+  yaml fallback stop being load-bearing for free-tier viability. They remain worth having on their
+  own merits, at a different priority.
+- **`noopcache85` still matters, for a different reason.** 67,442 gzipped bytes and a smaller binary
+  is less to inflate at startup, which is now the scarce resource rather than bundle bytes.
+- **The unmeasured data-table terms are still unmeasured**, and they now buy startup rather than
+  headroom. `ext/date/lib/timezonedb.h` is **6,515,781 bytes of source** -- six times the "roughly a
+  megabyte" it was estimated at -- and `--with-system-tzdata` is confirmed absent from the configure
+  line, so it compiles in whole. `ext/standard/html_tables.h` is **483,597**. The 8.5 binary's `data`
+  section is **3,134,780 bytes, 25.7% of the module**, which is where both live.
+- **Stripping is not a lever: the binaries are already stripped.** Section census of `control85`:
+  `code` 8,935,473 (73.1%), `data` 3,134,780 (25.7%), `export` 116,397 (1.0%), and **no name or debug
+  custom sections at all**.
+
+## Open, in the order it is worth doing
+
+1. **Render a page through the zstd seam**, against an object with real site state. The one claim
+   this work does not yet own.
+2. **A wasm zstd decoder** to take ~257 ms of inflate to ~20-30, at order 60-80 KB. The whole
+   remaining startup cost is here.
+3. **Publish `@drupflare/cartridge` 0.1.1**, which the worker's seam imports. Until then the worker
+   typechecks only against a locally staged copy of `./inflate` in `node_modules`.
+4. **tzdata as an asset relocation**, which helps 8.3 as much as 8.5.
+5. `html_tables.h` trimmed to UTF-8, and libxml2's own `--without-*` surface, still untouched.
+6. `-Wl,-mllvm,-mergefunc`, one flag on a link already being done, with the `-O3` caveat that gzip
+   already eats near-duplicate code so the raw win may not survive to the meter.
+
+## The four remaining levers, each checked against the source rather than assumed
+
+Now that the ceiling is cleared, these buy **startup** (less to inflate at 36 MB/s) rather than
+headroom. Two of the four were mis-specified, in the same way: a source-byte count was read as a
+binary-byte count, and a distro patch was read as a configure flag.
+
+**tzdata is NOT a configure flag, and the option does not exist.** `--with-system-tzdata` is a
+Debian/Fedora patch, not upstream PHP. Verified in 8.5.2: `ext/date/config0.m4` declares **no
+`PHP_ARG_WITH` at all**, and `HAVE_SYSTEM_TZDATA` appears nowhere under `ext/date/`. So this is not
+an rc line; it is carrying a downstream patch to `parse_tz.c` that teaches timelib to read TZif files
+from disk, plus mounting those files. Much larger and riskier than it was scoped as.
+
+**And it is 1,070,269 bytes, not 6,515,781.** `ext/date/lib/timezonedb.h` is 6,515,781 bytes of
+SOURCE, but it is a hex byte array: counting `0x..` tokens gives **1,070,269** real data bytes, a
+6.1x expansion between the two. That is still 34% of the module's 3,134,780-byte `data` section and
+the largest single data term, but it is not six megabytes and never was. The instrument error is the
+familiar one -- source text measured where binary content was meant.
+
+**libxml2's http and ftp are ALREADY off, and the rest is not rc-reachable.**
+`packages/libxml/static.mak` builds it with a hardcoded line:
+
+```sh
+emconfigure ./configure --with-http=no --with-ftp=no --with-python=no --with-threads=no \
+  --prefix=/src/lib/ --cache-file=/tmp/config-cache
+```
+
+So two of the nine proposed `--without-*` flags are already applied. The other seven (catalog,
+schemas, schematron, xptr, c14n, legacy, modules) are genuinely unexamined, and because the
+configure line is written inside the `lib/lib/libxml2.a` recipe rather than composed from a
+variable, adding them needs a patch script over `static.mak` -- the `patch-drop-opcache.sh` shape,
+not an rc line. `LIBXML2_TAG?=v2.9.10` is the only rc-overridable thing in that file.
+
+**`html_tables.h` is unmeasured and should stay that way until it is measured properly.** 483,597
+bytes of source across 26 charset tables, but only **4,841** `0x..` tokens, so unlike timezonedb it
+is not predominantly a hex blob and its real contribution cannot be inferred from the source size.
+Anything quoted for it now would be the same error this section is about.
+
+**`-mergefunc` is now an rc, `src/rc/mergefunc85.rc`.** The injection point was read off php-wasm
+rather than guessed: `Makefile:140` declares `LTO_FLAG?=-flto` so an rc can override it, and
+`Makefile:406-408` interpolates `${LTO_FLAG}` into `EXTRA_LDFLAGS_PROGRAM`, which is assigned inside
+the recipe and cannot be set from an rc directly. It carries a known cost: `Makefile:404-405` also
+interpolate `LTO_FLAG` into the C and C++ flags, so every compile gets `-Wl,-mllvm,-mergefunc` and
+clang warns "argument unused during compilation" each time. Loud, harmless, and there is no
+rc-reachable variable that lands on the link alone.
+
+Its expected value has changed sign-of-interest since it was proposed. gzip already eats
+near-duplicate code, which is why `-O3` produced a smaller raw binary and a larger gzipped one. But
+the binary now ships through **zstd**, whose window is far larger, so zstd should be even better at
+finding the duplication `-mergefunc` would remove -- which makes a null result the likely one and
+worth recording either way. It passes `lint:rc` (16 rcs, 0 failed) and has never been built.
+
+## A DUPLICATED PACKAGE SPLIT THE REENTRANCY GATE IN TWO, AND IT SHIPPED
+
+Found 2026-08-14 by a failing test, `tests/unit/runtime/mask.spec.ts` reading `expected +0 to be 1`.
+
+`cartridge/src/mask.ts` exports `export const mask = createMask()`, a module-level singleton holding
+`let depth = 0`, and that counter IS the reentrancy gate. Installing
+`"@drupflare/cartridge": "0.1.1"` as an exact pin while `durabledb@0.1.0` asks for `^0.1.0` left a
+nested `0.1.0` in place, so **two copies existed and both reached the bundle** -- confirmed by
+counting a string that occurs once per copy: `unbalanced mask` appeared **twice** in `site.js`, and
+once after the fix.
+
+**Two singletons means two counters.** `withMask()` increments one while `maskDepth()` reads the
+other, so a genuine reentrant call into the interpreter is not detected -- and per cartridge's own
+`GateError` docs a reentrant call hangs FOREVER rather than throwing. It presents as starvation, and
+nothing logs. The throwaway that served the 12,304-byte page carried this, which is worth stating
+plainly: the page rendering is not evidence the gate was working.
+
+**The class, not the instance.** This is a module-level singleton crossing a package boundary, so any
+version skew between this repo's pin and `durabledb`'s range reintroduces it silently. `bun install`
+reported "no changes" and did NOT dedupe; `bun install --force` did. The durable fixes are an
+`overrides` entry in `package.json` and `tests/node/single-cartridge.spec.ts`, which asserts exactly
+one copy, asserts it is top-level rather than nested, and asserts the override names the same version
+as the dependency. Proven to fail: a planted nested copy turns 4 passing assertions into 3 failing
+ones.
+
+The lesson generalises past this package. **A singleton is only single per module instance**, and a
+package manager decides how many instances exist. Anything whose correctness depends on being one
+object needs a test that counts the copies, not a comment saying there is one.
+
+## 8.4 IS BIGGER THAN 8.5, AND BOTH FIT FREE ONCE RECOMPRESSED
+
+`control84` built 2026-08-14, same run and image as the rest, measured with the corrected
+one-stream-at-level-6 inspector.
+
+| variant | raw wasm | gzip -6 | zstd --ultra -22 | vs 3 MiB, zstd |
+| --- | --- | --- | --- | --- |
+| `control` (8.3) | 8,791,409 | 2,635,798 | -- | -- |
+| `control84` | 11,861,077 | 3,635,201 | **2,707,222** | **438,506 under** |
+| `control85` | 12,218,400 | 3,576,776 | **2,658,002** | **487,726 under** |
+
+**8.4 costs MORE than 8.5 on both meters** -- 49,220 more zstd bytes and 34,977 more one-stream gzip
+bytes -- while carrying a SMALLER raw binary than 8.5 by 357,323. Raw size and compressed size move in
+opposite directions again, the same inversion `-O3` produced, so a raw comparison would have ranked
+these backwards.
+
+The consequence for the version question is that there is no size argument for preferring 8.4. Both
+clear the free ceiling with every extension intact, and 8.5 clears it by more.
+
+## The `-mergefunc` flag name does not exist, and `lint:rc` could not have caught it
+
+`mergefunc85` failed 16 minutes in with
+`wasm-ld (LLVM option parsing): Unknown command line argument '-mergefunc'`. `-mergefunc` is the
+legacy pass-manager name. The live option is **`--enable-merge-functions`**, and it is HIDDEN: it
+appears in `wasm-ld -mllvm --help-list-hidden` and NOT in `--help-list`, which is why a first grep for
+it returned nothing. It is also absent from clang's option list, so it is link-only.
+
+**The instrument gap is the finding.** `tools/lint-rc.sh` evaluates each rc with `make -n` against
+php-wasm's `$(error)` guards, so it parses makefiles and never invokes a compiler -- a linker flag is
+invisible to it by construction. It passed this rc, and an hour of CI found the defect instead.
+
+`lint-rc.sh` now extracts any `-Wl,` flag from an rc (comment lines stripped first) and performs a
+trivial real link through the builder image, seconds rather than an hour. Proven both directions: with
+`-mergefunc` it prints `FAIL mergefunc85 rejects its own link flags` and quotes wasm-ld's own
+"Did you mean '--trap-func'?"; with `--enable-merge-functions` it prints
+`link flags accepted`. It degrades to a `note` when Docker is absent rather than passing silently.
+
+## THE WASM DECODER TAKES STARTUP FROM ~311 ms TO 112 ms FOR 25,569 BYTES
+
+Built and measured 2026-08-14. The inflate was 94% of the recompression's startup cost, so it was the
+only thing worth attacking.
+
+**What it is.** zstd 1.5.6, decompress only, compiled to a standalone wasm through the pinned
+`emscripten/emsdk:3.1.68`: no compressor, no dictBuilder, no legacy formats, error strings stripped.
+**65,332 bytes raw, 24,798 gzipped**, with exactly **one import**,
+`env.emscripten_notify_memory_growth`, which the consumer stubs with a no-op. It is imported as
+`CompiledWasm` so the PLATFORM compiles it ahead of the isolate -- the same property that makes the
+old path cost 8 ms -- and then instantiated synchronously at module scope, which is legal because
+`new WebAssembly.Instance` over an already-compiled module is not codegen.
+
+`scripts/build-zstd-decoder.sh` builds it, verifies the source tarball's sha256 (**an earlier revision
+of that script carried a hash I had invented rather than measured; it is now the real
+`30f35f71...`**), and asserts the five required exports are present before reporting success.
+
+**Correctness first.** Against the real 9,281,983-byte interpreter frame the wasm decoder and `fzstd`
+produce **byte-identical output**, same sha256, at 35 ms against 361-390 ms locally -- 10.3-11.1x, and
+a local wall clock so the ratio is the only part worth quoting.
+
+**On the edge, which is the part that counts.** Cloudflare's own `Worker Startup Time` on the same
+product bundle:
+
+| seam | startup | n |
+| --- | --- | --- |
+| `CompiledWasm`, no recompression | 8 ms | 2 |
+| zstd + `fzstd` (pure JS) | 295, 311, 332 ms | 3 |
+| zstd + wasm decoder | **100, 161, 112, 101, 114 ms** | 5 |
+
+Median **112 ms**, so about **199 ms returned** for **25,569 bytes** on the meter. The 161 is the
+platform's usual spread rather than a second mode; the other four sit inside 14 ms.
+
+It is no longer decompression-dominated. What remains is the interpreter's own
+`WebAssembly.Module` compile (~17 ms measured separately), the decoder's instantiation, and the rest
+of module scope -- so the next 100 ms would have to come out of the PHP compile itself, and there is
+no obvious lever on that.
+
+| | bundle, wrangler's figure | free headroom |
+| --- | --- | --- |
+| `CompiledWasm` | 2,995,384 | 150,344 |
+| zstd + `fzstd` | 2,282,127 | 863,601 |
+| zstd + wasm decoder | **2,307,696** | **838,032** |
+
+**`fzstd` is still bundled and still costs 5,591 bytes**, because `inflate.ts` imports its
+`decompress` unconditionally as the default. Making it lazy would recover that; it is not worth a
+dynamic import today.
+
+**API shape.** `wasmModuleFromZstd(blob, { decompress })` takes any synchronous decompressor, so
+`fzstd` remains the zero-setup default and `zstdDecoderFromWasm(module)` is the opt-in fast path. The
+factory validates the module's exports up front and throws `inflate.decoder-incomplete` naming the
+missing one, rather than failing inside a decode with a corrupt-frame message.
+
+**The hazard in it, and it is the one bug this could have shipped.** `malloc` can grow the memory,
+and growing DETACHES the old `ArrayBuffer`. A `Uint8Array` view captured before the last `malloc` is
+therefore zero-length, and `.set()` into it copies NOTHING while throwing nothing. Every view here is
+taken after the final allocation. The output is returned as a view onto the decoder's own memory
+rather than a copy, because `WebAssembly.Module` copies the bytes while compiling and a second 9 MB
+allocation would be pure waste.
+
+## THE 12x SERVING LEVER: THE FILE HALF IS BUILT, THE PAGE HALF IS NOT
+
+Checked 2026-08-14, because everything else on the roadmap is worth 1.1-2x and this one is worth 12x,
+so which half exists decides what to do next.
+
+**What exists.** `drainMirrors()` runs from the alarm and pushes FILES to R2. It walks
+`cfw_file_mirror_queue` keyed by `uri`, refuses anything `isMirrorable()` rejects, and drops a task
+that can never become sendable rather than starving the queue with it. A null bucket is a supported
+state, not a misconfiguration.
+
+**What does not exist.** Nothing writes a rendered PAGE anywhere that answers without invoking the
+Worker. The two page tiers are `caches.default` (`cache.put` in `src/site.ts`) and an optional
+`PAGE_KV`, and **both still cost a Worker request, because the Worker must run to consult them.** That
+is precisely the trap RULE 0b names: a cache hit is not free.
+
+So the serving ceiling shipping today is **3.0M visits/month, saturated at 1.00x**, and the
+**3.0M -> 37.5M** figure remains a designed path. What it needs is unchanged: rendered pages written
+to R2 on fill, the public hostname on the R2 custom domain, invalidation rewritten as an R2 delete
+plus a cache purge, and the authenticated bypass routed around the asset layer -- for which the
+`private://` refusal already established the principle.
+
+**A caveat in `README.md` was stale in the other direction** and is now corrected. It said "the R2
+mirror queue exists and drains nowhere yet". The queue DOES drain now. What was never true is that
+draining it moved the serving ceiling: it mirrors files, and the ceiling is set by pages.
+
+## THE 12.5x WAS DERIVED FROM THE WRONG METER; THE FLOOR IS ABOUT 3.3x
+
+Checked before building the page half, because a lever's size decides whether it goes first.
+
+**The quote does not cover the mechanism.** "Requests to static assets are free and unlimited" is the
+**Workers Static Assets** line, and static assets are uploaded at DEPLOY time -- a page rendered at
+runtime cannot go there. The runtime-writable candidate is an **R2 public bucket on a custom domain**,
+and R2 is metered: **10 million Class B operations per month** free, plus 1 million Class A. Not
+unlimited. Two products, one sentence, and the sentence was applied to the wrong one.
+
+| meter | free | per day | against | ratio |
+| --- | --- | --- | --- | --- |
+| Worker requests, today | 100,000/day | 100,000 | -- | 1.00x |
+| R2 Class B (reads) | 10M/month | **333,333** | the 100,000/day ceiling | **3.33x** |
+| R2 Class A (writes) | 1M/month | 33,333 | the 7,575/day regeneration ceiling | 4.4x spare |
+| R2 storage | 10 GB | -- | ~800,000 pages at 12 KB | not binding |
+
+So **the floor is 3.3x, not 12.5x**, and it is a floor rather than the answer: an R2 custom domain sits
+behind Cloudflare's CDN, so a cached read never reaches the bucket and never spends a Class B op. The
+true ceiling is `3.33x / (1 - hitRatio)` and **nobody has measured that hit ratio here.** Writes are
+comfortably clear, and storage is not close.
+
+**This is the same error three times now**, which is why it belongs above the FOLD rather than in a
+footnote: scoring renders against the 10 ms cap, declaring a better compressor "closed" because the
+bytes "must be a wasm module", and now sizing the serving lever from a sentence about a different
+product. In all three the arithmetic was fine and the meter was wrong.
+
+`scripts/measure/free-envelope.ts` carried the false premise in the docblock a scorer actually reads
+-- `offWorker` was documented as "free and unlimited per Cloudflare's pricing". Corrected in place,
+with the real limits and the arithmetic above. **The model still charges nothing for an `offWorker`
+visit, so any figure it produces past ~3.3x of the Worker ceiling is an upper bound that assumes the
+CDN carries the rest.** Wiring the R2 meters in as real ceilings, with tests, is the remaining
+instrument work.
+
+**It is still the largest lever on the board and still worth building first.** 3.3x guaranteed, more
+with a measured hit ratio, against 1.1-2x for everything else. What changes is the claim: this is not
+a 12x change, and the README and the levers table should not say it is.
+
+## THE OFF-WORKER LEVER HAS A MAXIMUM AT 77%, NOT A LIMIT AT 100%
+
+Modelled 2026-08-14, once R2's own meter was in `scripts/measure/free-envelope.ts` rather than
+assumed away. The instrument was charging **nothing** for an off-Worker visit, so the model could only
+ever say "more is better".
+
+With R2 Class B priced at 10M/month (333,333/day):
+
+| off-Worker fraction | views/day | bound by |
+| --- | --- | --- |
+| 0.00 | 100,000 | worker |
+| 0.50 | 200,000 | worker |
+| **0.77** | **432,900** | **r2ClassB** |
+| 0.90 | 370,370 | r2ClassB |
+| 0.99 | 336,700 | r2ClassB |
+
+**Past the optimum, moving more traffic off the Worker makes the ceiling WORSE**, because it spends a
+333,333/day meter faster in order to save a 100,000/day one. Serving everything off-Worker gives
+**3.37x**; serving 77% gives **4.33x**. Over-applying the lever costs 22% of the ceiling it was
+supposed to buy.
+
+That is a design constraint on the page mirror, not a curiosity: **the drain should target the optimum
+rather than mirroring every page.** `src/ops/page-mirror.ts` records it. The optimum moves with the
+traffic mix and with CDN absorption, so it is a computed target rather than a constant.
+
+**CDN absorption is now an explicit, defaulted-to-zero parameter** rather than a silent assumption.
+The ceiling scales as `3.37x / (1 - absorption)` until another meter takes over -- at 0.9 that is rows.
+Nobody has measured the hit ratio in front of an R2 custom domain here, so the model refuses to assume
+one, and a caller that passes a value is stating an assumption rather than reporting a measurement.
+
+Class A (writes) is in the model too, on the REGENERATION side where it belongs: 1M/month is
+33,333/day against a rows-bound ceiling of ~7,575, so writes are not close to binding. Five spec
+assertions changed, and all five had encoded the old premise -- "off-Worker serving is free, so DO
+binds next".
+
+## D1 HAS EXACTLY ONE UNASSIGNED JOB, AND IT IS THE MISSING HALF OF THE SECURITY PIPELINE
+
+Verified: **no `d1_databases` binding exists in any wrangler config in this repo.** D1 is unused, and
+that has been the right call -- the Durable Object's own SQLite is faster, synchronous from inside the
+object, and is what makes PHP's blocking database calls possible at all. D1 would be a step down for
+anything on the render path.
+
+But there is one shape of data no Durable Object can hold: **cross-site data.** A fleet inventory --
+which site runs which core version and which pack hash -- is exactly that. Each object knows only
+about itself, so no object can answer "which of my sites are unpatched", and that question is the
+precondition for a measured time-to-patch. It is tiny per row, written on deploy and on update, and
+queried rarely.
+
+So the assignment is: **DO SQLite for everything per-site, D1 for the fleet.** That is the missing
+half of the security-update pipeline, which is built and has never been rehearsed end to end. Not
+built.
+
+## PHP 8.5 DEPLOYS AND FITS, AND THE INTERPRETER EXITS -2 DURING BOOT
+
+Measured 2026-08-14 on a `cfw-php85` throwaway, deployed and torn down, worker list verified back to 9.
+This is the first time 8.5 has been run on the edge rather than measured as an artifact.
+
+**What works.** The full 8.5 binary -- `control85`, carrying opcache, pdo, yaml, zlib, simplexml, xml
+and all of lexbor and DOM -- packs to **2,658,002 zstd bytes**, and the whole Worker bundle is
+**2,874,859 on wrangler's own figure, 270,869 under the 3 MiB free ceiling.** Cloudflare reported a
+startup time of **155 ms**. It uploads, it deploys, it fits, and the seam guard accepts it.
+
+**What fails.** Every request returns HTTP 1101, and `wrangler tail` names the cause on both the
+stateless and the durableObject event:
+
+```txt
+ExitStatus: Program terminated with exit(-2)
+```
+
+So the interpreter aborts during startup, before any route logic runs. This is exactly the gap the
+project's own framing predicted: **"fits the ceiling" and "runs the workload" are different claims**,
+and 8.3 satisfies the second while 8.5 now demonstrably does not.
+
+**What this rules out.** Not size, not the recompression, not the decoder, not the seam wiring, and not
+codegen -- a 12,218,400-byte module inflated and compiled, and the failure is downstream of that. The
+zstd path is the same one that renders a real page on 8.3.
+
+**Candidates, in the order worth testing, none of them measured yet.** `control85` differs from the
+shipping `static-o2` on more than the version: it carries `--enable-opcache` and 8.5 makes opcache
+mandatory; it carries ext/uri and lexbor, which are new since 8.4 and initialise at module startup; and
+the host's ini and boot fragments were written against 8.3 and may set a directive 8.5 removed. exit(-2)
+is a startup abort rather than a PHP fatal with a message, which points at `php_module_startup` rather
+than at userland.
+
+**The cheap diagnostic is local, not on the edge.** The glue and the binary are both in `build/wasm/`,
+so the interpreter can be driven under node or bun outside workerd, where PHP's stderr is visible.
+An edge deploy reports the exit code and swallows the reason; that is the wrong instrument for this
+question.
+
+`src/runtime/php-binary-85.ts` exists, is registered in the seam guard, and is deliberately NOT the
+default. **8.3 remains the shipping interpreter.**
+
+## PHP 8.5 SHIPS, AND THE DEFECT WAS TEN LINES OF DEAD CONFIG
+
+Measured 2026-08-14 across three `cfw-php85` throwaways, each deployed, driven and deleted, with the
+worker list verified back to 9 every time. **8.5 is now the default seam.**
+
+**The defect, and it was never about 8.5.** `site-do.ts` passes an ini block with ten `opcache.*`
+directives, including `opcache.file_cache=/tmp/opcache` and `opcache.file_cache_only=1`. The shipping
+8.3 binary, `vendor/static-o2`, contains **ZERO occurrences of `Zend OPcache`** -- opcache was never
+compiled into it. So every one of those lines has been **dead config, parsed and ignored, for the life
+of the project.** 8.5 makes opcache mandatory, so they went live for the first time and immediately
+hit an ordering bug: opcache reads `file_cache` during PHP's MODULE STARTUP, which happens inside the
+interpreter's constructor, while the `mkdirp(FS, '/tmp/opcache')` that creates the directory runs later
+in the mount sequence. Missing directory plus `file_cache_only=1` is a startup abort:
+
+```txt
+ExitStatus: Program terminated with exit(-2)
+```
+
+The fix is one line -- `opcache.file_cache=/tmp`, which emscripten's MEMFS always creates -- and it
+removes the ordering dependency rather than reordering anything.
+
+**The evidence chain, in the order it was cut down.** Size, the recompression, the zstd decoder, the
+seam wiring and codegen were all eliminated first: the bundle deployed at 2,874,859 gzipped with a
+155 ms startup, and a 12 MB module inflated and compiled fine. Then the binary was driven **locally
+under node**, outside workerd, where it instantiated cleanly -- which moved the fault from
+instantiation to PHP startup. The edge reports the exit code and swallows the reason; that is the wrong
+instrument for this question, and local was the right one.
+
+**What 8.5 now does, measured on the edge.**
+
+| | 8.5 | 8.3 for comparison |
+| --- | --- | --- |
+| interpreter, zstd | **2,659,133** | 2,070,852 |
+| deployed bundle, wrangler's figure | **2,808,672** -- **337,056 under** the 3 MiB ceiling | 2,307,696 |
+| Worker startup | **129, 136, 155 ms** (n=3) | 112 ms median |
+| PHP boot inside the object | **196, 209 ms** | 271 ms |
+| rendered page | **HTTP 200, 12,304 bytes** | 200, 12,304 bytes |
+| output sha1 | **`10077de5f0bd93ff`** | `10077de5f0bd93ff` |
+
+**The output is byte-identical to 8.3's**, and that hash is the same one this document already recorded
+across five objects. Every extension is intact -- opcache, pdo, yaml, zlib, simplexml, xml, and all of
+lexbor and DOM. Nothing was dropped to make it fit.
+
+**PHP boot got FASTER**, 271 ms to ~200, which is consistent with opcache actually running for the
+first time; the report's own estimate for `file_cache_only` was ~70 ms. That figure was previously
+described as "permanently blocked by a configure gate", and the real reason it did nothing was simpler:
+the extension was not in the binary.
+
+**Reproducibility, which was the other half of shipping it.** `bun run fetch:interp85` pulls the
+interpreter from phasm's **artifacts API** and packs it. Two earlier versions of that script failed and
+both are worth recording: phasm's newest RELEASE carries no assets at all, so release-asset download
+fails outright, and "the newest successful run" resolves to a lint run whose commit has no interpreter
+artifact. Asking for artifacts by NAME is independent of both.
+
+The 8.5 seam deliberately carries **no `inflatedSize` cross-check**, unlike the 8.3 one. That binary is
+pinned in `vendor/` and never changes, so a hardcoded size is a real guard there. This one tracks the
+newest artifact, and two consecutive builds measured 12,218,400 and 12,218,393 -- a hardcoded size
+turns every upstream rebuild into a code edit that fails closed.
+
+---
+
+> **Round 75 —** three avenues closed on their own mechanics rather than on a measurement
+
+# THREE CLOSED AVENUES, RECORDED SO THEY ARE NOT RE-PROPOSED
+
+**Zone-level Cache Rules cannot reduce Worker invocations.** A Worker attached to a route runs BEFORE
+the zone cache, so a Cache Rule with any edge TTL is evaluated downstream of an invocation that has
+already been counted. Nothing configured at the zone moves the serving ceiling. That is why
+`caches.default` inside the Worker is the only edge tier this architecture has, and why R2 on a custom
+domain -- which carries no Worker route at all -- is the only path to zero Worker requests for a
+served page.
+
+**Queues are paid-only.** A producer or consumer binding requires the Workers Paid plan, so no free
+deployment can hand deferred work to a queue. The alarm chain exists in its place, and it is charged
+against the Durable Object request meter.
+
+**A running Worker can NEVER swap its interpreter.** The two capabilities a live binary replacement
+needs sit in mutually exclusive scopes: module scope may compile wasm and may not perform async I/O,
+and request scope may fetch and may not perform codegen. An interpreter update is therefore an
+automated REDEPLOY, and the rollback unit is a Worker version. The full derivation is in
+[`docs/php-update-delivery.md`](docs/php-update-delivery.md).
+
+---
+
+> **Round 76 —** the index audit: two thirds of every charged row is index maintenance, and `overheadShare()` reported 0 for it
+
+# THE INDEX SHARE, MEASURED PER TABLE INSTEAD OF BOUNDED
+
+`bun run measure:index-audit` reads the schema that actually ships -- `assets/drupal-sql/*.json`, the
+79 chunks the migration replays -- and prices every table on the meter that binds regeneration. It is
+deterministic: same pack in, same numbers out. The charge model it applies is measured against real
+Durable Object SQL in `tests/unit/db/index-charge-model.spec.ts`, and the pack figures are pinned in
+`tests/node/index-audit.spec.ts`.
+
+| shipped schema                | count     |
+| ----------------------------- | --------- |
+| tables                        | 69        |
+| `CREATE INDEX`                | 177       |
+| implicit (primary key/UNIQUE) | 51        |
+| `sqlite_sequence` writers     | 17        |
+| data rows                     | 1,342     |
+| **charged rows**              | **4,447** |
+| of which index entries        | 2,995     |
+
+**67.3% of the shipped database is index maintenance** (2,995 / 4,447). The remaining 110 charged
+rows above the 1,342 data rows are `sqlite_sequence`, one per insert into each of the 17 AUTOINCREMENT
+tables.
+
+## No table charges 1.0, and the floor is 2
+
+The question the audit was built to answer was which tables have a factor of 1.0 and therefore nothing
+to win. **The answer is none of them.** Every table in this schema declares a primary key, and a
+primary key that is not the rowid is an index that gets written on every insert. The floor is **2x**,
+reached by exactly 6 of 69 tables: `key_value`, `config`, `cachetags`, `node_access`,
+`inline_block_usage`, `sequences`.
+
+| table                   | charge | index share | why                                     |
+| ----------------------- | ------ | ----------- | --------------------------------------- |
+| `node_field_data`       | 11x    | 90.9%       | composite key + 9 indexes               |
+| `media_field_data`      | 8x     | 87.5%       | composite key + 6 indexes               |
+| `users_field_data`      | 7x     | 85.7%       | composite key + 5 indexes, 1 UNIQUE     |
+| `router`                | 4x     | 75.0%       | text key + 2 indexes                    |
+| every `cache_*` bin     | 4x     | 75.0%       | `cid` key + `_created` + `_expire`      |
+| `watchdog`              | 5x     | 60.0%       | 3 indexes + the sequence row            |
+| `cfw_page`              | 2x     | 50.0%       | `path` key, no secondary index          |
+| `key_value` / `config`  | 2x     | 50.0%       | composite key, no secondary index       |
+
+`cfw_page` is worth calling out because it is the largest write in a fill by bytes -- 12,304 for the
+front page -- and it costs **2 charged rows**, the same as a two-byte row. The meter counts rows and
+index entries, not bytes, so the page store is not where a fill's cost is.
+
+## The model was wrong about AUTOINCREMENT, and the engine said so
+
+The first draft predicted 4 for `watchdog`: a rowid primary key stores no index, so 1 row plus 3
+`CREATE INDEX` entries. Real Durable Object SQL billed **5**. Isolated against a control -- the same
+key with and without the keyword -- a plain `INTEGER PRIMARY KEY` costs **1** charged row per insert
+and `INTEGER PRIMARY KEY AUTOINCREMENT` costs **2**. The extra row is `sqlite_sequence`, rewritten on
+every insert, and it is a write multiplier on all 17 tables Drupal declares with a serial key.
+
+Nothing about that is inferable from the DDL by reasoning; it was a measurement correcting a model,
+which is why `chargePerInsertedRow()` carries the note and the spec carries the control.
+
+## `overheadShare()` reported 0 for a fill that is 75% index maintenance
+
+The instrument this project already had documented itself as an **upper bound on the index share**.
+It is not one. It clamps `explained` to `min(statements, rowsWritten)`, so the recorded cold fill --
+**63 statements against 12 charged rows** -- returns **0**, while the same 12 rows decompose as 3 data
+and 9 index. Any write path with more no-op statements than rows reads 0 there and looks index-free.
+
+The docblock is corrected and `splitChargedRows()` sits next to it: measured charged rows in, schema
+factors in, the exact split out, with `exact: false` rather than a rounded answer when a table's total
+is not a whole multiple of its factor. It is tree-shaken out of the shipping bundle (0 occurrences in
+the `--dry-run` output), so the correction costs no bytes.
+
+# `router_alias` IS 96% NULL, COUNTED RATHER THAN QUOTED
+
+Counted off the shipped `INSERT INTO "router"` parameters: **419 routes, 402 with a NULL `alias`**.
+That is **95.94%**, so the figure this document has been carrying stands.
+
+The sweep that found it is over every single-column index in the schema, not a lookup of a name that
+was already suspected. Two indexes come back: `router_alias` at 402 NULL rows, and
+`users_field_data_user_field__mail` at 1 of 2. There is no third.
+
+**What a partial index is worth, with the arithmetic.** A rebuild is `DELETE FROM router` at 1 charged
+row per route plus a re-insert at 4, so 419 x 5 = **2,095 charged rows**. Under
+`CREATE INDEX "router_alias" ON "router" ("alias") WHERE "alias" IS NOT NULL` the 402 NULL routes fall
+to 3 on the insert side and the 17 real aliases stay at 4:
+
+```
+419 delete + (402 x 3) + (17 x 4) = 419 + 1,206 + 68 = 1,693
+2,095 - 1,693 = 402 charged rows saved, 19.2% of a rebuild
+```
+
+**It is priced, not implemented, and the reason is not squeamishness.** A router rebuild is not a
+fill, so this moves the cost of an install or a module enable rather than the regeneration ceiling
+RULE 0b scores against. It also does not survive: Drupal's Schema API cannot express a partial index,
+so any path that recreates the table restores the full one. The change site is
+`assets/drupal/site.sqlite` plus a regenerated `assets/drupal-sql`, which is the hand-trimmed artifact
+this repo's own rules say not to regenerate casually.
+
+# THE `dynamic_page_cache` ROWS ARE 75% INDEX, AND NULLING THE BIN IS THE WRONG LEVER
+
+The recorded fill was 12 charged rows: `cache_dynamic_page_cache` 8, `cache_page` 4. Divided by the
+measured factor of 4 for a cache bin:
+
+| table                      | charged | factor | data rows | index entries |
+| -------------------------- | ------: | -----: | --------: | ------------: |
+| `cache_dynamic_page_cache` |       8 |     4x |     **2** |         **6** |
+| `cache_page`               |       4 |     4x |     **1** |         **3** |
+| **total**                  |  **12** |        |     **3** |         **9** |
+
+**Six of the eight `dynamic_page_cache` rows are index entries. Two are data.** The whole fill stores
+**three rows of content** and pays nine rows of index maintenance for them. Both totals divide cleanly
+by 4, so the fill really was fresh single-row inserts -- and the split reports `exact: false` rather
+than rounding when it is not.
+
+That reframes the target. The 8 was being read as "eight rows of `dynamic_page_cache` content to get
+rid of", and nulling the bin was the proposal. Nulling it removes 8 rows and takes the reassemble path
+with it: `warmReassemble` is **3 rows** precisely because a warm `dynamic_page_cache` lets a fill
+reassemble instead of render, against **13** for a real render, and a cold object's inline render is
+boot-dominated at ~1.4 s. Trading 8 charged rows for a render on every fill is a bad trade.
+
+**The indexes are the lever, and they cost no render.** All 14 bins are identical: a `cid` primary key
+plus exactly two secondary indexes, `<bin>_created` and `<bin>_expire`. That is **28 indexes**, each
+charging one row per stored row, and it is the whole of the 75%.
+
+Measured in workerd on the real DDL: 10 stored rows cost **40** charged rows with both indexes and
+**20** without, exactly **2.00x**. The primary key stays -- `cid` is the lookup the bin exists for --
+so 2 is the floor. Applied to the recorded composition, 12 charged rows become **6**, with
+`dynamic_page_cache` still warm and no extra CPU anywhere.
+
+**Which bins can lose them, and which cannot.** Drupal's `DatabaseBackend::garbageCollection()` is the
+only reader of both columns, and it runs only from `SystemHooks::cron()` -- the hook
+`src/ops/cron.ts` documents this runtime cannot call. The one bin with a live consumer is `cache_data`,
+which the host GCs itself at `src/ops/cron.ts:504` with `ORDER BY created ASC, cid ASC` and
+`WHERE expire <> -1 AND expire < ?`. So the proposal is 26 indexes across the other 13 bins, not 28.
+
+**Also priced rather than implemented, and for one more reason than the router case.** Same change
+site (`assets/drupal/site.sqlite`), same regeneration of `assets/drupal-sql` -- plus `ensureBinExists()`
+recreates a missing bin from `schemaDefinition()`, which declares both indexes, so a dropped index
+returns whenever a bin is recreated. The change is durable on an existing table and not durable across
+a bin rebuild, and that difference has to be decided before it ships rather than discovered afterwards.
+
+## What this instrument cannot see
+
+- **It cannot produce a fill.** There is no wasm interpreter in the workers lane, so no per-table tally
+  of a live fill can be taken here. The decomposition divides a total this document already recorded;
+  a fresh composition needs the deployed lane and `/writes`.
+- **It therefore cannot decompose the 13-row `realRender`.** Only the 12-row cold tally has a per-table
+  breakdown on the record, and the two were taken under different conditions -- the 12 predates the
+  `cache_page` nulling. Carrying the 75% across to the 13 would be dividing a total by a factor that
+  was never measured on it.
+- **It reads the pack, not the live database.** A table Drupal creates lazily at runtime, and any index
+  added by an update hook, is invisible until it is in the pack.
+- **`rowsWritten` here is workerd's, on the same SQLite implementation the platform runs, but it is
+  not a `wrangler tail` reading.** It is a count rather than a duration, so RULE 0 does not bind it --
+  but it has never been cross-checked against a deployed `rowsWritten`, and that check is still owed.
+- **A dropped index is a read cost this does not price at all.** The meter it audits counts writes.
+
+---
+
+> **Round 77 —** three secrets shipped in the payload, and the instrument that was meant to catch them could not open the file they were in
+
+# EVERY SITE FROM ONE PAYLOAD SHARED A SALT, AN ADMIN HASH AND A PRIVATE KEY
+
+Workers assets are served publicly and `assets/.assetsignore` un-ignores the packs, so every byte
+below was fetchable at a guessable URL and identical on every deployed site.
+
+| secret               | shipped in                     | fix                                             |
+| -------------------- | ------------------------------ | ----------------------------------------------- |
+| `hash_salt`          | `drupal-pf/core.pf.bin`        | minted per site at boot, scrubbed from the pack |
+| admin bcrypt hash    | `drupal-sql/0064.json`         | blanked; `/firstrun` mints and returns one once |
+| `system.private_key` | `drupal-sql/0052.json`         | row removed; Drupal regenerates it itself       |
+
+`hash_salt` is the one that mattered: it signs one-time login links and form tokens, so holding the
+payload was enough to mint a valid password-reset URL for any site built from it.
+
+**THE SCANNER ALREADY HAD A `hash_salt` PATTERN AND HAD NEVER FIRED.** `scanSeededCredentials()`
+skipped anything that was not `.json`, so it never opened `core.pf.bin` -- the 12 MB blob holding
+`settings.php`. A pattern with no file to match against reports clean forever, which is the same
+defect as no gate at all.
+
+Extending it to read the packs forced every pattern to change shape. Measured over all 11,444
+members: bare `hash_salt` matches **11 files** (`default.settings.php`, `rebuild.php`, the token
+calculator) and bare `system.private_key` matches `PrivateKey.php`. Identifier patterns would fire on
+every release. Value-shaped patterns -- a whole 60-character crypt string, a serialized state row, an
+assignment of a non-empty literal -- match **zero** of those and still catch the real rows.
+
+The scrub rewrites `settings.php` in place at its own offset and zero-fills the tail, because
+appending a corrected copy would leave the old bytes readable at an offset the index no longer points
+at. Verified: **11,443 of 11,444 members byte-identical**, one changed, blob length unchanged at
+12,087,553, and the old salt absent from the raw bytes.
+
+## Verified on the edge, not in a fixture
+
+Deployed on PHP **8.5.2**, `bootMs` 666, 11,444 files mounted from the scrubbed pack:
+
+| claim                     | shipped state          | after                                        |
+| ------------------------- | ---------------------- | -------------------------------------------- |
+| `hash_salt`               | absent                 | 74 chars, minted, stable across boots         |
+| `users_field_data.pass`   | length 0               | `$2y$12$`, 60 chars, plaintext returned once  |
+| `system.private_key`      | absent (370 rows)      | regenerated by Drupal, 82 bytes (371 rows)    |
+
+`password_verify(x, '')` is false for every input, checked against the real interpreter rather than
+assumed, so the shipped account cannot be authenticated into before `/firstrun` runs.
+
+# A HEADER THAT REPORTED A PREDICTION AS AN OUTCOME
+
+`PLAN=paid` renders inline on a cold object instead of returning 503, and the response carried
+`x-cfw-inline-boot: 1`. Three deployed renders reported that boot and cost **55/58/77 ms** of
+cpuTime while the alarms beside them cost **3,200/3,608/3,623 ms**. A boot is not 58 ms.
+
+The decision is taken before the gate, from `!this.php`; by the time the render ran, an alarm had
+booted the object behind it. `coldBoot` is a prediction and was printed as a measurement. It now
+comes from `fillOne()`, which knows, and the prediction is kept as a separate header so the
+disagreement stays visible.
+
+## The contention hypothesis was wrong, and only re-measuring showed it
+
+The obvious reading of those numbers is that 55-77 ms is contended and the true warm cost is the
+recorded 34-41 ms. **Uncontended is HIGHER.** Eight back-to-back renders on a warm object, with
+overlap computed from each event's `[eventTimestamp - wallTime, eventTimestamp]` span:
+
+| condition                    | cpuTime                          | wall        |
+| ---------------------------- | -------------------------------- | ----------- |
+| contended by a filling alarm | 44-173 ms (n=5)                  | 5.0-6.8 s   |
+| **uncontended, warm**        | **67/81/81/82/88/99/107**, n=7   | 116-152 ms  |
+
+Median **81 ms**. The contended samples were LOW because the alarm did the rendering while the fetch
+waited on the gate. This does not correct the pinned 34/41 ms: those were a different page on the 8.3
+binary, and this is `/user/password` -- a form page with a CSRF token -- on 8.5. It is a new
+measurement, not a retraction.
+
+# `fillBatchSize: 25` WAS A LATENCY REGRESSION, AND THE FIX IS SMALLER BATCHES NOT LONGER ONES
+
+A Durable Object is single-threaded and `php._run()` is synchronous, so a fill occupies the object
+outright and a queued cache HIT cannot be answered by either lane while it runs. Measured at
+`fillBatchSize: 25`: alarms cost **4,337-5,832 ms** of cpuTime (n=6) and every `/__serve` racing them
+waited **5.0-6.8 s of wall** (n=5). Nothing tripped -- it was well inside `fillBatchWallMs`.
+
+Throughput does not pay for that, because the alarm re-arms while the queue is non-empty: measured,
+consecutive firings **130-160 ms apart**. Many short alarms deliver the same fills per second and
+bound the worst HIT wait. Paid also bills duration, so a 4.5 s alarm is a GB-s cost as well.
+
+`PAID_PROFILE` is now `fillBatchSize: 8`, `fillBatchWallMs: 1500` -- about 650 ms of occupancy at the
+measured 81 ms median, against 4.5 s.
+
+**This does not touch free.** Free's serving path is unchanged and still measured: a cache HIT is
+**1 ms** of Durable Object cpuTime (n=4), prefill is the default so a read never reaches PHP, and the
+edge tier answers before the object at all. What the 81 ms figure sharpens is the REGENERATION path,
+where a free alarm carries the same 10 ms cap as a request -- which is the slicing track's existing
+remit, not a new finding.
+
+---
+
+> **Round 78 —** the opcache file cache is write-only by construction, and the isolate ceiling is one render away from `exceededMemory`
+
+# FOUR MEASUREMENTS ON A DEPLOYED 8.5 WORKER
+
+Taken on `cfw-measure`, deployed from the canonical `wrangler.jsonc` with `--var PW_DIAGNOSTICS:1`
+and torn down in the same session; the worker list was verified back to its prior nine. Upload
+3,716.83 KiB, **gzip 2,811.93 KiB** against the 3,072 KiB ceiling, **Worker Startup Time 139 ms**,
+PHP **8.5.2**, 11,444 files mounted lazily from a 12,087,553 B blob.
+
+Every absolute below is `cpuTime` from `wrangler tail --format json` on that deployed worker, joined
+to what it measured by the `&tag=` the driver writes. 641 events were captured, 323 of them
+`executionModel: "durableObject"`.
+
+**`wrangler tail` DID emit those Durable Object events with no filter arguments**, which is worth
+recording because this document has assumed since RULE 0 was written that it omits them. The rule
+still holds for the case it was learned from -- an empty tail is not evidence -- but the plain
+`--format json` stream was sufficient here, so the Observability API is a convenience rather than
+the only route. `eventTimestamp` is the END of an invocation, verified rather than assumed: across
+129 Worker/Durable-Object pairs for the same request the Worker's timestamp is the later one in 115
+of them, by 19-39 ms, which is only true if the field marks completion.
+
+# THE OPCACHE FILE CACHE IS WRITTEN ON EVERY COLD BOOT AND READ BY NOTHING
+
+`src/site-do.ts` sets `opcache.file_cache=/tmp` and `opcache.file_cache_only=1`. Ten sibling
+`opcache.*` lines were dead config for the life of the 8.3 build; 8.5 makes opcache mandatory, so
+whether the survivors do anything was open. They do -- and what they do is pure cost.
+
+**It writes.** `/tmp` on a booted edge interpreter holds two entries: `opcache`, the directory
+`mkdirp(binary.FS, '/tmp/opcache')` creates and which opcache never touches because `file_cache` is
+`/tmp`, and `e47d59ae4978bff9587bb1a058a1da76`, opcache's `system_id`. The tree under it mirrors the
+source tree -- `drupal/autoload.php.bin`, `drupal/core/lib/Drupal.php.bin`,
+`drupal/vendor/composer/ClassLoader.php.bin`. Walked to completion through `/files?op=dir`
+(`truncated: false`, `queued: 0`), with `warmInterpreter: 1` checked afterwards so the count and the
+instance belong together:
+
+| instance state                | `.bin` entries | directories | for comparison            |
+| ----------------------------- | -------------: | ----------: | ------------------------- |
+| kernel booted, never rendered |        **112** |          68 | -                         |
+| after one front-page render   |      **1,301** |         425 | `includedFiles` **1,337** |
+
+The 36-file gap is code with no file path -- the boot fragment and what it `eval`s.
+
+The entries are real blobs rather than empty files, and the instrument discriminates: `op=read` on a
+missing path answers `{found: false, bytes: -1}`, on `/drupal/autoload.php` answers
+`{found: true, bytes: 265, sha1: 55b9521894...}`, and on a `.bin` answers HTTP 500 `no JSON in
+output` -- `json_encode()` refuses the non-UTF-8 body. A failure only the binary case produces is
+evidence; it is also why the cache's BYTES are not in this round.
+
+**It cannot be read on a later boot, because MEMFS belongs to the interpreter instance.** A marker
+written to `/tmp/cfw-marker.txt` reads back at 7 bytes on the same instance and is **gone**
+(`found: false`) after `drop=1`, while the `<system_id>` tree is **rebuilt** by the boot that
+follows. So every cold boot starts with an empty `/tmp`, every lookup is a guaranteed miss, and the
+1,301 entries are written for a reader that never arrives.
+
+**It is not read within an instance either.** Three entries were deleted --
+`drupal/core/lib/Drupal.php.bin`, `drupal/vendor/composer/ClassLoader.php.bin` and
+`drupal/autoload.php.bin`, each `unlinked: true, existsAfter: false` -- and then three further full
+front-page renders ran on the same warm interpreter (`warmInterpreter: 1`, three 200s at 12,304
+bytes, `includedFiles` unchanged at 1,337). **None of the three came back.** A file compiled once in
+an instance is never compiled again, so its entry is never rewritten and never consulted.
+
+That is the mechanism: `php._run()` does not tear the request down between calls -- which is what
+lets `$GLOBALS['__pw_kernel']` memoise a booted kernel across two `runJson()` calls, the property
+`/__files` depends on -- so compiled scripts are never freed, and the request-boundary reload that
+`file_cache_only` exists to serve never happens.
+
+**What is NOT measured is what it costs.** Pricing 1,301 serialisations plus 1,301 MEMFS writes
+needs a second build or a config seam without the file cache, and the ini block lives in
+`src/site-do.ts`. The direction is not in doubt; the magnitude is unmeasured, and a removal should
+be scored against a real A/B rather than against this paragraph.
+
+# THE COLD PATH IS FULLY ATTRIBUTED AT PHASE GRANULARITY, AND THE FIRST RENDER IS 68% OF IT
+
+80 invocations: 10 samples of all seven `/bootphase` phases plus a `boot-only` floor, one FRESH
+migrated site per measurement, `alreadyBooted === 0` on all 70 bootphase samples.
+
+**Contention was scoped to the OBJECT, not to the worker.** Two Durable Objects do not contend, so
+overlap is computed only between events sharing a `?site=`. **3 of 80 overlapped**, all of them
+`render`, each against its own site's `/__migrate` invocation -- the driver's 1,500 ms settle is not
+long enough, because a migrate invocation stays open after it has answered. Their cpuTime was
+**5,647 / 5,960 / 6,719 ms** against an uncontended render median of 3,278. They are excluded from
+the table below and reported here instead. Re-run with an 8-second settle, contention went to **0 of
+10**, so the settle is the fix rather than the sampling.
+
+**Contention inflated these samples rather than deflating them, which is the opposite of Round 77.**
+There a request queued behind a filling alarm read LOW, because the alarm did the work. Here the
+overlapping invocation is a migration that has not finished writing, so the measured request pays
+costs a settled site would not. Both are real; "contended" is not one direction, and a sample has to
+say which.
+
+CUMULATIVE edge cpuTime per phase, ms:
+
+| phase                   |   n |  median |   min |   max |
+| ----------------------- | --: | ------: | ----: | ----: |
+| `boot-only`             |  10 |   583.5 |   327 |   700 |
+| `autoload`              |  10 |   897.5 |   408 | 1,243 |
+| `kernel-new`            |  10 |     978 |   626 | 1,418 |
+| `container-read`        |  10 |   1,030 |   534 | 1,441 |
+| `container-unserialize` |  10 | 1,267.5 |   715 | 1,516 |
+| `kernel-boot`           |  10 |   1,386 |   732 | 1,844 |
+| `pre-handle`            |  10 |   1,047 |   602 | 1,999 |
+| `render`                |   7 |   3,278 | 2,895 | 3,476 |
+
+Subtraction, with `container-read` and `container-unserialize` read as branches off `kernel-new`
+rather than steps toward it:
+
+| phase                   | baseline         | cost (median) | cost (min) |
+| ----------------------- | ---------------- | ------------: | ---------: |
+| `autoload`              | `boot-only`      |           314 |         81 |
+| `kernel-new`            | `autoload`       |          80.5 |        218 |
+| `container-read`        | `kernel-new`     |            52 |    **-92** |
+| `container-unserialize` | `container-read` |         237.5 |        181 |
+| `kernel-boot`           | `kernel-new`     |           408 |        106 |
+| `pre-handle`            | `kernel-boot`    |      **-339** |   **-130** |
+| **`render`**            | `pre-handle`     |     **2,231** |  **2,293** |
+
+Floor **583.5 ms** median / 327 min. Attributed above the floor **2,694.5** / 2,568. Total cold
+render **3,278** / 2,895.
+
+**Nothing is left over, and that is the answer to the question.** Treating `pre-handle` as zero, the
+phases over-attribute the total by 339 ms -- one phase's worth of platform spread, in the direction
+that says the split has no room left in it. There is no residual bucket at this granularity. The
+"~820 ms unattributed" figure this document carried below the FOLD was the residual of a LOCAL
+bucket tree over a 1,323 ms boot; asked for per invocation on the edge, the cold path is floor plus
+autoload plus kernel construction plus `$kernel->boot()` plus the first render, and it adds up.
+
+**Two phases came out below the noise floor and are reported as such rather than as numbers.**
+`pre-handle` is negative on both estimators and `container-read` disagrees in sign between them; a
+phase whose two estimators cannot agree has not been measured, whatever the median says. So
+`preHandle()` is not free -- it is unresolvable against a platform that is bimodal by 400-600 ms,
+and resolving it needs an instrument with a smaller quantum than an invocation.
+
+**Where the cost actually is: `render`, 2,231 ms of a 3,278 ms cold path, 68%.** The kernel boot on
+a container HIT is 408 ms, of which the unserialise is 237.5 and the read across the host bridge is
+52 -- confirming, on 8.5 and on a fresh sweep, that the container was never the story. Edge
+`containerBytes` is now **480,147** against the 479,615 recorded on 8.3.
+
+## The warm render did not change between 8.3 and 8.5, so the render phase is a FIRST-render cost
+
+`/drupal?repeat=N` on fresh migrated sites with an 8-second settle, n=5 per point, 0 contended, all
+ten runs verified as real renders (`MISS`/`MISS`, 200, 12,304 bytes):
+
+| N   | samples                             | median | min   |
+| --- | ----------------------------------- | -----: | ----: |
+| 1   | 2,974 / 2,984 / 3,203 / 5,621 / 7,559 |  3,203 | 2,974 |
+| 10  | 3,627 / 3,721 / 6,561 / 6,660 / 7,117 |  6,561 | 3,627 |
+
+Marginal warm render: **72.6 ms from the minima, 373.1 ms from the medians.** The two estimators
+differ by 5x and the N=1 spread is 4,585 ms, so the minima figure is the usable one -- and it lands
+on **74.7 ms, the 8.3 figure**, from an independent sweep on a different binary. The warm render did
+not move between the two interpreters.
+
+Carrying that across to the phase table is a CROSS-INSTRUMENT subtraction and is labelled as one:
+the 2,231 ms is `render` minus `pre-handle` from the sweep, the 72.6 ms is a slope from the repeat
+scan, and the two were taken on different sites. Read that way, only about 3% of the render phase is
+a render that would happen again, and the rest is work only the FIRST render does. `hostStatements`
+says the same thing from the other side and with no subtraction at all: **70 on render #1 and 17 on
+each of the nine after it**.
+
+# 96 MiB OF THE ISOLATE IS RESERVED BEFORE PHP RUNS, AND `exceededMemory` IS ONE RENDER AWAY
+
+**The shipping binary reserves 96 MiB of linear memory at instantiation.** The memory section of
+`.interp/php8.5.wasm` declares `flags 0x1, initial 1,536 pages = 100,663,296 B = 96 MiB`, maximum
+65,536 pages. The edge agrees and never grows past it: every successful `/heap?op=snapshot` reported
+`heapBytes: 100663296`. PHP's own `memory_limit=96M` equals the whole reservation, so PHP reaching
+its limit means asking the heap to grow.
+
+Only a small part of that is dirty. After a kernel boot the snapshot keeps **187 non-zero pages =
+12,255,232 B**, identical across three separate objects.
+
+**The JavaScript side is not small, and one render fixes its size.** On a single instance, tracked
+through `mountInfo.inflateStats`:
+
+| point                 | files inflated | resident bytes |
+| --------------------- | -------------: | -------------: |
+| after boot, no Drupal |              1 |     **37,779** |
+| after ONE render      |          1,328 |  **7,828,597** |
+| after five renders    |          1,328 |  **7,828,597** |
+
+On top of that the per-file pack's 12,087,553 B blob stays resident for the life of the object by
+design -- eviction drops inflated contents and keeps the blob, because the blob is what re-inflates
+them. The eviction budget is **20,971,520 B**.
+
+**Add the design's own numbers and there is no headroom:** 100,663,296 (wasm) + 12,087,553 (blob) +
+20,971,520 (inflate budget) = **133,722,369 B**, against a documented 128 MB isolate ceiling. A
+front page uses 7.8 MB of that 20 MB budget; an object serving a wide route set converges on the
+budget, and the budget was sized against nothing that knew about the 96 MiB underneath it.
+
+**The platform's own memory metric does not count the reservation.** `workersInvocationsAdaptive`
+over the session, `scriptName: cfw-measure`, 824 successful invocations: `memoryUsageBytes` **P50
+39,483,590 / P90 40,532,170 / P99 41,580,744 / P999 67,696,840**. Reading 39.5 MB as "88 MB of
+headroom" would be wrong by the whole reservation, and the reservation is the largest single
+allocation in the isolate.
+
+**The boundary was reached without being forced, and it is one render wide.** `/heap?op=snapshot`
+copies the heap with `toStorableBytes()`, which is `view.slice()` -- a second full 96 MiB, in the JS
+heap:
+
+| isolate state                        |   n | outcome                            |
+| ------------------------------------ | --: | ---------------------------------- |
+| kernel booted, 0 renders, `fresh=1`  |   1 | ok, 187 pages, 12,255,232 B stored |
+| kernel booted, 0 renders, no `fresh` |   1 | ok, 187 pages, 12,255,232 B stored |
+| after 1, 3 and 8 renders             |   3 | **`exceededMemory`**               |
+| after ten renders on one object      |   2 | **`exceededMemory`**               |
+| after 1 render, then `fresh=1`       |   1 | ok, 187 pages, 12,255,232 B stored |
+
+The `no fresh, 0 renders` row is the control that rules out the drop-and-rebuild as the cause, and
+the last row shows a rebuild RECLAIMS the headroom a render spent.
+
+The failure signature, from the tail: the Durable Object event carries `outcome: "exceededMemory"`
+and the exception **`Durable Object's isolate exceeded its memory limit and was reset.`**; the
+Worker event in front of it carries `outcome: "exception"` with the same message; the client sees
+HTTP 500 with Cloudflare error 1101. The five failures cost 138 / 192 / 215 / 313 / 679 ms of
+cpuTime against 139 / 222 / 238 / 334 / 943 ms of wall -- the reset is fast, not a stall.
+**Recovery is automatic and was verified**: the next request booted clean at `bootMs 114` with the
+mount re-read.
+
+**The serving path never tripped it.** Across all 641 captured events, `exceededMemory` appears on
+`/__heap` and nowhere else. So this is a snapshot-path finding rather than a rendering-path one --
+but the snapshot path is a shipped feature (`HEAP_SNAPSHOT=1`), and as written it can only run on an
+object that has not yet served a page.
+
+# `locationHint` IS THE ONE WORTH TAKING, AND SMART PLACEMENT WOULD UNDO THE EDGE TIER
+
+Measured. Every Worker invocation in this session ran in **ORD** (315 of 318 events carry it; the
+three without are the cron). The front Worker costs nothing: its `cpuTime` on a request it proxies
+to the object is **median 0 ms, max 2 ms (n=145)**. The hop is not free, though -- Worker `wallTime`
+minus Durable Object `wallTime` on `/bootphase`, one hop with a small response, is **8-16 ms, median
+11 (n=68)**, with the object in the same colo as the Worker. Over all 145 paired invocations the
+median is the same 11 ms and the tail runs to 491, which is response size rather than distance.
+
+Read, from Cloudflare's documentation rather than measured here: a `locationHint` is honoured only
+on the FIRST `get()` for an object, is best effort rather than binding, and objects never relocate;
+the default places the object near that first `get()`; and Cloudflare warns in as many words that
+pre-creating an object before real traffic, or from a request unrepresentative of where traffic will
+come from, hurts latency.
+
+**That warning describes this product exactly.** `src/site.ts` resolves every route through
+`env.SITE.get(env.SITE.idFromName(site))` with no hint, and the first `get()` a site ever receives
+is its INSTALL -- `/migrate`, issued by whoever set the site up. So the object lands next to the
+operator and stays there for the life of the site, while the audience may be anywhere. There is
+exactly one object per site and it holds both the interpreter and the database, so every uncached
+view crosses to that colo and pays the 11 ms floor above plus whatever the distance adds. An
+install-time `locationHint`, chosen by the operator, is the only lever the platform offers for this
+and it costs one optional argument.
+
+Smart Placement is the opposite trade and should not be taken. It moves the WORKER toward what the
+worker talks to, only into locations the worker already runs in, needs enough requests from multiple
+locations before it will decide, and takes up to 15 minutes to analyse a deployment. The front
+Worker here exists to answer `caches.default` hits near the visitor and to keep hit traffic off a
+single-threaded object; moving it next to the object would put the cache tier in one colo, which is
+the one thing the cache tier is for. Cloudflare documents that static assets are always served
+nearest the request and says nothing about `caches.default` under placement -- so the specific claim
+that the cache tier follows the worker is an inference from where the code runs, not a documented
+fact.
+
+## What this round did not measure, and why
+
+- **The CPU cost of the opcache file cache.** It needs a build or a config seam without
+  `file_cache`, and the ini block is in `src/site-do.ts`. Existence, scope and entry count are
+  measured; magnitude is not.
+- **The bytes the file cache occupies.** The only reachable read is `json_encode()`d, which refuses
+  a non-UTF-8 body, and no route reports `filesize()` for a path it did not itself write.
+- **How many files a kernel-boot-only instance includes.** `includedFiles` is only reported by
+  `/drupal`, which renders. The 112 entries are a cache count, not an include count.
+- **The dirty page count after a render.** The instrument that reports it is the one that exceeds
+  the memory limit.
+- **Where the enforced memory ceiling actually sits.** 96 MiB live plus a 96 MiB copy survived on a
+  kernel-booted isolate and failed on a rendered one, so the threshold is between those two states,
+  and no instrument here reports the isolate's byte total. The reported `memoryUsageBytes` is
+  demonstrably a different quantity from the enforced one.
+- **A `locationHint` A/B.** It needs a change in `src/site.ts` and requests from a second region;
+  every request in this session came from one colo.
+- **Smart Placement's effect.** It needs multi-region traffic over days, and a throwaway worker torn
+  down the same session cannot produce it.
+
+---
+
+> **Round 79 —** the memory sum was a paper worst case, the cheapest lever was already measured, and the snapshot writer never got the streaming rewrite its restore did
+
+# 133.7 MB WAS NEVER OCCUPIED, AND SAYING "ON THE CEILING" OVERSTATED IT
+
+Round 78 added 96 MiB of wasm reservation, the 12,087,553-byte blob and a 20,971,520-byte eviction
+budget to 133,722,369 and set it against a 128 MB limit. **The budget is a CEILING, not a
+reservation**, so that sum is a worst case nothing has reached: across all 641 tail events the
+serving path never returned `exceededMemory`, and the platform's own `memoryUsageBytes` read
+P50 39,483,590 / P99 41,580,744 (n=824).
+
+The correct statement is that there is **no paper headroom left if anything grows**, and that
+matters for a specific reason rather than as caution: A7 established this boundary is
+**non-monotone** -- 128 MiB failed where 160 MiB succeeded -- and it is shared with whatever else a
+reused isolate holds. A failure mode that passes N times before appearing is exactly the kind worth
+buying headroom against.
+
+## The lever that was already measured, applied
+
+`LAZY_FS_BUDGET_BYTES` defaulted to 20 MB in `@drupflare/cartridge`. The measurement above ran a
+deliberately tight **2 MB** budget and recorded 1.91 MB resident, a 2.10 MB high water, 1,567
+evictions, 6 re-inflations and **byte-identical renders** through the thrashing.
+
+So 20 MB is set against evidence that 2 MB suffices. `wrangler.jsonc` now pins **4,194,304** -- twice
+the measured high water, which leaves room for a heavier page than the one measured while reclaiming
+~16.8 MB of the paper sum. No rebuild, no new measurement, and the eviction path is the one already
+proven to cost nothing.
+
+Two levers are deliberately NOT taken here:
+
+- **`INITIAL_MEMORY` 96 -> 80 MB** is safe by construction -- 83,886,080 x 1.2 is exactly
+  100,663,296, today's reservation, so a shortfall lands on the status quo -- but the demand figure
+  behind it was taken on `free-v1` and the shipping binary is 8.5. It needs `memory.buffer.byteLength`
+  re-measured after boot and render on 8.5 first. **Do not try 68-72 MB**: 61,440 bytes of shortfall
+  cost 13.4 MiB, measured.
+- **The 12 MB blob stays resident.** Fetching its 1,006 files individually is 1,006 subrequests
+  against a 50-per-invocation free cap, so a range-fetch version cannot serve a single page. This is
+  the design, not an oversight.
+
+# THE SNAPSHOT RESTORE STREAMS; THE CAPTURE DOES NOT
+
+`streamRestoreInto()` writes chunks straight into the live heap. The capture side does not:
+`heapBytes()` calls `toStorableBytes()`, which ends in `view.slice()` -- a second full copy of the
+96 MiB heap, by design, to detach it from a `WebAssembly.Memory` that a later `grow()` could
+invalidate.
+
+That is why `/heap?op=snapshot` reproducibly returns `exceededMemory` after any render (n=3 at 1, 3
+and 8 renders; n=2 after ten) while succeeding on a kernel-booted isolate (n=2). It is not a limit
+that needs raising -- it is the A7 failure mode, reached by allocating a second copy of the largest
+object in the isolate.
+
+**Consequence: `HEAP_SNAPSHOT=1` cannot be enabled on any plan as written**, and that should be known
+before it is described as ready. The restore got a streaming rewrite and the capture never did.
+Lowering `INITIAL_MEMORY` helps here too, since it makes the copy 80 MiB rather than 96.
+
+# THE METERS, RESTATED
+
+Round 78's product read said five of six meters were blank, including both daily ceilings. Two of
+those are now counted and a third is answered:
+
+| meter | state |
+| ----------------- | ------------------------------------------------------------------ |
+| rows written | counted, folded on the alarm |
+| DO requests | **counted**, in memory, folded on the same alarm at no extra row |
+| image transforms | **counted** from content: image styles x managed images |
+| Worker requests | **structurally unmeasurable here**, with the reason reported |
+| workflow steps | genuinely unmeasured; no counter exists |
+
+`worker-requests` is the one that cannot be fixed from inside: a request answered by the edge cache
+never enters an isolate that could count it, so any figure derived here would undercount by exactly
+the traffic the cache absorbs. `Threshold.unmeasurable` now carries that reason so it is not mistaken
+for a task nobody got to.
+
+---
+
+> **Round 80 —** the contrib QA pass: 21 of 25 modules are not on the filesystem, the installability oracle has been answering `not-found` for every Drupal package since drupal.org moved its metadata, and Drupal's own cron driver was written, tested and never wired
+
+# THE PASS, AND WHAT IT ACTUALLY MEASURED
+
+25 named contrib modules, driven against a real site under `wrangler dev` on a scratch
+`--persist-to` that is deleted afterwards. `scripts/qa/module-compat.ts` is the runner and
+`scripts/qa/modules.ts` the list; both are reusable, and `tests/node/qa-modules.spec.ts` covers the
+classifier without booting anything.
+
+**No CPU figure appears anywhere below.** Per RULE 0 an absolute comes only from `cpuTime` on a
+deployed worker, and this ran locally. Row counts are counts rather than durations, so they are
+reportable from here; every number in this round is a row count, a byte count or an HTTP status.
+
+# 21 OF 25 ARE NOT IN THE PACK, SO 19 PREDICTIONS WERE UNTESTABLE RATHER THAN WRONG
+
+`assets/drupal-pf/core.pf.json` holds 11,444 files. Filtering it for `*/NAME/NAME.info.yml` finds
+exactly four contrib modules — `pathauto`, `token`, `admin_toolbar`, `ctools` — matching
+`SHIPPED_LOCK_VERSIONS`, plus core's own `views` and `media`. Every other name on the list returns
+the same thing from `/enable`:
+
+```
+The module metatag does not exist.
+```
+
+That reframes the exercise. For 19 of the 25 the question was never "does it work" but "can it be
+attempted", and the answer is no without an R2 catalog and a layer mount. **A prediction reported as
+a result is the failure mode here**, so the runner classifies those as `absent` and
+`tests/node/qa-modules.spec.ts` asserts that `absent` outranks every capability verdict. "recaptcha:
+refused" would read as a measurement; nothing was measured.
+
+| verdict | n | modules |
+| ------- | -- | ------- |
+| `ships` | 3 | pathauto, token, admin_toolbar |
+| `core` | 2 | views, media |
+| `obsolete` | 1 | file_entity — no Drupal 11 release; core Media superseded it |
+| `absent` | 19 | everything else |
+
+# THE ORACLE HAS BEEN ANSWERING `not-found` FOR EVERY DRUPAL PACKAGE
+
+`/installable` returned `not-found` for all 25, including `drupal/pathauto`, which ships in this very
+artifact. The note says `packagist returned 404`, and the cause is one string:
+
+```
+packagistUrl()  https://packages.drupal.org/8/p2/drupal/pathauto.json   -> 302
+the 302 target  https://www.drupal.org/8/p2/drupal/pathauto.json        -> 404
+```
+
+drupal.org's own repository declares where the metadata is, and it is not that path:
+
+```
+$ curl -s https://packages.drupal.org/8/packages.json
+{"metadata-url":"/files/packages/8/p2/%package%.json"}
+```
+
+`packagist.ts`'s docblock records fixing this exact class of failure once already — "every
+`/installable?module=drupal/*` returned `not-found` with the plumbing working perfectly" — and it has
+regressed, because the endpoint moved underneath a hardcoded path. **This is the second time the same
+function has been wrong in the same way, and the second time it was invisible: `not-found` is a
+plausible answer, so nothing looked broken.**
+
+`scripts/qa/oracle-probe.ts` drives the real `newestVersion` / `checkRequirements` / `verdictFor` —
+imported from `src/ops/packagist.ts`, never reimplemented — against both URLs. **23 of 24 packages
+answer differently once it is right:**
+
+| package | shipped URL | corrected URL | why |
+| ------- | ----------- | ------------- | --- |
+| pathauto, token, admin_toolbar, metatag, redirect, webform, entity_reference_revisions, file_entity, search_api, google_analytics, stage_file_proxy, coffee, field_group, linkit, honeypot, scheduler | `not-found` | `installable` | every direct requirement satisfied |
+| paragraphs | `not-found` | `blocked` | `drupal/entity_reference_revisions is not provided by this site` |
+| search_api_solr | `not-found` | `blocked` | `drupal/search_api is not provided by this site (needs ^1.41)` |
+| xmlsitemap, simple_sitemap | `not-found` | `blocked` | `ext-xmlwriter is not provided by this site (needs *)` |
+| twig_tweak | `not-found` | `blocked` | `php is 8.3.0 but >=8.4 is required` |
+| devel | `not-found` | `blocked` | `doctrine/common is not provided by this site` |
+| recaptcha | `not-found` | `blocked` | `drupal/captcha is not provided by this site (needs ^1.15)` |
+
+## Two of those refusals are the oracle being wrong about the platform, not about the module
+
+**`twig_tweak` is falsely blocked.** `DEFAULT_PLATFORM.php` in `packagist.ts` is `'8.3.0'`. The
+shipping interpreter is 8.5 — `wrangler.jsonc` aliases `./runtime/php-binary.js` to
+`php-binary-85.ts`, and the running site reports it directly:
+
+```
+$ curl -s 'localhost:8791/php?site=facts'
+{"version":"8.5.2","bootMs":180,...}
+```
+
+So a module requiring `php >=8.4` is refused by a constant that has not tracked the binary.
+
+**`ext-xmlwriter` needs checking before it is believed.** `DEFAULT_PLATFORM` lists ten extensions and
+`xmlwriter` is not among them, which is why xmlsitemap and simple_sitemap are refused. The docblock
+says that omission is deliberate — "a MISSING extension is a real conflict" — so this is only a false
+refusal if the 8.5 build actually carries xmlwriter. **That was not determined here**: the extension
+list is inside the zstd-compressed wasm and no route reports `get_loaded_extensions()`. Recorded as
+unknown rather than guessed.
+
+# THE CAPABILITY GAP IS REAL, AND `recaptcha` IS THE WRONG EXAMPLE OF IT
+
+The prediction was that the oracle would say yes to reCAPTCHA. Measured, it says **`blocked`** — but
+on `drupal/captcha` being absent, which is an accident of the dependency graph rather than the oracle
+understanding anything about outbound HTTP. Ship `captcha` and the refusal disappears.
+
+The clean demonstration is **`stage_file_proxy`: `installable`**, with `search_api` and `scheduler`
+alongside it. All three satisfy every version constraint and all three need a runtime capability the
+oracle cannot see.
+
+**The capability model already exists and is not reachable from the route.** `src/ops/catalog.ts`
+defines `ModuleCapability`, `SHIPPED_CAPABILITIES` and refusal text that names ASYNCIFY=0 and
+reCAPTCHA by name. `planInstall()` enforces it. Grepping for its callers finds
+`tests/unit/ops/catalog.spec.ts` and nothing else — `site-do.ts` reaches `/installable` through
+`resolveInstallable` → `checkInstallable`, which consults Packagist metadata and the shipped lock and
+never opens the catalog.
+
+# DRUPAL'S OWN CRON HAS NEVER RUN, AND THE DRIVER FOR IT IS 968 LINES OLD
+
+The "unwired, not impossible" claim **survives contact**, and is stronger than stated: the driver is
+not missing, it is unreferenced.
+
+- `site-do.ts:99` imports `cronOptions` and `gcPass` from `./ops/cron` — **not** `cronStep`.
+- `src/ops/cron.ts` exports `cronStep()`, `cronUnits()`, `runCronHook()`, `runCronQueue()`,
+  `advanceCursor()` and `cronAlarmDelayMs()`: a sliced, resumable, starvation-safe cron that runs one
+  unit per firing and reports `rowsWritten` per step. Three specs cover it.
+- The live ops registry has no cron entry: `status, cr, updb, cex, cim, en, pmu, sql-dump`.
+
+The alarm's own comment explains the omission and was correct when written — `drupal_cron()` is 187
+queries natively to accomplish little but a watchdog trim, with hooks reaching for sockets this
+runtime lacks. **That objection was to the monolith, and `cronStep()` is not the monolith**: it runs
+one hook, or one queue batch, per firing. The comment describes a world that predates the file it
+sits next to.
+
+## What was built here
+
+`src/ops/cron-drive.ts` — new, and the only missing half — is the alarm-side budget. Three bounds,
+whichever comes first:
+
+| bound | default | why |
+| ----- | ------- | --- |
+| `maxUnits` | 6 | a quiet site should not walk the whole ring every 5 seconds |
+| `maxRows` | 500 | 0.5% of the 100k/day ceiling, so cron cannot consume regeneration |
+| `maxMs` | 500 | a loop guard against one pathological unit; **not** a CPU measurement |
+
+**At most one PHP unit per firing, and that falls out of `cronStep` rather than being imposed:**
+`mayContinue` is true only for a SQL unit or a skip, so the loop ends the moment a unit enters the
+interpreter — which is what stops cron holding the isolate while a visitor waits behind the fill
+queue. `driveCron()` never throws, and does not advance the cursor past a unit that threw, so one
+poisonous hook cannot wedge the ring.
+
+Measured on the reference seed, and it is the interesting result: **the first firing stops on `rows`
+before reaching a hook at all.** The watchdog trim alone is billed past 500 rows, so catch-up is
+several firings by design. Steady state writes nothing. Widening the budget to swallow the backlog in
+one go would spend page fills to trim a log, which is the trade the row budget exists to refuse.
+
+# ENABLING A MODULE COSTS A FIFTH OF THE DAILY ROW BUDGET
+
+Measured through `/enable`, which arms the write tally around the install:
+
+| module | rows written | statements | rows/statement |
+| ------ | ------------ | ---------- | -------------- |
+| pathauto | **20,141** | 3,546 | 5.68 |
+| admin_toolbar | **20,233** | 3,680 | 5.50 |
+| token | 4 | 5 | — already enabled as a pathauto dependency |
+| media | 13 | 23 | already enabled |
+| views | 4 | 5 | already enabled |
+
+**20,141 rows is 20% of the free plan's 100,000/day**, for one module. Two modules is 40% of a day's
+regeneration budget spent on installation. The 5.5-5.7 rows per statement is the index amplification
+`overheadShare()` reports, consistent with the ~60% index share Round 76 measured on the router
+rebuild.
+
+**A FAILED enable is not free: 38 rows each.** Twenty absent modules cost 760 rows to be told they do
+not exist — because `/enable` boots the kernel and runs `extension.list.module`'s discovery before it
+can answer. An install UI that probes a catalog would pay that per candidate.
+
+# THE PAGE CACHE HAS NO AUTHENTICATION GUARD ON THE WRITE PATH
+
+`devel` was on the "should work" list because it needs neither outbound nor cron. That scores it
+against the wrong constraint: its whole value is dumping debug output **into the rendered page**, and
+this runtime stores anonymous output in `cfw_page` and serves it to everyone.
+
+The module is absent, so it could not be enabled. The underlying question is a property of the
+runtime and was pursued directly. **By inspection, the write is unguarded:**
+
+- `fillOne(targetPath, bins, destruct)` takes no authentication parameter at all, and its
+  `INSERT INTO cfw_page ... ON CONFLICT(path) DO UPDATE` at `site-do.ts:2176` is unconditional.
+- The authenticated MISS branch at `site-do.ts:4205` calls that same `fillOne(path)`.
+- The guards that do exist are at the **Worker** tier — `putPage(..., personalised)` and
+  `kvPut = 'skipped:authenticated'` — and `cfw_page` is the **object's** copy, read on a HIT before
+  either runs.
+
+The comment at `site-do.ts:4186` states an authenticated request "can never be served from
+`cfw_page`". `scripts/qa/cache-poison.ts` contradicts the serving half of that directly:
+
+```
+shot                    status  tier      bytes    sha256            auth-mode
+1 authenticated (cold)  200     HIT       12296    407632f7c7cec1f1  render
+2 anonymous (after)     200     HIT       12296    407632f7c7cec1f1  -
+```
+
+An authenticated request was answered `x-cfw-cache: HIT` from the stored copy, with
+`x-cfw-auth-mode: render` confirming the Worker classified it as authenticated.
+
+**The leak itself was NOT demonstrated, and is recorded as unproven.** The probe's cookie is
+Drupal-*shaped* — it matches `SESSION_COOKIE_RE`, which is what the Worker checks — but it is not a
+real Drupal session, so Drupal rendered anonymous HTML either way and the probe correctly reported
+`INCONCLUSIVE`. What is established is that **nothing in the write path could prevent the leak if
+Drupal did render personalised output**. Proving or refuting it needs a genuine logged-in session,
+which is the obvious next probe.
+
+# WHAT SHOULD CHANGE IN `src/`
+
+Four patches, in severity order. None was applied here.
+
+**1. `src/ops/packagist.ts` — the metadata URL. One line, and it restores a whole feature.**
+
+```diff
+ 	return vendor === 'drupal'
+-		? `https://packages.drupal.org/8/p2/${name}.json`
++		// drupal.org's own packages.json declares this under `metadata-url`; the /8/p2/ form
++		// 302s to www.drupal.org and 404s there, which reads as `not-found` for every contrib
++		? `https://packages.drupal.org/files/packages/8/p2/${name}.json`
+ 		: `https://repo.packagist.org/p2/${name}.json`;
+```
+
+**2. `src/ops/packagist.ts` — the platform map, which is stale against the shipping binary.**
+
+```diff
+ export const DEFAULT_PLATFORM: PlatformVersions = {
+-	php: '8.3.0',
++	// the shipping interpreter is 8.5 (`wrangler.jsonc` aliases php-binary-85.ts); a running
++	// site reports 8.5.2 from /php. At 8.3.0 this falsely refuses anything needing >=8.4
++	php: '8.5.2',
+```
+
+**3. `src/site-do.ts` — the alarm, so Drupal cron runs. Guarded off by default.**
+
+```diff
+-import { cronOptions, gcPass } from './ops/cron';
++import { cronOptions, gcPass } from './ops/cron';
++import { cronBudget, driveCron, drupalCronEnabled } from './ops/cron-drive';
+```
+
+and, immediately after the existing `shouldRunGc()` block and before the HTTP drain:
+
+```diff
++		// Drupal's own cron, sliced. `gcPass()` above is host-side SQL and never enters the
++		// interpreter; `hook_cron` has never run on this site at all, which is what makes
++		// scheduler, simple_sitemap and search_api indexing silently do nothing after they
++		// install. Placed after GC and before the HTTP drain for the same reason both are
++		// after the fills: a waiting visitor outranks background work.
++		//
++		// Off unless DRUPAL_CRON is set: wiring this on is a behaviour change per site.
++		if (drupalCronEnabled(this.env)) {
++			try {
++				const driven = await driveCron(
++					await this.ctx.storage.get<string>('cronCursor'),
++					{ sql: this.sql, runJson: (code: string) => this.runJson(code) },
++					cronOptions(this.env),
++					cronBudget(this.env)
++				);
++				await this.ctx.storage.put('cronCursor', writeCursor(driven.cursor));
++				this.lastCron = driven;
++				this.lastCronAt = Date.now();
++			} catch (e: any) {
++				this.lastCron = { error: String(e?.message ?? e) };
++			}
++		}
+```
+
+`writeCursor` comes from `./ops/cron`; `lastCron` / `lastCronAt` are new fields alongside `lastGc` /
+`lastGcAt`. `driveCron()` is covered by `tests/unit/ops/cron-drive.spec.ts` (12 assertions) against
+the real `ctx.storage.sql`, so the patch is wiring rather than logic.
+
+**4. `src/ops/oracle.ts` — three tiers instead of yes/no.** `/installable` should consult the catalog
+and report the capability, not just the version verdict. The shape:
+
+```
+verdict:    installable | blocked | unverifiable | not-found
+tier:       works-today | needs-deferred-tier | refused
+reason:     the mechanism, when tier is not works-today
+```
+
+`resolveInstallable()` already takes `env`; loading the catalog there and folding
+`planInstall()`'s `problems` into the response is the whole change. Without it the oracle will say
+`installable` to `stage_file_proxy` — measured above — and a user will install a module that cannot
+work.
+
+# THE THREE TIERS, APPLIED
+
+The coarse "cannot call out during a request" is wrong. The runtime has a cached → deferred → sync
+layering: `cfwQueueFetch` records, `drainHttpQueue()` performs the fetch inside `alarm()` where
+awaiting is legal, the result lands in `cfw_http_cache`, and a later invocation reads it
+synchronously through `cfwFetch`. `site-php.ts:2037` asserts the 202 with `x-cfw-deferred: queued`.
+JSPI is an optimisation for that path, not a precondition.
+
+| module | tier | note |
+| ------ | ---- | ---- |
+| `search_api_solr` | **refused** | the only structural one. A query per keystroke against a remote index cannot be deferred without changing the UX; Search API's DB backend is the answer |
+| `recaptcha` | **needs the deferred tier** | siteverify need not happen inside the render. Tokens are single-use and expire in ~2 min; the alarm re-arms at +1 ms while the queue is non-empty, so the round trip fits. The cost is a per-module Drupal shim, because captcha validation is a synchronous form constraint |
+| `stage_file_proxy` | **needs the deferred tier** | the easiest case: placeholder or 202 on the miss, queue the fetch, land it in R2 through the mirror queue that already drains. A cache fill, not a synchronous dependency |
+
+**Honeypot stays the recommended default even once reCAPTCHA works.** Zero outbound beats two round
+trips on every form submission for this architecture. reCAPTCHA becomes the compliance option, not
+the recommendation.
+
+# THE FULL TABLE
+
+`expected` is the prediction recorded before the run; `actual` is what the site did. Nineteen
+disagreements, all of them `absent`, all of them because the code is not on the filesystem.
+
+| module | composer | expected | actual | oracle (URL fixed) | rows | evidence |
+| ------ | -------- | -------- | ------ | ------------------ | ---- | -------- |
+| pathauto | drupal/pathauto | ships | **ships** | installable | 20,141 | enabled; site renders |
+| token | drupal/token | ships | **ships** | installable | 4 | enabled as a pathauto dep |
+| admin_toolbar | drupal/admin_toolbar | ships | **ships** | installable | 20,233 | enabled; site renders |
+| views | drupal/core | core | **core** | — | 4 | core in Drupal 11 |
+| media | drupal/core | core | **core** | — | 13 | core in Drupal 11 |
+| file_entity | drupal/file_entity | obsolete | **obsolete** | installable | 38 | no Drupal 11 release; core Media superseded it |
+| metatag | drupal/metatag | works | **absent** | installable | 38 | `The module metatag does not exist.` |
+| redirect | drupal/redirect | works | **absent** | installable | 38 | `The module redirect does not exist.` |
+| webform | drupal/webform | works | **absent** | installable | 38 | `The module webform does not exist.` |
+| paragraphs | drupal/paragraphs | works | **absent** | blocked (erv missing) | 38 | `The module paragraphs does not exist.` |
+| entity_reference_revisions | drupal/entity_reference_revisions | works | **absent** | installable | 38 | `The module entity_reference_revisions does not exist.` |
+| google_analytics | drupal/google_analytics | works | **absent** | installable | 38 | `The module google_analytics does not exist.` |
+| twig_tweak | drupal/twig_tweak | works | **absent** | blocked (php >=8.4, falsely) | 38 | `The module twig_tweak does not exist.` |
+| coffee | drupal/coffee | works | **absent** | installable | 38 | `The module coffee does not exist.` |
+| field_group | drupal/field_group | works | **absent** | installable | 38 | `The module field_group does not exist.` |
+| linkit | drupal/linkit | works | **absent** | installable | 38 | `The module linkit does not exist.` |
+| honeypot | drupal/honeypot | works | **absent** | installable | 38 | `The module honeypot does not exist.` |
+| devel | drupal/devel | works | **absent** | blocked (doctrine/common) | 38 | absent; and see the cache-guard section — it was on the list against the wrong constraint |
+| search_api | drupal/search_api | needs-cron | **absent** | installable | 38 | `The module search_api does not exist.` |
+| xmlsitemap | drupal/xmlsitemap | needs-cron | **absent** | blocked (ext-xmlwriter) | 38 | `The module xmlsitemap does not exist.` |
+| simple_sitemap | drupal/simple_sitemap | needs-cron | **absent** | blocked (ext-xmlwriter) | 38 | `The module simple_sitemap does not exist.` |
+| scheduler | drupal/scheduler | needs-cron | **absent** | installable | 38 | `The module scheduler does not exist.` |
+| recaptcha | drupal/recaptcha | needs-deferred-tier | **absent** | blocked (drupal/captcha) | 38 | `The module recaptcha does not exist.` |
+| stage_file_proxy | drupal/stage_file_proxy | needs-deferred-tier | **absent** | **installable** | 38 | `The module stage_file_proxy does not exist.` — the clean capability-gap case |
+| search_api_solr | drupal/search_api_solr | refused | **absent** | blocked (search_api missing) | 38 | `The module search_api_solr does not exist.` |
+
+The site rendered normally after all 25 attempts: HTTP 200, 12,222 bytes, closing `</html>`.
+
+# WHAT THIS LEAVES
+
+- **The pack is the ceiling on the whole contrib story.** Until a catalog and layer mount exist, 21
+  of the 25 most-used modules cannot be attempted at all, and every capability verdict about them is
+  a prediction. `planInstall()` is written and waiting.
+- **`get_loaded_extensions()` is not reportable.** `ext-xmlwriter` could not be resolved, so two
+  refusals remain unadjudicated. A one-line addition to `/php` would close it.
+- **The cache-poisoning question is open and worth closing.** The write path has no guard; whether
+  Drupal renders anything personalised through it was not established.

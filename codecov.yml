@@ -1,0 +1,48 @@
+coverage:
+  precision: 2
+  round: down
+  range: '10...90'
+  status:
+    project:
+      default:
+        target: 60%
+        threshold: 2%
+    patch:
+      default:
+        target: 50%
+        threshold: 5%
+
+comment:
+  layout: 'condensed_header, condensed_files, condensed_footer'
+  require_changes: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: coverage
+      paths:
+        - src/
+    - name: workers
+      paths:
+        - src/
+    - name: node
+      paths:
+        - src/
+
+ignore:
+  - 'tests/**/*'
+  - 'coverage/**/*'
+  - '.coverage/**/*'
+  - '**/*.test.ts'
+  - '**/*.spec.ts'
+  - 'wrangler.jsonc'
+  - 'dist/**/*'
+  - 'src/probes/**/*'
+  - 'experiments/**/*'
+  - 'scripts/**/*'
+  - 'build/**/*'
+  - 'drupal-src/**/*'
+  - 'drupal-min-src/**/*'
+  - 'vendor/**/*'
+  - 'assets/**/*'

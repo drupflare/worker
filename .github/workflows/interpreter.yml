@@ -1,0 +1,216 @@
+name: Update the PHP Interpreter
+
+on:
+  repository_dispatch:
+    types: [phasm-interpreter-published]
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'The phasm rc name to fetch'
+        type: string
+        required: true
+        default: control85
+      php_version:
+        description: 'The PHP version in the artifact filenames'
+        type: string
+        required: true
+        default: '8.5'
+      artifact_id:
+        description: 'A phasm Actions artifact id. Empty takes the newest unexpired one'
+        type: string
+        required: false
+      payload_tag:
+        description: 'Release payload to hydrate from. Empty uses package.json version'
+        type: string
+        required: false
+
+concurrency:
+  group: ${{ github.workflow }}
+
+permissions:
+  contents: read
+
+jobs:
+  interpreter:
+    name: Fetch, Verify and Propose
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the Requested Interpreter
+        env:
+          VARIANT: ${{ github.event.client_payload.variant || inputs.variant }}
+          PHP_VERSION: ${{ github.event.client_payload.php_version || inputs.php_version }}
+          ARTIFACT_ID: ${{ github.event.client_payload.artifact_id || inputs.artifact_id }}
+          SOURCE_RUN: ${{ github.event.client_payload.run_id }}
+          SOURCE_COMMIT: ${{ github.event.client_payload.commit }}
+          PAYLOAD_TAG: ${{ inputs.payload_tag }}
+        run: |
+          if [ -z "$VARIANT" ] || [ -z "$PHP_VERSION" ]; then
+            echo "::error::the trigger named no variant or no php version" >&2
+            exit 1
+          fi
+          case "$VARIANT" in
+            *[!a-zA-Z0-9._-]*)
+              echo "::error::variant '$VARIANT' is not a phasm rc name" >&2
+              exit 1
+              ;;
+          esac
+          case "$PHP_VERSION" in
+            [0-9].[0-9]) ;;
+            *) echo "::error::php version '$PHP_VERSION' is not <major>.<minor>" >&2; exit 1 ;;
+          esac
+          case "$ARTIFACT_ID" in
+            '') ;;
+            *[!0-9]*) echo "::error::artifact id '$ARTIFACT_ID' is not numeric" >&2; exit 1 ;;
+          esac
+          {
+            echo "VARIANT=$VARIANT"
+            echo "PHP_VERSION=$PHP_VERSION"
+            echo "ARTIFACT_ID=$ARTIFACT_ID"
+            echo "SOURCE_RUN=$SOURCE_RUN"
+            echo "SOURCE_COMMIT=$SOURCE_COMMIT"
+            echo "PAYLOAD_TAG=$PAYLOAD_TAG"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check the zstd CLI Is Present
+        run: |
+          if ! command -v zstd > /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y zstd
+          fi
+          zstd --version
+
+      - name: Hydrate the Incumbent Tree
+        run: |
+          if [ -n "$PAYLOAD_TAG" ]; then
+            set -- "--tag=$PAYLOAD_TAG"
+          else
+            set --
+          fi
+          if ! bun run hydrate "$@"; then
+            {
+              echo "::error::no release payload to hydrate from."
+              echo "This lane prices the new interpreter against the tree that ships, so it needs"
+              echo "assets/ and .interp/zstddec.wasm out of a published payload. Publish one with"
+              echo "bun run release:payload, or name an existing release in payload_tag."
+            } >&2
+            exit 1
+          fi
+
+      - name: Measure the Incumbent Bundle
+        run: |
+          bun run release:check | tee /tmp/incumbent.txt
+          echo "INCUMBENT=$(tail -1 /tmp/incumbent.txt)" >> "$GITHUB_ENV"
+
+      - name: Fetch and Pack the New Interpreter
+        env:
+          GH_TOKEN: ${{ secrets.PHASM_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::PHASM_TOKEN is unset, so phasm's artifacts API is unreachable" >&2
+            exit 1
+          fi
+          ARGS=("$VARIANT" "$PHP_VERSION")
+          if [ -n "$ARTIFACT_ID" ]; then
+            ARGS+=("$ARTIFACT_ID")
+          fi
+          bun scripts/fetch-interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
+
+      - name: Price the New Bundle Against the Free Ceiling
+        run: |
+          bun run release:check | tee /tmp/bundle.txt
+          echo "BUNDLE=$(tail -1 /tmp/bundle.txt)" >> "$GITHUB_ENV"
+
+      - name: Build the Deploy Payload
+        run: bun run release:payload | tee /tmp/payload.txt
+
+      - name: Upload the Payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: drupflare-worker-payload-${{ env.VARIANT }}-php${{ env.PHP_VERSION }}
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+            dist/manifest.json
+            interp.lock.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Open the Pin as a Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$(git status --porcelain -- interp.lock.json)" ]; then
+            echo "interp.lock.json is unchanged; the fetched interpreter is already pinned."
+            echo "PR=none" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ARTIFACT="$(jq -r .artifactId interp.lock.json)"
+          BRANCH="interp/${VARIANT}-php${PHP_VERSION}-${ARTIFACT}"
+          echo "PR=$BRANCH" >> "$GITHUB_ENV"
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
+            echo "$BRANCH already exists, so this pin is already proposed."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "$BRANCH"
+          git add interp.lock.json
+          git commit -m "chore(interp): pin $VARIANT php$PHP_VERSION artifact $ARTIFACT"
+          git push origin "$BRANCH"
+          {
+            echo "Fetched from \`drupflare/phasm\` and verified. Nothing here deploys."
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| variant | \`$VARIANT\` |"
+            echo "| php | \`$PHP_VERSION\` |"
+            echo "| artifact | \`$ARTIFACT\` |"
+            echo "| phasm run | \`${SOURCE_RUN:-n/a}\` |"
+            echo "| phasm commit | \`${SOURCE_COMMIT:-n/a}\` |"
+            echo
+            echo '```txt'
+            cat /tmp/fetch.txt
+            echo "incumbent: $INCUMBENT"
+            echo "proposed:  $BUNDLE"
+            echo '```'
+            echo
+            echo "The payload carrying these bytes is attached to run $GITHUB_RUN_ID."
+            echo "The rollback unit is a Worker version, so ship this on its own."
+          } > /tmp/pr.md
+          gh pr create --base "${GITHUB_REF_NAME}" --head "$BRANCH" \
+            --title "chore(interp): $VARIANT php$PHP_VERSION" --body-file /tmp/pr.md
+
+      - name: Interpreter to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Interpreter update"
+            echo
+            echo "- Variant: \`${VARIANT:-unresolved}\` php \`${PHP_VERSION:-unresolved}\`"
+            echo "- Artifact: \`${ARTIFACT_ID:-newest unexpired}\`"
+            echo "- Incumbent: ${INCUMBENT:-not measured}"
+            echo "- Proposed: ${BUNDLE:-not measured}"
+            echo "- Branch: \`${PR:-not opened}\`"
+            echo
+            echo '```txt'
+            cat /tmp/fetch.txt 2> /dev/null || echo 'the fetch did not complete'
+            echo '```'
+            echo
+            echo "Nothing here deploys. The payload is an artifact and the pin is a pull request."
+          } >> "$GITHUB_STEP_SUMMARY"

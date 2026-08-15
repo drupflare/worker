@@ -1,0 +1,57 @@
+# build inputs and outputs that are regenerated, never committed
+vendor/
+# composer targets this instead of vendor/, which holds the wasm binaries (see composer.json)
+.composer-vendor/
+node_modules/
+package-lock.json
+
+# the Drupal tree the packers, the PHP suites and phpstan all read: the 11.4.5 tarball from
+# ftp.drupal.org plus the four pinned contrib modules. One command rebuilds it:
+# bun run fetch:drupal (the same script .github/workflows/build.yml calls)
+drupal-src
+# no producer; read only by src/probes/min.ts and scripts/stage-edge-assets.sh
+drupal-min-src
+
+assets/*
+!assets/.assetsignore
+!assets/drupal/
+assets/drupal/*
+!assets/drupal/site.sqlite
+
+# a copy of an assets subset, rebuilt by scripts/stage-edge-assets.sh; only the probe configs
+# under experiments/wrangler/ need it now -- wrangler.jsonc uses assets/.assetsignore instead
+.edge-assets
+# hardlinks to assets/drupal-trim, so wrangler.trim.jsonc can serve the trimmed
+# pack under the `drupal` prefix the mount hardcodes
+.trim-assets
+# the packer writes a backup of the last pack to avoid re-packing if nothing changed; never committed
+# safe to lose -- the same 7,585,792 bytes are in drupflare-cdn at
+# snapshots/site.sqlite.064105ca7223
+.pack-backup
+
+# wrangler local state and build cache
+.wrangler
+.dev.vars
+.dev.vars.*
+
+# test and coverage output
+coverage/
+*.lcov
+.vitest-cache/
+
+# typedoc output; built in CI and deployed to gh-pages, never committed to master
+typedoc/
+
+# logs and scratch
+*.log
+/tmp-*
+
+.DS_Store
+
+# the interpreter frames the shipping seam imports: the zstd frame, its glue and the zstd decoder.
+# One command rebuilds them: bun run build:wasm (docker for the decoder, gh auth for the binary)
+.interp/
+
+# the release payload and the dry-run output; built by scripts/release-payload.ts and attached
+# to a GitHub Release, never committed
+dist/

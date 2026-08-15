@@ -61,8 +61,10 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>tiers</title>'));
 
 		const doHit = await serveThroughWorker(site, '/');
+		const warmed = await untilEdge(site, '/');
+		expect(warmed?.cache, 'the edge copy never became readable').toBe('EDGE');
 		const before = await serveRequestsOf(site);
-		const edge = await untilEdge(site, '/');
+		const edge = await serveThroughWorker(site, '/');
 		const after = await serveRequestsOf(site);
 
 		expect(miss.cache).toBe('MISS');

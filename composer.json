@@ -16,7 +16,11 @@
 	},
 	"config": {
 		"sort-packages": true,
-		"vendor-dir": ".composer-vendor"
+		"vendor-dir": ".composer-vendor",
+		"allow-plugins": {
+			"drupal/core-composer-scaffold": false,
+			"symfony/runtime": true
+		}
 	},
 	"minimum-stability": "stable",
 	"prefer-stable": true,

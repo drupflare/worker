@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderPage } from '../../src/drupal/site-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -28,7 +29,13 @@ async function enableAndProbe(module: string, probe: string) {
 			site,
 			`SELECT COUNT(*) AS c FROM router WHERE name LIKE '${module}.%'`
 		);
-		return { enabled, observed, routes };
+		// a second, looser count: several modules name their routes with underscores rather than the
+		// dotted `module.route` convention, and a prefix match on the dotted form finds none of them
+		const namedRoutes = await sql(
+			site,
+			`SELECT COUNT(*) AS c FROM router WHERE name LIKE '%${module}%'`
+		);
+		return { enabled, observed, routes, namedRoutes };
 	});
 }
 
@@ -92,22 +99,23 @@ describe('contrib modules, enabled against a real site', () => {
 	);
 
 	it(
-		'captcha installs its settings and its own table',
+		'captcha creates its own table, which is a schema change rather than a setting',
 		async () => {
 			const out = await enableAndProbe(
 				'captcha',
-				"SELECT name FROM config WHERE name LIKE 'captcha.%' ORDER BY name"
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%captcha%' ORDER BY name"
 			);
 			if (!expectEnabled(out, 'captcha')) return;
-			expect(rows(out.observed).length, 'captcha installed no configuration').toBeGreaterThan(
-				0
-			);
-			// captcha adds admin routes; a module that registers routes and has none in the table
-			// means the install-triggered rebuild did not pick it up
+			// `captcha_sessions` is created by its schema hook, so this is the install doing work
+			// rather than the installer returning
+			expect(rows(out.observed).map((r) => r['name'])).toContain('captcha_sessions');
+			// its routes are named with underscores (`captcha_settings`, `captcha_point.add`), which
+			// is why the module-prefixed LIKE this file used first found none
 			expect(
-				Number(rows(out.routes)[0]?.['c']),
+				Number(rows(out.namedRoutes)[0]?.['c']),
 				'captcha registered no routes'
 			).toBeGreaterThan(0);
+			console.log(`[contrib] captcha: ${Number(rows(out.namedRoutes)[0]?.['c'])} routes`);
 		},
 		REQUEST_TIMEOUT
 	);
@@ -165,17 +173,115 @@ describe('contrib modules, enabled against a real site', () => {
 	);
 
 	it(
-		'migrate_plus installs its migration_group config entity type',
+		'migrate_plus installs the migration_group entity type it exists to provide',
 		async () => {
 			const out = await enableAndProbe(
 				'migrate_plus',
-				"SELECT name FROM config WHERE name LIKE 'migrate_plus.%' ORDER BY name"
+				"SELECT name FROM key_value WHERE name LIKE 'migration%.entity_type' ORDER BY name"
 			);
 			if (!expectEnabled(out, 'migrate_plus')) return;
-			expect(
-				rows(out.observed).length,
-				'migrate_plus installed no configuration'
-			).toBeGreaterThan(0);
+			// it ships no config OBJECTS of its own -- what it adds is two config ENTITY TYPES, whose
+			// installed definitions land in key_value. Asserting on `migrate_plus.%` config found
+			// nothing and would have read as a module that installed and did nothing
+			const names = rows(out.observed).map((r) => r['name']);
+			expect(names).toContain('migration_group.entity_type');
+			expect(names).toContain('migration.entity_type');
+			console.log(`[contrib] migrate_plus: entity types ${names.join(', ')}`);
+		},
+		REQUEST_TIMEOUT
+	);
+	it(
+		'search_api creates the index tables its backend writes to',
+		async () => {
+			const out = await enableAndProbe(
+				'search_api',
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'search_api%' ORDER BY name"
+			);
+			if (!expectEnabled(out, 'search_api')) return;
+			const names = rows(out.observed).map((r) => r['name']);
+			expect(names).toContain('search_api_item');
+			expect(names).toContain('search_api_task');
+			expect(Number(rows(out.namedRoutes)[0]?.['c'])).toBeGreaterThan(0);
+			console.log(`[contrib] search_api: tables ${names.join(', ')}`);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'honeypot creates its own table, which is what it uses instead of a remote captcha',
+		async () => {
+			const out = await enableAndProbe(
+				'honeypot',
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'honeypot%' ORDER BY name"
+			);
+			if (!expectEnabled(out, 'honeypot')) return;
+			// the advertised captcha replacement here, and the reason is structural: a hidden field
+			// and a submission timer are entirely local, so it costs no outbound round trip at all
+			expect(rows(out.observed).map((r) => r['name'])).toContain('honeypot_user');
+			console.log('[contrib] honeypot: honeypot_user created');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'redirect installs its entity type and the table behind it',
+		async () => {
+			const out = await enableAndProbe(
+				'redirect',
+				"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'redirect'"
+			);
+			if (!expectEnabled(out, 'redirect')) return;
+			expect(rows(out.observed).length, 'the redirect table was not created').toBe(1);
+			// a route subscriber over its own table, so both halves have to be present
+			expect(Number(rows(out.namedRoutes)[0]?.['c'])).toBeGreaterThan(0);
+			console.log(`[contrib] redirect: ${Number(rows(out.namedRoutes)[0]?.['c'])} routes`);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'stage_file_proxy installs the settings its fetch path reads',
+		async () => {
+			const out = await enableAndProbe(
+				'stage_file_proxy',
+				"SELECT name FROM config WHERE name LIKE 'stage_file_proxy.%' ORDER BY name"
+			);
+			if (!expectEnabled(out, 'stage_file_proxy')) return;
+			expect(rows(out.observed).map((r) => r['name'])).toContain('stage_file_proxy.settings');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'field_group contributes its plugin manager to the container',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enable(site, 'field_group');
+				// A DISPLAY-CONFIGURATION MODULE CREATES NO TABLE AND SHIPS NO SETTINGS, so the
+				// observable is what it adds to the CONTAINER. Read after a render rather than from
+				// the install's own reply: the container is rebuilt during the install and a service
+				// resolved in the same breath could be answered by the one still in memory.
+				await site.runJson(renderPage('/', [], false, {}));
+				const services = await site.runJson(`<?php
+echo json_encode([
+  'ok' => true,
+  'formatters' => \\Drupal::hasService('plugin.manager.field_group.formatters'),
+  'subscriber' => \\Drupal::hasService('field_group.subscriber'),
+  'converter' => \\Drupal::hasService('field_group.param_converter'),
+  'core' => \\Drupal::hasService('entity_type.manager'),
+]);`);
+				return { enabled, services };
+			});
+			if (!expectEnabled(out, 'field_group')) return;
+
+			const services = out.services as Payload;
+			expect(services['formatters'], 'its plugin manager is not in the container').toBe(true);
+			expect(services['subscriber']).toBe(true);
+			expect(services['converter']).toBe(true);
+			// the control: a core service answering true is what proves the probe can see the
+			// container at all, so three falses would mean a broken probe rather than a dead module
+			expect(services['core'], 'CONTROL: the probe cannot see the container').toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

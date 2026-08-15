@@ -41,7 +41,7 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 		expect(/'\/serve'/.test(diag)).toBe(false);
 	});
 
-	it.each(['/php', '/sql', '/export', '/savenode', '/firstrun', '/nativefetch'])(
+	it.each(['/php', '/sql', '/export', '/savenode', '/nativefetch'])(
 		'keeps %s behind the diagnostic gate',
 		(route) => {
 			const diag = siteSource.slice(
@@ -51,6 +51,19 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 			expect(diag).toContain(`'${route}'`);
 		}
 	);
+
+	it('puts /firstrun in the PUBLIC set and takes it out of the diagnostic one', () => {
+		const pub = siteSource.slice(
+			siteSource.indexOf('const PUBLIC_ROUTES'),
+			siteSource.indexOf('const DIAGNOSTIC_ROUTES')
+		);
+		const diag = siteSource.slice(
+			siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
+			siteSource.indexOf('const ROUTES =')
+		);
+		expect(pub).toContain("'/firstrun'");
+		expect(/'\/firstrun'/.test(diag)).toBe(false);
+	});
 
 	it('gates on membership of the public set rather than on the route table alone', () => {
 		// the exact shape matters: an unconditional `PW_DIAGNOSTICS !== '1'` return is the bug

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -225,5 +225,21 @@ describe('no backtick may appear inside a String.raw PHP block', () => {
 			backtickedComments(`throw new RangeError(${backtick}bad \${x}${backtick});`)
 		).toEqual([]);
 		expect(backtickedComments('// a plain comment with no backtick')).toEqual([]);
+	});
+});
+
+describe('every PHP-carrying module still parses as TypeScript', () => {
+	const dir = join(ROOT, 'src/drupal');
+	const modules = readdirSync(dir)
+		.filter((f) => f.endsWith('.ts'))
+		.filter((f) => readFileSync(join(dir, f), 'utf8').includes('String.raw'));
+
+	it('found the modules to check, so this cannot pass by checking nothing', () => {
+		expect(modules.length).toBeGreaterThanOrEqual(5);
+	});
+
+	it.each(modules)('%s imports', async (file) => {
+		const mod = await import(`../../src/drupal/${file}`);
+		expect(Object.keys(mod).length).toBeGreaterThan(0);
 	});
 });

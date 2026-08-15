@@ -95,24 +95,38 @@ jobs:
           fi
           zstd --version
 
+      - name: Resolve the Release Payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${PAYLOAD_TAG:-v$(jq -r .version package.json)}"
+          echo "RESOLVED_TAG=$TAG" >> "$GITHUB_ENV"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "HAVE_PAYLOAD=1" >> "$GITHUB_ENV"
+          elif [ -n "$PAYLOAD_TAG" ]; then
+            echo "::error::payload_tag '$TAG' names no release on this repository" >&2
+            exit 1
+          else
+            echo "HAVE_PAYLOAD=" >> "$GITHUB_ENV"
+            {
+              echo "::warning::no release '$TAG', so the bundle cannot be priced."
+              echo "The interpreter is still fetched, verified and pinned; only the size"
+              echo "comparison is skipped. Publish a payload with bun run release:payload."
+            } >&2
+          fi
+
       - name: Hydrate the Incumbent Tree
+        if: ${{ env.HAVE_PAYLOAD }}
         run: |
           if [ -n "$PAYLOAD_TAG" ]; then
             set -- "--tag=$PAYLOAD_TAG"
           else
             set --
           fi
-          if ! bun run hydrate "$@"; then
-            {
-              echo "::error::no release payload to hydrate from."
-              echo "This lane prices the new interpreter against the tree that ships, so it needs"
-              echo "assets/ and .interp/zstddec.wasm out of a published payload. Publish one with"
-              echo "bun run release:payload, or name an existing release in payload_tag."
-            } >&2
-            exit 1
-          fi
+          bun run hydrate "$@"
 
       - name: Measure the Incumbent Bundle
+        if: ${{ env.HAVE_PAYLOAD }}
         run: |
           bun run release:check | tee /tmp/incumbent.txt
           echo "INCUMBENT=$(tail -1 /tmp/incumbent.txt)" >> "$GITHUB_ENV"
@@ -132,14 +146,17 @@ jobs:
           bun scripts/fetch-interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
 
       - name: Price the New Bundle Against the Free Ceiling
+        if: ${{ env.HAVE_PAYLOAD }}
         run: |
           bun run release:check | tee /tmp/bundle.txt
           echo "BUNDLE=$(tail -1 /tmp/bundle.txt)" >> "$GITHUB_ENV"
 
       - name: Build the Deploy Payload
+        if: ${{ env.HAVE_PAYLOAD }}
         run: bun run release:payload | tee /tmp/payload.txt
 
       - name: Upload the Payload
+        if: ${{ env.HAVE_PAYLOAD }}
         uses: actions/upload-artifact@v7
         with:
           name: drupflare-worker-payload-${{ env.VARIANT }}-php${{ env.PHP_VERSION }}

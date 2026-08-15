@@ -23,7 +23,7 @@
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	"include": ["src/**/*.ts", "src/**/*.js", "scripts/**/*.mjs", "test/**/*.ts"],
+	"include": ["src/**/*.ts", "src/**/*.js", "scripts/**/*.mjs"],
 	"exclude": [
 		"node_modules",
 		"vendor",

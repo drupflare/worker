@@ -21,9 +21,6 @@ export type SupportState = 'verified' | 'supported' | 'blocked';
 /**
  * Modules whose BEHAVIOUR the gate has asserted, with what was asserted.
  *
- * **The instrument limit is gone; two modules are verified and two are not, for a reason that has
- * nothing to do with memory.**
- *
  * Under `wrangler dev` an enable killed the host process, so no follow-up request could be made and
  * nothing could be verified. Re-run under `@cloudflare/vitest-pool-workers` that limit does not
  * exist: an enable survives, a follow-up request answers, and TWO enables in one object survive --
@@ -42,10 +39,42 @@ export type SupportState = 'verified' | 'supported' | 'blocked';
  * it would reproduce identically on real infrastructure.
  */
 export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
+	'drupal/captcha':
+		'enabled against a real site; its schema hook created `captcha_sessions` and 8 routes appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix match finds none of them',
+	'drupal/metatag':
+		'enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does',
+	'drupal/migrate_plus':
+		'enabled against a real site; both config entity types it exists to provide are installed -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a `migrate_plus.%` config probe finds nothing and would read as inert',
+	'drupal/paragraphs':
+		'enabled against a real site; it created its entity type as four tables -- `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`, `paragraphs_item_revision_field_data`',
+	'drupal/queue_ui':
+		'enabled against a real site; its admin routes are in the `router` table, and routes are the whole module',
+	'drupal/recaptcha':
+		'enabled against a real site; captcha came with it, so dependency resolution ran, and it installed its own configuration',
+	'drupal/scheduler':
+		'enabled against a real site; it installed its own configuration and its routes are in the `router` table',
 	'drupal/admin_toolbar':
 		'enabled against a real site in the workers lane; its own routes appear in the `router` table after the install-triggered rebuild',
 	'drupal/ctools':
 		'enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has'
+};
+
+/**
+ * Modules whose CAPABILITY the gate exercised end to end, while the module itself is absent.
+ */
+export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = {
+	'drupal/captcha':
+		'the deferred POST it needs is measured end to end in `deferred-post.spec.ts` -- body intact, two submissions to one endpoint kept apart, answered from the queue with no second visitor. The module is not in the pack, so the module itself is unexercised',
+	'drupal/recaptcha':
+		'siteverify is a POST inside form validation, and that exact shape is measured in `deferred-post.spec.ts` against a mocked endpoint. The tier keys on method + url + body, which is what keeps two submissions to one endpoint apart. The module is not in the pack',
+	'drupal/scheduler':
+		"its work is `hook_cron` and nothing else; `cron-wire.spec.ts` invokes Drupal's cron handlers across several firings, inside the 6-unit / 500-row budget, and a second sweep runs again rather than latching. The module is not in the pack",
+	'drupal/queue_ui':
+		'a UI over queues that only move when cron runs them, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
+	'drupal/search_api':
+		'indexing runs on cron with the database backend, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
+	'drupal/simple_sitemap':
+		'generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack'
 };
 
 export interface TableRow {
@@ -76,7 +105,8 @@ export function labelFor(name: string): string {
  */
 export function moduleTable(
 	capabilities = SHIPPED_CAPABILITIES,
-	verified: Readonly<Record<string, string>> = VERIFIED_BEHAVIOURS
+	verified: Readonly<Record<string, string>> = VERIFIED_BEHAVIOURS,
+	capabilityEvidence: Readonly<Record<string, string>> = CAPABILITY_EVIDENCE
 ): TableRow[] {
 	const names = new Set([
 		...Object.keys(MODULE_TIER_NOTES),
@@ -100,7 +130,11 @@ export function moduleTable(
 			continue;
 		} else {
 			state = 'supported';
-			evidence = note?.why ?? verdict.reason ?? 'classified as workable, not yet exercised';
+			evidence =
+				capabilityEvidence[name] ??
+				note?.why ??
+				verdict.reason ??
+				'classified as workable, not yet exercised';
 		}
 		rows.push({ name, label: labelFor(name), state, evidence });
 	}
@@ -155,8 +189,9 @@ export function renderModuleTable(rows: TableRow[] = moduleTable()): string {
 		TABLE_BEGIN,
 		'',
 		`**${counts.verified} verified, ${counts.supported} supported, ${counts.blocked} blocked.** ` +
-			'Verified means the gate enabled the module and asserted it functions. Supported means the ' +
-			'capability analysis says it works and nothing has exercised it yet.',
+			'Verified means the gate enabled the module and asserted an observable it owns. Supported ' +
+			'means it has not been enabled here; where the evidence names a spec, the runtime ' +
+			'capability that module needs has been measured end to end without the module.',
 		'',
 		line(header),
 		rule,

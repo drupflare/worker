@@ -317,7 +317,11 @@ describe('PACK_INDEX=1 takes the list verbatim', () => {
 	});
 
 	it('runs no completion rule and keeps the list order', () => {
-		expect(packs.index!.stderr).toBe('index-driven: 5 files, no completion rules');
+		// the contrib count is reported even at zero, because a silent 0 and a rule that never ran
+		// look identical from outside and one of them is a packing bug
+		expect(packs.index!.stderr).toBe(
+			'index-driven: 5 files + 0 contrib, no other completion rules'
+		);
 		expect(packs.index!.index.map((e) => e.p)).toEqual([
 			'core/modules/system/system.module',
 			'core/themes/claro/claro.info.yml',

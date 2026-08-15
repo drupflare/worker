@@ -1,4 +1,4 @@
-import { isPaid } from '../ops/plan.js';
+import { isPaid } from '../ops/plan';
 /**
  * First-run migration, replayed in JavaScript straight into `ctx.storage.sql`.
  *
@@ -56,6 +56,15 @@ export interface MigrationManifest {
 	chunks: { file: string }[];
 	creates?: string[];
 	tables?: Record<string, number>;
+	/**
+	 * Whether this manifest may replay over a database that has already finished a DIFFERENT
+	 * generation. Absent, which is the shipped pack, means no.
+	 *
+	 * A restore sets it, and that is the whole difference between the two directions. Replaying a
+	 * newer pack over a site that has been running and writing for months would produce a database
+	 * that is neither; replaying a BACKUP over that same site is the entire point of the backup.
+	 */
+	replaces?: boolean;
 }
 
 /** One packed statement: SQL text plus its params, still in packed form. */
@@ -185,7 +194,7 @@ export class MigrationChunkError extends Error {
  * Decodes one packed param back to something `sql.exec()` can bind.
  *
  * `$b64` is bytes that were not valid UTF-8. `$i` is an integer outside the IEEE-754
- * safe range: it is bound as a decimal STRING deliberately, because SQLite's INTEGER
+ * safe range: it is bound as a decimal STRING, because SQLite's INTEGER
  * affinity converts a well-formed integer string losslessly on the way in, while a JS
  * number would already have lost the low bits before the binding saw it.
  */
@@ -324,7 +333,14 @@ export class SqlMigrator {
 		if (cursor && cursor.generation !== generation && cursor.state !== 'done') {
 			throw new MigrationGenerationError(cursor.generation, generation);
 		}
-		if (cursor?.state === 'done') {
+		// "already migrated" has to mean "already migrated THIS generation". It used to mean "the
+		// cursor says done", which read the row without looking at whose it was -- so a restore, which
+		// shares this one cursor row with the pack, was skipped on every site that had finished
+		// migrating and reported `{ ok: true, done: true }` having replayed nothing. A rollback
+		// reported success and changed no data. The namespaced `import:<id>:<gen>` generation was
+		// written to prevent that and could not, because the branch never compared generations.
+		const sameGeneration = cursor?.generation === generation;
+		if (cursor?.state === 'done' && (sameGeneration || manifest.replaces !== true)) {
 			return {
 				ok: true,
 				done: true,
@@ -335,6 +351,22 @@ export class SqlMigrator {
 				rowsWritten: cursor.rowsWritten,
 				applied: 0
 			};
+		}
+
+		if (cursor && !sameGeneration) {
+			const at = this.now();
+			this.sql.exec(
+				`UPDATE ${MIGRATE_TABLE}
+				 SET generation = ?, chunk = 0, chunks = ?, statements = 0, rows_written = 0,
+				     state = 'running', error = NULL, started_at = ?, updated_at = ?
+				 WHERE id = 1`,
+				generation,
+				total,
+				at,
+				at
+			);
+			cursor = readMigrateCursor(this.sql);
+			if (!cursor) throw new Error('migrate cursor missing immediately after its handover');
 		}
 
 		const startedAt = cursor?.startedAt || this.now();
@@ -393,7 +425,7 @@ export class SqlMigrator {
 						c.toArray();
 						chunkRows += Number(c.rowsWritten ?? 0);
 					}
-					// same transaction as the data, deliberately: a chunk and its cursor
+					// same transaction as the data: a chunk and its cursor
 					// commit together or not at all
 					this.sql.exec(
 						`UPDATE ${MIGRATE_TABLE}

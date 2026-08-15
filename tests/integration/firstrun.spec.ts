@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { freshSite } from '../helpers/serve-do';
+import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
+import { freshSite, inObject } from '../helpers/serve-do';
 
 /**
  * First-run configuration, and specifically the two things that made the existing route
@@ -82,5 +83,102 @@ describe('the body must be JSON, because everything else is a secret in the wron
 		const stub = freshSite();
 		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{}' });
 		expect(res.status).not.toBe(400);
+	});
+});
+
+/**
+ * Provisioning is trust-on-first-use, and the claim window has to actually close.
+ *
+ * `/firstrun` is reachable WITHOUT `PW_DIAGNOSTICS=1` because the owner token is minted here and
+ * nowhere else, and that token is what `/export` takes. While this route was diagnostic-gated the
+ * only way to obtain it was to expose `/sql`, `/restore` and `/php` to the internet first -- so the
+ * supported way to take your own data out was to open a remote shell.
+ *
+ * The trade is a claim window on an UNPROVISIONED site. What must hold is that it is the only
+ * window: once `first_run_at` is set, `?force=1` resets the admin password and therefore needs the
+ * token. These drive the object directly, which is where the check lives -- a gate in the Worker in
+ * front is a second place to get it right, not the place it has to be right.
+ */
+describe('the trust-on-first-use window closes once the site is provisioned', () => {
+	/**
+	 * Marks the site provisioned without booting a kernel; `first_run_at` is the whole state.
+	 *
+	 * Turns `PW_DIAGNOSTICS` OFF, because the pool sets it to `1` and diagnostics is deliberately
+	 * still a way past this check -- it already exposes `/sql`, so gating `force` against it would
+	 * be theatre. Left on, every case below would pass for the wrong reason.
+	 */
+	async function provision(stub: DurableObjectStub, token = 'owner-token-for-this-site') {
+		await inObject(stub, (site) => {
+			const meta = site as unknown as { metaSet: (k: string, v: unknown) => void };
+			meta.metaSet('first_run_at', Date.now());
+			meta.metaSet(OWNER_TOKEN_KEY, token);
+			site.env.PW_DIAGNOSTICS = '0';
+		});
+		return token;
+	}
+
+	it('refuses a second POST with 409, naming the token as the way through', async () => {
+		const stub = freshSite();
+		await provision(stub);
+		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{}' });
+		expect(res.status).toBe(409);
+		const body = (await res.json()) as { ok: boolean; error: string; how: string };
+		expect(body.ok).toBe(false);
+		expect(body.error).toMatch(/already configured/);
+		expect(body.how).toMatch(/owner token/);
+	});
+
+	it('refuses force=1 with NO token: an unauthenticated reset is a site takeover', async () => {
+		const stub = freshSite();
+		await provision(stub);
+		const res = await stub.fetch(`${URL_BASE}?force=1`, { method: 'POST', body: '{}' });
+		expect(res.status).toBe(401);
+		const body = (await res.json()) as { error: string; how: string };
+		expect(body.error).toMatch(/owner token/);
+		expect(body.how).toMatch(/Bearer/);
+	});
+
+	it('refuses force=1 with the WRONG token', async () => {
+		const stub = freshSite();
+		await provision(stub);
+		const res = await stub.fetch(`${URL_BASE}?force=1`, {
+			method: 'POST',
+			body: '{}',
+			headers: { authorization: 'Bearer not-the-right-token' }
+		});
+		expect(res.status).toBe(401);
+	});
+
+	it('lets force=1 THROUGH with the right token, or the escape hatch does not exist', async () => {
+		const stub = freshSite();
+		const token = await provision(stub);
+		const res = await stub.fetch(`${URL_BASE}?force=1`, {
+			method: 'POST',
+			body: '{}',
+			headers: { authorization: `Bearer ${token}` }
+		});
+		// past the gate; what happens next needs a booted kernel and is not what this asserts
+		expect(res.status).not.toBe(401);
+		expect(res.status).not.toBe(409);
+	});
+
+	it('lets force=1 through on DIAGNOSTICS as well, which is unchanged', async () => {
+		const stub = freshSite();
+		await provision(stub);
+		await inObject(stub, (site) => {
+			// diagnostics already exposes /sql, so it is not a lesser credential than the token
+			site.env.PW_DIAGNOSTICS = '1';
+		});
+		const res = await stub.fetch(`${URL_BASE}?force=1`, { method: 'POST', body: '{}' });
+		expect(res.status).not.toBe(401);
+	});
+
+	it('still lets an UNPROVISIONED site be claimed with no credential at all', async () => {
+		// the window itself: this is the property that makes one-click provisioning work, and the
+		// three cases above are what stop it staying open
+		const stub = freshSite();
+		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{}' });
+		expect(res.status).not.toBe(401);
+		expect(res.status).not.toBe(409);
 	});
 });

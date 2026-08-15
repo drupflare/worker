@@ -1,15 +1,17 @@
 import { SELF, createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { ensureFleetTable, reportSite, type FleetDb } from '../../src/ops/fleet';
+import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
 import worker, { isNeverDrupal } from '../../src/site';
 import {
-	type ServeProbe,
 	inObject,
 	namedSite,
 	pageFor,
 	queuePath,
 	seedPage,
 	serveThroughWorker,
-	stubRender
+	stubRender,
+	type ServeProbe
 } from '../helpers/serve-do';
 
 /**
@@ -249,7 +251,7 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.status).not.toBe(404);
 	});
 
-	it.each(['/php', '/sql', '/savenode', '/firstrun', '/nativefetch', '/migrate'])(
+	it.each(['/php', '/sql', '/savenode', '/nativefetch', '/migrate'])(
 		'404s %s when diagnostics are off',
 		async (route) => {
 			const res = await worker.fetch(
@@ -263,6 +265,14 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 			expect(await res.text()).toContain('not found');
 		}
 	);
+
+	it('does NOT 404 /firstrun with diagnostics off, or the token is unobtainable', async () => {
+		const res = await worker.fetch(new Request('https://cfw.local/firstrun?site=x'), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		expect(res.status).not.toBe(404);
+	});
 
 	/**
 	 * `/export` is an OWNER route, not a diagnostic, and the difference is the whole point.
@@ -292,6 +302,43 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 			{ ...env, PW_DIAGNOSTICS: '0' }
 		);
 		expect(res.status).toBe(401);
+	});
+
+	/**
+	 * The positive half, which the two 401s above cannot supply.
+	 *
+	 * `ownerAuthorised()` returning false unconditionally passes every assertion in this block --
+	 * a gate that refuses everyone looks exactly like a gate that works. So this mints the site's
+	 * own token, presents it, and requires the dump to come back.
+	 */
+	it('LETS THE OWNER THROUGH with the site token, and returns a real dump', async () => {
+		const site = 'owner-token-ok';
+		const token = await inObject(namedSite(site), (obj) =>
+			ensureOwnerToken((obj as unknown as { secretStore: () => SecretStore }).secretStore())
+		);
+
+		const res = await worker.fetch(
+			new Request(`https://cfw.local/export?site=${site}&body=1`, {
+				headers: { authorization: `Bearer ${token}` }
+			}),
+			{ ...env, PW_DIAGNOSTICS: '0' }
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean; replayable: boolean; sql: string };
+		expect(body.replayable).toBe(true);
+		expect(body.sql).toContain('CREATE TABLE');
+	});
+
+	it('does not answer the DO path directly, so the gate cannot be stepped around', async () => {
+		// the Worker maps `/export` to `/__export`; the inner name is not itself a route, and a
+		// request for it must not reach the object without passing the token check first
+		for (const route of ['/__export', '/__ownercheck', '/__restore']) {
+			const res = await worker.fetch(new Request(`https://cfw.local${route}?site=x`), {
+				...env,
+				PW_DIAGNOSTICS: '1'
+			});
+			expect(res.status, route).toBe(404);
+		}
 	});
 
 	it('still 404s /restore with diagnostics off, so the owner tier did not widen', async () => {
@@ -347,6 +394,90 @@ describe('the cron entry point opens a window per configured site', () => {
 		await waitOnExecutionContext(ctx);
 		const depth = await inObject(namedSite('default'), (obj) => obj.queueDepth());
 		expect(depth).toBe(0);
+	});
+});
+
+/**
+ * The inventory `scripts/security-update.mjs --fleet=<url>` reads.
+ *
+ * Every function behind it had a unit test and the ROUTE had none, so the endpoint answered 404 to
+ * every caller while `fleet.spec.ts` stayed green: `/fleet` does not start with `/admin`, so it never
+ * reached `renderAdmin()`, and it has no `DO_ROUTE` entry either, so it fell through to a proxy hop
+ * with an undefined inner pathname. A rollout denominator nothing can read is the same defect the
+ * endpoint was built to fix.
+ */
+describe('the fleet inventory a security rollout scores against', () => {
+	/** puts the database back to "never reported into", which is the state that used to throw */
+	const dropFleetTable = () =>
+		(env.FLEET_DB as unknown as FleetDb).prepare('DROP TABLE IF EXISTS cfw_fleet').bind().run();
+
+	it('ANSWERS, rather than falling through to a Durable Object route that does not exist', async () => {
+		const res = await worker.fetch(new Request('https://cfw.local/fleet'), {
+			...env,
+			PW_DIAGNOSTICS: '1'
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as Record<string, unknown>;
+		// the three fields `security-update.mjs` reads by name
+		expect(body).toHaveProperty('sites');
+		expect(body).toHaveProperty('byPackGeneration');
+		expect(body).toHaveProperty('stale');
+	});
+
+	it('reports an EMPTY fleet before any site has written a row', async () => {
+		// D1 is not rolled back between tests in this pool, so the state is staged rather than
+		// assumed. The table is created by the OBJECT's write path, so a bound database nobody has
+		// reported into threw `no such table: cfw_fleet` -- a 500 that reads as "the fleet read
+		// failed" on the endpoint whose whole answer is "how many sites are there"
+		await dropFleetTable();
+		const res = await worker.fetch(new Request('https://cfw.local/fleet'), {
+			...env,
+			PW_DIAGNOSTICS: '1'
+		});
+		expect(res.status).toBe(200);
+		expect((await res.json()) as { sites: number }).toMatchObject({ sites: 0 });
+	});
+
+	it('scores a rollout against a target pack generation', async () => {
+		const db = env.FLEET_DB as unknown as FleetDb;
+		await dropFleetTable();
+		await ensureFleetTable(db);
+		await reportSite(db, {
+			site: 'a',
+			packGeneration: 'new',
+			coreVersion: '11.4.5',
+			workerVersion: 'v2',
+			plan: 'free',
+			lastSeenMs: Date.now()
+		});
+		await reportSite(db, {
+			site: 'b',
+			packGeneration: 'old',
+			coreVersion: '11.4.4',
+			workerVersion: 'v1',
+			plan: 'free',
+			lastSeenMs: Date.now()
+		});
+
+		const res = await worker.fetch(new Request('https://cfw.local/fleet?target=new'), {
+			...env,
+			PW_DIAGNOSTICS: '1'
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			sites: number;
+			rollout: { patched: number; total: number; fraction: number };
+		};
+		expect(body.sites).toBe(2);
+		expect(body.rollout).toMatchObject({ patched: 1, total: 2, fraction: 0.5 });
+	});
+
+	it('404s without diagnostics, so the inventory is not public', async () => {
+		const res = await worker.fetch(new Request('https://cfw.local/fleet'), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		expect(res.status).toBe(404);
 	});
 });
 

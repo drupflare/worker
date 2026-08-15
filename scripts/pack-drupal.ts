@@ -67,6 +67,10 @@ const list: ListEntry[] = (JSON.parse(await readFile(listPath, 'utf8')) as ListE
 //
 // This is the sharp edge of profile-guided packing -- profile in the target
 // environment, or over-pack the known extension-conditional paths.
+/** what a browser fetches from the asset layer, which PHP never opens */
+const CONTRIB_SKIP =
+	/\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|css|js|map|md|txt|po|sql|dist|lock)$/i;
+
 const extra: string[] = [];
 for await (const p of glob('vendor/symfony/polyfill-*/**/*.php', { cwd: root })) {
 	extra.push(p);
@@ -77,8 +81,32 @@ for await (const p of glob('vendor/symfony/polyfill-*/**/*.php', { cwd: root }))
 // that conditionally-loaded drivers cause.
 let paths: string[];
 if (process.env.PACK_INDEX === '1') {
-	paths = list.map((x) => x.path).filter((p): p is string => Boolean(p) && !p!.startsWith('/'));
-	console.error(`index-driven: ${paths.length} files, no completion rules`);
+	const indexed = list
+		.map((x) => x.path)
+		.filter((p): p is string => Boolean(p) && !p!.startsWith('/'));
+	// PACK_CONTRIB=1 adds `modules/contrib` wholesale, and it is OFF by default because those
+	// modules are a QA fixture rather than product: the shipping pack carries the four the profile
+	// already saw and nothing else.
+	//
+	// Wholesale rather than profiled when it is on, and that is structural: the index is a list of
+	// files a traced run OPENED, so a module installed after the trace is invisible to it entirely
+	// -- packed as zero files while being present on disk and discoverable, which then fails at
+	// whichever class the trace never reached. Same shape as the doctrine/lexer miss that made
+	// vendor wholesale, pointed at `modules/contrib`.
+	const contrib = new Set<string>();
+	for await (const p of process.env.PACK_CONTRIB === '1'
+		? glob('modules/contrib/**/*', { cwd: root })
+		: []) {
+		if (p.includes('/tests/') || p.includes('/Tests/')) continue;
+		if (p.includes('/node_modules/')) continue;
+		if (CONTRIB_SKIP.test(p)) continue;
+		contrib.add(p);
+	}
+	for (const p of indexed) contrib.delete(p);
+	paths = [...indexed, ...contrib];
+	console.error(
+		`index-driven: ${indexed.length} files + ${contrib.size} contrib, no other completion rules`
+	);
 } else if (process.env.FULL === '1') {
 	// Drupal's PHP is not only .php: .inc, .module, .install, .theme, .engine and
 	// .profile are all executed, and .yml/.twig are read at runtime by the
@@ -191,6 +219,20 @@ if (process.env.PACK_INDEX === '1') {
 			if (p.includes('/node_modules/')) continue;
 			completed.add(p);
 		}
+	}
+
+	// Contrib modules, WHOLESALE, for the same structural reason vendor is taken wholesale: a
+	// profile captured before a module was installed cannot know which of its files load, and a
+	// module that is present-but-partially-packed fails at a class the trace never reached. That is
+	// the doctrine/lexer failure again, pointed at `modules/contrib`.
+	//
+	// Bounded by the same SKIP list, so the images, fonts and stylesheets a browser fetches from the
+	// asset layer are not carried into the PHP filesystem.
+	for await (const p of glob('modules/contrib/**/*', { cwd: root })) {
+		if (p.includes('/tests/') || p.includes('/Tests/')) continue;
+		if (p.includes('/node_modules/')) continue;
+		if (CONTRIB_SKIP.test(p)) continue;
+		completed.add(p);
 	}
 
 	const seen = new Set(list.map((x) => x.path));

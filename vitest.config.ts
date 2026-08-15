@@ -17,16 +17,27 @@ const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
 const SHIPPING_WASM = '.interp/php8.5.wasm';
 
 /**
- * The specs that BOOT the interpreter rather than stubbing it, so they cannot run without one.
+ * The packed Drupal tree and the migration chunks, which a clean checkout cannot build.
  *
- * Measured, not guessed: with the stub forced on, these are exactly the 11 files whose tests fail
- * with the stub's own "no PHP interpreter in this lane" error. Every other workers spec replaces the
- * interpreter with `stubRender()` and passes.
- *
- * A new spec that boots PHP and is not listed here fails on CI with that same named error, which is
- * the intended way to find out -- an exclusion list that silently grew would be worse.
+ * `bun run assets:pack` needs a native-PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim
+ * recipe is written down nowhere -- so unlike the interpreter these cannot be restored from the CDN
+ * either. They arrive only in a published release payload, via `bun run hydrate`.
  */
-const INTERPRETER_SPECS = [
+const PACK_INDEX = 'assets/drupal-pf/core.pf.json';
+
+/**
+ * The specs that need a BUILD ARTIFACT: the interpreter, the pack, or the migration chunks.
+ *
+ * Measured from CI rather than guessed, twice. With the interpreter stubbed, 11 files fail on the
+ * stub's own "no PHP interpreter in this lane" error. With the interpreter RESTORED but no pack, 15
+ * fail -- the same 11 plus four that mount the tree or replay a migration, on
+ * `per-file pack not reachable: core.pf.json 404` and `dump contains no statements`. The wider list
+ * is the one that matters, because the pack is the artifact a clean checkout cannot obtain at all.
+ *
+ * A new spec that needs an artifact and is not listed here fails with one of those named errors,
+ * which is the intended way to find out -- an exclusion list that silently grew would be worse.
+ */
+const ARTIFACT_SPECS = [
 	'tests/integration/admin-config.spec.ts',
 	'tests/integration/contrib-verify.spec.ts',
 	'tests/integration/cron-wire.spec.ts',
@@ -37,21 +48,32 @@ const INTERPRETER_SPECS = [
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
-	'tests/integration/submission-wall.spec.ts'
+	'tests/integration/serve-invalidation.spec.ts',
+	'tests/integration/serve-migration.spec.ts',
+	'tests/integration/serve-restore.spec.ts',
+	'tests/integration/submission-wall.spec.ts',
+	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 
 const haveShipping = existsSync(SHIPPING_WASM) && existsSync(SHIPPING_GLUE);
 const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 
+const havePack = existsSync(PACK_INDEX);
+const haveArtifacts = haveBinary && havePack;
+
 if (haveShipping) {
 	console.log('[vitest] running the SHIPPING PHP 8.5 interpreter from .interp/');
 } else if (haveBinary) {
 	console.log(`[vitest] no ${SHIPPING_WASM}: falling back to PHP 8.3 from ${DEFAULT_SEAM}.`);
-} else {
-	// never a silent reduction in coverage: the lane says what it dropped and how to get it back
+}
+
+// never a silent reduction in coverage: the lane says what it dropped and how to get it back
+if (!haveArtifacts) {
 	console.log(
-		`[vitest] no interpreter: stubbing it and SKIPPING ${INTERPRETER_SPECS.length} spec files ` +
-			'that boot it.\n         Run `bun install` to restore it from the CDN.'
+		`[vitest] SKIPPING ${ARTIFACT_SPECS.length} spec files that need a build artifact ` +
+			`(${haveBinary ? 'have' : 'no'} interpreter, ${havePack ? 'have' : 'no'} pack).\n` +
+			'         `bun install` restores the interpreter; the pack needs `bun run hydrate`,\n' +
+			'         which needs a published release payload.'
 	);
 }
 
@@ -95,7 +117,7 @@ export default defineConfig({
 				test: {
 					name: 'workers',
 					include: ['tests/unit/**/*.spec.ts', 'tests/integration/**/*.spec.ts'],
-					exclude: haveBinary ? [] : INTERPRETER_SPECS,
+					exclude: haveArtifacts ? [] : ARTIFACT_SPECS,
 					maxWorkers: process.env.CI ? 1 : 2,
 					testTimeout: 15000
 				}

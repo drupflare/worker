@@ -1,7 +1,7 @@
 /**
  * Closes the mb_substr() content-loss bug in PHP, without a rebuild.
  *
- * THE BUG. In wasm there is no mbstring extension, so Symfony's polyfill provides
+ * The bug. In wasm there is no mbstring extension, so Symfony's polyfill provides
  * mb_*. Its mb_substr() is `return (string) iconv_substr(...)`, its mb_strlen()
  * is `if (false !== $len = @iconv_strlen(...))`, and Symfony's *iconv* polyfill
  * returns FALSE for any string that is not valid UTF-8. `(string) false` is `''`.
@@ -9,7 +9,7 @@
  * returns the text with the bad bytes replaced by '?'. Core calls mb_substr 50
  * times and mb_strtolower 66 times.
  *
- * THE FIX THAT WAS PRESCRIBED IS WRONG, and this is the part worth reading.
+ * The prescribed fix is wrong.
  * AGENT-TECHNICAL_REPORT.md TASK C says "compile the real iconv extension into the wasm
  * build" and calls it cheap. It would not work. Measured on native PHP 8.5.7 with
  * the REAL iconv extension loaded:
@@ -22,13 +22,13 @@
  * MBSTRING that substitutes. So compiling iconv in leaves the polyfill's
  * `(string) false` intact and changes nothing.
  *
- * WHAT THIS DOES. Defines the affected mb_* functions BEFORE the polyfill's
+ * What this does: defines the affected mb_* functions BEFORE the polyfill's
  * bootstrap runs, so its own function_exists() guards skip. Each one replaces
  * invalid UTF-8 with '?' -- byte for byte what native mbstring's substitute
  * character does -- and then delegates to the polyfill class for the real work.
  * No vendor file is edited and no rebuild is needed.
  *
- * WHAT IT DELIBERATELY DOES NOT TOUCH. mb_check_encoding() and
+ * What it does not touch: mb_check_encoding() and
  * mb_detect_encoding() must keep seeing the original bytes: sanitising first
  * would make mb_check_encoding() answer TRUE for input that is invalid, which
  * turns a correct answer into a wrong one. Both already agree with native.

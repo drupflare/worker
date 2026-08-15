@@ -1,5 +1,5 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync, unzlibSync, zlibSync } from 'fflate';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
+import { base64ToBytes, bytesToBase64 } from '../db/file-store';
 
 /**
  * Replaces `ext-zlib` with fflate, so the six gz* functions Drupal reaches survive

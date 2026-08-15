@@ -1,0 +1,11 @@
+parameters:
+    level: 5
+    paths:
+        - scripts
+    treatPhpDocTypesAsCertain: false
+    bootstrapFiles:
+        - drupal-src/autoload.php
+    scanFiles:
+        - drupal-src/core/includes/common.inc
+        - drupal-src/core/includes/install.core.inc
+        - assets/probe/pw-probe.php

@@ -1,4 +1,11 @@
-import type { MigrationChunk, MigrationLoader, MigrationManifest, SqlLike } from './migrate-sql.js';
+import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
+import type {
+	MigrationChunk,
+	MigrationLoader,
+	MigrationManifest,
+	SqlLike,
+	StorageLike
+} from './migrate-sql';
 
 /**
  * The other half of `/export`, which had none: replaying a dump back into a Durable Object.
@@ -118,22 +125,59 @@ export type StoredImport = {
 	generation: string;
 };
 
+/** a statement no replay could ever execute, named at STORE time rather than mid-restore */
+export class ImportStatementTooLongError extends Error {
+	index: number;
+	chars: number;
+
+	constructor(index: number, chars: number) {
+		super(
+			`statement ${index} is ${chars} characters, over the ${DO_SQLITE_MAX_STATEMENT_CHARS} ` +
+				`Durable Object SQLite allows. Storing it would build a restore point that fails partway ` +
+				`through its own replay, with the database already half overwritten.`
+		);
+		this.name = 'ImportStatementTooLongError';
+		this.index = index;
+		this.chars = chars;
+	}
+}
+
 /**
  * Stores a dump as replay chunks and returns what a loader will find.
  *
+ * ATOMIC, for the same reason the replay is: the parent row and every chunk commit together or not at
+ * all. Without that, an invocation killed midway leaves a `cfw_import` row claiming N chunks with
+ * fewer than N stored -- and that row is what `latestImport()` offers a rollback as a restore point.
+ * The replay would start, run until the first missing chunk, and stop with the database half
+ * overwritten and the backup only partly applied.
+ *
  * @param sql the object's own SQL
- * @param dump the SQL text, as `/export` produces it
- * @param opts `generation` labels the import; `source` records where it came from, for the audit trail
- *   a rollback needs
+ * @param dump the SQL text, as `dumpDatabase()` or `/export` produces it
+ * @param opts `storage` supplies the transaction; `generation` labels the import; `source` records
+ *   where it came from, for the audit trail a rollback needs
  */
 export function storeImport(
 	sql: SqlLike,
 	dump: string,
-	opts: { generation: string; source: string; nowMs: number; perChunk?: number }
+	opts: {
+		storage: StorageLike;
+		generation: string;
+		source: string;
+		nowMs: number;
+		perChunk?: number;
+	}
 ): StoredImport {
 	ensureImportTables(sql);
 	const statements = splitSqlStatements(dump);
 	if (statements.length === 0) throw new Error('dump contains no statements');
+
+	// checked before anything is written, so an unreplayable dump costs nothing and is refused by
+	// NAME. A dump inlines its values as literals, so one oversized blob is all it takes
+	statements.forEach((s, i) => {
+		if (s.length > DO_SQLITE_MAX_STATEMENT_CHARS) {
+			throw new ImportStatementTooLongError(i, s.length);
+		}
+	});
 
 	const perChunk = Math.max(1, opts.perChunk ?? IMPORT_STATEMENTS_PER_CHUNK);
 	const chunks: string[][] = [];
@@ -141,30 +185,33 @@ export function storeImport(
 		chunks.push(statements.slice(i, i + perChunk));
 	}
 
-	const row = sql
-		.exec(
-			`INSERT INTO cfw_import
-				(created_at, generation, total_chunks, total_statements, source)
-			 VALUES (?, ?, ?, ?, ?) RETURNING id`,
-			opts.nowMs,
-			opts.generation,
-			chunks.length,
-			statements.length,
-			opts.source
-		)
-		.toArray()[0] as { id: number | bigint } | undefined;
-	const id = Number(row?.id ?? 0);
-	if (id === 0) throw new Error('the import row did not come back with an id');
+	const id = opts.storage.transactionSync(() => {
+		const row = sql
+			.exec(
+				`INSERT INTO cfw_import
+					(created_at, generation, total_chunks, total_statements, source)
+				 VALUES (?, ?, ?, ?, ?) RETURNING id`,
+				opts.nowMs,
+				opts.generation,
+				chunks.length,
+				statements.length,
+				opts.source
+			)
+			.toArray()[0] as { id: number | bigint } | undefined;
+		const assigned = Number(row?.id ?? 0);
+		if (assigned === 0) throw new Error('the import row did not come back with an id');
 
-	chunks.forEach((group, seq) => {
-		sql.exec(
-			'INSERT OR REPLACE INTO cfw_import_chunk (import_id, seq, statements) VALUES (?, ?, ?)',
-			id,
-			seq,
-			// the packed shape the migrator already reads: {s, p?}. No params, because a dump inlines
-			// its values -- which is also why a chunk is bounded by statement COUNT here
-			JSON.stringify(group.map((s) => ({ s })))
-		);
+		chunks.forEach((group, seq) => {
+			sql.exec(
+				'INSERT OR REPLACE INTO cfw_import_chunk (import_id, seq, statements) VALUES (?, ?, ?)',
+				assigned,
+				seq,
+				// the packed shape the migrator already reads: {s, p?}. No params, because a dump
+				// inlines its values -- which is also why a chunk is bounded by statement COUNT here
+				JSON.stringify(group.map((s) => ({ s })))
+			);
+		});
+		return assigned;
 	});
 
 	return {
@@ -175,12 +222,23 @@ export function storeImport(
 	};
 }
 
-/** the newest stored import, or null */
+/**
+ * The newest COMPLETE stored import, or null.
+ *
+ * Completeness is checked rather than assumed, because this is the value `shouldRollback()` reads as
+ * "a restore point that actually exists" and a torn one does not exist as a restore point -- it is a
+ * database that gets half overwritten and then stops. `storeImport()` is atomic now, so a torn row
+ * cannot be created any more; this stays as the guard for one written before it was.
+ */
 export function latestImport(sql: SqlLike): StoredImport | null {
 	ensureImportTables(sql);
 	const row = sql
 		.exec(
-			'SELECT id, generation, total_chunks, total_statements FROM cfw_import ORDER BY id DESC LIMIT 1'
+			`SELECT i.id, i.generation, i.total_chunks, i.total_statements
+			 FROM cfw_import i
+			 WHERE i.total_chunks =
+				(SELECT COUNT(*) FROM cfw_import_chunk c WHERE c.import_id = i.id)
+			 ORDER BY i.id DESC LIMIT 1`
 		)
 		.toArray()[0] as
 		| {
@@ -226,6 +284,9 @@ export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoa
 				// the generation is the IMPORT's, not the pack's, so a replayed dump cannot be mistaken
 				// for the shipped migration and skipped as already-done
 				generation: `import:${importId}:${row.generation}`,
+				// a backup is the one thing allowed to replay over a finished, different generation;
+				// without this the migrator skips the whole restore as "already migrated"
+				replaces: true,
 				totals: {
 					chunks,
 					statements: Number(row.total_statements),
@@ -234,16 +295,18 @@ export function storedImportLoader(sql: SqlLike, importId: number): MigrationLoa
 				chunks: Array.from({ length: chunks }, (_, seq) => ({ file: String(seq) }))
 			};
 		},
-		async loadChunk(file: string, index: number): Promise<MigrationChunk> {
+		async loadChunk(file: string): Promise<MigrationChunk> {
 			const row = sql
 				.exec(
-					'SELECT statements FROM cfw_import_chunk WHERE import_id = ? AND seq = ?',
+					'SELECT seq, statements FROM cfw_import_chunk WHERE import_id = ? AND seq = ?',
 					importId,
 					Number(file)
 				)
-				.toArray()[0] as { statements: string } | undefined;
+				.toArray()[0] as { seq: number | bigint; statements: string } | undefined;
 			if (!row) throw new Error(`stored import ${importId} has no chunk ${file}`);
-			return { i: index, statements: JSON.parse(String(row.statements)) };
+			// `i` is the seq READ BACK from the row, never the index the caller asked for. Echoing the
+			// argument made the migrator's cross-check compare a value to itself, so it could not fail
+			return { i: Number(row.seq), statements: JSON.parse(String(row.statements)) };
 		}
 	};
 }

@@ -23,7 +23,7 @@ export const WASM_PAGE_BYTES = 65_536;
 /**
  * Default bytes per stored chunk.
  *
- * SIZED BY THE CPU CAP, NOT BY THE RECORD CAP, and that correction is measured rather than reasoned.
+ * Sized by the CPU cap, not by the record cap, and the correction is measured.
  * The old default was 2,000,000 -- chosen because it fits `DO_SQLITE_MAX_RECORD_BYTES` -- and a
  * deployed sweep with `HEAP_RESTORE_CHUNKS=1` showed the record cap is not the binding constraint:
  *
@@ -33,7 +33,7 @@ export const WASM_PAGE_BYTES = 65_536;
  * | 400,000     | 21   | median 8, max 13 ms     | 4 of 21            |
  * | 200,000     | 41   | median 2, max 10 ms     | **0 of 41**        |
  *
- * So the whole point of chunking -- one restore step inside one free-plan invocation -- only holds
+ * So the goal of chunking -- one restore step inside one free-plan invocation -- only holds
  * at roughly this size. 41 rows for an 8.1 MB elided image is still a handful of reads, and rows are
  * not the meter that binds. The cost is not the memcpy: each chunk is also digested by a per-byte
  * JS loop (`digestBytes`), so per-firing CPU tracks chunk size closely.
@@ -87,7 +87,7 @@ export type ElidedHeap = {
 /**
  * Copies a heap out of wasm memory into a plain array so it can be stored.
  *
- * THIS FUNCTION EXISTS BECAUSE OF A SILENT-FAILURE TRAP. `someUint8Array.set(arrayBuffer)` copies
+ * This function exists because of a silent-failure trap. `someUint8Array.set(arrayBuffer)` copies
  * **zero bytes** and throws nothing -- the destination stays zeroed and the snapshot looks like it
  * worked until the restore renders an empty page. An `ArrayBuffer` is not an array-like, so `set()`
  * treats it as having no indexed properties and length 0. It must be wrapped in a view first.
@@ -216,7 +216,8 @@ export function joinChunks(chunks: HeapChunk[], expectedBytes?: number): Uint8Ar
 /**
  * FNV-1a/32 over the heap, as an equality assertion rather than a cryptographic guarantee.
  *
- * A1b used the same function so the two are comparable. It answers "are these the same bytes",
+ * The standalone restore probe used the same function, so the two are comparable. It answers
+ * "are these the same bytes",
  * which is the only question a restore needs to ask.
  */
 export function digestBytes(bytes: Uint8Array): string {
@@ -231,8 +232,8 @@ export function digestBytes(bytes: Uint8Array): string {
 /**
  * The open file descriptors a restored heap must have, recorded at snapshot time.
  *
- * A1b's central finding, and it inverted the hypothesis this code was written against: inode
- * alignment is NOT load-bearing (shifting every inode by 1 and by 500 both restored
+ * Measured on the standalone restore probe, and it inverted the hypothesis this code was written
+ * against: inode alignment is NOT load-bearing (shifting every inode by 1 and by 500 both restored
  * byte-identically), but the open fd table IS, at the same fd numbers. Four descriptors. Dropping
  * `/dev/urandom`'s alone throws `RandomException`; dropping the three sqlite fds gives a
  * locking-protocol error after an **80-120 second stall**, which on the edge is a hung request
@@ -246,13 +247,13 @@ export type FdEntry = { fd: number; path: string; flags: number };
  * NOT a list of descriptors every runtime has, which is how it was being read and is where the false
  * alarm came from. On the Durable Object path the database is a HOST CALL rather than a file, so a
  * booted object legitimately has zero descriptors above stdio, and the check demanded a
- * `/dev/urandom` that is correctly absent. A1b's four descriptors came from `static-free-v1`
+ * `/dev/urandom` that is correctly absent. The four descriptors came from `static-free-v1`
  * STANDALONE, with a real `.sqlite` open on disk.
  *
  * What survives is the narrow inference: a runtime that opened ANY descriptor also opened
  * `/dev/urandom`, because PHP's CSPRNG does. So a capture that holds descriptors but no
  * `/dev/urandom` did not come from a live `captureStreams()` -- it was assembled somewhere else,
- * which is the A1b failure this exists to catch.
+ * which is the failure this exists to catch.
  */
 export const RECONSTRUCTION_TELL_PATHS = ['/dev/urandom'] as const;
 
@@ -297,7 +298,7 @@ export function fdTableProblems(snapshot: FdEntry[], live: FdEntry[]): string[] 
 }
 
 /**
- * One open descriptor, as A1b proved a restore needs it.
+ * One open descriptor, in the form a restore needs it.
  *
  * `fd` is the load-bearing field: the heap holds descriptor NUMBERS, so a correct path reopened at
  * a different number still breaks. `position` matters for the same reason -- a replayed handle at
@@ -339,10 +340,10 @@ export interface StreamFS {
 /**
  * Every open descriptor above stdio.
  *
- * Starts at 3 deliberately: 0/1/2 are stdio, which emscripten sets up for every instance, so
+ * Starts at 3: 0/1/2 are stdio, which emscripten sets up for every instance, so
  * replaying them would fight the runtime rather than restore anything.
  *
- * Ported from the A1b probe rather than reimplemented -- that code is the only version of this
+ * Ported from the restore probe rather than reimplemented -- that code is the only version of this
  * that has been proven against a real restore, and `src/probes/**` are frozen instruments that
  * must not be edited, so the logic is promoted here instead.
  */
@@ -543,7 +544,7 @@ export type ReplayResult = {
  * expects, so the stream is relocated afterwards and the vacated slot nulled.
  *
  * The numeric flags go back in as-is: they came out of a real open, and the node ops then see
- * exactly the mode PHP opened with. A1b measured what happens without this -- dropping
+ * exactly the mode PHP opened with. Measured without this -- dropping
  * `/dev/urandom` alone throws `RandomException`, and dropping the three sqlite descriptors gives a
  * locking-protocol error **after an 80-120 second stall**, which on the edge is a hung request
  * rather than an error. That is why failures are collected and returned rather than thrown past:
@@ -573,11 +574,11 @@ export function replayStreams(FS: StreamFS, streams: StreamRecord[]): ReplayResu
 /**
  * The `ctx.storage.sql` surface this module needs, and nothing wider.
  *
- * Narrow on purpose: it makes the read/write path drivable from a unit test with a fake, which is
+ * Narrow: it makes the read/write path drivable from a unit test with a fake, which is
  * the only way to test a Durable Object's storage without a Durable Object.
  */
 export interface HeapSql {
-	// deliberately NOT generic: the platform's `exec()` returns Record<string, SqlStorageValue>[],
+	// NOT generic: the platform's `exec()` returns Record<string, SqlStorageValue>[],
 	// and a generic T is too permissive to accept it. Rows are narrowed at each use instead
 	exec(
 		query: string,
@@ -627,7 +628,7 @@ export function ensureHeapTables(sql: HeapSql): void {
  * choice: a base64 payload would become statement TEXT and blow the 100,000-character statement
  * ceiling long before the record cap, which is why the codec is bypassed entirely here.
  *
- * The fd table goes in the metadata row rather than being derived on restore. A1b proved it is the
+ * The fd table goes in the metadata row rather than being derived on restore. It is the
  * load-bearing part of a restore, so it is stored WITH the bytes it belongs to -- a snapshot whose
  * descriptor table is reconstructed from a different instance's state is not a snapshot.
  */
@@ -876,7 +877,7 @@ export type StreamRestoreResult = {
  * implementation allocated the row array, the joined buffer AND the reassembled heap: roughly 4x the
  * image.
  *
- * Compression is deliberately absent for the same reason it was disqualified rather than traded off:
+ * Compression is absent for the same reason it was disqualified rather than traded off:
  * `DecompressionStream` bills at **15.7 ms/MB of output** on the edge, so inflating a 22.4 MB
  * snapshot would cost ~350 ms of billed CPU -- 35x the free per-invocation cap -- against a memcpy
  * measured at roughly a tenth of that. The compressed form wins on rows and storage and loses on the

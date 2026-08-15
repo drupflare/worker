@@ -21,6 +21,18 @@ $dryRun = !empty($GLOBALS['__cfw_enable_dry']);
 $out['module'] = $name;
 $out['dryRun'] = $dryRun;
 
+$stopAt = (string) ($GLOBALS['__cfw_enable_stop'] ?? '');
+$halt = static function (string $stage) use (&$out, $stopAt): bool {
+  if ($stopAt !== $stage) {
+    return false;
+  }
+  $out['ok'] = true;
+  $out['stoppedAt'] = $stage;
+  echo json_encode($out);
+  return true;
+};
+if ($halt('boot')) { return; }
+
 if ($name === '') {
   $out['error'] = 'no module named';
   echo json_encode($out);
@@ -53,6 +65,7 @@ try {
 } catch (\Throwable $e) {
   $out['discoverError'] = $e->getMessage();
 }
+if ($halt('discover')) { return; }
 
 // the legacy includes, and leaving them out is what this probe failed on first: the install died
 // with "Call to undefined function module_config_sort()" at ModuleInstaller.php:277.
@@ -75,6 +88,7 @@ try {
 } catch (\Throwable $e) {
   $out['legacyIncludesError'] = $e->getMessage();
 }
+if ($halt('includes')) { return; }
 
 // hook_requirements, which ModuleInstaller will NOT run for us
 try {
@@ -88,6 +102,7 @@ try {
 } catch (\Throwable $e) {
   $out['requirementsError'] = $e->getMessage();
 }
+if ($halt('requirements')) { return; }
 
 if ($dryRun) {
   $out['ok'] = ($out['discoverable'] ?? false) === true;
@@ -130,6 +145,38 @@ try {
 } catch (\Throwable $e) {
   $out['requestStackError'] = $e->getMessage();
 }
+if ($halt('preinstall')) { return; }
+
+// the driver's own counters, snapshotted around the install rather than read after it. A total
+// read once cannot tell an install's cost from a boot's, and the replay counter is the one that
+// matters: statementCount() counts a replay as ONE call, replayedStatementCount() counts what the
+// host executed inside it, so the gap between them IS the O(W*R) term
+// COMPILED SOURCE IS COUNTED ALONGSIDE THE SQL, because there is no opcache in this build: every
+// PHP file an install pulls in is lexed and compiled inside the invocation that pulls it. A cost
+// that scales with bytes-of-source is invisible to both a statement counter and a row counter
+$meter = static function (): array {
+  $out = ['files' => count(get_included_files()), 'sourceBytes' => 0, 'peakBytes' => 0];
+  foreach (get_included_files() as $file) {
+    $size = @filesize($file);
+    if (is_int($size)) {
+      $out['sourceBytes'] += $size;
+    }
+  }
+  $out['peakBytes'] = memory_get_peak_usage(true);
+  try {
+    $db = \Drupal::database();
+    if (method_exists($db, 'replayedStatementCount')) {
+      $out['statements'] = $db->statementCount();
+      $out['transactions'] = $db->transactionCount();
+      $out['speculative'] = $db->speculativeCount();
+      $out['replayed'] = $db->replayedStatementCount();
+    }
+  } catch (\Throwable $e) {
+    // a connection that cannot be read leaves the file counters, which need no database
+  }
+  return $out;
+};
+$before = $meter();
 
 // THE ATTEMPT. Wrapped tightly and reporting class + file:line, because the interesting outcome is
 // the failure: this call has never been made in this runtime and a bare message would not say which
@@ -146,6 +193,16 @@ try {
   $out['throwAt'] = $e->getFile() . ':' . $e->getLine();
   $out['ok'] = false;
 }
+
+$after = $meter();
+foreach ($after as $key => $value) {
+  $out['driver'][$key] = $value - ($before[$key] ?? 0);
+}
+// absolutes as well as the delta: the delta says what the install added, these say what it was
+// added to, and the compile cost is a property of the total rather than of the increment
+$out['driver']['filesTotal'] = $after['files'];
+$out['driver']['sourceBytesTotal'] = $after['sourceBytes'];
+$out['driver']['peakBytesTotal'] = $after['peakBytes'];
 
 // how many times the router was DUMPED and how many of those were skipped, read out of the dumper
 // rather than divided out of a row count. A statement total cannot tell a repeat from a wide write

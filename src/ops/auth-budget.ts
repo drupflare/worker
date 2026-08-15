@@ -1,4 +1,4 @@
-import { isPaid, type PlanEnv } from './plan.js';
+import { isPaid, type PlanEnv } from './plan';
 
 /**
  * A bounded daily allowance for AUTHENTICATED traffic, and a degrade ladder for past it.
@@ -22,14 +22,14 @@ import { isPaid, type PlanEnv } from './plan.js';
  * The anonymous side still clears the 1,000 regenerations/day a 3M-visit month needs at 1% dynamic,
  * with 5.68x headroom, which is the property that makes the reservation safe to take.
  *
- * PAID HAS NO RESERVATION. The meters it is protecting do not bind there, and a limit that exists
+ * Paid has no reservation. The meters it is protecting do not bind there, and a limit that exists
  * only to be never reached is a limit a reader has to explain later.
  */
 
 /**
  * The two figures from `scripts/measure/free-envelope.ts` this module needs.
  *
- * COPIED RATHER THAN IMPORTED, and the reason is the bundle: `free-envelope.ts` carries an
+ * Copied rather than imported, because of the bundle: `free-envelope.ts` carries an
  * `import.meta.main` CLI block that reads `process.argv`, so importing it here would drag a script
  * into the Worker. Copying a measured number is the drift hazard this project has been bitten by
  * twice, so it is pinned instead: `tests/unit/auth-budget.spec.ts` asserts both against the script's
@@ -48,7 +48,7 @@ export const DAILY_DO_QUOTA = 100_000;
  *
  * `SESS` over HTTP and `SSESS` over HTTPS, then **exactly 32 lowercase hex characters**.
  *
- * READ OFF THE SOURCE, and the first version of this was written from memory and was wrong in a way
+ * Read off the source; the first version of this was written from memory and was wrong in a way
  * that mattered. `SessionConfiguration::getName()` is
  * `($request->isSecure() ? 'SSESS' : 'SESS') . $this->getUnprefixedName($request)`
  * (`drupal-src/core/lib/Drupal/Core/Session/SessionConfiguration.php:79`), and
@@ -96,7 +96,7 @@ export function hasSessionCookie(cookieHeader: string | null | undefined): boole
 /**
  * Whether a request is authenticated, decided from the request alone.
  *
- * MUST BE DECIDED BEFORE ANY DO HOP. The reservation exists to stop authenticated traffic reaching
+ * Must be decided before any DO hop. The reservation exists to stop authenticated traffic reaching
  * the object once the allowance is gone; a check made inside the object has already spent the DO
  * request it was meant to protect.
  *
@@ -337,7 +337,7 @@ export function authSpendHeaders(
 /**
  * Reads a spend record back off a response, or null when the object did not report one.
  *
- * Null rather than a zeroed record on purpose: "the object did not say" and "the object said zero"
+ * Null rather than a zeroed record: "the object did not say" and "the object said zero"
  * lead to different decisions, and collapsing them is how a missing header reads as a fresh budget.
  */
 export function parseAuthSpend(headers: { get(name: string): string | null }): AuthSpend | null {

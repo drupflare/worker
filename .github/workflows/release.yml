@@ -1,0 +1,199 @@
+name: Release Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        type: string
+        description: 'Changelog to replace the auto-generated one'
+      suffix:
+        type: string
+        description: 'Suffix to append to the version'
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  STREAM_HTTP_SRC: .siblings/stream-http/src
+
+jobs:
+  gate:
+    name: Gate Suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Check Prettier Formatting
+        run: bun run prettier:check
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+      - name: Run Vitest Suites
+        run: bun run test
+
+  payload:
+    name: Verify the Release Payload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: gate
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Read the Version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
+            echo "package.json has no version field; the tag would be 'vundefined'." >&2
+            exit 1
+          fi
+          {
+            echo "VERSION=$VERSION"
+            echo "TAG=v${VERSION}${{ github.event.inputs.suffix }}"
+            echo "PAYLOAD=drupflare-worker-${VERSION}.tar.gz"
+          } >> "$GITHUB_ENV"
+      - name: Find the Payload on the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" --json assets --jq '.assets[].name' > /tmp/assets.txt; then
+            {
+              echo "::error::no release or draft at $TAG."
+              echo "The payload carries bytes no runner can rebuild: the interpreter frame, its"
+              echo "glue, the zstd decoder and the packs derived from assets/drupal/site.sqlite."
+              echo "Build it on the machine that has them, then attach it:"
+              echo "  bun run release:payload"
+              echo "  gh release create $TAG --draft --title \"drupflare/worker $TAG\" --notes pending"
+              echo "  gh release upload $TAG dist/$PAYLOAD dist/SHA256SUMS --clobber"
+            } >&2
+            exit 1
+          fi
+          cat /tmp/assets.txt
+          if ! grep -qx "$PAYLOAD" /tmp/assets.txt; then
+            echo "::error::$TAG carries no $PAYLOAD; run bun run release:payload and upload it." >&2
+            exit 1
+          fi
+          if ! grep -qx 'SHA256SUMS' /tmp/assets.txt; then
+            echo "::error::$TAG carries no SHA256SUMS, so the payload cannot be verified." >&2
+            exit 1
+          fi
+      - name: Download and Check the Payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --pattern "$PAYLOAD" --pattern SHA256SUMS --dir dist --clobber
+          cd dist && sha256sum -c SHA256SUMS
+      - name: Hydrate the Checkout
+        run: bun scripts/hydrate.ts --from="dist/$PAYLOAD"
+      - name: Run the Suites Against the Hydrated Tree
+        env:
+          REQUIRE_ARTIFACTS: '1'
+        run: bun run test
+      - name: Price the Bundle Against the Free Ceiling
+        run: bun run release:check | tee /tmp/bundle.txt
+      - name: Payload to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Release payload"
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- Asset: \`$PAYLOAD\`"
+            echo "- Files: $(node -p "require('./dist/manifest.json').totals.files" 2>/dev/null || echo 'n/a')"
+            echo "- Bundle: $(cat /tmp/bundle.txt 2>/dev/null || echo 'not measured')"
+            echo "- Suites: run with REQUIRE_ARTIFACTS=1, so the pack-dependent specs asserted"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Publish the Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: payload
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Extract Version from package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Extracted Version: $VERSION"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
+            echo "package.json has no version field; the tag would be 'vundefined'." >&2
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Retrieve Latest Tag
+        id: latest_tag
+        run: echo "LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo '')" >> "$GITHUB_ENV"
+      - name: Generate Changelog
+        if: ${{ github.event.inputs.changelog == '' }}
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        with:
+          configuration: '.github/release.json'
+          mode: 'HYBRID'
+          fromTag: '${{ env.LATEST_TAG }}'
+          toTag: '${{ github.ref_name }}'
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ env.VERSION }}${{ github.event.inputs.suffix }}
+          name: drupflare/worker v${{ env.VERSION }}${{ github.event.inputs.suffix }}
+          body: |
+            Commit: ${{ github.sha }}
+
+            Deploying this release needs no build toolchain:
+
+            ```sh
+            git clone https://github.com/drupflare/worker.git && cd worker
+            bun install
+            bun run hydrate
+            bunx wrangler deploy -c wrangler.jsonc
+            ```
+
+            ${{ steps.changelog.outputs.changelog || github.event.inputs.changelog }}
+          draft: false
+          prerelease: ${{ github.ref_name != 'master' }}

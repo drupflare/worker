@@ -1,0 +1,50 @@
+name: Verify CDN Backup
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - cdn-manifest.json
+      - scripts/backup-cdn.ts
+      - .github/workflows/backup.yml
+  schedule:
+    - cron: '20 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  verify:
+    name: HEAD Every Backed-Up Key
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Verify the Backup
+        run: bun run backup:verify | tee /tmp/backup.txt
+      - name: Backup to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## CDN backup"
+            echo
+            echo "Checked with a public HEAD per key, so this job holds no credential."
+            echo "The upload half cannot run here: no runner has \`vendor/\` or"
+            echo "\`assets/drupal/site.sqlite\`, so \`bun run backup:cdn\` is pushed from the"
+            echo "machine that does."
+            echo
+            echo '```txt'
+            tail -20 /tmp/backup.txt || echo 'no output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

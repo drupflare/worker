@@ -5,7 +5,9 @@ import {
 	DO_SQLITE_MAX_RECORD_BYTES,
 	GLOBAL_HANDLE_NAME,
 	HeapChunkDigestError,
+	chunkHeap,
 	digestBytes,
+	elideZeroPages,
 	ensureHeapTables,
 	gcHeapSnapshots,
 	latestSnapshotMeta,
@@ -104,6 +106,40 @@ describe('a heap survives a round trip through SQLite', () => {
 		expect(back).not.toBeNull();
 		expect([...back!.heap]).toEqual([...heap]);
 		expect(digestBytes(back!.heap)).toBe(w.digest);
+	});
+
+	it('writes byte-for-byte what elide-then-chunk would, without ever holding the image', () => {
+		const heap = sparseHeap([9, null, 4, 4, null, 1, null, 8], 96);
+		const chunkBytes = 70;
+		const pageBytes = 96;
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: STREAMS,
+			generation: 'gen-stream',
+			nowMs: 5_000,
+			chunkBytes,
+			pageBytes
+		});
+
+		const expected = chunkHeap(elideZeroPages(heap, pageBytes).bytes, chunkBytes);
+		const stored = db
+			.prepare('SELECT seq, bytes FROM cfw_heap_chunk ORDER BY seq')
+			.all()
+			.map((r) => ({
+				seq: (r as { seq: number }).seq,
+				bytes: (r as { bytes: Uint8Array }).bytes
+			}));
+
+		expect(stored.length).toBe(expected.length);
+		for (let i = 0; i < expected.length; i++) {
+			expect(stored[i]!.seq).toBe(expected[i]!.seq);
+			expect([...stored[i]!.bytes]).toEqual([...expected[i]!.bytes]);
+		}
+		// and the last chunk is SHORT rather than padded out of the staging buffer, which is the
+		// one way a streaming writer silently corrupts the tail
+		const last = stored[stored.length - 1]!.bytes;
+		expect(last.length).toBeLessThanOrEqual(chunkBytes);
+		expect([...readHeapSnapshot(sql)!.heap]).toEqual([...heap]);
 	});
 
 	it('carries the fd table back with the bytes', () => {

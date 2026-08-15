@@ -4,7 +4,7 @@ export type PlanEnv = { PLAN?: string | null };
 /**
  * `true` when the site is on the paid plan.
  *
- * Free is the DEFAULT for an absent or unrecognised value, deliberately: every limit in this project
+ * Free is the DEFAULT for an absent or unrecognised value: every limit in this project
  * is a free-plan limit, and a typo in `PLAN` must not silently grant a 30 s CPU budget to something
  * that has 10 ms.
  */

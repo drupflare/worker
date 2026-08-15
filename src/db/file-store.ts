@@ -27,9 +27,9 @@ export type FileSql = {
 /**
  * One typed read.
  *
- * The cast is here and nowhere else. `FileSql` is deliberately non-generic so that the gate lane's
+ * The cast is here and nowhere else. `FileSql` is non-generic so that the gate lane's
  * narrowed handle satisfies it, which means the column shapes have to be asserted somewhere; doing
- * it in one place keeps every call site honest about the fact that SQLite, not TypeScript, decides
+ * it in one place keeps every call site clear that SQLite, not TypeScript, decides
  * what comes back.
  */
 function rows<T>(sql: FileSql, text: string, ...bindings: unknown[]): T[] {
@@ -144,7 +144,7 @@ export function normaliseUri(uri: string): string | null {
  *
  * So this is the file-side of the same rule `src/site.ts` enforces for renders: **anything whose
  * correctness depends on knowing who is asking must not be answered by a layer that does not
- * know.** It is a list rather than a `!== 'private'` test on purpose -- a scheme added later
+ * know.** It is a list rather than a `!== 'private'` test -- a scheme added later
  * (`temporary://`, a contrib scheme) is refused until someone decides it is publishable, which is
  * the direction a mistake should fail in.
  */
@@ -154,7 +154,7 @@ export const MIRRORABLE_SCHEMES: readonly string[] = ['public'];
  * Whether a URI may be mirrored off the object at all.
  *
  * Enforced at BOTH ends -- `queueMirror()` keeps the queue clean and `drainMirrors()` refuses again
- * before touching the bucket -- and the redundancy is the point. A queue row can outlive the rule
+ * before touching the bucket, and the redundancy is what matters. A queue row can outlive the rule
  * that admitted it: a file mirrored while public, then replaced by a private one at the same URI,
  * leaves a stale `put` behind. Checking only at enqueue would publish it.
  */
@@ -455,7 +455,7 @@ export const MIRROR_STRIKES = 3;
 /**
  * Records a mirror outcome.
  *
- * A failure that has struck out DROPS the queue row instead of holding it, and that is deliberate:
+ * A failure that has struck out DROPS the queue row instead of holding it:
  * the file is already durable in the Durable Object and serves from there, so an unmirrored file is
  * a lost optimisation rather than a lost file. Retrying forever would spend the rows-written meter
  * -- the one that binds regeneration -- on a bucket that is not coming back.
@@ -542,16 +542,16 @@ export function mirrorKey(uri: string): string | null {
 /**
  * Pushes queued files to R2 and removes the ones that left.
  *
- * WHAT THIS IS FOR. Serving a page from R2 on a custom domain costs **zero Worker requests**,
+ * Serving a page from R2 on a custom domain costs **zero Worker requests**,
  * which is the only lever on the serving ceiling -- every other optimisation moves CPU or rows
  * while the ceiling stays at 3M visits/month. The queue existed and drained nowhere, so the
  * ceiling stayed saturated.
  *
- * THE REFUSAL IS RE-CHECKED HERE, having already been checked at enqueue. That is not belt and
- * braces, it is the boundary rule: `isMirrorable()` at enqueue guards the queue, and a queue row
+ * The refusal is re-checked here, having already been checked at enqueue, because of the boundary
+ * rule: `isMirrorable()` at enqueue guards the queue, and a queue row
  * can outlive the state that admitted it. Only the check adjacent to the `put` guards the bucket.
  *
- * Sequential rather than concurrent on purpose. A pass runs inside one invocation against a 10 ms
+ * Sequential rather than concurrent. A pass runs inside one invocation against a 10 ms
  * CPU budget, and `limit` is what bounds it; firing N puts at once would make the slowest one
  * decide the invocation and remove the only control there is over that.
  */

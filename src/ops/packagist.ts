@@ -29,9 +29,10 @@ import { satisfies, type Satisfaction } from './composer-constraint';
  * Drupal ecosystem. Drupal contrib is NOT on Packagist -- it is published to drupal.org's own
  * Composer repository, which core's own `composer.json` adds as a second repository. Measured:
  *
- *   repo.packagist.org/p2/drupal/pathauto.json .... 404
- *   packages.drupal.org/8/p2/drupal/pathauto.json .. 302 (the metadata)
- *   repo.packagist.org/p2/symfony/yaml.json ....... 200
+ *   repo.packagist.org/p2/drupal/pathauto.json ................ 404
+ *   packages.drupal.org/8/p2/drupal/pathauto.json ............. 302 -> www.drupal.org, then 404
+ *   packages.drupal.org/files/packages/8/p2/drupal/pathauto.json  200 (the metadata)
+ *   repo.packagist.org/p2/symfony/yaml.json ................... 200
  *
  * So every `/installable?module=drupal/*` returned `not-found` with the plumbing working perfectly.
  * Three roadmap items are priced against this check, which means they were priced against a
@@ -41,10 +42,12 @@ import { satisfies, type Satisfaction } from './composer-constraint';
  * to Packagist, but drupal.org serves them too, so routing the whole `drupal/` vendor there is both
  * correct and simpler than special-casing.
  */
+export const DRUPAL_METADATA_URL = 'https://packages.drupal.org/files/packages/8/p2/%package%.json';
+
 export function packagistUrl(name: string): string {
 	const vendor = String(name ?? '').split('/')[0];
 	return vendor === 'drupal'
-		? `https://packages.drupal.org/8/p2/${name}.json`
+		? DRUPAL_METADATA_URL.replace('%package%', name)
 		: `https://repo.packagist.org/p2/${name}.json`;
 }
 
@@ -83,17 +86,31 @@ export function lockVersions(lock: unknown): Record<string, string> {
  */
 export type PlatformVersions = Record<string, string>;
 
+/**
+ * The interpreter version this map reports.
+ *
+ * STALE AT 8.3.0 UNTIL NOW, and the failure was silent in the same direction as the metadata URL
+ * above: the shipping binary is 8.5 -- `wrangler.jsonc` aliases `php-binary-85.ts` and a deployed
+ * site reports `8.5.2` from `/php` -- so anything requiring `>=8.4` was refused as unsatisfiable by
+ * a platform that satisfies it. A refusal reads as a considered answer, which is why nothing looked
+ * broken.
+ *
+ * The extension entries carry the same version because a bundled extension is part of the
+ * interpreter; a constraint on `ext-dom` is really a constraint on the build that provides it.
+ */
+export const PLATFORM_PHP_VERSION = '8.5.2';
+
 export const DEFAULT_PLATFORM: PlatformVersions = {
-	php: '8.3.0',
-	'ext-json': '8.3.0',
-	'ext-mbstring': '8.3.0',
-	'ext-pcre': '8.3.0',
-	'ext-spl': '8.3.0',
-	'ext-tokenizer': '8.3.0',
-	'ext-xml': '8.3.0',
-	'ext-dom': '8.3.0',
-	'ext-simplexml': '8.3.0',
-	'ext-zlib': '8.3.0'
+	php: PLATFORM_PHP_VERSION,
+	'ext-json': PLATFORM_PHP_VERSION,
+	'ext-mbstring': PLATFORM_PHP_VERSION,
+	'ext-pcre': PLATFORM_PHP_VERSION,
+	'ext-spl': PLATFORM_PHP_VERSION,
+	'ext-tokenizer': PLATFORM_PHP_VERSION,
+	'ext-xml': PLATFORM_PHP_VERSION,
+	'ext-dom': PLATFORM_PHP_VERSION,
+	'ext-simplexml': PLATFORM_PHP_VERSION,
+	'ext-zlib': PLATFORM_PHP_VERSION
 };
 
 export type Conflict = {

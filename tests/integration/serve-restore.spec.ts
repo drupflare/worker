@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { dumpDatabase } from '../../src/db/export-sql';
+import {
+	RESTORE_OWNED_TABLES,
+	RUNTIME_OWNED_PREFIXES,
+	dumpDatabase,
+	isRegenerable,
+	tableColumns
+} from '../../src/db/export-sql';
 import { getFile, putFile } from '../../src/db/file-store';
 import { storeImport, storedImportLoader } from '../../src/db/import-sql';
 import type { SqlLike, StorageLike } from '../../src/db/migrate-sql';
@@ -60,6 +66,117 @@ function restore(site: ServeDo, dump: string, generation = 'backup-1') {
 		now: () => Date.now(),
 		...storedImportLoader(sql, id)
 	});
+}
+
+/** drives `/export?cursor=` to exhaustion the way a client does, and returns what it collected */
+async function drain(site: ServeDo, query = ''): Promise<{ sql: string; calls: number }> {
+	let cursor = 'start';
+	const parts: string[] = [];
+	let calls = 0;
+	for (;;) {
+		const reply = (await site
+			.fetch(
+				new Request(
+					`https://do.local/__export?body=1&cursor=${encodeURIComponent(cursor)}${query}`
+				)
+			)
+			.then((r) => r.json())) as {
+			ok: boolean;
+			sql: string;
+			nextCursor: string | null;
+		};
+		calls++;
+		expect(reply.ok, 'a chunk refused mid-export').toBe(true);
+		if (reply.sql) parts.push(reply.sql);
+		if (reply.nextCursor === null) break;
+		cursor = reply.nextCursor;
+		// the loop is the thing under test, so a runaway is a failure and not a hang
+		expect(calls).toBeLessThan(500);
+	}
+	return { sql: parts.join('\n'), calls };
+}
+
+/** replays a dump into a fresh object and hands back that object's own reading of itself */
+async function replayInto<T>(dump: string, read: (sql: SqlLike) => T): Promise<T> {
+	return inObject(freshSite(), async (site) => {
+		const { sql, storage } = seams(site);
+		const id = storeImport(sql, dump, {
+			storage,
+			generation: 'round-trip',
+			source: 'test',
+			nowMs: 1
+		}).id;
+		await new SqlMigrator({
+			sql,
+			storage,
+			now: () => Date.now(),
+			...storedImportLoader(sql, id)
+		}).step({ maxChunks: Infinity });
+		return read(sql);
+	});
+}
+
+function fnv1a(text: string): number {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) {
+		h ^= text.charCodeAt(i);
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return h;
+}
+
+const q = (name: string) => `"${name.replace(/"/g, '""')}"`;
+
+/** the tables a comparison may look at: the site's own, never the runtime's or the restore's */
+function comparableTables(sql: SqlLike): string[] {
+	return sql
+		.exec("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+		.toArray()
+		.map((r) => String(r.name))
+		.filter((n) => !RUNTIME_OWNED_PREFIXES.some((p) => n.startsWith(p)))
+		.filter((n) => !RESTORE_OWNED_TABLES.includes(n));
+}
+
+/**
+ * Every table's contents, read WITHOUT the exporter.
+ *
+ * The chunked export is already compared against the one-shot dump, and both are `dumpChunk` -- so a
+ * row dropped at a chunk boundary is dropped identically by both and the equality still holds. This
+ * reads the database directly instead, so the two sides of the comparison share no code with the
+ * thing under test.
+ *
+ * `typeof()` and `hex()` for the same reason the exporter uses them: a Durable Object integer read is
+ * lossy above 2^53, so a comparison that read the column would agree about a value neither side
+ * holds. The per-row digests are SORTED, so this measures contents rather than rowid assignment.
+ */
+function fingerprint(sql: SqlLike): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const table of comparableTables(sql)) {
+		const columns = tableColumns(sql, table);
+		if (columns.length === 0) {
+			out[table] = '0:none';
+			continue;
+		}
+		const select = columns
+			.map((c, i) => `typeof(${q(c)}) AS t${i}, hex(${q(c)}) AS h${i}`)
+			.join(', ');
+		const rows = sql.exec(`SELECT ${select} FROM ${q(table)}`).toArray();
+		const digests = rows
+			.map((r) => fnv1a(columns.map((_, i) => `${r[`t${i}`]}:${r[`h${i}`]}`).join('')))
+			.sort((a, b) => a - b);
+		out[table] = `${rows.length}:${fnv1a(digests.join(','))}`;
+	}
+	return out;
+}
+
+/** the schema as the engine stores it, so an index or a view that went missing is visible */
+function schemaOf(sql: SqlLike): string[] {
+	return sql
+		.exec('SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name')
+		.toArray()
+		.filter((r) => !RUNTIME_OWNED_PREFIXES.some((p) => String(r.name).startsWith(p)))
+		.filter((r) => !RESTORE_OWNED_TABLES.includes(String(r.name)))
+		.map((r) => `${r.type} ${r.name} ${String(r.sql).replace(/\s+/g, ' ').trim()}`);
 }
 
 describe('a site being restored refuses to serve until the restore lands', () => {
@@ -474,34 +591,6 @@ describe('the runtime keeps its own tables in the same database', () => {
 });
 
 describe('a dump too big for one invocation, which is any site worth backing up', () => {
-	/** drives `/export?cursor=` to exhaustion the way a client does, and returns what it collected */
-	async function drain(site: ServeDo, query = ''): Promise<{ sql: string; calls: number }> {
-		let cursor = 'start';
-		const parts: string[] = [];
-		let calls = 0;
-		for (;;) {
-			const reply = (await site
-				.fetch(
-					new Request(
-						`https://do.local/__export?body=1&cursor=${encodeURIComponent(cursor)}${query}`
-					)
-				)
-				.then((r) => r.json())) as {
-				ok: boolean;
-				sql: string;
-				nextCursor: string | null;
-			};
-			calls++;
-			expect(reply.ok, 'a chunk refused mid-export').toBe(true);
-			if (reply.sql) parts.push(reply.sql);
-			if (reply.nextCursor === null) break;
-			cursor = reply.nextCursor;
-			// the loop is the thing under test, so a runaway is a failure and not a hang
-			expect(calls).toBeLessThan(500);
-		}
-		return { sql: parts.join('\n'), calls };
-	}
-
 	it('REASSEMBLES to exactly what the one-shot dump produces', async () => {
 		// the one-shot and the chunked path are the same code -- `dumpDatabase` drives `dumpChunk`
 		// to exhaustion -- and this is what pins that. Two implementations agreeing today is how the
@@ -566,5 +655,128 @@ describe('a dump too big for one invocation, which is any site worth backing up'
 		});
 
 		expect(status).toBe(409);
+	});
+});
+
+/**
+ * Does the round trip actually reproduce the database?
+ *
+ * Everything above proves a PROPERTY of the dump -- that it is replayable, that a split blob comes
+ * back, that the chunked path reassembles to the one-shot text. None of it compares the restored
+ * database to the one that was exported, and the one comparison that came close (`router` has more
+ * than zero rows) passes on a restore that dropped every other table.
+ *
+ * The instrument is deliberately NOT the exporter. `dumpDatabase()` drives `dumpChunk()`, so the
+ * chunked/one-shot equality above cannot see a row dropped at a chunk boundary: both halves drop it.
+ */
+describe('the round trip reproduces the database, measured without the exporter', () => {
+	it('carries every non-regenerable table row for row into a fresh object', async () => {
+		const { dump, before } = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			const sql = seams(site).sql;
+			return {
+				dump: dumpDatabase(sql).sql,
+				before: { rows: fingerprint(sql), schema: schemaOf(sql) }
+			};
+		});
+
+		const after = await replayInto(dump, (sql) => ({
+			rows: fingerprint(sql),
+			schema: schemaOf(sql)
+		}));
+
+		// the shipped pack, so this is a real Drupal schema rather than a fixture
+		expect(Object.keys(before.rows).length).toBeGreaterThan(50);
+		expect(after.schema).toEqual(before.schema);
+
+		const regenerable = Object.keys(before.rows).filter(isRegenerable);
+		const carried = Object.keys(before.rows).filter((t) => !isRegenerable(t));
+		// the comparison is only worth anything if rows were actually carried
+		expect(carried.some((t) => !before.rows[t]!.startsWith('0:'))).toBe(true);
+		for (const table of carried) {
+			expect(after.rows[table], `${table} did not survive the round trip`).toBe(
+				before.rows[table]
+			);
+		}
+		// structure-only: present, and empty, rather than absent
+		for (const table of regenerable) {
+			expect(after.rows[table], `${table} should be present and empty`).toMatch(/^0:/);
+		}
+		// nothing invented on the way in either
+		expect(Object.keys(after.rows).sort()).toEqual(Object.keys(before.rows).sort());
+	});
+
+	it('drops no row at a chunk boundary, which the one-shot comparison cannot show', async () => {
+		// a boundary falls between rows and the cursor is a keyset, so a resume that mis-positions by
+		// one silently loses a row per chunk. Measured against the LIVE database rather than against
+		// the other dump, because both dumps come from `dumpChunk`
+		const { dump, before, calls } = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, MIGRATE_SELF_DRIVE: '0' };
+			await migrate(site, '?all=1&prefill=0');
+			const drained = await drain(site, '&chunkChars=20000');
+			return {
+				dump: drained.sql,
+				calls: drained.calls,
+				before: fingerprint(seams(site).sql)
+			};
+		});
+
+		// a single-chunk export would make the boundary claim vacuous
+		expect(calls, 'the export was not actually chunked').toBeGreaterThan(3);
+		const after = await replayInto(dump, fingerprint);
+		for (const table of Object.keys(before).filter((t) => !isRegenerable(t))) {
+			expect(after[table], `${table} lost rows across ${calls} chunks`).toBe(before[table]);
+		}
+	});
+
+	it('keeps a wide integer, a NUL and a blob through a read the platform makes LOSSY', async () => {
+		// the claim in `export-sql.ts` is that no value crosses a double, so this asserts the premise
+		// as well as the conclusion: the same column read directly comes back WRONG on this platform
+		const probe = `INSERT INTO round_trip_probe (id, big, txt, blob, amount, empty, missing) VALUES
+			(1, 9007199254740993, CAST(x'41000A42' AS TEXT), x'410A0042FF', 2.0, '', NULL)`;
+		const { dump, before, direct } = await inObject(freshSite(), async (site) => {
+			const sql = seams(site).sql;
+			sql.exec(
+				`CREATE TABLE round_trip_probe (id INTEGER PRIMARY KEY, big INTEGER, txt TEXT,
+				 blob BLOB, amount REAL, empty TEXT, missing TEXT)`
+			);
+			sql.exec(probe);
+			return {
+				dump: dumpDatabase(sql).sql,
+				before: fingerprint(sql).round_trip_probe,
+				direct: String(sql.exec('SELECT big FROM round_trip_probe').toArray()[0]?.big)
+			};
+		});
+
+		// the premise: a direct read of this value is off by one on the platform, so a dump built
+		// from column reads would carry a number the site never held
+		expect(direct).toBe('9007199254740992');
+		// and the dump carries the digits bare rather than through that read
+		expect(dump).toContain('9007199254740993');
+
+		const after = await replayInto(dump, (sql) => ({
+			print: fingerprint(sql).round_trip_probe,
+			row: sql
+				.exec(
+					`SELECT typeof(big) AS tb, hex(big) AS hb, typeof(txt) AS tt, hex(txt) AS ht,
+					 typeof(blob) AS tbl, hex(blob) AS hbl, typeof(amount) AS ta,
+					 typeof(empty) AS te, typeof(missing) AS tm FROM round_trip_probe`
+				)
+				.toArray()[0] as Record<string, string>
+		}));
+
+		expect(after.print).toBe(before);
+		// named individually as well, because a matching digest of two wrong values is a pass
+		expect(after.row.tb).toBe('integer');
+		expect(after.row.hb).toBe(Buffer.from('9007199254740993').toString('hex').toUpperCase());
+		expect(after.row.tt).toBe('text');
+		expect(after.row.ht).toBe('41000A42');
+		expect(after.row.tbl).toBe('blob');
+		expect(after.row.hbl).toBe('410A0042FF');
+		// `2.0` emitted as `2` comes back an INTEGER, and an empty string is not a NULL
+		expect(after.row.ta).toBe('real');
+		expect(after.row.te).toBe('text');
+		expect(after.row.tm).toBe('null');
 	});
 });

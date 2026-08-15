@@ -166,6 +166,48 @@ identical `cachetags` - a `checksum` that disagrees with the destination's tags 
 present but rejected, so the cost it was meant to remove is still paid and nothing looks wrong. See
 the provenance section in `TECHNICAL_REPORT.md`.
 
+## The gate and production reach the SAME interpreter by two different routes
+
+`wrangler.jsonc` aliases `./runtime/php-binary.js` to the zstd 8.5 seam. **Vite does not apply that
+alias**, so for the whole life of the project the test lane resolved the DEFAULT seam and ran PHP
+**8.3** from `vendor/static-free-v1`, an experiment arm, while production ran 8.5. Every dev machine
+has `vendor/`, so it was invisible until a clean checkout had neither.
+
+**The zstd seam cannot be used by the gate, and this is a platform limit rather than a preference.**
+`php-binary-85.ts` inflates and calls `new WebAssembly.Module` at module scope, which is correct in
+production because workerd permits codegen at worker STARTUP -- but a vitest spec is evaluated inside
+a fetch handler, so module scope there is REQUEST time and workerd answers `inflate.codegen-disallowed`.
+Measured by pointing the seam at it: every workers spec fails to load.
+
+So `vitest.config.ts` aliases the seam's two imports to the **raw** `.interp/php8.5.wasm` +
+`php8.5-worker.mjs`. A `.wasm` import arrives pre-compiled through the `CompiledWasm` rule and needs
+no runtime codegen. It costs 12,218,393 bytes, which is why it is a TEST path and never a shipping
+one. The gate now executes the interpreter that actually ships.
+
+**What that immediately caught**, both invisible while the gate ran 8.3: a hardcoded `< 80 MB` heap
+assertion that 8.5 fails at 96 MB (now compared against a fresh run of the same build), and
+`HEAP_CEILING` at 100 MB when an install on 8.5 peaks at **115 MB** -- which agrees with the
+~110.6 MB measured on a deployed worker. The 8.5 opcache startup abort shipped undetected for
+exactly this reason and had to be caught on a throwaway deploy.
+
+## An artifact a clean checkout cannot build is a lane boundary, not a failure
+
+`bun install` runs `scripts/restore-artifacts.ts`, which pulls the interpreter from the public CDN,
+**verifies sha256 against `cdn-manifest.json`**, and skips anything already current. No credential --
+the bucket is fronted by a custom domain, the same property that lets `backup:verify` run from CI.
+It never fails the install; offline you get a stub and a printed list of what was skipped.
+`DRUPFLARE_SKIP_RESTORE=1` opts out.
+
+**The pack cannot be restored that way.** `assets/drupal-pf` and `assets/drupal-sql` need a native
+PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere, so they
+arrive only in a published release payload via `bun run hydrate`. Until one exists,
+`ARTIFACT_SPECS` in `vitest.config.ts` -- **15 files, measured from CI twice, never guessed** -- is
+excluded and the lane prints what it dropped. 51 files / 1,521 tests still run.
+
+Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter against the tree that
+ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.
+An explicitly named `payload_tag` that does not exist is still a hard error.
+
 ## A passing test does not mean anything calls it
 
 `src/ops/supervisor.ts` -- 11 tripwires, the health ledger, the circuit breaker,

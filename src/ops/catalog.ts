@@ -1,4 +1,4 @@
-import { satisfies } from './composer-constraint.js';
+import { satisfies } from './composer-constraint';
 
 /** one catalog entry: a pre-packed module and what it needs */
 export type CatalogEntry = {
@@ -9,10 +9,62 @@ export type CatalogEntry = {
 	r2: string;
 	/** the Drupal core constraint this pack was built against */
 	core: string;
+	/** the PHP constraint this pack declares, when it declares one */
+	php?: string;
+	/**
+	 * Runtime capabilities this module needs at REQUEST time.
+	 *
+	 * A DIFFERENT CLASS FROM `core` AND `php`, which are version constraints answerable by comparing
+	 * two strings. These are capability constraints, and they are what the oracle could not see: a
+	 * module can satisfy every version constraint, install cleanly, and then fail the first time a
+	 * visitor uses it because the runtime cannot do the thing it assumes.
+	 *
+	 * `cron` is softer still: cron runs from the Durable Object alarm with
+	 * `automated_cron.interval = 0`, so a cron-driven module is UNWIRED rather than impossible.
+	 */
+	needs?: readonly ModuleCapability[];
 	/** other catalog modules this one needs, by composer name */
 	requires?: string[];
 	/** uncompressed bytes, so a caller can refuse before reading */
 	bytes?: number;
+};
+
+/**
+ * A runtime capability a module may require, ordered by how hard it is to satisfy.
+ *
+ * `deferrable-outbound` is deliberately NOT a refusal. Treating every outbound need as a wall
+ * classified reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the
+ * queue already solves; only a call whose answer must arrive inside the same render is truly
+ * blocked.
+ */
+import { allKnownCapabilities } from './module-tiers';
+
+export type ModuleCapability = 'deferrable-outbound' | 'blocking-outbound' | 'cron';
+
+/**
+ * What this runtime can do, so the planner refuses on capability as well as on version.
+ *
+ * `outbound` is false on the shipping binary and stays false until a build can suspend; `cron`
+ * is true because the alarm exists, but a module needing it still has to be driven from there.
+ */
+export type RuntimeCapabilities = {
+	/** the queue/drain/cache tier exists, so an outbound call split across invocations works */
+	deferredOutbound: boolean;
+	/** an outbound call that must answer inside one `php._run()`; needs a suspending build */
+	blockingOutbound: boolean;
+	cron: boolean;
+};
+
+/**
+ * The shipping runtime.
+ *
+ * `deferredOutbound` is TRUE and always has been -- the queue, the alarm drain and the response
+ * cache all exist and ship. What is false is `blockingOutbound`, which needs JSPI or Asyncify.
+ */
+export const SHIPPED_CAPABILITIES: RuntimeCapabilities = {
+	deferredOutbound: true,
+	blockingOutbound: false,
+	cron: true
 };
 
 export type Catalog = {
@@ -57,6 +109,16 @@ export function parseCatalog(raw: unknown): Catalog {
 			version: e.version,
 			r2: e.r2,
 			core: e.core,
+			// a non-string is dropped here rather than reaching the planner, matching `bytes`
+			php: typeof e.php === 'string' ? e.php : undefined,
+			// an unrecognised capability is DROPPED rather than carried: a planner that refused on a
+			// name it does not understand would fail closed on a catalog written by a newer build
+			needs: Array.isArray(e.needs)
+				? (e.needs.filter(
+						(n: unknown) =>
+							n === 'deferrable-outbound' || n === 'blocking-outbound' || n === 'cron'
+					) as ModuleCapability[])
+				: undefined,
 			requires: Array.isArray(e.requires)
 				? e.requires.filter((r) => typeof r === 'string')
 				: [],
@@ -77,16 +139,19 @@ export function findEntry(catalog: Catalog, name: string): CatalogEntry | null {
  * node creation and a LATER layer overrides an earlier one on the same path, so the requested module has
  * to come last or a dependency could shadow it.
  *
- * Refuses rather than guesses in three cases, because each would otherwise produce a site that mounts and
+ * Refuses rather than guesses in four cases, because each would otherwise produce a site that mounts and
  * then breaks: a module absent from the catalog, a dependency absent from the catalog, and a pack built
- * against a core version this site does not run. The core check uses E3's constraint checker, so an
+ * against a core version this site does not run. The core check uses the constraint checker in
+ * `composer-constraint.ts`, so an
  * unjudgeable constraint is a refusal too -- `unknown` is not a yes.
  */
 export function planInstall(
 	catalog: Catalog,
 	name: string,
 	shippedCore: string,
-	seen: Set<string> = new Set()
+	runningPhp: string,
+	seen: Set<string> = new Set(),
+	capabilities: RuntimeCapabilities = SHIPPED_CAPABILITIES
 ): InstallPlan {
 	const problems: string[] = [];
 	const layers: LayerSpec[] = [];
@@ -121,8 +186,43 @@ export function planInstall(
 		);
 	}
 
+	// a module that caps PHP below the running interpreter would otherwise install and then fatal at
+	// the point of use. Zero of the 73 packages in the shipped lock cap PHP today, so this closes a
+	// gap rather than a live bug -- and it matters more now that the shipping interpreter is 8.5
+	if (entry.php) {
+		const phpFits = satisfies(runningPhp, entry.php);
+		if (phpFits === 'no') {
+			problems.push(
+				`${name} ${entry.version} needs php ${entry.php} but this site runs ${runningPhp}`
+			);
+		} else if (phpFits === 'unknown') {
+			problems.push(
+				`cannot decide whether php ${runningPhp} satisfies ${entry.php} for ${name}`
+			);
+		}
+	}
+
+	// the capability check, which version constraints cannot express. A refusal here names the
+	// mechanism rather than the module, because "recaptcha is unsupported" invites someone to try
+	// the next captcha module and hit the same wall
+	for (const need of entry.needs ?? []) {
+		if (need === 'deferrable-outbound' && !capabilities.deferredOutbound) {
+			problems.push(`${name} needs the deferred outbound tier, and this site has none`);
+		}
+		if (need === 'blocking-outbound' && !capabilities.blockingOutbound) {
+			problems.push(
+				`${name} needs an outbound call to answer INSIDE one render, and this runtime cannot ` +
+					`suspend mid-run to wait for a socket (the shipping binary is ASYNCIFY=0). An ` +
+					`outbound call that can be split across invocations is supported; this one cannot be`
+			);
+		}
+		if (need === 'cron' && !capabilities.cron) {
+			problems.push(`${name} needs cron, and nothing drives it on this site`);
+		}
+	}
+
 	for (const dep of entry.requires ?? []) {
-		const sub = planInstall(catalog, dep, shippedCore, seen);
+		const sub = planInstall(catalog, dep, shippedCore, runningPhp, seen, capabilities);
 		problems.push(...sub.problems);
 		for (const [i, layer] of sub.layers.entries()) {
 			if (!layers.some((l) => l.r2 === layer.r2)) {
@@ -162,4 +262,101 @@ export async function loadCatalog(
 		// an unreadable catalog is "no catalog", not an outage: the install feature is simply absent
 		return null;
 	}
+}
+
+/**
+ * What a module's capability needs mean for THIS runtime.
+ *
+ * Separate from the install verdict on purpose: `installable` answers "can composer resolve it",
+ * and that is orthogonal to "will it work here". reCAPTCHA resolves perfectly and needs a tier the
+ * shipping runtime does not offer; Honeypot resolves the same way and needs nothing.
+ */
+export type RuntimeTier = 'works-today' | 'needs-deferred-tier' | 'refused' | 'unknown';
+
+/**
+ * Capability needs for modules that have been CLASSIFIED, keyed by composer name.
+ *
+ * Data rather than inference. Nothing can read a module's tarball and work out that it POSTs to
+ * Google during form validation, so this is a hand-maintained list of what has actually been looked
+ * at -- and an absent entry means "not classified", never "safe".
+ */
+export const KNOWN_MODULE_CAPABILITIES: Readonly<Record<string, readonly ModuleCapability[]>> = {
+	// verification is a POST to Google inside form validation; it does not have to happen inside
+	// the render, so it is deferrable rather than impossible
+	'drupal/recaptcha': ['deferrable-outbound'],
+	'drupal/captcha': ['deferrable-outbound'],
+	// fetches a missing file from an upstream site: a cache fill, the easiest deferred case
+	'drupal/stage_file_proxy': ['deferrable-outbound'],
+	// a query per keystroke against a remote index cannot be split across invocations without
+	// changing what the user sees, which is what makes this the real refusal
+	'drupal/search_api_solr': ['blocking-outbound'],
+	'drupal/scheduler': ['cron'],
+	'drupal/simple_sitemap': ['cron'],
+	'drupal/xmlsitemap': ['cron'],
+	'drupal/search_api': ['cron'],
+	// classified and needing nothing, which is worth recording so it is not confused with unknown
+	'drupal/honeypot': [],
+	'drupal/token': [],
+	'drupal/pathauto': [],
+	'drupal/admin_toolbar': [],
+	'drupal/metatag': [],
+	'drupal/redirect': [],
+	'drupal/webform': [],
+	'drupal/paragraphs': [],
+	'drupal/entity_reference_revisions': [],
+	'drupal/twig_tweak': [],
+	'drupal/field_group': [],
+	'drupal/linkit': [],
+	'drupal/coffee': [],
+	'drupal/google_analytics': []
+};
+
+/**
+ * Which tier a module lands in, and why.
+ *
+ * AN UNCLASSIFIED MODULE IS `unknown`, NEVER `works-today`. Absence of knowledge is not evidence of
+ * safety, and defaulting to "works" would make the tier a decoration that always agrees with the
+ * install verdict -- which is exactly the failure the blank meters had.
+ */
+export function tierFor(
+	name: string,
+	capabilities: RuntimeCapabilities = SHIPPED_CAPABILITIES
+): { tier: RuntimeTier; reason?: string } {
+	// the working set in `module-tiers.ts` is merged in here rather than consulted separately: a
+	// module classified in one table and not the other returned `unknown`, which reads as "nobody
+	// has looked at it" when somebody had
+	const needs = allKnownCapabilities(KNOWN_MODULE_CAPABILITIES)[name];
+	if (needs === undefined) {
+		return {
+			tier: 'unknown',
+			reason: `${name} has not been classified against this runtime; it may still need outbound HTTP or cron`
+		};
+	}
+	if (needs.includes('blocking-outbound') && !capabilities.blockingOutbound) {
+		return {
+			tier: 'refused',
+			reason: `${name} needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket`
+		};
+	}
+	if (needs.includes('deferrable-outbound')) {
+		return {
+			tier: capabilities.deferredOutbound ? 'needs-deferred-tier' : 'refused',
+			reason: capabilities.deferredOutbound
+				? `${name} calls out during a request; the call is queued, performed on the alarm and read back on a later invocation`
+				: `${name} needs outbound HTTP and this site has no deferred tier`
+		};
+	}
+	if (needs.includes('cron') && !capabilities.cron) {
+		return {
+			tier: 'refused',
+			reason: `${name} needs cron, and nothing drives it on this site`
+		};
+	}
+	if (needs.includes('cron')) {
+		return {
+			tier: 'needs-deferred-tier',
+			reason: `${name} does its work on cron, which runs from the Durable Object alarm; set DRUPAL_CRON=1 or it installs and silently does nothing`
+		};
+	}
+	return { tier: 'works-today' };
 }

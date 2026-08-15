@@ -283,8 +283,19 @@ function rowReader(table: string, columns: string[], limit: number): string {
  * A `WITHOUT ROWID` table has no keyset to use, so it falls back to OFFSET and says so through
  * {@link DumpChunk.offsetPaged}. Nothing in Drupal or in this host declares one today; the fallback
  * exists so a contrib module that does cannot produce a silently wrong export.
+ *
+ * @param bounded false for the FIRST query against a table, which carries no `WHERE` at all. A
+ *   rowid is signed, so there is no number that means "before every row": starting the keyset at 0
+ *   and testing `_rowid_ > 0` dropped rowid 0 from every dump, and Drupal's `users` table stores the
+ *   anonymous user at uid 0. Measured on the shipped pack: 2 rows live, 1 row exported.
  */
-function pagedRowReader(table: string, columns: string[], keyed: boolean, batch: number): string {
+function pagedRowReader(
+	table: string,
+	columns: string[],
+	keyed: boolean,
+	batch: number,
+	bounded: boolean
+): string {
 	const select = columns
 		.map(
 			(c, i) =>
@@ -297,7 +308,7 @@ function pagedRowReader(table: string, columns: string[], keyed: boolean, batch:
 	}
 	return (
 		`SELECT _rowid_ AS __rid, ${select} FROM ${ident(table)} ` +
-		`WHERE _rowid_ > ? ORDER BY _rowid_ LIMIT ${batch}`
+		`${bounded ? 'WHERE _rowid_ > ? ' : ''}ORDER BY _rowid_ LIMIT ${batch}`
 	);
 }
 
@@ -379,7 +390,13 @@ export interface DumpCursor {
 	phase: 'ddl' | 'rows' | 'later' | 'done';
 	/** the table being emitted, by name */
 	table?: string | null;
-	/** keyset position: the last rowid emitted for {@link DumpCursor.table} */
+	/**
+	 * Keyset position: the last rowid emitted for {@link DumpCursor.table}.
+	 *
+	 * NULL means "nothing emitted from this table yet", and it is not the same as 0. A rowid is
+	 * signed, so 0 is an ordinary position a row can occupy -- Drupal's anonymous user is `users`
+	 * rowid 0 -- and using it as the start sentinel dropped that row from every dump.
+	 */
 	afterRowid?: number | null;
 	/** OFFSET position, used only for a `WITHOUT ROWID` table */
 	offset?: number | null;
@@ -563,7 +580,7 @@ function nextRowCursor(
 	for (let i = Math.max(0, from); i < tables.length; i++) {
 		const name = tables[i] as string;
 		if (includeRows(name)) {
-			return { phase: 'rows', table: name, afterRowid: 0, offset: 0, emitted: 0 };
+			return { phase: 'rows', table: name, afterRowid: null, offset: 0, emitted: 0 };
 		}
 	}
 	return { phase: 'later' };
@@ -642,7 +659,11 @@ export function dumpChunk(
 	if (cursor.phase === 'done') return finish({ phase: 'done' });
 
 	let table = cursor.table ?? null;
-	let afterRowid = Number(cursor.afterRowid ?? 0);
+	// null, not 0: 0 is a rowid a row can actually have, so it cannot double as "not started"
+	let afterRowid =
+		cursor.afterRowid === null || cursor.afterRowid === undefined
+			? null
+			: Number(cursor.afterRowid);
 	let offset = Number(cursor.offset ?? 0);
 	let emitted = Number(cursor.emitted ?? 0);
 
@@ -664,8 +685,12 @@ export function dumpChunk(
 		while (!exhausted && chars < charBudget) {
 			if (limit > 0 && emitted >= limit) break;
 			const take = limit > 0 ? Math.min(batch, limit - emitted) : batch;
+			const bounded = keyed && afterRowid !== null;
 			const rows = sql
-				.exec(pagedRowReader(table, columns, keyed, take), keyed ? afterRowid : offset)
+				.exec(
+					pagedRowReader(table, columns, keyed, take, bounded),
+					...(keyed ? (bounded ? [afterRowid as number] : []) : [offset])
+				)
 				.toArray();
 			if (rows.length === 0) {
 				exhausted = true;
@@ -711,11 +736,11 @@ export function dumpChunk(
 		const resume = nextRowCursor(plan.tables, includeRows, table);
 		if (resume.phase !== 'rows') return finish(resume);
 		table = resume.table as string;
-		afterRowid = 0;
+		afterRowid = null;
 		offset = 0;
 		emitted = 0;
 		if (chars >= charBudget) {
-			return finish({ phase: 'rows', table, afterRowid: 0, offset: 0, emitted: 0 });
+			return finish({ phase: 'rows', table, afterRowid: null, offset: 0, emitted: 0 });
 		}
 	}
 

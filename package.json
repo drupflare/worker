@@ -44,6 +44,7 @@
 		"fetch:interp85": "bun scripts/fetch-interpreter.ts control85 8.5",
 		"build:site-db": "php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/drupal/install-site-db.php drupal-src",
 		"check:await": "bun scripts/check-await-shape.ts",
+		"check:reachability": "bun scripts/qa/reachability.ts",
 		"check:site-db": "node scripts/diff-site-db.ts assets/drupal/site.sqlite",
 		"bake:pack": "bun scripts/bake-pack.ts",
 		"bake:container": "node scripts/lift-container.ts",

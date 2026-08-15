@@ -67,7 +67,7 @@ describe('renderPage threads the request', () => {
 	it('passes parsed parameters into Request::create, not only $_POST', () => {
 		const php = renderPage('/');
 		expect(php).toContain(
-			'Request::create($path, $method, $parameters, [], [], $server, $body)'
+			'Request::create($path, $method, $parameters, $cookies, [], $server, $body)'
 		);
 		expect(php).toContain('parse_str($body, $parameters)');
 		expect(php).toContain('$_POST = $parameters;');

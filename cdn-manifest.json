@@ -1,0 +1,258 @@
+{
+	"bucket": "drupflare-cdn",
+	"origin": "https://drupflare-cdn.gmitch215.dev",
+	"version": 1,
+	"keys": [
+		{
+			"key": "vendor/php8.3-web.mjs",
+			"bytes": 359020,
+			"sha256": "7e7a5772547a457870e1bb11c60178a45ac4e19e94a9274fb51a9266b1f6a7cb",
+			"md5": "b643294c8f25c08f9d644c212e92e601"
+		},
+		{
+			"key": "vendor/php8.3.wasm",
+			"bytes": 13165354,
+			"sha256": "6391b5721d310aef36431dd665a41c2b727707a697aa9027eb4068aa64f9605b",
+			"md5": "f7cdc84f43b23c09257f95f395f78e0c"
+		},
+		{
+			"key": "vendor/php8.4-web.mjs",
+			"bytes": 361022,
+			"sha256": "f4bbf5988cc0c7cb6940b13f4fffa258fbf2d553b44bbbc05e19d142d58f8238",
+			"md5": "ef8b5c2f0577d15ff51af6362254da01"
+		},
+		{
+			"key": "vendor/php8.4.wasm",
+			"bytes": 13827389,
+			"sha256": "66b6a6f127e984215d792b676d12bcbb6dd5c3bd09409ca2599a929f77634df0",
+			"md5": "f51796b7b5becf4b44d7fb4e7778afb4"
+		},
+		{
+			"key": "vendor/static-asyncify/php8.3-worker.mjs",
+			"bytes": 948543,
+			"sha256": "e3f9528c126876bc30538d5cd2ab05eea19359cd984bbe21589c347f6ff01598",
+			"md5": "b88202587d4508df241214fc43d30ab4"
+		},
+		{
+			"key": "vendor/static-asyncify/php8.3-worker.mjs.wasm",
+			"bytes": 20263074,
+			"sha256": "4e13d2ac4a006ac1c55f9ef4f3ac38d359314ff46ee7865cfade3dedb6d814b8",
+			"md5": "4e46d81a9ce1cc76a32ff991617f34f8"
+		},
+		{
+			"key": "vendor/static-cap/php8.3-worker.mjs",
+			"bytes": 731298,
+			"sha256": "6b45c5025a04c2e1c16d15a13f6b5a124978b96e9b49031a2a8de26024862e43",
+			"md5": "99de13fc4cbcb05ec87da6f158a9cf77"
+		},
+		{
+			"key": "vendor/static-cap/php8.3-worker.mjs.wasm",
+			"bytes": 8654137,
+			"sha256": "930463ca9c661dc3e8f66934428358e52c79f4bfe11c712bd3095b3abb939113",
+			"md5": "9ca69712da48fed2db7ed646631a4bf3"
+		},
+		{
+			"key": "vendor/static-free-v1/php8.3-worker.mjs",
+			"bytes": 877287,
+			"sha256": "57e97b9d69a9503d31e7c91d2f4277c89f99c3f2d07d3b254c28fea0c8ce07d7",
+			"md5": "b5d7b592fc0449878edc551e912abdae"
+		},
+		{
+			"key": "vendor/static-free-v1/php8.3-worker.mjs.wasm",
+			"bytes": 11116619,
+			"sha256": "4866c90126b14e711c3df3ff543b7df679060b438b5fe0b1f01257119d3c14d1",
+			"md5": "cdc96100d529990a0a3a06265389f144"
+		},
+		{
+			"key": "vendor/static-free-v2/php8.3-worker.mjs",
+			"bytes": 749208,
+			"sha256": "477252f7638fb4b81455e5029a3a8582b84d111da2920fed75345c07166d3970",
+			"md5": "6b691cba440e6a31f15b2a38a8609916"
+		},
+		{
+			"key": "vendor/static-free-v2/php8.3-worker.mjs.wasm",
+			"bytes": 10267917,
+			"sha256": "d46f93c61b5e68a1f900bf6869e52f7bde359cf6d9d50969d5d5a58f3b3865f2",
+			"md5": "37dd9a492ff184491a1dae4de1835061"
+		},
+		{
+			"key": "vendor/static-free/php8.3-worker.mjs",
+			"bytes": 696619,
+			"sha256": "e8cffda07aa1db07961ac90d608223a75ee7e96b41bed1f7d5157f91499ba763",
+			"md5": "0dca41cffde5e85309f191ca892c2f70"
+		},
+		{
+			"key": "vendor/static-free/php8.3-worker.mjs.wasm",
+			"bytes": 8612738,
+			"sha256": "55ba3f87f2507a3ed25eae63d803db0471c048784a7917bc755b131f92e52d96",
+			"md5": "f48b1877f9cfb969ceccbd034fad98f7"
+		},
+		{
+			"key": "vendor/static-jspimb/php8.3-worker.mjs",
+			"bytes": 839193,
+			"sha256": "3fc327d6d478defe460dc534d9aee0a7a4cce6ff7505846c21b0a35ed4a934ad",
+			"md5": "170da7b3c25d8f5b08a4275001e7224b"
+		},
+		{
+			"key": "vendor/static-jspimb/php8.3-worker.mjs.wasm",
+			"bytes": 10379492,
+			"sha256": "73d6341426d67fb44dc44d90a57f27808405ce6bbb0d9646c0262d06d53658ec",
+			"md5": "9b0b6e5f8a0eb1b0ad0e41355f3ce734"
+		},
+		{
+			"key": "vendor/static-jspimbsjlj/php8.3-worker.mjs",
+			"bytes": 815736,
+			"sha256": "66bf0986669a27df25170c8a824d8898b4f594ed21d8e63d2e0621253ed76aca",
+			"md5": "956ea95e7ca14faa2888789b4af06787"
+		},
+		{
+			"key": "vendor/static-jspimbsjlj/php8.3-worker.mjs.wasm",
+			"bytes": 10382942,
+			"sha256": "d38041d0309d4797a075498f7a0f0f64fa40f0c5acec1bfc8336f24f45760e64",
+			"md5": "8d3df6b32e0f1afd6456ead32e1dc041"
+		},
+		{
+			"key": "vendor/static-jspisjlj/php8.3-worker.mjs",
+			"bytes": 805292,
+			"sha256": "9a08d81263260e2329ea0e5ffe155c3644e14f4e06752a538b85ac69912e9cd5",
+			"md5": "af7b9848102a493d8d217f8137583bfb"
+		},
+		{
+			"key": "vendor/static-jspisjlj/php8.3-worker.mjs.wasm",
+			"bytes": 9267939,
+			"sha256": "9f012cc338a5ae25c7d3d806944eb48b2cb0978b78cae7aa70da7f18311f1ac7",
+			"md5": "55185fb4c826e3458858fc45465c69fc"
+		},
+		{
+			"key": "vendor/static-jspisjljctl/php8.3-worker.mjs",
+			"bytes": 804062,
+			"sha256": "51d8f759fbfbf6bd10f47b2213ada41fa96488c8785c19aab6fdb1102e9a26ff",
+			"md5": "7ae9fc9b589927a287cfd06c9063f2db"
+		},
+		{
+			"key": "vendor/static-jspisjljctl/php8.3-worker.mjs.wasm",
+			"bytes": 9254042,
+			"sha256": "a6da89e814d95c25861e95270b1a3bd8d3801cd3ca1f64f2b97deb1547edd5a6",
+			"md5": "c48140f47f66b686323045c14dd4303e"
+		},
+		{
+			"key": "vendor/static-mbstring/php8.3-worker.mjs",
+			"bytes": 837333,
+			"sha256": "25e0c2657553d3b108239267368694d9fba6e0ce97f76b75acff296764052c46",
+			"md5": "529da2c6190cfca7da0474465a9375a2"
+		},
+		{
+			"key": "vendor/static-mbstring/php8.3-worker.mjs.wasm",
+			"bytes": 10379491,
+			"sha256": "7df1ad74a651d76ad55ac201d31e03207ca255ed22e9a1163ed6678cdc992be6",
+			"md5": "3c0a180b116693b6fa342e77f3867df1"
+		},
+		{
+			"key": "vendor/static-o2/php8.3-worker.mjs",
+			"bytes": 823573,
+			"sha256": "04bf79084fe606b7fc834c11fe394956da13b07181ed7114765f54d6a428451b",
+			"md5": "3efa232fcd0f17d174116e37ab21034c"
+		},
+		{
+			"key": "vendor/static-o2/php8.3-worker.mjs.wasm",
+			"bytes": 9281983,
+			"sha256": "4326a63aacfc4d12fe8577347e4ee863bf0986e92307a318c33679882230d2c3",
+			"md5": "8dbcbd28579862d98a8e10f86935e19b"
+		},
+		{
+			"key": "vendor/static-o3mbsjlj/php8.3-worker.mjs",
+			"bytes": 814517,
+			"sha256": "e0bcd2b7c8b3c3b49bfc878f13470158ef0cb08b740f84b68fdb399d32bc4eee",
+			"md5": "186682cbb75b3a0f021be8f29014289a"
+		},
+		{
+			"key": "vendor/static-o3mbsjlj/php8.3-worker.mjs.wasm",
+			"bytes": 10140333,
+			"sha256": "85142dc5a3408477c66a02a47c55867b096d7dfcc71202de84c75a1e3d205361",
+			"md5": "60102daa55dae201df5fe4f5645717ae"
+		},
+		{
+			"key": "vendor/static-opcache/php8.3-worker.mjs",
+			"bytes": 772944,
+			"sha256": "1dde6109d1cb23345969dc0a31f69b07cb89312c944e30c95f1c87af9e861dea",
+			"md5": "3594b1048437b447c9fd82e6e3dee3d3"
+		},
+		{
+			"key": "vendor/static-opcache/php8.3-worker.mjs.wasm",
+			"bytes": 10202691,
+			"sha256": "0e2d761c997d4a38cea447980482489b1cb36d853263589ac6077788c24fa7d1",
+			"md5": "63873e94d20226493213880fe68a08c3"
+		},
+		{
+			"key": "vendor/static-v2/php8.3-worker.mjs",
+			"bytes": 751173,
+			"sha256": "61e9aaf3c6d3b9e5cc1bf5d82e81380e852cd6240928122495613b00d6e5ffc1",
+			"md5": "ff1685f65211214b7f322b19b651adeb"
+		},
+		{
+			"key": "vendor/static-v2/php8.3-worker.mjs.wasm",
+			"bytes": 8880459,
+			"sha256": "df84a0a66646d362316d60896297d07629efb16fb351a9d9df08914b5c9a6b55",
+			"md5": "b1e72cda754068fd64c4a8c773abd3f4"
+		},
+		{
+			"key": "vendor/static/php8.3-worker.mjs",
+			"bytes": 948543,
+			"sha256": "e3f9528c126876bc30538d5cd2ab05eea19359cd984bbe21589c347f6ff01598",
+			"md5": "b88202587d4508df241214fc43d30ab4"
+		},
+		{
+			"key": "vendor/static/php8.3-worker.mjs.wasm",
+			"bytes": 20263074,
+			"sha256": "4e13d2ac4a006ac1c55f9ef4f3ac38d359314ff46ee7865cfade3dedb6d814b8",
+			"md5": "4e46d81a9ce1cc76a32ff991617f34f8"
+		},
+		{
+			"key": "assets/drupal/site.sqlite",
+			"bytes": 7585792,
+			"sha256": "a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974",
+			"md5": "d62c74571fc35f2b0b3559b8f70e2b9d"
+		}
+	],
+	"archived": [
+		{
+			"key": "assets/drupal/site.sqlite.trimmed-1618p-cc13",
+			"bytes": 6627328,
+			"sha256": "94911463f798d3bbefb66f8e9a2b17decb453048af59d559a407b2bf61e8dab8",
+			"md5": "d7a5801614964886e4834e287b189432",
+			"note": "the original hand-trimmed lineage: 1618 pages, change counter 13"
+		},
+		{
+			"key": "snapshots/site.sqlite.064105ca7223",
+			"bytes": 7585792,
+			"sha256": "064105ca7223ef57f48e3e979d7ddcf53293060939c1202400110f08ea760380",
+			"md5": "6a6a872406851f8947b2c03b1e86283d",
+			"mirrors": ".pack-backup/site.sqlite.bak",
+			"note": "the rollback point bun run bake:pack overwrites on its next run: change counter 16"
+		},
+		{
+			"key": "snapshots/site.sqlite.a18db26a417b",
+			"bytes": 7585792,
+			"sha256": "a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974",
+			"md5": "d62c74571fc35f2b0b3559b8f70e2b9d",
+			"mirrors": "assets/drupal/site.sqlite",
+			"note": "the canonical lineage at change counter 19, pinned by digest so a later edit cannot move it"
+		},
+		{
+			"key": "vendor/static-control85/php8.5-worker.mjs.wasm",
+			"bytes": 12218393,
+			"sha256": "02244ae68d49a5b97116646447151c310b9d29d449ed33993d5ad99578539148",
+			"md5": "988a338279a50604fac00c565a42b6b4",
+			"mirrors": ".interp/php8.5.wasm",
+			"note": "the shipping PHP 8.5 binary; phasm publishes it as an artifact and artifacts expire"
+		},
+		{
+			"key": "vendor/static-control85/php8.5-worker.mjs",
+			"bytes": 863402,
+			"sha256": "016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb",
+			"md5": "36aa14c39812465961b522d4065daba8",
+			"mirrors": ".interp/php8.5-worker.mjs",
+			"note": "its glue, which the seam imports as PHPFactory"
+		}
+	]
+}

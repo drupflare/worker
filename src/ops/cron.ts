@@ -1,4 +1,4 @@
-import { cronHookList, runCronHook, runCronQueue } from '../drupal/cron-php.js';
+import { cronHookList, runCronHook, runCronQueue } from '../drupal/cron-php';
 
 /**
  * Garbage collection and the decomposed cron chain.
@@ -33,7 +33,7 @@ export type TableLedger = {
 /**
  * A pass's accounting record.
  *
- * A `type` rather than an `interface` on purpose: an object type alias carries an implicit index
+ * A `type` rather than an `interface`: an object type alias carries an implicit index
  * signature, which is what lets a ledger be returned as `cronStep()`'s `result` alongside a PHP
  * reply. An interface would not be assignable there.
  *
@@ -99,7 +99,7 @@ export interface CronUnit {
 	unreviewed?: boolean;
 }
 
-/** The cursor as it is stored; `wrapped` is deliberately not part of it. */
+/** The cursor as it is stored; `wrapped` is not part of it. */
 export interface StoredCursor {
 	v: number;
 	i: number;
@@ -204,7 +204,7 @@ export const EXPIRED_ROW_RULES = [
 		where: "created < ? AND name LIKE 'drupal_batch:%'",
 		ageS: BATCH_MAX_AGE_S
 	},
-	// src/site-do.js's alarm() already runs this one inline; once gcPass is wired in,
+	// src/site-do's alarm() already runs this one inline; once gcPass is wired in,
 	// that line is a duplicate statement and should go
 	{ table: 'semaphore', where: 'expire < ?', ageS: 0 }
 ];
@@ -423,8 +423,8 @@ function exec(
  * changes() is how many rows the DELETE removed, rowsWritten is how many rows
  * Cloudflare bills for it, and the two differ by one write per index touched
  * (D1/DO pricing, footnote 6: "Indexes will add an additional written row"). The
- * ratio is reported rather than assumed, so the real amplification on the edge
- * arrives as a measurement on the first run.
+ * ratio is reported, so the real amplification on the edge arrives as a
+ * measurement on the first run.
  */
 function changes(sql: CronSql, led: Ledger, table: string | null): number {
 	const r = exec(sql, led, table, 'SELECT changes() AS c');
@@ -483,7 +483,7 @@ export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
 /**
  * Enforces a row cap on cache_data, then clears anything genuinely expired.
  *
- * THE ROW CAP IS THE ONLY THING THAT WORKS HERE, and it is measured: all 144
+ * The row cap is the only thing that works here, and it is measured: all 144
  * cache_data rows on the reference site have `expire = -1`, so an expire-based
  * sweep removes exactly zero of them. 70 are RouteProvider's per-URL route cache
  * -- cid `route:[language]=en:[query_parameters]=<qs>:<path>`, written at
@@ -497,7 +497,7 @@ export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
  * hook this runtime cannot call. So the policy was always there and the caller
  * never was.
  *
- * Ordering by `created, cid` rather than core's `created <= pivot` on purpose:
+ * Ordering by `created, cid` rather than core's `created <= pivot`:
  * `created` is a float with millisecond resolution and a single request writes
  * several rows, so ties are ordinary and core's condition over-deletes them.
  */
@@ -902,7 +902,7 @@ export async function cronStep(
 /**
  * The queue with the most items waiting, or null with the reason why not.
  *
- * Pure SQL on purpose: the only cron queue this site defines is
+ * Pure SQL: the only cron queue this site defines is
  * media_entity_thumbnail, and asking PHP which queues have work would cost a
  * kernel boot to be told "none", which is the answer every time until something
  * queues a thumbnail. `expire = 0` is the unclaimed condition, so an item another

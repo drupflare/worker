@@ -33,16 +33,11 @@ const ALLOWED_OFF_EDGE = new Map<string, string>([
 	// alias targets, reached through wrangler `alias` rather than through an import
 	['src/runtime/php-binary-jspi.ts', 'alias target for the JSPI probe configs'],
 	['src/runtime/php-binary-o2.ts', 'alias target for the -O2 probe configs'],
-	['src/runtime/php-binary-zstd.ts', 'alias target for the zstd probe configs'],
-	// KNOWN DEAD, listed so the count is honest rather than to excuse them. Both are the same shape
-	// the health layer was in: written, tested, and reached by nothing.
-	//
-	// `tail-worker.ts` is a tail consumer with 17 exports and a unit spec, and NO wrangler config
-	// declares `tail_consumers`, so nothing has ever run it.
-	// `capabilities.ts` is imported by nothing at all -- not by src, not by a script, not even by a
-	// test; only a comment in scripts/qa/modules.ts mentions the concept.
-	['src/ops/tail-worker.ts', 'DEAD: no wrangler config declares tail_consumers'],
-	['src/drupal/capabilities.ts', 'DEAD: imported by nothing, including tests']
+	['src/runtime/php-binary-zstd.ts', 'alias target for the zstd probe configs']
+	// `src/ops/tail-worker.ts` and `src/drupal/capabilities.ts` were listed here as KNOWN DEAD and
+	// have since been deleted. The stale-exemption check below is what caught the removal -- it
+	// failed with both names the moment the files went, which is the direction that is easy to get
+	// wrong: an allow-list nobody prunes is how the next dead module gets waved through.
 ]);
 
 type Scan = {
@@ -81,5 +76,20 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 		const offEdge = new Set(scan().offEdge.map((r) => r.file));
 		expect(offEdge.has('src/ops/supervisor.ts')).toBe(false);
 		expect(offEdge.has('src/ops/repair.ts')).toBe(false);
+	});
+
+	it('leaves nothing dead outside the build-lane tools and the alias targets', () => {
+		// the whole finding as one list: everything off the edge now has a reason, and the two
+		// modules that did not (tail-worker, capabilities) were deleted rather than exempted.
+		// dormancy and module-table read as `dead` rather than `script` because a vitest spec drives
+		// them, not a bun entrypoint -- which is accurate, and why they carry a reason above
+		const dead = scan().dead.map((r) => r.file);
+		expect(dead).toEqual([
+			'src/ops/dormancy.ts',
+			'src/ops/module-table.ts',
+			'src/runtime/php-binary-jspi.ts',
+			'src/runtime/php-binary-o2.ts',
+			'src/runtime/php-binary-zstd.ts'
+		]);
 	});
 });

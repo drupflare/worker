@@ -49,11 +49,14 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 	});
 
 	it('spends five eighths of every stored row on index maintenance', () => {
-		// 1,342 / 3,939 / 0.6314 before the content type; the 14 rows it adds are 6 config, 8
-		// key_value, and the ratio barely moves because the two new tables ship empty
-		expect(audit.totals.dataRows).toBe(1356);
-		expect(audit.totals.chargedRows).toBe(3967);
-		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.6305, 3);
+		// 1,342 / 3,939 / 0.6314 before the content type, 1,356 / 3,967 / 0.6305 after it. Enabling
+		// drupflare in the pack took 40 stale cache rows OUT -- rows keyed to the pre-install module
+		// list, which the runtime would have read as warm and wrong -- so the count falls while the
+		// ratio rises: a cache row is cheap in indexes and dropping it leaves the index-heavy tables
+		// a larger share
+		expect(audit.totals.dataRows).toBe(1316);
+		expect(audit.totals.chargedRows).toBe(3883);
+		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.6328, 3);
 	});
 });
 

@@ -43,3 +43,157 @@ export function planFlag(
 	}
 	return isPaid(env) ? paidDefault : !paidDefault;
 }
+
+/**
+ * Where the effective plan came from, so a surface can say WHY it thinks it is on free.
+ *
+ * `var` is the deployed `PLAN` binding, `kv` is the override an operator can flip without a
+ * redeploy, and `default` is the free fallback when neither says anything.
+ */
+export type PlanSource = 'kv' | 'var' | 'default';
+
+export type ResolvedPlan = { plan: 'free' | 'paid'; source: PlanSource };
+
+/** the KV key the plan override lives under */
+export const PLAN_KV_KEY = 'plan';
+
+/**
+ * How long an isolate reuses a resolved plan before reading KV again.
+ *
+ * KV free allows 100,000 reads/day, the same order as the Worker-request ceiling, so a read per
+ * request would spend one binding meter to consult another. One read per isolate per minute is
+ * nothing, and an upgrade that takes up to a minute to apply everywhere is the right trade for a
+ * value that changes about once in a site's life.
+ */
+export const PLAN_MEMO_MS = 60_000;
+
+/** the minimal KV surface, so the resolver is drivable over a stand-in */
+export type PlanKv = { get(key: string): Promise<string | null> };
+
+let memo: { at: number; value: ResolvedPlan } | null = null;
+
+/** drops the isolate's memo; tests use it, and so does an explicit refresh */
+export function resetPlanMemo(): void {
+	memo = null;
+}
+
+/**
+ * The effective plan: KV first, then the deployed var, then free.
+ *
+ * KV WINS ON PURPOSE. `PLAN` is a `vars` entry, so upgrading an account meant editing the config and
+ * redeploying -- a deploy to change a fact the deploy does not control. An operator who upgrades
+ * flips one KV key and every isolate picks it up within {@link PLAN_MEMO_MS}.
+ *
+ * A missing binding, a KV error and an unrecognised value all fall through to the var rather than
+ * throwing: this runs on the serving path, and a KV blip must not take a site from paid to broken.
+ * The same reason `isPaid()` treats an unrecognised value as free -- every limit here is a free
+ * limit, and guessing upward is the failure that costs money.
+ */
+export async function resolvePlan(
+	env?: PlanEnv | null,
+	kv?: PlanKv | null,
+	nowMs: number = Date.now()
+): Promise<ResolvedPlan> {
+	if (memo && nowMs - memo.at < PLAN_MEMO_MS) return memo.value;
+
+	let value: ResolvedPlan = { plan: isPaid(env) ? 'paid' : 'free', source: 'var' };
+	if (env?.PLAN === undefined || env.PLAN === null || env.PLAN === '') {
+		value = { plan: 'free', source: 'default' };
+	}
+	if (kv) {
+		try {
+			const raw = (await kv.get(PLAN_KV_KEY))?.trim().toLowerCase();
+			if (raw === 'paid' || raw === 'free') value = { plan: raw, source: 'kv' };
+		} catch {
+			// a KV read that failed leaves the deployed var in force; never an outage
+		}
+	}
+	memo = { at: nowMs, value };
+	return value;
+}
+
+/** overlays the resolved plan onto an env, so the 16 existing `isPaid(env)` call sites need no change */
+export function withPlan<T extends PlanEnv>(env: T, resolved: ResolvedPlan): T {
+	return { ...env, PLAN: resolved.plan };
+}
+
+/**
+ * The KV key holding runtime lever overrides, as one JSON object.
+ *
+ * One key rather than one per lever: a single read is atomic, costs one of the 100,000 daily KV
+ * reads instead of seven, and gives an operator one place to see every override in force.
+ */
+export const SETTINGS_KV_KEY = 'settings';
+
+/**
+ * The ONLY env names KV may override.
+ *
+ * AN ALLOW-LIST, AND THIS IS A PRIVILEGE BOUNDARY RATHER THAN TIDINESS. KV is operator-writable, so
+ * merging an arbitrary object into the environment would let anyone with KV write set
+ * `PW_DIAGNOSTICS=1` -- which reaches `/sql` (arbitrary SQL against the site database) and
+ * `/restore` (a whole-database overwrite). Every name here is a performance lever whose worst case
+ * is a slow site; nothing here changes what is reachable.
+ *
+ * `PLAN` is deliberately absent: it has its own key and its own resolver, because it selects a whole
+ * profile rather than one number.
+ */
+export const KV_OVERRIDABLE = [
+	'RENDER_BUDGET_MS',
+	'FILL_BATCH_SIZE',
+	'FILL_BATCH_WALL_MS',
+	'HTTP_DRAIN_LIMIT',
+	'MIRROR_LIMIT',
+	'LAZY_FS_BUDGET_BYTES',
+	'PREFILL',
+	'GEN_BUCKET_MS'
+] as const;
+
+export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
+
+let settingsMemo: { at: number; value: Partial<Record<KvOverridable, string>> } | null = null;
+
+/** drops the isolate's settings memo; tests use it, and so does an explicit refresh */
+export function resetSettingsMemo(): void {
+	settingsMemo = null;
+}
+
+/**
+ * Reads the lever overrides from KV, keeping only the names on {@link KV_OVERRIDABLE}.
+ *
+ * Every value is coerced to a string, because that is what a `vars` binding delivers and what every
+ * reader already parses. A malformed document, an unknown key and a KV error all yield no overrides
+ * rather than throwing: this runs on the serving path.
+ */
+export async function resolveSettings(
+	kv?: PlanKv | null,
+	nowMs: number = Date.now()
+): Promise<Partial<Record<KvOverridable, string>>> {
+	if (settingsMemo && nowMs - settingsMemo.at < PLAN_MEMO_MS) return settingsMemo.value;
+	const out: Partial<Record<KvOverridable, string>> = {};
+	if (kv) {
+		try {
+			const raw = await kv.get(SETTINGS_KV_KEY);
+			const parsed: unknown = raw ? JSON.parse(raw) : null;
+			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+				for (const name of KV_OVERRIDABLE) {
+					const value = (parsed as Record<string, unknown>)[name];
+					if (value !== undefined && value !== null && typeof value !== 'object') {
+						out[name] = String(value);
+					}
+				}
+			}
+		} catch {
+			// unparseable or unreachable: the deployed vars stay in force
+		}
+	}
+	settingsMemo = { at: nowMs, value: out };
+	return out;
+}
+
+/** overlays KV lever overrides onto an env, leaving anything not on the allow-list untouched */
+export function withSettings<T extends object>(
+	env: T,
+	overrides: Partial<Record<KvOverridable, string>>
+): T {
+	return { ...env, ...overrides };
+}

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { findEntry, loadCatalog, parseCatalog, planInstall } from '../../../src/ops/catalog';
+import {
+	findEntry,
+	KNOWN_MODULE_CAPABILITIES,
+	loadCatalog,
+	parseCatalog,
+	planInstall,
+	tierFor,
+	type Catalog,
+	type ModuleCapability
+} from '../../../src/ops/catalog';
 
 /**
  * The pre-packed module catalog.
@@ -273,5 +282,217 @@ describe('the php constraint', () => {
 
 	it('leaves a module with no php constraint alone', () => {
 		expect(planInstall(CATALOG, 'drupal/token', CORE, PHP).ok).toBe(true);
+	});
+});
+
+describe('the capability constraint, which a version check cannot express', () => {
+	const withNeeds = (needs: ModuleCapability[], name = 'drupal/recaptcha'): Catalog => ({
+		builtAt: 'now',
+		entries: [{ name, version: '3.4.0', r2: 'r', core: '^11', needs }]
+	});
+
+	it('ALLOWS deferrable outbound, because the queue and the alarm drain already ship', () => {
+		// the correction that matters: treating every outbound need as a wall classified reCAPTCHA
+		// and Stage File Proxy as impossible when both are two-phase problems. cfwQueueFetch records
+		// the call, drainHttpQueue() performs it inside alarm() where awaiting is legal, and a later
+		// invocation reads the answer synchronously
+		const plan = planInstall(
+			withNeeds(['deferrable-outbound']),
+			'drupal/recaptcha',
+			'11.4.5',
+			'8.5.2'
+		);
+		expect(plan.ok).toBe(true);
+	});
+
+	it('REFUSES an outbound call that must answer inside one render', () => {
+		// search_api_solr is the real refusal: a query per keystroke against a remote index cannot
+		// be split across invocations without changing what the user sees
+		const plan = planInstall(
+			withNeeds(['blocking-outbound'], 'drupal/search_api_solr'),
+			'drupal/search_api_solr',
+			'11.4.5',
+			'8.5.2'
+		);
+		expect(plan.ok).toBe(false);
+		// the message names the MECHANISM, not the module, and distinguishes the two tiers so the
+		// reader learns which calls ARE supported
+		expect(plan.problems[0]).toContain('INSIDE one render');
+		expect(plan.problems[0]).toContain('ASYNCIFY=0');
+		expect(plan.problems[0]).toContain('split across invocations is supported');
+	});
+
+	it('ALLOWS blocking outbound on a runtime that can suspend, so it is a capability not a ban', () => {
+		const plan = planInstall(
+			withNeeds(['blocking-outbound'], 'drupal/search_api_solr'),
+			'drupal/search_api_solr',
+			'11.4.5',
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: true, blockingOutbound: true, cron: true }
+		);
+		expect(plan.ok).toBe(true);
+	});
+
+	it('REFUSES deferrable outbound on a site with no queue at all', () => {
+		const plan = planInstall(
+			withNeeds(['deferrable-outbound']),
+			'drupal/recaptcha',
+			'11.4.5',
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: false, blockingOutbound: false, cron: true }
+		);
+		expect(plan.ok).toBe(false);
+		expect(plan.problems[0]).toContain('deferred outbound tier');
+	});
+
+	it('allows a cron-driven module, because the alarm exists', () => {
+		const plan = planInstall(withNeeds(['cron']), 'drupal/recaptcha', '11.4.5', '8.5.2');
+		expect(plan.ok).toBe(true);
+	});
+
+	it('refuses a cron-driven module where nothing drives cron', () => {
+		const plan = planInstall(
+			withNeeds(['cron']),
+			'drupal/recaptcha',
+			'11.4.5',
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: true, blockingOutbound: false, cron: false }
+		);
+		expect(plan.ok).toBe(false);
+		expect(plan.problems[0]).toContain('needs cron');
+	});
+
+	it('still passes a module that declares no capabilities at all', () => {
+		const plan = planInstall(
+			{
+				builtAt: 'now',
+				entries: [{ name: 'drupal/honeypot', version: '2.2.0', r2: 'r', core: '^11' }]
+			},
+			'drupal/honeypot',
+			'11.4.5',
+			'8.5.2'
+		);
+		expect(plan.ok).toBe(true);
+		expect(plan.problems).toEqual([]);
+	});
+
+	it('drops an unrecognised capability rather than failing closed on it', () => {
+		// a catalog written by a newer build must not brick an older planner
+		const plan = planInstall(
+			parseCatalog({
+				builtAt: 'now',
+				entries: [
+					{
+						name: 'drupal/x',
+						version: '1.0.0',
+						r2: 'r',
+						core: '^11',
+						needs: ['quantum', 'blocking-outbound']
+					}
+				]
+			}),
+			'drupal/x',
+			'11.4.5',
+			'8.5.2'
+		);
+		// the one it understands still refuses; the one it does not is ignored
+		expect(plan.problems).toHaveLength(1);
+		expect(plan.problems[0]).toContain('INSIDE one render');
+	});
+
+	it('refuses when a DEPENDENCY needs a capability the runtime lacks', () => {
+		const plan = planInstall(
+			{
+				builtAt: 'now',
+				entries: [
+					{
+						name: 'drupal/parent',
+						version: '1.0.0',
+						r2: 'p',
+						core: '^11',
+						requires: ['drupal/child']
+					},
+					{
+						name: 'drupal/child',
+						version: '1.0.0',
+						r2: 'c',
+						core: '^11',
+						needs: ['blocking-outbound']
+					}
+				]
+			},
+			'drupal/parent',
+			'11.4.5',
+			'8.5.2'
+		);
+		expect(plan.ok).toBe(false);
+		expect(plan.problems[0]).toContain('INSIDE one render');
+	});
+});
+
+describe('tierFor: will it RUN here, which is not the same question as can composer resolve it', () => {
+	it('classifies a module needing nothing as works-today', () => {
+		expect(tierFor('drupal/honeypot')).toEqual({ tier: 'works-today' });
+	});
+
+	it('classifies reCAPTCHA as DEFERRABLE and explains the mechanism', () => {
+		// it resolves perfectly on Packagist; the install verdict has nothing to say about this
+		const out = tierFor('drupal/recaptcha');
+		expect(out.tier).toBe('needs-deferred-tier');
+		expect(out.reason).toContain('queued');
+		expect(out.reason).toContain('alarm');
+	});
+
+	it('classifies Solr as REFUSED, because a per-keystroke query cannot be split', () => {
+		const out = tierFor('drupal/search_api_solr');
+		expect(out.tier).toBe('refused');
+		expect(out.reason).toContain('INSIDE one render');
+	});
+
+	it('warns that a cron module installs and silently does nothing without DRUPAL_CRON', () => {
+		// the failure mode worth naming: a module that enables and never runs looks fine
+		const out = tierFor('drupal/scheduler');
+		expect(out.tier).toBe('needs-deferred-tier');
+		expect(out.reason).toContain('silently does nothing');
+	});
+
+	it('returns UNKNOWN for an unclassified module, never works-today', () => {
+		// absence of knowledge is not evidence of safety. Defaulting to works-today would make the
+		// tier always agree with the install verdict, which is the blank-meter failure again
+		const out = tierFor('drupal/something_nobody_looked_at');
+		expect(out.tier).toBe('unknown');
+		expect(out.reason).toContain('has not been classified');
+	});
+
+	it('promotes the refusal to works-today on a runtime that can suspend', () => {
+		expect(
+			tierFor('drupal/search_api_solr', {
+				deferredOutbound: true,
+				blockingOutbound: true,
+				cron: true
+			}).tier
+		).toBe('works-today');
+	});
+
+	it('refuses a deferrable module on a site with no deferred tier at all', () => {
+		expect(
+			tierFor('drupal/recaptcha', {
+				deferredOutbound: false,
+				blockingOutbound: false,
+				cron: true
+			}).tier
+		).toBe('refused');
+	});
+
+	it('every classified entry names a real capability or none', () => {
+		// a typo in the map would silently classify a module as needing nothing
+		const allowed = new Set(['deferrable-outbound', 'blocking-outbound', 'cron']);
+		for (const [name, needs] of Object.entries(KNOWN_MODULE_CAPABILITIES)) {
+			expect(name.startsWith('drupal/'), name).toBe(true);
+			for (const need of needs) expect(allowed.has(need), `${name}: ${need}`).toBe(true);
+		}
 	});
 });

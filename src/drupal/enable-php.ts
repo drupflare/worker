@@ -147,6 +147,19 @@ try {
   $out['ok'] = false;
 }
 
+// how many times the router was DUMPED and how many of those were skipped, read out of the dumper
+// rather than divided out of a row count. A statement total cannot tell a repeat from a wide write
+try {
+  if (class_exists('Drupal\\drupflare\\Routing\\CfwMatcherDumper')) {
+    $out['routerDumps'] = \Drupal\drupflare\Routing\CfwMatcherDumper::$dumps;
+    $out['routerSkips'] = \Drupal\drupflare\Routing\CfwMatcherDumper::$skips;
+  } else {
+    $out['routerDumps'] = null;
+  }
+} catch (\Throwable $e) {
+  $out['routerDumpError'] = $e->getMessage();
+}
+
 // what actually changed, read back rather than assumed
 try {
   $after = \Drupal::configFactory()->get('core.extension');

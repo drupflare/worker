@@ -124,6 +124,7 @@ export type ServeDo = {
 	/** wall time of a fill that also booted; diagnostics only, never an estimate */
 	lastBootInclusiveMs?: number;
 	renderClockUnmeasurable?: boolean;
+	heapRestore?: Record<string, unknown> | null;
 };
 
 /** every `x-cfw-*` header the original suite's `serve()` read, plus the body */

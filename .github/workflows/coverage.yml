@@ -1,0 +1,110 @@
+name: Check Test Coverage
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  STREAM_HTTP_SRC: .siblings/stream-http/src
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+          coverage: none
+      - name: Run Tests (workers)
+        run: bunx vitest run --project=workers --reporter=default --reporter=junit --outputFile=test-report.workers.junit.xml
+      - name: Run Tests (node)
+        if: ${{ !cancelled() }}
+        run: bunx vitest run --project=node --reporter=default --reporter=junit --outputFile=test-report.node.junit.xml
+      - name: Upload Test Results to Codecov (workers)
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: test_results
+          flags: workers
+          files: test-report.workers.junit.xml
+      - name: Upload Test Results to Codecov (node)
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: test_results
+          flags: node
+          files: test-report.node.junit.xml
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+          coverage: none
+      - name: Run Tests with Coverage
+        run: bun run test:coverage
+      - name: Upload Coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: coverage
+          flags: coverage
+          files: coverage/lcov.info
+      - name: Archive Coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14

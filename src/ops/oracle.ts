@@ -1,3 +1,4 @@
+import { tierFor, type RuntimeTier } from './catalog';
 import { checkInstallable, type InstallVerdict } from './packagist';
 
 /**
@@ -47,6 +48,10 @@ export type OracleEntry = {
 };
 
 export type OracleResult = InstallVerdict & {
+	/** whether this runtime can actually run it, independent of whether composer can resolve it */
+	tier?: RuntimeTier;
+	/** the mechanism, when the tier is not `works-today` */
+	reason?: string;
 	/** where the answer came from, reported so a caller can tell a cheap answer from a fresh one */
 	source: 'oracle' | 'live' | 'oracle-stale';
 };
@@ -104,6 +109,8 @@ export async function resolveInstallable(
 	installed: Record<string, string>,
 	shippedCore: string
 ): Promise<OracleResult> {
+	const runtime = tierFor(name);
+
 	const hit = await readOracle(env, name, shippedCore);
 	if (hit && !hit.stale) {
 		return {
@@ -113,7 +120,8 @@ export async function resolveInstallable(
 			conflicts: hit.entry.conflicts,
 			satisfied: [],
 			note: `from the oracle, built ${hit.entry.builtAt} against core ${hit.entry.core}`,
-			source: 'oracle'
+			source: 'oracle',
+			...runtime
 		};
 	}
 
@@ -123,6 +131,7 @@ export async function resolveInstallable(
 		note: hit?.stale
 			? `${live.note ?? ''} (oracle entry ignored: built against core ${hit.entry.core}, this site is ${shippedCore})`.trim()
 			: live.note,
-		source: hit?.stale ? 'oracle-stale' : 'live'
+		source: hit?.stale ? 'oracle-stale' : 'live',
+		...runtime
 	};
 }

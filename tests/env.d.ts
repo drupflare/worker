@@ -20,6 +20,7 @@ declare namespace Cloudflare {
 	interface Env {
 		SITE: DurableObjectNamespace;
 		ASSETS: Fetcher;
+		FLEET_DB?: D1Database;
 		PW_DIAGNOSTICS?: string;
 		RENDER_BUDGET_MS?: string;
 		GEN_BUCKET_MS?: string;

@@ -88,9 +88,15 @@ export function readEntry(bin: Uint8Array, entry: PackEntry): Uint8Array {
 	return entry.s === 1 ? slice : new Uint8Array(inflateRawSync(slice));
 }
 
-/** latin1 keeps every byte addressable, so a binary member cannot throw the way a UTF-8 decode can */
+/**
+ * latin1 keeps every byte addressable, so a binary member cannot throw the way a UTF-8 decode can.
+ *
+ * Spelled `windows-1252` rather than `latin1` because that is the canonical WHATWG label and the one
+ * bun's `Encoding` union carries; `latin1` is an alias for it. Verified rather than assumed --
+ * decoding all 256 byte values through both labels gives identical strings.
+ */
 export function decodeLatin1(bytes: Uint8Array): string {
-	return new TextDecoder('latin1').decode(bytes);
+	return new TextDecoder('windows-1252').decode(bytes);
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

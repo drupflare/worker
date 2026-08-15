@@ -39,6 +39,16 @@ export type SupportState = 'verified' | 'supported' | 'blocked';
  * it would reproduce identically on real infrastructure.
  */
 export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
+	'drupal/field_group':
+		'enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control',
+	'drupal/honeypot':
+		'enabled against a real site; its schema hook created `honeypot_user`. The recommended default over any captcha here, because a hidden field and a submission timer are entirely local and cost no outbound round trip',
+	'drupal/redirect':
+		'enabled against a real site; the `redirect` table exists and 11 of its routes are in the `router` table, so both halves of a route subscriber over its own table are present',
+	'drupal/search_api':
+		'enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table',
+	'drupal/stage_file_proxy':
+		'enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads',
 	'drupal/captcha':
 		'enabled against a real site; its schema hook created `captcha_sessions` and 8 routes appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix match finds none of them',
 	'drupal/metatag':

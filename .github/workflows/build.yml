@@ -56,6 +56,11 @@ jobs:
           php-version: '8.3'
           extensions: pdo_sqlite, sqlite3, mbstring, iconv
           coverage: none
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
       - name: Typecheck

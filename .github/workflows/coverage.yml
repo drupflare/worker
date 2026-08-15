@@ -40,6 +40,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 'latest'
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
       - name: Pack the Drupal Modules
@@ -102,6 +107,11 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 'latest'
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
       - name: Pack the Drupal Modules

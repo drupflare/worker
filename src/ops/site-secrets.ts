@@ -32,6 +32,9 @@ export type SecretStore = {
 /** `cfw_meta` key holding this site's hash salt */
 export const HASH_SALT_KEY = 'hash_salt';
 
+/** `cfw_meta` key holding this site's owner token */
+export const OWNER_TOKEN_KEY = 'owner_token';
+
 /**
  * Bytes of entropy behind a salt, matching `Crypt::randomBytesBase64(55)`.
  *
@@ -109,4 +112,51 @@ export function hashSaltAssignment(salt: string): string {
  */
 export function stateSerialized(value: string): string {
 	return `s:${value.length}:"${value}";`;
+}
+
+/**
+ * Reads this site's owner token, minting one the first time.
+ *
+ * WHY A SECOND SECRET RATHER THAN REUSING `PW_DIAGNOSTICS`. Getting your data out required
+ * `PW_DIAGNOSTICS=1`, and that flag is one boolean over a set that also contains `/sql` (arbitrary
+ * SQL against the site database), `/restore` (a whole-database overwrite) and `/php`. So the
+ * supported way to leave was to expose a remote shell to the internet first. Export is an OWNER
+ * operation, not a diagnostic, and it needs a credential rather than a mode.
+ *
+ * Same mint and same storage as {@link ensureHashSalt}: per site, persisted, never in the payload.
+ */
+export function ensureOwnerToken(store: SecretStore, mint: () => string = randomKeyBase64): string {
+	const existing = store.get(OWNER_TOKEN_KEY);
+	if (existing !== null && existing !== '') return existing;
+	const token = mint();
+	assertSalt(token);
+	store.set(OWNER_TOKEN_KEY, token);
+	return token;
+}
+
+/**
+ * Compares a presented token against the stored one in constant time.
+ *
+ * A `===` on a secret leaks its prefix through timing, and this one guards a whole-database dump.
+ * The length check is deliberately NOT an early return on mismatch -- it folds the lengths into the
+ * same accumulator so a wrong-length guess costs the same as a wrong-value one.
+ */
+export function tokenMatches(presented: string | null | undefined, stored: string | null): boolean {
+	if (!stored) return false;
+	const a = presented ?? '';
+	let diff = a.length ^ stored.length;
+	const width = Math.max(a.length, stored.length);
+	for (let i = 0; i < width; i++) {
+		// charCodeAt past the end is NaN and `NaN | 0` is 0, so a short guess costs a full pass
+		// rather than branching out of the loop early
+		diff |= (a.charCodeAt(i) | 0) ^ (stored.charCodeAt(i) | 0);
+	}
+	return diff === 0;
+}
+
+/** the `Authorization` value an owner request carries */
+export function bearerToken(header: string | null): string | null {
+	if (!header) return null;
+	const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+	return match?.[1]?.trim() ?? null;
 }

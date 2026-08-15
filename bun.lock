@@ -5,10 +5,11 @@
     "": {
       "name": "drupal-cfw-test",
       "dependencies": {
-        "@drupflare/cartridge": "^0.1.0",
-        "@drupflare/durabledb": "^0.1.0",
+        "@drupflare/cartridge": "^0.1.2",
+        "@drupflare/durabledb": "0.1.1",
         "@drupflare/untarl": "^0.1.0",
         "fflate": "^0.8.3",
+        "fzstd": "^0.1.1",
         "php-wasm": "0.1.0",
       },
       "devDependencies": {
@@ -84,9 +85,9 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@drupflare/cartridge": ["@drupflare/cartridge@0.1.0", "", { "dependencies": { "fflate": "^0.8.3" } }, "sha512-Csku2YUQLmbMj7ML2KlRpz7TNm+/+ZaDMhYPDohDuT7ZdVeowoGfmbM2X4Gw1uzDyZsHY3/vvG4PLywK7s9GPw=="],
+    "@drupflare/cartridge": ["@drupflare/cartridge@0.1.2", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-fvD2zvb5AwqhsVwHeIyWwqFvxoCH25E2cvZQPbim9vfjzlgHEMHAp2FJ07dHqh/WQn01jc4XZT45YBDwP7Ug4w=="],
 
-    "@drupflare/durabledb": ["@drupflare/durabledb@0.1.0", "", { "dependencies": { "@drupflare/cartridge": "^0.1.0" } }, "sha512-YwX5/d3gzrQQRbw3fLB/jnV7zia8H1vCn7yg/I4QygP4tXhEhTKF+tdMmSugpvkXlaCWI8GL0qNEKWNbyn1unw=="],
+    "@drupflare/durabledb": ["@drupflare/durabledb@0.1.1", "", { "dependencies": { "@drupflare/cartridge": "^0.1.2" } }, "sha512-ie3kI7bDxlww6uKHegdlYIzPSYJPtN4rb7qrXQCL9hN61wljO9LhxuMtJLMOvv3FKDM1n1uSbsD/9MDULNZcCQ=="],
 
     "@drupflare/untarl": ["@drupflare/untarl@0.1.0", "", {}, "sha512-FMabw/DeeM1WGmeF7kV0liY4N1nD0Itc/wIST8VMR3yQZpfyJCG94rB/Jchb42DTKAMs+7asN04085CH8ke7YQ=="],
 
@@ -383,6 +384,8 @@
     "fflate": ["fflate@0.8.3", "", {}, "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="],
 
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
+
+    "fzstd": ["fzstd@0.1.1", "", {}, "sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA=="],
 
     "gensync": ["gensync@1.0.0-beta.2", "", {}, "sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg=="],
 

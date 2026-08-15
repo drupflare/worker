@@ -3,13 +3,24 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 /**
- * The security-update pipeline. SA-CORE advisories are disclosed on a published
- * schedule with hours between announcement and exploitation, so a Drupal host that
- * cannot ship a core patch inside that window is a liability regardless of how good
- * the runtime is.
+ * Diffs a Drupal tree against a prior manifest and plans the objects a rollout has to move.
  *
- *   node scripts/security-update.mjs plan   <tree> [--against=<manifest.json>] [--fleet=<url>]
- *   node scripts/security-update.mjs manifest <tree> [--out=<manifest.json>]
+ *   node scripts/tree-diff.mjs plan     <tree> [--against=<manifest.json>] [--fleet=<url>]
+ *   node scripts/tree-diff.mjs manifest <tree> [--out=<manifest.json>]
+ *
+ * `plan` exits 3 when the plan DELETES a file and 0 otherwise, so a pipeline that uploads only
+ * `objectsToUpload` has to stop and handle it: a removal moves no bytes, so it is invisible in
+ * every count a bandwidth-shaped plan would report.
+ *
+ * IT DOES NOT READ ADVISORIES, and was named `security-update.mjs` as though it did. There is no
+ * feed, no `composer audit` and no security query anywhere in it -- the tree handed to `plan` must
+ * ALREADY be patched, by a human who already knew about the advisory. `scripts/README.md` claimed
+ * it "reaches the network for SA-CORE advisories", and that false line was the recorded reason it
+ * had never been ported: an offline test was believed impossible for a script whose only `fetch()`
+ * is of the operator's own `--fleet=` URL.
+ *
+ * The detection half is unbuilt. What is here is the deterministic half and it is worth having:
+ * hash the tree, diff it, emit exactly what a rollout has to move.
  *
  * This is tractable because the PHP tree is baked into a versioned asset pack,
  * so a core patch would naively mean re-packing and re-deploying every site. But
@@ -18,10 +29,8 @@ import { join, relative } from 'node:path';
  * objects that changed. A core security patch touches a handful of files, which
  * makes fleet patching a loop bounded by API rate limits rather than by bandwidth.
  *
- * This script is the deterministic half: hash the tree, diff it against a previous
- * manifest, and emit exactly what a rollout has to move. The fleet inventory and the
- * staged `deployments.create` percentage call are the operator's half, and the plan
- * output is shaped to be fed straight into them.
+ * The fleet inventory and the staged `deployments.create` percentage call are the operator's half,
+ * and the plan output is shaped to be fed straight into them.
  */
 
 const [, , command, treeArg, ...flags] = process.argv;
@@ -32,21 +41,25 @@ const flag = (name, fallback = null) => {
 
 if (!command || !treeArg) {
 	console.error(
-		'usage: security-update.mjs <plan|manifest> <drupal-tree> [--against=manifest.json] [--out=manifest.json]'
+		'usage: tree-diff.mjs <plan|manifest> <drupal-tree> [--against=manifest.json] [--out=manifest.json]'
 	);
 	process.exit(2);
 }
 
 // Only what actually ships. Tests and VCS metadata are excluded because they are
 // excluded from the pack, and a diff that reports them would overstate the rollout.
-const SKIP_DIRS = new Set(['tests', 'Tests', '.git', 'node_modules', 'sites/default/files']);
+const SKIP_NAMES = new Set(['tests', 'Tests', '.git', 'node_modules']);
+// tree-relative, and separate from SKIP_NAMES because a multi-segment path can never equal the
+// single segment `entry.name` -- as one entry in that set it silently matched nothing
+const SKIP_PATHS = new Set(['sites/default/files']);
 const SHIPPED = /\.(php|inc|module|install|theme|engine|profile|yml|twig|svg|json)$/;
 
 async function walk(dir, root, out = new Map()) {
 	for (const entry of await readdir(dir, { withFileTypes: true })) {
-		if (SKIP_DIRS.has(entry.name)) continue;
+		if (SKIP_NAMES.has(entry.name)) continue;
 		const full = join(dir, entry.name);
 		const rel = relative(root, full);
+		if (SKIP_PATHS.has(rel)) continue;
 		if (entry.isDirectory()) {
 			await walk(full, root, out);
 		} else if (SHIPPED.test(entry.name)) {
@@ -121,6 +134,10 @@ if (command === 'plan') {
 		else if (before.get(path) !== hash) changed.push(path);
 	}
 	const removed = [...before.keys()].filter((p) => !files.has(p));
+	// readdir order is not sorted, so two runs over the same tree could disagree on order alone
+	changed.sort();
+	added.sort();
+	removed.sort();
 
 	const moved = changed.length + added.length;
 	const plan = {
@@ -132,6 +149,10 @@ if (command === 'plan') {
 		removed,
 		// the number that decides whether a fleet patch is minutes or hours
 		objectsToUpload: moved,
+		// a deleted file uploads nothing, so it can only be counted separately
+		objectsToDelete: removed.length,
+		// the upload manifest is the whole tree rather than the delta; deletion is by omission
+		manifestEntries: files.size,
 		fractionOfTree: files.size ? Number((moved / files.size).toFixed(5)) : 0,
 		rollout: {
 			note: 'assets bind to a Worker version, so blob and index ship atomically; a version has both or neither',
@@ -154,7 +175,8 @@ if (command === 'plan') {
 						note: 'no --fleet=<url> given, so this plan names no sites; GET /fleet on a deployment that has the D1 binding'
 					},
 			steps: [
-				'for each site in rollout.sites: versions.create with only the changed objects (unmodified files are not requested)',
+				"for each site in rollout.sites: open an upload session with a manifest of ALL manifestEntries paths, omitting the plan's removed paths -- the session requests only the changed objects, and a path the manifest leaves out is absent from the version, which is the only way a rollout deletes a file",
+				'versions.create against that session; a manifest of just the objectsToUpload paths would carry every removed path forward onto every site',
 				'deployments.create at 10 percent, watch exceededCpu / exceededMemory / 5xx in Workers Logs',
 				'deployments.create at 100 percent, or roll back to the previous version id'
 			],
@@ -163,7 +185,8 @@ if (command === 'plan') {
 		}
 	};
 	console.log(JSON.stringify(plan, null, 2));
-	process.exit(removed.length > 0 ? 0 : 0);
+	// 3 rather than 0: an upload-shaped caller has to opt in to a plan that deletes
+	process.exit(removed.length > 0 ? 3 : 0);
 }
 
 console.error(`unknown command: ${command}`);

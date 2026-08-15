@@ -108,8 +108,13 @@ yet** for a stated reason each:
 
 - `patch-drupal.mjs` -- mutates `drupal-src/`, which is gitignored and has no committed version
   to diff against, so verification needs a throwaway copy of the tree first.
-- `security-update.mjs` -- reaches the network for SA-CORE advisories, so there is no offline
-  way to prove the port behaves identically.
+- `tree-diff.mjs` -- was `security-update.mjs`, and this entry used to say it "reaches the network
+  for SA-CORE advisories, so there is no offline way to prove the port behaves identically". That
+  was false: its only `fetch()` is of the operator's own `--fleet=` URL, so it ports offline. It
+  hashes a tree, diffs it against a prior manifest and plans the objects a rollout moves. Advisory
+  detection does not exist; the tree must already be patched. `tests/node/tree-diff.spec.ts` covers
+  it offline in 21 assertions, including the `--fleet` success and failure branches against a
+  loopback server, so the port now has a behaviour baseline to be judged against.
 
 ## Rules
 

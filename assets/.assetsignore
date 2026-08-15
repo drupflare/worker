@@ -1,0 +1,40 @@
+# Deny by default; the shipping set is the un-ignored list below.
+#
+# GATE 0.3. `wrangler.jsonc` is the canonical config and its `assets.directory` is this
+# directory, which has grown to 97 MB across 318 walked entries. The full tree does not upload:
+# a 48 MB attempt failed with a connectivity error after ~49 s, which is why
+# `scripts/stage-edge-assets.sh` and `experiments/wrangler/wrangler.edge*.jsonc` existed
+# at all. This file replaces that staging step: the subset is declared next to the assets
+# instead of copied into a parallel directory served by a parallel config, so there is one
+# config, one directory, and no build step to forget before a deploy.
+#
+# It is ALSO a disclosure fix. Workers assets are served publicly and take precedence over
+# the Worker, so `assets.directory: ./assets` published the whole site database at
+# /drupal/site.sqlite and every measurement fixture alongside it.
+#
+# THE SHIPPING SET IS DERIVED FROM THE CANONICAL VARS, not from what looks useful:
+#   LAZY_MOUNT=1        -> mountDrupalLazy() reads drupal-pf/core.pf.{json,bin}
+#                          (@drupflare/cartridge/fs)
+#   MIGRATE_ENGINE unset -> migrateEngine() defaults to 'sql' in src/site-do.ts, so `database`
+#                          is false and NOTHING fetches site.sqlite; the shipping binary carries
+#                          no pdo_sqlite to open it with either
+#   the JS engine replays drupal-sql/ (assetChunkLoader, src/db/migrate-sql.ts:508)
+#   mountDriver() reads driver.json (@drupflare/cartridge/fs)
+#   the free-tier prefill reads prefill.json (the /__migrate handler in src/site-do.ts)
+#
+# So changing LAZY_MOUNT, MIGRATE_ENGINE or SITE_DB_PREFIX in a deploying config means
+# changing this file too, and `tests/unit/runtime/assets-ignore.spec.ts` is what fails when
+# the two disagree.
+/*
+
+!/driver.json
+!/prefill.json
+
+# the lazy mount's per-file pack; prefix is fixed at drupal-pf in @drupflare/cartridge/fs
+!/drupal-pf/
+/drupal-pf/*
+!/drupal-pf/core.pf.json
+!/drupal-pf/core.pf.bin
+
+# the migration chunks the JS engine replays: manifest.json plus NNNN.json
+!/drupal-sql/

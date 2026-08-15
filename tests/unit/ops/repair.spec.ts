@@ -1,0 +1,165 @@
+import { describe, expect, it } from 'vitest';
+import {
+	CLEAN_STATE,
+	QUARANTINE_STRIKES,
+	ROLLBACK_STRIKES,
+	RUNGS,
+	isQuarantined,
+	parseState,
+	recordOutcome,
+	release,
+	serialiseState,
+	shouldRollback,
+	type RepairState
+} from '../../../src/ops/repair';
+
+/**
+ * Quarantine and rollback, the ladder's top two rungs. The ladder has declared them all along and
+ * nothing executed them, because a rollback with no restore point is not a rollback -- `/export` produced a dump nothing could replay until
+ * `src/db/import-sql.ts`.
+ *
+ * Almost every assertion here is a REFUSAL, which is the design rather than caution. Rollback discards
+ * everything written since the restore point, so the failure that matters is not "it declined to repair"
+ * but "it reverted a user's content because of one bad render". Quarantine keeps the site SERVING, so
+ * there is never urgency to escalate past it.
+ */
+
+const fail = (code: string) => ({ ok: false, code });
+const pass = { ok: true };
+
+/** drives n consecutive failures of one code */
+function strike(state: RepairState, code: string, times: number, at = 1000): RepairState {
+	let s = state;
+	for (let i = 0; i < times; i++) s = recordOutcome(s, fail(code), at + i);
+	return s;
+}
+
+describe('the ladder mirrors the PHP module', () => {
+	it('has the same six rungs in the same order', () => {
+		expect(RUNGS).toEqual([
+			'observe',
+			'reset',
+			'reconstruct',
+			'reconfigure',
+			'quarantine',
+			'rollback'
+		]);
+	});
+});
+
+describe('quarantine needs repeated failures of the SAME code', () => {
+	it('escalates after the strike threshold', () => {
+		const s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
+		expect(s.rung).toBe('quarantine');
+		expect(s.quarantinedAt).not.toBeNull();
+		expect(isQuarantined(s)).toBe(true);
+	});
+
+	it('does NOT escalate one strike short', () => {
+		const s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES - 1);
+		expect(s.rung).toBe('observe');
+		expect(isQuarantined(s)).toBe(false);
+	});
+
+	it('RESETS the count when the failure code changes', () => {
+		// two unrelated faults are not evidence of one durable condition, and summing them quarantines a
+		// site for having two different bad days
+		let s = strike(CLEAN_STATE, 'alpha', QUARANTINE_STRIKES - 1);
+		s = recordOutcome(s, fail('beta'), 2000);
+		expect(s.strikes).toBe(1);
+		expect(s.rung).toBe('observe');
+	});
+
+	it('treats a missing code as its own code rather than as a wildcard', () => {
+		let s = recordOutcome(CLEAN_STATE, { ok: false }, 1);
+		s = recordOutcome(s, { ok: false }, 2);
+		expect(s.code).toBe('unknown');
+		expect(s.strikes).toBe(2);
+	});
+
+	it('clears strikes on a pass but does NOT leave quarantine', () => {
+		// one good render says nothing about the condition that caused the quarantine, so release is a
+		// separate deliberate act
+		let s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
+		s = recordOutcome(s, pass, 5000);
+		expect(s.strikes).toBe(0);
+		expect(s.rung).toBe('quarantine');
+	});
+
+	it('is released explicitly, never automatically', () => {
+		const s = release(strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES), 9000);
+		expect(s.rung).toBe('observe');
+		expect(s.quarantinedAt).toBeNull();
+		expect(isQuarantined(s)).toBe(false);
+	});
+});
+
+describe('rollback refuses far more often than it fires', () => {
+	const point = { id: 7, statements: 300 };
+
+	it('refuses when not quarantined at all', () => {
+		const d = shouldRollback(CLEAN_STATE, point);
+		expect(d.rollback).toBe(false);
+		expect(d.reason).toContain('not quarantined');
+	});
+
+	it('refuses a quarantined site short of the rollback threshold', () => {
+		const s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
+		const d = shouldRollback(s, point);
+		expect(d.rollback).toBe(false);
+		// the reason names the count, so an operator can see how close it is
+		expect(d.reason).toContain(`/${ROLLBACK_STRIKES}`);
+	});
+
+	it('REFUSES when no restore point exists, and says why that is better', () => {
+		// the important one: a quarantined site is still serving, and reverting to nothing is worse than
+		// the fault being repaired
+		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
+		const d = shouldRollback(s, null);
+		expect(d.rollback).toBe(false);
+		expect(d.reason).toContain('no restore point');
+		expect(d.reason).toContain('strictly better');
+	});
+
+	it('refuses an EMPTY restore point, which would replay nothing', () => {
+		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
+		expect(shouldRollback(s, { id: 3, statements: 0 }).rollback).toBe(false);
+	});
+
+	it('fires only with quarantine, the full strike count and a real restore point', () => {
+		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
+		const d = shouldRollback(s, point);
+		expect(d.rollback).toBe(true);
+		expect(d.reason).toContain('restore point 7');
+		expect(d.reason).toContain('300 statements');
+	});
+
+	it('needs the strikes to be CONSECUTIVE and same-code', () => {
+		// a code change mid-run resets, so an intermittent fault can never accumulate to a rollback
+		let s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES - 1);
+		s = recordOutcome(s, fail('other'), 1);
+		expect(shouldRollback(s, point).rollback).toBe(false);
+	});
+
+	it('requires more evidence than quarantine does', () => {
+		expect(ROLLBACK_STRIKES).toBeGreaterThan(QUARANTINE_STRIKES);
+	});
+});
+
+describe('state survives a round trip and a corrupt row', () => {
+	it('round-trips', () => {
+		const s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
+		expect(parseState(serialiseState(s))).toEqual(s);
+	});
+
+	it('defaults to CLEAN on junk, so a corrupt row cannot quarantine a healthy site', () => {
+		for (const raw of [null, undefined, '', 'not json', '{"rung":"nonsense"}']) {
+			expect(parseState(raw).rung, String(raw)).toBe('observe');
+			expect(isQuarantined(parseState(raw))).toBe(false);
+		}
+	});
+
+	it('clamps a negative strike count rather than trusting it', () => {
+		expect(parseState('{"rung":"observe","strikes":-5}').strikes).toBe(0);
+	});
+});

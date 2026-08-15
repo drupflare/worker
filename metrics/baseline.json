@@ -1,0 +1,21 @@
+{
+	"schema": 1,
+	"values": {
+		"bundle.gzippedBytes": 2879099,
+		"driverPack.bytes": 305599,
+		"driverPack.files": 54,
+		"freeEnvelope.regenerationsPerDay": 1052,
+		"freeEnvelope.servingViewsPerDay": 100000,
+		"freeEnvelope.verdict": "fits",
+		"indexAudit.chargedRows": 4447,
+		"indexAudit.explicitIndexes": 177,
+		"indexAudit.indexShare": 0.6734877445468855,
+		"indexAudit.minChargePerRow": 2,
+		"packShape.chunks": 79,
+		"packShape.payloadBytes": 3958281,
+		"packShape.rows": 1342,
+		"tests.cases.workers": 1453,
+		"tests.specFiles.node": 21,
+		"tests.specFiles.workers": 50
+	}
+}

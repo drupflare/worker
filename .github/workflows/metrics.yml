@@ -1,0 +1,85 @@
+name: Class A Metrics
+
+on:
+  schedule:
+    - cron: '40 4 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        description: 'Release tag to hydrate; blank uses the tag for package.json version'
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  STREAM_HTTP_SRC: .siblings/stream-http/src
+
+jobs:
+  collect:
+    name: Collect and Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+      - name: Hydrate the Release Payload
+        id: hydrate
+        continue-on-error: true
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            bun run hydrate "--tag=$RELEASE_TAG"
+          else
+            bun run hydrate
+          fi
+      - name: Collect the Metrics
+        run: |
+          mkdir -p dist
+          bun run metrics --out=dist/metrics.json
+      - name: Archive the Metrics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: metrics
+          path: dist/metrics.json
+          retention-days: 90
+      - name: Gate Against the Baseline
+        if: ${{ !cancelled() }}
+        run: bun run metrics:gate --metrics=dist/metrics.json --summary="$GITHUB_STEP_SUMMARY"
+      - name: Report a Failed Hydrate
+        if: ${{ !cancelled() && steps.hydrate.outcome == 'failure' }}
+        run: |
+          {
+            echo "### Payload Not Hydrated"
+            echo
+            echo "The bundle, index audit and pack shape are reported as not collected above."
+            echo "Build the payload on the machine that has \`vendor/\` and"
+            echo "\`assets/drupal/site.sqlite\`, attach it to the release, and re-run:"
+            echo
+            echo '```sh'
+            echo "bun run release:payload"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,10 +1,10 @@
-import { isPaid, type PlanEnv } from '../ops/plan.js';
+import { isPaid, type PlanEnv, type ResolvedPlan } from '../ops/plan';
 import {
 	projectImageTransforms,
 	thresholdReport,
 	type ImagePlan,
 	type MeterReading
-} from '../ops/thresholds.js';
+} from '../ops/thresholds';
 
 /**
  * | surface    | state                                                                        |
@@ -106,7 +106,8 @@ const pill = (status: string) => {
 export function renderThresholds(
 	used: Partial<Record<string, number>>,
 	imagePlan: ImagePlan | null,
-	env?: PlanEnv | null
+	env?: PlanEnv | null,
+	resolved?: ResolvedPlan | null
 ): string {
 	const report = thresholdReport(used, env);
 	const rows = report.readings.map((r: MeterReading) => {
@@ -140,7 +141,17 @@ export function renderThresholds(
 	}
 
 	return `<h1>Limits</h1>
-<p class="sub">Every meter this site can run out of, what spends it, and what happens when it does. ${escapeHtml(String(report.hardCapCount))} of these stops working rather than billing.</p>
+${
+	resolved
+		? `<p class="sub">Plan <strong>${escapeHtml(resolved.plan)}</strong>, from ${escapeHtml(
+				resolved.source === 'kv'
+					? 'the CONFIG_KV override'
+					: resolved.source === 'var'
+						? 'the deployed PLAN var'
+						: 'nothing set, so the free default'
+			)}. Set the <code>plan</code> key in CONFIG_KV to change it without a redeploy.</p>`
+		: ''
+}<p class="sub">Every meter this site can run out of, what spends it, and what happens when it does. ${escapeHtml(String(report.hardCapCount))} of these stops working rather than billing.</p>
 <table><thead><tr><th>Meter</th><th>Allowance</th><th>When it runs out</th><th>Now</th></tr></thead><tbody>${rows.join('')}</tbody></table>
 ${images}
 <p class="sub">Anything marked <em>nothing measures this yet</em> has no counter wired to it. That is reported rather than shown as healthy, because an unmeasured meter reading zero is the failure this column exists to prevent.</p>`;

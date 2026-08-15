@@ -13,7 +13,7 @@
 <h1>Type Alias InstallPlan</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">InstallPlan</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#entries">entries</a><span class="tsd-signature-symbol">:</span> <a href="ops_catalog.CatalogEntry.html" class="tsd-signature-type tsd-kind-type-alias">CatalogEntry</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#layers">layers</a><span class="tsd-signature-symbol">:</span> <a href="ops_catalog.LayerSpec.html" class="tsd-signature-type tsd-kind-type-alias">LayerSpec</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ok">ok</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#problems">problems</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requested">requested</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#totalbytes">totalBytes</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L78">src/ops/catalog.ts:78</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L78">src/ops/catalog.ts:78</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -37,36 +37,36 @@
 <div class="tsd-comment tsd-typography"><p>catalog entries in the same order as <code>layers</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L83">src/ops/catalog.ts:83</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L83">src/ops/catalog.ts:83</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="layers"><span>layers</span><a href="#layers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">layers</span><span class="tsd-signature-symbol">:</span> <a href="ops_catalog.LayerSpec.html" class="tsd-signature-type tsd-kind-type-alias">LayerSpec</a><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>every layer to mount, dependencies FIRST so a later layer can override an earlier one</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L81">src/ops/catalog.ts:81</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L81">src/ops/catalog.ts:81</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ok"><span>ok</span><a href="#ok" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ok</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L85">src/ops/catalog.ts:85</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L85">src/ops/catalog.ts:85</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="problems"><span>problems</span><a href="#problems" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">problems</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>why it cannot be planned; empty when ok</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L87">src/ops/catalog.ts:87</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L87">src/ops/catalog.ts:87</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="requested"><span>requested</span><a href="#requested" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">requested</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L79">src/ops/catalog.ts:79</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L79">src/ops/catalog.ts:79</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="totalbytes"><span>total<wbr/>Bytes</span><a href="#totalbytes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">totalBytes</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/7fe6bd21fc2bf17658e91cb4e91244ea73c44e96/src/ops/catalog.ts#L84">src/ops/catalog.ts:84</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/133d0ea0002cafe98ff6858fec269b62f508daca/src/ops/catalog.ts#L84">src/ops/catalog.ts:84</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

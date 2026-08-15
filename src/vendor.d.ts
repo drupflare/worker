@@ -22,14 +22,20 @@ declare module '*.zst' {
 }
 
 /**
- * The emscripten glue a `vendor/` build ships next to its `.wasm`.
+ * The emscripten glue a `vendor/` or `assets/` build ships next to its `.wasm`.
  *
- * Declared because the whole directory is gitignored: on a machine that has never run
+ * Declared because both directories are gitignored: on a machine that has never run
  * `bun run vendor` -- CI, or this repo with four of the probe builds never rebuilt -- the
  * specifier resolves to nothing and every importer fails to typecheck. The shape is the one
  * emscripten emits for MODULARIZE=1, and it is what `PhpBase` calls.
+ *
+ * **Matches every `.mjs`, not just `*-worker.mjs`.** The narrower pattern was green locally and
+ * failed CI on three files it did not cover -- `vendor/php8.3-web.mjs` and the two
+ * `assets/sjlj/*sjlj.mjs` -- which broke `typecheck` AND `docs:build`, because typedoc resolves the
+ * same specifiers. Every `.mjs` imported anywhere in `src/` is emscripten glue of this shape, so
+ * the wildcard is accurate rather than a blanket `any`.
  */
-declare module '*-worker.mjs' {
+declare module '*.mjs' {
 	const factory: (moduleArg?: object) => Promise<any>;
 	export default factory;
 }

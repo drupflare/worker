@@ -8,6 +8,8 @@ on:
 
 env:
   STREAM_HTTP_SRC: .siblings/stream-http/src
+  DRUPFLARE_SRC: .siblings/drupflare
+  ROM_SRC: .siblings/rom
 
 jobs:
   test:
@@ -24,6 +26,16 @@ jobs:
         with:
           repository: drupflare/stream-http
           path: .siblings/stream-http
+      - name: Check Out drupflare/drupflare
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/drupflare
+          path: .siblings/drupflare
+      - name: Check Out drupflare/rom
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/rom
+          path: .siblings/rom
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -76,6 +88,16 @@ jobs:
         with:
           repository: drupflare/stream-http
           path: .siblings/stream-http
+      - name: Check Out drupflare/drupflare
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/drupflare
+          path: .siblings/drupflare
+      - name: Check Out drupflare/rom
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/rom
+          path: .siblings/rom
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:

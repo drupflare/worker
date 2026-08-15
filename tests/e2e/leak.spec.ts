@@ -144,25 +144,35 @@ describe.skipIf(skip)('the identity leak differential', () => {
 	});
 
 	/**
-	 * **THE CONTENT-LEVEL DIFFERENTIAL IS NOT COVERED, and this records why rather than hiding it.**
+	 * The content-level differential, now that content can exist.
 	 *
-	 * The plan was to seed a node per identity and look for one identity's marker in another's
-	 * response. It cannot run: `assets/drupal/site.sqlite` ships no `node.type.*` config entity, so
-	 * every save is refused and there is no per-identity content to leak. See
-	 * `operate.spec.ts` step 1.
-	 *
-	 * The structural differential above still holds and is the stronger of the two for the defect
-	 * that actually occurred -- the uid-1 poisoning was host-tier, and a digest comparison against a
-	 * fresh object catches it. But a green run here must not be read as "no content ever crosses
-	 * identities", because no content exists to cross. Asserting the blocker means this starts
-	 * failing the day a node type is restored, which is when the check becomes writable.
+	 * Each identity saves a node carrying a marker only it should ever produce, and every response is
+	 * then checked for every OTHER identity's marker. This is the check the uid-1 poisoning would
+	 * have failed: admin HTML in the anonymous copy would carry the admin marker.
 	 */
-	it('cannot run the content-level differential, because no content can be created', async () => {
-		const saved = await saveNode(mixed, { title: 'cfw-leak-user-a', body: 'cfw-leak-user-a' });
-		expect(saved.ok).toBe(false);
-		expect(saved.error).toBe(
-			'RuntimeException: no node type exists in this site, so nothing can be saved'
-		);
+	it('no identity marker appears in another identity response', async () => {
+		const markers: Record<string, string> = {};
+		for (const step of SEQUENCE) {
+			if (step.cookie === null) continue;
+			const marker = `cfw-leak-${step.identity}`;
+			markers[step.identity] = marker;
+			const saved = await saveNode(mixed, { title: marker, body: marker });
+			expect(saved.ok, `${step.identity}: ${JSON.stringify(saved).slice(0, 300)}`).toBe(true);
+			// the acting-user restore is what keeps one identity's save out of the next render
+			expect(saved.restoredUid, step.identity).toBe(0);
+		}
+		expect(Object.keys(markers).length).toBeGreaterThan(1);
+
+		const after = await runSequence(mixed, '/');
+		for (const shot of after) {
+			for (const [owner, marker] of Object.entries(markers)) {
+				if (owner === shot.identity) continue;
+				expect(
+					shot.body.includes(marker),
+					`${shot.identity} received ${owner}'s marker ${marker}`
+				).toBe(false);
+			}
+		}
 	});
 
 	it('reports what the run could not cover, so a pass is not over-read', () => {

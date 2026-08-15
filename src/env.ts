@@ -16,4 +16,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	CRON_MAX_UNITS?: string | number;
 	CRON_MAX_ROWS?: string | number;
 	CRON_MAX_MS?: string | number;
+	/** logs every Drupal statement through console.log, which survives an object reset */
+	PW_SQL_TRACE?: string;
+	/** first statement number to log, so a 256 KB tail budget covers the END of a long run */
+	PW_SQL_TRACE_FROM?: string | number;
 }

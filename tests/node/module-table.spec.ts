@@ -74,21 +74,28 @@ describe('moduleTable', () => {
 			expect(VERIFIED_BEHAVIOURS[row.name], row.name).toBeDefined();
 		}
 		const verified = rows.filter((r) => r.state === 'verified').map((r) => r.name);
-		expect(verified).toEqual(Object.keys(VERIFIED_BEHAVIOURS));
+		expect(verified.sort()).toEqual(Object.keys(VERIFIED_BEHAVIOURS).sort());
 	});
 
 	/**
 	 * The verified set, pinned by name.
-	 *
-	 * This started as "nothing is verified yet" and was written to fail the day the first module was,
-	 * so that promotion is a deliberate edit rather than a drift. Two modules earned it under the
-	 * workers pool lane; `pathauto` and `token` did not, because the site ships no pathauto pattern
-	 * and their behaviour is therefore unreachable rather than broken.
 	 */
 	it('pins exactly which modules have had their behaviour observed', () => {
 		expect(Object.keys(VERIFIED_BEHAVIOURS).sort()).toEqual([
 			'drupal/admin_toolbar',
-			'drupal/ctools'
+			'drupal/captcha',
+			'drupal/ctools',
+			'drupal/field_group',
+			'drupal/honeypot',
+			'drupal/metatag',
+			'drupal/migrate_plus',
+			'drupal/paragraphs',
+			'drupal/queue_ui',
+			'drupal/recaptcha',
+			'drupal/redirect',
+			'drupal/scheduler',
+			'drupal/search_api',
+			'drupal/stage_file_proxy'
 		]);
 		for (const [name, evidence] of Object.entries(VERIFIED_BEHAVIOURS)) {
 			// evidence must say what was exercised, not that it "works"

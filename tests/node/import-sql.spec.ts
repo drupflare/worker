@@ -1,10 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+	DUMP_START,
 	RESTORE_OWNED_TABLES,
+	dumpChunk,
 	dumpDatabase,
 	encodeLiteral,
-	isRegenerable
+	isRegenerable,
+	type DumpCursor
 } from '../../src/db/export-sql';
 import { DO_SQLITE_MAX_STATEMENT_CHARS } from '../../src/db/heap-store';
 import {
@@ -901,5 +904,48 @@ describe('what a dump carries and what it deliberately leaves behind', () => {
 		const lastInsert = statements.map((s) => s.startsWith('INSERT ')).lastIndexOf(true);
 		const createIndex = statements.findIndex((s) => s.startsWith('CREATE INDEX'));
 		expect(createIndex).toBeGreaterThan(lastInsert);
+	});
+});
+
+describe('the row at rowid 0, which the keyset used to use as its start sentinel', () => {
+	/** Drupal's own shape: the anonymous user is `users` uid 0, and uid IS the rowid */
+	function withAnonymous(): DatabaseSync {
+		const db = new DatabaseSync(':memory:');
+		db.exec(`CREATE TABLE users (uid INTEGER PRIMARY KEY, uuid TEXT, langcode TEXT)`);
+		db.exec(`INSERT INTO users VALUES (0, 'anon-uuid', 'en'), (1, 'admin-uuid', 'en')`);
+		return db;
+	}
+
+	it('EXPORTS it, rather than starting the keyset past it', () => {
+		// `WHERE _rowid_ > ?` from a cursor of 0 skips rowid 0, and a rowid is signed so no number
+		// means "before every row". Measured on the shipped pack before the fix: `users` held 2 rows
+		// and the dump carried 1, so every backup silently lost the anonymous user
+		const dump = dumpDatabase(storageOver(withAnonymous()).sql);
+		expect(dump.tables.users).toBe(2);
+		expect(dump.sql).toContain(`VALUES (0, 'anon-uuid', 'en')`);
+	});
+
+	it('carries it through a CHUNKED export as well, where the cursor is what resumes', () => {
+		// one row per chunk, so the first boundary lands immediately after rowid 0
+		const { sql } = storageOver(withAnonymous());
+		let cursor: DumpCursor = DUMP_START;
+		const parts: string[] = [];
+		for (let guard = 0; guard < 50; guard++) {
+			const chunk = dumpChunk(sql, cursor, { maxCharsPerChunk: 1, maxLiteralChars: 64 });
+			if (chunk.sql) parts.push(chunk.sql);
+			if (chunk.done) break;
+			cursor = chunk.cursor;
+		}
+		const text = parts.join('\n');
+		expect(text).toContain(`VALUES (0, 'anon-uuid', 'en')`);
+		expect(text).toContain(`VALUES (1, 'admin-uuid', 'en')`);
+	});
+
+	it('keeps a NEGATIVE rowid too, which the same comparison also excluded', () => {
+		const db = withAnonymous();
+		db.exec(`INSERT INTO users VALUES (-5, 'negative-uuid', 'en')`);
+		const dump = dumpDatabase(storageOver(db).sql);
+		expect(dump.tables.users).toBe(3);
+		expect(dump.sql).toContain(`VALUES (-5, 'negative-uuid', 'en')`);
 	});
 });

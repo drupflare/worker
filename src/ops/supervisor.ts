@@ -78,6 +78,15 @@ export interface Observation {
 	doRequestsSamples?: number[];
 	/** rows in the health ledger itself, so it can police its own growth */
 	ledgerRows?: number;
+	/**
+	 * Unique image transformations this site's CONFIGURATION implies: styles x images.
+	 *
+	 * A projection rather than a count, and that is the point -- the meter is a function of content
+	 * and configuration, both known in advance, so the answer does not have to wait for the failure.
+	 */
+	imageTransforms?: number;
+	/** the monthly allowance, when the plan has one */
+	imageTransformsLimit?: number;
 }
 
 /** how far outside the rolling median a body may fall before it is an anomaly */
@@ -506,6 +515,38 @@ export function ledgerOversized(obs: Observation): Finding | null {
 	};
 }
 
+/**
+ * The image-transformation cap, projected from the site's own configuration.
+ *
+ * THE THIRD METER, and neither ceiling in the cost model can see it. Serving is bound by Worker
+ * requests and regeneration by rows written; this one is bound by CONTENT -- 5,000 unique
+ * transformations per MONTH on free, and it fails as a hard cap rather than as a bill. Ten image
+ * styles over 2,000 images is 20,000, four times over, and images simply stop being transformed
+ * partway through the month with nothing reporting it.
+ *
+ * Monthly, so unlike every other meter here it does NOT clear at midnight -- which is why it warns
+ * on the projection rather than on a reading. By the time a count crossed the line the month would
+ * already be spent, and the only remedies (drop a style, cut the image count) take effect next month.
+ *
+ * `warn` rather than `error` even when it is over: this quarantines nothing and repairs nothing,
+ * because the fix is a configuration decision a human makes. It has to be SAID, not acted on.
+ */
+export function imageCapProjected(obs: Observation): Finding | null {
+	const { imageTransforms: used, imageTransformsLimit: limit } = obs;
+	if (used === undefined || !limit || limit <= 0) return null;
+	const fraction = used / limit;
+	if (fraction < BUDGET_WARN_FRACTION) return null;
+	const over = fraction >= 1;
+	return {
+		code: 'budget.image_transforms',
+		severity: 'warn',
+		scope: 'images',
+		context: over
+			? `${used} of ${limit}/month (${fraction.toFixed(2)}x over); transforms stop partway through the month`
+			: `${used} of ${limit}/month (${(fraction * 100).toFixed(1)}%)`
+	};
+}
+
 /** every host-side tripwire, in the order they are evaluated */
 export const HOST_TRIPWIRES = [
 	renderEmpty,
@@ -518,7 +559,8 @@ export const HOST_TRIPWIRES = [
 	packGenerationMismatch,
 	memoryHighwaterRising,
 	memoryTrendRising,
-	ledgerOversized
+	ledgerOversized,
+	imageCapProjected
 ] as const;
 
 /**

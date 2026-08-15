@@ -1,0 +1,96 @@
+name: Build Project
+
+on:
+  push:
+    branches: [master, ver/*, feat/*, renovate/*]
+  pull_request:
+    branches: [master, ver/*, feat/*, renovate/*]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  STREAM_HTTP_SRC: .siblings/stream-http/src
+  DRUPFLARE_SRC: .siblings/drupflare
+  ROM_SRC: .siblings/rom
+
+jobs:
+  gate:
+    name: Gate Suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Check Out drupflare/drupflare
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/drupflare
+          path: .siblings/drupflare
+      - name: Check Out drupflare/rom
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/rom
+          path: .siblings/rom
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+          coverage: none
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Fetch Drupal Tree
+        run: bun run fetch:drupal
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+      - name: Run Vitest Suites
+        run: bun run test
+      - name: Run PHP Driver Suite
+        run: php -d opcache.enable_cli=0 .siblings/rom/tests/run-driver-suite.php ./drupal-src
+      - name: Run Health Suite
+        run: php .siblings/drupflare/tests/health-suite.php
+      - name: Report What This Lane Cannot Cover
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Gate"
+            echo
+            echo "Built here: \`assets/driver.json\` only."
+            echo
+            echo "Not built here, so the specs that assert them name themselves skipped:"
+            echo "- \`assets/drupal-pf/\` and \`assets/drupal-sql/\` need a native-PHP Drupal bake"
+            echo "  plus \`assets/drupal/site.sqlite\`, which nothing in the repository regenerates."
+            echo "- \`.interp/\` needs Docker and a token for drupflare/phasm's artifacts."
+            echo
+            echo "The release lane hydrates the payload and runs the same suites with"
+            echo "\`REQUIRE_ARTIFACTS=1\`, so a stale pack fails before anything is published."
+          } >> "$GITHUB_STEP_SUMMARY"

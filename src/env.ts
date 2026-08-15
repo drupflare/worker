@@ -12,4 +12,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
 	PREFILL?: string;
+	DRUPAL_CRON?: string;
+	CRON_MAX_UNITS?: string | number;
+	CRON_MAX_ROWS?: string | number;
+	CRON_MAX_MS?: string | number;
 }

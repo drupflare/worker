@@ -1,0 +1,252 @@
+import { describe, expect, it } from 'vitest';
+import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/cron-php';
+import {
+	CRON_HOOKS,
+	KNOWN_CRON_HOOKS,
+	advanceCursor,
+	cronAlarmDelayMs,
+	cronUnits,
+	keepWarmMs,
+	queueBatchSize,
+	readCursor,
+	skippedCronHooks,
+	writeCursor
+} from '../../../src/ops/cron';
+
+describe('cronUnits: the chain and what it deliberately omits', () => {
+	const units = cronUnits();
+	const ids = units.map((u) => u.id);
+
+	it('puts the three SQL GC units first, before anything can enter PHP', () => {
+		expect(ids.slice(0, 3)).toEqual(['gc:watchdog', 'gc:cachedata', 'gc:expired']);
+	});
+
+	it.each([
+		["file's cron runs", 'hook:file', true],
+		["layout_builder's cron runs", 'hook:layout_builder', true],
+		["update's cron does NOT run", 'hook:update', false],
+		["announcements_feed's cron does NOT run", 'hook:announcements_feed', false],
+		["system's cron does NOT run", 'hook:system', false],
+		["dblog's cron does NOT run", 'hook:dblog', false]
+	])('%s', (_label, id, present) => {
+		expect(ids.includes(id)).toBe(present);
+	});
+
+	it('closes the round with the queue and then cron_last', () => {
+		expect(ids[ids.length - 2]).toBe('queue');
+		expect(ids[ids.length - 1]).toBe('cron_last');
+	});
+
+	it('is seven units: four pure SQL, three that may enter PHP', () => {
+		expect(units).toHaveLength(7);
+		expect(units.filter((u) => u.kind === 'sql')).toHaveLength(4);
+		// two hooks plus the queue; the queue only enters PHP when SQL says there is work
+		expect(units.filter((u) => u.kind === 'php')).toHaveLength(3);
+		expect(units.filter((u) => u.module)).toHaveLength(2);
+	});
+
+	it('never runs a hook for a module the site does not have', () => {
+		// `module` is optional on a unit, so the filter narrows it before the lookup
+		const named = units.map((u) => u.module).filter((m): m is string => typeof m === 'string');
+		expect(named.every((m) => KNOWN_CRON_HOOKS.includes(m))).toBe(true);
+	});
+});
+
+describe('the skip policy carries its reasons', () => {
+	const skipped = skippedCronHooks();
+
+	it('skips four of the six implementations', () => {
+		expect(Object.keys(skipped)).toHaveLength(4);
+	});
+
+	it('gives every skip a real reason rather than a flag', () => {
+		expect(Object.values(skipped).every((v) => String(v).length > 10)).toBe(true);
+	});
+
+	it("update's reason names the outbound HTTPS this runtime lacks", () => {
+		expect(skipped.update).toMatch(/HTTPS/);
+	});
+
+	it("dblog's reason names the SQL pass that replaced it", () => {
+		expect(skipped.dblog).toMatch(/gc:watchdog/);
+	});
+
+	it('re-enables system when a site has the advisories fetch disabled', () => {
+		const units = cronUnits({ hookPolicy: { system: { run: true } } });
+		expect(units.some((u) => u.module === 'system')).toBe(true);
+	});
+
+	it('accounts for every known hook, so a new one cannot be silently dropped', () => {
+		const accounted = new Set([
+			...cronUnits()
+				.filter((u) => u.module)
+				.map((u) => u.module),
+			...Object.keys(skippedCronHooks())
+		]);
+		for (const hook of KNOWN_CRON_HOOKS) expect(accounted.has(hook)).toBe(true);
+	});
+
+	it('CRON_HOOKS and KNOWN_CRON_HOOKS agree on the surface', () => {
+		expect(Array.isArray(KNOWN_CRON_HOOKS)).toBe(true);
+		expect(KNOWN_CRON_HOOKS.length).toBeGreaterThan(0);
+		expect(typeof CRON_HOOKS).toBe('object');
+	});
+});
+
+describe('the cursor', () => {
+	const n = cronUnits().length;
+
+	it.each([
+		['null becomes the start of the chain', null],
+		['a garbage string becomes the start', '{{{'],
+		['an array is not a cursor', [1, 2]],
+		['an index past the end resets', { i: 99 }],
+		['a negative index resets', { i: -1 }],
+		['a float index resets', { i: 1.5 }]
+	])('%s', (_label, stored) => {
+		expect(readCursor(stored as never, n).i).toBe(0);
+	});
+
+	it('round-trips through writeCursor', () => {
+		expect(readCursor(writeCursor(readCursor({ i: 3 }, n)), n).i).toBe(3);
+	});
+
+	it('keeps a valid round and resets a bad one', () => {
+		expect(readCursor({ i: 1, round: 7 }, n).round).toBe(7);
+		expect(readCursor({ i: 1, round: -3 }, n).round).toBe(0);
+	});
+
+	it('advances one unit at a time, wraps, and bumps the round on wrap', () => {
+		// separate consts rather than reassigning one variable: `readCursor` returns a STORED
+		// cursor, which has no `wrapped`, and `wrapped` exists only on what `advanceCursor`
+		// returns. Reusing the variable narrows it to the stored shape and hides that
+		const start = readCursor(null, 3);
+		const first = advanceCursor(start, 3);
+		expect(first.i).toBe(1);
+		expect(first.wrapped).toBe(false);
+		const second = advanceCursor(first, 3);
+		expect(second.i).toBe(2);
+		const third = advanceCursor(second, 3);
+		expect(third.i).toBe(0);
+		expect(third.wrapped).toBe(true);
+		expect(third.round).toBe(1);
+	});
+});
+
+describe('cronAlarmDelayMs', () => {
+	it('chains fast while there is more of the round to do', () => {
+		expect(cronAlarmDelayMs({ more: true }, { chainMs: 1 })).toBe(1);
+	});
+
+	it('falls back to the keep-warm interval when the round is finished', () => {
+		expect(cronAlarmDelayMs({ more: false }, { idleMs: 240000 })).toBe(240000);
+	});
+
+	it('has defaults, so a caller that passes no options still gets a sane delay', () => {
+		expect(typeof cronAlarmDelayMs({ more: true }, {})).toBe('number');
+		expect(cronAlarmDelayMs({ more: false }, {})).toBeGreaterThan(0);
+	});
+});
+
+describe('env plumbing for the step machine', () => {
+	it('reads the queue batch size and the keep-warm interval', () => {
+		expect(queueBatchSize({ CRON_QUEUE_BATCH_SIZE: '7' })).toBe(7);
+		expect(keepWarmMs({ KEEP_WARM_MS: '5000' })).toBe(5000);
+	});
+
+	it('ignores nonsense rather than producing 0 or NaN', () => {
+		expect(queueBatchSize({ CRON_QUEUE_BATCH_SIZE: 'abc' })).toBeGreaterThan(0);
+		expect(keepWarmMs({ KEEP_WARM_MS: 'abc' })).toBeGreaterThan(0);
+	});
+
+	it('an absent env yields defaults', () => {
+		expect(queueBatchSize(undefined)).toBeGreaterThan(0);
+		expect(keepWarmMs(undefined)).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * The PHP fragments are `String.raw` templates, and two mistakes in them break the BUNDLE
+ * rather than a test: a backtick terminates the template literal, and `${` interpolates.
+ *
+ * That has happened twice in this project -- once in `site-php.js` and once in `updb-php.js`,
+ * where a PHP comment containing a backtick produced `Expected ";" but found "semaphore"` at
+ * build time. These assertions move that failure from the bundler to the gate.
+ */
+describe('the PHP fragments cannot break the bundle', () => {
+	// String.fromCharCode(96) rather than a literal, so this file cannot break the same way it
+	// is asserting against
+	const BACKTICK = String.fromCharCode(96);
+	const fragments: Record<string, string> = {
+		'runCronHook(file)': runCronHook('file'),
+		'runCronHook(layout_builder)': runCronHook('layout_builder'),
+		runCronQueue: runCronQueue('media_entity_thumbnail', 5),
+		cronHookList: cronHookList()
+	};
+
+	it.each(Object.keys(fragments))('%s has no backtick anywhere', (name) => {
+		expect(fragments[name]).not.toContain(BACKTICK);
+	});
+
+	it.each(Object.keys(fragments))('%s opens with the PHP tag', (name) => {
+		expect(fragments[name]!.startsWith('<?php')).toBe(true);
+	});
+
+	it.each(Object.keys(fragments))('%s prints exactly one json_encode', (name) => {
+		expect((fragments[name]!.match(/echo json_encode/g) ?? []).length).toBe(1);
+	});
+
+	it.each(Object.keys(fragments))('%s installs the Fiber shim', (name) => {
+		expect(fragments[name]).toContain('PhpWasmSyncFiber');
+	});
+
+	it('boots the memoized kernel rather than a fresh one per hook', () => {
+		expect(fragments['runCronHook(file)']).toContain('__pw_kernel');
+	});
+
+	it('goes through invokeAllWith, not invoke()', () => {
+		expect(fragments['runCronHook(file)']).toContain("invokeAllWith('cron'");
+	});
+
+	it('never calls drupal_cron, which is the whole point of the unit list', () => {
+		for (const code of Object.values(fragments)) {
+			expect(/drupal_cron|\bcron\(\)->run\b/.test(code)).toBe(false);
+		}
+	});
+
+	it('takes no lock, because the Durable Object gate is the mutual exclusion', () => {
+		expect(fragments['runCronHook(file)']).not.toContain('->acquire(');
+	});
+
+	it('caps the queue by item count rather than by wall clock', () => {
+		expect(/\$i < \$max/.test(fragments.runCronQueue!)).toBe(true);
+	});
+
+	it("handles all four of core's requeue cases", () => {
+		for (const s of [
+			'DelayedRequeueException',
+			'RequeueException',
+			'SuspendQueueException',
+			'releaseItem'
+		]) {
+			expect(fragments.runCronQueue).toContain(s);
+		}
+	});
+
+	// a bad name must never reach the interpreter as SQL or PHP
+	it.each(['Bad-Name', 'a b', '', '1module', 'file; echo 1', '../x'])(
+		'refuses module name %j',
+		(bad) => {
+			expect(runCronHook(bad)).toContain('refused module name');
+		}
+	);
+
+	it.each(['Bad Queue', '', 'A', "x'y"])('refuses queue name %j', (bad) => {
+		expect(runCronQueue(bad)).toContain('refused queue name');
+	});
+
+	it('clamps an absurd item cap and falls back on a nonsense one', () => {
+		expect(/\$max = (\d+);/.exec(runCronQueue('q', 9999))?.[1]).toBe('50');
+		expect(/\$max = (\d+);/.exec(runCronQueue('q', -3))?.[1]).toBe('5');
+	});
+});

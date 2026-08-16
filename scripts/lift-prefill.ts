@@ -54,16 +54,28 @@ const arg = (name: string, fallback: string): string => {
 	return hit ? hit.slice(name.length + 3) : fallback;
 };
 
-const endpoint = arg('endpoint', 'http://localhost:8801').replace(/\/+$/, '');
-const site = arg('site', 'bake');
-const paths = arg('paths', '/,/user/login')
-	.split(',')
-	.map((p) => p.trim())
-	.filter(Boolean);
-const out = arg('out', 'assets/prefill.json');
+/** the five paths the shipped `assets/prefill.json` carries, so a rebuild produces the same set */
+export const PREFILL_PATHS = ['/', '/node', '/user/login', '/user/password', '/filter/tips'];
 
-/** renders one path through the real worker and returns the shape prefill.json stores */
-async function renderOne(path: string) {
+/** one prefilled page, in the shape `prefill.json` stores and `/__migrate` reads back */
+export type PrefilledPage = {
+	status: number;
+	contentType: string;
+	html: string;
+	renderMs: number;
+};
+
+/**
+ * Renders one path through the real worker and returns the shape prefill.json stores.
+ *
+ * @param endpoint - a running worker, no trailing slash
+ * @throws when the path never returns a rendered 200, rather than recording whatever it did return.
+ */
+export async function renderOne(
+	endpoint: string,
+	site: string,
+	path: string
+): Promise<PrefilledPage> {
 	const url = new URL(`${endpoint}/serve`);
 	url.searchParams.set('site', site);
 	url.searchParams.set('path', path);
@@ -85,36 +97,63 @@ async function renderOne(path: string) {
 	throw new Error(`${path}: never returned a rendered 200 from ${endpoint}`);
 }
 
-const prefill: Record<string, unknown> = {};
-for (const path of paths) {
-	const page = await renderOne(path);
-	prefill[path] = page;
-	const suffixed = (page.html.match(/--2/g) ?? []).length;
-	// UTF-8 BYTES, not `html.length`. A JS string length counts UTF-16 code units, so the front page
-	// reported 12,296 for content that is 12,304 bytes on the wire -- an 8-byte gap that looks exactly
-	// like a page which failed to match the recorded acceptance value while being byte-identical to it.
-	// The digest is printed for the same reason: it is what a restore byte-compare compares.
-	const bytes = new TextEncoder().encode(page.html);
-	const digest = createHash('sha1').update(bytes).digest('hex').slice(0, 12);
-	console.log(`  ${path}: ${bytes.length} bytes, sha1 ${digest}, "--2" ids: ${suffixed}`);
-	if (suffixed > 0) {
-		// the runtime is the authority, so a suffix here is real rather than an artifact -- but it
-		// is worth seeing, because it would mean the page genuinely contains a duplicate id
-		console.log(`    note: ${suffixed} suffixed ids came from the RUNTIME, so they are real`);
+/**
+ * Lifts every path and writes the file.
+ *
+ * Exported so `scripts/bake-prefill.ts` can boot a worker and drive this, rather than reimplementing
+ * the render loop -- what is measured here is which bytes get recorded, and a second copy of that is
+ * a second answer to the same question.
+ */
+export async function liftPrefill(
+	endpoint: string,
+	site: string,
+	paths: readonly string[],
+	out: string
+): Promise<Record<string, PrefilledPage>> {
+	const prefill: Record<string, PrefilledPage> = {};
+	for (const path of paths) {
+		const page = await renderOne(endpoint, site, path);
+		prefill[path] = page;
+		const suffixed = (page.html.match(/--2/g) ?? []).length;
+		// UTF-8 BYTES, not `html.length`. A JS string length counts UTF-16 code units, so the front page
+		// reported 12,296 for content that is 12,304 bytes on the wire -- an 8-byte gap that looks exactly
+		// like a page which failed to match the recorded acceptance value while being byte-identical to it.
+		// The digest is printed for the same reason: it is what a restore byte-compare compares.
+		const bytes = new TextEncoder().encode(page.html);
+		const digest = createHash('sha1').update(bytes).digest('hex').slice(0, 12);
+		console.log(`  ${path}: ${bytes.length} bytes, sha1 ${digest}, "--2" ids: ${suffixed}`);
+		if (suffixed > 0) {
+			// the runtime is the authority, so a suffix here is real rather than an artifact -- but it
+			// is worth seeing, because it would mean the page genuinely contains a duplicate id
+			console.log(
+				`    note: ${suffixed} suffixed ids came from the RUNTIME, so they are real`
+			);
+		}
 	}
+
+	writeFileSync(out, JSON.stringify(prefill));
+	console.log(
+		JSON.stringify(
+			{
+				out,
+				paths: Object.keys(prefill),
+				bytes: JSON.stringify(prefill).length,
+				source: `${endpoint} (site=${site})`,
+				note: 'prefilled output now matches rendered output by construction'
+			},
+			null,
+			2
+		)
+	);
+	return prefill;
 }
 
-writeFileSync(out, JSON.stringify(prefill));
-console.log(
-	JSON.stringify(
-		{
-			out,
-			paths: Object.keys(prefill),
-			bytes: JSON.stringify(prefill).length,
-			source: `${endpoint} (site=${site})`,
-			note: 'prefilled output now matches rendered output by construction'
-		},
-		null,
-		2
-	)
-);
+if (import.meta.main) {
+	const endpoint = arg('endpoint', 'http://localhost:8801').replace(/\/+$/, '');
+	const site = arg('site', 'bake');
+	const paths = arg('paths', PREFILL_PATHS.join(','))
+		.split(',')
+		.map((p) => p.trim())
+		.filter(Boolean);
+	await liftPrefill(endpoint, site, paths, arg('out', 'assets/prefill.json'));
+}

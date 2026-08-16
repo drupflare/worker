@@ -18,11 +18,11 @@
  * when the paths it `produces` are on disk, so a re-run after a failure resumes rather than restarting
  * -- which matters because the pipeline is minutes long and three of its steps are downloads.
  *
- * WHAT IT CANNOT PRODUCE, stated rather than silently skipped: `assets/prefill.json` comes from
- * `scripts/lift-prefill.ts`, which reads the RUNTIME's own renders through a running worker. There is
- * no offline producer and a fabricated one would ship HTML the site cannot reproduce, which is the
- * exact failure that script was written to remove. It is optional at runtime -- see
- * `prefillServingTable()` in `src/site-do.ts` -- so the build reports it and continues.
+ * EVERY PAYLOAD ARTIFACT HAS A PRODUCER HERE, including `assets/prefill.json`. That one holds the
+ * RUNTIME's own rendered bytes, so it cannot be baked on native PHP -- but "needs the runtime" is not
+ * the same as "needs a deploy", and `scripts/bake-prefill.ts` boots `wrangler dev` locally, migrates
+ * a throwaway site and lifts the pages. It is the one step marked optional: it binds a port, and a
+ * busy port is not a reason to discard twelve finished steps.
  *
  * @see scripts/hydrate.ts for the payload half
  * @see docs/building-from-source.md for what each step is for and why the order is the order
@@ -60,7 +60,8 @@ export type StepId =
 	| 'twig'
 	| 'core'
 	| 'pack'
-	| 'sql';
+	| 'sql'
+	| 'prefill';
 
 /** one step of the from-source build */
 export interface LocalStep {
@@ -110,6 +111,14 @@ export interface LocalStep {
 	 * is just the wrong one.
 	 */
 	freshAgainst?: string;
+	/**
+	 * A failure here is reported and the build continues.
+	 *
+	 * For a step whose output the runtime does not require. Losing twelve steps of work because the
+	 * thirteenth could not bind a port is a worse outcome than a tree missing an optional artifact,
+	 * and the report names what is missing either way.
+	 */
+	optional?: boolean;
 	/** what to say when the step's tools are missing, beyond the tool names themselves */
 	note?: string;
 }
@@ -430,6 +439,30 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		tools: ['node'],
 		commands: () => [['bun', 'run', 'assets:sql']],
 		note: 'reads the TRACKED site.sqlite, so this step alone works on a clone with nothing else built'
+	},
+	{
+		id: 'prefill',
+		title: 'boot the runtime and lift the pages it renders into assets/prefill.json',
+		produces: ['assets/prefill.json'],
+		// everything, because it renders through the real worker: the interpreter, the pack, the
+		// migration chunks and the driver all have to be in place before a page comes back
+		inputs: [
+			'assets/driver.json',
+			'assets/drupal-pf/core.pf.bin',
+			'assets/drupal-sql/manifest.json',
+			'.interp/php8.5.wasm.zst',
+			'.interp/zstddec.wasm'
+		],
+		tools: ['bun'],
+		// optional because the runtime does not need it: an absent prefill.json means the first
+		// request to each path renders instead of hitting. It is worth having anyway -- a prefilled
+		// path is a HIT on its first ever request -- but not worth discarding a finished build for
+		optional: true,
+		commands: () => [['bun', 'scripts/bake-prefill.ts']],
+		note:
+			'boots `wrangler dev` locally, migrates a throwaway site and renders five paths. No ' +
+			'Cloudflare credential; the bytes have to come from the runtime, because native PHP ' +
+			'renders a page this site cannot reproduce'
 	}
 ];
 
@@ -464,7 +497,7 @@ export function stepSatisfied(root: string, step: LocalStep): boolean {
  * The ordered decision for every step, without touching anything.
  *
  * PURE, so the whole resume story is one testable function: a second run against a finished tree
- * plans twelve skipped steps and executes nothing.
+ * plans every step skipped and executes nothing.
  */
 export function planLocalBuild(
 	root: string,
@@ -558,31 +591,28 @@ export function missingTools(
 		.sort((a, b) => (a.tool < b.tool ? -1 : 1));
 }
 
+/** an optional artifact this run did not end up with, and how to get it */
+export interface MissingOptional {
+	path: string;
+	why: string;
+	how: string;
+}
+
 /** what a run did, in the shape `--json` prints */
 export interface LocalBuildReport {
 	root: string;
 	steps: { id: StepId; run: boolean; reason: string; commands: string[] }[];
 	/** true when every step was skipped, which is the resume case */
 	resumed: boolean;
-	/** artifacts this pipeline structurally cannot produce, named rather than left missing */
-	unbuildable: { path: string; why: string; how: string }[];
+	/**
+	 * Optional steps that failed, named rather than left as a quietly absent file.
+	 *
+	 * Every payload artifact has a producer here, so this is normally empty. It fills when an optional
+	 * step could not run -- today that is only `prefill`, which needs to bind a port and boot the
+	 * runtime, and a busy port is not a reason to fail a build that has finished everything else.
+	 */
+	missingOptional: MissingOptional[];
 }
-
-/**
- * `assets/prefill.json`, and why no offline step produces it.
- *
- * Declared rather than omitted because the payload carries it, so a source-built tree and a hydrated
- * one differ by exactly this file and a reader needs to know that is deliberate.
- */
-export const UNBUILDABLE: LocalBuildReport['unbuildable'] = [
-	{
-		path: 'assets/prefill.json',
-		why:
-			"it holds the RUNTIME's own rendered bytes, so producing it natively ships HTML the site " +
-			'cannot reproduce -- measured, and the reason lift-prefill.ts exists at all',
-		how: 'bun run dev, then: bun scripts/lift-prefill.ts --endpoint=http://localhost:8787 --site=bake'
-	}
-];
 
 function runAll(commands: readonly string[][], root: string, env: NodeJS.ProcessEnv): void {
 	for (const command of commands) {
@@ -596,6 +626,7 @@ function runAll(commands: readonly string[][], root: string, env: NodeJS.Process
 export function runLocalBuild(root: string, planned: readonly PlannedStep[]): LocalBuildReport {
 	const env = { ...process.env, ...siblingEnv(root) };
 	const done: LocalBuildReport['steps'] = [];
+	const skippedOptional: MissingOptional[] = [];
 
 	for (const { step, run, reason } of planned) {
 		const commands = run ? step.commands(root) : [];
@@ -639,19 +670,37 @@ export function runLocalBuild(root: string, planned: readonly PlannedStep[]): Lo
 				failure = cause;
 			}
 		}
-		if (failure) throw failure;
+		const absent = step.produces.filter((p) => !populated(join(root, p)));
+		const problem =
+			failure ??
+			(stepSatisfied(root, step)
+				? null
+				: new Error(
+						`${step.id} reported success and did not produce ` +
+							`${absent.length ? absent.join(', ') : 'what it exists to produce'}`
+					));
 
-		if (!stepSatisfied(root, step)) {
-			const absent = step.produces.filter((p) => !populated(join(root, p)));
-			throw new Error(
-				`${step.id} reported success and did not produce ` +
-					`${absent.length ? absent.join(', ') : 'what it exists to produce'}. ` +
-					(step.note ? `\n  ${step.note}` : '')
+		if (problem && step.optional) {
+			const why = problem instanceof Error ? problem.message : String(problem);
+			console.warn(
+				`\n!!  ${step.id} did not finish, and is optional; continuing.\n    ${why}`
 			);
+			skippedOptional.push({
+				path: step.produces[0] ?? step.id,
+				why: why.split('\n')[0] ?? why,
+				how: `bun run build:local -- --only=${step.id}`
+			});
+			continue;
 		}
+		if (problem) throw problem;
 	}
 
-	return { root, steps: done, resumed: done.every((s) => !s.run), unbuildable: UNBUILDABLE };
+	return {
+		root,
+		steps: done,
+		resumed: done.every((s) => !s.run),
+		missingOptional: skippedOptional
+	};
 }
 
 function listArg(name: string, argv: string[]): StepId[] {
@@ -697,7 +746,7 @@ if (import.meta.main) {
 				commands: run ? step.commands(root).map((c) => c.join(' ')) : []
 			})),
 			resumed: willRun.length === 0,
-			unbuildable: UNBUILDABLE
+			missingOptional: []
 		};
 		if (argv.includes('--json')) {
 			console.log(JSON.stringify({ ...report, missingTools: missing }, null, 2));
@@ -735,9 +784,9 @@ if (import.meta.main) {
 	console.log(
 		`\n${report.resumed ? 'nothing rebuilt' : 'built from source'}: this tree is deployable`
 	);
-	for (const { path, why, how } of report.unbuildable) {
+	for (const { path, why, how } of report.missingOptional) {
 		console.log(
-			`\n${path} is NOT produced here, and is optional at runtime.\n  ${why}\n  ${how}`
+			`\n${path} was NOT produced, and is optional at runtime.\n  ${why}\n  retry: ${how}`
 		);
 	}
 	console.log('\nnext: bun run dev, or bunx wrangler deploy -c wrangler.jsonc');

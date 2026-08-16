@@ -12,12 +12,12 @@ import {
 	siblingEnv,
 	stepSatisfied,
 	TOOL_HINTS,
-	UNBUILDABLE,
 	type LocalStep,
 	type StepId,
 	type ToolId
 } from '../../scripts/build-local.ts';
 import { resolvePayloadSource } from '../../scripts/hydrate.ts';
+import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
 import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
 
 /**
@@ -359,18 +359,52 @@ describe('the sibling checkouts the driver pack is built from', () => {
 	});
 });
 
-describe('what the source route cannot produce is named, not left missing', () => {
-	it('names prefill.json and how to get it', () => {
-		expect(UNBUILDABLE.map((u) => u.path)).toEqual(['assets/prefill.json']);
-		expect(UNBUILDABLE[0]?.how).toContain('lift-prefill.ts');
+describe('a source-built tree carries everything the payload does', () => {
+	it('produces every asset the payload ships', () => {
+		// the gap this closes: prefill.json was the one payload artifact with no local producer, on
+		// the reasoning that it needs the runtime. It does -- but a local `wrangler dev` IS the
+		// runtime, so "needs a deploy" was never true
+		const produced = LOCAL_STEPS.flatMap((s) => [...s.produces, ...(s.refreshes ?? [])]);
+		const unproduced = PAYLOAD_ASSETS.filter((asset) =>
+			// a payload DIRECTORY entry is covered by a step producing anything inside it: `sql` names
+			// `drupal-sql/manifest.json`, because a directory that exists and is empty is not built
+			asset.dir
+				? !produced.some((p) => p.startsWith(`${asset.path}/`))
+				: !produced.includes(asset.path)
+		).map((a) => a.path);
+		expect(unproduced, 'the payload ships an artifact nothing here builds').toEqual([]);
 	});
 
-	it('is exactly what a hydrated tree has and a source-built one does not', () => {
-		// if a step ever produces it, this fails and the entry has to go -- which is the intent
-		const produced = new Set(LOCAL_STEPS.flatMap((s) => s.produces));
-		for (const { path } of UNBUILDABLE) {
-			expect(produced.has(path)).toBe(false);
-			expect(PAYLOAD_ASSETS.map((a) => a.path)).toContain(path);
+	it('marks only the port-binding step optional', () => {
+		// optional is a real escape hatch and a tempting one; anything else claiming it would be a
+		// step quietly allowed to fail
+		expect(LOCAL_STEPS.filter((s) => s.optional).map((s) => s.id)).toEqual(['prefill']);
+	});
+
+	it('lifts the same five paths the shipped prefill.json carries', () => {
+		// a bake of two paths would deploy a site where three pages miss on their first request, and
+		// nothing would report it: a miss renders correctly, just slowly
+		expect(PREFILL_PATHS).toEqual([
+			'/',
+			'/node',
+			'/user/login',
+			'/user/password',
+			'/filter/tips'
+		]);
+	});
+
+	it('waits for everything a render needs before booting the runtime', () => {
+		// the prefill step renders through the real worker, so a missing pack or an unmigrated
+		// chunk set comes back as a 202 retried twelve times rather than as a named missing input
+		const prefill = LOCAL_STEPS.find((s) => s.id === 'prefill') as LocalStep;
+		const at = (id: StepId) => LOCAL_STEPS.findIndex((s) => s.id === id);
+		expect(at('prefill')).toBe(LOCAL_STEPS.length - 1);
+		for (const needed of [
+			'assets/driver.json',
+			'assets/drupal-pf/core.pf.bin',
+			'assets/drupal-sql/manifest.json'
+		]) {
+			expect(prefill.inputs).toContain(needed);
 		}
 	});
 });

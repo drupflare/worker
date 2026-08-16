@@ -391,23 +391,24 @@ locally, for a commit no release was cut from. `bun run hydrate` takes the paylo
 back to the source route when there is no payload; `--payload-only` forbids the fallback and
 `--from-source` skips straight to it.
 
-The source route runs twelve steps in one order, each skipped when what it produces is already on
-disk:
+The source route runs fourteen steps in one order, each skipped when what it produces is already on
+disk, and together they produce **every artifact a release payload carries**:
 
 ```txt
 interpreter → frame → decoder      the three files the binary seam imports
 siblings    → driver               the Drupal modules, packed into assets/driver.json
 tree → site → patch                the Drupal tree, installed and patched for wasm
-twig → core → pack                 the compiled Twig cache, the index, the per-file pack
+bootstrap → twig → core → pack     the file list, the compiled Twig cache, the per-file pack
 sql                                the migration chunks, from the committed site.sqlite
+prefill                            the pages, rendered by a local wrangler dev and lifted back
 ```
 
 Run `bun run build:plan` first — it prints the plan and names every tool this machine is missing
 before it spends a minute on the 180 MB tree download. Only `decoder` needs Docker, and only once.
 
 **[`docs/building-from-source.md`](docs/building-from-source.md)** is the full account: what each step
-produces, why the order is the order, what caches on what, and the one artifact
-(`assets/prefill.json`) that has no offline producer.
+produces, why the order is the order, what caches on what, and why `prefill` is the one step allowed
+to fail without failing the build.
 
 ---
 

@@ -22,7 +22,7 @@ Builds has no Docker to build with.
 
 The source route regenerates the same bytes locally. It exists for the case the payload cannot
 cover: a checkout of a commit no release was cut from, and the window before the first release
-exists at all.
+exists at all. It produces every artifact the payload carries, `assets/prefill.json` included.
 
 ## Quick Start
 
@@ -66,7 +66,9 @@ asset with nothing reporting it.
 ## The Steps
 
 `bun run build:local` runs these in order. Each is skipped when what it produces is already on disk,
-so a re-run after a failure resumes rather than restarting.
+so a re-run after a failure resumes rather than restarting. Together they produce **every artifact a
+release payload carries**, which `tests/node/build-from-source.spec.ts` asserts against the payload's
+own manifest rather than against a list.
 
 | #   | step          | produces                                           | needs                 |
 | --- | ------------- | -------------------------------------------------- | --------------------- |
@@ -83,6 +85,7 @@ so a re-run after a failure resumes rather than restarting.
 | 11  | `core`        | the same two, repacked from the list               | `node`, step 10       |
 | 12  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 11               |
 | 13  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
+| 14  | `prefill`     | `assets/prefill.json`                              | a free port, 1-12     |
 
 ### 1-3, The Interpreter
 
@@ -198,21 +201,34 @@ Four of these orderings fail silently when reversed, which is why they are asser
 - **`core` before `pack`.** `pack-perfile.ts` reuses `core.json` rather than re-globbing, which keeps
   a repack a change of format and not a change of which files ship.
 
-## What The Source Route Cannot Produce
+### 14, The Prefill
 
-`assets/prefill.json` holds the runtime's own rendered bytes, lifted from a running worker by
-`scripts/lift-prefill.ts`. There is no offline producer. Rendering it on native PHP instead was tried
-and shipped HTML the site could not reproduce -- suffixed block ids and a different favicon path --
-which matters because a prefilled path is a **hit on its first ever request**, so whatever is in that
-file is the page a visitor sees.
+`prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
+prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a
+visitor sees.
 
-It is optional at runtime: an absent `prefill.json` means the first request to each path renders
-instead of hitting. A hydrated tree and a source-built tree therefore differ by exactly this file. To
-produce it:
+That is why it cannot be baked on native PHP, which was tried: the bytes came back with suffixed
+block ids, because `Html::$seenIds` is a static `drupal_static_reset()` does not clear, and with a
+different favicon path, because the packer drops `.ico` so wasm's `file_exists()` correctly disagrees
+with native PHP's. Both render fine and neither matches what the site produces, so the page would
+change the first time it was genuinely re-rendered.
+
+**Needing the runtime is not the same as needing a deploy.** `scripts/bake-prefill.ts` boots
+`wrangler dev` locally -- workerd, with its own Durable Object, no Cloudflare login -- drives
+`/migrate` to completion, renders the five paths through `/serve`, and tears the worker down. The
+state directory is a fresh `--persist-to` under the system temp directory each time, so a run cannot
+lift a page from a Durable Object left behind by a previous one.
+
+It is the **only optional step**. It binds a port and boots an interpreter, and a busy port is not a
+reason to discard thirteen finished steps: a failure here is reported, the build continues, and the
+run ends naming the file and the command that retries it. An absent `prefill.json` is normal at
+runtime -- the first request to each path renders instead of hitting.
+
+To produce or refresh it on its own:
 
 ```sh
-bun run dev
-bun scripts/lift-prefill.ts --endpoint=http://localhost:8787 --site=bake
+bun run build:local -- --only=prefill
+bun scripts/bake-prefill.ts --port=8802 --keep # or drive it directly
 ```
 
 ## Caching

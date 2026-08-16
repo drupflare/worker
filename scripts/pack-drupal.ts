@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { glob, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -51,14 +52,27 @@ const outDir = outArg
 	: resolve(import.meta.dirname, '../assets/drupal');
 await mkdir(outDir, { recursive: true });
 
+// FULL=1 globs the tree and reads no list, which is the only mode a checkout with no pack can run:
+// PACK_INDEX and the profiled mode both take their file set FROM an index, and `bake-twig.php`
+// builds that index's successor from the index -- so the first pack has to come from somewhere else.
+// Without this the missing file surfaced as a JSON parse error naming neither the file nor the mode
+if (!existsSync(listPath) && process.env.FULL !== '1') {
+	console.error(
+		`no ${listPath}: PACK_INDEX=1 and the profiled mode both take their file set from it.\n` +
+			'A checkout with no pack yet bootstraps one with FULL=1, which globs the tree instead:\n' +
+			`  FULL=1 node scripts/pack-drupal.ts ${root} ${listPath} drupal`
+	);
+	process.exit(1);
+}
+
 // a pack index keys the path as `p`, a profile trace as `path`; accept either so
 // either can seed a rebuild
-const list: ListEntry[] = (JSON.parse(await readFile(listPath, 'utf8')) as ListEntry[]).map(
-	(x) => ({
-		...x,
-		path: x.path ?? x.p
-	})
-);
+const list: ListEntry[] = existsSync(listPath)
+	? (JSON.parse(await readFile(listPath, 'utf8')) as ListEntry[]).map((x) => ({
+			...x,
+			path: x.path ?? x.p
+		}))
+	: [];
 
 // The profiled set is environment-dependent: it was captured on a PHP with
 // intl/mbstring/iconv present, so Symfony's polyfills short-circuited and never

@@ -2,9 +2,9 @@ name: Check Test Coverage
 
 on:
   push:
-    branches: [master, ver/*, feat/*, renovate/*]
+    branches: [master, ver/*, feat/*, renovate/*, interp/*]
   pull_request:
-    branches: [master, ver/*, feat/*, renovate/*]
+    branches: [master, ver/*, feat/*, renovate/*, interp/*]
 
 env:
   STREAM_HTTP_SRC: .siblings/stream-http/src

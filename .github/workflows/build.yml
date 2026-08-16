@@ -2,9 +2,9 @@ name: Build Project
 
 on:
   push:
-    branches: [master, ver/*, feat/*, renovate/*]
+    branches: [master, ver/*, feat/*, renovate/*, interp/*]
   pull_request:
-    branches: [master, ver/*, feat/*, renovate/*]
+    branches: [master, ver/*, feat/*, renovate/*, interp/*]
   workflow_dispatch:
 
 concurrency:

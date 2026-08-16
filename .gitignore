@@ -12,6 +12,10 @@ drupal-src
 # no producer; read only by src/probes/min.ts and scripts/stage-edge-assets.sh
 drupal-min-src
 
+# the module repositories assets:driver packs, cloned here when they are not checked out beside this
+# one. CI writes the same three paths; scripts/build-local.ts is what clones them locally
+.siblings/
+
 assets/*
 !assets/.assetsignore
 !assets/drupal/

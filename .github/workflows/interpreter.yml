@@ -26,6 +26,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -168,50 +169,15 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Open the Pin as a Pull Request
+      - name: Reconcile the Pin into One Pull Request
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$(git status --porcelain -- interp.lock.json)" ]; then
-            echo "interp.lock.json is unchanged; the fetched interpreter is already pinned."
-            echo "PR=none" >> "$GITHUB_ENV"
-            exit 0
-          fi
-          ARTIFACT="$(jq -r .artifactId interp.lock.json)"
-          BRANCH="interp/${VARIANT}-php${PHP_VERSION}-${ARTIFACT}"
-          echo "PR=$BRANCH" >> "$GITHUB_ENV"
-          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null 2>&1; then
-            echo "$BRANCH already exists, so this pin is already proposed."
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -b "$BRANCH"
-          git add interp.lock.json
-          git commit -m "chore(interp): pin $VARIANT php$PHP_VERSION artifact $ARTIFACT"
-          git push origin "$BRANCH"
-          {
-            echo "Fetched from \`drupflare/phasm\` and verified. Nothing here deploys."
-            echo
-            echo "| field | value |"
-            echo "| --- | --- |"
-            echo "| variant | \`$VARIANT\` |"
-            echo "| php | \`$PHP_VERSION\` |"
-            echo "| artifact | \`$ARTIFACT\` |"
-            echo "| phasm run | \`${SOURCE_RUN:-n/a}\` |"
-            echo "| phasm commit | \`${SOURCE_COMMIT:-n/a}\` |"
-            echo
-            echo '```txt'
-            cat /tmp/fetch.txt
-            echo "incumbent: $INCUMBENT"
-            echo "proposed:  $BUNDLE"
-            echo '```'
-            echo
-            echo "The payload carrying these bytes is attached to run $GITHUB_RUN_ID."
-            echo "The rollback unit is a Worker version, so ship this on its own."
-          } > /tmp/pr.md
-          gh pr create --base "${GITHUB_REF_NAME}" --head "$BRANCH" \
-            --title "chore(interp): $VARIANT php$PHP_VERSION" --body-file /tmp/pr.md
+          bun scripts/interp-proposal.ts \
+            "--variant=$VARIANT" \
+            "--php=$PHP_VERSION" \
+            "--base=$GITHUB_REF_NAME" \
+            --fetch-log=/tmp/fetch.txt
 
       - name: Interpreter to Job Summary
         if: ${{ !cancelled() }}
@@ -223,7 +189,10 @@ jobs:
             echo "- Artifact: \`${ARTIFACT_ID:-newest unexpired}\`"
             echo "- Incumbent: ${INCUMBENT:-not measured}"
             echo "- Proposed: ${BUNDLE:-not measured}"
-            echo "- Branch: \`${PR:-not opened}\`"
+            echo "- Branch: \`${PROPOSAL_BRANCH:-not opened}\`"
+            echo "- Proposal: ${PROPOSAL_PR:-none}, ${PROPOSAL_ACTION:-not reconciled}"
+            echo "- Reason: ${PROPOSAL_WHY:-the reconcile step did not run}"
+            echo "- Superseded: ${PROPOSAL_SUPERSEDED:-none}"
             echo
             echo '```txt'
             cat /tmp/fetch.txt 2> /dev/null || echo 'the fetch did not complete'

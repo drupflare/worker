@@ -38,29 +38,29 @@ bucket at `snapshots/site.sqlite.064105ca7223`.
 
 ## Tracked Against Untracked
 
-**29 files are tracked. 3.9 GB is on disk.** A deploy reads `src/`, `drupal/`, `assets/` and
-`.interp/`. The rest of the untracked bulk is build input, measurement state, or regenerable output.
+**29 files are tracked. 3.9 GB is on disk.** A deploy reads `src/`, `assets/` and `.interp/`. The rest
+of the untracked bulk is build input, measurement state, or regenerable output.
 
-| path              | size | tracked         | how it arrives on a clean clone                                             | delete?          |
-| ----------------- | ---- | --------------- | --------------------------------------------------------------------------- | ---------------- |
-| `src/`            | 15M  | 15 of 76 files  | committed                                                                   | no               |
-| `drupal/`         | 500K | no, not ignored | committed; the copy that executes, packed into `assets/driver.json`         | no               |
-| `tests/`          | 884K | no, not ignored | committed                                                                   | no               |
-| `scripts/`        | 420K | no, not ignored | committed                                                                   | no               |
-| `assets/`         | 97M  | no              | `bun run assets`, or `bun run hydrate` for the 22 MB that ships             | no               |
-| `.interp/`        | 17M  | no              | `bun run build:wasm`, or `bun run hydrate`                                  | no               |
-| `vendor/`         | 198M | no              | not reproducible; restored from `drupflare-cdn/vendor/`. Not a deploy input | never            |
-| `drupal-src/`     | 159M | no              | `bun run fetch:drupal`, which `build.yml` also calls                        | yes, regenerable |
-| `drupal-min-src/` | 164M | no              | no producer; read only by `src/probes/min.ts` and `stage-edge-assets.sh`    | recommend        |
-| `experiments/`    | 282M | no              | 88,874 bytes of configs are committed; the rest is dev state                | see below        |
-| `build/`          | 96K  | no              | a stale copy of `phasm`'s toolchain                                         | recommend        |
-| `.pack-backup/`   | 7.2M | no              | `bun run bake:pack`                                                         | no               |
-| `.trim-assets/`   | 7.5M | no              | `bash scripts/stage-edge-assets.sh`                                         | yes, regenerable |
-| `typedoc/`        | 7.0M | no              | `bun run docs:build`                                                        | yes, regenerable |
-| `coverage/`       | 3.2M | no              | `bun run test:coverage`                                                     | yes, regenerable |
-| `dist/`           | 22M  | no              | `bun run release:payload`                                                   | yes, regenerable |
-| `.wrangler/`      | 1.7G | no              | any `wrangler dev` or vitest run                                            | yes, regenerable |
-| `node_modules/`   | 828M | no              | `bun install`                                                               | yes, regenerable |
+| path              | size | tracked         | how it arrives on a clean clone                                              | delete?          |
+| ----------------- | ---- | --------------- | ---------------------------------------------------------------------------- | ---------------- |
+| `src/`            | 15M  | 15 of 76 files  | committed                                                                    | no               |
+| `tests/`          | 884K | no, not ignored | committed                                                                    | no               |
+| `scripts/`        | 420K | no, not ignored | committed                                                                    | no               |
+| `assets/`         | 97M  | no              | `bun run hydrate`, for the 22 MB that ships; `bun run build:local` in full   | no               |
+| `.interp/`        | 17M  | no              | `bun install` restores 2 of 3; `bun run hydrate` or `build:local` the rest   | no               |
+| `.siblings/`      | 3.4M | no              | `bun run build:local`, only when the modules are not checked out beside this | yes, regenerable |
+| `vendor/`         | 198M | no              | not reproducible; restored from `drupflare-cdn/vendor/`. Not a deploy input  | never            |
+| `drupal-src/`     | 159M | no              | `bun run fetch:drupal`, which `build.yml` also calls                         | yes, regenerable |
+| `drupal-min-src/` | 164M | no              | no producer; read only by `src/probes/min.ts` and `stage-edge-assets.sh`     | recommend        |
+| `experiments/`    | 282M | no              | 88,874 bytes of configs are committed; the rest is dev state                 | see below        |
+| `build/`          | 96K  | no              | a stale copy of `phasm`'s toolchain                                          | recommend        |
+| `.pack-backup/`   | 7.2M | no              | `bun run bake:pack`                                                          | no               |
+| `.trim-assets/`   | 7.5M | no              | `bash scripts/stage-edge-assets.sh`                                          | yes, regenerable |
+| `typedoc/`        | 7.0M | no              | `bun run docs:build`                                                         | yes, regenerable |
+| `coverage/`       | 3.2M | no              | `bun run test:coverage`                                                      | yes, regenerable |
+| `dist/`           | 22M  | no              | `bun run release:payload`                                                    | yes, regenerable |
+| `.wrangler/`      | 1.7G | no              | any `wrangler dev` or vitest run                                             | yes, regenerable |
+| `node_modules/`   | 828M | no              | `bun install`                                                                | yes, regenerable |
 
 ## `experiments/`
 
@@ -134,17 +134,21 @@ Four things need it. `assets:twig`, `assets:core` and `assets:pack` read it as t
 the same reason. Everything except the packers degrades to skipped or unresolved without it rather than
 failing loudly, so the tree being absent is quiet.
 
-## `drupal/`
+## `.siblings/`
 
-`composer.json` requires `drupflare/drupflare` and `drupflare/rom` the published way, and `drupal/` is
-still not redundant. Composer never runs on the edge: `bun run assets:driver` reads `drupal/` off disk and
-packs 51 files into `assets/driver.json`, which the Durable Object mounts and therefore executes.
-`tests/node/driver-pack.spec.ts` rebuilds the pack and compares byte for byte, so a stale copy fails the
-gate. The sibling repositories remain the authority on those modules' behaviour, and a release is when
-the copies here are refreshed.
+**`drupal/` is gone.** It held module-shaped copies of `drupflare/drupflare` and `drupflare/rom`, it was
+what the packer read, and it had drifted from both: `CircuitBreaker.php` differed from its sibling and the
+test copies sat 8 assertions behind, with nothing reporting it. `bun run assets:driver` now reads the
+sibling checkouts directly, the way it already read `drupflare/stream-http` -- whose entry had said why:
+"a fourth copy is what created the drift".
 
-`drupflare/stream-http` is read from the **sibling checkout** rather than copied under `drupal/`, because
-a fourth copy is what created the drift its subclass removed. CI clones it and sets `STREAM_HTTP_SRC`.
+Composer never runs on the edge, so the packed copy is what executes.
+`tests/node/driver-pack.spec.ts` rebuilds `assets/driver.json` from the modules on disk and compares byte
+for byte, so a stale pack still fails the gate.
+
+Each of the three is resolved as `DRUPFLARE_SRC` / `ROM_SRC` / `STREAM_HTTP_SRC`, then `../<name>`, then
+`.siblings/<name>`. CI sets the environment variables and checks the repositories out under `.siblings/`;
+`bun run build:local` clones into the same paths, and only the ones that are not already there.
 
 ## Unwired Scripts
 

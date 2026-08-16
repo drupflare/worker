@@ -236,6 +236,7 @@ the largest style count that still fits.
 - [How It Works](#-how-it-works)
 - [What It Costs](#-what-it-costs)
 - [Getting Started](#-getting-started)
+- [Building From a Clean Clone](#-building-from-a-clean-clone)
 - [Project Structure](#-project-structure)
 - [Testing](#-testing)
 - [Contributing](#-contributing)
@@ -332,8 +333,12 @@ and every meter except Worker requests has roughly 5x headroom.
 git clone https://github.com/drupflare/worker.git
 cd worker
 bun install
+bun run hydrate
 bun run dev
 ```
+
+`assets/` and `.interp/` are generated and gitignored, so a clean clone has nothing to deploy until
+`bun run hydrate` lands them. See [Building From a Clean Clone](#-building-from-a-clean-clone).
 
 Then migrate a site into the Durable Object and render a page:
 
@@ -360,8 +365,49 @@ itself to completion over ~99 alarm firings, keeping every invocation under
 | `bun run check:reachability` | which modules the edge actually imports, and which are dead |
 | `bun run assets:driver`      | repacks `assets/driver.json` from the sibling module repos  |
 | `bun run build`              | hydrate the release payload: what a deploy runs             |
-| `bun run build:all`          | vendor the binaries, then pack the Drupal tree and database |
+| `bun run build:local`        | build every generated artifact from source                  |
+| `bun run build:plan`         | what a source build would do, and what tools are missing    |
 | `bun run assets:sql`         | rebuild only the migration chunks                           |
+
+### 🧰 Building From a Clean Clone
+
+`assets/` is ~97 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
+a fresh clone has nothing to deploy until one of two routes lands them.
+
+```bash
+bun install     # postinstall restores the interpreter from the CDN, verified by sha256
+bun run hydrate # the payload if one is published, a source build if not
+bun run dev
+```
+
+| route       | command               | needs                                          | takes   |
+| ----------- | --------------------- | ---------------------------------------------- | ------- |
+| **payload** | `bun run hydrate`     | network                                        | seconds |
+| **source**  | `bun run build:local` | network, PHP, composer, node 24+, zstd, Docker | minutes |
+
+The payload route is one verified HTTPS GET of a release asset, which is what lets the Deploy to
+Cloudflare button work: Workers Builds has no Docker. The source route regenerates the same bytes
+locally, for a commit no release was cut from. `bun run hydrate` takes the payload route and falls
+back to the source route when there is no payload; `--payload-only` forbids the fallback and
+`--from-source` skips straight to it.
+
+The source route runs twelve steps in one order, each skipped when what it produces is already on
+disk:
+
+```txt
+interpreter → frame → decoder      the three files the binary seam imports
+siblings    → driver               the Drupal modules, packed into assets/driver.json
+tree → site → patch                the Drupal tree, installed and patched for wasm
+twig → core → pack                 the compiled Twig cache, the index, the per-file pack
+sql                                the migration chunks, from the committed site.sqlite
+```
+
+Run `bun run build:plan` first — it prints the plan and names every tool this machine is missing
+before it spends a minute on the 180 MB tree download. Only `decoder` needs Docker, and only once.
+
+**[`docs/building-from-source.md`](docs/building-from-source.md)** is the full account: what each step
+produces, why the order is the order, what caches on what, and the one artifact
+(`assets/prefill.json`) that has no offline producer.
 
 ---
 

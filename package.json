@@ -6,7 +6,7 @@
 	"description": "Drupal on Cloudflare Workers",
 	"module": "src/index.js",
 	"scripts": {
-		"dev": "wrangler dev -c wrangler.jsonc",
+		"dev": "wrangler dev -c wrangler.jsonc --var PW_DIAGNOSTICS:1",
 		"deploy": "wrangler deploy -c wrangler.jsonc",
 		"typecheck": "bun scripts/typecheck.ts",
 		"prettier": "prettier --write .",

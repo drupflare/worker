@@ -12,11 +12,13 @@ import {
 	collectPackShape,
 	countSpecFiles,
 	isSkipped,
+	type BundleMetric,
 	type MetricsDocument
 } from '../../scripts/measure/collect-metrics';
 import {
 	CHECKS,
 	compare,
+	interpret,
 	nextBaseline,
 	readBaseline,
 	readPath,
@@ -293,6 +295,67 @@ describe('the rendered summary', () => {
 		const doc = fixture();
 		(doc.metrics.bundle as { gzippedBytes: number }).gzippedBytes = FREE_CEILING + 1;
 		expect(renderMarkdown(doc, compare(doc, fixtureBaseline()))).toContain('**FAIL**');
+	});
+
+	it('carries the reading, so a pull request comment states consequences', () => {
+		const doc = fixture();
+		expect(renderMarkdown(doc, compare(doc, fixtureBaseline()))).toContain('### Reading');
+	});
+});
+
+describe('the reading a reviewer gets instead of a row', () => {
+	it('states the headroom, both ceilings, the index share and the suite counts', () => {
+		const doc = fixture();
+		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
+		expect(reading).toContain(`leaving ${(FREE_CEILING - 2_879_099).toLocaleString()} under`);
+		expect(reading).toContain('100,000 views/day bound by Worker requests');
+		expect(reading).toContain('1,052 regenerations/day bound by Durable Object requests');
+		expect(reading).toContain('7,575 windowed');
+		expect(reading).toContain('67.3% of every stored row is index maintenance');
+		expect(reading).toContain('1,342 rows in 79 chunks');
+		expect(reading).toContain('50 workers spec files (1,453 cases)');
+	});
+
+	it('quotes the delta only where the metric moved', () => {
+		const doc = fixture();
+		(doc.metrics.bundle as { gzippedBytes: number }).gzippedBytes = 2_879_099 + 4096;
+		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
+		expect(reading).toContain('+4,096 against the baseline');
+		expect(reading).not.toContain('0 against the baseline');
+	});
+
+	it('names the deploy failure rather than a headroom of minus something', () => {
+		const doc = fixture();
+		Object.assign(doc.metrics.bundle as BundleMetric, {
+			gzippedBytes: FREE_CEILING + 1000,
+			headroom: -1000,
+			fits: false
+		});
+		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
+		expect(reading).toContain('1,000 OVER the ceiling');
+		expect(reading).toContain('code: 10027');
+	});
+
+	it('drops the line for a metric that was not collected, rather than reading a zero', () => {
+		const doc = fixture();
+		doc.metrics.packShape = { skipped: 'assets/drupal-sql/manifest.json is absent' };
+		doc.metrics.bundle = { skipped: 'wrangler produced no size line' };
+		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
+		expect(reading).not.toContain('**Pack**');
+		expect(reading).not.toContain('**Bundle**');
+		expect(reading).toContain('**Free envelope**');
+	});
+
+	it('carries no duration, because no collected figure could support one', () => {
+		const doc = fixture();
+		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
+		expect(reading).not.toMatch(/\d\s*(ms|s|ms\/|seconds)\b/);
+	});
+
+	it('quotes a meter key it does not have words for, rather than inventing them', () => {
+		const doc = fixture();
+		(doc.metrics.freeEnvelope as { regenerationBoundBy: string }).regenerationBoundBy = 'kv';
+		expect(interpret(doc, compare(doc, fixtureBaseline())).join('\n')).toContain('`kv`');
 	});
 });
 

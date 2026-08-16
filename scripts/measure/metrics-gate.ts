@@ -22,7 +22,16 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FREE_CEILING } from './bundle-size';
-import { isSkipped, type MetricsDocument } from './collect-metrics';
+import {
+	isSkipped,
+	type BundleMetric,
+	type DriverPackMetric,
+	type FreeEnvelopeMetric,
+	type IndexAuditMetric,
+	type MetricsDocument,
+	type PackShapeMetric,
+	type TestsMetric
+} from './collect-metrics';
 
 /**
  * One rule over one metric.
@@ -392,6 +401,114 @@ export function skippedMetrics(doc: MetricsDocument): { metric: string; why: str
 	return out;
 }
 
+/** the signed delta a check recorded, so a reading can quote it without re-deriving it */
+function deltaOf(comparison: Comparison, path: string): number | undefined {
+	return comparison.results.find((r) => r.path === path && r.delta !== undefined)?.delta;
+}
+
+function pct(value: number): string {
+	return `${(value * 100).toFixed(1)}%`;
+}
+
+/** the envelope's meter keys in the words RULE 0b uses; an unknown key is quoted, not renamed */
+const METER: Record<string, string> = {
+	worker: 'Worker requests',
+	do: 'Durable Object requests',
+	rows: 'rows written',
+	r2ClassA: 'R2 class A operations',
+	r2ClassB: 'R2 class B operations'
+};
+
+function meter(key: string): string {
+	return METER[key] ?? `\`${key}\``;
+}
+
+function against(comparison: Comparison, path: string): string {
+	const delta = deltaOf(comparison, path);
+	return delta === undefined || delta === 0 ? '' : `, ${signed(delta)} against the baseline`;
+}
+
+/**
+ * The gated numbers said as consequences rather than as rows.
+ *
+ * A reviewer reading a pull request wants "the bundle has 247,409 bytes of headroom left", not
+ * `bundle.gzippedBytes 2898319`. Each line is derived from a COLLECTED metric, so a skipped one
+ * produces no line rather than a zero -- the same rule the collector follows, for the same reason.
+ *
+ * No line may carry a duration, and none is derivable from anything here: every input is a count or
+ * a byte. See `docs/measurement-classes.md`.
+ */
+export function interpret(doc: MetricsDocument, comparison: Comparison): string[] {
+	const lines: string[] = [];
+
+	const bundle = readPath(doc, 'bundle') as BundleMetric | undefined;
+	if (bundle) {
+		lines.push(
+			`**Bundle** ${bundle.gzippedBytes.toLocaleString()} gzipped bytes` +
+				against(comparison, 'bundle.gzippedBytes') +
+				(bundle.fits
+					? `, leaving ${bundle.headroom.toLocaleString()} under the ` +
+						`${bundle.ceiling.toLocaleString()} ceiling.`
+					: `, which is ${(bundle.gzippedBytes - bundle.ceiling).toLocaleString()} OVER ` +
+						'the ceiling, so the worker cannot be uploaded at all (`code: 10027`).')
+		);
+	}
+
+	const envelope = readPath(doc, 'freeEnvelope') as FreeEnvelopeMetric | undefined;
+	if (envelope) {
+		lines.push(
+			`**Free envelope** \`${envelope.verdict}\`: ` +
+				`${envelope.servingViewsPerDay.toLocaleString()} views/day bound by ` +
+				`${meter(envelope.servingBoundBy)}, and ` +
+				`${envelope.regenerationsPerDay.toLocaleString()} regenerations/day bound by ` +
+				`${meter(envelope.regenerationBoundBy)} ` +
+				`(${envelope.windowedRegenerationsPerDay.toLocaleString()} windowed).`
+		);
+	}
+
+	const audit = readPath(doc, 'indexAudit') as IndexAuditMetric | undefined;
+	if (audit) {
+		lines.push(
+			`**Writes** ${audit.chargedRows.toLocaleString()} charged rows for ` +
+				`${audit.dataRows.toLocaleString()} rows of data` +
+				against(comparison, 'indexAudit.chargedRows') +
+				`. ${pct(audit.indexShare)} of every stored row is index maintenance across ` +
+				`${audit.explicitIndexes} explicit indexes, and the floor is ` +
+				`${audit.minChargePerRow} charged rows per row.`
+		);
+	}
+
+	const pack = readPath(doc, 'packShape') as PackShapeMetric | undefined;
+	if (pack) {
+		lines.push(
+			`**Pack** ${pack.rows.toLocaleString()} rows in ${pack.chunks} chunks, ` +
+				`${pack.payloadBytes.toLocaleString()} payload bytes. Every chunk is a migration ` +
+				'step replayed into the object on first boot.'
+		);
+	}
+
+	const driver = readPath(doc, 'driverPack') as DriverPackMetric | undefined;
+	if (driver) {
+		lines.push(
+			`**Driver pack** ${driver.files} files, ${driver.bytes.toLocaleString()} bytes` +
+				against(comparison, 'driverPack.bytes') +
+				'; these are bundled into the worker, so they spend the same ceiling.'
+		);
+	}
+
+	const tests = readPath(doc, 'tests') as TestsMetric | undefined;
+	if (tests) {
+		const workers = isSkipped(tests.cases) ? undefined : tests.cases.workers;
+		lines.push(
+			`**Suites** ${tests.specFiles.workers} workers spec files` +
+				(workers === undefined ? '' : ` (${workers.toLocaleString()} cases)`) +
+				` and ${tests.specFiles.node} node spec files.`
+		);
+	}
+
+	return lines;
+}
+
 /** Renders the comparison as a markdown table for a step summary. */
 export function renderMarkdown(doc: MetricsDocument, comparison: Comparison): string {
 	const lines: string[] = [
@@ -402,10 +519,20 @@ export function renderMarkdown(doc: MetricsDocument, comparison: Comparison): st
 			'`docs/measurement-classes.md`.',
 		'',
 		`**${comparison.ok ? 'PASS' : 'FAIL'}** - ${comparison.reason}`,
-		'',
+		''
+	];
+
+	const reading = interpret(doc, comparison);
+	if (reading.length > 0) {
+		lines.push('### Reading', '');
+		for (const line of reading) lines.push(`- ${line}`);
+		lines.push('');
+	}
+
+	lines.push(
 		'| Metric | Baseline | Current | Delta | Rule | Verdict |',
 		'| --- | ---: | ---: | ---: | --- | --- |'
-	];
+	);
 	for (const r of comparison.results) {
 		lines.push(
 			`| \`${r.path}\` | ${cell(r.baseline)} | ${cell(r.current)} | ${signed(r.delta)} | ` +

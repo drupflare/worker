@@ -597,10 +597,22 @@ and every meter except Worker requests has roughly 5x headroom.</p>
 
 <p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so a clean clone has nothing to deploy until
 <code>bun run hydrate</code> lands them. See <a href="#-building-from-a-clean-clone">Building From a Clean Clone</a>.</p>
-<p>Then migrate a site into the Durable Object and render a page:</p>
-<pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/migrate?site=demo&amp;all=1&quot;</span><br/><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/serve?site=demo&amp;path=/&quot;</span>
+<p>Then open it:</p>
+<pre><code class="bash"><span class="hl-0">open</span><span class="hl-1"> </span><span class="hl-2">http://localhost:8787/</span>
 </code><button type="button">Copy</button></pre>
 
+<p>The first visit to a site that has no database yet answers a self-refreshing setup page and starts
+the migration on the alarm chain; the page becomes the site as soon as the replay finishes. To do it
+in one shot instead, which is faster locally:</p>
+<pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/migrate?all=1&quot;</span>
+</code><button type="button">Copy</button></pre>
+
+<p><strong>Drupal owns the URL space.</strong> Any path the Worker does not claim is served as a page, so <code>/</code>,
+<code>/user/login</code> and <code>/node/1</code> all work; <code>/serve?site=X&amp;path=Y</code> still does the same thing explicitly.
+Which site a request resolves to is decided in <a href="modules/ops_site-id.html"><code>src/ops/site-id.ts</code></a>: a KV
+mapping for the host, then the <code>SITE_ID</code> var, then the hostname itself, then <code>site</code>. On <code>localhost</code>
+the hostname names no site, so it lands on <code>site</code>. A <code>?site=</code> on a path the visitor typed is ignored;
+it names the site only on <code>/serve</code>, where the caller wrote the URL.</p>
 <p>On the free plan, drop <code>&amp;all=1</code> — migration then replays one chunk per invocation and drives
 itself to completion over ~99 alarm firings, keeping every invocation under
 10 ms of CPU.</p>

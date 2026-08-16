@@ -3,6 +3,12 @@ name: Class A Metrics
 on:
   schedule:
     - cron: '40 4 * * *'
+  push:
+    branches: [master]
+    paths-ignore: ['**/*.md', 'docs/**']
+  pull_request:
+    branches: [master]
+    paths-ignore: ['**/*.md', 'docs/**']
   workflow_dispatch:
     inputs:
       tag:
@@ -12,6 +18,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   STREAM_HTTP_SRC: .siblings/stream-http/src
@@ -26,6 +33,7 @@ jobs:
 
     permissions:
       contents: read
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v7
@@ -71,16 +79,31 @@ jobs:
         run: |
           mkdir -p dist
           bun run metrics --out=dist/metrics.json
+      - name: Gate Against the Baseline
+        id: gate
+        if: ${{ !cancelled() }}
+        run: bun run metrics:gate --metrics=dist/metrics.json --summary=dist/metrics.md
       - name: Archive the Metrics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: metrics
-          path: dist/metrics.json
+          path: |
+            dist/metrics.json
+            dist/metrics.md
           retention-days: 90
-      - name: Gate Against the Baseline
-        if: ${{ !cancelled() }}
-        run: bun run metrics:gate --metrics=dist/metrics.json --summary="$GITHUB_STEP_SUMMARY"
+      - name: Metrics to Job Summary
+        if: ${{ !cancelled() && hashFiles('dist/metrics.md') != '' }}
+        run: cat dist/metrics.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Reply on the Pull Request
+        if: >-
+          ${{ !cancelled() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          hashFiles('dist/metrics.md') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file dist/metrics.md --edit-last --create-if-none
       - name: Report a Failed Hydrate
         if: ${{ !cancelled() && steps.hydrate.outcome == 'failure' }}
         run: |

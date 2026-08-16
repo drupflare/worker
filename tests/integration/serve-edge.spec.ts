@@ -7,6 +7,7 @@ import {
 	inObject,
 	namedSite,
 	pageFor,
+	provisionedNamedSite,
 	queuePath,
 	seedPage,
 	serveThroughWorker,
@@ -59,6 +60,10 @@ const serveRequestsOf = (site: string) =>
 describe('the three tiers are distinguishable, and only one of them costs a DO request', () => {
 	it('walks MISS to DO HIT to EDGE, and the edge copy never reaches the object', async () => {
 		const site = 'tiers';
+		// provisioned first, and it is the only test here that needs saying so: this is the one
+		// that serves BEFORE seeding a page, so without a database the first request is the
+		// first-run placeholder rather than the MISS the walk starts from
+		await provisionedNamedSite(site);
 		const miss = await serveThroughWorker(site, '/');
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>tiers</title>'));
 
@@ -353,9 +358,117 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		}
 	});
 
-	it('404s a route that is not in the table even with diagnostics on', async () => {
+	it('renders an unclaimed path as a page rather than 404ing it', async () => {
+		// DRUPAL OWNS THE URL SPACE. This asserted 404 until the front end gained a catch-all, and
+		// the old expectation was the bug: `/` answered 404 on a deployed site too, so the only way
+		// to reach the product was `/serve?site=X&path=Y`. What must NOT happen is the request being
+		// refused by the Worker -- whether Drupal then answers 200 or its own 404 is Drupal's call,
+		// and this object holds no migrated site, so the render tier reports itself unready instead.
 		const res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
+		expect(res.status, 'the Worker refused a path that belongs to Drupal').not.toBe(404);
+	});
+});
+
+/**
+ * What the catch-all rewrites an unclaimed path INTO.
+ *
+ * The test above only asserts the request was not refused, which was enough to catch the 404 and is
+ * not enough to keep the rewrite honest -- a rewrite that dropped the query string, or picked the
+ * site out of the visitor's own parameters, passes it just as well.
+ *
+ * Driven through a STAND-IN namespace rather than the real one, because what is under test is the
+ * URL the object is asked for, and that is invisible from the far side of a real DO hop.
+ */
+describe('the catch-all rewrite', () => {
+	/** records the inner URL each hop was made with, and answers without a real object */
+	function spySite() {
+		const seen: URL[] = [];
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: (id: { name?: string }) => ({
+				fetch: async (r: Request) => {
+					seen.push(new URL(r.url));
+					return new Response('rendered\n', {
+						status: 200,
+						headers: { 'x-cfw-spy-site': String(id.name) }
+					});
+				}
+			})
+		};
+		return { seen, namespace };
+	}
+
+	/** one request through the real Worker with the namespace replaced */
+	async function hop(path: string, overrides: Record<string, unknown> = {}) {
+		const { seen, namespace } = spySite();
+		const res = await worker.fetch(new Request(`https://cfw.local${path}`), {
+			...env,
+			SITE: namespace,
+			...overrides
+		} as unknown as typeof env);
+		return { res, inner: seen[0], seen };
+	}
+
+	it('becomes the /serve it would have been, with the path carried in a parameter', async () => {
+		const { res, inner } = await hop('/about-rewrite');
+		expect(res.status).toBe(200);
+		expect(inner?.pathname).toBe('/__serve');
+		expect(inner?.searchParams.get('path')).toBe('/about-rewrite');
+	});
+
+	it('carries the query string inside `path`, where Drupal reads it', async () => {
+		// dropped, a paginated view or a search result serves page 1 to everyone
+		const { inner } = await hop('/search?keys=drupal&page=2');
+		expect(inner?.searchParams.get('path')).toBe('/search?keys=drupal&page=2');
+	});
+
+	it('refuses to let a visitor choose which site answers', async () => {
+		// THE REASON THE REWRITE IS BUILT FROM THE ORIGIN. Copying the incoming URL would carry
+		// `?site=` straight into /serve's own parameters, and one link would serve another
+		// customer's database from this hostname
+		const { inner, res } = await hop('/about-guard?site=someone-elses-site');
+		expect(inner?.searchParams.get('site')).toBe('cfw-local');
+		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw-local');
+		// not discarded either -- Drupal still sees the parameter it was sent
+		expect(inner?.searchParams.get('path')).toBe('/about-guard?site=someone-elses-site');
+	});
+
+	it('resolves the site through the same layers a bare /serve does', async () => {
+		const { inner } = await hop('/about-var', { SITE_ID: 'configured-site' });
+		expect(inner?.searchParams.get('site')).toBe('configured-site');
+	});
+
+	it('claims the root, which is the path the product is actually reached by', async () => {
+		const { inner } = await hop('/');
+		expect(inner?.pathname).toBe('/__serve');
+		expect(inner?.searchParams.get('path')).toBe('/');
+	});
+
+	it('leaves a route the Worker owns alone', async () => {
+		const { inner } = await hop('/serve?site=named&path=%2Fnode');
+		// still one hop, but the explicit parameters are the caller's, not a rewrite's
+		expect(inner?.searchParams.get('site')).toBe('named');
+		expect(inner?.searchParams.get('path')).toBe('/node');
+	});
+
+	it("does not swallow the object's own routes, which must stay unreachable", async () => {
+		// rewriting `/__export` into a page render answers a probe with a render, which reads as
+		// "the route exists and something went wrong" rather than "there is no such route"
+		for (const route of ['/__export', '/__serve', '/__restore']) {
+			const { res, seen } = await hop(route);
+			expect(res.status, route).toBe(404);
+			expect(seen, route).toHaveLength(0);
+		}
+	});
+
+	it('still lets the never-Drupal filter refuse what Drupal would never own', async () => {
+		// the catch-all forwards, so the filter is now the only thing standing between a wp-admin
+		// scan and a DO request per probe
+		const { res, seen } = await hop('/wp-login.php');
 		expect(res.status).toBe(404);
+		expect(res.headers.get('x-cfw-deny')).toBe('never-drupal');
+		expect(seen).toHaveLength(0);
 	});
 });
 

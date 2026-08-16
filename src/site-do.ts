@@ -1,6 +1,7 @@
 import '@drupflare/cartridge/shim';
 import type { SiteEnv } from './env';
 import { attemptBudget, deferredKey, isFresh, ttlFor } from './ops/deferred-post.js';
+import { warmingResponse } from './ops/warming-page.js';
 
 import {
 	mountDriver,
@@ -2945,6 +2946,64 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * Whether this deployment ships migration chunks at all.
+	 *
+	 * The guard that lets a fresh site start itself without breaking a deploy that has no chunks to
+	 * replay: an alarm that throws stops re-arming, so "no manifest" has to be a quiet null rather
+	 * than an exception. One asset fetch, and only on an object that has never migrated.
+	 */
+	/**
+	 * Whether a page request has asked this site to provision itself.
+	 *
+	 * Durable, because the request that asks and the alarm that acts are different invocations and
+	 * an eviction sits between them. One row in `cfw_meta`, the table the serve path already writes.
+	 */
+	provisionRequested(): boolean {
+		try {
+			const rows = this.sql
+				.exec(`SELECT v FROM cfw_meta WHERE k = 'provision_requested'`)
+				.toArray();
+			return rows.length > 0;
+		} catch {
+			// the table is created by the write path, so its absence means nobody has asked
+			return false;
+		}
+	}
+
+	/** Records that a visitor wants this site, and wakes the alarm chain to build it. */
+	async requestProvision(): Promise<void> {
+		this.sql.exec(`CREATE TABLE IF NOT EXISTS cfw_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
+		this.sql.exec(
+			`INSERT INTO cfw_meta (k, v) VALUES ('provision_requested', '1')
+			 ON CONFLICT(k) DO NOTHING`
+		);
+		await this.ctx.storage.setAlarm(this.nowMs() + 1);
+	}
+
+	async hasMigrationManifest(): Promise<boolean> {
+		try {
+			await assetChunkLoader(this.env, sqlChunkPrefix(this.env)).loadManifest();
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Whether this site has never been provisioned, so a page request has nothing to render from.
+	 *
+	 * NO CURSOR AT ALL is a different state from a half-finished one, and it was the state a fresh
+	 * deploy sat in forever: `migrateStepIfPending()` returns null without a cursor, so the alarm
+	 * chain never started, and `/serve` answered `warming` on every request for the life of the
+	 * object. Provisioning happened only if somebody called `/migrate` by hand -- which is a
+	 * DIAGNOSTIC route, so on the canonical config there was no way to do it at all.
+	 */
+	neverMigrated(): boolean {
+		ensureMigrateTable(this.sql);
+		return this.migrateCursorOrNull() === null && this.migrated !== true;
+	}
+
+	/**
 	 * The R2 bucket to offload files to, or null when there is none.
 	 *
 	 * NULL IS A SUPPORTED STATE, not a misconfiguration, and that is the whole reason this is a
@@ -3154,7 +3213,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	async migrateStepIfPending(): Promise<Payload | null> {
 		ensureMigrateTable(this.sql);
 		const cursor = readMigrateCursor(this.sql);
-		if (!cursor || cursor.state === 'done') return null;
+		if (cursor?.state === 'done') return null;
+		// NO CURSOR STARTS A MIGRATION ONLY WHEN A VISITOR ASKED FOR ONE. Starting on any alarm
+		// instead was measured hijacking 37 tests: the object migrated first and never reached the
+		// quarantine check, the HTTP-queue drain or the deferred-POST drain, so an alarm asserting
+		// any of those got a migration report. The marker keeps this alarm's contract as it was --
+		// carry an IN-PROGRESS migration forward -- and makes provisioning an explicit request
+		if (!cursor && !(this.provisionRequested() && (await this.hasMigrationManifest()))) {
+			return null;
+		}
 
 		// the pack inserts the packed cachetags rows; that is setup, not a content change,
 		// so it must not bump the generation and invalidate the edge cache
@@ -4882,15 +4949,32 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// truncated caches, and a rendered page gets written to the page cache and the
 					// edge. A 503 with Retry-After is the right answer, and it is cheap because the
 					// check is one indexed read of a single row.
+					// A PAGE REQUEST IS THE TRIGGER, because on the canonical config nothing else can
+					// be. `/migrate` is diagnostic-gated, so a deployed site had no reachable way to
+					// provision itself and answered `warming` forever. Arming the alarm rather than
+					// migrating inline keeps the replay off the request path, where it belongs: the
+					// chain is already resumable and already re-arms itself until the cursor is done.
+					if (this.neverMigrated()) {
+						await this.requestProvision();
+						return warmingResponse({
+							stage: 'migrating',
+							retryAfterSeconds: 2,
+							request,
+							headers: {
+								'x-cfw-migrate': 'starting',
+								'x-cfw-migrate-state': 'queued'
+							}
+						});
+					}
+
 					const partial = this.migratePartial();
 					if (partial) {
-						return new Response('migrating\n', {
-							status: 503,
+						return warmingResponse({
+							stage: 'migrating',
+							// seconds, and short: the alarm chain re-arms at +1 ms
+							retryAfterSeconds: 1,
+							request,
 							headers: {
-								'content-type': 'text/plain; charset=utf-8',
-								// seconds, and short: the alarm chain re-arms at +1 ms
-								'retry-after': '1',
-								'cache-control': 'no-store',
 								'x-cfw-migrate': `${partial.chunk}/${partial.chunks}`,
 								'x-cfw-migrate-state': partial.state
 							}
@@ -5075,13 +5159,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// renders it as the page. 503 with Retry-After is the only answer that says
 					// "not yet, come back" to a browser, a CDN and a crawler alike -- and it is the
 					// same reasoning already applied to the half-migrated case above.
-					return new Response('warming\n', {
-						status: 503,
+					return warmingResponse({
+						stage: 'warming',
+						// seconds, short because the fill is queued and the alarm re-arms fast
+						retryAfterSeconds: 1,
+						request,
 						headers: {
-							'content-type': 'text/plain; charset=utf-8',
-							// seconds, short because the fill is queued and the alarm re-arms fast
-							'retry-after': '1',
-							'cache-control': 'no-store',
 							'x-cfw-cache': 'MISS',
 							'x-cfw-lane': 'php-gate',
 							'x-cfw-generation': String(this.generation()),

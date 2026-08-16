@@ -20,6 +20,7 @@ import {
 } from './ops/fleet';
 import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store';
 import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan';
+import { resolveSite } from './ops/site-id';
 import { bearerToken } from './ops/site-secrets';
 import { SitePhpDurableObject } from './site-do';
 import {
@@ -473,13 +474,44 @@ async function putPage(
 
 export default {
 	async fetch(request: Request, env: SiteWorkerEnv): Promise<Response> {
-		const url = new URL(request.url);
+		let url = new URL(request.url);
 		// resolved ONCE and overlaid, so the 16 `isPaid(env)` call sites downstream need no change
 		// and cannot disagree with each other about which plan this request is on
 		env = withPlan(env, await resolvePlan(env, env.CONFIG_KV));
 		// the numeric levers ride the same namespace, behind an allow-list: KV is operator-writable,
 		// so a blanket merge would let a KV write set PW_DIAGNOSTICS and reach /sql and /restore
 		env = withSettings(env, await resolveSettings(env.CONFIG_KV));
+
+		// DRUPAL OWNS THE URL SPACE, so anything this Worker does not claim is a page request. Before
+		// this, `/` answered 404 on a deployed site as well as locally -- the only serving route was
+		// `/serve?site=X&path=Y`, so the premise of the product was reachable only by query string.
+		//
+		// A REWRITE, not a second serving path: the request becomes the `/serve` it would have been,
+		// and every tier below -- the edge cache key, the generation counter, the KV page tier, the
+		// DO hop -- is reached unchanged. `inner` downstream is built from `request.url` rather than
+		// from `url`, which is why the REQUEST is replaced and not just the parsed copy.
+		// `__`-prefixed paths are the DURABLE OBJECT's own routes, double-underscored precisely so they
+		// cannot collide with a Drupal path once this front end forwards real requests. They must stay
+		// a 404 from outside: rewriting them into a page render would answer a probe for `/__export`
+		// with a render rather than a refusal, which reads as "the route exists and something went
+		// wrong" instead of "there is no such route here"
+		const internal = url.pathname.startsWith('/__');
+		if (!internal && !ROUTES.has(url.pathname)) {
+			// `allowParam: false` because THIS query string is the visitor's. Without it,
+			// `https://customer-a.example/about?site=customer-b` resolves to customer B and serves
+			// their database from customer A's hostname -- the origin rewrite below keeps the
+			// parameter out of `/serve`'s own arguments and does nothing about which object answers
+			const { site } = await resolveSite(url, env, { allowParam: false });
+			const rewritten = new URL(url.origin);
+			rewritten.pathname = '/serve';
+			rewritten.searchParams.set('site', site);
+			// built from the ORIGIN, so the visitor's own query cannot land among /serve's parameters
+			// -- `/about?site=someone-else` would otherwise choose which site answers. The query is
+			// preserved where Drupal wants it, inside `path`
+			rewritten.searchParams.set('path', url.pathname + url.search);
+			request = new Request(rewritten, request);
+			url = rewritten;
+		}
 
 		if (!ROUTES.has(url.pathname)) {
 			return new Response('not found\n', { status: 404 });
@@ -1017,6 +1049,13 @@ export interface SiteWorkerEnv extends SiteEnv {
 	CONFIG_KV?: PlanKv | null;
 	/** the cross-site inventory; OPTIONAL, because a single site does not need one */
 	FLEET_DB?: FleetDb | null;
+	/**
+	 * The site every request on this deployment resolves to, unless KV maps the host to another.
+	 *
+	 * OPTIONAL and second in the chain: KV, then this, then the hostname, then `site`. See
+	 * `src/ops/site-id.ts` for why the two optional layers sit above the derived one.
+	 */
+	SITE_ID?: string;
 }
 
 /**

@@ -340,12 +340,26 @@ bun run dev
 `assets/` and `.interp/` are generated and gitignored, so a clean clone has nothing to deploy until
 `bun run hydrate` lands them. See [Building From a Clean Clone](#-building-from-a-clean-clone).
 
-Then migrate a site into the Durable Object and render a page:
+Then open it:
 
 ```bash
-curl "localhost:8787/migrate?site=demo&all=1"
-curl "localhost:8787/serve?site=demo&path=/"
+open http://localhost:8787/
 ```
+
+The first visit to a site that has no database yet answers a self-refreshing setup page and starts
+the migration on the alarm chain; the page becomes the site as soon as the replay finishes. To do it
+in one shot instead, which is faster locally:
+
+```bash
+curl "localhost:8787/migrate?all=1"
+```
+
+**Drupal owns the URL space.** Any path the Worker does not claim is served as a page, so `/`,
+`/user/login` and `/node/1` all work; `/serve?site=X&path=Y` still does the same thing explicitly.
+Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/site-id.ts): a KV
+mapping for the host, then the `SITE_ID` var, then the hostname itself, then `site`. On `localhost`
+the hostname names no site, so it lands on `site`. A `?site=` on a path the visitor typed is ignored;
+it names the site only on `/serve`, where the caller wrote the URL.
 
 On the free plan, drop `&all=1` — migration then replays one chunk per invocation and drives
 itself to completion over ~99 alarm firings, keeping every invocation under

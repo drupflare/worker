@@ -300,6 +300,7 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [THE SITE HAD NO ROOT ROUTE](#the-site-had-no-root-route-and-nothing-in-the-suite-could-notice) | **read before scoring the product surface**: `/` answered 404 on a deployed site, not just locally; the only serving route was `/serve?site=X&path=Y`, and a test asserted the 404 as correct |
 | [A DRUPAL SITE CAN BE LOGGED INTO AND ADMINISTERED](#a-drupal-site-can-be-logged-into-and-administered-and-four-defects-were-stacked-in-the-way) | **read before scoring the admin track**: sessions, forms, CSRF and the full CRUD journey all work; four stacked defects, one pinned defect that is not fixed, and the router 8x was the DRIVER (20,592 -> 4,427 rows) |
 | [THE COMPRESSOR WAS NOT THE CLOSED DOOR](#the-compressor-was-not-the-closed-door-the-module-type-was) | **read before scoring any size lever**: shipping the binary as a zstd `Data` module took the bundle 2,995,384 -> 2,282,127 on wrangler's meter (2,307,696 with the wasm decoder), so **8.5 fits free with nothing dropped** and the lexbor surgery is off the list. Retracts a "closed, permanently" |
 | [THE TWIG BAKE IS ALREADY SATURATED](#the-twig-bake-is-already-saturated-so-widen-it-has-no-work-in-it) | falsified: six paths bake byte-identically to three, because Drupal's templates are shared |
@@ -364,6 +365,221 @@ wherever it disagrees with the above.
 | --- | --- |
 | [DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING](#-deep-dive-a-memory-autoload-mbstring-) | [TASK A](#task-a--the-isolate-memory-ceiling) the 512 MiB build ceiling, [TASK B](#task-b--composer-dump-autoload---classmap-authoritative) autoload, [TASK C](#task-c--the-mbstring-polyfill) mbstring, [Caveats](#caveats-in-one-place) |
 | [DEEP DIVE B: THE cfw_do_sqlite DRIVER](#-deep-dive-b-the-cfw_do_sqlite-driver-) | transaction buffer, SQL function audit, integer safety, what the runtime refuses |
+---
+
+# THE SITE HAD NO ROOT ROUTE, AND NOTHING IN THE SUITE COULD NOTICE
+
+**Measured 2026-08-15**, against a workspace built entirely from source by `bun run build:local`.
+
+`GET /` answered **404**. Not only on `localhost` -- on a deployed site too. The front end opened with
+an allow-list check as the first statement of `fetch()`, and `/` was not in it:
+
+```ts
+if (!ROUTES.has(url.pathname)) {
+	return new Response('not found\n', { status: 404 });
+}
+```
+
+`ROUTES` is `PUBLIC_ROUTES` plus `DIAGNOSTIC_ROUTES`. The only serving route in it is `/serve`, which
+takes the site and the path as query parameters. So the reachable surface of a product whose premise
+is "Drupal, with no origin server" was `/serve?site=X&path=Y`, and every other URL a visitor could
+type was refused by the Worker before any tier ran. There is no host-based resolution anywhere in
+`src/site.ts` -- no `url.host` read, no mapping, nothing -- so this was not a localhost artifact.
+
+## What a fresh `drangler dev` actually got
+
+| request | before | why |
+| --- | --- | --- |
+| `/` | **404** | not in `ROUTES` |
+| `/serve?site=demo&path=/` | **503** | the site was never migrated |
+| `/migrate?site=demo&all=1` | **404** | diagnostic-gated, and `wrangler.jsonc` never set `PW_DIAGNOSTICS` |
+| `/firstrun?site=demo` | 200 | a bare GET only reports; provisioning is a POST |
+
+The second defect compounds the first and is independent of it: `PW_DIAGNOSTICS` is set in **all ten**
+`experiments/wrangler/*.jsonc` probe configs and in the vitest bindings, and **not** in the canonical
+config. So the one config a user runs is the one config that cannot reach `/migrate`, which means a
+fresh site could never be populated -- and the quickstart in `README.md`, which says to `curl`
+`/migrate` and then `/serve`, could not have worked as written.
+
+## Why the suite could not catch it
+
+`tests/integration/serve-edge.spec.ts` asserted the 404 **as the correct answer**:
+
+```ts
+it('404s a route that is not in the table even with diagnostics on', async () => {
+	const res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
+	expect(res.status).toBe(404);
+});
+```
+
+That test passed on every commit. It is the same shape as the health layer that was green in CI and
+imported by nothing: the assertion encoded the implementation rather than the requirement, so the
+gate defended the defect. **A route table with no root entry and a test asserting the root 404s agree
+with each other forever.**
+
+## The fix
+
+Unmatched paths are rewritten into the `/serve` they would have been, after the allow-list, so every
+tier below -- the edge cache key, the generation counter, the KV page tier, the DO hop -- is reached
+unchanged. It is a rewrite rather than a second serving path, and the REQUEST is replaced rather than
+the parsed URL, because `inner` downstream is built from `request.url`.
+
+Two details are load-bearing:
+
+- **The rewritten URL is built from the ORIGIN, not from the request URL.** Copying the request URL
+  would carry the visitor's own query into `/serve`'s parameters, so `/about?site=someone-else` would
+  choose which site answers. The query is preserved where Drupal wants it, inside `path`.
+- **AND THAT WAS NOT ENOUGH, WHICH THIS SECTION PREVIOUSLY GOT WRONG.** The origin rewrite keeps the
+  visitor's parameters out of `/serve`'s arguments and does nothing at all about which object answers,
+  because `resolveSite()` was handed the ORIGINAL url and its first layer is `?site=`. So
+  `https://customer-a.example/about?site=customer-b` still resolved to customer B and served their
+  database from customer A's hostname. Found by writing the test for the claim rather than by
+  re-reading the claim. `resolveSite()` now takes `allowParam`, and the catch-all -- the one caller
+  whose query string belongs to the visitor -- passes `false`. The layer stays for `/serve`, where the
+  parameter is an instruction the caller wrote.
+- **`/__`-prefixed paths keep their 404.** Those are the Durable Object's own routes, double-
+  underscored precisely so they cannot collide with a Drupal path once the front end forwards real
+  requests. `serve-edge.spec.ts` caught this: without the exclusion, a probe for `/__export` was
+  rewritten into a page render and answered 503 instead of 404, which reads as "the route exists and
+  something went wrong" rather than "there is no such route here".
+
+Site resolution is `src/ops/site-id.ts`, four layers, and the ORDER follows from which of them can be
+absent: **KV** by host, then the **`SITE_ID`** var, then the **hostname** derived, then the literal
+`site`. The two optional layers sit above the guaranteed one because derivation answers for every
+real host, so anything below it is unreachable on exactly the hosts it exists to configure -- a KV
+mapping consulted after derivation could never apply to a deployed site, which is the whole point of
+having one. A KV miss, a blank value or a KV outage all fall through rather than propagating.
+
+Ports are part of the identity only when non-default: two dev servers on one box are two sites, and
+`example.com` and `example.com:443` are one, because treating them as two would split a site's data
+the first time a proxy rewrote the URL. `localhost` and the loopback literals name no site at all and
+fall to the var, then to `site`.
+
+## Measured after the fix
+
+Against the source-built workspace, `wrangler dev`, site migrated in 62 chunks:
+
+| request | after | bytes |
+| --- | --- | --- |
+| `/` | **200** | 12,304 |
+| `/user/login` | **200** | 13,012 |
+| `/filter/tips` | **200** | 19,575 |
+| `/serve?site=site&path=/` | 200 | 12,304 |
+| `/__export` | 404 | -- |
+
+12,304 is the front page, byte-for-byte the figure `assets/prefill.json` records, and the migration
+reported `prefilled: 5`.
+
+## The 500 was the COLD OBJECT, not a missing class, and the earlier guess here was wrong
+
+This section previously said the `/no-such-page` 500 "has the shape of the packing failures in
+`pack-drupal.ts`'s comments, where a missing exception class turned a 404 into something else". That
+was a guess with no evidence behind it, and it was wrong. Retracted.
+
+Measured instead, on a migrated site:
+
+| attempt on a cold object | status |
+| --- | --- |
+| 1 | **503** |
+| 2 | **404** |
+| 3+ | 404 |
+
+Drupal returns its own 404 correctly. `watchdog` holds no error rows. What produced the 500 and the
+503 was the FIRST REAL RENDER on an object whose interpreter had not booted -- and the front page hid
+it, because `/` is prefilled and answers from the serving table without booting PHP at all. So the
+first request that actually needed the interpreter was whatever unprefilled path was asked for next,
+and it met a cold object.
+
+**Two things had to be true for a visitor to be stuck**, and the pair is the real defect:
+
+1. A cold object answers `warming\n` as `text/plain`, which a browser renders as the word "warming"
+   on a white page. Nothing says to reload, so a human stops there.
+2. A site with NO migration cursor never started one. `migrateStepIfPending()` returns null without a
+   cursor, so the alarm chain never ran, and `/serve` answered `warming` for the life of the object.
+   Provisioning happened only if somebody called `/migrate` -- a DIAGNOSTIC route, unreachable on the
+   canonical config. **A freshly deployed site could not provision itself by any supported means.**
+
+## The fix, and the trap in it
+
+`src/ops/warming-page.ts` returns an auto-refreshing HTML page to anything sending `Accept: text/html`
+and the original one-word body to everything else. **The status does not change**: 503 with
+`Retry-After` is still the only answer that means "not yet" to a browser, a CDN and a crawler alike,
+and the 202 reasoning already recorded above is unchanged. What the meta refresh adds is that the
+retry a bot does through `Retry-After`, a human now does automatically.
+
+A page request on an unprovisioned site records `provision_requested` in `cfw_meta` and arms the
+alarm, and `migrateStepIfPending()` starts a migration when that marker is set. Measured end to end
+on a fresh object, no `/migrate`, no diagnostics: **first request 503 with the setup page, next poll
+200 with the 12,304-byte front page.**
+
+**THE MARKER IS LOAD-BEARING AND THE FIRST ATTEMPT DID NOT HAVE ONE.** Starting a migration whenever
+the alarm found no cursor broke **37 tests across 8 files**: the object migrated first and never
+reached the quarantine check, the HTTP-queue drain or the deferred-POST drain, so an alarm asserting
+any of those got a migration report instead. The marker restores this alarm's original contract --
+carry an IN-PROGRESS migration forward -- and makes provisioning an explicit request rather than
+something any alarm may decide to do.
+
+## The fixture conflated two states, in three files rather than the one recorded
+
+`freshSite()` returns an object that has never migrated. Tests across `serve-chain.spec.ts`,
+`serve-lanes.spec.ts` and `serve-edge.spec.ts` built subjects with it and then asserted a cold MISS on
+them -- `x-cfw-cache: MISS`, `x-cfw-miss-ms`, the 4,000 ms boot estimate, the lane. They passed for as
+long as an unprovisioned object answered `warming` on every request, because that is
+indistinguishable from the cold-MISS placeholder at the header level.
+
+**This section previously said 16 assertions in one file, and that was an undercount.** Measured while
+fixing it: 16 in `serve-chain.spec.ts`, 7 more in `serve-lanes.spec.ts` (each asserting
+`x-cfw-lane`, which the placeholder does not carry) and 1 in `serve-edge.spec.ts` -- the only test
+there that serves BEFORE seeding a page. The 16 came from a run that did not cover the other two
+files; a failure count is a measurement and inherits the scope of the run that produced it.
+
+**The fix is the fixture, not the behaviour.** Cold means a cold INTERPRETER and an empty page cache;
+whether the site has a database is a different axis, and the two were only ever conflated by accident.
+`markProvisioned()` stamps the migration cursor `done` and `provisionedSite()` / `provisionedNamedSite()`
+hand back an object in that state. Every subject in the two lane/chain files is now provisioned; the
+one test in `serve-edge.spec.ts` that needed it is the only one there that serves BEFORE seeding a page.
+
+The cursor and not the in-memory `migrated` flag, and that is load-bearing: the flag is discarded on
+eviction, and one of these tests evicts. A fixture built on the flag would have silently dropped back
+into the never-provisioned branch mid-test.
+
+A control test asserts `markProvisioned()` is not vacuous. Without it, a fixture that silently wrote
+nothing would put every one of those assertions back to reading the first-run placeholder, and the
+whole file would prove nothing again.
+
+## What the two bugs cost in tests, and what now fails if either regresses
+
+Neither bug was reachable by any existing assertion. Both are now pinned, and the counts are from a
+full run rather than carried forward:
+
+| spec | tests | what it fails on |
+| --- | --- | --- |
+| `tests/integration/serve-provision.spec.ts` | 17 | first-run provisioning, both directions of the marker |
+| `tests/unit/ops/warming-page.spec.ts` | 15 | the placeholder's status, its coupling and its self-containment |
+| `tests/integration/serve-edge.spec.ts` (`the catch-all rewrite`) | 8 | what an unclaimed path is rewritten INTO |
+| `tests/unit/ops/site-id.spec.ts` (added) | 3 | the `?site=` refusal on a visitor-owned URL |
+
+The ones worth naming, because each covers something a plausible future change would break silently:
+
+- **An alarm nobody asked for does not even fetch the manifest.** This is the 37-test regression,
+  pinned from the other side: the test counts manifest lookups and requires zero. Restarting a
+  migration on any cursor-less alarm fails here rather than in eight unrelated files.
+- **The marker survives an eviction.** The request that asks and the alarm that acts are different
+  invocations with an eviction possible between them, so an in-memory flag reintroduces the original
+  bug one layer down.
+- **A page request records and arms; the ALARM replays.** A change that migrates inline on the request
+  path fails here rather than in production, where it is a multi-second stall on the first visitor.
+- **`Retry-After` and the meta refresh carry the same number.** One is a header, one is inside a
+  string of HTML, and nothing but a test couples them.
+- **A visitor cannot choose which site answers.** Written against the claim in "The fix" above, which
+  is how the claim turned out to be half true.
+- **A stored page is still served on an unprovisioned site.** The fast lane checks `migratePartial()`
+  and deliberately not `neverMigrated()`, because a row in `cfw_page` was put there by something that
+  had a database. Pinned so that reordering the two checks fails visibly instead of taking
+  `serve-lanes.spec.ts` down with it.
+
+Gate after: **101 files, 2,289 tests, 0 failures**, `tsc --noEmit` clean, `prettier --check` clean.
+
 ---
 
 # THE BACKUP PATH DROPPED ONE ROW FROM EVERY DUMP, AND THE TEST COULD NOT SEE IT

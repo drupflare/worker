@@ -12,10 +12,22 @@
 #
 # The output is gitignored on purpose -- this repo does not commit binaries. Re-run after a clone.
 #
-# usage: scripts/build-zstd-decoder.sh [out-dir]
+# It is also CACHED, because the inputs are pinned: one zstd tarball verified by sha256, compiled by
+# one pinned emsdk image. Re-running produces the same 65 KB, so an existing decoder is reused and
+# Docker is never started. `--force` (or FORCE=1) rebuilds it anyway.
+#
+# usage: scripts/build-zstd-decoder.sh [out-dir] [--force]
 set -euo pipefail
 
-OUT_DIR="${1:-.interp}"
+FORCE="${FORCE:-0}"
+OUT_DIR=""
+for arg in "$@"; do
+	case "$arg" in
+		--force) FORCE=1 ;;
+		*) OUT_DIR="$arg" ;;
+	esac
+done
+OUT_DIR="${OUT_DIR:-.interp}"
 ZSTD_VERSION="${ZSTD_VERSION:-1.5.6}"
 ZSTD_SHA256="30f35f71c1203369dc979ecde0400ffea93c27391bfd2ac5a9715d2173d92ff7"
 # the emsdk the php binaries were built with, so the decoder cannot drift onto a newer LLVM
@@ -25,6 +37,12 @@ fail() {
 	echo "FAIL: $*" >&2
 	exit 1
 }
+
+# cached: the inputs are pinned, so an existing decoder is the same decoder
+if [ "$FORCE" != "1" ] && [ -s "$OUT_DIR/zstddec.wasm" ]; then
+	echo "$OUT_DIR/zstddec.wasm  $(wc -c < "$OUT_DIR/zstddec.wasm" | tr -d ' ') bytes, already built (--force rebuilds)"
+	exit 0
+fi
 
 command -v docker > /dev/null || fail "docker is required to build the decoder"
 docker info > /dev/null 2>&1 || fail "docker is installed but not running; start it and re-run"

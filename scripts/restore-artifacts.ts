@@ -2,9 +2,10 @@
  * Populates the gitignored interpreter a clean clone needs, from the public CDN.
  *
  * ```sh
- * bun scripts/restore-artifacts.ts          # verify, download only what is missing or wrong
- * bun scripts/restore-artifacts.ts --force  # re-download even when the digest already matches
- * DRUPFLARE_SKIP_RESTORE=1 bun install      # opt out entirely
+ * bun scripts/restore-artifacts.ts           # verify, download only what is missing or wrong
+ * bun scripts/restore-artifacts.ts --force   # re-download even when the digest already matches
+ * bun scripts/restore-artifacts.ts --strict  # exit non-zero on a failed fetch, for a build step
+ * DRUPFLARE_SKIP_RESTORE=1 bun install       # opt out entirely
  * ```
  *
  * WHY THIS IS A postinstall AND NOT A CI STEP. `src/site-do.ts` imports the interpreter at module
@@ -81,6 +82,9 @@ if (import.meta.main) {
 
 	const manifest = JSON.parse(readFileSync(join(ROOT, MANIFEST_PATH), 'utf8')) as CdnManifest;
 	const force = process.argv.includes('--force');
+	// a postinstall must never fail; `bun run build:local` calls the same script as a STEP, where a
+	// silent success would hand the next step a missing interpreter and fail somewhere unrelated
+	const strict = process.argv.includes('--strict');
 
 	let fetched = 0;
 	let held = 0;
@@ -101,10 +105,12 @@ if (import.meta.main) {
 			// checkout: the vitest config stubs the interpreter and names the specs it skipped, so the
 			// failure mode is reduced coverage with a printed reason rather than a broken `bun install`
 			console.warn(
-				`restore-artifacts: could not fetch ${entry.key}: ${(e as Error).message}\n` +
-					'  the test lane will stub the interpreter and skip the specs that boot it.'
+				`restore-artifacts: could not fetch ${entry.key}: ${(e as Error).message}` +
+					(strict
+						? ''
+						: '\n  the test lane will stub the interpreter and skip the specs that boot it.')
 			);
-			process.exit(0);
+			process.exit(strict ? 1 : 0);
 		}
 	}
 	console.log(

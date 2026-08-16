@@ -40,6 +40,8 @@ export type FetchResult = {
 	packed: number;
 	declared: number;
 	artifactId: string;
+	/** true when the binary was already on disk and no artifact was downloaded */
+	cached?: boolean;
 };
 
 /**
@@ -116,19 +118,60 @@ export function assertSeamImports(root: string, result: FetchResult): void {
 	}
 }
 
+/** the two paths a fetch lands, before the frame is packed from them */
+export function interpreterPaths(
+	phpVersion: string,
+	outDir = OUT_DIR
+): { wasm: string; glue: string } {
+	return {
+		wasm: join(outDir, `php${phpVersion}.wasm`),
+		glue: join(outDir, `php${phpVersion}-worker.mjs`)
+	};
+}
+
+/**
+ * Whether the binary is already on disk, so the 12 MB artifact download can be skipped.
+ *
+ * `bun install` restores exactly these two files from the public CDN, verified by sha256, and they
+ * are the same bytes this script would pull from phasm. Downloading them again to overwrite them
+ * with themselves is the largest avoidable cost in a rebuild, and it is the one that needs `gh`
+ * auth -- so the cache is also what keeps a rebuild credential-free.
+ */
+export function interpreterIsCurrent(phpVersion: string, outDir = OUT_DIR): boolean {
+	const { wasm, glue } = interpreterPaths(phpVersion, outDir);
+	return [wasm, glue].every((p) => existsSync(p) && statSync(p).size > 0);
+}
+
 /**
  * Downloads one variant's `.wasm` and its glue, then packs the wasm.
  *
  * @param variant - a phasm rc name, e.g. `control85`
  * @param phpVersion - the version in the asset filenames, e.g. `8.5`
  * @param artifactId - a phasm Actions artifact id; defaults to the newest unexpired one
+ * @param force - download even when {@link interpreterIsCurrent}; an explicit artifact id implies it
  */
 export function fetchInterpreter(
 	variant: string,
 	phpVersion: string,
-	artifactId?: string
+	artifactId?: string,
+	force = false
 ): FetchResult {
 	mkdirSync(OUT_DIR, { recursive: true });
+
+	if (!force && artifactId === undefined && interpreterIsCurrent(phpVersion)) {
+		const { wasm, glue } = interpreterPaths(phpVersion);
+		const { raw, packed, declared, out } = packWasm(wasm, OUT_DIR);
+		return {
+			wasm,
+			glue,
+			frame: out,
+			raw,
+			packed,
+			declared,
+			artifactId: 'cached',
+			cached: true
+		};
+	}
 
 	// THE ARTIFACTS API, NOT `gh run list`, and two earlier versions of this got it wrong. phasm's
 	// newest RELEASE carries no assets at all, so release-asset download fails outright; and picking
@@ -176,14 +219,19 @@ if (import.meta.main) {
 	if (!variant || !phpVersion) {
 		console.error(
 			'usage: bun scripts/fetch-interpreter.ts <variant> <php-version> [artifact-id]' +
-				' [--pin] [--any-version]'
+				' [--pin] [--any-version] [--force]'
 		);
 		console.error('   eg: bun scripts/fetch-interpreter.ts control85 8.5');
 		process.exit(2);
 	}
-	const result = fetchInterpreter(variant, phpVersion, artifactId);
+	// a pin records WHICH artifact produced the bytes, so it cannot be written from a cached run
+	const force = args.includes('--force') || args.includes('--pin');
+	const result = fetchInterpreter(variant, phpVersion, artifactId, force);
 	if (!args.includes('--any-version')) assertSeamImports(process.cwd(), result);
-	console.log(`${result.wasm}  raw=${result.raw}  packed to ${result.packed} zstd bytes`);
+	console.log(
+		`${result.wasm}  raw=${result.raw}  packed to ${result.packed} zstd bytes` +
+			(result.cached ? '  [already on disk, --force re-downloads]' : '')
+	);
 	console.log(`${result.frame}  declares ${result.declared} inflated bytes`);
 	console.log(`${result.glue}`);
 	if (args.includes('--pin')) {

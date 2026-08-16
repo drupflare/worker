@@ -18,7 +18,7 @@
 
 import { zstdContentSize } from '@drupflare/cartridge/inflate';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 /** where the packed frames land; gitignored, rebuilt from vendor/ on demand */
@@ -59,14 +59,52 @@ export function assertDeclaredSize(frame: Uint8Array, raw: number, source: strin
 	return declared;
 }
 
-/** Compress one wasm binary, returning the before/after sizes and the length the frame declares. */
+/**
+ * Whether an existing frame was packed from the binary now on disk.
+ *
+ * `--ultra -22` over 12 MB is the slowest repeatable step in the whole build, and it is pure waste
+ * when the interpreter has not moved. The frame's own header carries the inflated length, so the
+ * cache key is read out of the artifact rather than kept beside it -- a `.zst` that declares a
+ * different length was packed from a different binary and is rebuilt.
+ *
+ * The mtime comparison is the second half: a rebuild of the same interpreter to the same byte count
+ * is exactly what phasm has been measured doing (12,218,400 then 12,218,393), so length alone is a
+ * weaker key than it looks.
+ */
+export function frameIsCurrent(source: string, out: string): boolean {
+	if (!existsSync(out)) return false;
+	try {
+		if (statSync(out).mtimeMs < statSync(source).mtimeMs) return false;
+		return zstdContentSize(readFileSync(out)) === statSync(source).size;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Compress one wasm binary, returning the before/after sizes and the length the frame declares.
+ *
+ * @param force - repack even when {@link frameIsCurrent} says the frame on disk already matches
+ */
 export function packWasm(
 	source: string,
-	outDir = OUT_DIR
-): { raw: number; packed: number; declared: number; out: string } {
+	outDir = OUT_DIR,
+	force = false
+): { raw: number; packed: number; declared: number; out: string; cached: boolean } {
 	const raw = statSync(source).size;
 	mkdirSync(outDir, { recursive: true });
 	const out = join(outDir, `${basename(source)}.zst`);
+
+	if (!force && frameIsCurrent(source, out)) {
+		const existing = readFileSync(out);
+		return {
+			raw,
+			packed: existing.byteLength,
+			declared: assertDeclaredSize(existing, raw, source),
+			out,
+			cached: true
+		};
+	}
 
 	let frame: Buffer;
 	try {
@@ -80,21 +118,24 @@ export function packWasm(
 	}
 	const declared = assertDeclaredSize(frame, raw, source);
 	writeFileSync(out, frame);
-	return { raw, packed: frame.byteLength, declared, out };
+	return { raw, packed: frame.byteLength, declared, out, cached: false };
 }
 
 if (import.meta.main) {
-	const sources = process.argv.slice(2);
+	const args = process.argv.slice(2);
+	const force = args.includes('--force');
+	const sources = args.filter((a: string) => !a.startsWith('--'));
 	if (sources.length === 0) {
-		console.error('usage: bun scripts/pack-wasm-zstd.ts <wasm> [<wasm>...]');
+		console.error('usage: bun scripts/pack-wasm-zstd.ts <wasm> [<wasm>...] [--force]');
 		process.exit(2);
 	}
 	for (const source of sources) {
-		const { raw, packed, declared, out } = packWasm(source);
+		const { raw, packed, declared, out, cached } = packWasm(source, OUT_DIR, force);
 		const saved = raw - packed;
 		console.log(
 			`${out}  raw=${raw}  zstd=${packed}  declared=${declared}  ` +
-				`(-${saved}, ${((100 * saved) / raw).toFixed(1)}%)`
+				`(-${saved}, ${((100 * saved) / raw).toFixed(1)}%)` +
+				(cached ? '  [cached, --force repacks]' : '')
 		);
 	}
 }

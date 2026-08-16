@@ -471,6 +471,7 @@ what makes it dangerous.</p>
 <li><a href="#-how-it-works">How It Works</a></li>
 <li><a href="#-what-it-costs">What It Costs</a></li>
 <li><a href="#-getting-started">Getting Started</a></li>
+<li><a href="#-building-from-a-clean-clone">Building From a Clean Clone</a></li>
 <li><a href="#-project-structure">Project Structure</a></li>
 <li><a href="#-testing">Testing</a></li>
 <li><a href="#-contributing">Contributing</a></li>
@@ -591,9 +592,11 @@ and every meter except Worker requests has roughly 5x headroom.</p>
 <li>A Cloudflare account with Durable Objects enabled (available on the free plan)</li>
 </ul>
 <h3 id="install-and-run" class="tsd-anchor-link">Install and run<a href="#install-and-run" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<pre><code class="bash"><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">clone</span><span class="hl-1"> </span><span class="hl-2">https://github.com/drupflare/worker.git</span><br/><span class="hl-0">cd</span><span class="hl-1"> </span><span class="hl-2">worker</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">dev</span>
+<pre><code class="bash"><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">clone</span><span class="hl-1"> </span><span class="hl-2">https://github.com/drupflare/worker.git</span><br/><span class="hl-0">cd</span><span class="hl-1"> </span><span class="hl-2">worker</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">hydrate</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">dev</span>
 </code><button type="button">Copy</button></pre>
 
+<p><code>assets/</code> and <code>.interp/</code> are generated and gitignored, so a clean clone has nothing to deploy until
+<code>bun run hydrate</code> lands them. See <a href="#-building-from-a-clean-clone">Building From a Clean Clone</a>.</p>
 <p>Then migrate a site into the Durable Object and render a page:</p>
 <pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/migrate?site=demo&amp;all=1&quot;</span><br/><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/serve?site=demo&amp;path=/&quot;</span>
 </code><button type="button">Copy</button></pre>
@@ -651,8 +654,12 @@ itself to completion over ~99 alarm firings, keeping every invocation under
 <td>hydrate the release payload: what a deploy runs</td>
 </tr>
 <tr>
-<td><code>bun run build:all</code></td>
-<td>vendor the binaries, then pack the Drupal tree and database</td>
+<td><code>bun run build:local</code></td>
+<td>build every generated artifact from source</td>
+</tr>
+<tr>
+<td><code>bun run build:plan</code></td>
+<td>what a source build would do, and what tools are missing</td>
 </tr>
 <tr>
 <td><code>bun run assets:sql</code></td>
@@ -660,6 +667,56 @@ itself to completion over ~99 alarm firings, keeping every invocation under
 </tr>
 </tbody>
 </table>
+<h3 id="🧰-building-from-a-clean-clone" class="tsd-anchor-link">🧰 Building From a Clean Clone<a href="#🧰-building-from-a-clean-clone" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>assets/</code> is ~97 MB of generated packs and <code>.interp/</code> holds the interpreter. Both are gitignored, so
+a fresh clone has nothing to deploy until one of two routes lands them.</p>
+<pre><code class="bash"><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1">     </span><span class="hl-3"># postinstall restores the interpreter from the CDN, verified by sha256</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">hydrate</span><span class="hl-1"> </span><span class="hl-3"># the payload if one is published, a source build if not</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">dev</span>
+</code><button type="button">Copy</button></pre>
+
+<table>
+<thead>
+<tr>
+<th>route</th>
+<th>command</th>
+<th>needs</th>
+<th>takes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>payload</strong></td>
+<td><code>bun run hydrate</code></td>
+<td>network</td>
+<td>seconds</td>
+</tr>
+<tr>
+<td><strong>source</strong></td>
+<td><code>bun run build:local</code></td>
+<td>network, PHP, composer, node 24+, zstd, Docker</td>
+<td>minutes</td>
+</tr>
+</tbody>
+</table>
+<p>The payload route is one verified HTTPS GET of a release asset, which is what lets the Deploy to
+Cloudflare button work: Workers Builds has no Docker. The source route regenerates the same bytes
+locally, for a commit no release was cut from. <code>bun run hydrate</code> takes the payload route and falls
+back to the source route when there is no payload; <code>--payload-only</code> forbids the fallback and
+<code>--from-source</code> skips straight to it.</p>
+<p>The source route runs fourteen steps in one order, each skipped when what it produces is already on
+disk, and together they produce <strong>every artifact a release payload carries</strong>:</p>
+<pre><code class="txt">interpreter → frame → decoder      the three files the binary seam imports
+siblings    → driver               the Drupal modules, packed into assets/driver.json
+tree → site → patch                the Drupal tree, installed and patched for wasm
+bootstrap → twig → core → pack     the file list, the compiled Twig cache, the per-file pack
+sql                                the migration chunks, from the committed site.sqlite
+prefill                            the pages, rendered by a local wrangler dev and lifted back
+</code><button type="button">Copy</button></pre>
+
+<p>Run <code>bun run build:plan</code> first — it prints the plan and names every tool this machine is missing
+before it spends a minute on the 180 MB tree download. Only <code>decoder</code> needs Docker, and only once.</p>
+<p><strong><a href="media/building-from-source.md"><code>docs/building-from-source.md</code></a></strong> is the full account: what each step
+produces, why the order is the order, what caches on what, and why <code>prefill</code> is the one step allowed
+to fail without failing the build.</p>
 <hr>
 <h2 id="📁-project-structure" class="tsd-anchor-link">📁 Project Structure<a href="#📁-project-structure" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <pre><code class="txt">src/
@@ -1137,7 +1194,8 @@ edge, so <code>assets/driver.json</code> is the copy that actually executes, and
 <ul>
 <li><a href="#prerequisites"><span>Prerequisites</span></a></li>
 <li><a href="#install-and-run"><span>Install and run</span></a></li>
-<li><a href="#scripts"><span>Scripts</span></a></li></ul></li>
+<li><a href="#scripts"><span>Scripts</span></a></li>
+<li><a href="#🧰-building-from-a-clean-clone"><span>🧰 <wbr/>Building <wbr/>From a <wbr/>Clean <wbr/>Clone</span></a></li></ul></li>
 <li><a href="#📁-project-structure"><span>📁 <wbr/>Project <wbr/>Structure</span></a></li>
 <li><a href="#🧪-testing"><span>🧪 <wbr/>Testing</span></a></li>
 <li>

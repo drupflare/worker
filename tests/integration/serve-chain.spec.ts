@@ -7,9 +7,9 @@ import {
 	type ServeDo,
 	decodeRenderCall,
 	driveAlarms,
-	freshSite,
 	inObject,
 	pageFor,
+	provisionedSite,
 	queuePath,
 	serveDirect,
 	statsOf,
@@ -50,6 +50,13 @@ import {
  *
  * Timing assertions are kept only where the number IS the claim: a MISS and a HIT must fit the
  * free plan's 10 ms invocation, and both are pure `ctx.storage.sql` here.
+ *
+ * EVERY SUBJECT IS `provisionedSite()`, never `freshSite()`. Cold here means a cold INTERPRETER and
+ * an empty page cache, which is a different state from a site that has no database yet -- and the
+ * two were conflated for as long as an unprovisioned object answered `warming` on every request.
+ * Once it started answering `migrating` instead, 16 assertions in this file were reading the
+ * first-run placeholder while claiming to measure a MISS. First-run behaviour is
+ * `serve-provision.spec.ts`.
  */
 
 /** the wrangler.jsonc default: what a MISS may spend rendering for the visitor */
@@ -61,7 +68,7 @@ const FIRST_RENDER_ESTIMATE_MS = 1800;
 
 describe('a cold MISS costs no interpreter and no render', () => {
 	it('returns the placeholder, queues the path and says why it did not render', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
 
 		expect(cold.status).toBe(503);
@@ -78,14 +85,14 @@ describe('a cold MISS costs no interpreter and no render', () => {
 	});
 
 	it('fits the 10 ms a free-plan invocation gets', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
 		expect(cold.missMs).toBeGreaterThanOrEqual(0);
 		expect(cold.missMs).toBeLessThan(10);
 	});
 
 	it('estimates a BOOT rather than a render, so it cannot gamble the visitor on one', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
 		expect(cold.estimateMs).toBe(COLD_ESTIMATE_MS);
 		expect(cold.budgetMs).toBe(BUDGET_MS);
@@ -94,7 +101,7 @@ describe('a cold MISS costs no interpreter and no render', () => {
 	});
 
 	it('counts the request durably and pulls the fill alarm in', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			const before = site.metaGet('serve_requests', '0');
 			await serveDirect(site, '/');
@@ -113,7 +120,7 @@ describe('a cold MISS costs no interpreter and no render', () => {
 	});
 
 	it('keeps the counter across an eviction, so an edge-tier assertion can rely on it', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, (site) => serveDirect(site, '/'));
 		await evictDurableObject(stub);
 		const after = await inObject(stub, (site) => site.metaGet('serve_requests', '0'));
@@ -123,7 +130,7 @@ describe('a cold MISS costs no interpreter and no render', () => {
 
 describe('inline rendering off is the free-plan shape and stays reachable', () => {
 	it('returns the placeholder and leaves the work to the alarm chain', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const off = await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			return serveDirect(site, '/', '&inline=0');
@@ -137,7 +144,7 @@ describe('inline rendering off is the free-plan shape and stays reachable', () =
 	});
 
 	it('a zero budget disables inline rendering entirely, restoring the always-placeholder shape', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const off = await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			return serveDirect(site, '/', '&budget=0');
@@ -148,7 +155,7 @@ describe('inline rendering off is the free-plan shape and stays reachable', () =
 	});
 
 	it('never renders when the interpreter is absent, whatever the budget says', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/', '&budget=99999'));
 		expect(cold.inline).toBe('cold');
 		expect(cold.status).toBe(503);
@@ -157,7 +164,7 @@ describe('inline rendering off is the free-plan shape and stays reachable', () =
 
 describe('the alarm chain fills what a MISS queued, unattended', () => {
 	it('fills the path and turns the next request into a HIT', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const calls = await inObject(stub, async (site) => {
 			const recorded = stubRender(site, ({ path }) => pageFor(path));
 			await serveDirect(site, '/', '&inline=0');
@@ -188,7 +195,7 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	});
 
 	it('fills a BATCH per firing, which is what amortises the re-arm row', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			for (const path of ['/a', '/b', '/c']) queuePath(site, path);
@@ -202,7 +209,7 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	});
 
 	it('gives each path its own row rather than serving the first one back', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			queuePath(site, '/');
@@ -220,7 +227,7 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	});
 
 	it('drops back to the keep-warm interval once the queue is empty', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			queuePath(site, '/');
@@ -237,7 +244,7 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 
 describe('a MISS on a warm object renders inline for the visitor', () => {
 	it('returns the page rather than the placeholder, and says this invocation rendered it', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const inline = await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			return serveDirect(site, '/user/password');
@@ -254,7 +261,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 	});
 
 	it('refuses to believe a zero wall-clock delta, which is what the edge reports', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			// FREEZE the clock rather than relying on a synchronous render being fast enough to
@@ -291,7 +298,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 		// asset-fetch time and the synchronous boot and render contributed nothing. Non-zero, so
 		// renderClockUnmeasurable did not trip, so the over-budget guard would wave a 1.4 s boot
 		// through -- the exact opposite of what it exists for.
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, async ({ path }) => {
 				await tick(3);
@@ -323,7 +330,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 	});
 
 	it('learns from a render it COULD measure, and estimates that next time', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, async ({ path }) => {
 				// a real await, so the wall clock moves and the delta is real
@@ -342,7 +349,7 @@ describe('a MISS on a warm object renders inline for the visitor', () => {
 
 describe('a render that cannot fit the budget falls back to the placeholder', () => {
 	it('says the estimate exceeded the budget and still queues the path', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const over = await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			return serveDirect(site, '/filter/tips', '&budget=1');
@@ -356,7 +363,7 @@ describe('a render that cannot fit the budget falls back to the placeholder', ()
 	});
 
 	it('and the alarm chain still fills what the fallback queued', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			return serveDirect(site, '/filter/tips', '&budget=1');
@@ -370,7 +377,7 @@ describe('a render that cannot fit the budget falls back to the placeholder', ()
 
 describe('a path that can never render is retried and then dropped', () => {
 	it('takes three strikes, records the error, and leaves the queue', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, () => ({ error: 'no route matched' }));
 			queuePath(site, '/definitely-not-a-route');
@@ -405,7 +412,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('records why it failed while the path is still queued', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const queued = await inObject(stub, async (site) => {
 			stubRender(site, () => ({ error: 'no route matched' }));
 			queuePath(site, '/nope');
@@ -418,7 +425,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('a failed inline render falls through to the placeholder rather than 500 at the visitor', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const failed = await inObject(stub, (site) => {
 			stubRender(site, () => ({ error: 'boom' }));
 			return serveDirect(site, '/broken');
@@ -430,7 +437,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('an html-less reply is a failure, not an empty page', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, () => ({ status: 200, renderMs: 1 }));
 			queuePath(site, '/htmlless');
@@ -446,7 +453,7 @@ describe('a path that can never render is retried and then dropped', () => {
 		// stayed 1, so the re-arm picked +1 ms -- 196 firings in 14 s, every one `outcome: ok`
 		// and every one a Durable Object invocation. fillOne()'s three strikes only run when the
 		// render REPORTS a failure; this covers the case where it never got that far.
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, () => {
 				throw new TypeError('target is not a function');
@@ -473,7 +480,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('reports the throw as the outcome rather than swallowing it', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const outcome = await inObject(stub, async (site) => {
 			stubRender(site, () => {
 				throw new TypeError('target is not a function');
@@ -485,7 +492,7 @@ describe('a path that can never render is retried and then dropped', () => {
 	});
 
 	it('strikeFillHead on an empty queue is a no-op, not a throw', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const struck = await inObject(stub, (site) => site.strikeFillHead('nothing queued'));
 		expect(struck).toBeNull();
 	});
@@ -493,7 +500,7 @@ describe('a path that can never render is retried and then dropped', () => {
 
 describe('/__fill drives one fill synchronously', () => {
 	it('reports the path it filled and what is left', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, ({ path }) => pageFor(path));
 			queuePath(site, '/one');
@@ -506,7 +513,7 @@ describe('/__fill drives one fill synchronously', () => {
 	});
 
 	it('answers filled:null on an empty queue instead of entering the interpreter', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			const calls = stubRender(site, ({ path }) => pageFor(path));
 			const res = await site.fetch(new Request('https://do.local/__fill'));
@@ -524,7 +531,7 @@ describe('/__assemble decodes destruct as a tri-state, and re-renders rather tha
 		reported: unknown;
 		call: RenderCall | undefined;
 	}> {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		return inObject(stub, async (site: ServeDo) => {
 			const calls = stubRender(site, ({ path }) => pageFor(path));
 			const res = await site.fetch(
@@ -558,7 +565,7 @@ describe('/__assemble decodes destruct as a tri-state, and re-renders rather tha
 	});
 
 	it('empties only the bins it was asked for, so dynamic_page_cache can answer', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const calls = await inObject(stub, async (site) => {
 			const recorded = stubRender(site, ({ path }) => pageFor(path));
 			await site.fetch(new Request('https://do.local/__assemble?path=%2F&bins=page'));
@@ -568,7 +575,7 @@ describe('/__assemble decodes destruct as a tri-state, and re-renders rather tha
 	});
 
 	it('deletes the stored row first, so it measures a render rather than a HIT', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			const calls = stubRender(site, ({ path }) => pageFor(path, 7));
 			// a page that would otherwise be served straight back
@@ -609,7 +616,7 @@ describe('a heap restore in flight is not a strike against the queued page', () 
 		// `ensurePhp()` throws HeapRestoreIncomplete on the boot that applied the first chunk, and
 		// alarm()'s restore branch owns every firing after that. Charging the page for the object's
 		// own boot would drop a perfectly good path after three cold starts.
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			stubRender(site, () => {
 				throw new HeapRestoreIncomplete({

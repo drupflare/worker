@@ -1,10 +1,10 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import {
-	freshSite,
 	inObject,
 	pageFor,
 	probe,
+	provisionedSite,
 	seedPage,
 	serveDirect,
 	statsOf,
@@ -13,6 +13,9 @@ import {
 } from '../helpers/serve-do';
 
 /**
+ * Every subject is `provisionedSite()`: the lane split is about WHICH path answers a request the
+ * object can answer at all, so a site with no database would take neither lane and report no lane.
+ *
  * Ported from the `the lane split: a HIT must not queue behind a render` region of
  * `scripts/test-serve-chain.mjs`.
  *
@@ -54,7 +57,7 @@ import {
 
 describe('a HIT on a ready object takes the storage lane', () => {
 	it('answers from storage, reports the lane, and never enters the PHP gate', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			// one gated request first, so the tables exist: condition 1 of the split
 			await serveDirect(site, '/');
@@ -76,7 +79,7 @@ describe('a HIT on a ready object takes the storage lane', () => {
 	});
 
 	it('counts a storage-lane serve exactly once, in the durable counter', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -89,7 +92,7 @@ describe('a HIT on a ready object takes the storage lane', () => {
 	});
 
 	it('is counted separately from the PHP lane, so the split is observable', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const stats = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -105,7 +108,7 @@ describe('a HIT on a ready object takes the storage lane', () => {
 
 describe('lane=gate forces the gated lane, so the split is testable both ways', () => {
 	it('answers the same bytes from either lane', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -121,7 +124,7 @@ describe('lane=gate forces the gated lane, so the split is testable both ways', 
 	});
 
 	it('takes the gated lane for a method the fast lane will not answer', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -138,7 +141,7 @@ describe('lane=gate forces the gated lane, so the split is testable both ways', 
 
 describe('the fast lane refuses to run DDL, which is the constraint that makes it safe', () => {
 	it('declines on an object whose serve tables do not exist yet', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const first = await inObject(stub, (site) => serveDirect(site, '/'));
 		// CREATE TABLE next to an open transaction replay dirties sqlite_master and turns every
 		// later read in that transaction into a speculative replay
@@ -146,7 +149,7 @@ describe('the fast lane refuses to run DDL, which is the constraint that makes i
 	});
 
 	it('declines again after an eviction, because the memo is in-memory state', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -165,7 +168,7 @@ describe('the fast lane refuses to run DDL, which is the constraint that makes i
 	});
 
 	it('hands back to the gated lane when the memo turns out to have lied', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
@@ -185,7 +188,7 @@ describe('the fast lane refuses to run DDL, which is the constraint that makes i
 
 describe('a storage-lane HIT is answered while the PHP lane is occupied', () => {
 	it('reports gate-active 1 for a HIT overlapping a render that yields', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/warm', '<title>warm</title>');
@@ -210,7 +213,7 @@ describe('a storage-lane HIT is answered while the PHP lane is occupied', () => 
 	});
 
 	it('CONTROL: the same HIT forced through the gate reports no overlap', async () => {
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/warm', '<title>warm</title>');

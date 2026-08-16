@@ -1,5 +1,6 @@
 import { SELF, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/migrate-sql';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -94,6 +95,14 @@ export type ServeDo = {
 	queueDepth: () => number;
 	generation: () => number;
 	metaGet: (key: string, fallback?: string | null) => string | null;
+	/** first-run provisioning: the state check, the durable marker, and what acts on it */
+	neverMigrated: () => boolean;
+	provisionRequested: () => boolean;
+	requestProvision: () => Promise<void>;
+	hasMigrationManifest: () => Promise<boolean>;
+	migrateStepIfPending: () => Promise<Record<string, unknown> | null>;
+	/** the memoised migrator, replaceable so a provisioning spec needs no packed chunks */
+	_migrator?: unknown;
 	/** the daily rows meter: the accumulator, its flush, and the read that does not write */
 	rowsSinceFlush?: number;
 	flushDailyRows: (nowMs?: number) => number;
@@ -186,14 +195,65 @@ export type ServeStats = {
 	lastGc: Record<string, unknown> | null;
 };
 
-/** an object of its own, so one spec's warm object cannot satisfy another's cold assertion */
+/**
+ * An object of its own, NEVER PROVISIONED: no database, no cursor, nothing to render from.
+ *
+ * That second half used to be invisible, because an object in this state answered `warming` on
+ * every request forever and a cold-MISS assertion could not tell the two apart. It can now --
+ * `/__serve` asks for provisioning and returns the `migrating` placeholder -- so a spec asserting a
+ * cold MISS wants {@link provisionedSite}, and only a spec asserting FIRST-RUN behaviour wants this.
+ */
 export function freshSite() {
 	return env.SITE.get(env.SITE.newUniqueId());
+}
+
+/**
+ * Stamps the migration cursor `done`, which is the state every provisioned site is in.
+ *
+ * The CURSOR and not the in-memory `migrated` flag, and the difference is load-bearing: the flag is
+ * discarded on eviction, so a spec that evicts would silently drop back to the never-provisioned
+ * branch and assert against the wrong placeholder. `ensureMigrateTable()` rather than a copy of the
+ * DDL, so a schema change cannot leave the fixture writing to a table shaped like last month's.
+ */
+export function markProvisioned(site: ServeDo, generation = 'test-fixture'): void {
+	ensureMigrateTable(site.sql as SqlLike);
+	site.sql.exec(
+		`INSERT INTO ${MIGRATE_TABLE} (id, generation, chunk, chunks, statements, rows_written,
+			state, error, started_at, updated_at)
+		 VALUES (1, ?, 0, 0, 0, 0, 'done', NULL, 0, 0)
+		 ON CONFLICT(id) DO UPDATE SET state = 'done'`,
+		generation
+	);
+}
+
+/**
+ * A fresh object that has already been provisioned: no warm state, but a database to render from.
+ *
+ * This is what "a cold object" means everywhere except the first-run specs -- cold is about the
+ * INTERPRETER and the page cache, not about whether the site exists.
+ */
+export async function provisionedSite(): Promise<DurableObjectStub> {
+	const stub = freshSite();
+	await inObject(stub, (site) => markProvisioned(site));
+	return stub;
 }
 
 /** the object the Worker in front reaches for `?site=<name>`, which is how the two lanes meet */
 export function namedSite(name: string) {
 	return env.SITE.get(env.SITE.idFromName(name));
+}
+
+/**
+ * The same object, provisioned.
+ *
+ * The Worker-side counterpart of {@link provisionedSite}: a spec that drives `/serve` through the
+ * front end and expects a MISS needs the object to have a database, or the first request is the
+ * first-run placeholder and carries no `x-cfw-cache` at all.
+ */
+export async function provisionedNamedSite(name: string): Promise<DurableObjectStub> {
+	const stub = namedSite(name);
+	await inObject(stub, (site) => markProvisioned(site));
+	return stub;
 }
 
 /** runs `fn` against the real instance, narrowed to the surface above */

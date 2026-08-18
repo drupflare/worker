@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+	autoclosedTitle,
+	blockedComment,
+	branchIsPristine,
 	bumpComment,
 	decide,
 	isLegacyProposalBranch,
 	matchesProposal,
+	plan,
 	proposalBody,
 	proposalBranch,
 	proposalTitle,
@@ -29,7 +33,7 @@ const P = '8.5';
 const CANONICAL = 'interp/control85-php8.5';
 
 function pr(number: number, headRefName: string, state: ProposalPr['state'] = 'OPEN'): ProposalPr {
-	return { number, headRefName, state };
+	return { number, headRefName, state, title: 'chore(interp): control85 php8.5' };
 }
 
 /** the three that were open, newest first, as `gh pr list` returned them */
@@ -143,6 +147,63 @@ describe('the decision', () => {
 		});
 		expect(d).toMatchObject({ push: true, pr: 'create' });
 	});
+
+	it('refuses to reset a branch carrying work it did not write', () => {
+		// resetting the ref to base is an unconditional force; a human who fixed something on the
+		// branch would otherwise lose it to the next phasm build
+		const d = decide({
+			...base,
+			basePin: null,
+			branchPin: '{"artifactId":"9255713894"}',
+			canonicalPr: pr(7, CANONICAL),
+			branchIsPristine: false
+		});
+		expect(d).toMatchObject({ push: false, pr: 'blocked' });
+		expect(d.why).toContain('work this workflow did not write');
+	});
+
+	it('still adopts a branch that does not exist, whatever the authorship flag says', () => {
+		const d = decide({
+			...base,
+			basePin: null,
+			branchPin: null,
+			canonicalPr: null,
+			branchIsPristine: false
+		});
+		expect(d).toMatchObject({ push: true, pr: 'create' });
+	});
+
+	it('does not block when there is nothing to push', () => {
+		const d = decide({
+			...base,
+			basePin: null,
+			branchPin: base.newPin,
+			canonicalPr: pr(7, CANONICAL),
+			branchIsPristine: false
+		});
+		expect(d).toMatchObject({ push: false, pr: 'none' });
+	});
+});
+
+describe('whether a branch is still only what the reconciler put there', () => {
+	// identity cannot be the test: the commit is made through the contents API so GitHub signs it,
+	// which attributes it to the token owner rather than to a bot address
+	it('accepts a branch one commit ahead touching only the pin', () => {
+		expect(branchIsPristine(1, ['interp.lock.json'])).toBe(true);
+	});
+
+	it('accepts a branch that only trails the base', () => {
+		expect(branchIsPristine(0, [])).toBe(true);
+	});
+
+	it('rejects a second commit, however small', () => {
+		expect(branchIsPristine(2, ['interp.lock.json'])).toBe(false);
+	});
+
+	it('rejects a commit that touched anything else', () => {
+		expect(branchIsPristine(1, ['interp.lock.json', 'src/site-do.ts'])).toBe(false);
+		expect(branchIsPristine(1, ['wrangler.jsonc'])).toBe(false);
+	});
 });
 
 describe('superseding', () => {
@@ -183,6 +244,96 @@ describe('the branch sweep', () => {
 
 	it('never sweeps the canonical branch, even with nothing open on it', () => {
 		expect(staleBranches(remote, V, P, [])).not.toContain(CANONICAL);
+	});
+});
+
+describe('the plan a dry run prints', () => {
+	const base = 'deadbeefcafe1234567890abcdef1234567890ab';
+
+	/** the state the repository was actually in: three legacy proposals, no canonical branch */
+	it('collapses the three that accumulated into one signed proposal', () => {
+		const steps = plan(
+			{ push: true, pr: 'create', why: 'the proposal moves to 9259605002' },
+			CANONICAL,
+			base,
+			null,
+			supersede(theBrokenCase(), V, P, CANONICAL),
+			[]
+		);
+		expect(steps[0]).toContain(`reset refs/heads/${CANONICAL} to deadbee`);
+		expect(steps[1]).toContain('signed');
+		expect(steps[2]).toContain('open a pull request');
+		expect(steps.filter((s) => s.includes('rename autoclosed'))).toHaveLength(3);
+		for (const n of [6, 5, 4]) {
+			expect(steps.some((s) => s.includes(`#${n}`))).toBe(true);
+		}
+	});
+
+	it('re-triggers the checks when it bumps an open proposal', () => {
+		// the commit is written by a bot token, which emits no synchronize; without this the new
+		// head sha would carry no Gate Suites, test or format at all and could never merge
+		const steps = plan(
+			{ push: true, pr: 'update', why: 'the proposal moves to 9259605002' },
+			CANONICAL,
+			base,
+			pr(7, CANONICAL),
+			[],
+			[]
+		);
+		expect(steps.some((s) => s.includes('close and reopen #7'))).toBe(true);
+	});
+
+	it('does not close and reopen when it changed no bytes', () => {
+		const steps = plan(
+			{ push: false, pr: 'update', why: 'nothing moved' },
+			CANONICAL,
+			base,
+			pr(7, CANONICAL),
+			[],
+			[]
+		);
+		expect(steps.some((s) => s.includes('close and reopen'))).toBe(false);
+	});
+
+	it('mutates nothing at all when the branch is blocked', () => {
+		const steps = plan(
+			{ push: false, pr: 'blocked', why: 'a human committed here' },
+			CANONICAL,
+			base,
+			pr(7, CANONICAL),
+			supersede(theBrokenCase(), V, P, CANONICAL),
+			['interp/control85-php8.5-1']
+		);
+		expect(steps.join('\n')).not.toContain('reset refs/heads');
+		expect(steps.join('\n')).not.toContain('autoclosed');
+		expect(steps.join('\n')).not.toContain('delete');
+		expect(steps.some((s) => s.includes('supersede nothing'))).toBe(true);
+	});
+
+	it('says so plainly when there is nothing to clean up', () => {
+		const steps = plan(
+			{ push: true, pr: 'create', why: 'first proposal' },
+			CANONICAL,
+			base,
+			null,
+			[],
+			[]
+		);
+		expect(steps.some((s) => s.includes('supersede nothing; none is open'))).toBe(true);
+	});
+
+	it('sweeps an orphan branch whose pull request a human closed', () => {
+		const steps = plan(
+			{ push: false, pr: 'none', why: 'already pinned' },
+			CANONICAL,
+			base,
+			null,
+			[],
+			['interp/control85-php8.5-9255713894']
+		);
+		expect(steps.some((s) => s.includes('delete interp/control85-php8.5-9255713894'))).toBe(
+			true
+		);
 	});
 });
 
@@ -227,5 +378,29 @@ describe('what a reviewer reads', () => {
 
 	it('titles every proposal the same, so the bump is visible as an edit', () => {
 		expect(proposalTitle(V, P)).toBe('chore(interp): control85 php8.5');
+	});
+
+	it('marks a superseded proposal autoclosed, the way renovate does', () => {
+		expect(autoclosedTitle(proposalTitle(V, P))).toBe(
+			'chore(interp): control85 php8.5 - autoclosed'
+		);
+	});
+
+	it('does not stack the suffix when a title already carries it', () => {
+		const once = autoclosedTitle(proposalTitle(V, P));
+		expect(autoclosedTitle(once)).toBe(once);
+	});
+
+	it('explains a block without implying anything was changed', () => {
+		const comment = blockedComment(facts);
+		expect(comment).toContain('9259605002');
+		expect(comment).toContain('nothing was changed');
+	});
+
+	it('warns in the body when the credential holds the required checks', () => {
+		const held = proposalBody({ ...facts, checksHeld: true });
+		expect(held).toContain('action_required');
+		expect(held).toContain('PHASM_TOKEN');
+		expect(proposalBody(facts)).not.toContain('action_required');
 	});
 });

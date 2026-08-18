@@ -33,12 +33,12 @@ export const PIN_PATH = 'interp.lock.json';
 /** the state GitHub reports for a pull request, in the spelling `gh pr list --json state` uses */
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED';
 
-export type ProposalPr = { number: number; state: PrState; headRefName: string };
+export type ProposalPr = { number: number; state: PrState; headRefName: string; title: string };
 
 /** what to do with the branch and with the pull request on it */
 export type Decision = {
 	push: boolean;
-	pr: 'none' | 'create' | 'update' | 'reopen';
+	pr: 'none' | 'create' | 'update' | 'reopen' | 'blocked';
 	why: string;
 };
 
@@ -52,7 +52,33 @@ export type DecisionInput = {
 	artifactId: string;
 	/** the newest pull request whose head is the proposal branch, in any state */
 	canonicalPr: ProposalPr | null;
+	/** false when the branch holds work this workflow did not write; see {@link branchIsPristine} */
+	branchIsPristine?: boolean;
 };
+
+/**
+ * Whether a proposal branch still holds only what this workflow put there.
+ *
+ * Identity is a fragile test here, because how the commit is written decides what it is attributed
+ * to: `git commit` in Actions gives `github-actions[bot]` and `verified: false`, the contents API
+ * under a bot token gives `github-actions[bot]` and a GitHub signature, and the same call under a
+ * user PAT gives that user. Only one of those is what this workflow currently does, and it has
+ * already changed once.
+ *
+ * The structural test survives all three: a pristine proposal is at most one commit ahead of its
+ * base and touches nothing but the pin.
+ *
+ * @param aheadBy - `ahead_by` from a `base...branch` comparison; 0 when the branch only trails
+ * @param files - the paths that comparison reports as changed
+ */
+export function branchIsPristine(aheadBy: number, files: readonly string[]): boolean {
+	return aheadBy <= 1 && files.every((path) => path === PIN_PATH);
+}
+
+/** what a superseded proposal is renamed to, following renovate; appending twice is not a rename */
+export function autoclosedTitle(title: string): string {
+	return title.endsWith(' - autoclosed') ? title : `${title} - autoclosed`;
+}
 
 /** the one branch every proposal for a variant and version lands on */
 export function proposalBranch(variant: string, phpVersion: string): string {
@@ -102,6 +128,16 @@ export function decide(input: DecisionInput): Decision {
 	const push = branchPin !== newPin;
 	if (!push && canonicalPr?.state === 'OPEN') {
 		return { push: false, pr: 'none', why: `the open proposal already pins ${artifactId}` };
+	}
+
+	// resetting the ref to base is an unconditional force, so a human who committed onto the
+	// proposal branch gets told rather than overwritten
+	if (push && branchPin !== null && input.branchIsPristine === false) {
+		return {
+			push: false,
+			pr: 'blocked',
+			why: 'the branch carries work this workflow did not write, so it is left alone'
+		};
 	}
 
 	const pr =
@@ -154,6 +190,49 @@ export function proposalTitle(variant: string, phpVersion: string): string {
 	return `chore(interp): ${variant} php${phpVersion}`;
 }
 
+/**
+ * Every mutation a run would make, in order, as one readable list.
+ *
+ * `--dry-run` prints this so the reconciliation of an existing mess can be checked BEFORE it runs.
+ * The three pull requests that accumulated on 2026-08-16 are exactly the case it was written for.
+ */
+export function plan(
+	decision: Decision,
+	branch: string,
+	baseSha: string,
+	canonicalPr: ProposalPr | null,
+	replaced: readonly ProposalPr[],
+	orphans: readonly string[]
+): string[] {
+	const steps: string[] = [];
+	if (decision.pr === 'blocked') {
+		steps.push(`leave ${branch} untouched: ${decision.why}`);
+		if (canonicalPr?.state === 'OPEN')
+			steps.push(`edit the status comment on #${canonicalPr.number}`);
+		steps.push('supersede nothing, because the open proposals are the only record');
+		return steps;
+	}
+	if (decision.push) {
+		steps.push(`reset refs/heads/${branch} to ${baseSha.slice(0, 7)} (create if absent)`);
+		steps.push(`commit ${PIN_PATH} onto ${branch} over the contents API, signed`);
+	} else {
+		steps.push(`leave refs/heads/${branch} as it is: ${decision.why}`);
+	}
+	if (decision.pr === 'create') steps.push(`open a pull request from ${branch}`);
+	if (decision.pr === 'update') steps.push(`edit #${canonicalPr?.number} and its status comment`);
+	if (decision.pr === 'reopen') steps.push(`reopen and edit #${canonicalPr?.number}`);
+	if (decision.pr === 'update' && decision.push) {
+		steps.push(`close and reopen #${canonicalPr?.number} so the new sha gets its own checks`);
+	}
+	for (const pr of replaced) {
+		steps.push(`comment, rename autoclosed, close #${pr.number} and delete ${pr.headRefName}`);
+	}
+	for (const orphan of orphans) steps.push(`delete ${orphan}, which has no open pull request`);
+	if (replaced.length === 0 && orphans.length === 0)
+		steps.push('supersede nothing; none is open');
+	return steps;
+}
+
 export type ProposalFacts = {
 	variant: string;
 	phpVersion: string;
@@ -165,6 +244,8 @@ export type ProposalFacts = {
 	proposed?: string;
 	runId?: string;
 	superseded?: number[];
+	/** true when the proposal was opened with GITHUB_TOKEN, which holds the required checks */
+	checksHeld?: boolean;
 };
 
 export function proposalBody(facts: ProposalFacts): string {
@@ -196,6 +277,14 @@ export function proposalBody(facts: ProposalFacts): string {
 	if (facts.superseded?.length) {
 		lines.push('', `Superseded: ${facts.superseded.map((n) => `#${n}`).join(', ')}.`);
 	}
+	if (facts.checksHeld) {
+		lines.push(
+			'',
+			'> This was opened with `GITHUB_TOKEN`, so GitHub holds every workflow run on it at ' +
+				'`action_required` and the checks master requires cannot report. Approve them from ' +
+				'the Actions tab, or set the `PHASM_TOKEN` secret so the next one runs unattended.'
+		);
+	}
 	lines.push(
 		'',
 		`The payload carrying these bytes is attached to run ${facts.runId || 'n/a'}.`,
@@ -213,12 +302,22 @@ export function bumpComment(facts: ProposalFacts): string {
 	);
 }
 
-/** what a superseded proposal is told before it is closed */
+/** what a superseded proposal is told before it is renamed and closed */
 export function supersededComment(facts: ProposalFacts, keep: string): string {
 	return (
 		`Superseded by \`${keep}\`, which now pins phasm artifact \`${facts.artifactId}\`. ` +
 		'One branch carries every proposal for this variant and version, so this one is closed ' +
 		'and deleted rather than left to be reviewed against bytes nothing would ship.\n'
+	);
+}
+
+/** what an open proposal is told when a human has committed onto its branch */
+export function blockedComment(facts: ProposalFacts): string {
+	return (
+		`phasm artifact \`${facts.artifactId}\` is newer than the pin on this branch, and this ` +
+		'branch carries a commit this workflow did not write. Force-pushing would destroy it, so ' +
+		'nothing was changed. Merge or close this proposal, or drop the extra commit, and the next ' +
+		'phasm build will take the branch again.\n'
 	);
 }
 
@@ -239,9 +338,72 @@ function tryRun(cmd: string, args: string[]): string | null {
 	}
 }
 
+const REPO = process.env.GITHUB_REPOSITORY ?? 'drupflare/worker';
+
+/**
+ * The credential that WRITES THE COMMIT, which is not the one that opens the pull request.
+ *
+ * GitHub signs an API commit only when "the request is verified and authenticated as the GitHub App
+ * or bot and contains no custom author information, custom committer information, and no custom
+ * signature information". So the ref and contents calls go out under `GITHUB_TOKEN` -- a bot token,
+ * with no author or committer field in the payload -- and the commit lands `verified: true`,
+ * attributed to `github-actions[bot]`.
+ *
+ * Attribution is the half that matters more here. Under a user PAT the commit is authored by the
+ * token's owner, and `require_last_push_approval` then forbids that same person from approving it;
+ * keeping the pusher a bot leaves the review rule usable instead of needing an admin bypass.
+ */
+const COMMIT_TOKEN = process.env.COMMIT_TOKEN || process.env.GITHUB_TOKEN || '';
+
+function ghApi<T>(method: string, path: string, body?: unknown, token?: string): T {
+	const args = ['api', '--method', method, path];
+	if (body) args.push('--input', '-');
+	const out = execFileSync('gh', args, {
+		encoding: 'utf8',
+		input: body ? JSON.stringify(body) : undefined,
+		maxBuffer: 1 << 26,
+		env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env
+	});
+	return out.trim() ? (JSON.parse(out) as T) : ({} as T);
+}
+
+function tryGhApi<T>(method: string, path: string): T | null {
+	try {
+		const out = execFileSync('gh', ['api', '--method', method, path], {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+			maxBuffer: 1 << 26
+		});
+		return out.trim() ? (JSON.parse(out) as T) : ({} as T);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * A comment that REPLACES the last one this workflow left, rather than stacking beneath it.
+ *
+ * One status comment per proposal, always describing the current bytes. `--edit-last` targets the
+ * authenticated user's own newest comment, so a bump overwrites a bump and a supersession overwrites
+ * whatever the bumps left.
+ */
+function stickyComment(number: number, body: string): void {
+	run('gh', ['pr', 'comment', String(number), '--body', body, '--edit-last', '--create-if-none']);
+}
+
 /** `git show <ref>:interp.lock.json`, or null when the ref or the file is absent */
 export function pinAt(ref: string): string | null {
 	return tryRun('git', ['show', `${ref}:${PIN_PATH}`]);
+}
+
+/** the pin a ref carries and the blob sha it is stored under, read over the API */
+function pinOnRef(ref: string): { text: string; sha: string } | null {
+	const got = tryGhApi<{ content?: string; sha?: string }>(
+		'GET',
+		`/repos/${REPO}/contents/${PIN_PATH}?ref=${encodeURIComponent(ref)}`
+	);
+	if (!got?.content || !got.sha) return null;
+	return { text: Buffer.from(got.content, 'base64').toString('utf8'), sha: got.sha };
 }
 
 function exportEnv(values: Record<string, string>): void {
@@ -277,23 +439,28 @@ if (import.meta.main) {
 	const artifactId = String(JSON.parse(newPin).artifactId);
 	const branch = proposalBranch(variant, phpVersion);
 
-	const remoteSha = tryRun('git', ['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`])
-		?.split(/\s/)[0]
-		?.trim();
-	if (remoteSha) run('git', ['fetch', '--depth=1', 'origin', `refs/heads/${branch}`]);
-	const branchPin = remoteSha ? pinAt('FETCH_HEAD') : null;
+	const baseSha = run('git', ['rev-parse', 'HEAD']).trim();
+	const branchRef = tryGhApi<{ object: { sha: string } }>(
+		'GET',
+		`/repos/${REPO}/git/ref/heads/${branch}`
+	);
+	const branchPin = branchRef ? (pinOnRef(branch)?.text ?? null) : null;
+	const comparison = branchRef
+		? ghApi<{ ahead_by: number; files?: { filename: string }[] }>(
+				'GET',
+				`/repos/${REPO}/compare/${baseSha}...${branch}`
+			)
+		: null;
+	const pristine = comparison
+		? branchIsPristine(
+				comparison.ahead_by,
+				(comparison.files ?? []).map((f) => f.filename)
+			)
+		: true;
 
+	const fields = 'number,state,headRefName,title';
 	const openPrs = JSON.parse(
-		run('gh', [
-			'pr',
-			'list',
-			'--state',
-			'open',
-			'--limit',
-			'100',
-			'--json',
-			'number,state,headRefName'
-		])
+		run('gh', ['pr', 'list', '--state', 'open', '--limit', '200', '--json', fields])
 	) as ProposalPr[];
 	const history = JSON.parse(
 		run('gh', [
@@ -306,13 +473,29 @@ if (import.meta.main) {
 			'--limit',
 			'10',
 			'--json',
-			'number,state,headRefName'
+			fields
 		])
 	) as ProposalPr[];
 	const canonicalPr = history[0] ?? null;
 
-	const decision = decide({ basePin: pinAt('HEAD'), branchPin, newPin, artifactId, canonicalPr });
+	const decision = decide({
+		basePin: pinAt('HEAD'),
+		branchPin,
+		newPin,
+		artifactId,
+		canonicalPr,
+		branchIsPristine: pristine
+	});
 	const replaced = supersede(openPrs, variant, phpVersion, branch);
+	const orphanBranches = staleBranches(
+		(
+			tryGhApi<{ ref: string }[]>('GET', `/repos/${REPO}/git/matching-refs/heads/interp/`) ??
+			[]
+		).map((r) => r.ref.replace('refs/heads/', '')),
+		variant,
+		phpVersion,
+		openPrs
+	);
 	const facts: ProposalFacts = {
 		variant,
 		phpVersion,
@@ -326,7 +509,8 @@ if (import.meta.main) {
 		incumbent: arg('incumbent', process.env.INCUMBENT ?? ''),
 		proposed: arg('proposed', process.env.BUNDLE ?? ''),
 		runId: process.env.GITHUB_RUN_ID,
-		superseded: replaced.map((pr) => pr.number)
+		superseded: replaced.map((pr) => pr.number),
+		checksHeld: Boolean(process.env.GITHUB_ACTIONS) && process.env.PHASM_TOKEN_SET !== 'true'
 	};
 
 	console.log(`branch:  ${branch}`);
@@ -334,27 +518,59 @@ if (import.meta.main) {
 	console.log(`replace: ${replaced.map((pr) => `#${pr.number}`).join(', ') || 'nothing open'}`);
 
 	if (dryRun) {
+		console.log('\n--- plan ---');
+		for (const step of plan(decision, branch, baseSha, canonicalPr, replaced, orphanBranches))
+			console.log(`  ${step}`);
 		console.log('\n--- body ---\n' + proposalBody(facts));
 		process.exit(0);
 	}
 
+	if (decision.pr === 'blocked') {
+		if (canonicalPr?.state === 'OPEN') stickyComment(canonicalPr.number, blockedComment(facts));
+		// nothing is superseded either: the open proposals are the only record of what was wanted
+		exportEnv({
+			PROPOSAL_BRANCH: branch,
+			PROPOSAL_PR: canonicalPr ? `#${canonicalPr.number}` : 'none',
+			PROPOSAL_ACTION: 'blocked',
+			PROPOSAL_WHY: decision.why,
+			PROPOSAL_SUPERSEDED: 'none'
+		});
+		console.error(`::warning::${branch} was left alone: ${decision.why}`);
+		process.exit(0);
+	}
+
 	if (decision.push) {
-		run('git', ['config', 'user.name', 'github-actions[bot]']);
-		run('git', [
-			'config',
-			'user.email',
-			'41898282+github-actions[bot]@users.noreply.github.com'
-		]);
-		run('git', ['checkout', '-B', branch]);
-		run('git', ['add', PIN_PATH]);
-		run('git', [
-			'commit',
-			'-m',
-			`chore(interp): pin ${variant} php${phpVersion} artifact ${artifactId}`
-		]);
-		// rebuilt from the base every run, so the lease is what stops a concurrent push being lost
-		const lease = remoteSha ? [`--force-with-lease=refs/heads/${branch}:${remoteSha}`] : [];
-		run('git', ['push', ...lease, 'origin', `HEAD:refs/heads/${branch}`]);
+		// the ref is reset to the base first, so the branch is always exactly base + one commit and
+		// a proposal that sat through three master merges is never behind
+		if (branchRef) {
+			ghApi(
+				'PATCH',
+				`/repos/${REPO}/git/refs/heads/${branch}`,
+				{ sha: baseSha, force: true },
+				COMMIT_TOKEN
+			);
+		} else {
+			ghApi(
+				'POST',
+				`/repos/${REPO}/git/refs`,
+				{ ref: `refs/heads/${branch}`, sha: baseSha },
+				COMMIT_TOKEN
+			);
+		}
+		// the CONTENTS API rather than `git commit`, because a pushed commit is
+		// `verified: false, reason: unsigned` and master requires a signature; no author or
+		// committer field is sent, because either one turns the signing back off
+		ghApi(
+			'PUT',
+			`/repos/${REPO}/contents/${PIN_PATH}`,
+			{
+				branch,
+				message: `chore(interp): pin ${variant} php${phpVersion} artifact ${artifactId}`,
+				content: Buffer.from(newPin, 'utf8').toString('base64'),
+				...(pinOnRef(baseSha) ? { sha: pinOnRef(baseSha)!.sha } : {})
+			},
+			COMMIT_TOKEN
+		);
 	}
 
 	const bodyFile = '/tmp/interp-proposal.md';
@@ -382,27 +598,28 @@ if (import.meta.main) {
 		const target = String(canonicalPr?.number);
 		if (decision.pr === 'reopen') run('gh', ['pr', 'reopen', target]);
 		run('gh', ['pr', 'edit', target, '--body-file', bodyFile]);
-		if (decision.push) run('gh', ['pr', 'comment', target, '--body', bumpComment(facts)]);
+		if (decision.push) {
+			stickyComment(canonicalPr!.number, bumpComment(facts));
+			// required checks are recorded per head sha, and the commit above was written by a bot
+			// token, which emits no `synchronize` a workflow can run on; reopening does emit one,
+			// so the new sha gets its own Gate Suites, test and format rather than none
+			if (decision.pr === 'update') {
+				run('gh', ['pr', 'close', target]);
+				run('gh', ['pr', 'reopen', target]);
+			}
+		}
 		open = canonicalPr?.number ?? null;
 	}
 
 	for (const pr of replaced) {
-		run('gh', ['pr', 'comment', String(pr.number), '--body', supersededComment(facts, branch)]);
+		stickyComment(pr.number, supersededComment(facts, branch));
+		run('gh', ['pr', 'edit', String(pr.number), '--title', autoclosedTitle(pr.title)]);
 		run('gh', ['pr', 'close', String(pr.number), '--delete-branch']);
-		console.log(`closed #${pr.number} (${pr.headRefName}) and deleted its branch`);
+		console.log(`autoclosed #${pr.number} (${pr.headRefName}) and deleted its branch`);
 	}
 
-	const orphans = staleBranches(
-		(tryRun('git', ['ls-remote', '--heads', 'origin', 'interp/*']) ?? '')
-			.split('\n')
-			.filter(Boolean)
-			.map((line) => line.split('refs/heads/')[1]?.trim() ?? ''),
-		variant,
-		phpVersion,
-		openPrs
-	);
-	for (const orphan of orphans) {
-		run('git', ['push', 'origin', '--delete', orphan]);
+	for (const orphan of orphanBranches) {
+		ghApi('DELETE', `/repos/${REPO}/git/refs/heads/${orphan}`);
 		console.log(`deleted ${orphan}, which had no open pull request`);
 	}
 

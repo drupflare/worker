@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	utimesSync,
+	writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -43,6 +52,22 @@ function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), 'drupflare-build-plan-'));
 	scratches.push(dir);
 	return dir;
+}
+
+/**
+ * Rewrites a file and stamps it a second into the future.
+ *
+ * `newerThan()` compares `mtimeMs` with `>=`, so two writes inside one filesystem tick compare
+ * equal and the input reads as older than the output that was meant to be stale. On this machine the
+ * clock always advanced between the two writes; on the runner it did not, and the assertion failed
+ * as `expected true to be false`. The freshness being tested is "strictly newer", so it is stamped
+ * rather than raced for.
+ */
+function rewriteNewer(root: string, path: string, contents: string): void {
+	const target = join(root, path);
+	writeFileSync(target, contents);
+	const ahead = new Date(statSync(target).mtimeMs + 1000);
+	utimesSync(target, ahead, ahead);
 }
 
 /** a tree in which every step reports itself already built, so the resume decision can be read */
@@ -157,7 +182,7 @@ describe('the pipeline order, which is what a from-source build gets wrong', () 
 		);
 		expect(stepSatisfied(root, core)).toBe(true);
 
-		writeFileSync(join(root, 'assets/drupal/core.list.json'), 'a newer bake');
+		rewriteNewer(root, 'assets/drupal/core.list.json', 'a newer bake');
 		expect(stepSatisfied(root, core)).toBe(false);
 	});
 
@@ -165,7 +190,7 @@ describe('the pipeline order, which is what a from-source build gets wrong', () 
 		const root = satisfiedTree();
 		const pack = LOCAL_STEPS.find((s) => s.id === 'pack') as LocalStep;
 		expect(stepSatisfied(root, pack)).toBe(true);
-		writeFileSync(join(root, 'assets/drupal/core.json'), 'a newer index');
+		rewriteNewer(root, 'assets/drupal/core.json', 'a newer index');
 		expect(stepSatisfied(root, pack)).toBe(false);
 	});
 

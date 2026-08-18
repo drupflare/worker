@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	autoclosedTitle,
 	blockedComment,
+	BOT_LOGIN,
 	branchIsPristine,
 	bumpComment,
 	decide,
@@ -11,6 +12,7 @@ import {
 	proposalBody,
 	proposalBranch,
 	proposalTitle,
+	reusable,
 	staleBranches,
 	supersede,
 	type ProposalPr
@@ -32,8 +34,13 @@ const V = 'control85';
 const P = '8.5';
 const CANONICAL = 'interp/control85-php8.5';
 
-function pr(number: number, headRefName: string, state: ProposalPr['state'] = 'OPEN'): ProposalPr {
-	return { number, headRefName, state, title: 'chore(interp): control85 php8.5' };
+function pr(
+	number: number,
+	headRefName: string,
+	state: ProposalPr['state'] = 'OPEN',
+	author = BOT_LOGIN
+): ProposalPr {
+	return { number, headRefName, state, title: 'chore(interp): control85 php8.5', author };
 }
 
 /** the three that were open, newest first, as `gh pr list` returned them */
@@ -173,6 +180,36 @@ describe('the decision', () => {
 		expect(d).toMatchObject({ push: true, pr: 'create' });
 	});
 
+	it('replaces a proposal a person authored rather than reopening it', () => {
+		// #7 was opened by a maintainer PAT before the reconciler moved onto GITHUB_TOKEN; reopening
+		// it on the next phasm build would keep an automated pin attributed to a human forever
+		const d = decide({
+			...base,
+			basePin: null,
+			branchPin: base.newPin,
+			canonicalPr: pr(7, CANONICAL, 'CLOSED', 'gmitch215')
+		});
+		expect(d).toMatchObject({ pr: 'create' });
+		expect(d.retire).toBeUndefined();
+		expect(d.why).toContain('gmitch215');
+	});
+
+	it('closes a person-authored proposal that is still open, then replaces it', () => {
+		const d = decide({
+			...base,
+			basePin: null,
+			branchPin: base.newPin,
+			canonicalPr: pr(7, CANONICAL, 'OPEN', 'gmitch215')
+		});
+		expect(d).toMatchObject({ pr: 'create', retire: 7 });
+	});
+
+	it('reuses a proposal the bot authored', () => {
+		expect(reusable(pr(7, CANONICAL))).toBe(true);
+		expect(reusable(pr(7, CANONICAL, 'OPEN', 'gmitch215'))).toBe(false);
+		expect(reusable(null)).toBe(true);
+	});
+
 	it('does not block when there is nothing to push', () => {
 		const d = decide({
 			...base,
@@ -310,6 +347,22 @@ describe('the plan a dry run prints', () => {
 		expect(steps.some((s) => s.includes('supersede nothing'))).toBe(true);
 	});
 
+	it('retires a person-authored proposal without deleting the branch under it', () => {
+		const steps = plan(
+			{ push: true, pr: 'create', retire: 7, why: '#7 was authored by gmitch215' },
+			CANONICAL,
+			base,
+			pr(7, CANONICAL, 'OPEN', 'gmitch215'),
+			[],
+			[]
+		);
+		expect(steps.some((s) => s.includes('close #7, keeping its branch'))).toBe(true);
+		expect(steps.join('\n')).not.toContain(`delete ${CANONICAL}`);
+		expect(steps.indexOf(steps.find((s) => s.includes('close #7'))!)).toBeLessThan(
+			steps.indexOf(steps.find((s) => s.includes('open a pull request'))!)
+		);
+	});
+
 	it('says so plainly when there is nothing to clean up', () => {
 		const steps = plan(
 			{ push: true, pr: 'create', why: 'first proposal' },
@@ -397,10 +450,11 @@ describe('what a reviewer reads', () => {
 		expect(comment).toContain('nothing was changed');
 	});
 
-	it('warns in the body when the credential holds the required checks', () => {
+	it('says why the checks are held, and that bot authorship is the reason', () => {
 		const held = proposalBody({ ...facts, checksHeld: true });
 		expect(held).toContain('action_required');
-		expect(held).toContain('PHASM_TOKEN');
+		expect(held).toContain('github-actions[bot]');
+		expect(held).toContain('deliberate');
 		expect(proposalBody(facts)).not.toContain('action_required');
 	});
 });

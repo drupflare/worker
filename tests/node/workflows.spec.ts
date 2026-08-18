@@ -25,7 +25,15 @@ type Workflow = {
 	on: Record<string, Trigger | null>;
 	jobs: Record<
 		string,
-		{ steps?: { name?: string; run?: string; with?: Record<string, string> }[] }
+		{
+			steps?: {
+				name?: string;
+				run?: string;
+				uses?: string;
+				env?: Record<string, string>;
+				with?: Record<string, string>;
+			}[];
+		}
 	>;
 };
 
@@ -124,12 +132,28 @@ describe('the metrics lane', () => {
 describe('the interpreter lane', () => {
 	const doc = () => parse(readFileSync(join(DIR, 'interpreter.yml'), 'utf8')) as Workflow;
 
-	it('opens with a credential that starts the required checks', () => {
-		const text = readFileSync(join(DIR, 'interpreter.yml'), 'utf8');
-		// a pull request authored by github-actions[bot] has every run held at action_required
-		// under this org's first_time_contributors policy, and master requires three of them
-		expect(text).toContain('GH_TOKEN: ${{ secrets.PHASM_TOKEN || github.token }}');
-		expect(text).not.toContain('INTERP_TOKEN');
+	it('reconciles as the bot, so no proposal is attributed to a maintainer', () => {
+		const doc_ = doc();
+		const reconcile = (doc_.jobs.interpreter?.steps ?? []).find((s) =>
+			(s.run ?? '').includes('interp-proposal.ts')
+		);
+		// running this half under a user PAT was tried: the commit came back correctly as
+		// github-actions[bot] and the pull request came back authored by a person
+		expect(reconcile?.env?.GH_TOKEN).toBe('${{ github.token }}');
+		expect(JSON.stringify(reconcile?.env ?? {})).not.toContain('PHASM_TOKEN');
+	});
+
+	it('spends PHASM_TOKEN only on the other repository it exists to reach', () => {
+		const steps = doc().jobs.interpreter?.steps ?? [];
+		const usingPhasm = steps.filter((s) => JSON.stringify(s.env ?? {}).includes('PHASM_TOKEN'));
+		expect(usingPhasm.map((s) => s.name)).toEqual(['Fetch and Pack the New Interpreter']);
+	});
+
+	it('checks out with the default credential, since nothing here pushes over git', () => {
+		const checkout = (doc().jobs.interpreter?.steps ?? []).find((s) =>
+			(s.uses ?? '').startsWith('actions/checkout')
+		);
+		expect(checkout?.with?.token).toBeUndefined();
 	});
 
 	it('reconciles rather than creating a branch per artifact', () => {

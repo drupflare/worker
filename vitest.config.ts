@@ -61,15 +61,17 @@ const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 const havePack = existsSync(PACK_INDEX);
 const haveArtifacts = haveBinary && havePack;
 
+// stderr, not stdout: `vitest list --json` is parsed by the metrics collector, and a banner on
+// stdout made every run answer `JSON Parse error: Unexpected identifier "vitest"`
 if (haveShipping) {
-	console.log('[vitest] running the SHIPPING PHP 8.5 interpreter from .interp/');
+	console.error('[vitest] running the SHIPPING PHP 8.5 interpreter from .interp/');
 } else if (haveBinary) {
-	console.log(`[vitest] no ${SHIPPING_WASM}: falling back to PHP 8.3 from ${DEFAULT_SEAM}.`);
+	console.error(`[vitest] no ${SHIPPING_WASM}: falling back to PHP 8.3 from ${DEFAULT_SEAM}.`);
 }
 
 // never a silent reduction in coverage: the lane says what it dropped and how to get it back
 if (!haveArtifacts) {
-	console.log(
+	console.error(
 		`[vitest] SKIPPING ${ARTIFACT_SPECS.length} spec files that need a build artifact ` +
 			`(${haveBinary ? 'have' : 'no'} interpreter, ${havePack ? 'have' : 'no'} pack).\n` +
 			'         `bun install` restores the interpreter; the pack needs `bun run hydrate`,\n' +

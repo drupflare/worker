@@ -20,6 +20,17 @@
  * Recovery is the same code path rather than a mode, which is why a `workflow_dispatch` with no
  * artifact id collapses whatever is open today.
  *
+ * **EVERYTHING HERE RUNS AS `GITHUB_TOKEN`, and that is the requirement rather than a default.** A
+ * proposal must be attributed to `github-actions[bot]`, never to a maintainer. Running the pull
+ * request half under a user PAT was tried and produced exactly that: the commit came back correctly
+ * as `github-actions[bot]`, and the pull request came back authored by a person. The cost is that
+ * GitHub holds every workflow run on a bot-authored pull request at `action_required` until someone
+ * approves it from the Actions tab; that is accepted, because the alternative attributes automated
+ * work to whoever owns the token.
+ *
+ * `PHASM_TOKEN` is not used here at all. It reaches the other repository's artifacts API, which is
+ * the one thing `GITHUB_TOKEN` cannot do, and `scripts/fetch-interpreter.ts` is where it belongs.
+ *
  * @see .github/workflows/interpreter.yml which drives this
  * @see scripts/fetch-interpreter.ts which writes the pin this proposes
  */
@@ -33,14 +44,38 @@ export const PIN_PATH = 'interp.lock.json';
 /** the state GitHub reports for a pull request, in the spelling `gh pr list --json state` uses */
 export type PrState = 'OPEN' | 'CLOSED' | 'MERGED';
 
-export type ProposalPr = { number: number; state: PrState; headRefName: string; title: string };
+export type ProposalPr = {
+	number: number;
+	state: PrState;
+	headRefName: string;
+	title: string;
+	/** the login `gh pr list --json author` reports, e.g. `github-actions` or a person */
+	author: string;
+};
 
 /** what to do with the branch and with the pull request on it */
 export type Decision = {
 	push: boolean;
 	pr: 'none' | 'create' | 'update' | 'reopen' | 'blocked';
+	/** an open proposal to close first, because a person authored it and cannot be reused */
+	retire?: number;
 	why: string;
 };
+
+/** what `gh pr list --json author` reports for a pull request this workflow opened */
+export const BOT_LOGIN = 'github-actions';
+
+/**
+ * Whether an existing proposal can carry the next pin, or must be retired and replaced.
+ *
+ * A proposal authored by a person is never reused. One was opened by a maintainer PAT before the
+ * reconciler moved fully onto `GITHUB_TOKEN`, and reopening it on the next phasm build would keep
+ * an automated pin attributed to a human indefinitely -- the exact thing the bot attribution exists
+ * to prevent.
+ */
+export function reusable(pr: ProposalPr | null): boolean {
+	return pr === null || pr.author === BOT_LOGIN;
+}
 
 export type DecisionInput = {
 	/** `interp.lock.json` as the base branch carries it, or null when the base has no pin */
@@ -125,8 +160,9 @@ export function decide(input: DecisionInput): Decision {
 		return { push: false, pr: 'none', why: `the base branch already pins ${artifactId}` };
 	}
 
+	const reuse = reusable(canonicalPr);
 	const push = branchPin !== newPin;
-	if (!push && canonicalPr?.state === 'OPEN') {
+	if (!push && canonicalPr?.state === 'OPEN' && reuse) {
 		return { push: false, pr: 'none', why: `the open proposal already pins ${artifactId}` };
 	}
 
@@ -141,7 +177,7 @@ export function decide(input: DecisionInput): Decision {
 	}
 
 	const pr =
-		canonicalPr === null || canonicalPr.state === 'MERGED'
+		canonicalPr === null || canonicalPr.state === 'MERGED' || !reuse
 			? 'create'
 			: canonicalPr.state === 'CLOSED'
 				? 'reopen'
@@ -150,9 +186,12 @@ export function decide(input: DecisionInput): Decision {
 	return {
 		push,
 		pr,
-		why: push
-			? `the proposal moves to ${artifactId}`
-			: `the branch pins ${artifactId} and no open proposal names it`
+		...(reuse || canonicalPr?.state !== 'OPEN' ? {} : { retire: canonicalPr.number }),
+		why: !reuse
+			? `#${canonicalPr!.number} was authored by ${canonicalPr!.author}, so it is replaced`
+			: push
+				? `the proposal moves to ${artifactId}`
+				: `the branch pins ${artifactId} and no open proposal names it`
 	};
 }
 
@@ -218,6 +257,9 @@ export function plan(
 	} else {
 		steps.push(`leave refs/heads/${branch} as it is: ${decision.why}`);
 	}
+	if (decision.retire !== undefined) {
+		steps.push(`close #${decision.retire}, keeping its branch: ${decision.why}`);
+	}
 	if (decision.pr === 'create') steps.push(`open a pull request from ${branch}`);
 	if (decision.pr === 'update') steps.push(`edit #${canonicalPr?.number} and its status comment`);
 	if (decision.pr === 'reopen') steps.push(`reopen and edit #${canonicalPr?.number}`);
@@ -244,7 +286,7 @@ export type ProposalFacts = {
 	proposed?: string;
 	runId?: string;
 	superseded?: number[];
-	/** true when the proposal was opened with GITHUB_TOKEN, which holds the required checks */
+	/** true when a bot opened the proposal, which is always, and which holds the required checks */
 	checksHeld?: boolean;
 };
 
@@ -280,9 +322,10 @@ export function proposalBody(facts: ProposalFacts): string {
 	if (facts.checksHeld) {
 		lines.push(
 			'',
-			'> This was opened with `GITHUB_TOKEN`, so GitHub holds every workflow run on it at ' +
-				'`action_required` and the checks master requires cannot report. Approve them from ' +
-				'the Actions tab, or set the `PHASM_TOKEN` secret so the next one runs unattended.'
+			'> Opened by `github-actions[bot]`, so GitHub holds every workflow run on it at ' +
+				'`action_required` until it is approved from the Actions tab. That is deliberate: ' +
+				'a maintainer token would start the checks unattended and would also author this ' +
+				'pull request, which is not what an automated pin should look like.'
 		);
 	}
 	lines.push(
@@ -340,29 +383,13 @@ function tryRun(cmd: string, args: string[]): string | null {
 
 const REPO = process.env.GITHUB_REPOSITORY ?? 'drupflare/worker';
 
-/**
- * The credential that WRITES THE COMMIT, which is not the one that opens the pull request.
- *
- * GitHub signs an API commit only when "the request is verified and authenticated as the GitHub App
- * or bot and contains no custom author information, custom committer information, and no custom
- * signature information". So the ref and contents calls go out under `GITHUB_TOKEN` -- a bot token,
- * with no author or committer field in the payload -- and the commit lands `verified: true`,
- * attributed to `github-actions[bot]`.
- *
- * Attribution is the half that matters more here. Under a user PAT the commit is authored by the
- * token's owner, and `require_last_push_approval` then forbids that same person from approving it;
- * keeping the pusher a bot leaves the review rule usable instead of needing an admin bypass.
- */
-const COMMIT_TOKEN = process.env.COMMIT_TOKEN || process.env.GITHUB_TOKEN || '';
-
-function ghApi<T>(method: string, path: string, body?: unknown, token?: string): T {
+function ghApi<T>(method: string, path: string, body?: unknown): T {
 	const args = ['api', '--method', method, path];
 	if (body) args.push('--input', '-');
 	const out = execFileSync('gh', args, {
 		encoding: 'utf8',
 		input: body ? JSON.stringify(body) : undefined,
-		maxBuffer: 1 << 26,
-		env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env
+		maxBuffer: 1 << 26
 	});
 	return out.trim() ? (JSON.parse(out) as T) : ({} as T);
 }
@@ -458,25 +485,18 @@ if (import.meta.main) {
 			)
 		: true;
 
-	const fields = 'number,state,headRefName,title';
-	const openPrs = JSON.parse(
-		run('gh', ['pr', 'list', '--state', 'open', '--limit', '200', '--json', fields])
-	) as ProposalPr[];
-	const history = JSON.parse(
-		run('gh', [
-			'pr',
-			'list',
-			'--head',
-			branch,
-			'--state',
-			'all',
-			'--limit',
-			'10',
-			'--json',
-			fields
-		])
-	) as ProposalPr[];
-	const canonicalPr = history[0] ?? null;
+	const fields = 'number,state,headRefName,title,author';
+	// `author` arrives as an object; flattening it here keeps every pure function taking a login
+	const list = (args: string[]): ProposalPr[] =>
+		(
+			JSON.parse(run('gh', ['pr', 'list', ...args, '--json', fields])) as (Omit<
+				ProposalPr,
+				'author'
+			> & { author?: { login?: string } })[]
+		).map((pr) => ({ ...pr, author: pr.author?.login ?? '' }));
+
+	const openPrs = list(['--state', 'open', '--limit', '200']);
+	const canonicalPr = list(['--head', branch, '--state', 'all', '--limit', '10'])[0] ?? null;
 
 	const decision = decide({
 		basePin: pinAt('HEAD'),
@@ -510,7 +530,7 @@ if (import.meta.main) {
 		proposed: arg('proposed', process.env.BUNDLE ?? ''),
 		runId: process.env.GITHUB_RUN_ID,
 		superseded: replaced.map((pr) => pr.number),
-		checksHeld: Boolean(process.env.GITHUB_ACTIONS) && process.env.PHASM_TOKEN_SET !== 'true'
+		checksHeld: Boolean(process.env.GITHUB_ACTIONS)
 	};
 
 	console.log(`branch:  ${branch}`);
@@ -543,40 +563,45 @@ if (import.meta.main) {
 		// the ref is reset to the base first, so the branch is always exactly base + one commit and
 		// a proposal that sat through three master merges is never behind
 		if (branchRef) {
-			ghApi(
-				'PATCH',
-				`/repos/${REPO}/git/refs/heads/${branch}`,
-				{ sha: baseSha, force: true },
-				COMMIT_TOKEN
-			);
+			ghApi('PATCH', `/repos/${REPO}/git/refs/heads/${branch}`, {
+				sha: baseSha,
+				force: true
+			});
 		} else {
-			ghApi(
-				'POST',
-				`/repos/${REPO}/git/refs`,
-				{ ref: `refs/heads/${branch}`, sha: baseSha },
-				COMMIT_TOKEN
-			);
+			ghApi('POST', `/repos/${REPO}/git/refs`, {
+				ref: `refs/heads/${branch}`,
+				sha: baseSha
+			});
 		}
-		// the CONTENTS API rather than `git commit`, because a pushed commit is
-		// `verified: false, reason: unsigned` and master requires a signature; no author or
-		// committer field is sent, because either one turns the signing back off
-		ghApi(
-			'PUT',
-			`/repos/${REPO}/contents/${PIN_PATH}`,
-			{
-				branch,
-				message: `chore(interp): pin ${variant} php${phpVersion} artifact ${artifactId}`,
-				content: Buffer.from(newPin, 'utf8').toString('base64'),
-				...(pinOnRef(baseSha) ? { sha: pinOnRef(baseSha)!.sha } : {})
-			},
-			COMMIT_TOKEN
-		);
+		// the CONTENTS API rather than `git commit`, and no author or committer field: GitHub
+		// attributes it to whoever the token is and signs it only when the payload names nobody
+		ghApi('PUT', `/repos/${REPO}/contents/${PIN_PATH}`, {
+			branch,
+			message: `chore(interp): pin ${variant} php${phpVersion} artifact ${artifactId}`,
+			content: Buffer.from(newPin, 'utf8').toString('base64'),
+			...(pinOnRef(baseSha) ? { sha: pinOnRef(baseSha)!.sha } : {})
+		});
 	}
 
 	const bodyFile = '/tmp/interp-proposal.md';
 	writeFileSync(bodyFile, proposalBody(facts));
 
-	let open: number | null = canonicalPr?.state === 'OPEN' ? canonicalPr.number : null;
+	// the branch is kept: it carries the commit this run just wrote, and the replacement opens on it
+	if (decision.retire !== undefined) {
+		stickyComment(decision.retire, supersededComment(facts, branch));
+		run('gh', [
+			'pr',
+			'edit',
+			String(decision.retire),
+			'--title',
+			autoclosedTitle(canonicalPr!.title)
+		]);
+		run('gh', ['pr', 'close', String(decision.retire)]);
+		console.log(`autoclosed #${decision.retire}, which ${canonicalPr!.author} authored`);
+	}
+
+	let open: number | null =
+		canonicalPr?.state === 'OPEN' && decision.retire === undefined ? canonicalPr.number : null;
 	if (decision.pr === 'create') {
 		run('gh', [
 			'pr',
@@ -600,9 +625,9 @@ if (import.meta.main) {
 		run('gh', ['pr', 'edit', target, '--body-file', bodyFile]);
 		if (decision.push) {
 			stickyComment(canonicalPr!.number, bumpComment(facts));
-			// required checks are recorded per head sha, and the commit above was written by a bot
-			// token, which emits no `synchronize` a workflow can run on; reopening does emit one,
-			// so the new sha gets its own Gate Suites, test and format rather than none
+			// required checks are recorded per head sha, and a contents-API commit emits no
+			// `synchronize`; a bot-opened pull request did get its runs created (held at
+			// `action_required`), so reopening is the way to get runs onto the new sha to approve
 			if (decision.pr === 'update') {
 				run('gh', ['pr', 'close', target]);
 				run('gh', ['pr', 'reopen', target]);

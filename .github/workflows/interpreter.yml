@@ -43,8 +43,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.PHASM_TOKEN || github.token }}
 
       - name: Resolve the Requested Interpreter
         env:
@@ -173,9 +171,7 @@ jobs:
 
       - name: Reconcile the Pin into One Pull Request
         env:
-          GH_TOKEN: ${{ secrets.PHASM_TOKEN || github.token }}
-          COMMIT_TOKEN: ${{ github.token }}
-          PHASM_TOKEN_SET: ${{ secrets.PHASM_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           bun scripts/interp-proposal.ts \
             "--variant=$VARIANT" \

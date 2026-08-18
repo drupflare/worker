@@ -67,7 +67,7 @@
 		"docs:serve": "typedoc --watch"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.21.0",
+		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@cloudflare/workers-types": "^5.20260811.1",
 		"@prettier/plugin-php": "^0.25.0",
 		"@types/bun": "latest",

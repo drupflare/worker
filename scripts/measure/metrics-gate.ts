@@ -1,19 +1,24 @@
 /**
- * Judges a Class A metrics document against a committed baseline, and renders the verdict.
+ * Judges a Class A metrics document against the last passing master run, and renders the verdict.
  *
  * ```sh
  * bun scripts/measure/metrics-gate.ts --metrics=metrics.json
- * bun scripts/measure/metrics-gate.ts --metrics=metrics.json --summary=$GITHUB_STEP_SUMMARY
- * bun scripts/measure/metrics-gate.ts --metrics=metrics.json --write-baseline
+ * bun scripts/measure/metrics-gate.ts --metrics=metrics.json --baseline-metrics=master.json
+ * bun scripts/measure/metrics-gate.ts --metrics=metrics.json --require-baseline
  * ```
+ *
+ * The baseline is ANOTHER DOCUMENT, not a committed file. Nothing here has to be refreshed by hand,
+ * which is what the file it replaced never was -- see {@link resolveBaseline} for the four numbers
+ * that had gone stale in it.
  *
  * Exits 1 when any check fails, and ALSO when no check could be evaluated at all. A run where every
  * metric skipped is indistinguishable from a run where every metric passed, and this project's own
- * rule is that a step which can only skip is worse than no step.
+ * rule is that a step which can only skip is worse than no step. `--require-baseline` extends that
+ * to the baseline itself, so a download that silently produced nothing cannot pass on the two
+ * absolute checks alone.
  *
- * Tolerances live here rather than in the baseline file so that a `--write-baseline` refresh moves
- * the recorded values and cannot quietly widen what is allowed. The baseline is data; this is the
- * contract.
+ * Tolerances live here rather than in the document, so a newer baseline moves the recorded values
+ * and cannot widen what is allowed. The baseline is data; this is the contract.
  *
  * @see scripts/measure/collect-metrics.ts for the half that produces the document
  * @see docs/measurement-classes.md for why no timing figure is eligible for any of this
@@ -181,10 +186,8 @@ export type Comparison = {
 	reason: string;
 };
 
-/** a flat `a.b.c` path map; the only thing a baseline file holds */
+/** a flat `a.b.c` path map, reduced from a metrics document by {@link nextBaseline} */
 export type BaselineValues = Record<string, number | string | boolean>;
-
-export type Baseline = { schema: 1; values: BaselineValues };
 
 /**
  * Reads a dotted path out of a metrics document.
@@ -307,8 +310,8 @@ function evaluate(check: Check, current: unknown, baseline: unknown): CheckResul
  * Scores a document against a baseline.
  *
  * A check with nothing to compare (`no-baseline`) does not fail: a metric added today has no
- * history, and failing on that would train everyone to pass `--write-baseline` reflexively. It does
- * not count as evaluated either, so it cannot be the thing that keeps a vacuous run green.
+ * history in the run it is judged against, and failing on that would make every new check a
+ * red build once. It does not count as evaluated either, so it cannot keep a vacuous run green.
  */
 export function compare(
 	doc: MetricsDocument,
@@ -347,12 +350,12 @@ export function compare(
 	};
 }
 
-/** the baseline a document would record, keeping any value it could not re-measure */
+/** the values a document contributes as a baseline, keeping anything it could not measure */
 export function nextBaseline(doc: MetricsDocument, previous: BaselineValues): BaselineValues {
 	const values: BaselineValues = { ...previous };
 	for (const check of CHECKS) {
 		const current = readPath(doc, check.path);
-		// a skipped metric must not erase a recorded value; a refresh on a machine with no payload
+		// a skipped metric must not erase a carried value; a master run on a machine with no payload
 		// would otherwise silently drop the bundle and index baselines
 		if (typeof current === 'number' || typeof current === 'string')
 			values[check.path] = current;
@@ -509,18 +512,27 @@ export function interpret(doc: MetricsDocument, comparison: Comparison): string[
 	return lines;
 }
 
-/** Renders the comparison as a markdown table for a step summary. */
-export function renderMarkdown(doc: MetricsDocument, comparison: Comparison): string {
+/**
+ * Renders the comparison as a markdown table for a step summary.
+ *
+ * @param baselineSource - what the deltas are measured against; a delta whose baseline is unnamed
+ *   cannot be read, and this one is no longer a fixed file
+ */
+export function renderMarkdown(
+	doc: MetricsDocument,
+	comparison: Comparison,
+	baselineSource?: string
+): string {
 	const lines: string[] = [
 		'## Class A Metrics',
 		'',
 		`Commit \`${doc.commit.slice(0, 7)}\`. Counts and bytes only: no duration is collected here, ` +
 			'because an absolute CPU figure comes only from `cpuTime` on a deployed worker. See ' +
 			'`docs/measurement-classes.md`.',
-		'',
-		`**${comparison.ok ? 'PASS' : 'FAIL'}** - ${comparison.reason}`,
 		''
 	];
+	if (baselineSource) lines.push(`Baseline: ${baselineSource}.`, '');
+	lines.push(`**${comparison.ok ? 'PASS' : 'FAIL'}** - ${comparison.reason}`, '');
 
 	const reading = interpret(doc, comparison);
 	if (reading.length > 0) {
@@ -548,14 +560,38 @@ export function renderMarkdown(doc: MetricsDocument, comparison: Comparison): st
 	return lines.join('\n') + '\n';
 }
 
-/** the empty baseline, so a first run reports `new` for everything instead of throwing */
-export const EMPTY_BASELINE: Baseline = { schema: 1, values: {} };
+/** where the numbers a run was judged against came from, so a delta can be read at all */
+export type BaselineSource = { values: BaselineValues; describe: string };
 
-export function readBaseline(path: string): Baseline {
-	if (!existsSync(path)) return EMPTY_BASELINE;
-	const parsed = JSON.parse(readFileSync(path, 'utf8')) as Baseline;
-	if (parsed.schema !== 1) throw new Error(`baseline schema ${parsed.schema} is not supported`);
-	return parsed;
+/**
+ * Reduces the last passing master run to the values the checks compare against.
+ *
+ * There is no committed baseline file any more, and deleting it was the point. `metrics/baseline.json`
+ * had to be refreshed by hand every time master moved, so it did not get refreshed: it recorded
+ * 305,599 driver-pack bytes against an actual 331,533, 177 indexes against 157, and a
+ * `tests.cases.workers` figure of 1,453 that no run had been able to collect at all since a banner
+ * on stdout started breaking `vitest list --json`. A stale anchor is worse than none, because
+ * `nextBaseline` layering hid every wrong value behind a fresh one until the day the fresh one was
+ * missing.
+ *
+ * What is lost with it is the CUMULATIVE comparison -- creep since a release rather than since the
+ * previous commit. The absolute checks still carry that weight (`bundle.gzippedBytes` against
+ * `FREE_CEILING`, `freeEnvelope.verdict` against `fits`), and any archived document can be passed as
+ * the baseline to get the cumulative reading back for a specific question.
+ *
+ * @param master - the newest passing master run's document, or null when none is reachable
+ */
+export function resolveBaseline(master: MetricsDocument | null): BaselineSource {
+	if (!master) {
+		return {
+			values: {},
+			describe: 'nothing; no master run was reachable, so every relative check is unjudged'
+		};
+	}
+	return {
+		values: nextBaseline(master, {}),
+		describe: `the last passing master run at \`${master.commit.slice(0, 7)}\``
+	};
 }
 
 if (import.meta.main) {
@@ -565,25 +601,30 @@ if (import.meta.main) {
 		fallback;
 
 	const metricsPath = resolve(root, arg('metrics', 'metrics.json'));
-	const baselinePath = resolve(root, arg('baseline', 'metrics/baseline.json'));
 	const doc = JSON.parse(readFileSync(metricsPath, 'utf8')) as MetricsDocument;
-	const baseline = readBaseline(baselinePath);
 
-	if (process.argv.includes('--write-baseline')) {
-		const values = nextBaseline(doc, baseline.values);
-		const sorted = Object.fromEntries(
-			Object.entries(values).sort(([a], [b]) => (a < b ? -1 : 1))
-		);
-		writeFileSync(
-			baselinePath,
-			JSON.stringify({ schema: 1, values: sorted }, null, '\t') + '\n'
-		);
-		console.log(`wrote ${Object.keys(sorted).length} baseline value(s) to ${baselinePath}`);
-		process.exit(0);
+	const masterPath = arg('baseline-metrics', '');
+	let master: MetricsDocument | null = null;
+	if (masterPath && existsSync(resolve(root, masterPath))) {
+		try {
+			master = JSON.parse(readFileSync(resolve(root, masterPath), 'utf8')) as MetricsDocument;
+		} catch (error) {
+			console.error(`ignoring ${masterPath}: ${(error as Error).message}`);
+		}
 	}
+	// a caller that KNOWS a master run exists says so, and a download that then produced nothing is
+	// a failure rather than a quiet pass on the two checks that need no baseline
+	if (!master && process.argv.includes('--require-baseline')) {
+		console.error(
+			`metrics gate FAILED: ${masterPath || '--baseline-metrics'} carries no readable ` +
+				'document, so the relative checks would be unjudged and the run would prove nothing'
+		);
+		process.exit(1);
+	}
+	const source = resolveBaseline(master);
 
-	const comparison = compare(doc, baseline.values);
-	const markdown = renderMarkdown(doc, comparison);
+	const comparison = compare(doc, source.values);
+	const markdown = renderMarkdown(doc, comparison, source.describe);
 	const summary = arg('summary', process.env.GITHUB_STEP_SUMMARY ?? '');
 	if (summary) writeFileSync(summary, markdown, { flag: 'a' });
 	process.stdout.write(markdown);

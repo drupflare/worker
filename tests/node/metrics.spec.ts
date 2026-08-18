@@ -20,9 +20,9 @@ import {
 	compare,
 	interpret,
 	nextBaseline,
-	readBaseline,
 	readPath,
 	renderMarkdown,
+	resolveBaseline,
 	type BaselineValues
 } from '../../scripts/measure/metrics-gate';
 
@@ -359,39 +359,67 @@ describe('the reading a reviewer gets instead of a row', () => {
 	});
 });
 
-describe('the shipped baseline', () => {
-	it('records exactly the paths the checks name, so none of it is dead weight', () => {
-		const shipped = readBaseline(join(ROOT, 'metrics/baseline.json'));
-		expect(Object.keys(shipped.values).sort()).toEqual(
+describe('the baseline is another run, not a file anyone maintains', () => {
+	it('reduces a master document to exactly the paths the checks name', () => {
+		const resolved = resolveBaseline(fixture());
+		expect(Object.keys(resolved.values).sort()).toEqual(
 			[...new Set(CHECKS.map((c) => c.path))].sort((a, b) => (a < b ? -1 : 1))
 		);
+		expect(resolved.describe).toContain('aaaaaaa');
 	});
 
-	it('holds a bundle figure that fits the ceiling it is gated against', () => {
-		const shipped = readBaseline(join(ROOT, 'metrics/baseline.json'));
-		expect(shipped.values['bundle.gzippedBytes']).toBeLessThanOrEqual(FREE_CEILING);
+	it('carries no value a master run could not measure, rather than a zero', () => {
+		const master = fixture();
+		master.metrics.bundle = { skipped: 'wrangler produced no size line' };
+		const resolved = resolveBaseline(master);
+		expect(resolved.values['bundle.gzippedBytes']).toBeUndefined();
+		expect(resolved.values['packShape.rows']).toBe(1342);
+	});
+
+	it('judges nothing relative when no master run is reachable, and says so', () => {
+		const resolved = resolveBaseline(null);
+		expect(resolved.values).toEqual({});
+		expect(resolved.describe).toContain('unjudged');
+
+		// still not vacuous: the two absolute checks need no baseline at all
+		const comparison = compare(fixture(), resolved.values);
+		expect(comparison.evaluated).toBeGreaterThan(0);
+		expect(
+			comparison.results.filter((r) => r.verdict === 'no-baseline').length
+		).toBeGreaterThan(0);
+	});
+
+	it('names the baseline in the summary, so a delta can be read at all', () => {
+		const doc = fixture();
+		const markdown = renderMarkdown(doc, compare(doc, {}), resolveBaseline(null).describe);
+		expect(markdown).toContain('Baseline: nothing;');
 	});
 });
 
 describe('the gate CLI', () => {
-	/** runs the gate over a document and a baseline written to scratch, so the shipped one is untouched */
-	function runGate(doc: MetricsDocument): { status: number; output: string } {
+	/** runs the gate over a document, with another document standing in for the master run */
+	function runGate(
+		doc: MetricsDocument,
+		opts: { master?: MetricsDocument | null; require?: boolean } = {}
+	): { status: number; output: string } {
 		const metrics = join(scratch, 'metrics.json');
-		const baseline = join(scratch, 'baseline.json');
 		writeFileSync(metrics, JSON.stringify(doc));
-		writeFileSync(baseline, JSON.stringify({ schema: 1, values: fixtureBaseline() }));
+		const args = ['scripts/measure/metrics-gate.ts', `--metrics=${metrics}`, '--summary='];
+		if (opts.master !== null) {
+			const master = join(scratch, 'master.json');
+			writeFileSync(master, JSON.stringify(opts.master ?? fixture()));
+			args.push(`--baseline-metrics=${master}`);
+		} else {
+			args.push(`--baseline-metrics=${join(scratch, 'absent.json')}`);
+		}
+		if (opts.require) args.push('--require-baseline');
 		try {
 			// --summary= keeps the subprocess from appending to a real GITHUB_STEP_SUMMARY
-			const output = execFileSync(
-				'bun',
-				[
-					'scripts/measure/metrics-gate.ts',
-					`--metrics=${metrics}`,
-					`--baseline=${baseline}`,
-					'--summary='
-				],
-				{ cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-			);
+			const output = execFileSync('bun', args, {
+				cwd: ROOT,
+				encoding: 'utf8',
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
 			return { status: 0, output };
 		} catch (error) {
 			const e = error as { status?: number; stdout?: string; stderr?: string };
@@ -409,5 +437,26 @@ describe('the gate CLI', () => {
 		expect(dirty.status).toBe(1);
 		expect(dirty.output).toContain('metrics gate FAILED');
 		expect(dirty.output).toContain('indexAudit.chargedRows');
+	});
+
+	it('compares against the master document rather than the checkout', () => {
+		const master = fixture();
+		(master.metrics.driverPack as { bytes: number }).bytes = 1000;
+		// +10% of 1000 is 1100, and the fixture reports 300,677
+		const over = runGate(fixture(), { master });
+		expect(over.status).toBe(1);
+		expect(over.output).toContain('driverPack.bytes');
+	});
+
+	it('fails when a baseline was required and none arrived', () => {
+		const missing = runGate(fixture(), { master: null, require: true });
+		expect(missing.status).toBe(1);
+		expect(missing.output).toContain('carries no readable document');
+	});
+
+	it('passes thinly, and says so, when no baseline was required or found', () => {
+		const thin = runGate(fixture(), { master: null });
+		expect(thin.status, thin.output).toBe(0);
+		expect(thin.output).toContain('Baseline: nothing;');
 	});
 });

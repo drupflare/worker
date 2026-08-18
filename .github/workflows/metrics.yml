@@ -13,7 +13,7 @@ on:
     inputs:
       tag:
         type: string
-        description: 'Release tag to hydrate; blank uses the tag for package.json version'
+        description: 'Release payload to hydrate first, for the artifacts no producer here can build'
         default: ''
 
 concurrency:
@@ -34,6 +34,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      actions: read
 
     steps:
       - uses: actions/checkout@v7
@@ -62,27 +63,30 @@ jobs:
           node-version: '24'
       - name: Install Dependencies
         run: bun install --frozen-lockfile
-      - name: Pack the Drupal Modules
-        run: bun run assets:driver
-      - name: Hydrate the Release Payload
-        id: hydrate
+      - name: Hydrate a Named Payload
+        if: ${{ github.event.inputs.tag != '' }}
         continue-on-error: true
-        env:
-          RELEASE_TAG: ${{ github.event.inputs.tag }}
-        run: |
-          if [ -n "$RELEASE_TAG" ]; then
-            bun run hydrate "--tag=$RELEASE_TAG"
-          else
-            bun run hydrate
-          fi
+        run: bun run hydrate "--tag=${{ github.event.inputs.tag }}" --payload-only
+      - name: Ensure the Artifacts the Collectors Read
+        run: bun scripts/ensure-artifacts.ts
       - name: Collect the Metrics
         run: |
           mkdir -p dist
           bun run metrics --out=dist/metrics.json
+      - name: Fetch the Baseline from the Last Passing Master Run
+        id: baseline
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun scripts/measure/fetch-baseline.ts --out=baseline-run/metrics.json
       - name: Gate Against the Baseline
         id: gate
         if: ${{ !cancelled() }}
-        run: bun run metrics:gate --metrics=dist/metrics.json --summary=dist/metrics.md
+        run: |
+          bun run metrics:gate --metrics=dist/metrics.json --summary=dist/metrics.md \
+            --baseline-metrics=baseline-run/metrics.json \
+            ${{ steps.baseline.outputs.found && '--require-baseline' || '' }}
       - name: Archive the Metrics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -104,17 +108,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: gh pr comment "$PR" --body-file dist/metrics.md --edit-last --create-if-none
-      - name: Report a Failed Hydrate
-        if: ${{ !cancelled() && steps.hydrate.outcome == 'failure' }}
-        run: |
-          {
-            echo "### Payload Not Hydrated"
-            echo
-            echo "The bundle, index audit and pack shape are reported as not collected above."
-            echo "Build the payload on the machine that has \`vendor/\` and"
-            echo "\`assets/drupal/site.sqlite\`, attach it to the release, and re-run:"
-            echo
-            echo '```sh'
-            echo "bun run release:payload"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,30 @@
+{
+	"name": "drupflare-interpreter-pin",
+	"version": 1,
+	"repo": "drupflare/phasm",
+	"variant": "control85",
+	"phpVersion": "8.5",
+	"artifactId": "9311918694",
+	"frame": {
+		"raw": 12218396,
+		"packed": 2659444,
+		"declared": 12218396
+	},
+	"files": [
+		{
+			"path": ".interp/php8.5-worker.mjs",
+			"bytes": 863402,
+			"sha256": "016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb"
+		},
+		{
+			"path": ".interp/php8.5.wasm",
+			"bytes": 12218396,
+			"sha256": "346d1e47b66631bd5f9c543fb3aa9bd1b68ae9f4b836915fd09cdf529c52aa6d"
+		},
+		{
+			"path": ".interp/php8.5.wasm.zst",
+			"bytes": 2659444,
+			"sha256": "a9a41349bd53a848b5d2001ce799f71906744d7a9c9f1f0e1f43e7096cc7473e"
+		}
+	]
+}

@@ -118,6 +118,9 @@ async function openRewritten(path: string) {
 	);
 	await copyFile(path, tmp);
 	const db = new DatabaseSync(tmp);
+	// node 24.19 turns SQLITE_DBCONFIG_DEFENSIVE on by default and 24.11 did not, so the
+	// sqlite_master write below threw only on the runner: "table sqlite_master may not be modified"
+	(db as { enableDefensive?: (on: boolean) => void }).enableDefensive?.(false);
 	const before = db.prepare('PRAGMA schema_version').get()!.schema_version;
 	const affected = db
 		.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE sql LIKE '%NOCASE_UTF8%'")

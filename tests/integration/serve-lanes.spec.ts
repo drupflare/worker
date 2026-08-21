@@ -135,7 +135,11 @@ describe('lane=gate forces the gated lane, so the split is testable both ways', 
 		});
 		// one SELECT and one response with nothing able to interleave is only safe for a read
 		expect(out.lane).toBe('php-gate');
-		expect(out.cache).toBe('HIT');
+		// AND IT MUST NOT BE A HIT. This assertion used to read `toBe('HIT')`, which pinned a real
+		// defect in place: reaching the gated lane is not the same as being allowed to answer from
+		// `cfw_page`, and a POST answered from a cached anonymous GET never runs Drupal at all.
+		// See the regression block in `serve-chain.spec.ts`.
+		expect(out.cache).not.toBe('HIT');
 	});
 });
 

@@ -7,10 +7,13 @@ import {
 	type ServeDo,
 	decodeRenderCall,
 	driveAlarms,
+	freshSite,
 	inObject,
+	markProvisioned,
 	pageFor,
 	provisionedSite,
 	queuePath,
+	seedPage,
 	serveDirect,
 	statsOf,
 	stubRender,
@@ -239,6 +242,80 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 		}));
 		// 240 s, and a later MISS is what pulls it back in; see the /__serve comment
 		expect(Number(out.alarmAt) - out.now).toBeGreaterThan(60000);
+	});
+});
+
+/**
+ * A REDIRECT IS NOT A PAGE, and storing one shipped a dead end.
+ *
+ * `cfw_page` is `(path, status, content_type, html, rendered_at, render_ms)` -- there is no column
+ * for a `Location`, and `pageResponse()` cannot set a header it has no value for. So a 3xx that
+ * took the cacheable branch was written to the table, answered as a bodyless redirect pointing
+ * nowhere, and then replayed as a HIT to every later visitor until the next invalidation.
+ *
+ * It is reachable through Drupal's own code rather than through anything exotic:
+ * `AssetControllerBase::deliver()` answers 301 whenever an aggregate URL's hash does not match the
+ * one it recomputes, which is every aggregate URL in the prefilled HTML.
+ */
+describe('a redirect is answered, not stored', () => {
+	it('carries the Location through and writes no cfw_page row', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, () => ({
+				html: '',
+				status: 301,
+				contentType: 'text/html; charset=utf-8',
+				location: '/sites/default/files/css/css_correct.css',
+				renderMs: 3,
+				bytes: 0
+			}));
+			const first = await serveDirect(site, '/sites/default/files/css/css_stale.css');
+			return {
+				first,
+				// the SECOND request is the one that proves nothing was stored: a stored 301
+				// answers x-cfw-cache HIT with no location at all
+				second: await serveDirect(site, '/sites/default/files/css/css_stale.css'),
+				rows: site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE status >= 300 AND status < 400')
+					.toArray()
+					.map((r) => Number(r.c))[0],
+				queued: site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_fill_queue')
+					.toArray()
+					.map((r) => Number(r.c))[0]
+			};
+		});
+
+		expect(out.first.status).toBe(301);
+		expect(out.first.location).toBe('/sites/default/files/css/css_correct.css');
+		expect(out.first.cache).toBe('RENDER');
+
+		expect(out.second.status).toBe(301);
+		expect(out.second.location, 'a replayed redirect must still point somewhere').toBe(
+			'/sites/default/files/css/css_correct.css'
+		);
+		expect(out.second.cache, 'and must not have come from the page table').toBe('RENDER');
+
+		expect(out.rows, 'no 3xx may be stored').toBe(0);
+		// refusing to store must not strand the path in the queue either
+		expect(out.queued).toBe(0);
+	});
+
+	it('still stores a 200 and a 404, so the guard is a 3xx guard and not a blanket one', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				status: path === '/gone' ? 404 : 200
+			}));
+			await serveDirect(site, '/here');
+			await serveDirect(site, '/gone');
+			return site.sql
+				.exec('SELECT path, status FROM cfw_page ORDER BY path')
+				.toArray()
+				.map((r) => `${r.path}:${r.status}`);
+		});
+		expect(out).toEqual(['/gone:404', '/here:200']);
 	});
 });
 
@@ -597,6 +674,169 @@ describe('the fragment decoder used above is not vacuous', () => {
 		expect(empty.path).toBe('');
 		expect(empty.bins).toEqual([]);
 		expect(empty.destruct).toBe('');
+		expect(empty.origin).toBe('');
+	});
+});
+
+/**
+ * An unclaimed site shows its owner the way in.
+ *
+ * The pack ships an INSTALLED database, so `install.php` never runs and uid 1 carries an empty hash
+ * that no password can match. A freshly deployed site therefore looked finished, served its front
+ * page, and had no way in -- and because the claim window IS the unprovisioned state, it was also
+ * claimable by anyone who found the URL. The only thing that said so was a README caveat.
+ */
+describe('a site nobody has claimed serves a setup page', () => {
+	const browser = (path: string) =>
+		new Request(`https://real.example/__serve?path=${encodeURIComponent(path)}`, {
+			headers: { accept: 'text/html,application/xhtml+xml' }
+		});
+
+	it('answers a navigation with the claim page rather than the front page', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(browser('/'));
+			return {
+				status: res.status,
+				setup: res.headers.get('x-cfw-setup'),
+				robots: res.headers.get('x-robots-tag'),
+				cacheControl: res.headers.get('cache-control'),
+				body: await res.text(),
+				// nothing rendered, so an unclaimed site costs no interpreter either
+				rendered: calls.length
+			};
+		});
+
+		expect(out.status).toBe(200);
+		expect(out.setup).toBe('required');
+		expect(out.robots).toBe('noindex');
+		expect(out.cacheControl).toBe('no-store');
+		expect(out.body).toContain('Claim This Site');
+		expect(out.rendered).toBe(0);
+	});
+
+	// the page is a signpost for a human; a machine client still gets the site
+	it('leaves a non-HTML request on the normal path', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			const res = await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return {
+				status: res.status,
+				setup: res.headers.get('x-cfw-setup'),
+				body: await res.text()
+			};
+		});
+
+		expect(out.setup).toBeNull();
+		expect(out.body).toContain('<title>/</title>');
+	});
+
+	it('stops once the site is claimed', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			const before = await site.fetch(browser('/'));
+			site.metaSet('first_run_at', site.nowMs());
+			const after = await site.fetch(browser('/'));
+			return {
+				before: before.headers.get('x-cfw-setup'),
+				after: after.headers.get('x-cfw-setup'),
+				body: await after.text()
+			};
+		});
+
+		expect(out.before).toBe('required');
+		expect(out.after).toBeNull();
+		expect(out.body).toContain('<title>/</title>');
+	});
+
+	/**
+	 * ORDER MATTERS. A site still replaying its migration is not an unclaimed site, and telling its
+	 * owner to claim it while the database is a quarter loaded would invite exactly the wrong action.
+	 */
+	it('yields to the migration placeholder on a site that is still replaying', async () => {
+		const res = await inObject(freshSite(), (site) => site.fetch(browser('/')));
+		expect(res.status).toBe(503);
+		expect(res.headers.get('x-cfw-setup')).toBeNull();
+		expect(res.headers.get('x-cfw-migrate')).not.toBeNull();
+	});
+});
+
+/**
+ * Which host Drupal renders absolute URLs against.
+ *
+ * Every canonical tag, form action, `Location:` and password-reset link is built from it, and the
+ * fragments hardcoded `localhost` -- so a deployed site advertised `http://localhost` to every
+ * visitor and every crawler. The origin the object serves is now a property of the SITE: pinned on
+ * first use and read back afterwards, never re-read from the request.
+ *
+ * Asserted off the emitted fragment rather than off rendered HTML, for the reason
+ * `decodeRenderCall`'s docblock gives -- this lane has no interpreter, and what is being tested is
+ * that the object put the right value into the PHP. `tests/integration/render-origin.spec.ts`
+ * carries the other half, where a real interpreter turns it into real markup.
+ */
+describe('the render origin is pinned, not believed', () => {
+	it('pins the first real origin it serves and hands it to the render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned).toBe('https://real.example');
+		expect(out.calls[0]?.origin).toBe('https://real.example');
+	});
+
+	/** the whole defence: after the pin, a forged Host renders against the pinned host anyway */
+	it('ignores a later origin, so a forged Host cannot move a reset link', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2Fone'));
+			await site.fetch(new Request('https://attacker.example/__serve?path=%2Ftwo'));
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned).toBe('https://real.example');
+		expect(out.calls.map((c) => c.origin)).toEqual([
+			'https://real.example',
+			'https://real.example'
+		]);
+	});
+
+	/**
+	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED, and the split is the point.
+	 *
+	 * Used, because `wrangler dev` on `localhost:8787` should render links to `localhost:8787` and
+	 * not to port 80. Not pinned, because every spec in this file reaches the object over
+	 * `do.local` -- so a pin would mean the first suite run against a persisted object fixed a real
+	 * site's canonical URL to a developer's laptop, permanently and invisibly.
+	 */
+	it('uses a local origin without pinning it', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await serveDirect(site, '/');
+			return { calls, pinned: site.metaGet('site_origin') };
+		});
+		expect(out.pinned, 'nothing may be written for a local host').toBeNull();
+		expect(out.calls[0]?.origin).toBe('https://do.local');
+	});
+
+	// the alarm chain fills most pages and has no request to read an origin from; without the
+	// default in fillOne() the same page carried a different host depending on which lane made it
+	it('gives the alarm chain the same origin as an inline render', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2Finline'));
+			queuePath(site, '/by-alarm');
+			await site.alarm();
+			return calls.map((c) => `${c.path}=${c.origin}`);
+		});
+		expect(out).toContain('/inline=https://real.example');
+		expect(out).toContain('/by-alarm=https://real.example');
 	});
 });
 
@@ -640,4 +880,49 @@ describe('a heap restore in flight is not a strike against the queued page', () 
 		expect(out.attempts).toBe(0);
 		expect(JSON.stringify(out.outcome)).toContain('restorePending');
 	});
+});
+
+/**
+ * A SUBMISSION IS NEVER ANSWERED FROM `cfw_page`.
+ *
+ * Found by the e2e mail lane on 2026-08-21, not by any unit test. The cache read ran before the
+ * method was considered, so a POST to a path with a stored page got the stored ANONYMOUS GET back
+ * with a 200 and Drupal never ran: no validation, no mail, no content, and a success-looking
+ * response. `/user/password` ships in `prefill.json`, so it is pre-cached on every site from its
+ * first boot -- every password reset was swallowed.
+ *
+ * Confirmed live before the fix (`x-cfw-cache: HIT` on the POST) and after (`x-cfw-cache: RENDER`,
+ * `x-cfw-method: POST`, 303).
+ */
+describe('the page cache and non-GET methods', () => {
+	it('serves a GET from the cache', async () => {
+		const site = freshSite();
+		const res = await inObject(site, async (obj) => {
+			markProvisioned(obj);
+			obj.metaSet('first_run_at', String(Date.now()));
+			seedPage(obj, '/user/password', '<html><body>the empty form</body></html>');
+			const url = new URL('https://site.example/__serve?path=/user/password');
+			return obj.handle(new Request(url), url);
+		});
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-cache')).toBe('HIT');
+	});
+
+	for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+		it(`never answers a ${method} from the cache, even when the path is cached`, async () => {
+			const site = freshSite();
+			const res = await inObject(site, async (obj) => {
+				markProvisioned(obj);
+				obj.metaSet('first_run_at', String(Date.now()));
+				seedPage(obj, '/user/password', '<html><body>the empty form</body></html>');
+				const url = new URL('https://site.example/__serve?path=/user/password');
+				return obj.handle(new Request(url, { method }), url);
+			});
+			expect(
+				res.headers.get('x-cfw-cache'),
+				`${method} was answered from the page cache`
+			).not.toBe('HIT');
+			expect(await res.text()).not.toContain('the empty form');
+		});
+	}
 });

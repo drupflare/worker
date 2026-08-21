@@ -6,6 +6,7 @@ import {
 	overheadShare,
 	rankTally,
 	routerRebuildPasses,
+	routerRebuilds,
 	splitChargedRows,
 	tallyWrite,
 	writeTargetTable
@@ -139,34 +140,62 @@ describe('ranking, because only the heaviest tables matter', () => {
 });
 
 describe('reading router rebuilds out of the statement shape', () => {
-	/** one rebuild: a single DELETE plus ceil(routes / 16) parameter-budgeted INSERTs */
-	function rebuild(t: ReturnType<typeof emptyTally>, routes: number) {
+	/** one rebuild as the driver actually writes it: a DELETE plus one INSERT per route */
+	function rebuild(t: ReturnType<typeof emptyTally>, routes: number, perStatement = 1) {
 		t = tallyWrite(t, 'DELETE FROM router', routes);
-		for (let n = 0; n < Math.ceil(routes / 16); n++) {
+		for (let n = 0; n < Math.ceil(routes / perStatement); n++) {
 			t = tallyWrite(t, 'INSERT INTO router (name) VALUES (?)', 64);
 		}
 		return t;
 	}
 
-	it('counts one rebuild of the real 419-route table', () => {
-		expect(routerRebuildPasses(rebuild(emptyTally(), 419), 419)).toBe(1);
+	/**
+	 * The default was 16 and the driver writes 1, so this answered `null` on every real enable.
+	 *
+	 * Measured 2026-08-19 on a `token` install: 422 router statements over 420 routes, 2,518 charged
+	 * rows, 5.97 per statement. At the old default `perPass` was 28, `422 / 28` was fractional, and
+	 * the function refused to answer -- so `/enable` reported `routerRebuilds: null` for its whole
+	 * life while the enable was in fact paying exactly one pass.
+	 */
+	it('reads the real shape: one pass over 420 routes', () => {
+		const t = rebuild(emptyTally(), 420);
+		expect(routerRebuildPasses(t, 420)).toBe(1);
+		expect(routerRebuilds(t, 420)).toEqual({ passes: 1, residual: 0, perPass: 421 });
 	});
 
-	it('counts the eight the module enable actually paid for', () => {
+	it('reports the residual rather than refusing to answer', () => {
+		// the measured enable is 422 over 420: one pass plus one statement this cannot attribute
+		let t = rebuild(emptyTally(), 420);
+		t = tallyWrite(t, 'INSERT INTO router (name) VALUES (?)', 64);
+		expect(routerRebuilds(t, 420)).toEqual({ passes: 1, residual: 1, perPass: 421 });
+		expect(routerRebuildPasses(t, 420)).toBe(1);
+	});
+
+	/**
+	 * A wrong chunk size shows up as an absurd PASS COUNT, and divisibility never caught it.
+	 *
+	 * This is why returning `null` on a fraction was the wrong signal. One rebuild of 419 routes at
+	 * the old assumed chunk of 16 divides exactly -- `420 / 28 = 15` -- so the old function would
+	 * have answered "15 rebuilds" for a single dump with no complaint at all. It only refused when
+	 * the residual happened to be non-zero, which is a property of the arithmetic rather than of the
+	 * assumption being right. The pass count is the thing to read: 15 passes over one dump is
+	 * obviously wrong in a way that `null` never was.
+	 */
+	it('shows a wrong chunk size as an absurd pass count, not as a refusal', () => {
+		const t = rebuild(emptyTally(), 419);
+		expect(routerRebuilds(t, 419, 16)).toEqual({ passes: 15, residual: 0, perPass: 28 });
+		expect(routerRebuilds(t, 419, 1)?.passes).toBe(1);
+	});
+
+	it('still counts eight passes when eight were paid', () => {
 		let t = emptyTally();
 		for (let i = 0; i < 8; i++) t = rebuild(t, 419);
 		expect(routerRebuildPasses(t, 419)).toBe(8);
 	});
 
-	it('returns null rather than rounding when the shape does not divide', () => {
-		let t = rebuild(emptyTally(), 419);
-		t = tallyWrite(t, 'INSERT INTO router (name) VALUES (?)', 64);
-		// 2.4 rebuilds reported as 2 would launder a wrong chunk-size assumption into a fact
-		expect(routerRebuildPasses(t, 419)).toBeNull();
-	});
-
 	it('returns null when the router was never written', () => {
 		expect(routerRebuildPasses(emptyTally(), 419)).toBeNull();
+		expect(routerRebuilds(emptyTally(), 419)).toBeNull();
 	});
 
 	it('returns null on a zero route count rather than dividing by it', () => {

@@ -67,10 +67,33 @@ describe('renderPage threads the request', () => {
 	it('passes parsed parameters into Request::create, not only $_POST', () => {
 		const php = renderPage('/');
 		expect(php).toContain(
-			'Request::create($path, $method, $parameters, $cookies, [], $server, $body)'
+			'Request::create($url, $method, $parameters, $cookies, [], $server, $body)'
 		);
 		expect(php).toContain('parse_str($body, $parameters)');
 		expect(php).toContain('$_POST = $parameters;');
+	});
+
+	/**
+	 * The FIRST argument is an absolute URL, and that is the whole of the localhost fix.
+	 *
+	 * `Request::create()` builds its own server bag from defaults and never reads `$_SERVER`, so the
+	 * `$_SERVER['HTTP_HOST'] = 'localhost'` the fragments used to open with set nothing -- the host
+	 * came from Symfony's default. Only an absolute URI moves it, which is why `$url` rather than
+	 * `$path` is the assertion worth pinning here.
+	 */
+	it('builds the absolute URL from the origin the host supplied', () => {
+		const php = renderPage('/node/1', [], false, { origin: 'https://example.test' });
+		expect(php).toContain('$url = $origin === "" ? $path : rtrim($origin, "/") . $path;');
+		expect(php).toContain('$origin = json_decode("\\"https://example.test\\"");');
+		// the superglobals follow the request, so nothing can read a host the request disagrees with
+		expect(php).toContain('$_SERVER["HTTP_HOST"] = $request->getHttpHost();');
+		expect(php).not.toContain("$_SERVER['HTTP_HOST'] = 'localhost';");
+	});
+
+	// an absent origin has to stay a no-op, or every probe and measurement fragment moves with it
+	it('leaves the URL relative when no origin is supplied', () => {
+		const php = renderPage('/node/1');
+		expect(php).toContain('$origin = json_decode("\\"\\"")');
 	});
 
 	it('only parses a body as a form when the content type says so', () => {

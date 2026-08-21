@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { KV_OVERRIDABLE } from '../../../src/ops/plan';
 import {
 	FALLBACK_SITE,
+	locationHint,
 	resolveSite,
 	siteFromHost,
 	siteKvKey,
+	siteStubOptions,
 	type SiteIdEnv
 } from '../../../src/ops/site-id';
 
@@ -177,5 +180,69 @@ describe('a KV miss or outage must not take the site down', () => {
 		expect(await resolveSite(new URL('https://example.com/'), undefined)).toMatchObject({
 			site: 'example-com'
 		});
+	});
+});
+
+/**
+ * Where a site's Durable Object is created.
+ *
+ * **UNSET IS THE DEFAULT AND IT IS THE PRODUCT DECISION**, taken 2026-08-18: placement follows the
+ * first request, because guessing a region trades latency for one audience against latency for
+ * every other and a one-click product has no way to ask. An owner who knows their audience pins it.
+ *
+ * The value is on `KV_OVERRIDABLE`, which is the convention rather than a special case: **anything
+ * offered as a var is offered as KV first**, so it can be changed without a redeploy. What is
+ * asserted here is the half that would silently break a site - an unrecognised value must be
+ * IGNORED rather than passed through, because this reaches `SITE.get()` on the serving path.
+ */
+describe('the durable object location hint', () => {
+	it('is undefined when unset, which is the shipped default', () => {
+		expect(locationHint()).toBeUndefined();
+		expect(locationHint({})).toBeUndefined();
+		expect(locationHint({ SITE_LOCATION_HINT: '' })).toBeUndefined();
+		expect(locationHint({ SITE_LOCATION_HINT: null })).toBeUndefined();
+	});
+
+	it('accepts every region Cloudflare names', () => {
+		for (const hint of ['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac', 'oc', 'afr', 'me']) {
+			expect(locationHint({ SITE_LOCATION_HINT: hint })).toBe(hint);
+		}
+	});
+
+	it('is case- and whitespace-insensitive, because a KV value is typed by hand', () => {
+		expect(locationHint({ SITE_LOCATION_HINT: '  WEUR ' })).toBe('weur');
+	});
+
+	// the failure that matters: this reaches SITE.get() on every request, so a typo the platform
+	// rejects would take the site down for the sake of a latency preference
+	it('IGNORES an unrecognised value rather than passing it through', () => {
+		expect(locationHint({ SITE_LOCATION_HINT: 'europe' })).toBeUndefined();
+		expect(locationHint({ SITE_LOCATION_HINT: 'us-east-1' })).toBeUndefined();
+		expect(locationHint({ SITE_LOCATION_HINT: 'wnam,weur' })).toBeUndefined();
+	});
+
+	/**
+	 * `{ locationHint: undefined }` is not the same as passing nothing to a runtime that checks for
+	 * the key rather than its value, which is why the options bag is built rather than inlined.
+	 */
+	it('passes no options bag at all when there is no hint', () => {
+		expect(siteStubOptions()).toBeUndefined();
+		expect(siteStubOptions({ SITE_LOCATION_HINT: 'nonsense' })).toBeUndefined();
+		expect(siteStubOptions({ SITE_LOCATION_HINT: 'apac' })).toEqual({ locationHint: 'apac' });
+	});
+});
+
+describe('the KV-over-var convention', () => {
+	// stated as a test because it is a convention, and a convention with no check is a preference:
+	// anything offered as a lever is offered through KV first, so it changes without a redeploy
+	it('lists the location hint as KV-overridable', () => {
+		expect(KV_OVERRIDABLE).toContain('SITE_LOCATION_HINT');
+	});
+
+	// the allow-list is a privilege boundary: nothing on it may change what is REACHABLE
+	it('still admits nothing that changes what is reachable', () => {
+		expect(KV_OVERRIDABLE).not.toContain('PW_DIAGNOSTICS');
+		expect(KV_OVERRIDABLE).not.toContain('SITE_ID');
+		expect(KV_OVERRIDABLE).not.toContain('PLAN');
 	});
 });

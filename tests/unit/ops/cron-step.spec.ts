@@ -218,6 +218,33 @@ describe('the PHP fragments cannot break the bundle', () => {
 		expect(fragments['runCronHook(file)']).not.toContain('->acquire(');
 	});
 
+	/**
+	 * CRON IS WHERE MAIL IS SENT, and `user_pass_reset_url()` builds an absolute link from the
+	 * request. Booted against the default host, every link Drupal mails from cron points the
+	 * recipient at their own machine -- so the origin has to reach these fragments the same way it
+	 * reaches a render, even though cron has no request to read one from.
+	 */
+	it('boots against the origin it was given, in all three fragments', () => {
+		const origin = 'https://mail-links.example';
+		for (const code of [
+			runCronHook('file', origin),
+			runCronQueue('media_entity_thumbnail', 5, origin),
+			cronHookList(origin)
+		]) {
+			expect(code).toContain('$origin = json_decode("\\"https://mail-links.example\\"");');
+			// the superglobals AND the request the kernel boots from, or the two disagree
+			expect(code).toContain("$_SERVER['SERVER_NAME'] = $__host;");
+			expect(code).toContain("rtrim($origin, '/') . '/'");
+			// the URL generator reads the request stack, and a cron fragment pushes none of its own
+			expect(code).toContain('request_stack');
+		}
+	});
+
+	// an absent origin has to stay a no-op, or every existing caller and probe moves with it
+	it('leaves the host alone when no origin is supplied', () => {
+		expect(fragments['runCronHook(file)']).toContain('$origin = json_decode("\\"\\"");');
+	});
+
 	it('caps the queue by item count rather than by wall clock', () => {
 		expect(/\$i < \$max/.test(fragments.runCronQueue!)).toBe(true);
 	});

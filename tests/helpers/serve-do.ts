@@ -37,10 +37,21 @@ export type RenderResult = {
 	dynamicCache?: string;
 	destructed?: unknown;
 	error?: string;
+	/** where a 3xx points; `renderPage()` has always reported it and the stub could not */
+	location?: string | null;
+	/** `Set-Cookie` lines, which is what makes a response uncacheable from the other direction */
+	setCookie?: string[];
 };
 
 /** one entry into the stubbed interpreter, read back out of the emitted PHP fragment */
-export type RenderCall = { path: string; bins: string[]; destruct: string; code: string };
+export type RenderCall = {
+	path: string;
+	bins: string[];
+	destruct: string;
+	/** the `scheme://host[:port]` the fragment renders absolute URLs against */
+	origin: string;
+	code: string;
+};
 
 /** what `fillOne()` hands back; the two outcomes share only `filled` and `remaining` */
 export type FillOutcome = {
@@ -95,6 +106,8 @@ export type ServeDo = {
 	queueDepth: () => number;
 	generation: () => number;
 	metaGet: (key: string, fallback?: string | null) => string | null;
+	metaSet: (key: string, value: unknown) => void;
+	nowMs: () => number;
 	/** first-run provisioning: the state check, the durable marker, and what acts on it */
 	neverMigrated: () => boolean;
 	provisionRequested: () => boolean;
@@ -117,6 +130,22 @@ export type ServeDo = {
 	handleIndex: (binary: never) => { id: number; add?: (o: object) => number } | null;
 	pinHandles: (binary: never) => number;
 	pinnedHandles?: Set<object>;
+	/** the host bridge, so a spec can call a capability the way PHP does */
+	installCapabilities: (binary: Record<string, (json: string) => string>) => void;
+	/** the in-memory attempt log `/__capability` reports; refusals carry their reason */
+	mails?: Array<{
+		to: unknown;
+		subject: unknown;
+		bytes: number;
+		transport: string | null;
+		refusal?: string;
+	}>;
+	lastMailDrain?: Record<string, unknown>;
+	adoptSettings: () => Promise<void>;
+	handle: (request: Request, url: URL) => Promise<Response>;
+	degradation: (nowMs?: number) => import('../../src/ops/degrade').Degradation;
+	shellCandidates: () => { safe: number; unsafe: number; reasons: Record<string, number> };
+	invalidateOnCoreUpgrade: () => { deleted: number } | null;
 	queueHttp: (url: string, method?: string, body?: string) => void;
 	httpCacheGet: (
 		url: string,
@@ -161,6 +190,8 @@ export type ServeProbe = {
 	retryAfter: string | null;
 	cacheControl: string | null;
 	contentType: string | null;
+	/** where a 3xx points; a redirect with none is a dead end the visitor cannot follow */
+	location: string | null;
 	body: string;
 	/** anything the named fields above do not cover */
 	header: (name: string) => string | null;
@@ -187,6 +218,13 @@ export type ServeStats = {
 	semaphoreHeld: number | null;
 	httpQueue: number | null;
 	lastHttpDrain: { drained?: Record<string, unknown>[]; remaining?: number } | null;
+	mailQueue: number | null;
+	lastMailDrain: {
+		sent?: Record<string, unknown>[];
+		remaining?: number;
+		refusal?: string;
+		error?: string;
+	} | null;
 	asyncifyCalls: number;
 	phpBooted: boolean;
 	migrate: { chunk: number; chunks: number; state: string } | null;
@@ -325,8 +363,12 @@ export function decodeRenderCall(code: string): RenderCall {
 	} catch {
 		bins = [];
 	}
-	const destruct = /cfw_serve\(\$path, (.+?)\);/.exec(code)?.[1] ?? '';
-	return { path, bins, destruct, code };
+	// anchored on the ASSIGNMENT so it cannot match `function cfw_serve($path, $destruct = true`,
+	// and stopped at the first comma so the request arguments that now always follow -- method,
+	// body, content type, cookie, origin -- do not land in the destruct field
+	const destruct = /=\s*cfw_serve\(\$path, ([^,)]*)/.exec(code)?.[1] ?? '';
+	const origin = /\$origin = json_decode\("\\"(.*?)\\""\)/.exec(code)?.[1] ?? '';
+	return { path, bins, destruct, origin, code };
 }
 
 /** one `/__serve` against the object, bypassing the Worker and its edge cache */
@@ -379,6 +421,7 @@ export async function probe(res: Response): Promise<ServeProbe> {
 		retryAfter: res.headers.get('retry-after'),
 		cacheControl: res.headers.get('cache-control'),
 		contentType: res.headers.get('content-type'),
+		location: res.headers.get('location'),
 		body: await res.text(),
 		header: (name) => res.headers.get(name)
 	};

@@ -38,7 +38,7 @@ import { firstDifference, maskNonces } from './helpers/twice';
  *
  * A RENDER ALONE PROVES ALMOST NOTHING, so no stage here asserts only bytes. A cache hit and a
  * cache miss produce identical output -- measured: a live wasm render of `/` is byte-for-byte the
- * packed prefill artifact, 12,304 bytes and sha1 10077de5f0bd -- so each stage also asserts row
+ * packed prefill artifact, 17,686 bytes and sha1 9e0ffe64f622 -- so each stage also asserts row
  * counts, statement counts, the cursor state, or whether the interpreter booted.
  *
  * The stages run in declaration order and share one site, because a lifecycle IS the order. An
@@ -70,8 +70,8 @@ async function packedHome(): Promise<string> {
 }
 
 /** the front page, as the packed `assets/prefill.json` holds it and as a live render reproduces it */
-const HOME_SHA1 = '10077de5f0bd93ff065cb3a178edd08422a81689';
-const HOME_BYTES = 12304;
+const HOME_SHA1 = '9e0ffe64f622cd30ac04c81b1fa8083472955843';
+const HOME_BYTES = 17686;
 
 /** the site name the pack ships with; firstrun is what changes it, and it changes the bytes too */
 const PACK_SITE_NAME = 'CFW Bench';
@@ -147,7 +147,7 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		const r = await serve(t, '/');
 		const row = (await stats(t)).cached.find((c) => c.path === '/');
 		// `SELECT length(html)` counts characters, and the front page carries four U+2019, so the
-		// row reads 12,296 against 12,304 bytes on the wire. An assertion equating the two is wrong
+		// row reads 17,678 against 17,686 bytes on the wire. An assertion equating the two is wrong
 		// by the number of multi-byte characters, which is why this is pinned rather than left to a
 		// later reader to rediscover
 		expect(row?.bytes).toBe(r.charLength);

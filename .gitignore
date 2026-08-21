@@ -59,3 +59,7 @@ typedoc/
 # the release payload and the dry-run output; built by scripts/release-payload.ts and attached
 # to a GitHub Release, never committed
 dist/
+
+# the shipping pack, saved while scripts/contrib-fixture.ts has a fixture pack mounted in its
+# place; `bun scripts/contrib-fixture.ts --restore` puts it back and deletes this
+.contrib-fixture/

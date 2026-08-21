@@ -26,7 +26,17 @@ const SHIPPING_WASM = '.interp/php8.5.wasm';
 const PACK_INDEX = 'assets/drupal-pf/core.pf.json';
 
 /**
- * The specs that need a BUILD ARTIFACT: the interpreter, the pack, or the migration chunks.
+ * The browser-fetchable core tree, which `tests/unit/runtime/assets-ignore.spec.ts` fetches through
+ * the real ASSETS binding.
+ *
+ * Its own lane boundary: `bun run assets:static` copies it out of `drupal-src`, which a clean
+ * checkout does not have either, so it arrives with the pack rather than with `bun install`.
+ */
+const STATIC_TREE = 'assets/core/misc/drupal.js';
+
+/**
+ * The specs that need a BUILD ARTIFACT: the interpreter, the pack, the migration chunks, or the
+ * browser-fetchable core tree.
  *
  * Measured from CI rather than guessed, twice. With the interpreter stubbed, 11 files fail on the
  * stub's own "no PHP interpreter in this lane" error. With the interpreter RESTORED but no pack, 15
@@ -45,9 +55,11 @@ const ARTIFACT_SPECS = [
 	'tests/integration/csrf.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/firstrun.spec.ts',
+	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
+	'tests/integration/render-origin.spec.ts',
 	'tests/integration/serve-invalidation.spec.ts',
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
@@ -59,7 +71,8 @@ const haveShipping = existsSync(SHIPPING_WASM) && existsSync(SHIPPING_GLUE);
 const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 
 const havePack = existsSync(PACK_INDEX);
-const haveArtifacts = haveBinary && havePack;
+const haveStatic = existsSync(STATIC_TREE);
+const haveArtifacts = haveBinary && havePack && haveStatic;
 
 // stderr, not stdout: `vitest list --json` is parsed by the metrics collector, and a banner on
 // stdout made every run answer `JSON Parse error: Unexpected identifier "vitest"`
@@ -73,9 +86,11 @@ if (haveShipping) {
 if (!haveArtifacts) {
 	console.error(
 		`[vitest] SKIPPING ${ARTIFACT_SPECS.length} spec files that need a build artifact ` +
-			`(${haveBinary ? 'have' : 'no'} interpreter, ${havePack ? 'have' : 'no'} pack).\n` +
+			`(${haveBinary ? 'have' : 'no'} interpreter, ${havePack ? 'have' : 'no'} pack, ` +
+			`${haveStatic ? 'have' : 'no'} static tree).\n` +
 			'         `bun install` restores the interpreter; the pack needs `bun run hydrate`,\n' +
-			'         which needs a published release payload.'
+			'         which needs a published release payload. The static tree ships in that\n' +
+			'         payload too, or comes from `bun run assets:static` against a fetched tree.'
 	);
 }
 

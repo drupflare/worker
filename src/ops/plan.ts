@@ -136,6 +136,13 @@ export const SETTINGS_KV_KEY = 'settings';
  *
  * `PLAN` is deliberately absent: it has its own key and its own resolver, because it selects a whole
  * profile rather than one number.
+ *
+ * THE MAIL CREDENTIALS ARE ABSENT FOR THE SAME REASON `PW_DIAGNOSTICS` IS. `MAIL_TRANSPORT` and
+ * `MAIL_DRAIN_LIMIT` are here because their worst case is "no mail" or "slower mail", and both only
+ * choose between transports the DEPLOYER already configured. `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`,
+ * `CF_EMAIL_TOKEN`, `CF_EMAIL_ACCOUNT_ID` and `MAIL_FROM` must never join them: a KV writer who could
+ * set `SMTP_HOST` would receive every password-reset link the site sends, which is a reach rather
+ * than a slow site.
  */
 export const KV_OVERRIDABLE = [
 	'RENDER_BUDGET_MS',
@@ -145,7 +152,13 @@ export const KV_OVERRIDABLE = [
 	'MIRROR_LIMIT',
 	'LAZY_FS_BUDGET_BYTES',
 	'PREFILL',
-	'GEN_BUCKET_MS'
+	'GEN_BUCKET_MS',
+	'MAIL_TRANSPORT',
+	'MAIL_DRAIN_LIMIT',
+	// placement is the one entry here that is not a number, and it belongs on this list rather than
+	// in `vars` for the reason the list exists: an operator who learns where their audience is
+	// should not need a redeploy to act on it. Worst case is still a slow site
+	'SITE_LOCATION_HINT'
 ] as const;
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
@@ -190,7 +203,15 @@ export async function resolveSettings(
 	return out;
 }
 
-/** overlays KV lever overrides onto an env, leaving anything not on the allow-list untouched */
+/**
+ * Overlays KV lever overrides onto an env, leaving anything not on the allow-list untouched.
+ *
+ * TWO CALLERS, and there have to be two. This one runs in `src/site.ts` against the FRONT worker's
+ * env, which is where `GEN_BUCKET_MS` and `SITE_LOCATION_HINT` are read. The Durable Object receives
+ * its own copy of the bindings and cannot see this, so it overlays its own in `adoptSettings()` --
+ * for the whole life of the convention it did not, and the seven levers read only inside the object
+ * were knobs that configured nothing.
+ */
 export function withSettings<T extends object>(
 	env: T,
 	overrides: Partial<Record<KvOverridable, string>>

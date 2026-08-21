@@ -31,6 +31,7 @@
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { drupalVersion, installedVersion } from './fetch-drupal-tree';
 
 /** an external program a step shells out to, and how to get it */
 export type ToolId = 'bun' | 'node' | 'php' | 'composer' | 'docker' | 'zstd' | 'git' | 'tar';
@@ -60,6 +61,7 @@ export type StepId =
 	| 'twig'
 	| 'core'
 	| 'pack'
+	| 'static'
 	| 'sql'
 	| 'prefill';
 
@@ -313,6 +315,15 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		id: 'tree',
 		title: 'fetch the Drupal tree the packers read',
 		produces: ['drupal-src/core/lib/Drupal.php'],
+		/**
+		 * SATISFIED BY THE VERSION, not by the file existing.
+		 *
+		 * Keyed on presence alone, `DRUPAL_VERSION=11.4.6 bun run build:local` on a tree holding
+		 * 11.4.5 skipped this step -- and then skipped every downstream step too, because each
+		 * one's own output was still on disk. The command completed in 0.08 s, reported success,
+		 * and upgraded nothing. Measured 2026-08-21 while rehearsing a core upgrade.
+		 */
+		satisfied: (root) => installedVersion(join(root, 'drupal-src')) === drupalVersion(),
 		tools: ['bun', 'composer', 'tar'],
 		commands: () => [['bun', 'run', 'fetch:drupal']],
 		note: '~180 MB: the pinned core tarball plus the four contrib modules it does not carry'
@@ -432,6 +443,21 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		]
 	},
 	{
+		id: 'static',
+		title: 'copy the browser-fetchable core and contrib trees into the Workers Assets directory',
+		// one representative file per subtree rather than the directories, so a half-finished copy
+		// does not read as done the way a non-empty directory would. BOTH, because `assets/core/`
+		// cannot answer `/modules/contrib/**` and an enabled module's css would 404 without it
+		produces: ['assets/core/misc/drupal.js', 'assets/modules/contrib/token/css/token.css'],
+		inputs: ['drupal-src/core/lib/Drupal.php'],
+		tools: ['bun'],
+		commands: () => [['bun', 'run', 'assets:static']],
+		note:
+			'every pack SKIPs these extensions because PHP never opens them, and nothing serves a ' +
+			'file out of the MEMFS over HTTP -- so without this step every stylesheet, script and ' +
+			'font 404s'
+	},
+	{
 		id: 'sql',
 		title: 'chunk the site database into the migration the Durable Object replays',
 		produces: ['assets/drupal-sql/manifest.json'],
@@ -522,10 +548,18 @@ export function planLocalBuild(
 					: 'already done'
 			};
 		}
+		// "missing" is only true when the path is actually absent. A step with its own `satisfied`
+		// can be unsatisfied while every output exists -- the tree at the wrong VERSION is exactly
+		// that -- and reporting it as missing sends the reader looking for a file that is right there
+		const absent = step.produces.filter((path) => !populated(join(root, path)));
 		return {
 			step,
 			run: true,
-			reason: step.produces.length ? `missing ${step.produces.join(', ')}` : 'not done yet'
+			reason: absent.length
+				? `missing ${absent.join(', ')}`
+				: step.produces.length
+					? `out of date: ${step.produces.join(', ')}`
+					: 'not done yet'
 		};
 	});
 }

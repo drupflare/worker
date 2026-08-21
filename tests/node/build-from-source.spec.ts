@@ -28,6 +28,7 @@ import {
 import { resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
 import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
+import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
 
 /**
  * A clean checkout can build itself, and the ORDER is the product.
@@ -91,6 +92,12 @@ function satisfiedTree(): string {
 	for (const name of ['drupflare', 'rom', 'stream-http']) {
 		mkdirSync(join(root, '.siblings', name), { recursive: true });
 	}
+	// the tree step is satisfied by the VERSION rather than by the file existing, so the stub has to
+	// carry one -- a tree at the wrong version is exactly the case that used to skip silently
+	writeFileSync(
+		join(root, 'drupal-src/core/lib/Drupal.php'),
+		`<?php\nclass Drupal { const VERSION = '${SHIPPED_CORE_VERSION}'; }\n`
+	);
 	const renderer = join(root, 'drupal-src/core/lib/Drupal/Core/Render/Renderer.php');
 	mkdirSync(dirname(renderer), { recursive: true });
 	writeFileSync(renderer, 'new \\PhpWasmSyncFiber(');

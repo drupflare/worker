@@ -18,19 +18,16 @@ nothing could be verified. Re-run under <code>@cloudflare/vitest-pool-workers</c
 exist: an enable survives, a follow-up request answers, and TWO enables in one object survive --
 the exact case that killed wrangler dev hardest. The failure was miniflare's proxy controller, a
 component that only exists locally, and suspecting the instrument first was right.</p>
-<p>What that leaves is a configuration gap rather than a runtime one:</p>
-<ul>
-<li><code>admin_toolbar</code> and <code>ctools</code> are verified, with what was asserted recorded above.</li>
-<li><code>pathauto</code> enables cleanly and has NOTHING TO APPLY: no <code>pathauto.pattern.*</code> config ships, so
-a node save produces no alias. Installed, <code>ok: true</code>, and silently inert.</li>
-<li><code>token</code> is unverifiable for the same reason. Its behaviour is token replacement, and the only
-observable on this site would have been the alias pathauto did not generate.</li>
-</ul>
-<p>A deploy would not change any of this: the blocker is absent config, not the memory envelope, so
-it would reproduce identically on real infrastructure.</p>
+<p>What that left was a configuration gap rather than a runtime one, and <strong>the gap was closed by
+supplying the configuration rather than by waiting for it.</strong> This block used to record <code>pathauto</code>
+as inert (no <code>pathauto.pattern.*</code> ships, so a node save produces no alias) and <code>token</code> as
+unverifiable for the same reason. A pattern is a config entity a SITE OWNER creates, so the test
+creates one; both are now verified against an alias the run generated.</p>
+<p>The distinction worth keeping: absent CONFIGURATION is a fixture gap a test can fill, absent CODE
+is not. Twelve rows here are in the second class -- see <a href="ops_module-table.SHIPPING_PACK_CONTRIB.html" class="tsd-kind-variable">SHIPPING_PACK_CONTRIB</a>.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/ops/module-table.ts#L41">src/ops/module-table.ts:41</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/ops/module-table.ts#L77">src/ops/module-table.ts:77</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

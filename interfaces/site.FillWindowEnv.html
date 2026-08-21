@@ -15,9 +15,9 @@
 <div class="tsd-comment tsd-typography"><p>The bindings a window needs: the namespace, plus its two optional bounds.</p>
 <p>Narrower than the whole environment, so a caller that only has these can drive one.</p>
 </div></section>
-<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">FillWindowEnv</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#site">SITE</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">DurableObjectNamespace</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#window_max_fills">WINDOW_MAX_FILLS</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#window_wall_ms">WINDOW_WALL_MS</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">FillWindowEnv</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#site">SITE</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">DurableObjectNamespace</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#site_location_hint">SITE_LOCATION_HINT</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#window_max_fills">WINDOW_MAX_FILLS</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#window_wall_ms">WINDOW_WALL_MS</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/site.ts#L1026">src/site.ts:1026</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L1116">src/site.ts:1116</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -26,6 +26,7 @@
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading tsd-anchor-link" id="properties">Properties<a href="#properties" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-index-list"><a href="#site" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>SITE</span></a>
+<a href="#site_location_hint" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>SITE_<wbr/>LOCATION_<wbr/>HINT?</span></a>
 <a href="#window_max_fills" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>MAX_<wbr/>FILLS?</span></a>
 <a href="#window_wall_ms" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>WALL_<wbr/>MS?</span></a>
 </div></section></div></details></section></section>
@@ -36,17 +37,24 @@
 <h3 class="tsd-anchor-link" id="site"><span>SITE</span><a href="#site" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">SITE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">DurableObjectNamespace</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/site.ts#L1027">src/site.ts:1027</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L1117">src/site.ts:1117</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="site_location_hint"><code class="tsd-tag">Optional</code><span>SITE_<wbr/>LOCATION_<wbr/>HINT</span><a href="#site_location_hint" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">SITE_LOCATION_HINT</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
+<div class="tsd-comment tsd-typography"><p>carried so the window reaches the SAME object placement the serving path does</p>
+</div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L1121">src/site.ts:1121</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="window_max_fills"><code class="tsd-tag">Optional</code><span>WINDOW_<wbr/>MAX_<wbr/>FILLS</span><a href="#window_max_fills" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">WINDOW_MAX_FILLS</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/site.ts#L1028">src/site.ts:1028</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L1118">src/site.ts:1118</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="window_wall_ms"><code class="tsd-tag">Optional</code><span>WINDOW_<wbr/>WALL_<wbr/>MS</span><a href="#window_wall_ms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">WINDOW_WALL_MS</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/site.ts#L1029">src/site.ts:1029</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L1119">src/site.ts:1119</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -63,7 +71,7 @@
 <h3>On This Page</h3></summary>
 <div class="tsd-accordion-details">
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
-<div><a href="#site"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>SITE</span></a><a href="#window_max_fills"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>MAX_<wbr/>FILLS</span></a><a href="#window_wall_ms"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>WALL_<wbr/>MS</span></a></div></details></div></details></div>
+<div><a href="#site"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>SITE</span></a><a href="#site_location_hint"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>SITE_<wbr/>LOCATION_<wbr/>HINT</span></a><a href="#window_max_fills"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>MAX_<wbr/>FILLS</span></a><a href="#window_wall_ms"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>WINDOW_<wbr/>WALL_<wbr/>MS</span></a></div></details></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../modules.html">drupflare/worker - v1.0.0</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">

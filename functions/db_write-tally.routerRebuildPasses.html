@@ -19,20 +19,29 @@
 <div class="tsd-comment tsd-typography"><p>How many full router rebuilds a tally represents, read from statements rather than rows.</p>
 <p>A rebuild is exactly one <code>DELETE FROM router</code> plus <code>ceil(routes / routesPerStatement)</code> inserts,
 because <code>MatcherDumper::dump()</code> empties the table once and then re-inserts everything
-(<code>core/lib/Drupal/Core/Routing/MatcherDumper.php:98-143</code>). Core chunks at 50 routes, which is
-300 bound parameters and over the Durable Object ceiling of 100, so the driver re-chunks to 16.</p>
-<p>Returns <code>null</code> rather than 0 when the shape does not divide cleanly: a fractional answer means
-the assumed chunk size is wrong, and reporting &quot;2.4 rebuilds&quot; as 2 would launder that away.</p>
+(<code>core/lib/Drupal/Core/Routing/MatcherDumper.php:98-143</code>).</p>
+<p><strong>The default was 16 and the driver writes 1, so this returned <code>null</code> on every real enable.</strong>
+Measured 2026-08-19 on a <code>token</code> install: <strong>422 router statements over 420 routes</strong>, 2,518 charged
+rows, 5.97 rows per statement -- one statement per route, not fourteen. The old default came from
+the 100-bound-parameter ceiling over a 7-column row, which is what the driver COULD batch rather
+than what it does. With <code>perPass</code> computed as 28 instead of 421, <code>422 / 28</code> is fractional and the
+function refused to answer -- so <code>/enable</code> has reported <code>routerRebuilds: null</code> for its whole life,
+and nobody noticed because a null reads as &quot;not applicable&quot; rather than as a broken instrument.</p>
+<p>The residual is reported rather than rejected. An enable pays one pass plus a handful of
+incidental statements, and demanding exact divisibility turned &quot;1 rebuild, 1 statement
+unaccounted&quot; into no answer at all. A caller that needs strictness reads <code>residual</code>.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
 <li><span><span class="tsd-kind-parameter">tally</span>: <a href="../types/db_write-tally.WriteTally.html" class="tsd-signature-type tsd-kind-type-alias">WriteTally</a></span></li>
 <li><span><span class="tsd-kind-parameter">routes</span>: <span class="tsd-signature-type">number</span></span></li>
-<li><span><span class="tsd-kind-parameter">routesPerStatement</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = 16</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">routesPerStatement</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = 1</span></span>
+<div class="tsd-comment tsd-typography"><p>rows the driver puts in one INSERT; 1 is what it does today</p>
+</div></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/db/write-tally.ts#L197">src/db/write-tally.ts:197</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/db/write-tally.ts#L207">src/db/write-tally.ts:207</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

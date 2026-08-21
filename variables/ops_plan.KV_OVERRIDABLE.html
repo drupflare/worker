@@ -11,7 +11,7 @@
 <li><a href="../modules/ops_plan.html">ops/plan</a></li>
 <li><a href="" aria-current="page">KV_OVERRIDABLE</a></li></ul>
 <h1>Variable KV_OVERRIDABLE<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">KV_OVERRIDABLE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><br/>    <span class="tsd-signature-type">&quot;RENDER_BUDGET_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;FILL_BATCH_SIZE&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;FILL_BATCH_WALL_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;HTTP_DRAIN_LIMIT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;MIRROR_LIMIT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;LAZY_FS_BUDGET_BYTES&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;PREFILL&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;GEN_BUCKET_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">KV_OVERRIDABLE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><br/>    <span class="tsd-signature-type">&quot;RENDER_BUDGET_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;FILL_BATCH_SIZE&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;FILL_BATCH_WALL_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;HTTP_DRAIN_LIMIT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;MIRROR_LIMIT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;LAZY_FS_BUDGET_BYTES&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;PREFILL&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;GEN_BUCKET_MS&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;MAIL_TRANSPORT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;MAIL_DRAIN_LIMIT&quot;</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-signature-type">&quot;SITE_LOCATION_HINT&quot;</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>The ONLY env names KV may override.</p>
 <p>AN ALLOW-LIST, AND THIS IS A PRIVILEGE BOUNDARY RATHER THAN TIDINESS. KV is operator-writable, so
 merging an arbitrary object into the environment would let anyone with KV write set
@@ -20,9 +20,15 @@ merging an arbitrary object into the environment would let anyone with KV write 
 is a slow site; nothing here changes what is reachable.</p>
 <p><code>PLAN</code> is deliberately absent: it has its own key and its own resolver, because it selects a whole
 profile rather than one number.</p>
+<p>THE MAIL CREDENTIALS ARE ABSENT FOR THE SAME REASON <code>PW_DIAGNOSTICS</code> IS. <code>MAIL_TRANSPORT</code> and
+<code>MAIL_DRAIN_LIMIT</code> are here because their worst case is &quot;no mail&quot; or &quot;slower mail&quot;, and both only
+choose between transports the DEPLOYER already configured. <code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code>,
+<code>CF_EMAIL_TOKEN</code>, <code>CF_EMAIL_ACCOUNT_ID</code> and <code>MAIL_FROM</code> must never join them: a KV writer who could
+set <code>SMTP_HOST</code> would receive every password-reset link the site sends, which is a reach rather
+than a slow site.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/ops/plan.ts#L140">src/ops/plan.ts:140</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/ops/plan.ts#L147">src/ops/plan.ts:147</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

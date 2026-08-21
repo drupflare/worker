@@ -11,22 +11,29 @@
 <li><a href="../modules/ops_module-table.html">ops/module-table</a></li>
 <li><a href="" aria-current="page">SupportState</a></li></ul>
 <h1>Type Alias SupportState</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">SupportState</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;verified&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;supported&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocked&quot;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">SupportState</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;verified&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;untested&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocked&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>The module support table, EMITTED from the classifier rather than hand-written.</p>
 <p>A hand-maintained README table goes stale the first time a tier moves, and it goes stale silently
 because nothing compares it to anything. <code>tests/node/module-table.spec.ts</code> renders these rows and
 fails when <a href="http://README.md">README.md</a> disagrees -- the same discipline as the driver-pack byte-for-byte check.</p>
-<p><strong>THREE STATES, AND THE DIFFERENCE BETWEEN THE FIRST TWO IS EVIDENCE.</strong></p>
+<p><strong>THREE STATES, AND ONLY ONE OF THEM IS A SUPPORT CLAIM.</strong></p>
 <ul>
 <li><code>verified</code>  the gate enabled it against a real site and asserted it FUNCTIONS. Not that the
 installer returned ok; that a thing the module does actually happened.</li>
-<li><code>supported</code> classified as workable by capability analysis, not yet exercised. This is a
-reasoned claim, and saying so is the point.</li>
+<li><code>untested</code>  nobody has enabled it here. The capability analysis says it should work, which is
+an inference about the runtime and not an observation about the module.</li>
 <li><code>blocked</code>   cannot work, with the mechanism and what would lift it.</li>
 </ul>
+<p><strong><code>supported</code> WAS A STATE HERE AND IT WAS DISSOLVED</strong> (2026-08-18, Gregory's call). It meant
+&quot;the capability this module needs was measured WITHOUT the module&quot;, which is a reasoned claim and
+reads to anybody else as a promise. Renaming it <code>untested</code> is the whole fix: the row still carries
+the same evidence, and it no longer claims something no test has shown.</p>
+<p>The rule that replaces it: <strong>nothing reaches <code>verified</code> except through a gated enable-and-assert
+run.</strong> There is no path in this file that promotes a module on analysis alone, and adding one
+would put the old problem back under a new name.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/ops/module-table.ts#L19">src/ops/module-table.ts:19</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/ops/module-table.ts#L28">src/ops/module-table.ts:28</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

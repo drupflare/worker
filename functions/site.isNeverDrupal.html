@@ -17,6 +17,11 @@
 <div class="tsd-signature tsd-anchor-link" id="isneverdrupal"><span class="tsd-kind-call-signature">isNeverDrupal</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#isneverdrupal" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>True when the path cannot be a Drupal route under any configuration.</p>
+<p>The query string is stripped first, and that is a fix rather than a tidy-up. Four of the six
+patterns are <code>$</code>-anchored, and the only caller reads <code>?path=</code>, which the catch-all builds as
+<code>url.pathname + url.search</code> -- so <code>/.env</code> was refused and <code>/.env?x=1</code> walked straight through
+into a Durable Object hop and the permanent <code>cache_data</code> row this deny list exists to prevent.
+Appending a parameter is the first thing a scanner does.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +29,7 @@
 <li><span><span class="tsd-kind-parameter">pathname</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e722d33259addb99a0253b2c0e18fa6d517acf48/src/site.ts#L272">src/site.ts:272</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/aaf292ebb951dd892ae9b1a4a883bc20b9987f45/src/site.ts#L340">src/site.ts:340</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

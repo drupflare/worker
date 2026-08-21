@@ -225,6 +225,14 @@ Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter a
 ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.
 An explicitly named `payload_tag` that does not exist is still a hard error.
 
+**A COUNT TAKEN THROUGH THIS BOUNDARY MEASURES THE MACHINE, NOT THE REPOSITORY.** `vitest list`
+honours the exclusion, so the Class A `tests.cases.workers` metric read 1,862 in CI against 2,066 on
+a checkout that has the pack -- and it held still only because the list did. The commit that added
+two files to it was reported as deleting 21 tests. `DRUPFLARE_LIST_ALL=1` collects the excluded
+specs without running them, which is what the collector now passes; `tests/node/metrics.spec.ts`
+evaluates the config from a directory with no artifacts, both ways, so the control is what makes the
+assertion mean anything.
+
 ## A passing test does not mean anything calls it
 
 `src/ops/supervisor.ts` -- 11 tripwires, the health ledger, the circuit breaker,
@@ -264,7 +272,7 @@ bun run test      # vitest: --project=workers --project=node
 bun run typecheck # tsc --noEmit
 bunx prettier --check .
 bun run assets:driver      # repack after ANY change in a sibling
-bun run test:health        # 195 PHP assertions
+bun run test:health        # the sibling's health suite, 566 PHP assertions
 bun run check:reachability # which modules the edge imports; which are dead
 
 bun run hydrate         # a clean checkout -> deployable, from the release payload
@@ -289,12 +297,12 @@ Three vitest projects exist because workerd cannot do `node:child_process` or `n
 runs in workerd, `node` runs what needs a real PHP binary or filesystem, `e2e` needs a server and is
 excluded from `bun run test` on purpose.
 
-PHP suites live in the siblings, and **they are the authority on their own module** -- the copies
-under `drupal/` are what ships, not what is tested.
+PHP suites live in the siblings, and **they are the authority on their own module** -- what ships is
+`assets/driver.json`, packed from those same checkouts, and nothing tests the pack's PHP directly.
 
 | suite                                                            | repo           | assertions |
 | ---------------------------------------------------------------- | -------------- | ---------- |
-| `php tests/health-suite.php`                                     | `../drupflare` | 561        |
+| `php tests/health-suite.php`                                     | `../drupflare` | 566        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/load-classes.php`     | `../drupflare` | 94         |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 219        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-installer.php`    | `../rom`       | 16         |
@@ -303,6 +311,12 @@ under `drupal/` are what ships, not what is tested.
 `run-installer.php` drives Drupal's own installer against the driver with core's sqlite driver as a
 child-process control. It needs a real filesystem, so it is sibling-only and has no counterpart
 here.
+
+**This repo's gate checks the siblings out with no `composer install`.** A suite or fixture that
+needs `drupal/core` must therefore search `../../drupal-src/vendor/autoload.php` as well as its own
+`vendor/`, and supply `Drupal\drupflare\` itself, since only composer's autoloader maps it.
+`health-suite.php` searches both; a hardcoded path in `tests/fixtures/renamed-form-state.php` did
+not, and failed three assertions here while passing in its own repo.
 
 **Re-measure these counts before quoting them.** Every number in this table has been stale at least
 once, in both directions, and a count copied forward from a previous session is not a measurement.

@@ -6,11 +6,15 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { isSafePayloadPath, readManifest, verifyExtracted } from '../../scripts/hydrate.ts';
 import { FREE_CEILING } from '../../scripts/measure/bundle-size.ts';
 import {
+	ASSET_FILE_BYTES_LIMIT,
+	ASSET_FILE_LIMIT,
 	assertCoversAssetsIgnore,
+	assetUploadProblems,
 	buildManifest,
 	ceilingVerdict,
 	expandPlan,
 	interpreterFiles,
+	measureAssetUpload,
 	negatedPaths,
 	parseWranglerGzipBytes,
 	payloadName,
@@ -50,6 +54,7 @@ function checkout(seam: string, ignore?: string): string {
 	const root = fixture();
 	mkdirSync(join(root, 'src/runtime'), { recursive: true });
 	mkdirSync(join(root, 'assets/drupal'), { recursive: true });
+	mkdirSync(join(root, 'assets/core/misc'), { recursive: true });
 	mkdirSync(join(root, 'assets/drupal-pf'), { recursive: true });
 	mkdirSync(join(root, 'assets/drupal-sql'), { recursive: true });
 	mkdirSync(join(root, '.interp'), { recursive: true });
@@ -67,6 +72,8 @@ function checkout(seam: string, ignore?: string): string {
 				'/*',
 				'!/driver.json',
 				'!/prefill.json',
+				'!/core/',
+				'!/modules/',
 				'!/drupal-pf/',
 				'/drupal-pf/*',
 				'!/drupal-pf/core.pf.json',
@@ -77,6 +84,11 @@ function checkout(seam: string, ignore?: string): string {
 	writeFileSync(join(root, 'assets/drupal/twig-bake.json'), '{"prefix":"x"}');
 	writeFileSync(join(root, 'assets/driver.json'), '{"a":"b"}');
 	writeFileSync(join(root, 'assets/prefill.json'), '{}');
+	writeFileSync(join(root, 'assets/core/misc/drupal.js'), 'window.Drupal = {};');
+	// the contrib half: `assets/core/` cannot answer `/modules/contrib/**`, so an enabled module
+	// shipping its own css or js used to 404 on every page that included it
+	mkdirSync(join(root, 'assets/modules/contrib/token/css'), { recursive: true });
+	writeFileSync(join(root, 'assets/modules/contrib/token/css/token.css'), '.t{}');
 	writeFileSync(join(root, 'assets/drupal-pf/core.pf.json'), '[]');
 	writeFileSync(join(root, 'assets/drupal-pf/core.pf.bin'), 'binary');
 	writeFileSync(join(root, 'assets/drupal-sql/manifest.json'), '{"chunks":1}');
@@ -173,8 +185,11 @@ describe('expanding the plan to files', () => {
 		expect(files).toContain('assets/driver.json');
 		expect(files).toContain('assets/drupal-sql/0000.json');
 		expect(files).toContain('assets/drupal-sql/manifest.json');
+		// the static tree is a directory entry too, and it is walked rather than named
+		expect(files).toContain('assets/core/misc/drupal.js');
+		expect(files).toContain('assets/modules/contrib/token/css/token.css');
 		expect(files).toContain('.interp/zstddec.wasm');
-		expect(files.length).toBe(10);
+		expect(files.length).toBe(12);
 	});
 
 	it('carries the build records the gate reads and the edge never serves', () => {
@@ -418,5 +433,97 @@ describe('verifying an extraction against its manifest', () => {
 		expect(problems.join('\n')).toMatch(/prefill\.json is missing/);
 		expect(problems.join('\n')).toMatch(/driver\.json is 19 bytes/);
 		expect(problems.join('\n')).toMatch(/zstddec\.wasm sha256/);
+	});
+});
+
+/**
+ * The deploy-time class nothing else in this repository covers.
+ *
+ * The gate runs inside workerd and cannot see an upload; `--dry-run` prices the WORKER bundle and
+ * says nothing about the asset tree beside it. So the two limits Workers Static Assets enforces at
+ * upload time -- 20,000 files, 25 MiB each -- were unchecked until a deploy hit them, and CLAUDE.md
+ * records that a 48 MB `assets/` upload has already failed once.
+ *
+ * It stopped being hypothetical when `assets/core/` added 4,028 files in one change.
+ */
+describe('the asset tree against the upload limits', () => {
+	const upload = (over: Partial<Parameters<typeof assetUploadProblems>[0]> = {}) => ({
+		files: 10,
+		bytes: 100,
+		oversize: [],
+		...over
+	});
+
+	it('passes a tree inside both limits', () => {
+		expect(assetUploadProblems(upload())).toEqual([]);
+	});
+
+	it('refuses too many files, naming the count and the limit', () => {
+		const problems = assetUploadProblems(upload({ files: ASSET_FILE_LIMIT + 1 }));
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain(String(ASSET_FILE_LIMIT + 1));
+		expect(problems[0]).toContain(String(ASSET_FILE_LIMIT));
+	});
+
+	// exactly at the limit is allowed; the platform refuses ABOVE it
+	it('allows a tree exactly at the file limit', () => {
+		expect(assetUploadProblems(upload({ files: ASSET_FILE_LIMIT }))).toEqual([]);
+	});
+
+	it('refuses an oversized file by name, and reports every one', () => {
+		const problems = assetUploadProblems(
+			upload({
+				oversize: [
+					{ path: 'core/big.wasm', bytes: ASSET_FILE_BYTES_LIMIT + 1 },
+					{ path: 'drupal-pf/core.pf.bin', bytes: ASSET_FILE_BYTES_LIMIT * 2 }
+				]
+			})
+		);
+		expect(problems).toHaveLength(2);
+		expect(problems[0]).toContain('core/big.wasm');
+		expect(problems[1]).toContain('drupal-pf/core.pf.bin');
+	});
+
+	/**
+	 * DERIVED FROM `.assetsignore`, NOT FROM `readdirSync(assets)`. The directory holds ~121 MB of
+	 * build inputs and the edge receives a fraction of it, so counting the directory would fail a
+	 * deploy that would have succeeded.
+	 */
+	it('counts only what the ignore file ships', () => {
+		const root = fixture();
+		mkdirSync(join(root, 'assets/shipped'), { recursive: true });
+		mkdirSync(join(root, 'assets/withheld'), { recursive: true });
+		writeFileSync(join(root, 'assets/shipped/a.css'), 'a');
+		writeFileSync(join(root, 'assets/shipped/b.js'), 'bb');
+		writeFileSync(join(root, 'assets/withheld/huge.bin'), 'x'.repeat(4096));
+		writeFileSync(join(root, 'assets/loose.json'), '{}');
+
+		const measured = measureAssetUpload(root, '/*\n!/shipped/\n!/loose.json\n');
+		expect(measured.files).toBe(3);
+		expect(measured.bytes).toBe(1 + 2 + 2);
+		expect(measured.oversize).toEqual([]);
+	});
+
+	it('finds an oversized file inside a shipped directory', () => {
+		const root = fixture();
+		mkdirSync(join(root, 'assets/core/deep'), { recursive: true });
+		writeFileSync(
+			join(root, 'assets/core/deep/big.bin'),
+			'x'.repeat(ASSET_FILE_BYTES_LIMIT + 1)
+		);
+
+		const measured = measureAssetUpload(root, '/*\n!/core/\n');
+		expect(measured.files).toBe(1);
+		expect(measured.oversize).toHaveLength(1);
+		expect(measured.oversize[0]?.path).toBe('core/deep/big.bin');
+		expect(assetUploadProblems(measured)).toHaveLength(1);
+	});
+
+	// a path in the ignore file that is not on disk is a plan that has not been built yet, not a
+	// failure: `bun run hydrate` lands them later
+	it('skips a shipped path that does not exist', () => {
+		const root = fixture();
+		mkdirSync(join(root, 'assets'), { recursive: true });
+		expect(measureAssetUpload(root, '/*\n!/never-built/\n').files).toBe(0);
 	});
 });

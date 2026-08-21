@@ -24,6 +24,12 @@
  * `renderOne` retries a 202 twelve times before giving up -- so skipping it produces a run that looks
  * like a slow failure rather than a missing step.
  *
+ * AND IT RUNS WITH PREFILL OFF, which is the difference between a bake and a copy. `/migrate` seeds
+ * the serving table from the shipped `assets/prefill.json`, so with it on every `/serve` here is a
+ * HIT of the file being rebuilt: measured, all five pages came back byte-identical to the old
+ * artifact with `renderMs` carried across unchanged, and a config change made two steps earlier was
+ * nowhere in the output.
+ *
  * @see scripts/lift-prefill.ts for the render loop this drives, and what it measured
  * @see scripts/dev-server.ts for the boot
  */
@@ -59,7 +65,9 @@ export async function bakePrefill(
 	});
 	try {
 		console.log(`[prefill] migrating site=${site}`);
-		const passes = await migrateSite(dev.origin, site);
+		// prefill OFF, or the bake reads its own output: /migrate seeds cfw_page from the shipped
+		// prefill.json and /serve then answers a HIT, so the rebuild reproduces the stale file exactly
+		const passes = await migrateSite(dev.origin, site, { prefill: false });
 		console.log(`[prefill] migrated in ${passes} pass(es); rendering ${paths.length} paths`);
 		const prefill = await liftPrefill(dev.origin, site, paths, out);
 		return Object.keys(prefill);

@@ -260,8 +260,8 @@ async function main(): Promise<number> {
 			console.error(`no payload to hydrate from: ${source.reason}.`);
 			console.error(
 				'\n--payload-only forbids the source route. Drop it to build the artifacts locally\n' +
-					'(`bun run build:local`), point --from= at a tarball, or cut a release first --\n' +
-					'see PUBLISHING.md.'
+					'(`bun run build:local`), point --from= at a tarball, or cut a release first.\n' +
+					'See docs/building-from-source.md for what each route needs.'
 			);
 			return 1;
 		}

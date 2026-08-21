@@ -107,14 +107,24 @@ if (process.env.PACK_INDEX === '1') {
 	// -- packed as zero files while being present on disk and discoverable, which then fails at
 	// whichever class the trace never reached. Same shape as the doctrine/lexer miss that made
 	// vendor wholesale, pointed at `modules/contrib`.
+	//
+	// `vendor` and `libraries` are swept on the same flag, because a contrib module's composer
+	// dependency lands there rather than under `modules/contrib`: address needs
+	// commerceguys/addressing, svg_image needs enshrined/svg-sanitize, smtp needs phpmailer. The
+	// index predates all of them, so packing the module alone installs it and then fatals on a
+	// class -- the doctrine/lexer shape again, one directory over.
 	const contrib = new Set<string>();
-	for await (const p of process.env.PACK_CONTRIB === '1'
-		? glob('modules/contrib/**/*', { cwd: root })
-		: []) {
-		if (p.includes('/tests/') || p.includes('/Tests/')) continue;
-		if (p.includes('/node_modules/')) continue;
-		if (CONTRIB_SKIP.test(p)) continue;
-		contrib.add(p);
+	const fixtureTrees =
+		process.env.PACK_CONTRIB === '1'
+			? ['modules/contrib/**/*', 'vendor/**/*', 'libraries/**/*']
+			: [];
+	for (const tree of fixtureTrees) {
+		for await (const p of glob(tree, { cwd: root })) {
+			if (p.includes('/tests/') || p.includes('/Tests/')) continue;
+			if (p.includes('/node_modules/')) continue;
+			if (CONTRIB_SKIP.test(p)) continue;
+			contrib.add(p);
+		}
 	}
 	for (const p of indexed) contrib.delete(p);
 	paths = [...indexed, ...contrib];

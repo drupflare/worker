@@ -5,15 +5,19 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
 import {
+	abandonTransaction,
 	BOOT_KERNEL,
 	BOOT_PHASES,
 	bootPhaseFragment,
+	BOUNDARY_STATE,
 	CAPABILITY_CHECK,
+	createUser,
 	DRIVER_LIVE_SUITE,
 	drupalRequest,
 	exportDatabase,
 	firstRunConfig,
 	invalidateTags,
+	leakOutputBuffer,
 	MB_CHECK,
 	MIGRATE_DB,
 	OPS_REGISTRY,
@@ -102,6 +106,13 @@ const FRAGMENTS: Array<[string, string]> = [
 	...BOOT_PHASES.map(
 		(phase) => [`bootPhase_${phase}`, bootPhaseFragment(phase)] as [string, string]
 	),
+	// the static-state sweep's instruments; BOUNDARY_STATE carries a recursive closure and nested
+	// reflection, which is exactly the shape a truncated raw block leaves still parseable
+	['BOUNDARY_STATE', BOUNDARY_STATE],
+	['abandonTransaction_scope', abandonTransaction('scope')],
+	['abandonTransaction_global', abandonTransaction('global')],
+	['leakOutputBuffer', leakOutputBuffer(2)],
+	['createUser', createUser({ name: 'probe', pass: 'p', roles: ['content_editor'] })],
 	['cronHookList', cronHookList()],
 	['runCronHook', runCronHook('system')],
 	['runCronQueue', runCronQueue('my_queue', 3)],
@@ -241,5 +252,73 @@ describe('every PHP-carrying module still parses as TypeScript', () => {
 	it.each(modules)('%s imports', async (file) => {
 		const mod = await import(`../../src/drupal/${file}`);
 		expect(Object.keys(mod).length).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * A clock that reads 0 does not only misreport, it hangs.
+ *
+ * `microtime()` returns 0 inside this interpreter, and the expensive lesson was not a wrong figure
+ * -- it was `DatabaseLockBackend`, which stores `microtime(TRUE) + $timeout` as an expiry and tests
+ * it against `microtime(TRUE)`. With the clock at 0 no lock ever expires, `wait()` polls with
+ * `usleep()`, there are no threads to yield to, and 30 seconds are billed as CPU. `CfwLockBackend`
+ * in the `drupflare` sibling replaces it for exactly that reason.
+ *
+ * So the rule this guard enforces is narrow and mechanical: a fragment may READ the clock to
+ * report elapsed time, and may not DERIVE A DEADLINE from it. The two are distinguishable in the
+ * source -- a deadline adds to the clock, or compares against it in a loop -- which is what makes
+ * this a gate test rather than a review checklist. An audit that lives in someone's head is the
+ * thing that let the lock defect ship.
+ */
+describe('no PHP fragment derives a deadline from a clock that reads 0', () => {
+	const dir = join(ROOT, 'src/drupal');
+	const modules = readdirSync(dir).filter((f) => f.endsWith('.ts'));
+
+	/** a deadline: the clock with something added to it, or the clock inside a loop condition */
+	const DEADLINE = [
+		/microtime\s*\([^)]*\)\s*[*/]?\s*[\d.]*\s*\+/,
+		/\+\s*[\d.]+\s*[*/]?\s*[\d.]*\s*;?\s*\/\/\s*deadline/i,
+		/while\s*\([^)]*microtime/,
+		/usleep\s*\(/,
+		/set_time_limit\s*\(/
+	];
+
+	/**
+	 * Reading the clock to REPORT is fine and every fragment does it. Listed as shapes rather than
+	 * as file names, so a new fragment inherits the allowance without being added here.
+	 */
+	const MEASUREMENT = [
+		'$clock = function () { return microtime(true) * 1000; };',
+		'$t0 = microtime(true) * 1000;',
+		'microtime(true) * 1000 - $t0'
+	];
+
+	it('found the modules to scan, so this cannot pass by scanning nothing', () => {
+		expect(modules.length).toBeGreaterThanOrEqual(5);
+	});
+
+	it.each(modules)('%s', (file) => {
+		const source = readFileSync(join(dir, file), 'utf8');
+		const offenders: string[] = [];
+		for (const [index, line] of source.split('\n').entries()) {
+			// a comment ABOUT the hazard is not the hazard, and this file is full of them
+			const code = line.replace(/^\s*(\/\/|\*|#).*$/, '');
+			if (MEASUREMENT.some((allowed) => code.includes(allowed))) continue;
+			if (DEADLINE.some((re) => re.test(code)))
+				offenders.push(`${file}:${index + 1} ${code.trim()}`);
+		}
+		expect(offenders, offenders.join('\n')).toEqual([]);
+	});
+
+	it('the detector fires, so a green result means something', () => {
+		const fire = (code: string) => DEADLINE.some((re) => re.test(code));
+		// the exact shape DatabaseLockBackend uses, which is what this exists to keep out
+		expect(fire('$expire = microtime(TRUE) + $timeout;')).toBe(true);
+		expect(fire('while (microtime(true) < $deadline) { }')).toBe(true);
+		expect(fire('usleep(25000);')).toBe(true);
+		expect(fire('set_time_limit(30);')).toBe(true);
+		// and the reporting shapes every fragment uses must stay silent
+		expect(fire('$clock = function () { return microtime(true) * 1000; };')).toBe(false);
+		expect(fire("$out['renderMs'] = round($clock() - $t0, 2);")).toBe(false);
 	});
 });

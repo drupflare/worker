@@ -192,6 +192,21 @@ async function waitForReady(
 	}
 }
 
+/** how {@link migrateSite} drives the route */
+export interface MigrateOptions {
+	/** passes before the loop gives up; the route is resumable and reports its own cursor */
+	maxPasses?: number;
+	/**
+	 * Whether `/migrate` may seed the serving table from `assets/prefill.json`.
+	 *
+	 * `false` is what a BAKE needs, and it is not a preference. `/migrate` seeds `cfw_page` from the
+	 * shipped `prefill.json`, so a bake that leaves it on renders nothing: `/serve` answers a HIT of
+	 * the file the bake exists to replace, and the "new" artifact comes back byte-identical to the
+	 * old one -- `renderMs` included, which is what made it detectable at all.
+	 */
+	prefill?: boolean;
+}
+
 /**
  * Drives `/migrate` to completion, which is what makes `/serve` render rather than answer 202.
  *
@@ -202,21 +217,36 @@ async function waitForReady(
  * @param origin - a booted {@link DevServer}'s origin
  * @param site - the site id to migrate, which must be the one the renders then ask for
  * @returns how many passes it took
- * @throws when the route stops answering JSON, or does not finish inside `maxPasses`
+ * @throws when the route stops answering JSON, does not finish inside `maxPasses`, or prefilled the
+ *   serving table after `prefill: false` asked it not to
  */
-export async function migrateSite(origin: string, site: string, maxPasses = 200): Promise<number> {
+export async function migrateSite(
+	origin: string,
+	site: string,
+	opts: MigrateOptions = {}
+): Promise<number> {
+	const { maxPasses = 200, prefill = true } = opts;
 	for (let pass = 0; pass < maxPasses; pass++) {
 		const url = new URL('/migrate', origin);
 		url.searchParams.set('site', site);
 		url.searchParams.set('all', '1');
+		if (!prefill) url.searchParams.set('prefill', '0');
 		const res = await fetch(url, { signal: AbortSignal.timeout(300_000) });
 		const text = await res.text();
-		let body: { done?: boolean } | null = null;
+		let body: { done?: boolean; prefilled?: number } | null = null;
 		try {
-			body = JSON.parse(text) as { done?: boolean };
+			body = JSON.parse(text) as { done?: boolean; prefilled?: number };
 		} catch {
 			throw new Error(
 				`/migrate returned no JSON (HTTP ${res.status}): ${text.slice(0, 400)}`
+			);
+		}
+		// a probe that cannot fail is not a probe: the caller asked for an unseeded site and every
+		// page it then lifts is only a render if this stayed zero
+		if (!prefill && (body?.prefilled ?? 0) > 0) {
+			throw new Error(
+				`/migrate prefilled ${body?.prefilled} page(s) after prefill=0; every page lifted ` +
+					'from this site would be a copy of assets/prefill.json rather than a render'
 			);
 		}
 		if (body?.done === true) return pass + 1;

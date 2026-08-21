@@ -18,7 +18,7 @@
  * either file that this script cannot carry fails the build instead of shipping a short payload.
  *
  * @see scripts/hydrate.ts for the consuming half
- * @see PUBLISHING.md for the release flow this is step one of
+ * @see docs/building-from-source.md for the two routes a clean checkout can take
  */
 
 import { execFileSync } from 'node:child_process';
@@ -52,6 +52,8 @@ export type PlanEntry = { readonly path: string; readonly dir?: boolean };
 export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/driver.json' },
 	{ path: 'assets/prefill.json' },
+	{ path: 'assets/core', dir: true },
+	{ path: 'assets/modules', dir: true },
 	{ path: 'assets/drupal-pf/core.pf.json' },
 	{ path: 'assets/drupal-pf/core.pf.bin' },
 	{ path: 'assets/drupal-sql', dir: true }
@@ -269,6 +271,8 @@ export function expandPlan(root: string, plan: ReturnType<typeof payloadPlan>): 
 const PRODUCED_BY: Record<string, string> = {
 	'assets/driver.json': 'bun run assets:driver',
 	'assets/prefill.json': 'bun scripts/lift-prefill.ts (needs a running worker)',
+	'assets/core': 'bun run assets:static (needs drupal-src)',
+	'assets/modules': 'bun run assets:static (needs drupal-src)',
 	'assets/drupal/twig-bake.json': 'bun run assets:twig',
 	'assets/drupal-pf': 'bun run assets:twig && bun run assets:core && bun run assets:pack',
 	'assets/drupal-sql': 'bun run assets:sql (needs assets/drupal/site.sqlite)',
@@ -434,6 +438,112 @@ function gitCommit(root: string): string {
 	}
 }
 
+/**
+ * What Workers Static Assets refuses at UPLOAD time.
+ *
+ * Documented platform limits, not measurements: **20,000 files** per deploy and **25 MiB** per file.
+ * They are here because they are the deploy-time class nothing else in this repo covers -- the gate
+ * runs inside workerd and cannot see an upload, and `--dry-run` prices the WORKER bundle while
+ * saying nothing about the asset tree beside it.
+ *
+ * It stopped being hypothetical when `assets/core/` added 4,028 files in one change. CLAUDE.md
+ * records that a 48 MB `assets/` upload has already failed once.
+ */
+export const ASSET_FILE_LIMIT = 20_000;
+export const ASSET_FILE_BYTES_LIMIT = 25 * 1024 * 1024;
+
+/** what the asset tree would cost a deploy */
+export interface AssetUpload {
+	files: number;
+	bytes: number;
+	oversize: { path: string; bytes: number }[];
+}
+
+/**
+ * Walks what `.assetsignore` actually ships, counting files and finding any that are too large.
+ *
+ * Derived from the ignore file rather than from `readdirSync(assets)`, because the directory holds
+ * ~121 MB of build inputs and the edge receives a fraction of it -- counting the directory would
+ * fail a deploy that would have succeeded, which is worse than not checking.
+ */
+export function measureAssetUpload(root: string, ignoreSource: string): AssetUpload {
+	const out: AssetUpload = { files: 0, bytes: 0, oversize: [] };
+	const walk = (abs: string, rel: string): void => {
+		let entries;
+		try {
+			entries = readdirSync(abs, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const childAbs = join(abs, entry.name);
+			const childRel = `${rel}/${entry.name}`;
+			if (entry.isDirectory()) {
+				walk(childAbs, childRel);
+				continue;
+			}
+			if (!entry.isFile()) continue;
+			const bytes = statSync(childAbs).size;
+			out.files += 1;
+			out.bytes += bytes;
+			if (bytes > ASSET_FILE_BYTES_LIMIT) out.oversize.push({ path: childRel, bytes });
+		}
+	};
+
+	for (const path of shippedPaths(ignoreSource)) {
+		// `.assetsignore` writes its paths rooted (`/core`); the leading slash is notation rather
+		// than part of the name, and leaving it on puts `//core/x` in the refusal message
+		const rel = path.replace(/^\/+/, '');
+		const abs = join(root, 'assets', rel);
+		let stat;
+		try {
+			stat = statSync(abs);
+		} catch {
+			continue;
+		}
+		if (stat.isDirectory()) walk(abs, rel);
+		else {
+			out.files += 1;
+			out.bytes += stat.size;
+			if (stat.size > ASSET_FILE_BYTES_LIMIT)
+				out.oversize.push({ path: rel, bytes: stat.size });
+		}
+	}
+	return out;
+}
+
+/** the assertion, separated from the walk so a spec can drive it with a synthetic measurement */
+export function assetUploadProblems(upload: AssetUpload): string[] {
+	const problems: string[] = [];
+	if (upload.files > ASSET_FILE_LIMIT) {
+		problems.push(
+			`${upload.files} asset files against the ${ASSET_FILE_LIMIT} per-deploy limit`
+		);
+	}
+	for (const { path, bytes } of upload.oversize) {
+		problems.push(
+			`${path} is ${bytes} bytes, over the ${ASSET_FILE_BYTES_LIMIT} per-file limit`
+		);
+	}
+	return problems;
+}
+
+/** Prices the asset tree against the upload limits. Reads the filesystem; needs no credential. */
+function checkAssets(root: string): AssetUpload {
+	const ignoreSource = readFileSync(join(root, 'assets/.assetsignore'), 'utf8');
+	const upload = measureAssetUpload(root, ignoreSource);
+	const problems = assetUploadProblems(upload);
+	console.log(
+		`assets ${upload.files} files / ${upload.bytes} bytes against ` +
+			`${ASSET_FILE_LIMIT} files and ${ASSET_FILE_BYTES_LIMIT} per file: ` +
+			(problems.length === 0
+				? `fits, ${ASSET_FILE_LIMIT - upload.files} files under`
+				: `REFUSED\n  ${problems.join('\n  ')}`)
+	);
+	if (problems.length > 0) throw new Error('the asset tree would be refused at upload');
+	return upload;
+}
+
 /** Dry-runs the canonical config and prices the bundle. Needs no credential; measured, not assumed. */
 function checkBundle(root: string): number {
 	const outdir = join(root, 'dist/dry-run');
@@ -469,6 +579,8 @@ if (import.meta.main) {
 
 	if (has('check-bundle')) {
 		checkBundle(root);
+		// the deploy-time class the bundle figure says nothing about
+		checkAssets(root);
 		process.exit(0);
 	}
 
@@ -480,8 +592,7 @@ if (import.meta.main) {
 		for (const { path, kind } of seeded) console.error(`  ${path}  ${kind}`);
 		console.error(
 			'\nEvery site deployed from this payload would share them. Strip the rows, rotate on\n' +
-				'first boot, or pass --allow-seeded-credentials to publish anyway. See\n' +
-				'PUBLISHING.md, "Seeded Credentials".'
+				'first boot, or pass --allow-seeded-credentials to publish anyway.'
 		);
 		process.exit(1);
 	}

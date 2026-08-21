@@ -32,11 +32,11 @@ import { writeFileSync } from 'node:fs';
  * divergence regardless of which icon wins, because it takes whatever the runtime says.
  *
  * `assets/prefill.json` has now been rebuilt through this script and is no longer the native
- * artifact. Measured after the rebuild: `/` is **12,304 bytes / sha1 10077de5f0bd**, byte-identical
+ * artifact. Measured after the rebuild: `/` is **17,686 bytes / sha1 9e0ffe64f622**, byte-identical
  * to what `/serve` returns, with **zero** `--2` ids where the native file had 5, 10 and 3, and no
- * `/core/themes/olivero/favicon.ico` anywhere. Whether the pack should also ship the theme's own
- * icon is a separate cosmetic call -- both URLs 404 for a visitor today, since `assets/` serves no
- * Drupal core tree.
+ * `/core/themes/olivero/favicon.ico` anywhere. `assets/` now DOES serve the Drupal core tree
+ * (`scripts/pack-static.ts`), so `/core/misc/favicon.ico` resolves and the theme's own icon is the
+ * only one still missing -- a cosmetic call rather than a broken page.
  *
  * That matters because prefill is the DEFAULT on free: a prefilled path is a HIT on its first
  * ever request, so whatever is in this file IS the page the visitor sees. Shipping HTML the site

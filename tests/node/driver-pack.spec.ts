@@ -8,14 +8,17 @@ import {
 
 /**
  * `assets/driver.json` is the copy of the Drupal modules that ACTUALLY EXECUTES on the edge, and
- * it is generated rather than copied, so nothing about it is guaranteed by the file-by-file
- * comparison in `check-module-sync.ts`.
+ * it is generated rather than copied, so this is the ONLY thing that ties it to its inputs.
  *
  * It has gone silently stale twice: once after a PHP formatting pass, and again when
- * `drupflare` gained its Health and Ops layers, where it sat 38,004 bytes short of the tree
- * it claimed to pack while `check:sync` reported everything in sync. A stale pack means the
- * deployed PHP is not the PHP in the repo, and the sibling repos' 77- and 132-assertion suites
- * are then testing code that does not ship.
+ * `drupflare` gained its Health and Ops layers, where it sat 38,004 bytes short of the tree it
+ * claimed to pack. A stale pack means the deployed PHP is not the PHP in the repo, and the sibling
+ * repos' own suites are then testing code that does not ship.
+ *
+ * There used to be a second check comparing three copies of each module file by mtime. It was
+ * deleted, correctly: after a formatting pass in this repo it declared the stale local copy newer
+ * than the sibling holding the real fix. The packer now reads `../drupflare` and `../rom` directly,
+ * so there is no third copy to drift and nothing left for such a check to compare.
  *
  * These run in the `node` project because they touch the real filesystem and import a build
  * script; `node:fs` is not available in workerd.

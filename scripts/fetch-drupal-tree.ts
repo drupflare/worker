@@ -140,6 +140,29 @@ function installContrib(pins: string[]): void {
 }
 
 /**
+ * Deletes the tree, having first made every directory writable.
+ *
+ * `rmSync(recursive, force)` is NOT enough here and the failure is destructive. Drupal's installer
+ * leaves `drupal-src/sites/build` at mode 0555, and bun's `rmSync` throws `ENOTEMPTY` on it AFTER
+ * it has already deleted `core/` -- so `--force` leaves a tree with no core and 4,253 orphaned
+ * entries, and re-running fails at exactly the same place. Measured 2026-08-21 while rehearsing a
+ * core upgrade; the documented `--force` rebuild could not complete on a tree that had ever been
+ * installed into.
+ *
+ * `force: true` on rmSync means "do not error if the path is absent". It has nothing to do with
+ * permissions, which is the reading that made this look already handled.
+ */
+function removeTree(path: string): void {
+	// chmod before unlink: a directory needs the write bit to have entries removed FROM it
+	try {
+		execFileSync('chmod', ['-R', 'u+w', path]);
+	} catch {
+		// a tree that cannot be chmod'd may still be removable; let rmSync report the real reason
+	}
+	rmSync(path, { recursive: true, force: true });
+}
+
+/**
  * Puts the requested version in `drupal-src/`, or explains why it will not.
  *
  * A tree already at the requested version is left alone: it is 180 MB and re-extracting it would
@@ -164,7 +187,7 @@ export async function fetchDrupalTree(
 	let action: FetchTreeResult['action'] = 'already-present';
 	if (present !== version || force) {
 		const tarball = await downloadTarball(version);
-		if (existsSync(DRUPAL_TREE)) rmSync(DRUPAL_TREE, { recursive: true, force: true });
+		if (existsSync(DRUPAL_TREE)) removeTree(DRUPAL_TREE);
 		mkdirSync(DRUPAL_TREE, { recursive: true });
 		// --strip-components=1 drops the `drupal-<version>/` wrapper the release tarball carries,
 		// which is what build.yml did inline before this script existed

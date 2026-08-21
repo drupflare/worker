@@ -39,6 +39,43 @@ function parseArgs(argv: string[]): Args {
 export type GroupRow = { group: string; value: number };
 
 /**
+ * One invocation, as the `events` view returns it.
+ *
+ * THE CALCULATIONS VIEW OMITS ZERO-VALUED GROUPS, and that is why this exists. Measured 2026-08-20
+ * against `cfw-bench`: 360 tagged invocations were driven, 347 of them cost `cpuTimeMs: 0`, and a
+ * `max` calculation grouped by tag returned **13 groups** -- the 3 that cost 1 ms and the 10 that
+ * cost 2 ms. The query succeeded, returned no error, and reported a median of 2 ms built from 3.6%
+ * of the data. The true median is 0.
+ *
+ * A serving path that costs under the meter's 1 ms resolution is the NORMAL case here, so an
+ * instrument that can only see the tail is an instrument that inverts the answer. The events view
+ * returns every invocation, zeros included.
+ */
+export type InvocationRow = { tag: string | null; cpuMs: number; wallMs: number; outcome: string };
+
+/** flattens the events response, keeping every invocation including the zero-cost ones */
+export function flattenEvents(body: any, groupParam = 'tag'): InvocationRow[] {
+	const events = body?.result?.events?.events ?? [];
+	const out: InvocationRow[] = [];
+	for (const e of events) {
+		const w = e?.$workers;
+		if (!w) continue;
+		const cpuMs = w.cpuTimeMs;
+		// a dropped event carries no cpuTimeMs at all; that is absent, not zero
+		if (typeof cpuMs !== 'number') continue;
+		const search = w.event?.request?.search ?? {};
+		const raw = search[groupParam];
+		out.push({
+			tag: raw === undefined || raw === null ? null : String(raw),
+			cpuMs,
+			wallMs: typeof w.wallTimeMs === 'number' ? w.wallTimeMs : 0,
+			outcome: String(w.outcome ?? 'unknown')
+		});
+	}
+	return out;
+}
+
+/**
  * Flattens the calculations response into `group -> value` pairs.
  *
  * The API answers a grouped calculation as one entry per group with the aggregate under the
@@ -60,6 +97,21 @@ export function flattenCalculations(body: any, alias: string, groupKey: string):
 	return out;
 }
 
+/**
+ * A timeframe bound as the API wants it, which is epoch MILLISECONDS.
+ *
+ * It used to send the ISO-8601 string straight through and the endpoint answers
+ * `ZodError: expected number` -- so the repo's only tool for reading the one CPU figure RULE 0
+ * accepts had been failing on every call. ISO in is still accepted here and converted.
+ */
+export function epochMillis(value: string, flag: string): number {
+	const raw = value.trim();
+	if (/^\d+$/.test(raw)) return Number(raw);
+	const parsed = Date.parse(raw);
+	if (Number.isNaN(parsed)) throw new Error(`${flag} is not ISO-8601 or epoch millis: ${value}`);
+	return parsed;
+}
+
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 	const token = process.env.CLOUDFLARE_API_TOKEN;
@@ -67,10 +119,13 @@ async function main(): Promise<void> {
 	const service = args.service ?? 'cfw-measure';
 	const from = args.from;
 	const to = args.to;
-	if (!from || !to) throw new Error('--from and --to (ISO-8601 Z) are required');
+	if (!from || !to) throw new Error('--from and --to (ISO-8601 Z, or epoch millis) are required');
 	const groupKey = args.group ?? '$workers.event.request.search.tag';
+	const groupParam = groupKey.split('.').pop() ?? 'tag';
 	const model = args.model ?? 'durableObject';
-	const limit = Number(args.limit ?? 500);
+	const limit = Number(args.limit ?? 1000);
+	// the calculations view drops zero-cost groups, so it is opt-in and never the default
+	const view = args.view === 'calculations' ? 'calculations' : 'events';
 
 	const filters: unknown[] = [
 		{ key: '$metadata.service', operation: 'eq', type: 'string', value: service }
@@ -84,6 +139,19 @@ async function main(): Promise<void> {
 		});
 	}
 
+	const parameters: Record<string, unknown> = {
+		datasets: ['cloudflare-workers'],
+		filterCombination: 'and',
+		filters,
+		limit
+	};
+	if (view === 'calculations') {
+		parameters.calculations = [
+			{ operator: 'max', key: '$workers.cpuTimeMs', keyType: 'number', alias: 'cpuMs' }
+		];
+		parameters.groupBys = [{ type: 'string', value: groupKey }];
+	}
+
 	const res = await fetch(
 		`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/workers/observability/telemetry/query`,
 		{
@@ -94,38 +162,42 @@ async function main(): Promise<void> {
 			},
 			body: JSON.stringify({
 				queryId: 'obs-cpu',
-				view: 'calculations',
+				view,
 				dry: false,
 				limit,
-				parameters: {
-					datasets: ['cloudflare-workers'],
-					filterCombination: 'and',
-					filters,
-					calculations: [
-						{
-							operator: 'max',
-							key: '$workers.cpuTimeMs',
-							keyType: 'number',
-							alias: 'cpuMs'
-						}
-					],
-					groupBys: [{ type: 'string', value: groupKey }],
-					limit
-				},
-				timeframe: { from, to }
+				parameters,
+				timeframe: { from: epochMillis(from, '--from'), to: epochMillis(to, '--to') }
 			})
 		}
 	);
 	const body: any = await res.json();
 	if (body?.success === false) {
-		throw new Error(`observability query failed: ${JSON.stringify(body.errors)}`);
+		// the payload carries its validation errors under `_c`, not `errors`, so reporting
+		// `body.errors` printed "undefined" for every rejected query
+		const detail = body.errors?.length ? body.errors : (body._c ?? body);
+		throw new Error(`observability query failed: ${JSON.stringify(detail)}`);
 	}
-	const rows = flattenCalculations(body, 'cpuMs', groupKey);
+
+	if (view === 'calculations') {
+		const rows = flattenCalculations(body, 'cpuMs', groupKey);
+		if (rows.length === 0)
+			console.error('# no groups returned; widen --from/--to or check --service');
+		console.error('# calculations view: groups costing 0 ms are ABSENT, not zero');
+		for (const r of rows.sort((a, b) => b.value - a.value)) {
+			console.log(`${r.group}\t${r.value}`);
+		}
+		return;
+	}
+
+	const rows = flattenEvents(body, groupParam);
 	if (rows.length === 0) {
-		console.error('# no groups returned; widen --from/--to or check --service');
+		console.error('# no invocations returned; widen --from/--to or check --service');
 	}
-	for (const r of rows.sort((a, b) => b.value - a.value)) {
-		console.log(`${r.group}\t${r.value}`);
+	const untagged = rows.filter((r) => r.tag === null).length;
+	if (untagged > 0) console.error(`# ${untagged} invocations carried no ?${groupParam}=`);
+	for (const r of rows) {
+		if (r.tag === null) continue;
+		console.log(`${r.tag}\t${r.cpuMs}`);
 	}
 }
 

@@ -30,6 +30,12 @@
 !/driver.json
 !/prefill.json
 
+# the Drupal static tree, which the BROWSER fetches at /core/**. Every pack skips these extensions
+# because PHP never opens them, and nothing serves a file out of the MEMFS over HTTP -- so the asset
+# layer is the only thing that can answer them. scripts/pack-static.ts writes it
+!/core/
+!/modules/
+
 # the lazy mount's per-file pack; prefix is fixed at drupal-pf in @drupflare/cartridge/fs
 !/drupal-pf/
 /drupal-pf/*

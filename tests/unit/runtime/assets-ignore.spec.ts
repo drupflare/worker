@@ -22,6 +22,12 @@ import wranglerSource from '../../../wrangler.jsonc?raw';
  * Reached through the real `ASSETS` binding rather than by reimplementing gitignore matching:
  * the pool serves `assets/` through the same `.assetsignore` wrangler uploads through, so a
  * 404 here is the same 404 the edge would give.
+ *
+ * The `/core/**` half is a second defect and not the same one. Nothing in `src/` reads those paths;
+ * the BROWSER does, and every pack drops their extensions on the reasoning that PHP never opens
+ * them -- true, and irrelevant, because nothing serves a file out of the PHP MEMFS over HTTP either.
+ * So the asset layer is the only thing that can answer them, and until it did every stylesheet,
+ * script and font on every page 404'd.
  */
 
 /** Every path the shipping runtime fetches through ASSETS, with the call site that fetches it. */
@@ -32,6 +38,25 @@ const SHIPPING = [
 	['/drupal-pf/core.pf.bin', 'mountDrupalLazy, src/runtime/lazy-fs.ts'],
 	['/drupal-sql/manifest.json', 'assetChunkLoader, src/db/migrate-sql.ts'],
 	['/drupal-sql/0000.json', 'assetChunkLoader, src/db/migrate-sql.ts']
+] as const;
+
+/**
+ * Static files the BROWSER fetches, which no call site in `src/` reads.
+ *
+ * A different failure from the rest of this file, and it is the reason `/core/` is served at all:
+ * every pack SKIPs `css|js|woff2|...` because PHP never opens them, and nothing serves a file out of
+ * the PHP MEMFS over HTTP -- so before `scripts/pack-static.ts` these 404'd and the site rendered
+ * unstyled with no fonts. One of each kind, because the three arrive by different Drupal mechanisms:
+ * a `<script>` from a library definition, a `<link>` from the theme, and a `url()` inside that
+ * stylesheet.
+ */
+const STATIC = [
+	['/core/misc/drupal.js', 'a library <script>'],
+	['/core/themes/olivero/css/base/fonts.css', 'a theme <link>'],
+	['/core/themes/olivero/fonts/lora/lora-v14-latin-regular.woff2', 'a url() inside that CSS'],
+	// the contrib half, and it is a different subtree rather than a deeper path: `assets/core/`
+	// cannot answer `/modules/**`, so the first enabled module shipping its own css 404s
+	['/modules/contrib/token/css/token.css', 'a contrib module stylesheet']
 ] as const;
 
 /**
@@ -55,10 +80,61 @@ const WITHHELD = [
 
 const asset = (path: string) => env.ASSETS.fetch(new URL(`https://a.local${path}`));
 
+/** the prefilled pages, read through the binding rather than imported, so the 103 KB stays out */
+const prefilledPages = async (): Promise<{ html: string }[]> =>
+	Object.values(
+		(await (await asset('/prefill.json')).json()) as Record<string, { html: string }>
+	);
+
 describe('the canonical config serves every asset the shipping runtime reads', () => {
 	it.each(SHIPPING)('serves %s (%s)', async (path) => {
 		const res = await asset(path);
 		expect(res.status).toBe(200);
+	});
+});
+
+describe('the canonical config serves the static tree the browser reads', () => {
+	it.each(STATIC)('serves %s (%s)', async (path) => {
+		const res = await asset(path);
+		expect(res.status).toBe(200);
+		expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0);
+	});
+
+	it('negates /core/ without re-ignoring its contents', () => {
+		// `!/dir/` plus `/dir/*` is the idiom that reaches INTO a directory without shipping it, and
+		// it is what drupal-pf uses two lines below. Doing that here would serve nothing
+		const rules = ignoreSource
+			.split('\n')
+			.map((l) => l.trim())
+			.filter((l) => l !== '' && !l.startsWith('#'));
+		expect(rules).toContain('!/core/');
+		expect(rules).not.toContain('/core/*');
+	});
+
+	it('keeps the aggregator off, because an aggregate has no file to read', async () => {
+		// with the raw tree served there is nothing for preprocessing to buy, and both its outcomes
+		// break: a hash mismatch 301s, and a match sends JsOptimizer at a file no pack carries
+		for (const page of await prefilledPages()) {
+			expect(page.html).not.toMatch(/\/files\/(css\/css_|js\/js_)/);
+		}
+	});
+
+	it('serves every core asset the prefilled pages reference', async () => {
+		// the prefill IS the first page a visitor sees, so a URL in it that 404s is a broken render
+		// rather than a missing optimisation
+		const referenced = new Set<string>();
+		for (const page of await prefilledPages()) {
+			for (const m of page.html.matchAll(/\/core\/[A-Za-z0-9/_.@-]+\.[a-z0-9]{2,5}/g)) {
+				referenced.add(m[0]);
+			}
+		}
+		expect(referenced.size).toBeGreaterThan(50);
+
+		const missing: string[] = [];
+		for (const path of referenced) {
+			if ((await asset(path)).status !== 200) missing.push(path);
+		}
+		expect(missing).toEqual([]);
 	});
 });
 

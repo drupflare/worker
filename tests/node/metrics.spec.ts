@@ -12,6 +12,7 @@ import {
 	collectPackShape,
 	countSpecFiles,
 	isSkipped,
+	LIST_ENV,
 	type BundleMetric,
 	type MetricsDocument
 } from '../../scripts/measure/collect-metrics';
@@ -145,6 +146,40 @@ describe('the collector produces only reproducible figures', () => {
 	it('counts spec files off the filesystem rather than off a run', () => {
 		expect(countSpecFiles(join(ROOT, 'tests/node'))).toBeGreaterThan(10);
 		expect(countSpecFiles(join(scratch, 'nowhere'))).toBe(0);
+	});
+});
+
+/**
+ * The case count must be a property of the repository, not of the machine that ran the collector.
+ *
+ * `ARTIFACT_SPECS` drops the specs that need the pack, so `vitest list` enumerated 1,862 cases in
+ * CI against 2,066 on a checkout that has one. Nothing noticed while the list held still; the day
+ * two files joined it the gate read 21 tests as deleted and failed a commit that deleted none.
+ *
+ * Both cases below evaluate the config from a directory where every artifact path is unreachable,
+ * which is the CI condition. The control is what makes the second assertion mean anything: without
+ * it, a config that never excluded anything would pass.
+ */
+describe('the case count does not move with what this machine has on disk', () => {
+	const CONFIG = join(ROOT, 'vitest.config.ts');
+
+	function excludeWithNoArtifacts(env: Record<string, string> = {}): string[] {
+		const read = `console.log(JSON.stringify((await import(${JSON.stringify(CONFIG)})).default.test.projects[0].test.exclude))`;
+		const out = execFileSync('bun', ['-e', read], {
+			cwd: scratch,
+			encoding: 'utf8',
+			env: { ...process.env, ...env },
+			stdio: ['ignore', 'pipe', 'ignore']
+		});
+		return JSON.parse(out) as string[];
+	}
+
+	it('CONTROL: a checkout with no artifacts really does drop spec files', () => {
+		expect(excludeWithNoArtifacts().length).toBeGreaterThan(15);
+	});
+
+	it('collects all of them under exactly the environment the collector runs', () => {
+		expect(excludeWithNoArtifacts({ ...LIST_ENV })).toEqual([]);
 	});
 });
 

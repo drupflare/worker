@@ -69,6 +69,17 @@ const ARTIFACT_SPECS = [
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 
+/**
+ * Collect the artifact specs anyway, without running them.
+ *
+ * `vitest list` is how the metrics collector counts cases, and a count that moves with what this
+ * machine happens to have on disk is an environment reading rather than a measurement -- CI has no
+ * pack, so it counted 204 fewer cases than a developer's checkout and read a lane boundary as
+ * deleted tests. Collection only imports a spec file; nothing here reads an artifact at module
+ * scope, so the enumeration is the same either way.
+ */
+const listAll = process.env.DRUPFLARE_LIST_ALL === '1';
+
 const haveShipping = existsSync(SHIPPING_WASM) && existsSync(SHIPPING_GLUE);
 const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 
@@ -85,7 +96,7 @@ if (haveShipping) {
 }
 
 // never a silent reduction in coverage: the lane says what it dropped and how to get it back
-if (!haveArtifacts) {
+if (!haveArtifacts && !listAll) {
 	console.error(
 		`[vitest] SKIPPING ${ARTIFACT_SPECS.length} spec files that need a build artifact ` +
 			`(${haveBinary ? 'have' : 'no'} interpreter, ${havePack ? 'have' : 'no'} pack, ` +
@@ -136,7 +147,7 @@ export default defineConfig({
 				test: {
 					name: 'workers',
 					include: ['tests/unit/**/*.spec.ts', 'tests/integration/**/*.spec.ts'],
-					exclude: haveArtifacts ? [] : ARTIFACT_SPECS,
+					exclude: haveArtifacts || listAll ? [] : ARTIFACT_SPECS,
 					maxWorkers: process.env.CI ? 1 : 2,
 					testTimeout: 15000
 				}

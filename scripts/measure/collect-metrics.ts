@@ -272,12 +272,23 @@ export function countSpecFiles(dir: string): number {
 }
 
 /**
+ * The environment `vitest list` is collected under.
+ *
+ * Exported so `metrics.spec.ts` can assert the config honours exactly this, rather than asserting
+ * a variable name that nothing on the other side has to read.
+ */
+export const LIST_ENV = { DRUPFLARE_LIST_ALL: '1' } as const;
+
+/**
  * Test counts, and only the ones that survive being asked twice.
  *
  * SPEC FILES are a glob over the repository, so they are deterministic everywhere. CASES come from
- * `vitest list`, which collects without running, and only the **workers** lane is quoted: no spec
- * under `tests/unit` or `tests/integration` reads a build artifact or shells out, so its collection
- * depends on the checkout alone.
+ * `vitest list`, which collects without running, and only the **workers** lane is quoted.
+ *
+ * `LIST_ENV` is load-bearing. The workers lane drops `ARTIFACT_SPECS` on a checkout with no pack,
+ * so the count read 204 lower in CI than on a developer's machine, and the day two files joined
+ * that list the gate reported 21 deleted tests that still exist. It makes the enumeration cover the
+ * repository rather than this machine.
  *
  * `tests/node` is deliberately absent from `cases`. `zlib-php.spec.ts` builds its `it.each` table
  * from a live `php` subprocess, so the node lane's case count changes with whether PHP is installed
@@ -299,7 +310,13 @@ export function collectTests(root: string, opts: { vitest: boolean }): TestsMetr
 			'bunx',
 			['vitest', 'list', '--project=workers', '--json'],
 			// vitest writes its own progress to stderr, so only stdout carries the JSON
-			{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] }
+			{
+				cwd: root,
+				encoding: 'utf8',
+				maxBuffer: 1 << 28,
+				stdio: ['ignore', 'pipe', 'ignore'],
+				env: { ...process.env, ...LIST_ENV }
+			}
 		);
 		const listed = JSON.parse(out) as unknown[];
 		return { specFiles, cases: { workers: listed.length } };

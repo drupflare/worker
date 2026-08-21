@@ -13,7 +13,7 @@
 <h1>Interface WarmingOptions</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">WarmingOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#headers">headers</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#request">request</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Request</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">CfProperties</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#retryafterseconds">retryAfterSeconds</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#stage">stage</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;warming&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;migrating&quot;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce7220f9d25101b6454470d7115e4bda7f0b514c/src/ops/warming-page.ts#L24">src/ops/warming-page.ts:24</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/c8d1add76874abedb410c129ad15811f0e825d42/src/ops/warming-page.ts#L24">src/ops/warming-page.ts:24</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -35,28 +35,28 @@
 <div class="tsd-comment tsd-typography"><p>extra response headers, which is where every <code>x-cfw-*</code> diagnostic already goes</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce7220f9d25101b6454470d7115e4bda7f0b514c/src/ops/warming-page.ts#L30">src/ops/warming-page.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/c8d1add76874abedb410c129ad15811f0e825d42/src/ops/warming-page.ts#L30">src/ops/warming-page.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="request"><code class="tsd-tag">Optional</code><span>request</span><a href="#request" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">request</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Request</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">CfProperties</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>the request, so the body matches what the caller can read</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce7220f9d25101b6454470d7115e4bda7f0b514c/src/ops/warming-page.ts#L32">src/ops/warming-page.ts:32</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/c8d1add76874abedb410c129ad15811f0e825d42/src/ops/warming-page.ts#L32">src/ops/warming-page.ts:32</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="retryafterseconds"><code class="tsd-tag">Optional</code><span>retry<wbr/>After<wbr/>Seconds</span><a href="#retryafterseconds" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">retryAfterSeconds</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>seconds until the page is worth asking for again; drives Retry-After AND the meta refresh</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce7220f9d25101b6454470d7115e4bda7f0b514c/src/ops/warming-page.ts#L28">src/ops/warming-page.ts:28</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/c8d1add76874abedb410c129ad15811f0e825d42/src/ops/warming-page.ts#L28">src/ops/warming-page.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="stage"><span>stage</span><a href="#stage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">stage</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;warming&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;migrating&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>what the site is doing, in the visitor's words</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce7220f9d25101b6454470d7115e4bda7f0b514c/src/ops/warming-page.ts#L26">src/ops/warming-page.ts:26</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/c8d1add76874abedb410c129ad15811f0e825d42/src/ops/warming-page.ts#L26">src/ops/warming-page.ts:26</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

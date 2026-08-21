@@ -1,9 +1,38 @@
-import { describe, expect, it } from 'vitest';
-import { renderPage } from '../../src/drupal/site-php';
+import { env } from 'cloudflare:test';
+import { afterAll, describe, expect, it, type TestContext } from 'vitest';
+import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { SHIPPED_CAPABILITIES } from '../../src/ops/catalog';
+import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
+import { SUSPEND_PROBE } from '../helpers/drupal-probes';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
  * Contrib modules, enabled and then asked to DO something.
+ *
+ * Contrib is a DEV DEPENDENCY here: `scripts/pack-drupal.ts` puts `modules/contrib` behind
+ * `PACK_CONTRIB=1`, so the shipping artifact carries four modules and the rest are verified against a
+ * build that has them. `bun run test:contrib` is that build -- it swaps a fixture pack into
+ * `assets/drupal-pf`, runs this file, and puts the shipping pack back.
+ *
+ * **THE SKIP USED TO BE INDISTINGUISHABLE FROM A PASS.** Against the shipping pack eleven of twelve
+ * cases logged `not in the mounted pack, skipped` and went green, so twelve `verified` rows had no
+ * gate that could fail. Three outcomes now, decided by reading the index of the pack the object
+ * actually mounted rather than by a flag anyone can forget:
+ *
+ *   - the pack carries it                  run the assertions
+ *   - absent, and it is the SHIPPING pack  `ctx.skip()`, which the reporter counts as skipped
+ *   - absent, and it is a FIXTURE pack     fail: the fixture build was supposed to carry it
+ *
+ * **EVERY CASE ASSERTS BOTH DIRECTIONS.** The observable is read before the enable and after it, and
+ * the before reading must NOT show it. A one-sided assertion cannot tell a module that did something
+ * from an observable the shipped site already had -- which is how `pathauto` was once read as working
+ * off an alias no pattern of its own produced. It has already earned its place: `menu_block` was
+ * written against `access_check.admin_menu_block_page`, which reads as its service and is core's,
+ * and the before reading is what said so.
+ *
+ * Falsified 2026-08-20, both directions, 41/41 red each time. Map every name in {@link CASES}
+ * through `'zz' + name` and each row fails on its own observable; enable a DIFFERENT module in place
+ * of the case's and each row fails again, `svg_image` reporting core's `ImageFormatter` back.
  */
 
 type Payload = Record<string, unknown>;
@@ -19,270 +48,739 @@ const sql = (site: ServeDo, query: string) => call(site, `/__sql?q=${encodeURICo
 const rows = (reply: Payload): Record<string, unknown>[] =>
 	Array.isArray(reply['rows']) ? (reply['rows'] as Record<string, unknown>[]) : [];
 
-/** enables one module and reads back an observable it owns */
-async function enableAndProbe(module: string, probe: string) {
-	return inObject(freshSite(), async (site) => {
-		await migrate(site);
-		const enabled = await enable(site, module);
-		const observed = await sql(site, probe);
-		const routes = await sql(
-			site,
-			`SELECT COUNT(*) AS c FROM router WHERE name LIKE '${module}.%'`
+// #region what the mounted pack carries
+
+/**
+ * The contrib machine names in the index the Durable Object mounts.
+ *
+ * Read through the real ASSETS binding, so it is the same bytes `mountDrupalLazy()` fetches. As text
+ * plus a scan rather than `JSON.parse`, because the fixture index is 1.7 MB and every path in it is
+ * a string this only has to match against.
+ */
+let packedOnce: Promise<Set<string>> | null = null;
+function packedContrib(): Promise<Set<string>> {
+	packedOnce ??= (async () => {
+		const res = await env.ASSETS.fetch(new URL('https://a.local/drupal-pf/core.pf.json'));
+		if (!res.ok) throw new Error(`pack index not reachable: core.pf.json ${res.status}`);
+		const found = new Set<string>();
+		for (const m of (await res.text()).matchAll(/"modules\/contrib\/([^/"]+)\//g)) {
+			found.add(m[1] as string);
+		}
+		return found;
+	})();
+	return packedOnce;
+}
+
+const shippingNames = SHIPPING_PACK_CONTRIB.map((n) => n.split('/')[1] as string);
+
+/** a pack carrying anything past the shipping four is a fixture build, and owes every case */
+const isFixturePack = (packed: Set<string>) =>
+	[...packed].some((name) => !shippingNames.includes(name));
+
+async function reachable(ctx: TestContext, module: string): Promise<boolean> {
+	const packed = await packedContrib();
+	if (packed.has(module)) return true;
+	if (isFixturePack(packed)) {
+		throw new Error(
+			`${module} is not in the mounted FIXTURE pack. The fixture build carries ` +
+				`modules/contrib wholesale, so this means composer never installed it: ` +
+				`composer require --dev drupal/${module} in drupal-src, then re-run`
 		);
-		// a second, looser count: several modules name their routes with underscores rather than the
-		// dotted `module.route` convention, and a prefix match on the dotted form finds none of them
-		const namedRoutes = await sql(
-			site,
-			`SELECT COUNT(*) AS c FROM router WHERE name LIKE '%${module}%'`
-		);
-		return { enabled, observed, routes, namedRoutes };
-	});
+	}
+	ctx.skip(
+		`${module} is not in the shipping pack, so nothing re-established this row. ` +
+			'`bun run test:contrib` mounts the fixture build that can.'
+	);
+	return false;
+}
+
+// #endregion
+
+// #region the report row every case contributes
+
+type Verdict = 'verified' | 'blocked' | 'failed';
+
+type Row = {
+	module: string;
+	enabled: boolean;
+	observable: string;
+	charged: number;
+	verdict: Verdict;
+};
+
+const report: Row[] = [];
+
+afterAll(() => {
+	if (report.length === 0) return;
+	const header = ['module', 'enabled', 'observable asserted', 'charged rows', 'verdict'];
+	const body = report
+		.sort((a, b) => a.module.localeCompare(b.module))
+		.map((r) => [r.module, r.enabled ? 'y' : 'n', r.observable, String(r.charged), r.verdict]);
+	const widths = header.map((h, i) => Math.max(h.length, ...body.map((r) => r[i]!.length)));
+	const line = (cells: string[]) =>
+		`| ${cells.map((c, i) => c.padEnd(widths[i] ?? 0)).join(' | ')} |`;
+	console.log(
+		['', line(header), `| ${widths.map((w) => '-'.repeat(w)).join(' | ')} |`, ...body.map(line)]
+			.map((l) => `[contrib] ${l}`)
+			.join('\n')
+	);
+});
+
+// #endregion
+
+// #region the two probes
+
+/** the four SQL surfaces an install can change, read as one row each so `/__sql` never truncates */
+const SNAPSHOT = {
+	tables: "SELECT group_concat(name) AS v FROM sqlite_master WHERE type = 'table'",
+	config: 'SELECT group_concat(name) AS v FROM config',
+	routes: 'SELECT group_concat(name) AS v FROM router',
+	types: "SELECT group_concat(name) AS v FROM key_value WHERE name LIKE '%.entity_type'"
+} as const;
+
+type Surface = keyof typeof SNAPSHOT;
+type Snapshot = Record<Surface, Set<string>>;
+
+async function snapshot(site: ServeDo): Promise<Snapshot> {
+	const out = {} as Snapshot;
+	for (const key of Object.keys(SNAPSHOT) as Surface[]) {
+		const reply = await sql(site, SNAPSHOT[key]);
+		const v = rows(reply)[0]?.['v'];
+		out[key] = new Set((typeof v === 'string' ? v : '').split(',').filter(Boolean));
+	}
+	return out;
 }
 
 /**
- * The shared assertions.
+ * What a module adds to the CONTAINER, for the modules that create no table and ship no settings.
  *
- * `discoverable` gates rather than fails: with the shipping pack the module is not on the
- * filesystem and there is nothing to assert about it.
+ * `common.inc` first, and it is not optional: `CSS_COMPONENT` and `JS_LIBRARY` are defined there
+ * rather than by the autoloader, so library discovery and every plugin manager that resolves a
+ * library throw `Invalid CSS category` from a kernel boot that has not loaded it. A request on the
+ * stack for the same class of reason -- `CurrentRouteMatch` refuses a null request -- and
+ * `loadAll()` because a procedural `hook_library_info_alter` in a `.module` file does not exist
+ * until its file is included, which is how `jquery_ui` declares the libraries of its four
+ * sub-modules.
  */
-function expectEnabled(out: { enabled: Payload }, module: string) {
-	if (out.enabled['discoverable'] !== true) {
-		console.log(`[contrib] ${module}: not in the mounted pack, skipped`);
-		return false;
+type AskSpec = {
+	services?: readonly string[];
+	/** `[plugin manager service, plugin id]`; ownership is provider OR class naming the module */
+	plugins?: readonly (readonly [string, string])[];
+	/** the extension whose libraries to list, when the module's whole output is asset libraries */
+	libraries?: string;
+	encodings?: readonly string[];
+};
+
+const askProbe = (spec: AskSpec) => String.raw`<?php
+$spec = json_decode(${JSON.stringify(JSON.stringify(spec))}, true);
+$out = ['ok' => true];
+if (!defined('CSS_COMPONENT')) { require_once '/drupal/core/includes/common.inc'; }
+\Drupal::service('request_stack')->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+\Drupal::moduleHandler()->loadAll();
+$c = \Drupal::getContainer();
+$services = [];
+foreach (($spec['services'] ?? []) as $id) { $services[$id] = $c->has($id); }
+$out['services'] = $services;
+$plugins = [];
+foreach (($spec['plugins'] ?? []) as $want) {
+  $key = $want[0] . ' ' . $want[1];
+  try {
+    $def = \Drupal::service($want[0])->getDefinition($want[1], false);
+    if ($def === null) { $plugins[$key] = null; }
+    elseif (is_array($def)) { $plugins[$key] = ($def['provider'] ?? '') . '|' . ($def['class'] ?? ''); }
+    else {
+      $provider = method_exists($def, 'getProvider') ? $def->getProvider() : '';
+      $class = method_exists($def, 'getClass') ? $def->getClass() : '';
+      $plugins[$key] = $provider . '|' . $class;
+    }
+  } catch (\Throwable $e) { $plugins[$key] = 'ERR:' . $e->getMessage(); }
+}
+$out['plugins'] = $plugins;
+if (isset($spec['libraries'])) {
+  try {
+    $out['libraries'] = array_keys(\Drupal::service('library.discovery')->getLibrariesByExtension($spec['libraries']));
+  } catch (\Throwable $e) { $out['libraries'] = []; }
+}
+$encodings = [];
+foreach (($spec['encodings'] ?? []) as $format) {
+  try { $encodings[$format] = \Drupal::service('serializer')->supportsEncoding($format); }
+  catch (\Throwable $e) { $encodings[$format] = false; }
+}
+$out['encodings'] = $encodings;
+// the control: a core service the probe must see either way, so an all-false reading reads as a
+// broken probe rather than as a module that did nothing
+$out['control'] = $c->has('entity_type.manager');
+echo json_encode($out);`;
+
+// #endregion
+
+// #region the cases
+
+/**
+ * A module and the thing it has to have DONE.
+ *
+ * Every field is a name the module owns, and each is asserted absent before the enable and present
+ * after. `routes` is a floor rather than a list where the module's route names are derivative or
+ * numerous; a floor of zero would assert nothing, so it is only set where it is meaningful.
+ */
+type Case = {
+	module: string;
+	/** one line for the report, naming what was actually asserted */
+	observable: string;
+	tables?: readonly string[];
+	config?: readonly string[];
+	types?: readonly string[];
+	routes?: number;
+	ask?: AskSpec;
+	/**
+	 * A module the classifier REFUSES.
+	 *
+	 * The case still enables it, because "cannot work here" is a claim about the capability and not
+	 * about the installer -- and the two were never the same thing. What it may not do is reach
+	 * `verified`: the run additionally asserts the mechanism the refusal rests on is still in force,
+	 * so the row is blocked against a measurement rather than against a constant.
+	 */
+	blocked?: string;
+};
+
+const CASES: readonly Case[] = [
+	{
+		module: 'address',
+		observable: 'field types address/address_country/address_zone, address.country_repository',
+		ask: {
+			services: [
+				'address.country_repository',
+				'address.address_format_repository',
+				'address.subdivision_repository'
+			],
+			plugins: [
+				['plugin.manager.field.field_type', 'address'],
+				['plugin.manager.field.widget', 'address_default']
+			]
+		}
+	},
+	{
+		module: 'backup_migrate',
+		observable: 'its four config entity types plus the six default source/destination entities',
+		config: [
+			'backup_migrate.backup_migrate_source.default_db',
+			'backup_migrate.backup_migrate_destination.private_files',
+			'backup_migrate.backup_migrate_schedule.daily_schedule'
+		],
+		types: [
+			'backup_migrate_source.entity_type',
+			'backup_migrate_destination.entity_type',
+			'backup_migrate_schedule.entity_type'
+		],
+		routes: 20
+	},
+	{
+		module: 'better_exposed_filters',
+		observable: 'its three widget plugin managers and bef_helper in the container',
+		ask: {
+			services: [
+				'better_exposed_filters.bef_helper',
+				'plugin.manager.better_exposed_filters_filter_widget',
+				'plugin.manager.better_exposed_filters_pager_widget',
+				'plugin.manager.better_exposed_filters_sort_widget'
+			]
+		}
+	},
+	{
+		module: 'captcha',
+		observable: 'the captcha_sessions table its schema hook creates, plus 5 captcha points',
+		tables: ['captcha_sessions'],
+		config: ['captcha.settings', 'captcha.captcha_point.user_login_form'],
+		types: ['captcha_point.entity_type'],
+		routes: 8
+	},
+	{
+		module: 'colorbox',
+		observable: 'colorbox.settings and its admin route',
+		config: ['colorbox.settings'],
+		routes: 1
+	},
+	{
+		module: 'config_ignore',
+		observable: 'config_ignore.settings and its admin route',
+		config: ['config_ignore.settings'],
+		routes: 1
+	},
+	{
+		module: 'crop',
+		observable: 'the crop entity type as four tables, and crop_type as a config entity type',
+		tables: ['crop', 'crop_field_data', 'crop_revision', 'crop_field_revision'],
+		config: ['crop.settings'],
+		types: ['crop.entity_type', 'crop_type.entity_type'],
+		routes: 5
+	},
+	{
+		module: 'csv_serialization',
+		observable: "serializer->supportsEncoding('csv'), with json as the control",
+		ask: { encodings: ['csv', 'json'] }
+	},
+	{
+		module: 'easy_breadcrumb',
+		observable: 'easy_breadcrumb.settings and its admin route',
+		config: ['easy_breadcrumb.settings'],
+		routes: 1
+	},
+	{
+		module: 'editor_advanced_link',
+		observable: 'the editor_advanced_link_link CKEditor 5 plugin and its two libraries',
+		ask: {
+			plugins: [['plugin.manager.ckeditor5.plugin', 'editor_advanced_link_link']],
+			libraries: 'editor_advanced_link'
+		}
+	},
+	{
+		module: 'entity',
+		observable: 'the bundle-plugin services it exists to provide',
+		ask: {
+			services: [
+				'entity.bundle_plugin_installer',
+				'entity.bundle_entity_duplicator',
+				'access_checker.entity_revision'
+			]
+		}
+	},
+	{
+		module: 'entity_browser',
+		observable: 'the entity_browser config entity type and its six routes',
+		types: ['entity_browser.entity_type'],
+		routes: 6
+	},
+	{
+		module: 'entity_reference_revisions',
+		observable: 'the entity_reference_revisions field type and its orphan purger',
+		ask: {
+			services: ['entity_reference_revisions.orphan_purger'],
+			plugins: [
+				['plugin.manager.field.field_type', 'entity_reference_revisions'],
+				['plugin.manager.field.formatter', 'entity_reference_revisions_entity_view']
+			]
+		}
+	},
+	{
+		module: 'externalauth',
+		observable: 'the authmap table its schema hook creates',
+		tables: ['authmap'],
+		config: ['views.view.authmap'],
+		routes: 2
+	},
+	{
+		module: 'field_group',
+		observable: 'its plugin manager, subscriber and param converter in the container',
+		ask: {
+			services: [
+				'plugin.manager.field_group.formatters',
+				'field_group.subscriber',
+				'field_group.param_converter'
+			]
+		},
+		routes: 30
+	},
+	{
+		module: 'focal_point',
+		observable: 'focal_point.settings and the focal_point crop type it installs into crop',
+		config: ['focal_point.settings', 'crop.type.focal_point'],
+		tables: ['crop', 'crop_field_data'],
+		routes: 5
+	},
+	{
+		module: 'google_tag',
+		observable: 'the google_tag_container config entity type and google_tag.settings',
+		config: ['google_tag.settings'],
+		types: ['google_tag_container.entity_type'],
+		routes: 8
+	},
+	{
+		module: 'honeypot',
+		observable: 'the honeypot_user table, which is what it uses instead of a remote captcha',
+		tables: ['honeypot_user'],
+		config: ['honeypot.settings'],
+		routes: 1
+	},
+	{
+		module: 'imce',
+		observable: 'the imce_profile config entity type and the two profiles it ships',
+		config: ['imce.settings', 'imce.profile.admin', 'imce.profile.member'],
+		types: ['imce_profile.entity_type'],
+		routes: 9
+	},
+	{
+		module: 'jquery_ui',
+		observable: 'the asset libraries it exists to provide, core and widget among them',
+		ask: { libraries: 'jquery_ui' }
+	},
+	{
+		module: 'jquery_ui_autocomplete',
+		observable: 'the autocomplete library jquery_ui declares on its behalf',
+		ask: { libraries: 'jquery_ui_autocomplete' }
+	},
+	{
+		module: 'jquery_ui_datepicker',
+		observable: 'the datepicker library jquery_ui declares on its behalf',
+		ask: { libraries: 'jquery_ui_datepicker' }
+	},
+	{
+		module: 'jquery_ui_menu',
+		observable: 'the menu library jquery_ui declares on its behalf',
+		ask: { libraries: 'jquery_ui_menu' }
+	},
+	{
+		module: 'libraries',
+		observable: 'libraries.settings, which is where its external library definitions are read',
+		config: ['libraries.settings']
+	},
+	{
+		module: 'mailsystem',
+		observable: 'mailsystem.settings and its admin route',
+		config: ['mailsystem.settings'],
+		routes: 1
+	},
+	{
+		module: 'menu_block',
+		observable: 'a menu_block: block plugin derivative per menu',
+		// `access_check.admin_menu_block_page` looks like its service and is core's, from the block
+		// module. The before reading is what caught that; it is not asserted here
+		ask: {
+			plugins: [
+				['plugin.manager.block', 'menu_block:main'],
+				['plugin.manager.block', 'menu_block:footer']
+			]
+		}
+	},
+	{
+		module: 'metatag',
+		observable: 'the metatag_defaults config entity type and the seven defaults it ships',
+		config: [
+			'metatag.settings',
+			'metatag.metatag_defaults.global',
+			'metatag.metatag_defaults.404'
+		],
+		types: ['metatag_defaults.entity_type'],
+		routes: 8
+	},
+	{
+		module: 'migrate_plus',
+		observable: 'both config entity types it provides -- migration and migration_group',
+		types: ['migration.entity_type', 'migration_group.entity_type'],
+		tables: ['cache_discovery_migration'],
+		routes: 2
+	},
+	{
+		module: 'module_filter',
+		observable: 'module_filter.settings and its admin route',
+		config: ['module_filter.settings'],
+		routes: 1
+	},
+	{
+		module: 'paragraphs',
+		observable: 'the paragraph entity type as four tables',
+		tables: [
+			'paragraphs_item',
+			'paragraphs_item_field_data',
+			'paragraphs_item_revision',
+			'paragraphs_item_revision_field_data'
+		],
+		types: ['paragraph.entity_type', 'paragraphs_type.entity_type'],
+		routes: 20
+	},
+	{
+		module: 'queue_ui',
+		observable: 'its admin routes, which are the whole module',
+		routes: 9
+	},
+	{
+		module: 'recaptcha',
+		observable: 'recaptcha.settings, and captcha_sessions from the dependency it pulled in',
+		config: ['recaptcha.settings', 'captcha.settings'],
+		tables: ['captcha_sessions'],
+		routes: 9
+	},
+	{
+		module: 'redirect',
+		observable: 'the redirect entity type as a table, and its routes',
+		tables: ['redirect'],
+		config: ['redirect.settings'],
+		types: ['redirect.entity_type'],
+		routes: 11
+	},
+	{
+		module: 'scheduler',
+		observable: 'scheduler.settings and the three views it installs',
+		config: ['scheduler.settings', 'views.view.scheduler_scheduled_content'],
+		routes: 9
+	},
+	{
+		module: 'search_api',
+		observable: 'search_api_item and search_api_task, where the database backend writes',
+		tables: ['search_api_item', 'search_api_task'],
+		config: ['search_api.settings'],
+		types: ['search_api_index.entity_type', 'search_api_server.entity_type'],
+		routes: 25
+	},
+	{
+		module: 'smtp',
+		observable: 'smtp.settings installs; the socket it exists to open still cannot be opened',
+		config: ['smtp.settings'],
+		routes: 1,
+		blocked: 'it needs an SMTP socket inside the request that sends the mail'
+	},
+	{
+		module: 'stage_file_proxy',
+		observable: 'stage_file_proxy.settings, which is what its fetch path reads',
+		config: ['stage_file_proxy.settings'],
+		routes: 1
+	},
+	{
+		module: 'svg_image',
+		observable: "it takes over core's image field formatter and image_image widget",
+		ask: {
+			plugins: [
+				['plugin.manager.field.formatter', 'image'],
+				['plugin.manager.field.widget', 'image_image']
+			]
+		}
+	},
+	{
+		module: 'video_embed_field',
+		observable: 'the video_embed_field field type and its provider manager',
+		ask: {
+			services: ['video_embed_field.provider_manager'],
+			plugins: [
+				['plugin.manager.field.field_type', 'video_embed_field'],
+				['plugin.manager.field.formatter', 'video_embed_field_video']
+			]
+		}
+	},
+	{
+		module: 'views_bulk_operations',
+		observable: 'its processor and action plugin manager, plus the delete action it ships',
+		ask: {
+			services: [
+				'views_bulk_operations.processor',
+				'views_bulk_operations.data',
+				'plugin.manager.views_bulk_operations_action'
+			],
+			plugins: [['plugin.manager.action', 'views_bulk_operations_delete_entity']]
+		},
+		routes: 4
+	},
+	{
+		module: 'views_data_export',
+		observable: 'the data_export views display and style plugins',
+		ask: {
+			plugins: [
+				['plugin.manager.views.display', 'data_export'],
+				['plugin.manager.views.style', 'data_export']
+			]
+		}
 	}
-	expect(
-		out.enabled['ok'],
-		`${module} failed to install: ${JSON.stringify(out.enabled).slice(0, 400)}`
-	).toBe(true);
-	expect(out.enabled['nowEnabled']).toBe(true);
-	return true;
+];
+
+/**
+ * Contrib the fixture pack carries with no case of its own.
+ *
+ * Listed rather than tolerated, because a module in the pack and in nobody's assertion is the
+ * stale-exemption shape: `everything the pack carries is covered` below fails on an addition, and
+ * this is where an addition is answered deliberately.
+ */
+const COVERED_ELSEWHERE: Readonly<Record<string, string>> = {
+	admin_toolbar: 'shipping pack; tests/integration/module-behaviour.spec.ts',
+	ctools: 'shipping pack; tests/integration/module-behaviour.spec.ts',
+	pathauto: 'shipping pack; tests/integration/module-behaviour.spec.ts',
+	token: 'shipping pack; tests/integration/module-behaviour.spec.ts'
+};
+
+// #endregion
+
+/** the names a case declared, so the before reading can be checked for every one of them */
+function declared(one: Case): Array<[Surface, string]> {
+	const out: Array<[Surface, string]> = [];
+	for (const surface of ['tables', 'config', 'types'] as const) {
+		for (const name of one[surface] ?? []) out.push([surface, name]);
+	}
+	return out;
 }
 
+const added = (before: Set<string>, after: Set<string>) => [...after].filter((x) => !before.has(x));
+
+/** ownership: the definition names the module, either as its provider or in its class */
+const owns = (value: unknown, module: string) =>
+	typeof value === 'string' && (value.split('|')[0] === module || value.includes(module));
+
 describe('contrib modules, enabled against a real site', () => {
-	it(
-		'metatag installs its own configuration and defaults',
-		async () => {
-			const out = await enableAndProbe(
-				'metatag',
-				"SELECT name FROM config WHERE name LIKE 'metatag.%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'metatag')) return;
-			// metatag ships default tag config as part of its install; an empty result means it
-			// enabled and has nothing to apply, which is the pathauto failure shape
-			expect(rows(out.observed).length, 'metatag installed no configuration').toBeGreaterThan(
-				0
-			);
-			console.log(`[contrib] metatag: ${rows(out.observed).length} config objects`);
-		},
-		REQUEST_TIMEOUT
-	);
+	for (const one of CASES) {
+		it(
+			`${one.module}: ${one.observable}`,
+			async (ctx) => {
+				if (!(await reachable(ctx, one.module))) return;
 
-	it(
-		'paragraphs registers its entity type, which is a schema change rather than a setting',
-		async () => {
-			const out = await enableAndProbe(
-				'paragraphs',
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'paragraph%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'paragraphs')) return;
-			// an entity type is tables, so this is the strongest observable a field module has
-			expect(rows(out.observed).length, 'no paragraphs tables were created').toBeGreaterThan(
-				0
-			);
-			console.log(
-				`[contrib] paragraphs: tables ${rows(out.observed)
-					.map((r) => r['name'])
-					.join(', ')}`
-			);
-		},
-		REQUEST_TIMEOUT
-	);
+				const out = await inObject(freshSite(), async (site) => {
+					await migrate(site);
+					const before = await snapshot(site);
+					let askBefore: Payload | null = null;
+					if (one.ask) {
+						await site.runJson(BOOT_KERNEL);
+						askBefore = await site.runJson(askProbe(one.ask));
+					}
+					const enabled = await enable(site, one.module);
+					const after = await snapshot(site);
+					let askAfter: Payload | null = null;
+					if (one.ask) {
+						// on a dropped interpreter, which is what `/__enable` leaves behind: the
+						// install rebuilt the container, so a service resolved in the same breath
+						// could still be answered by the graph already in memory
+						await site.runJson(BOOT_KERNEL);
+						askAfter = await site.runJson(askProbe(one.ask));
+					}
+					let suspend: Payload | null = null;
+					if (one.blocked) {
+						await site.runJson(BOOT_KERNEL);
+						suspend = await site.runJson(SUSPEND_PROBE);
+					}
+					return { enabled, before, after, askBefore, askAfter, suspend };
+				});
 
-	it(
-		'captcha creates its own table, which is a schema change rather than a setting',
-		async () => {
-			const out = await enableAndProbe(
-				'captcha',
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%captcha%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'captcha')) return;
-			// `captcha_sessions` is created by its schema hook, so this is the install doing work
-			// rather than the installer returning
-			expect(rows(out.observed).map((r) => r['name'])).toContain('captcha_sessions');
-			// its routes are named with underscores (`captcha_settings`, `captcha_point.add`), which
-			// is why the module-prefixed LIKE this file used first found none
-			expect(
-				Number(rows(out.namedRoutes)[0]?.['c']),
-				'captcha registered no routes'
-			).toBeGreaterThan(0);
-			console.log(`[contrib] captcha: ${Number(rows(out.namedRoutes)[0]?.['c'])} routes`);
-		},
-		REQUEST_TIMEOUT
-	);
+				const charged = Number(out.enabled['rowsWritten'] ?? 0);
+				const row: Row = {
+					module: one.module,
+					enabled: out.enabled['nowEnabled'] === true,
+					observable: one.observable,
+					charged,
+					verdict: 'failed'
+				};
+				report.push(row);
 
-	it(
-		'recaptcha installs on top of captcha and contributes its settings',
-		async () => {
-			const out = await enableAndProbe(
-				'recaptcha',
-				"SELECT name FROM config WHERE name LIKE 'recaptcha.%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'recaptcha')) return;
-			// it depends on captcha, so a successful install also proves dependency resolution ran
-			expect(out.enabled['added']).toContain('captcha');
-			expect(
-				rows(out.observed).length,
-				'recaptcha installed no configuration'
-			).toBeGreaterThan(0);
-		},
-		REQUEST_TIMEOUT
-	);
+				expect(
+					out.enabled['ok'],
+					`${one.module} failed to install: ${JSON.stringify(out.enabled).slice(0, 400)}`
+				).toBe(true);
+				expect(out.enabled['nowEnabled'], `${one.module} is not in core.extension`).toBe(
+					true
+				);
 
-	it(
-		'scheduler installs its settings and registers routes',
-		async () => {
-			const out = await enableAndProbe(
-				'scheduler',
-				"SELECT name FROM config WHERE name LIKE 'scheduler.%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'scheduler')) return;
-			expect(
-				rows(out.observed).length,
-				'scheduler installed no configuration'
-			).toBeGreaterThan(0);
-			expect(Number(rows(out.routes)[0]?.['c'])).toBeGreaterThan(0);
-		},
-		REQUEST_TIMEOUT
-	);
+				for (const [surface, name] of declared(one)) {
+					expect(
+						out.after[surface].has(name),
+						`${one.module}: ${surface} is missing ${name} after the install`
+					).toBe(true);
+					expect(
+						out.before[surface].has(name),
+						`${one.module}: ${surface} already had ${name} before the install, so it is ` +
+							'not this module that produced it'
+					).toBe(false);
+				}
 
-	it(
-		'queue_ui registers the admin routes it exists to provide',
-		async () => {
-			const out = await enableAndProbe(
-				'queue_ui',
-				"SELECT COUNT(*) AS c FROM router WHERE name LIKE 'queue_ui.%'"
-			);
-			if (!expectEnabled(out, 'queue_ui')) return;
-			// queue_ui IS a UI: routes are the whole module, so zero routes is zero module
-			expect(
-				Number(rows(out.observed)[0]?.['c']),
-				'queue_ui registered no routes'
-			).toBeGreaterThan(0);
-		},
-		REQUEST_TIMEOUT
-	);
+				if (one.routes !== undefined) {
+					const own = added(out.before.routes, out.after.routes);
+					expect(
+						own.length,
+						`${one.module} registered ${own.length} routes, wanted at least ${one.routes}`
+					).toBeGreaterThanOrEqual(one.routes);
+				}
 
-	it(
-		'migrate_plus installs the migration_group entity type it exists to provide',
-		async () => {
-			const out = await enableAndProbe(
-				'migrate_plus',
-				"SELECT name FROM key_value WHERE name LIKE 'migration%.entity_type' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'migrate_plus')) return;
-			// it ships no config OBJECTS of its own -- what it adds is two config ENTITY TYPES, whose
-			// installed definitions land in key_value. Asserting on `migrate_plus.%` config found
-			// nothing and would have read as a module that installed and did nothing
-			const names = rows(out.observed).map((r) => r['name']);
-			expect(names).toContain('migration_group.entity_type');
-			expect(names).toContain('migration.entity_type');
-			console.log(`[contrib] migrate_plus: entity types ${names.join(', ')}`);
-		},
-		REQUEST_TIMEOUT
-	);
-	it(
-		'search_api creates the index tables its backend writes to',
-		async () => {
-			const out = await enableAndProbe(
-				'search_api',
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'search_api%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'search_api')) return;
-			const names = rows(out.observed).map((r) => r['name']);
-			expect(names).toContain('search_api_item');
-			expect(names).toContain('search_api_task');
-			expect(Number(rows(out.namedRoutes)[0]?.['c'])).toBeGreaterThan(0);
-			console.log(`[contrib] search_api: tables ${names.join(', ')}`);
-		},
-		REQUEST_TIMEOUT
-	);
+				if (one.ask) {
+					const before = out.askBefore as Payload;
+					const after = out.askAfter as Payload;
+					expect(
+						after['control'],
+						`${one.module}: CONTROL, the probe cannot see the container`
+					).toBe(true);
+					expect(before['control']).toBe(true);
 
-	it(
-		'honeypot creates its own table, which is what it uses instead of a remote captcha',
-		async () => {
-			const out = await enableAndProbe(
-				'honeypot',
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'honeypot%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'honeypot')) return;
-			// the advertised captcha replacement here, and the reason is structural: a hidden field
-			// and a submission timer are entirely local, so it costs no outbound round trip at all
-			expect(rows(out.observed).map((r) => r['name'])).toContain('honeypot_user');
-			console.log('[contrib] honeypot: honeypot_user created');
-		},
-		REQUEST_TIMEOUT
-	);
+					const serviceBefore = (before['services'] ?? {}) as Record<string, unknown>;
+					const serviceAfter = (after['services'] ?? {}) as Record<string, unknown>;
+					for (const id of one.ask.services ?? []) {
+						expect(
+							serviceAfter[id],
+							`${one.module}: ${id} is not in the container`
+						).toBe(true);
+						expect(
+							serviceBefore[id],
+							`${one.module}: ${id} was in the container before the install`
+						).toBe(false);
+					}
 
-	it(
-		'redirect installs its entity type and the table behind it',
-		async () => {
-			const out = await enableAndProbe(
-				'redirect',
-				"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'redirect'"
-			);
-			if (!expectEnabled(out, 'redirect')) return;
-			expect(rows(out.observed).length, 'the redirect table was not created').toBe(1);
-			// a route subscriber over its own table, so both halves have to be present
-			expect(Number(rows(out.namedRoutes)[0]?.['c'])).toBeGreaterThan(0);
-			console.log(`[contrib] redirect: ${Number(rows(out.namedRoutes)[0]?.['c'])} routes`);
-		},
-		REQUEST_TIMEOUT
-	);
+					const pluginBefore = (before['plugins'] ?? {}) as Record<string, unknown>;
+					const pluginAfter = (after['plugins'] ?? {}) as Record<string, unknown>;
+					for (const [manager, id] of one.ask.plugins ?? []) {
+						const key = `${manager} ${id}`;
+						expect(
+							owns(pluginAfter[key], one.module),
+							`${one.module}: ${id} is ${JSON.stringify(pluginAfter[key])}, which does ` +
+								'not name this module'
+						).toBe(true);
+						expect(
+							owns(pluginBefore[key], one.module),
+							`${one.module}: ${id} already named this module before the install`
+						).toBe(false);
+					}
 
-	it(
-		'stage_file_proxy installs the settings its fetch path reads',
-		async () => {
-			const out = await enableAndProbe(
-				'stage_file_proxy',
-				"SELECT name FROM config WHERE name LIKE 'stage_file_proxy.%' ORDER BY name"
-			);
-			if (!expectEnabled(out, 'stage_file_proxy')) return;
-			expect(rows(out.observed).map((r) => r['name'])).toContain('stage_file_proxy.settings');
-		},
-		REQUEST_TIMEOUT
-	);
+					if (one.ask.libraries !== undefined) {
+						const list = (after['libraries'] ?? []) as string[];
+						const was = (before['libraries'] ?? []) as string[];
+						expect(
+							list.length,
+							`${one.module} declared no asset library`
+						).toBeGreaterThan(0);
+						expect(
+							was.length,
+							`${one.module} declared libraries before the install`
+						).toBe(0);
+					}
 
-	it(
-		'field_group contributes its plugin manager to the container',
-		async () => {
-			const out = await inObject(freshSite(), async (site) => {
-				await migrate(site);
-				const enabled = await enable(site, 'field_group');
-				// A DISPLAY-CONFIGURATION MODULE CREATES NO TABLE AND SHIPS NO SETTINGS, so the
-				// observable is what it adds to the CONTAINER. Read after a render rather than from
-				// the install's own reply: the container is rebuilt during the install and a service
-				// resolved in the same breath could be answered by the one still in memory.
-				await site.runJson(renderPage('/', [], false, {}));
-				const services = await site.runJson(`<?php
-echo json_encode([
-  'ok' => true,
-  'formatters' => \\Drupal::hasService('plugin.manager.field_group.formatters'),
-  'subscriber' => \\Drupal::hasService('field_group.subscriber'),
-  'converter' => \\Drupal::hasService('field_group.param_converter'),
-  'core' => \\Drupal::hasService('entity_type.manager'),
-]);`);
-				return { enabled, services };
-			});
-			if (!expectEnabled(out, 'field_group')) return;
+					for (const format of one.ask.encodings ?? []) {
+						const now = (after['encodings'] ?? {}) as Record<string, unknown>;
+						expect(now[format], `${one.module}: ${format} encoding unsupported`).toBe(
+							true
+						);
+					}
+				}
 
-			const services = out.services as Payload;
-			expect(services['formatters'], 'its plugin manager is not in the container').toBe(true);
-			expect(services['subscriber']).toBe(true);
-			expect(services['converter']).toBe(true);
-			// the control: a core service answering true is what proves the probe can see the
-			// container at all, so three falses would mean a broken probe rather than a dead module
-			expect(services['core'], 'CONTROL: the probe cannot see the container').toBe(true);
-		},
-		REQUEST_TIMEOUT
-	);
+				if (one.blocked) {
+					const suspend = out.suspend as Payload;
+					// the host sets the flag on every build, so a null here means the probe missed
+					// rather than that the build cannot suspend
+					expect(
+						suspend['hasVrznoEnv'],
+						`${one.module}: no vrzno_env, so this probe cannot see the flag`
+					).toBe(true);
+					expect(
+						suspend['canSuspend'],
+						`${one.module} is blocked on ${one.blocked}, and the interpreter now says it CAN suspend`
+					).toBe(false);
+					expect(SHIPPED_CAPABILITIES.blockingOutbound).toBe(suspend['canSuspend']);
+				}
+
+				row.verdict = one.blocked ? 'blocked' : 'verified';
+			},
+			REQUEST_TIMEOUT
+		);
+	}
+
+	/**
+	 * The other direction, and it is the one that waves the next skipped row through.
+	 *
+	 * A module in the pack and in nobody's assertion is a support claim nothing establishes -- the
+	 * same shape as an allow-list nobody prunes. This fails on a module ADDED to the fixture with no
+	 * case, and `COVERED_ELSEWHERE` is where that is answered on purpose.
+	 */
+	it('covers every contrib module the mounted pack carries', async () => {
+		const packed = [...(await packedContrib())].sort();
+		const covered = new Set([...CASES.map((c) => c.module), ...Object.keys(COVERED_ELSEWHERE)]);
+		const uncovered = packed.filter((name) => !covered.has(name));
+		expect(
+			uncovered,
+			`in the pack with no case here: ${uncovered.join(', ')}. Add one, or record it in ` +
+				'COVERED_ELSEWHERE with where it is covered'
+		).toEqual([]);
+		// and the reverse: a case for a module the fixture build does not carry
+		if (isFixturePack(new Set(packed))) {
+			const missing = CASES.map((c) => c.module).filter((m) => !packed.includes(m));
+			expect(missing, 'a case whose module the fixture pack does not carry').toEqual([]);
+		}
+	});
 });

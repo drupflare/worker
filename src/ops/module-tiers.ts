@@ -55,6 +55,93 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	},
 	// #endregion
 
+	// #region the 25 most-installed projects, classified 2026-08-20
+	//
+	// Popularity order from the August 2026 drupal.org usage snapshot, plus the four module
+	// dependencies composer pulled in with them. All 25 resolve on Drupal 11.4.5 and all 25 enable
+	// here, so what these entries record is the capability question, which install cannot answer.
+	'drupal/entity': { needs: [], why: 'entity API helpers; bundle plugins and a duplicator' },
+	'drupal/jquery_ui': {
+		needs: [],
+		why: 'asset libraries only. It also declares the libraries of its four sub-modules from a JSON file, through a procedural hook_library_info_alter'
+	},
+	'drupal/jquery_ui_autocomplete': { needs: [], why: 'one asset library, declared by jquery_ui' },
+	'drupal/jquery_ui_datepicker': { needs: [], why: 'one asset library, declared by jquery_ui' },
+	'drupal/jquery_ui_menu': { needs: [], why: 'one asset library, declared by jquery_ui' },
+	'drupal/libraries': {
+		needs: [],
+		why: 'a registry of external libraries on the local file system; it reads, it does not fetch'
+	},
+	'drupal/better_exposed_filters': {
+		needs: [],
+		why: 'views exposed-filter widgets; three plugin managers over local view data'
+	},
+	'drupal/imce': {
+		needs: [],
+		why: 'a file manager over the stream wrappers this runtime already provides'
+	},
+	'drupal/crop': { needs: [], why: 'an entity type storing crop geometry; no I/O of its own' },
+	'drupal/focal_point': {
+		needs: [],
+		why: 'an image effect over crop. The transform is GD, which this build has'
+	},
+	'drupal/views_bulk_operations': {
+		needs: [],
+		why: 'actions over view results, run through the batch API -- many requests rather than one long one, which is the shape this runtime wants'
+	},
+	'drupal/mailsystem': {
+		needs: [],
+		why: 'selects which mail plugin sends. No I/O of its own, and it is how a site points itself at `cfw_mail` instead of `php_mail`'
+	},
+	'drupal/colorbox': { needs: [], why: 'a lightbox; a library and a field formatter' },
+	'drupal/editor_advanced_link': { needs: [], why: 'a CKEditor 5 plugin, entirely client side' },
+	'drupal/backup_migrate': {
+		needs: ['cron'],
+		why: 'schedules are drained by cron, and a backup is a read of the database plus a write to a destination. A remote destination is outbound per destination, not per module',
+		lift: 'cron wiring for the schedules. Sizing is the open question rather than the capability: a full backup as one record meets the 2,199,995-byte ceiling, so a destination here has to chunk'
+	},
+	'drupal/module_filter': {
+		needs: [],
+		why: 'filters the Extend page; a form alter and a library'
+	},
+	'drupal/address': {
+		needs: [],
+		why: 'a field type over commerceguys/addressing, whose address formats ship as JSON in the package -- so the country repository is a file read rather than a service call'
+	},
+	'drupal/menu_block': { needs: [], why: 'a block derivative per menu; menu rendering only' },
+	'drupal/entity_browser': {
+		needs: [],
+		why: 'entity selection over local entities; iframes and modals around a view'
+	},
+	'drupal/views_data_export': {
+		needs: [],
+		why: 'a views display that serialises rows. The batched export is many requests, and the encoders are pure PHP'
+	},
+	'drupal/csv_serialization': { needs: [], why: 'a serializer encoder over league/csv' },
+	'drupal/google_tag': {
+		needs: [],
+		why: 'it injects a snippet the BROWSER calls Google with. Nothing leaves PHP, which is why an integration that reads as outbound is not'
+	},
+	'drupal/externalauth': {
+		needs: [],
+		why: 'maps an external identity to a local account in its own `authmap` table. The outbound half belongs to whichever provider module sits on top -- openid_connect is the one that is blocked, not this'
+	},
+	'drupal/easy_breadcrumb': { needs: [], why: 'a breadcrumb builder over the current route' },
+	'drupal/config_ignore': {
+		needs: [],
+		why: 'a config storage filter applied during import; no runtime I/O'
+	},
+	'drupal/video_embed_field': {
+		needs: ['deferrable-outbound'],
+		why: 'the field stores a URL and renders an iframe, which needs nothing. The THUMBNAIL is a fetch from the provider on save, and that is the one call it makes',
+		lift: 'the existing GET tier covers the thumbnail; what is missing is tolerating a miss on the first save instead of blocking. Without it the field still works and the thumbnail is empty'
+	},
+	'drupal/svg_image': {
+		needs: [],
+		why: "it takes over core's `image` formatter and `image_image` widget to pass SVGs through, sanitised by enshrined/svg-sanitize. Pure PHP, and it needs no image toolkit for the SVG path"
+	},
+	// #endregion
+
 	// #region cron: the driver exists and nothing calls it
 	'drupal/scheduler': {
 		needs: ['cron'],
@@ -121,6 +208,34 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 		needs: ['blocking-outbound'],
 		why: 'a query per keystroke against a remote index has to answer inside the render that asked. Deferring it changes what the user sees rather than when they see it',
 		lift: 'JSPI or an Asyncify build, which is the whole-binary change this project has priced and deferred. Use the Search API database backend instead'
+	},
+	// #endregion
+
+	// #region the dependencies of a real site, added 2026-08-19
+	//
+	// `earth-app/mantle2` is the one workload here that somebody depends on, and NONE of its five
+	// contrib dependencies was classified. Two of them are the product's own pitch rather than a
+	// compatibility question: this platform REPLACES them, so a site that moves here drops the
+	// dependency instead of needing it to work.
+	'drupal/json_field': { needs: [], why: 'a field type storing JSON in its own column; no I/O' },
+	'drupal/key': {
+		needs: [],
+		why: 'key management over local config and file storage. The providers that fetch from a remote vault are per-provider, not per-module'
+	},
+	'drupal/smtp': {
+		needs: ['blocking-outbound'],
+		why: 'it exists to open an SMTP socket inside the request that sends the mail, which this runtime cannot do. Measured 2026-08-20: it installs cleanly and `smtp.settings` lands, so what refuses it is the socket rather than the installer -- an install verdict was never a capability verdict',
+		lift: 'the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. What is still missing is the domain onboarding behind it, which `/setup/mail` now automates up to the verification click. So smtp stays blocked as a MODULE -- the socket is what refuses it -- while the capability it provides is covered'
+	},
+	'drupal/redis': {
+		needs: ['blocking-outbound'],
+		why: 'an external cache backend reached over a socket on every cache get',
+		lift: "none needed: the Durable Object's own SQLite IS the cache backend, so this is a dependency the architecture removes"
+	},
+	'drupal/openid_connect': {
+		needs: ['blocking-outbound'],
+		why: 'the authorization-code exchange POSTs to the identity provider token endpoint and must have the answer before it can finish the login response. Unlike a search query there is no partial answer to render',
+		lift: 'JSPI or an Asyncify build. The deferred-outbound queue does NOT reach it -- a token exchange cannot return a placeholder and fill later, and a site whose users cannot log in is not partially working'
 	}
 	// #endregion
 };

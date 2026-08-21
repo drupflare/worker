@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { SHIPPED_CAPABILITIES } from '../../src/ops/catalog';
+import { moduleTable } from '../../src/ops/module-table';
+import { SUSPEND_PROBE } from '../helpers/drupal-probes';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -13,9 +17,11 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * value it transformed.
  *
  * Only the four contrib modules in the shipped pack can be reached at all: token, ctools, pathauto,
- * admin_toolbar. Everything else on the support table is `supported` by capability analysis with no
- * code on the filesystem to exercise, and no amount of test writing changes that until a catalog and
- * layer mount exist.
+ * admin_toolbar. `scripts/pack-drupal.ts` puts `modules/contrib` behind `PACK_CONTRIB=1` and calls
+ * the rest a QA fixture, so the other rows on the support table have no code on the filesystem for
+ * this lane to exercise -- `SHIPPING_PACK_CONTRIB` in `src/ops/module-table.ts` is that boundary as
+ * data, and `tests/node/module-table.spec.ts` checks it against the pack index rather than believing
+ * this comment.
  */
 
 type Payload = Record<string, unknown>;
@@ -35,6 +41,58 @@ const saveNode = (site: ServeDo, title: string) =>
 const rows = (reply: Payload): Record<string, unknown>[] =>
 	Array.isArray(reply['rows']) ? (reply['rows'] as Record<string, unknown>[]) : [];
 
+/** the node title the alias assertion slugifies, chosen so the two forms cannot be confused */
+const TITLE = 'Pathauto Probe Title';
+
+/**
+ * The pattern the shipped site does not carry, created the way a site owner would.
+ *
+ * `canonical_entities:node` is the alias-type plugin pathauto derives per entity type, and no
+ * `selection_criteria` means every bundle, which is what makes one pattern enough here.
+ */
+const CREATE_PATTERN = String.raw`<?php
+$out = ['ok' => false];
+try {
+  // ConfigEntityBase::save() returns SAVED_NEW, which lives in common.inc and boot() never loads
+  if (!defined('SAVED_NEW')) { require_once '/drupal/core/includes/common.inc'; }
+  // a node save happens inside a request on a real site. BOOT_KERNEL leaves the stack empty, and
+  // pathauto resolves the aliased route through router.request_context, which then gets null
+  $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+  \Drupal::service('request_stack')->push($request);
+  \Drupal::service('router.request_context')->fromRequest($request);
+  // and preHandle()'s other half: boot() does not read .module files, so token's info hook reaches
+  // image_style_options() -- procedural, in image.module -- and finds no such function
+  \Drupal::moduleHandler()->loadAll();
+  $storage = \Drupal::entityTypeManager()->getStorage('pathauto_pattern');
+  $storage->create([
+    'id' => 'probe_node',
+    'label' => 'Probe node',
+    'type' => 'canonical_entities:node',
+    'pattern' => '/probe/[node:title]',
+    'weight' => 0,
+  ])->save();
+  $out['ok'] = $storage->load('probe_node') !== NULL;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+echo json_encode($out);
+`;
+
+/** one contrib-only token, one undeclared token as the control, one core token as the floor */
+const REPLACE_TOKENS = String.raw`<?php
+$out = ['ok' => false];
+try {
+  $token = \Drupal::token();
+  $out['random'] = $token->replace('[random:hash:md5]');
+  $out['unknown'] = $token->replace('[nosuchtype:nosuchtoken]');
+  $out['core'] = $token->replace('[site:name]');
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+echo json_encode($out);
+`;
+
 describe('pathauto and token, together', () => {
 	/**
 	 * **PATHAUTO ENABLES AND CANNOT DO ANYTHING**, and that is the finding.
@@ -47,12 +105,16 @@ describe('pathauto and token, together', () => {
 	 *
 	 * That is the same shape as the missing node types and the unwired cron: a capability present in
 	 * the artifact with the configuration that activates it absent, failing by doing nothing rather
-	 * than by erroring. It is why pathauto is `supported` and NOT `verified`: nothing about its
-	 * behaviour has been observed, because none is reachable.
+	 * than by erroring.
 	 *
-	 * Pinned as the current truth rather than skipped. The day a pattern ships this fails, which is
-	 * the signal to write the real alias assertion -- the one that would verify pathauto and token
-	 * together, since a pattern is a Token string and an alias carrying the node title proves both.
+	 * **IT IS NOT WHY PATHAUTO WAS UNVERIFIABLE, AND THAT READING COST A ROW.** This block used to
+	 * conclude "no behaviour has been observed, because none is reachable" and stop. A pattern is a
+	 * config entity a SITE OWNER creates, so the test can create one -- which is what the case below
+	 * does, and what moved both pathauto and token to `verified`. Absent configuration is a fixture
+	 * gap, not a platform limit; the two are worth telling apart before recording a verdict.
+	 *
+	 * This case stays as the precondition it always was: the shipped site ships no pattern. The day
+	 * one does, this fails, and the case below is where the assertion already lives.
 	 */
 	it(
 		'enables, but ships no pattern so it generates no alias',
@@ -77,6 +139,90 @@ describe('pathauto and token, together', () => {
 			// and it has nothing to apply
 			expect(rows(out.patterns)).toEqual([]);
 			expect(rows(out.aliases)).toEqual([]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * Pathauto, given the one thing it was missing.
+	 *
+	 * The observable is the row pathauto exists to write: a `path_alias` whose alias is the pattern
+	 * with `[node:title]` resolved. Two modules are proved by one row and neither claim leans on the
+	 * other -- pathauto owns the fact that a row appeared at all, token owns the fact that what
+	 * landed in it is the node's title rather than the literal bracket text.
+	 */
+	it(
+		'generates the alias its pattern describes, once a pattern exists',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enable(site, 'pathauto');
+				// the enable drops the interpreter, so the container has to come back before any
+				// PHP of ours can reach the storage handler pathauto just registered
+				const booted = await site.runJson(BOOT_KERNEL);
+				const pattern = await site.runJson(CREATE_PATTERN);
+				const saved = await saveNode(site, TITLE);
+				const aliases = await sql(site, 'SELECT path, alias FROM path_alias ORDER BY id');
+				return { enabled, booted, pattern, saved, aliases };
+			});
+
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 400)).toBe(true);
+			expect(out.booted['ok'], 'the kernel did not come back after the enable').toBe(true);
+			expect(out.pattern['ok'], JSON.stringify(out.pattern).slice(0, 400)).toBe(true);
+			expect(out.saved['ok'], JSON.stringify(out.saved).slice(0, 400)).toBe(true);
+
+			const alias = rows(out.aliases)[0];
+			expect(rows(out.aliases).length, 'pathauto generated no alias').toBe(1);
+			expect(alias?.['path']).toBe(`/node/${Number(out.saved['nid'])}`);
+			// TOKEN'S HALF IS THE VALUE, NOT THE ABSENCE OF BRACKETS. A `not.toContain('[node:
+			// title]')` was here and could never fail: pointed at `[node:nosuchtoken]` this run
+			// writes NO row rather than a literal one, so the unresolved case is already caught
+			// above and a literal-bracket assertion is dead weight. What token owns is that the
+			// value is the slugified title
+			expect(alias?.['alias']).toBe('/probe/pathauto-probe-title');
+			console.log(
+				`[behaviour] pathauto: ${Number(out.enabled['rowsWritten'])} charged rows, ` +
+					`alias ${String(alias?.['alias'])}`
+			);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * Token, on a token core does not have.
+	 *
+	 * `[site:name]` would have proved nothing: `system_tokens()` is core, so it resolves with the
+	 * contrib module absent. `[random:hash:md5]` is declared by `token.tokens.inc` and by nothing
+	 * else, so its resolution is the module answering.
+	 */
+	it(
+		'resolves a token that only the contrib module declares',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enable(site, 'token');
+				const booted = await site.runJson(BOOT_KERNEL);
+				const replaced = await site.runJson(REPLACE_TOKENS);
+				return { enabled, booted, replaced };
+			});
+
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 400)).toBe(true);
+			expect(out.booted['ok']).toBe(true);
+			expect(out.replaced['ok'], JSON.stringify(out.replaced).slice(0, 400)).toBe(true);
+			expect(String(out.replaced['random']), 'the contrib token stayed literal').toMatch(
+				/^[0-9a-f]{32}$/
+			);
+			// the control, and it is the one that makes the assertion above mean something: an
+			// undeclared token comes back UNTOUCHED, so `replace()` is not simply blanking brackets
+			expect(out.replaced['unknown']).toBe('[nosuchtype:nosuchtoken]');
+			// core's own token still answers, so a total token failure reads differently from a
+			// contrib-module-absent failure
+			expect(String(out.replaced['core']).length).toBeGreaterThan(0);
+			expect(out.replaced['core']).not.toContain('[site:name]');
+			console.log(
+				`[behaviour] token: ${Number(out.enabled['rowsWritten'])} charged rows, ` +
+					`[random:hash:md5] -> ${String(out.replaced['random'])}`
+			);
 		},
 		REQUEST_TIMEOUT
 	);
@@ -143,6 +289,46 @@ describe('ctools', () => {
 				Number(out.enabled['moduleCountBefore'])
 			);
 			expect(out.saved['ok'], JSON.stringify(out.saved).slice(0, 300)).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * The mechanism all four `blocked` rows rest on, measured instead of declared.
+ *
+ * `SHIPPED_CAPABILITIES.blockingOutbound` is a hand-written `false`, and it is what refuses
+ * search_api_solr, smtp, redis and openid_connect. Nothing compared it to the binary: an interpreter
+ * that gained Asyncify or JSPI would leave four rows wrong with every test still green. This reads
+ * the same flag `DrupflareServiceProvider::runtimeCanSuspend()` reads, which is what actually
+ * decides whether a blocking outbound call is possible.
+ */
+describe('what the blocked rows are blocked on', () => {
+	it(
+		'reports an interpreter that cannot suspend, which is why four rows are blocked',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				await site.runJson(BOOT_KERNEL);
+				return site.runJson(SUSPEND_PROBE);
+			});
+
+			expect(out['ok'], JSON.stringify(out).slice(0, 400)).toBe(true);
+			// the host sets the flag on every build, so `null` here means the probe missed rather
+			// than that the build cannot suspend -- a distinction the table's four rows depend on
+			expect(out['hasVrznoEnv'], 'no vrzno_env: this probe cannot see the flag').toBe(true);
+			expect(out['canSuspend']).toBe(false);
+			// **THE SYMBOL IS PRESENT AND MEANS NOTHING.** `function_exists('vrzno_await')` is TRUE
+			// on the shipping 8.5 build -- the extension declares it; what ASYNCIFY=0 removed is
+			// the `Asyncify` the glue calls, so reaching it throws a ReferenceError PHP cannot
+			// catch. Pinned true so nobody re-derives suspendability from the symbol
+			expect(out['hasVrznoAwait']).toBe(true);
+			// and the table's input agrees with the binary
+			expect(SHIPPED_CAPABILITIES.blockingOutbound).toBe(out['canSuspend']);
+			expect(
+				moduleTable().filter((r) => r.state === 'blocked').length,
+				'blocked rows exist only because the interpreter cannot suspend'
+			).toBeGreaterThan(0);
 		},
 		REQUEST_TIMEOUT
 	);

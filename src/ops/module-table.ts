@@ -8,15 +8,53 @@ import { MODULE_TIER_NOTES } from './module-tiers.js';
  * because nothing compares it to anything. `tests/node/module-table.spec.ts` renders these rows and
  * fails when README.md disagrees -- the same discipline as the driver-pack byte-for-byte check.
  *
- * **THREE STATES, AND THE DIFFERENCE BETWEEN THE FIRST TWO IS EVIDENCE.**
+ * **THREE STATES, AND ONLY ONE OF THEM IS A SUPPORT CLAIM.**
  *
  *   - `verified`  the gate enabled it against a real site and asserted it FUNCTIONS. Not that the
  *                 installer returned ok; that a thing the module does actually happened.
- *   - `supported` classified as workable by capability analysis, not yet exercised. This is a
- *                 reasoned claim, and saying so is the point.
+ *   - `untested`  nobody has enabled it here. The capability analysis says it should work, which is
+ *                 an inference about the runtime and not an observation about the module.
  *   - `blocked`   cannot work, with the mechanism and what would lift it.
+ *
+ * **`supported` WAS A STATE HERE AND IT WAS DISSOLVED** (2026-08-18, Gregory's call). It meant
+ * "the capability this module needs was measured WITHOUT the module", which is a reasoned claim and
+ * reads to anybody else as a promise. Renaming it `untested` is the whole fix: the row still carries
+ * the same evidence, and it no longer claims something no test has shown.
+ *
+ * The rule that replaces it: **nothing reaches `verified` except through a gated enable-and-assert
+ * run.** There is no path in this file that promotes a module on analysis alone, and adding one
+ * would put the old problem back under a new name.
  */
-export type SupportState = 'verified' | 'supported' | 'blocked';
+export type SupportState = 'verified' | 'untested' | 'blocked';
+
+/**
+ * The contrib modules the SHIPPING pack carries, which is four and has always been four.
+ *
+ * `scripts/pack-drupal.ts` puts `modules/contrib` behind `PACK_CONTRIB=1` and says why in its own
+ * comment: the other modules under `drupal-src/modules/contrib` are a QA fixture rather than
+ * product. So a `verified` row outside this list was established against a fixture build, and
+ * re-running the gate against the shipping artifact SKIPS it rather than re-establishing it.
+ *
+ * Measured from `assets/drupal-pf/core.pf.json` rather than believed --
+ * `tests/node/module-table.spec.ts` reads the pack index and fails if this list and the artifact
+ * disagree in either direction.
+ */
+export const SHIPPING_PACK_CONTRIB: readonly string[] = [
+	'drupal/admin_toolbar',
+	'drupal/ctools',
+	'drupal/pathauto',
+	'drupal/token'
+];
+
+/**
+ * The clause every fixture-verified row carries, so the reader is not left to infer it.
+ *
+ * One string rather than twelve copies: the distinction is a property of the pack, so a row gains
+ * or loses it by moving in or out of {@link SHIPPING_PACK_CONTRIB}, never by someone editing prose.
+ */
+export const FIXTURE_CLAUSE =
+	'. Required as a dev dependency and verified against the test build rather than shipped, so a ' +
+	'site does not carry it unless it asks for it';
 
 /**
  * Modules whose BEHAVIOUR the gate has asserted, with what was asserted.
@@ -27,16 +65,14 @@ export type SupportState = 'verified' | 'supported' | 'blocked';
  * the exact case that killed wrangler dev hardest. The failure was miniflare's proxy controller, a
  * component that only exists locally, and suspecting the instrument first was right.
  *
- * What that leaves is a configuration gap rather than a runtime one:
+ * What that left was a configuration gap rather than a runtime one, and **the gap was closed by
+ * supplying the configuration rather than by waiting for it.** This block used to record `pathauto`
+ * as inert (no `pathauto.pattern.*` ships, so a node save produces no alias) and `token` as
+ * unverifiable for the same reason. A pattern is a config entity a SITE OWNER creates, so the test
+ * creates one; both are now verified against an alias the run generated.
  *
- *   - `admin_toolbar` and `ctools` are verified, with what was asserted recorded above.
- *   - `pathauto` enables cleanly and has NOTHING TO APPLY: no `pathauto.pattern.*` config ships, so
- *     a node save produces no alias. Installed, `ok: true`, and silently inert.
- *   - `token` is unverifiable for the same reason. Its behaviour is token replacement, and the only
- *     observable on this site would have been the alias pathauto did not generate.
- *
- * A deploy would not change any of this: the blocker is absent config, not the memory envelope, so
- * it would reproduce identically on real infrastructure.
+ * The distinction worth keeping: absent CONFIGURATION is a fixture gap a test can fill, absent CODE
+ * is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CONTRIB}.
  */
 export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
 	'drupal/field_group':
@@ -66,7 +102,70 @@ export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
 	'drupal/admin_toolbar':
 		'enabled against a real site in the workers lane; its own routes appear in the `router` table after the install-triggered rebuild',
 	'drupal/ctools':
-		'enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has'
+		'enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has',
+	'drupal/pathauto':
+		'enabled against a real site, given the pattern the shipped database does not carry; a node saved as "Pathauto Probe Title" produced the `path_alias` row `/node/1 -> /probe/pathauto-probe-title`. Pointed at `canonical_entities:user` the same run writes no row, so the assertion tracks this pattern rather than an ambient alias',
+	'drupal/token':
+		"enabled against a real site; `[random:hash:md5]` resolves to 32 hex digits, and it is declared by `token.tokens.inc` and by nothing in core -- with `ctools` enabled in its place the same call returns the literal. Controls both ways: `[nosuchtype:nosuchtoken]` comes back untouched, and core's `[site:name]` still answers",
+
+	// #region driven 2026-08-20 in the fixture lane, each asserted absent before the enable
+	'drupal/address':
+		'enabled against a real site; the `address`, `address_country` and `address_zone` field types are registered and `address.country_repository`, `address.address_format_repository` and `address.subdivision_repository` resolve. None of the three is in the container beforehand',
+	'drupal/backup_migrate':
+		'enabled against a real site; it installed four config entity types and six default source and destination entities -- `default_db`, `entire_site`, the two file destinations and a daily schedule -- and 24 routes',
+	'drupal/better_exposed_filters':
+		'enabled against a real site; its three widget plugin managers and `better_exposed_filters.bef_helper` are in the container afterwards and absent before',
+	'drupal/colorbox':
+		'enabled against a real site; `colorbox.settings` is installed and its admin route is in the `router` table',
+	'drupal/config_ignore':
+		'enabled against a real site; `config_ignore.settings` is installed and its admin route is in the `router` table',
+	'drupal/crop':
+		'enabled against a real site; it created the crop entity type as four tables -- `crop`, `crop_field_data`, `crop_revision`, `crop_field_revision` -- and installed `crop_type` as a config entity type',
+	'drupal/csv_serialization':
+		"enabled against a real site; `serializer->supportsEncoding('csv')` is true afterwards and false before, with `json` true throughout as the control that the serializer is answering at all",
+	'drupal/easy_breadcrumb':
+		'enabled against a real site; `easy_breadcrumb.settings` is installed and its admin route is in the `router` table',
+	'drupal/editor_advanced_link':
+		'enabled against a real site; the `editor_advanced_link_link` CKEditor 5 plugin is registered and its two asset libraries resolve. Library discovery needs `common.inc` loaded first -- `JS_LIBRARY` and `CSS_COMPONENT` are defined there, not by the autoloader',
+	'drupal/entity':
+		'enabled against a real site; `entity.bundle_plugin_installer`, `entity.bundle_entity_duplicator` and `access_checker.entity_revision` resolve afterwards and are absent before. A substring match on its name is NOT evidence here: most of what matches `entity` in the container is core',
+	'drupal/entity_browser':
+		'enabled against a real site; the `entity_browser` config entity type is installed and six of its routes are in the `router` table',
+	'drupal/entity_reference_revisions':
+		'enabled against a real site; the `entity_reference_revisions` field type and its `entity_reference_revisions_entity_view` formatter are registered, and `entity_reference_revisions.orphan_purger` is in the container',
+	'drupal/externalauth':
+		'enabled against a real site; its schema hook created `authmap`, which is the table the identity mapping lives in',
+	'drupal/focal_point':
+		'enabled against a real site; `focal_point.settings` is installed and it created the `crop.type.focal_point` crop type inside the dependency it pulled in',
+	'drupal/google_tag':
+		'enabled against a real site; the `google_tag_container` config entity type and `google_tag.settings` are installed, with eight routes. Nothing outbound happens in PHP -- the snippet it injects is called by the browser',
+	'drupal/imce':
+		'enabled against a real site; the `imce_profile` config entity type and both shipped profiles -- `admin` and `member` -- are installed, with nine routes',
+	'drupal/jquery_ui':
+		'enabled against a real site; 24 asset libraries resolve for it afterwards and none before, `core` and `widget` among them',
+	'drupal/jquery_ui_autocomplete':
+		'enabled against a real site; the `autocomplete` library resolves for it afterwards and none before. It ships no code of its own -- jquery_ui declares the library on its behalf, so the library existing IS the module working',
+	'drupal/jquery_ui_datepicker':
+		'enabled against a real site; the `datepicker` library resolves for it afterwards and none before. Four files on disk and no PHP, so its library is the only observable it has',
+	'drupal/jquery_ui_menu':
+		'enabled against a real site; the `menu` library resolves for it afterwards and none before',
+	'drupal/libraries':
+		'enabled against a real site; `libraries.settings` is installed, which is where its external library definitions are read from',
+	'drupal/mailsystem':
+		'enabled against a real site; `mailsystem.settings` is installed and its admin route is in the `router` table. It is how a site selects `cfw_mail`, so it is the module a site drops smtp in favour of',
+	'drupal/menu_block':
+		"enabled against a real site; `menu_block:main` and `menu_block:footer` are block plugin derivatives it provides. `access_check.admin_menu_block_page` reads as its service and is CORE's -- the before reading is what said so",
+	'drupal/module_filter':
+		'enabled against a real site; `module_filter.settings` is installed and its admin route is in the `router` table',
+	'drupal/svg_image':
+		"enabled against a real site; the `image` field formatter is `Drupal\\svg_image\\...\\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and the `image_image` widget moves the same way. It takes core's plugin ids over rather than adding its own",
+	'drupal/video_embed_field':
+		'enabled against a real site; the `video_embed_field` field type, its `video_embed_field_video` formatter and `video_embed_field.provider_manager` are all present afterwards and absent before',
+	'drupal/views_bulk_operations':
+		'enabled against a real site; `views_bulk_operations.processor`, `views_bulk_operations.data` and its action plugin manager resolve, the `views_bulk_operations_delete_entity` action is registered, and four of its routes are in the `router` table',
+	'drupal/views_data_export':
+		'enabled against a real site; the `data_export` views display and style plugins are registered, which is the whole module'
+	// #endregion
 };
 
 /**
@@ -131,7 +230,11 @@ export function moduleTable(
 
 		if (name in verified) {
 			state = 'verified';
-			evidence = verified[name] as string;
+			// the fixture clause is appended rather than written into each entry, so a row gains or
+			// loses it by moving in or out of the shipping pack
+			evidence =
+				(verified[name] as string) +
+				(SHIPPING_PACK_CONTRIB.includes(name) ? '' : FIXTURE_CLAUSE);
 		} else if (verdict.tier === 'refused') {
 			state = 'blocked';
 			evidence = verdict.reason ?? note?.why ?? 'refused by the capability model';
@@ -139,12 +242,12 @@ export function moduleTable(
 			// an unclassified module is not a support claim at all, so it stays out of the table
 			continue;
 		} else {
-			state = 'supported';
+			state = 'untested';
 			evidence =
 				capabilityEvidence[name] ??
 				note?.why ??
 				verdict.reason ??
-				'classified as workable, not yet exercised';
+				'not enabled here; nothing has been asserted about it';
 		}
 		rows.push({ name, label: labelFor(name), state, evidence });
 	}
@@ -171,8 +274,11 @@ export const TABLE_END = '<!-- module-table:end -->';
 export function renderModuleTable(rows: TableRow[] = moduleTable()): string {
 	const counts = {
 		verified: rows.filter((r) => r.state === 'verified').length,
-		supported: rows.filter((r) => r.state === 'supported').length,
-		blocked: rows.filter((r) => r.state === 'blocked').length
+		untested: rows.filter((r) => r.state === 'untested').length,
+		blocked: rows.filter((r) => r.state === 'blocked').length,
+		fixtureVerified: rows.filter(
+			(r) => r.state === 'verified' && !SHIPPING_PACK_CONTRIB.includes(r.name)
+		).length
 	};
 
 	const body = rows.map((row) => {
@@ -198,10 +304,17 @@ export function renderModuleTable(rows: TableRow[] = moduleTable()): string {
 	return [
 		TABLE_BEGIN,
 		'',
-		`**${counts.verified} verified, ${counts.supported} supported, ${counts.blocked} blocked.** ` +
-			'Verified means the gate enabled the module and asserted an observable it owns. Supported ' +
-			'means it has not been enabled here; where the evidence names a spec, the runtime ' +
-			'capability that module needs has been measured end to end without the module.',
+		`**${counts.verified} verified, ${counts.untested} untested, ${counts.blocked} blocked.** ` +
+			'Verified means the gate enabled the module and asserted an observable it owns, and it is ' +
+			'the only state that is a support claim. Untested means nobody has enabled it here: the ' +
+			'evidence column says what the capability analysis concluded, which is an inference about ' +
+			'the runtime rather than an observation about the module.',
+		'',
+		`Contrib modules are development dependencies here, verified against the test build and not ` +
+			`shipped. The pack carries ${SHIPPING_PACK_CONTRIB.length} ` +
+			`(${SHIPPING_PACK_CONTRIB.map((n) => labelFor(n)).join(', ')}); the other ` +
+			`${counts.fixtureVerified} verified rows are tested that way and marked, so a site stays ` +
+			'small and adds only what it asks for.',
 		'',
 		line(header),
 		rule,

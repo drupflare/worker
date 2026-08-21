@@ -452,11 +452,17 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 		expect(out.reason).toContain('INSIDE one render');
 	});
 
-	it('warns that a cron module installs and silently does nothing without DRUPAL_CRON', () => {
-		// the failure mode worth naming: a module that enables and never runs looks fine
+	it('names the failure mode a cron module has when cron is turned OFF', () => {
+		// the failure mode worth naming: a module that enables and never runs looks fine.
+		// The direction matters and this warning used to have it backwards -- it said to SET
+		// DRUPAL_CRON=1, which `drupalCronEnabled()` has always treated as the default, so it told
+		// a reader to configure something they already had and named no real hazard
 		const out = tierFor('drupal/scheduler');
 		expect(out.tier).toBe('needs-deferred-tier');
 		expect(out.reason).toContain('silently does nothing');
+		expect(out.reason).toContain('ON by default');
+		expect(out.reason).toContain('DRUPAL_CRON=0');
+		expect(out.reason).not.toContain('DRUPAL_CRON=1');
 	});
 
 	it('returns UNKNOWN for an unclassified module, never works-today', () => {

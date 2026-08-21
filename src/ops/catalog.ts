@@ -355,7 +355,9 @@ export function tierFor(
 	if (needs.includes('cron')) {
 		return {
 			tier: 'needs-deferred-tier',
-			reason: `${name} does its work on cron, which runs from the Durable Object alarm; set DRUPAL_CRON=1 or it installs and silently does nothing`
+			// cron defaults ON -- `drupalCronEnabled()` returns true for unset, so this used to tell
+			// a reader to set a var they already had. The remaining hazard is the opposite one
+			reason: `${name} does its work on cron, which runs from the Durable Object alarm and is ON by default; with DRUPAL_CRON=0 it installs and silently does nothing`
 		};
 	}
 	return { tier: 'works-today' };

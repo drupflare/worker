@@ -33,6 +33,21 @@ Corollaries, each of which cost real work to learn:
   while CPU is the binding cost will pass its own test and blow the real one.
 - **Count both halves.** An instrument attached to one layer measures that layer, not the system;
   ask what it cannot see before quoting it.
+- **`PLAN=free` is drupflare's var, not Cloudflare's plan, and the working account is Workers PAID.**
+  A 6,355 ms invocation completed `ok`; free refuses with HTTP 503 and error 1102. So a deployed run
+  on the working account measures COST, which is plan-independent, and never ENFORCEMENT.
+  `limits.cpu_ms` does not substitute -- a 152 ms invocation survived a configured cap of 10. A
+  separate free account exists for enforcement work.
+- **THE FREE CAP HAS A BURST ALLOWANCE, so an n=1 probe of it reads ~200x too generous.** Measured on
+  a real free account: one 200,000,000-iteration request SUCCEEDS, the same request repeated fails
+  11 of 15. Sustained, only 1,000,000 iterations holds 10/10. Single-shot and sustained are different
+  measurements and the single-shot one is nearly useless. A warm render is 2,127 ms, so free is about
+  three orders of magnitude short of rendering; prefill and the alarm chain are load-bearing, not
+  defensive.
+- **Observability's `calculations` view omits zero-valued groups.** 360 driven invocations returned
+  13 groups, all of them the 1-2 ms tail, and the query reported no error. Read the `events` view;
+  `obs-cpu.ts` now defaults to it. Where the expected answer is "below the meter's resolution", an
+  instrument blind to zero reports the tail as the body.
 - Most moved verdicts in this project moved because the _instrument_ was wrong, not the system.
   Suspect the instrument first.
 
@@ -201,8 +216,10 @@ It never fails the install; offline you get a stub and a printed list of what wa
 **The pack cannot be restored that way.** `assets/drupal-pf` and `assets/drupal-sql` need a native
 PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere, so they
 arrive only in a published release payload via `bun run hydrate`. Until one exists,
-`ARTIFACT_SPECS` in `vitest.config.ts` -- **15 files, measured from CI twice, never guessed** -- is
-excluded and the lane prints what it dropped. 51 files / 1,521 tests still run.
+`ARTIFACT_SPECS` in `vitest.config.ts` -- **17 files, measured from CI, never guessed** -- is
+excluded and the lane prints what it dropped. **Count it, do not quote it**: this line said 15 while
+the list held 17, and the "51 files / 1,521 tests still run" that used to follow moved with it and
+was never re-measured. The lane prints both numbers when it skips.
 
 Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter against the tree that
 ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.
@@ -226,9 +243,19 @@ It also reports exports that only tests mention. That is usually the legitimate
 "exported for its unit test" pattern, but it is how `readHeapSnapshot` and `elideZeroPages` were
 found still passing their tests after the writer stopped calling them.
 
-Two modules are known dead and named in the spec's allow-list rather than quietly tolerated:
-`src/ops/tail-worker.ts` (17 exports, a unit spec, and no wrangler config declares `tail_consumers`)
-and `src/drupal/capabilities.ts` (imported by nothing, including tests).
+**`src/ops/tail-worker.ts` and `src/drupal/capabilities.ts` were the two known-dead modules and both
+have since been DELETED.** This paragraph named them as permanently exempt, which stopped being true
+without anyone editing it -- so do not go looking for either file. What caught the removal was the
+spec's stale-exemption half: it failed with both names the moment the files went. That direction is
+the one that is easy to get wrong, because an allow-list nobody prunes is how the next dead module
+gets waved through.
+
+The five entries on the list today are all legitimately off the edge: `src/ops/dormancy.ts` and
+`src/ops/module-table.ts` are build-lane tools driven by their own vitest specs, and
+`src/runtime/php-binary-{jspi,o2,zstd}.ts` are alias targets reached through a wrangler `alias`
+rather than through an import. The list may shrink without ceremony; **adding to it is the thing to
+think twice about**, because an entry is a promise the module is reached some other way rather than a
+way to silence the check.
 
 ## Commands
 
@@ -247,7 +274,13 @@ bun run build:wasm      # the zstd decoder (docker) and the interpreter (gh auth
 bun run backup:verify   # 40 CDN keys, no credentials
 ```
 
-`PUBLISHING.md` is the release procedure and `docs/repository-layout.md` says how every path arrives
+**`backup:verify` fails on Gregory's home network and that is not a defect.** The bucket is fronted
+by `drupflare-cdn.gmitch215.dev`, and the network blocklists `*.dev`, so it answers
+`UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Run it behind a VPN or from CI. Do not debug the script, and do
+not conclude anything about the bucket's contents from a failure with that error.
+
+`docs/building-from-source.md` is the release and build procedure; `docs/configuration.md` is every
+var and binding; `docs/repository-layout.md` says how every path arrives
 on a clean clone. The gate's own limit is written down there too: a clean checkout cannot build
 `assets/drupal-pf`, `assets/drupal-sql` or `.interp/`, so the specs that assert them run in the
 release lane, which hydrates the payload first and sets `REQUIRE_ARTIFACTS=1`.
@@ -261,9 +294,9 @@ under `drupal/` are what ships, not what is tested.
 
 | suite                                                            | repo           | assertions |
 | ---------------------------------------------------------------- | -------------- | ---------- |
-| `php tests/health-suite.php`                                     | `../drupflare` | 177        |
+| `php tests/health-suite.php`                                     | `../drupflare` | 561        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/load-classes.php`     | `../drupflare` | 94         |
-| `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 204        |
+| `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 219        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-installer.php`    | `../rom`       | 16         |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/pdo-shim.php`         | `../rom`       | 61         |
 
@@ -344,6 +377,20 @@ what `src/site-do.ts` imports.
 The recompression removed the constraint that shaped every earlier decision, so the ordering changed.
 Three rules replace "score it against the free envelope and stop".
 
+**R2 ABSORPTION IS 0 WITHOUT A CACHE RULE AND ~7/8 WITH ONE, measured 2026-08-21 -- and the first
+measurement of it was wrong twice.** `curl -I` sends HEAD, Cloudflare does not fill its cache from a
+HEAD, so every reading came back `DYNAMIC` and produced "R2 custom domains do not cache". With GET
+and a Cache Rule the A/B is clean: rule ON gives MISS then 7/7 HIT, rule OFF gives MISS then 7/7
+DYNAMIC, cold object both times. **Use GET when measuring cache behaviour.** The same pass also
+claimed the rule needs account-scoped `Account Rulesets: Edit`; measured, a zone-scoped
+`Zone > Cache Rules > Edit` alone creates it, so the privilege objection that had rejected this lever
+does not stand.
+
+Absorption is **not a constant**: every PoP fills independently, so it is a function of
+reads-per-colo-per-TTL-window. `cdnAbsorption` stays 0 as the model default because that is the
+correct floor for a low-traffic site and for any site with no rule; report anything derived from it
+as a range.
+
 **The off-Worker lever has a MAXIMUM, not a limit.** Once R2's read meter binds, moving more traffic
 off the Worker spends a 333,333/day meter faster to save a 100,000/day one. Modelled on the default
 mix: **77% off-Worker peaks at 432,900 views/day (4.33x); 99% falls back to 336,700 (3.37x)**. A page
@@ -374,6 +421,47 @@ the Greek final-sigma and emoji-width divergences outright) and on keeping lexbo
 because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000 did not move it. So
 "render inline on MISS" on a cold object is **boot-dominated at ~1.4 s**, not 34 ms. Still the largest
 latency win available; price it honestly.
+
+## A lever is offered through KV FIRST, then a var
+
+**Standing convention, 2026-08-18.** Anything you offer as a knob is offered through KV before it is
+offered as a `vars` entry, so an operator can change it **without a redeploy**. The ladder is KV,
+then the var, then whatever other fallbacks the reader already has. `resolveSettings()` and
+`KV_OVERRIDABLE` in `src/ops/plan.ts` implement it, so adding a lever means adding a name to the
+allow-list rather than building anything.
+
+Apply it even where it looks inapplicable, and check before assuming it is. `locationHint` read like
+a deploy-time property and is not: `DurableObjectNamespace.get()` takes it per call, so
+`SITE_LOCATION_HINT` sits on the allow-list like everything else.
+
+`KV_OVERRIDABLE` is a **privilege boundary, not tidiness.** KV is operator-writable, so nothing on it
+may change what is REACHABLE - every entry's worst case is a slow site. `PW_DIAGNOSTICS` would reach
+`/sql` and `/restore`; it, `SITE_ID` and `PLAN` are absent and a spec asserts they stay absent.
+`CF_OAUTH_CLIENT_ID` fails the same test for a subtler reason and lives in `cfw_meta` instead: a KV
+writer who could set it would point the consent screen at an application they control, and the
+operator would approve it reading the attacker's name off Cloudflare's own page.
+
+**THE CONVENTION WAS DECORATIVE FOR SEVEN OF ITS ELEVEN NAMES UNTIL 2026-08-21.** `withSettings()`
+runs in `src/site.ts` against the FRONT worker's env, and the Durable Object gets its own copy of the
+bindings - so `RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `HTTP_DRAIN_LIMIT`,
+`MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES` and `PREFILL` were knobs nothing read. Every one had a passing
+test of its RESOLVER, which is why nothing noticed: the resolvers were correct and were being handed
+an env the override never touched. `adoptSettings()` now overlays all eleven, and is called from
+`handle()` AND `alarm()` - four of the seven are read on the fill chain, which never passes through
+`handle()`. The fast storage lane still adopts nothing and must not: it is await-free by
+construction, and it reads no lever. `tests/integration/kv-levers.spec.ts` asserts the seam by NAME
+COVERAGE, so a twelfth entry with no wiring fails rather than shipping.
+
+## `supported` is not a state a module may be in
+
+**Nothing is a support claim except a gated enable-and-assert run.** The module table has exactly
+three states - `verified`, `untested`, `blocked` - and `verified` is reachable only by a test that
+enabled the module against a real site and asserted an observable it owns.
+
+`supported` used to exist and meant "the capability this module needs was measured WITHOUT the
+module". That is an inference about the runtime, and it read to everyone else as a promise about the
+module. Do not reintroduce it under another name: `tests/node/module-table.spec.ts` pins the state
+set and fails on a rendered table containing the word at all.
 
 ## Platform limits that are measured, not guessed
 

@@ -12,7 +12,7 @@ payload exists. `--payload-only` forbids the fallback; `--from-source` skips str
 
 ## Why Two Routes
 
-`assets/` is ~97 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
+`assets/` is 121 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
 a clean checkout has neither and `wrangler deploy` has nothing to upload.
 
 The payload route downloads them from a GitHub Release as one verified tarball. It is a plain HTTPS
@@ -84,8 +84,9 @@ own manifest rather than against a list.
 | 10  | `twig`        | `assets/drupal/twig-bake.json`, `core.list.json`   | `php`, steps 8 and 9  |
 | 11  | `core`        | the same two, repacked from the list               | `node`, step 10       |
 | 12  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 11               |
-| 13  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
-| 14  | `prefill`     | `assets/prefill.json`                              | a free port, 1-12     |
+| 13  | `static`      | `assets/core/`                                     | step 6                |
+| 14  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
+| 15  | `prefill`     | `assets/prefill.json`                              | a free port, 1-13     |
 
 ### 1-3, The Interpreter
 
@@ -145,7 +146,7 @@ runtime. The patch swaps the class for a synchronous stand-in with the same surf
 all: the default storage hashes the containing directory's mtime into the filename, and a mounted
 MEMFS directory's mtime is mount time.
 
-### 9-13, The Assets
+### 9-14, The Assets
 
 `bootstrap` exists because the packers and the bake read each other's output. `bake-twig.php` builds
 `core.list.json` as _the previous `core.json`, minus the compiled-Twig paths, plus the ones it just
@@ -181,6 +182,14 @@ materialised when PHP opens it instead of inflating 11,447 files at boot. It the
 `core.pf.bin` carries `settings.php` with a real `hash_salt`, Workers assets are served publicly, and
 a packed-but-unscrubbed pack is the state `release-payload.ts` refuses to publish.
 
+`static` copies the browser-fetchable half of the tree -- `css`, `js`, fonts and images under
+`core/` -- into `assets/core/`, where the Workers Assets layer serves it at the `/core/**` URLs
+Drupal already emits. Every pack skips those extensions because PHP never opens them, and nothing
+serves a file out of the PHP MEMFS over HTTP, so this is the only thing that answers them. It is a
+copy rather than a pack: Workers Assets content-hashes and compresses what it serves, and a hit never
+reaches the Worker. 4,028 files, 11,910,687 bytes on Drupal 11.4.5, with `core/profiles/demo_umami`,
+`tests/`, `node_modules/` and `.pcss.css` sources left out.
+
 `sql` chunks the committed `site.sqlite` into the JSON the Durable Object replays in JavaScript. It
 reads a tracked file, so it is the one step that works on a clone with nothing else built.
 
@@ -201,7 +210,7 @@ Four of these orderings fail silently when reversed, which is why they are asser
 - **`core` before `pack`.** `pack-perfile.ts` reuses `core.json` rather than re-globbing, which keeps
   a repack a change of format and not a change of which files ship.
 
-### 14, The Prefill
+### 15, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
 prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a
@@ -219,8 +228,14 @@ change the first time it was genuinely re-rendered.
 state directory is a fresh `--persist-to` under the system temp directory each time, so a run cannot
 lift a page from a Durable Object left behind by a previous one.
 
+**The migration runs with `prefill=0`, and that is what makes it a bake.** `/migrate` seeds the
+serving table from the shipped `assets/prefill.json`, so with it on every `/serve` is a hit of the
+file being rebuilt. Measured: all five pages came back byte-identical to the previous artifact with
+`renderMs` carried across unchanged, and a config change made two steps earlier appeared nowhere in
+the output. `migrateSite()` now asks for an unseeded site and throws if the route prefills anyway.
+
 It is the **only optional step**. It binds a port and boots an interpreter, and a busy port is not a
-reason to discard thirteen finished steps: a failure here is reported, the build continues, and the
+reason to discard fourteen finished steps: a failure here is reported, the build continues, and the
 run ends naming the file and the command that retries it. An absent `prefill.json` is normal at
 runtime -- the first request to each path renders instead of hitting.
 
@@ -238,12 +253,16 @@ that replaced a patched tree cannot leave a stamp behind claiming the patch is s
 
 The three expensive steps cache individually as well, and each takes `--force`:
 
-| artifact                  | cached on                                        | rebuild with                                   |
-| ------------------------- | ------------------------------------------------ | ---------------------------------------------- |
-| `.interp/php8.5.wasm`     | sha256 in `cdn-manifest.json`                    | `bun run restore:artifacts -- --force`         |
-| `.interp/php8.5.wasm.zst` | the length the frame's own header declares       | `bun scripts/pack-wasm-zstd.ts <wasm> --force` |
-| `.interp/zstddec.wasm`    | presence; the zstd and emsdk versions are pinned | `bash scripts/build-zstd-decoder.sh --force`   |
-| `drupal-src/`             | the version in `core/lib/Drupal.php`             | `bun run fetch:drupal -- --force`              |
+| artifact                  | cached on                                          | rebuild with                                   |
+| ------------------------- | -------------------------------------------------- | ---------------------------------------------- |
+| `.interp/php8.5.wasm`     | sha256 in `cdn-manifest.json`                      | `bun run restore:artifacts -- --force`         |
+| `.interp/php8.5.wasm.zst` | the length the frame's own header declares         | `bun scripts/pack-wasm-zstd.ts <wasm> --force` |
+| `.interp/zstddec.wasm`    | presence; the zstd and emsdk versions are pinned   | `bash scripts/build-zstd-decoder.sh --force`   |
+| `drupal-src/`             | presence of `core/lib/Drupal.php`, not its version | `bun run fetch:drupal -- --force`              |
+
+**The tree row is presence, and that is not the same rule `fetch-drupal-tree.ts` applies.** The script
+compares the version and refuses a mismatch; the `tree` step is skipped before the script runs, so on
+an already-built tree the comparison never happens. See [Upgrading Drupal Core](#upgrading-drupal-core).
 
 ## A Step Is Judged By Its Artifact
 
@@ -265,8 +284,125 @@ bun run build:local -- --json                # the plan and the preflight, as on
 `--only` and `--skip` reject a name that is not a step rather than silently doing nothing. A step
 whose inputs are not on disk fails by name before it runs.
 
+## Upgrading Drupal Core
+
+Rehearsed on 2026-08-21 against the real thing: the shipped tree was downgraded to 11.4.4 and
+upgraded back to 11.4.5 six times, in a throwaway copy of the repository. **Every figure below is
+wall clock** on one machine; none of them is a CPU number and none is comparable to a deployed one.
+
+### `DRUPAL_VERSION` Alone Rebuilds Nothing
+
+`DRUPAL_VERSION=<version> bun run build:local` **rebuilds nothing on a tree that is already built,
+and reports success.** Measured on a tree built at 11.4.4:
+
+```txt
+$ DRUPAL_VERSION=11.4.5 bun run build:local -- --skip=prefill
+  skip  tree  already built: drupal-src/core/lib/Drupal.php
+  ... all fifteen steps skipped ...
+nothing rebuilt: this tree is deployable
+real 0.08
+```
+
+The tree was still at 11.4.4 afterwards. `DRUPAL_VERSION` is read by `fetch-drupal-tree.ts` and by
+nothing else, and the `tree` step is keyed on the presence of `drupal-src/core/lib/Drupal.php`, so
+the step that would compare the two versions is skipped before it can. Every downstream step is then
+skipped for the same reason: its own output is still on disk from the previous version.
+
+### Two Failures On The Way To A Working Sequence
+
+Both were hit while rehearsing, and both stop an upgrade dead.
+
+**`bun run fetch:drupal -- --force` throws `ENOTEMPTY`, after deleting `core/`.** The `site` step
+runs Drupal's installer, which hardens `drupal-src/sites/build` to `0555`; `rmSync(recursive, force)`
+under Bun 1.4.0 cannot unlink through a read-only directory, so the recursive delete fails partway.
+The tree is left with no `core/` and 4,253 entries still in place, and re-running the same command
+fails identically. `chmod -R u+w drupal-src` first is the workaround. A `--force` rebuild of a tree
+that has never had a site installed into it does not hit this.
+
+**A forced build re-runs `tree`, which reads the version again.** `bun run build:local -- --force`
+executes `bun run fetch:drupal` with whatever `DRUPAL_VERSION` is in its own environment; unset, that
+is `SHIPPED_CORE_VERSION`, and the script then refuses a tree at any other version. The variable has
+to be set on both commands or neither.
+
+### The Sequence That Works
+
+```sh
+chmod -R u+w drupal-src
+DRUPAL_VERSION=11.4.5 bun scripts/fetch-drupal-tree.ts --force
+DRUPAL_VERSION=11.4.5 bun run build:local -- --force \
+  --skip=interpreter,frame,decoder,siblings,driver,prefill
+```
+
+Five of the six skipped steps do not depend on the core version: three are the interpreter, one is
+the sibling checkouts and one is the driver pack. The sixth, `prefill`, does -- drop it from that
+list on a real upgrade, since it re-renders the prefilled pages and a core patch can change them. It
+is excluded from the measurement below only because it binds a port.
+
+| measure                                           |  n  | wall clock               |
+| ------------------------------------------------- | :-: | ------------------------ |
+| a core-version swap, end to end                   |  6  | **23-27 s**, median 25 s |
+| of which: tarball fetch, extract, contrib install |  6  | 8-11 s                   |
+| of which: reinstall, rebake, repack, recopy       |  6  | 15-16 s                  |
+| a from-scratch build, same steps plus `driver`    |  1  | 23 s                     |
+
+The six swaps alternated direction, because a downgrade and an upgrade are the same work: replace
+167 MB of tree, reinstall the build site, rebake 34 Twig templates, repack 11,457 files twice and
+recopy 4,060 static assets.
+
+**Verified by artifact, not by exit code.** After the last swap the rebuilt `assets/core/misc/ajax.js`
+hashed identically to the 11.4.5 reference tree and differently from the 11.4.4 one, and
+`assets/drupal/core.bin.gz` carried `const VERSION = '11.4.5'` and no other.
+
+### What A Patch Release Actually Moves
+
+`scripts/tree-diff.mjs` hashes a tree and plans the objects a rollout has to move. For
+11.4.4 -> 11.4.5:
+
+| set                                  | count   |
+| ------------------------------------ | ------- |
+| pack objects to upload               | **209** |
+| pack objects to delete               | 0       |
+| fraction of the 11,024-file pack set | 1.90%   |
+| static assets that also change       | **2**   |
+
+The 209 are 93 `.info.yml` version stamps, 86 files under `vendor/`, 28 PHP classes under `core/`
+and two `core/*.json`. **Zero `*.routing.yml`, zero `.install`, zero `config/schema/*.yml`, zero
+`config/{install,optional}/*.yml`, zero `*.post_update.php` and zero `*.services.yml`** -- so this
+release is the code-only case, and no route, schema or config default moved.
+
+**`tree-diff.mjs` cannot see the static half.** Its `SHIPPED` regex matches the extensions the PHP
+packs carry, and `css` and `js` are deliberately not among them, because `assets:static` serves those
+instead. Diffed separately, 11 browser-fetchable files changed, of which two match `pack-static.ts`'s
+own `SERVED` set and therefore ship: `core/misc/ajax.js` and `core/misc/details.js`. Read
+`objectsToUpload` as the pack half of a rollout rather than as the whole of one.
+
+### The Two Rows Nothing Regenerates
+
+`assets/drupal/site.sqlite` is hand-trimmed and no step produces it; `sql` reads it verbatim. Two of
+its prefilled rows embed the core version, both at `expire = -1`:
+
+| bin               | cid                    | bytes  |
+| ----------------- | ---------------------- | ------ |
+| `cache_discovery` | `library_info:olivero` | 89,184 |
+| `cache_data`      | `fonts:olivero:...`    | 630    |
+
+The version in them is the `?v=` cache-buster Drupal appends to every asset URL. Measured across all
+six swaps, `site.sqlite` came out byte-identical to the committed one, so **a core upgrade does not
+touch them**: after a patch that changes `core/misc/ajax.js`, the site serves new bytes at
+`/core/misc/ajax.js` while still advertising the old version in the query string.
+
+The correction is a cache invalidation rather than schema surgery -- delete both rows and Drupal
+rebuilds them, at the cost of one discovery pass on the first render. `scripts/bake-collectors.php`
+is what originally produced them, and it is not wired into `build:local`: it reads
+`<root>/sites/default/files/.sqlite`, which the `site` step does not create (that step writes
+`sites/build/files/build-site.sqlite`), and it writes into the build database rather than into
+`site.sqlite`, from which the rows were then copied by hand.
+
 ## Related
 
-- `PUBLISHING.md` -- cutting the release that makes the payload route work
+- `docs/configuration.md` -- every variable and binding, and what breaks when one is wrong
 - `docs/repository-layout.md` -- every path outside `src/` and how it arrives
 - `scripts/README.md` -- why each script is in the language it is in
+
+`bun run release:payload` builds the payload the fast route downloads and `bun run release:check`
+prices the canonical config against the 3 MiB ceiling.

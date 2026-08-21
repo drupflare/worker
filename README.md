@@ -8,20 +8,20 @@
 
 **Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server — PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. **8.5 is what ships**, with every extension intact, at **2,658,002** zstd bytes
-against the 3,145,728 free-plan ceiling.
+the database. **8.5 is what ships**, with every extension intact, at **2,659,444** zstd bytes
+against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 
 > [!NOTE]
-> **Not released yet.** The deploy button needs a published release payload to pull from. `assets/`
-> is ~97 MB of generated packs and is gitignored, so a clean checkout builds nothing: `bun run build`
+> No release is published yet, and the deploy button needs a release payload to pull from. `assets/`
+> is 121 MB of generated packs and is gitignored, so a clean checkout builds nothing: `bun run build`
 > hydrates that payload instead, which is a plain HTTPS GET of a release asset and needs no Docker,
-> no token and no PHP. Every figure below is measured, and each one says where it came from.
+> no token and no PHP.
 
 > [!NOTE]
-> **The bundle fits with 247,409 bytes to spare.** The interpreter ships as a zstd frame inflated
-> at module scope, so Cloudflare's own gzip meter reads **2,898,319 bytes** against the free plan's
-> 3 MiB ceiling, with nothing removed to get there. Run `bun run release:check` rather than quoting
-> that figure — it has been stale in three documents at once. Boot is not the constraint either: cold boot is
+> **The bundle fits with 241,603 bytes to spare.** The interpreter ships as a zstd frame inflated
+> at module scope, so Cloudflare's own gzip meter reads **2,904,125 bytes** against the free plan's
+> 3 MiB ceiling, with nothing removed to get there. That figure moves whenever `src/` does, so run
+> `bun run release:check` for the current one. Boot is not the constraint either: cold boot is
 > **1,398 ms** of absolute `cpuTime` on a deployed worker, but boot-directed work is saturated —
 > cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written is what
 > binds. See [Free vs Paid](#-free-vs-paid).
@@ -35,12 +35,12 @@ ones where the hosting bill is not the problem, the _hours_ are.
 
 **Read the provenance column.** Every Drupflare figure marked **M** is measured on deployed
 Cloudflare infrastructure or on this machine, and says which. Alternatives are **L** (a vendor's
-published list price) or **—** (not measured; stated as a range or omitted rather than invented).
-Nothing in this table is a benchmark of someone else's host.
+published list price) or **—** (not measured; stated as a range or omitted). Nothing in this table
+is a benchmark of someone else's host.
 
 |                                            | Drupflare                                                                                                                                         | Traditional VPS                                                      | prov.   |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------- |
-| **Setup, from zero to a rendering site**   | one deploy, no server (**not live yet** — see the note at the top)                                                                                | provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups | —       |
+| **Setup, from zero to a rendering site**   | one deploy, no server                                                                                                                             | provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups | —       |
 | **Local toolchain you must learn first**   | none for deploy; `bun` to develop                                                                                                                 | ddev or Lando, Composer, Drush, ssh, a database client               | —       |
 | **Monthly infrastructure**                 | itemised in [The Cost Model, Exactly](#the-cost-model-exactly)                                                                                    | the same table                                                       | L       |
 | **What "scaling up" means**                | nothing to do — the edge absorbs it                                                                                                               | resize the box, tune PHP-FPM workers, add a cache layer              | —       |
@@ -52,10 +52,10 @@ Nothing in this table is a benchmark of someone else's host.
 | **Wasm penalty**                           | **3.57x** warm / **3.94x** cold vs native PHP                                                                                                     | 1x by definition                                                     | M local |
 | **Cold start**                             | **1,398 ms** measured (n=3, and the platform is bimodal by 400-600 ms) — paid absorbs it, free amortises it off the request path                  | ~0; the box is already running                                       | M edge  |
 | **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not                                           | whatever the box does before it swaps                                | M edge  |
-| **Worker bundle**                          | **2,898,319 bytes** gzipped, **247,409 under** the 3 MiB free ceiling                                                                             | n/a                                                                  | M local |
-| **First-run migration**                    | 79 chunks, **max 3 ms** per invocation, **0** over the 10 ms cap                                                                                  | `drush si`, then hope                                                | M edge  |
+| **Worker bundle**                          | **2,904,125 bytes** gzipped, **241,603 under** the 3 MiB free ceiling                                                                             | n/a                                                                  | M local |
+| **First-run migration**                    | **62 chunks**, one per invocation on free, each sized to fit the 10 ms cap                                                                        | `drush si`, then hope                                                | M local |
 | **When something breaks at 3am**           | a self-repair ladder runs: L0 observe → L1 reset → L2 reconstruct → L3 reconfigure → L4 quarantine → L5 rollback, with a decaying circuit breaker | you, or someone you pay                                              | M built |
-| **Failure detection**                      | **19 tripwires** (12 JS, 7 PHP) plus a mandatory boot self-test                                                                                   | uptime ping, if configured                                           | M built |
+| **Failure detection**                      | **19 tripwires** (12 host, 7 PHP) plus a mandatory boot self-test                                                                                 | uptime ping, if configured                                           | M built |
 
 ### The Cost Model, Exactly
 
@@ -91,8 +91,7 @@ What actually differs is the column that cannot be filled in:
 | Uptime and alerting          | 19 tripwires plus a self-repair ladder                | uptime ping, if configured                 |
 | Traffic spike                | nothing to do                                         | resize, tune, add caching                  |
 
-**Price those at your own rate.** This project will not invent an hourly figure for you, and two of
-those rows say "not finished yet".
+**Price those at your own rate.** This project states no hourly figure.
 
 Performance, with the full provenance in
 [the report's executive summary](TECHNICAL_REPORT.md#-executive-summary):
@@ -124,9 +123,9 @@ is the better tool — see below.
 - **A raw uncached render is ~3.6x slower** than native PHP. The architecture wins by not rendering,
   not by rendering faster.
 
-### What the self-repair layer replaces
+### What the Self-Repair Layer Replaces
 
-It is not a monitoring dashboard; it acts. A capped, GC'd health ledger; 12 JavaScript tripwires
+It is not a monitoring dashboard; it acts. A capped, GC'd health ledger; 12 host tripwires
 (empty render, size anomaly, asyncify called, mask leaked, semaphore dirty, incomplete migration,
 halted updb, pack generation mismatch, memory highwater rising, memory trend rising, ledger
 oversized, image cap projected) plus budget pressure and its forward projection; 7 PHP tripwires (anonymous cache purity,
@@ -142,7 +141,7 @@ when it changes.
 `RepairLadder::maySafelyRepair()` **fails closed** — it refuses to act while a transaction is open,
 because a repair that runs mid-transaction is worse than the fault it was fixing.
 
-**L4 quarantine and L5 rollback are live.** Three consecutive findings of the same code at `error`
+**L4 quarantine and L5 rollback act.** Three consecutive findings of the same code at `error`
 or above quarantine the site; a different code resets the count, because two unrelated faults are
 not one durable condition. A quarantined site **stops writing and stops filling, and keeps
 serving** — the failure that matters for a free host is not "the site is wrong" but "the site is
@@ -178,12 +177,13 @@ has measured. Regeneration then becomes the binding limit, and it decides whethe
 host rather than a cache.
 
 > [!IMPORTANT]
-> **The off-Worker serving path is designed, not delivered.** The R2 mirror queue drains from the
-> alarm now, but it mirrors **files**; the serving ceiling is set by **pages**, and no page is yet
-> served without invoking the Worker. Both page tiers -- the edge cache and the optional KV tier --
-> still cost one Worker request each, because the Worker has to run to consult them. So the ceiling
-> shipping today is the 3.0M row above, saturated, and the measured floor once pages do move
-> off-Worker is **3.33x**: 10M R2 Class B operations/month against 100,000 Worker requests/day.
+> **No page is served off-Worker today.** The alarm drains both mirrors — files and pages, the latter
+> ordered by view count so a limited budget publishes what actually moves traffic — but the canonical
+> `wrangler.jsonc` declares no R2 binding and no bucket is fronted by a custom domain, so nothing
+> answers a page without the Worker running. Both page tiers, the edge cache and the optional KV
+> tier, cost one Worker request each because the Worker has to run to consult them. The ceiling
+> shipping today is the 3.0M row above, saturated; the floor once pages do move off-Worker is
+> **3.33x**, 10M R2 Class B operations/month against 100,000 Worker requests/day.
 >
 > **There is no single rows-per-fill figure.** A fill costs **3 to 62 rows** depending on what is
 > already warm, so the model names four measured warmth classes rather than averaging them;
@@ -206,7 +206,7 @@ measured, **zero** rows of a fill go to `watchdog`. And past ~85% off-Worker ser
 becomes **DO requests**, not rows, so trimming rows per fill beyond that point moves the rows meter and
 does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.
 
-### A third meter nothing else models
+### A Third Meter Neither Ceiling Sees
 
 Cloudflare Images allows **5,000 unique transformations per month** on free, and it fails as a **hard
 cap rather than a bill**. Every image style is a transformation, so ten styles over 2,000 images is
@@ -223,8 +223,8 @@ the largest style count that still fits.
 > [!CAUTION]
 > Do **not** enable the Workers Caching feature on free. It bills every request at the standard rate
 > _"including requests that are normally free: static asset requests"_ — converting the one free serving
-> path into a billed one. Its name sounds exactly like what a cache-first architecture wants, which is
-> what makes it dangerous.
+> path into a billed one. The name reads like what a cache-first architecture wants; the billing does
+> the opposite.
 
 ---
 
@@ -237,6 +237,7 @@ the largest style count that still fits.
 - [What It Costs](#-what-it-costs)
 - [Getting Started](#-getting-started)
 - [Building From a Clean Clone](#-building-from-a-clean-clone)
+- [Configuration](#-configuration)
 - [Project Structure](#-project-structure)
 - [Testing](#-testing)
 - [Contributing](#-contributing)
@@ -268,6 +269,8 @@ monitoring, and patching labour — and the labour is the part that does not sca
 ```txt
 request
   │
+  ├─ 0. Workers Assets (/core/**)          stylesheets, scripts, fonts; never reaches the Worker
+  │
   ├─ 1. edge cache (caches.default)        ~85% of traffic, 0 Durable Object requests
   │
   ├─ 2. Durable Object page cache (SQL)    ~14%, stored HTML, no PHP
@@ -279,18 +282,34 @@ Four things make it work, and each was the hard part in turn:
 
 1. **A purpose-built PHP wasm binary.** No published php-wasm build can do this. workerd
    forbids the runtime wasm codegen that emscripten's dynamic linker needs, so every
-   extension Drupal requires is statically linked (`MAIN_MODULE=0`). See [`build/`](build/).
+   extension Drupal requires is statically linked (`MAIN_MODULE=0`). The toolchain is
+   [`drupflare/phasm`](https://github.com/drupflare/phasm); this repository consumes its output.
 2. **PHP runs _inside_ the Durable Object, not beside it.** `ctx.storage.sql` is synchronous
    only from within the object, and PHP's database calls are blocking. Any other arrangement
    cannot connect the two.
-3. **A real Drupal database driver.** [`drupal/cfw_do_sqlite/`](drupal/cfw_do_sqlite/) is a
-   Drupal 11 driver for Durable Object SQLite. Drupal's query builders, schema handling and
-   condition compiler are used unchanged; what is replaced is everything that assumed PDO and
-   a file on disk.
+3. **A real Drupal database driver.** `cfw_do_sqlite`, from the
+   [`rom`](https://github.com/drupflare/rom) sibling, is a Drupal 11 driver for Durable Object
+   SQLite. Drupal's query builders, schema handling and condition compiler are used unchanged;
+   what is replaced is everything that assumed PDO and a file on disk.
 4. **Divisibility, not speed.** The free plan caps CPU _per invocation_. So work that does
    not fit is split rather than optimised — and what language a step runs in decides whether
-   it can be split at all. First-run migration moved from PHP to JavaScript and went from
-   **3,467 ms in one invocation to a 3 ms worst case across 99**.
+   it can be split at all. First-run migration moved from PHP to JavaScript, from one 3,467 ms
+   invocation to **62 chunks**, each sized to fit the cap on its own.
+
+### Static Assets
+
+Drupal's stylesheets, scripts, fonts and images are served by **Workers Assets** from `assets/core/`,
+at the `/core/**` URLs Drupal already emits. All three PHP packers skip those extensions because PHP
+never opens them, and nothing serves a file out of the in-memory filesystem over HTTP, so the asset
+layer is the only thing that can answer them. `scripts/pack-static.ts` copies the tree; Workers Assets
+content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so it costs
+nothing against either free-tier ceiling.
+
+**CSS and JS aggregation is off**, because an aggregate has no file to read: a hash mismatch 301s and
+a match sends Drupal's optimiser at a path no pack carries. With the raw tree served there is nothing
+for preprocessing to buy. `tests/unit/runtime/assets-ignore.spec.ts` asserts both halves — that no
+prefilled page references an aggregate, and that every `/core/**` URL those pages do reference
+answers 200.
 
 ---
 
@@ -309,12 +328,13 @@ Observability API.
 **Free tier is ~100,000 page views/day (~3M/month) for a well-cached site**, saturated at 1.00x,
 and every meter except Worker requests has roughly 5x headroom.
 
-| artifact               | size                                                                              |
-| ---------------------- | --------------------------------------------------------------------------------- |
-| Worker bundle, gzipped | **2,881,546 bytes** — **264,182 under** the 3 MiB free ceiling                    |
-| PHP 8.5, nothing cut   | **2,658,002 bytes** zstd — **487,726 under** the same ceiling; this is what ships |
-| First-run migration    | **62** chunks, **max 3 ms** of edge CPU, 0 over the 10 ms cap                     |
-| Cold boot              | **1,398 ms** measured; amortised off the request path rather than eliminated      |
+| artifact               | size                                                                              | from                              |
+| ---------------------- | --------------------------------------------------------------------------------- | --------------------------------- |
+| Worker bundle, gzipped | **2,904,125 bytes** — **241,603 under** the 3 MiB free ceiling                    | `bun run release:check`           |
+| PHP 8.5, nothing cut   | **2,659,444 bytes** zstd, from 12,218,396 raw; this is what ships                 | `interp.lock.json`                |
+| First-run migration    | **62 chunks**, 1,564 statements over 1,316 rows; one chunk per invocation on free | `assets/drupal-sql/manifest.json` |
+| Static asset tree      | **4,028 files** served by Workers Assets, never reaching the Worker               | `assets/core/`                    |
+| Cold boot              | **1,398 ms** measured; amortised off the request path rather than eliminated      | deployed `cpuTime`, n=3           |
 
 ---
 
@@ -327,7 +347,7 @@ and every meter except Worker requests has roughly 5x headroom.
 - PHP 8.3+ with `pdo_sqlite` (only to run the database driver's test suite)
 - A Cloudflare account with Durable Objects enabled (available on the free plan)
 
-### Install and run
+### Install and Run
 
 ```bash
 git clone https://github.com/drupflare/worker.git
@@ -346,13 +366,114 @@ Then open it:
 open http://localhost:8787/
 ```
 
-The first visit to a site that has no database yet answers a self-refreshing setup page and starts
-the migration on the alarm chain; the page becomes the site as soon as the replay finishes. To do it
-in one shot instead, which is faster locally:
+The first visit starts the site up, which is [First Boot](#first-boot) below. To replay the whole
+database in one shot instead, which is faster locally:
 
 ```bash
 curl "localhost:8787/migrate?all=1"
 ```
+
+### First Boot
+
+A deployed site has an empty Durable Object until something asks it for a page. The first request
+records the ask, arms the alarm chain and answers **503** with a self-refreshing page, and the object
+replays the packed database one chunk per invocation until the cursor is done.
+
+| header                | value                                                |
+| --------------------- | ---------------------------------------------------- |
+| `x-cfw-migrate`       | `starting`, then `<chunk>/<chunks>`                  |
+| `x-cfw-migrate-state` | `queued`, `running` or `failed`                      |
+| `retry-after`         | `2` on the first request, `1` while chunks are going |
+
+A browser follows the `<meta http-equiv="refresh">` on that page and lands on the site by itself.
+Every other client gets the same 503 with the one-word body `migrating`.
+
+**Measured on a deployed worker: 4 to 7 polls at 2 s, so 8 to 14 seconds from the first request to
+the first 200.** A 503 in that window means the site is starting, not that the deploy failed.
+
+One chunk per invocation is what keeps every invocation under the free plan's 10 ms CPU cap, and the
+chain drives itself to completion over **62 alarm firings**. The chunk count is whatever
+`assets/drupal-sql/manifest.json` reports, and it moves whenever the packed database does.
+
+### Claim the Site
+
+The pack ships an installed database, so Drupal's `install.php` never runs and never asks you to
+pick a password. `/firstrun` is what does that, and until it runs, uid 1 carries an empty hash that
+no password can match.
+
+**An unclaimed site says so.** Once the migration finishes, a browser asking for any HTML page gets
+a one-click claim page instead of the front page: enter a site name, an administrator email and
+optionally a password, and the credentials come back in the response. The page carries
+`x-cfw-setup: required` and is never stored. A `curl`, an asset fetch and a POST all fall through to
+the normal path, so nothing but a browser navigation is blocked.
+
+To claim it from a terminal instead:
+
+```bash
+curl -X POST "localhost:8787/firstrun" \
+  -H 'content-type: application/json' \
+  -d '{"siteName":"My Site","adminMail":"you@example.com"}'
+```
+
+The response carries `adminPass` and `ownerToken`, **each shown once and stored nowhere**. Save both
+before closing the terminal. Pass `"adminPass":"..."` in the body to choose your own instead of
+taking the minted one. Claiming a site also pins its render origin — see
+[Configuration](#-configuration).
+
+The body takes `siteName`, `siteMail`, `adminName`, `adminMail`, `adminPass` and `timezone`, all
+optional. A password never travels in a query string: `?pass=` is refused by name rather than
+honoured, because the request line is what `wrangler tail`, observability and every intermediary
+log.
+
+A bare `GET /firstrun` reports whether a site has been claimed without claiming it:
+
+```bash
+curl "localhost:8787/firstrun"
+```
+
+Once claimed, `/firstrun` answers **409**. Reconfiguring is `POST /firstrun?force=1` with
+`Authorization: Bearer <ownerToken>`, which resets the administrator password.
+
+### Log In
+
+Log in at `/user/login` as `admin` with the `adminPass` from the claim. That is the Drupal account,
+and it is the only credential that reaches the administrative UI.
+
+**The owner token is a different credential and is not a login.** It is sent as
+`Authorization: Bearer <ownerToken>` and reaches four routes without turning on `PW_DIAGNOSTICS`:
+
+| route         | what it does                                                          |
+| ------------- | --------------------------------------------------------------------- |
+| `/export`     | dumps the site database, which is the "a customer can leave" property |
+| `/health`     | the health ledger, the repair state and the budget projections        |
+| `/setup/cf`   | connect, inspect or revoke a Cloudflare account for the site          |
+| `/setup/mail` | onboard a sending domain onto a zone                                  |
+
+Without it those four answer **401** with a `WWW-Authenticate: Bearer` challenge; a diagnostic route
+answers 404 to the same caller.
+
+A lost `adminPass` is recovered through Drupal's own password reset, which needs mail configured. A
+lost `ownerToken` is read back by setting `PW_DIAGNOSTICS=1` and calling `POST /firstrun?force=1`,
+which returns the stored token and resets the administrator password at the same time.
+
+### Manage the Site
+
+[`drangler`](https://github.com/drupflare/drangler) is the CLI for the rest of a site's life. It
+needs no checkout of anything:
+
+```sh
+bun add -g @drupflare/drangler
+
+drangler status my-site.example # plan, generation, header contract, claim state, diagnostics
+drangler health my-site.example # is it up, and which cache tier answered
+drangler doctor                 # the local toolchain and the Cloudflare credential
+```
+
+`build`, `dev`, `deploy` and `migrate install` are the four commands that write; `status`, `doctor`,
+`health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README covers the
+migration commands in both directions.
+
+### URL Routing
 
 **Drupal owns the URL space.** Any path the Worker does not claim is served as a page, so `/`,
 `/user/login` and `/node/1` all work; `/serve?site=X&path=Y` still does the same thing explicitly.
@@ -360,10 +481,6 @@ Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/si
 mapping for the host, then the `SITE_ID` var, then the hostname itself, then `site`. On `localhost`
 the hostname names no site, so it lands on `site`. A `?site=` on a path the visitor typed is ignored;
 it names the site only on `/serve`, where the caller wrote the URL.
-
-On the free plan, drop `&all=1` — migration then replays one chunk per invocation and drives
-itself to completion over ~99 alarm firings, keeping every invocation under
-10 ms of CPU.
 
 ### Scripts
 
@@ -385,7 +502,7 @@ itself to completion over ~99 alarm firings, keeping every invocation under
 
 ### 🧰 Building From a Clean Clone
 
-`assets/` is ~97 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
+`assets/` is 121 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
 a fresh clone has nothing to deploy until one of two routes lands them.
 
 ```bash
@@ -405,7 +522,7 @@ locally, for a commit no release was cut from. `bun run hydrate` takes the paylo
 back to the source route when there is no payload; `--payload-only` forbids the fallback and
 `--from-source` skips straight to it.
 
-The source route runs fourteen steps in one order, each skipped when what it produces is already on
+The source route runs fifteen steps in one order, each skipped when what it produces is already on
 disk, and together they produce **every artifact a release payload carries**:
 
 ```txt
@@ -413,6 +530,7 @@ interpreter → frame → decoder      the three files the binary seam imports
 siblings    → driver               the Drupal modules, packed into assets/driver.json
 tree → site → patch                the Drupal tree, installed and patched for wasm
 bootstrap → twig → core → pack     the file list, the compiled Twig cache, the per-file pack
+static                             the browser-fetchable half of core/, into assets/core
 sql                                the migration chunks, from the committed site.sqlite
 prefill                            the pages, rendered by a local wrangler dev and lifted back
 ```
@@ -426,39 +544,129 @@ to fail without failing the build.
 
 ---
 
+## 🔧 Configuration
+
+Every knob is a `vars` entry in `wrangler.jsonc`, and every one has a working default. Eleven of them
+can also be overridden at runtime through the `CONFIG_KV` namespace without a redeploy.
+**[`docs/configuration.md`](docs/configuration.md)** is the full reference: every variable, its
+default, what reads it, and what breaks when it is wrong. Three vars are worth stating here, plus the
+two setup flows a new site runs once.
+
+### `SITE_ORIGIN`
+
+The `scheme://host[:port]` Drupal builds absolute URLs against — the canonical tag, a form action, a
+`Location:`, the link in a password-reset mail. Unset, the object **pins the first non-local origin
+it serves** into `cfw_meta` and measures every later request against that rather than believing the
+inbound `Host`; `/firstrun` re-pins, so claiming a site also fixes its origin. Set it when a site is
+reached through a host it cannot observe, such as behind a proxy that rewrites `Host`, or on a deploy
+whose first request is a health check.
+
+A local origin is never pinned, so running the suite or a `wrangler dev` against a persisted object
+cannot fix a real site's canonical URL to a developer's laptop. Cron boots against the same origin,
+which is what stops a mailed reset link pointing the recipient at their own machine.
+
+### `PHP_LOG_LEVEL`
+
+The highest RFC 5424 severity that PHP's log mirrors to `console.log`, and therefore to
+`wrangler tail`. `off | error | warn | log | info | debug`, defaulting to `info`. `debug` is off
+because a single render on 8.5 emits several severity-7 deprecation notices with full stack traces.
+An unrecognised value is the default rather than an error.
+
+### `MAX_BODY_BYTES`
+
+The largest non-file request body the edge forwards, defaulting to **2 MiB**. Over it, the request is
+refused with 413 before any Durable Object hop. It is a heap guard rather than a bandwidth one:
+`parse_str()` on a form body allocates inside a 128 MB isolate, and `foo[][][][][]=bar` repeated
+turns a few hundred kilobytes of wire into far more of it. `multipart/form-data` is exempt, so file
+uploads are unaffected. `0` disables the guard.
+
+### Connecting a Cloudflare Account
+
+Mail needs an account behind it. Either paste `CF_EMAIL_ACCOUNT_ID` and `CF_EMAIL_TOKEN`, or run the
+OAuth flow at `/setup/cf`, which issues a short-lived scoped grant that is revocable from the
+Cloudflare dashboard. `?action=status`, `?action=connect` and `?action=disconnect` are the three
+actions; the callback at `/setup/cf/callback` is the one public part of it.
+
+[`docs/configuration.md`](docs/configuration.md#connecting-a-cloudflare-account) has the whole
+contract: the client an operator registers once, the scopes requested, and why the client ID lives in
+the site's database rather than in KV.
+
+### Onboarding a Sending Domain
+
+`GET /setup/mail?zone=<zone-id>` reports which step the domain is waiting on, and `?action=apply`
+creates the sending subdomain and writes the DNS. Safe to re-run: a settled zone costs zero API
+calls, and an existing DMARC record is reported rather than overwritten.
+
+[`docs/configuration.md`](docs/configuration.md#onboarding-a-sending-domain) has the five stages, the
+six records written, and what `settled` does and does not mean.
+
+Both routes take the owner token — see [Log In](#log-in).
+
+---
+
 ## 📁 Project Structure
 
 ```txt
 src/
-  site.ts            the edge front end: cache tiers, generation counter, deny filter
+  site.ts            the edge front end: cache tiers, generation counter, deny filter, body cap
   site-do.ts         the Durable Object: PHP lifecycle, render, fill queue, alarms
+  env.ts             the vars this worker reads beyond @drupflare/durabledb's own
   runtime/           interpreter plumbing: mount, lazy FS, interrupt mask, gate, binary seam
   db/                codec, the ctx.storage.sql bridge, chunked migration, heap snapshot store
   drupal/            PHP fragments evaluated inside the interpreter
-  ops/               cron/GC, sliced database updates, the Tail Worker
+  ops/               cron/GC, sliced database updates, site identity, origin, setup page
   probes/            measurement workers, kept so a report figure can be reproduced
-drupal/
-  cfw_do_sqlite/     the Drupal database driver for Durable Object SQLite (repo: rom)
-  drupflare/         mail, fetch, images, KV, health/self-repair, and the shim registry
-build/               the PHP wasm build: extension sets, the VM-interrupt patch, C probes (repo: phasm)
+assets/
+  core/              the browser-fetchable Drupal tree, served by Workers Assets
+  driver.json        the two Drupal modules, packed; this is the copy that executes
+  drupal-pf/         the per-file pack PHP materialises from
+  drupal-sql/        the 62 migration chunks
+  drupal/site.sqlite the installed database the chunks are cut from; the one tracked asset
 tests/               unit (in workerd), integration (live Durable Object), e2e
 scripts/             packers, benches, and the measurement instruments
-experiments/         44 measurement configs, kept for reproduction
+experiments/         44 wrangler probe configs, kept for reproduction
+docs/                configuration, the source build, repository layout, measurement classes
 ```
+
+The PHP lives in the sibling repositories, not here: `cfw_do_sqlite` in
+[`rom`](https://github.com/drupflare/rom), the capability module in
+[`drupflare`](https://github.com/drupflare/drupflare), and the wasm build toolchain in
+[`phasm`](https://github.com/drupflare/phasm). See [Repositories](#-repositories).
 
 ---
 
 ## 🧪 Testing
 
-Two vitest projects. **2,180 tests across 96 files, 0 failures**, plus **585 PHP assertions**.
+Two vitest projects. **2,474 tests across 110 files, 0 failures**, plus **585 PHP assertions**.
 
-| lane                  | command                            | count                        | runs in                                        |
-| --------------------- | ---------------------------------- | ---------------------------- | ---------------------------------------------- |
-| vitest `workers`      | `bun run test:workers`             | **1,652**                    | workerd, via `@cloudflare/vitest-pool-workers` |
-| vitest `node`         | `bun run test:node`                | **528**                      | Node, for oracles workerd cannot host          |
-| both, merged coverage | `bun run test`                     | **2,180** in 96 files        | one invocation                                 |
-| PHP suites            | `bun run test:health` / `test:php` | **585** across 5 suites      | real PHP, in the sibling repos                 |
-| e2e                   | `bun run test:e2e`                 | excluded from `bun run test` | needs a running server                         |
+| lane                  | command                | count                        | runs in                                        |
+| --------------------- | ---------------------- | ---------------------------- | ---------------------------------------------- |
+| vitest `workers`      | `bun run test:workers` | **1,788** in 73 files        | workerd, via `@cloudflare/vitest-pool-workers` |
+| vitest `node`         | `bun run test:node`    | **686** in 37 files          | Node, for oracles workerd cannot host          |
+| both, merged coverage | `bun run test`         | **2,474** in 110 files       | one invocation                                 |
+| PHP suites            | see below              | **585** across 5 suites      | real PHP, in the sibling repos                 |
+| e2e                   | `bun run test:e2e`     | excluded from `bun run test` | needs a running server                         |
+
+The PHP suites live in the sibling repositories, which are the authority on their own module. Two
+have a script here; all five take this repository's `drupal-src/` as `DRUPAL_ROOT`:
+
+| suite                        | repo        | assertions | run from here         |
+| ---------------------------- | ----------- | ---------- | --------------------- |
+| `tests/health-suite.php`     | `drupflare` | 195        | `bun run test:health` |
+| `tests/load-classes.php`     | `drupflare` | 94         | `php`, with the var   |
+| `tests/run-driver-suite.php` | `rom`       | 219        | `bun run test:php`    |
+| `tests/pdo-shim.php`         | `rom`       | 61         | `php`, with the var   |
+| `tests/run-installer.php`    | `rom`       | 16         | `php`, with the var   |
+
+```sh
+DRUPAL_ROOT=$PWD/drupal-src php ../rom/tests/run-installer.php
+```
+
+`run-installer.php` drives Drupal's own installer against the driver with core's sqlite driver as a
+child-process control. It needs a real filesystem, so it has no counterpart here.
+
+**Re-measure these counts before quoting them.** Every number in this table has been stale at least
+once, in both directions.
 
 ### Two Vitest Projects
 
@@ -480,14 +688,13 @@ Coverage from both projects is merged into one lcov by `bun run test:coverage`; 
 `coverage` flag for the merged report and `workers` / `node` flags for per-lane test results,
 all with `carryforward: true`.
 
-### The integration lane needs a real Durable Object
+### The Integration Lane
 
 Specs under `tests/integration/` use `ctx.storage.sql`, `transactionSync()`, `setAlarm()` and
 `caches.default`. A mock of any of those would be testing the mock, and `runInDurableObject` from
-`cloudflare:test` gives the real thing without a manually started server, so the
-serve-chain suite moved here rather than staying a script that needed `bun run dev` first.
+`cloudflare:test` gives the real thing without a manually started server.
 
-### Why the tests run inside workerd
+### Why the Tests Run Inside workerd
 
 Every one of these has already produced a defect that a Node-hosted mock passed:
 
@@ -500,70 +707,56 @@ Every one of these has already produced a defect that a Node-hosted mock passed:
 ### Coverage
 
 Coverage uses `provider: 'istanbul'`, not `v8`. The v8 provider reads coverage off the Node
-inspector, and these tests run inside workerd's isolate: it instrumented all 2,269 statements and
-attributed zero while 110 tests passed. istanbul instruments at transform time, so it travels into
-the isolate with the code.
+inspector and these tests run inside workerd's isolate, so it instruments every statement and
+attributes none of them while the suite passes. istanbul instruments at transform time, so it travels
+into the isolate with the code.
 
-The sibling repos split on exactly this axis: `earth-app/cloud` and `js/edgeport` are workerd
-and use istanbul; `earth-app/crust` and `earth-app/sky` are happy-dom and use v8.
+The sibling repos split on the same axis: `earth-app/cloud` and `js/edgeport` are workerd and use
+istanbul; `earth-app/crust` and `earth-app/sky` are happy-dom and use v8.
 
-Thresholds sit just under the current measured figure and are meant to be **ratcheted** as
-each legacy suite lands in `tests/`. An aspirational number here would be a failing check
-everyone learns to ignore.
+Thresholds sit just under the current measured figure and are ratcheted upward as coverage lands.
+An aspirational number here would be a failing check everyone learns to ignore.
 
-### The port is complete
+### Rules for a New Test
 
-There are no `scripts/test-*.mjs` suites left; every one now runs in the gate. Each original
-was deleted only once **coverage of the module it tested** justified it — not on an assertion
-count, which is not comparable across a rewrite in either direction.
-
-| original               | sites | ported to                                                              | what the move bought                                                       |
-| ---------------------- | ----- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `test-cron.mjs`        | 219   | `tests/unit/ops/cron-{chain,gc,step}.spec.ts`                          | its hand-written `fakeSql` replaced by the real `ctx.storage.sql`          |
-| `test-updb.mjs`        | 364   | `tests/unit/ops/updb.spec.ts`                                          | bookkeeping now runs in a real `transactionSync`                           |
-| `test-mask.mjs`        | 123   | `tests/unit/runtime/mask.spec.ts`                                      | source assertions made quote-agnostic                                      |
-| `test-mb-fix.mjs`      | 25    | `tests/unit/drupal/mb-fix.spec.ts` + `tests/node/mb-fix-iconv.spec.ts` | split, because the `iconv_substr` control needs real PHP                   |
-| `test-migrate-sql.mjs` | 89    | `tests/node/migrate-sql.spec.ts`                                       | stays in the node project; `node:sqlite` exists in neither workerd nor bun |
-| `test-serve-chain.mjs` | 94    | 7 specs in `tests/integration/`                                        | **no `wrangler dev` step** — `runInDurableObject` instead                  |
-
-The serve-chain port took 94 assertion sites to 344 across 96 cases, and dropped the requirement
-for a manually started server.
-
-Rules that carry over: assert on behaviour or a counter, never on timing, except where
-timing _is_ the claim. Name which cache bins were emptied for every render figure. **An
-absolute CPU number comes only from a deployed worker** — nothing in `tests/` can produce one.
+Assert on behaviour or a counter, never on timing, except where timing _is_ the claim. Name which
+cache bins were emptied for every render figure. **An absolute CPU number comes only from a deployed
+worker** — nothing in `tests/` can produce one. `docs/measurement-classes.md` is the full rule: which
+instrument may produce which class of number, and which class is banned outright.
 
 ---
 
 ## 📦 Repositories
 
-This started as one repository and is being split, so each piece is usable on its own.
+This started as one repository and is split, so each piece is usable on its own.
 
 | repo                    | what it is                                                                      | install                                |
 | ----------------------- | ------------------------------------------------------------------------------- | -------------------------------------- |
 | **`worker`** (this one) | the Worker: cache tiers, the Durable Object, the packers                        | clone                                  |
+| **`drangler`**          | the CLI: stand a site up, check it, migrate one on or off                       | `bun add -g @drupflare/drangler`       |
 | **`drupflare`**         | the capability module -- mail, fetch, images and KV bridged to Workers bindings | `composer require drupflare/drupflare` |
 | **`rom`**               | `cfw_do_sqlite`, the Drupal database driver for Durable Object SQLite           | `composer require drupflare/rom`       |
+| **`stream-http`**       | the `https://` stream wrapper `drupflare` extends                               | pulled in by `drupflare/drupflare`     |
 | **`phasm`**             | the PHP-to-WebAssembly build toolchain                                          | GitHub Releases                        |
+| **`cartridge`**         | the pack format, the lazy filesystem and the zstd inflate seam                  | `@drupflare/cartridge`                 |
+| **`durabledb`**         | the `ctx.storage.sql` bridge and its codec                                      | `@drupflare/durabledb`                 |
 
-### Why the Modules Exist Twice
+### How the PHP Reaches the Edge
 
-`composer.json` requires both modules the published way. **The copies under `drupal/` are not
-vestigial and must not be deleted.**
+**A `composer require` ships nothing.** Composer does not run on the edge, so the packed tree is the
+vendor directory. `bun run assets:driver` reads the sibling checkouts directly and writes
+`assets/driver.json`, which the Durable Object mounts into its in-memory filesystem; that packed copy
+is what executes. `composer.json` records provenance and lets a developer resolve the packages
+normally, and both are on Packagist as `drupflare/rom` and `drupflare/drupflare`.
 
-This worker never loads PHP from `vendor/` -- Composer does not run on the edge. `bun run
-assets:driver` reads `drupal/cfw_do_sqlite` and `drupal/drupflare` off disk and packs them
-into `assets/driver.json`, which the Durable Object mounts into its in-memory filesystem. So the
-packed copy is what executes, and the Composer requirement records provenance and lets a
-developer resolve the packages normally.
+The packer resolves each sibling as `DRUPFLARE_SRC` / `ROM_SRC` / `STREAM_HTTP_SRC`, then
+`../<name>`, then `.siblings/<name>`, and takes an allow-list of module-shaped paths (`src`,
+`.info.yml`, `.install`, `.module`, `.services.yml`) — a module repository is not a module, and
+walking a checkout wholesale would pull `node_modules/` and `vendor/` into the bundle.
 
-That trade has one hazard: a fix made here ships without running the sibling repo's suite, and a
-fix made there never reaches the edge. The guard is `tests/node/driver-pack.spec.ts`, which
-rebuilds the pack from `drupal/` and compares it to `assets/driver.json` byte for byte, so a stale
-pack fails the gate. The sibling repos are published, and a release is when the copies under
-`drupal/` are refreshed.
-
-Both modules resolve from Packagist normally: `drupflare/rom` and `drupflare/drupflare` are published.
+**Run `bun run assets:driver` after any change in a sibling.** `tests/node/driver-pack.spec.ts`
+rebuilds the pack from the modules on disk and compares it to `assets/driver.json` byte for byte, so
+a stale pack fails the gate.
 
 ## 🧩 Contrib Modules
 
@@ -573,40 +766,74 @@ visit while the pages the install invalidated are re-rendered.
 
 <!-- module-table:begin -->
 
-**14 verified, 15 supported, 1 blocked.** Verified means the gate enabled the module and asserted an observable it owns. Supported means it has not been enabled here; where the evidence names a spec, the runtime capability that module needs has been measured end to end without the module.
+**44 verified, 14 untested, 4 blocked.** Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.
 
-| Module                     | State     | Evidence                                                                                                                                                                                                                                                                                               |
-| -------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Admin Toolbar              | verified  | enabled against a real site in the workers lane; its own routes appear in the `router` table after the install-triggered rebuild                                                                                                                                                                       |
-| Captcha                    | verified  | enabled against a real site; its schema hook created `captcha_sessions` and 8 routes appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix match finds none of them                                                                                           |
-| Coffee                     | supported | classified as workable, not yet exercised                                                                                                                                                                                                                                                              |
-| Ctools                     | verified  | enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has                                                                             |
-| Devel                      | supported | local introspection. Worth a warning rather than a capability: it dumps debug output INTO the page, and this runtime stores anonymous output in `cfw_page` and serves it to everyone                                                                                                                   |
-| Entity Reference Revisions | supported | a field type                                                                                                                                                                                                                                                                                           |
-| Facets                     | supported | facets themselves are local: they read from whatever Search API backend is configured. With the DATABASE backend this needs nothing, which is why it is not refused                                                                                                                                    |
-| Field Group                | verified  | enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control |
-| Filefield Sources          | supported | the local sources (upload, reference, clipboard) need nothing. Only the "remote URL" source calls out, and it is one source among several                                                                                                                                                              |
-| Google Analytics           | supported | classified as workable, not yet exercised                                                                                                                                                                                                                                                              |
-| Honeypot                   | verified  | enabled against a real site; its schema hook created `honeypot_user`. The recommended default over any captcha here, because a hidden field and a submission timer are entirely local and cost no outbound round trip                                                                                  |
-| Image Optimize             | supported | batch optimisation over managed files. The BINARY pipelines shell out and cannot work; the pure-PHP and remote-service pipelines are the ones in scope                                                                                                                                                 |
-| Linkit                     | supported | autocomplete over local entities                                                                                                                                                                                                                                                                       |
-| Metatag                    | verified  | enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does                                                                                                                                                    |
-| Migrate Plus               | verified  | enabled against a real site; both config entity types it exists to provide are installed -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a `migrate_plus.%` config probe finds nothing and would read as inert                                            |
-| Paragraphs                 | verified  | enabled against a real site; it created its entity type as four tables -- `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`, `paragraphs_item_revision_field_data`                                                                                                           |
-| Pathauto                   | supported | token replacement over local entity data on save                                                                                                                                                                                                                                                       |
-| Purge                      | supported | invalidation is a queue drained by cron, and each purger POSTs or PURGEs to a CDN. Both halves are deferrable; neither has to answer inside a render                                                                                                                                                   |
-| Queue Ui                   | verified  | enabled against a real site; its admin routes are in the `router` table, and routes are the whole module                                                                                                                                                                                               |
-| Recaptcha                  | verified  | enabled against a real site; captcha came with it, so dependency resolution ran, and it installed its own configuration                                                                                                                                                                                |
-| Redirect                   | verified  | enabled against a real site; the `redirect` table exists and 11 of its routes are in the `router` table, so both halves of a route subscriber over its own table are present                                                                                                                           |
-| Scheduler                  | verified  | enabled against a real site; it installed its own configuration and its routes are in the `router` table                                                                                                                                                                                               |
-| Search Api                 | verified  | enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table                                                                                                                            |
-| Search Api Solr            | blocked   | drupal/search_api_solr needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** JSPI or an Asyncify build, which is the whole-binary change this project has priced and deferred. Use the Search API database backend instead        |
-| Simple Sitemap             | supported | generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack                                                                                                                                                                             |
-| Stage File Proxy           | verified  | enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads                                                                                                                                                                                              |
-| Token                      | supported | a token vocabulary; no I/O of its own                                                                                                                                                                                                                                                                  |
-| Twig Tweak                 | supported | Twig functions over local services                                                                                                                                                                                                                                                                     |
-| Webform                    | supported | form building and submission storage are local. Handlers that POST to a remote endpoint are the deferrable case and are per-handler, not per-module                                                                                                                                                    |
-| Xmlsitemap                 | supported | drupal/xmlsitemap does its work on cron, which runs from the Durable Object alarm; set DRUPAL_CRON=1 or it installs and silently does nothing                                                                                                                                                          |
+Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 40 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.
+
+| Module                     | State    | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Address                    | verified | enabled against a real site; the `address`, `address_country` and `address_zone` field types are registered and `address.country_repository`, `address.address_format_repository` and `address.subdivision_repository` resolve. None of the three is in the container beforehand. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                            |
+| Admin Toolbar              | verified | enabled against a real site in the workers lane; its own routes appear in the `router` table after the install-triggered rebuild                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Backup Migrate             | verified | enabled against a real site; it installed four config entity types and six default source and destination entities -- `default_db`, `entire_site`, the two file destinations and a daily schedule -- and 24 routes. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                          |
+| Better Exposed Filters     | verified | enabled against a real site; its three widget plugin managers and `better_exposed_filters.bef_helper` are in the container afterwards and absent before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                     |
+| Captcha                    | verified | enabled against a real site; its schema hook created `captcha_sessions` and 8 routes appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix match finds none of them. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                |
+| Coffee                     | untested | not enabled here; nothing has been asserted about it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Colorbox                   | verified | enabled against a real site; `colorbox.settings` is installed and its admin route is in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                  |
+| Config Ignore              | verified | enabled against a real site; `config_ignore.settings` is installed and its admin route is in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                             |
+| Crop                       | verified | enabled against a real site; it created the crop entity type as four tables -- `crop`, `crop_field_data`, `crop_revision`, `crop_field_revision` -- and installed `crop_type` as a config entity type. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                       |
+| Csv Serialization          | verified | enabled against a real site; `serializer->supportsEncoding('csv')` is true afterwards and false before, with `json` true throughout as the control that the serializer is answering at all. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                  |
+| Ctools                     | verified | enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has                                                                                                                                                                                                                                                                                                                                                                           |
+| Devel                      | untested | local introspection. Worth a warning rather than a capability: it dumps debug output INTO the page, and this runtime stores anonymous output in `cfw_page` and serves it to everyone                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Easy Breadcrumb            | verified | enabled against a real site; `easy_breadcrumb.settings` is installed and its admin route is in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                           |
+| Editor Advanced Link       | verified | enabled against a real site; the `editor_advanced_link_link` CKEditor 5 plugin is registered and its two asset libraries resolve. Library discovery needs `common.inc` loaded first -- `JS_LIBRARY` and `CSS_COMPONENT` are defined there, not by the autoloader. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                            |
+| Entity                     | verified | enabled against a real site; `entity.bundle_plugin_installer`, `entity.bundle_entity_duplicator` and `access_checker.entity_revision` resolve afterwards and are absent before. A substring match on its name is NOT evidence here: most of what matches `entity` in the container is core. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                  |
+| Entity Browser             | verified | enabled against a real site; the `entity_browser` config entity type is installed and six of its routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                           |
+| Entity Reference Revisions | verified | enabled against a real site; the `entity_reference_revisions` field type and its `entity_reference_revisions_entity_view` formatter are registered, and `entity_reference_revisions.orphan_purger` is in the container. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                      |
+| Externalauth               | verified | enabled against a real site; its schema hook created `authmap`, which is the table the identity mapping lives in. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                            |
+| Facets                     | untested | facets themselves are local: they read from whatever Search API backend is configured. With the DATABASE backend this needs nothing, which is why it is not refused                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Field Group                | verified | enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                      |
+| Filefield Sources          | untested | the local sources (upload, reference, clipboard) need nothing. Only the "remote URL" source calls out, and it is one source among several                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Focal Point                | verified | enabled against a real site; `focal_point.settings` is installed and it created the `crop.type.focal_point` crop type inside the dependency it pulled in. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                    |
+| Google Analytics           | untested | not enabled here; nothing has been asserted about it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Google Tag                 | verified | enabled against a real site; the `google_tag_container` config entity type and `google_tag.settings` are installed, with eight routes. Nothing outbound happens in PHP -- the snippet it injects is called by the browser. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                   |
+| Honeypot                   | verified | enabled against a real site; its schema hook created `honeypot_user`. The recommended default over any captcha here, because a hidden field and a submission timer are entirely local and cost no outbound round trip. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                       |
+| Image Optimize             | untested | batch optimisation over managed files. The BINARY pipelines shell out and cannot work; the pure-PHP and remote-service pipelines are the ones in scope                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Imce                       | verified | enabled against a real site; the `imce_profile` config entity type and both shipped profiles -- `admin` and `member` -- are installed, with nine routes. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                     |
+| Jquery Ui                  | verified | enabled against a real site; 24 asset libraries resolve for it afterwards and none before, `core` and `widget` among them. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                   |
+| Jquery Ui Autocomplete     | verified | enabled against a real site; the `autocomplete` library resolves for it afterwards and none before. It ships no code of its own -- jquery_ui declares the library on its behalf, so the library existing IS the module working. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                              |
+| Jquery Ui Datepicker       | verified | enabled against a real site; the `datepicker` library resolves for it afterwards and none before. Four files on disk and no PHP, so its library is the only observable it has. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                               |
+| Jquery Ui Menu             | verified | enabled against a real site; the `menu` library resolves for it afterwards and none before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                  |
+| Json Field                 | untested | a field type storing JSON in its own column; no I/O                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Key                        | untested | key management over local config and file storage. The providers that fetch from a remote vault are per-provider, not per-module                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Libraries                  | verified | enabled against a real site; `libraries.settings` is installed, which is where its external library definitions are read from. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                               |
+| Linkit                     | untested | autocomplete over local entities                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Mailsystem                 | verified | enabled against a real site; `mailsystem.settings` is installed and its admin route is in the `router` table. It is how a site selects `cfw_mail`, so it is the module a site drops smtp in favour of. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                       |
+| Menu Block                 | verified | enabled against a real site; `menu_block:main` and `menu_block:footer` are block plugin derivatives it provides. `access_check.admin_menu_block_page` reads as its service and is CORE's -- the before reading is what said so. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                              |
+| Metatag                    | verified | enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                         |
+| Migrate Plus               | verified | enabled against a real site; both config entity types it exists to provide are installed -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a `migrate_plus.%` config probe finds nothing and would read as inert. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                 |
+| Module Filter              | verified | enabled against a real site; `module_filter.settings` is installed and its admin route is in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                             |
+| Openid Connect             | blocked  | drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** JSPI or an Asyncify build. The deferred-outbound queue does NOT reach it -- a token exchange cannot return a placeholder and fill later, and a site whose users cannot log in is not partially working                                                                                                                                                                                                                                              |
+| Paragraphs                 | verified | enabled against a real site; it created its entity type as four tables -- `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`, `paragraphs_item_revision_field_data`. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                |
+| Pathauto                   | verified | enabled against a real site, given the pattern the shipped database does not carry; a node saved as "Pathauto Probe Title" produced the `path_alias` row `/node/1 -> /probe/pathauto-probe-title`. Pointed at `canonical_entities:user` the same run writes no row, so the assertion tracks this pattern rather than an ambient alias                                                                                                                                                                                                                                                                |
+| Purge                      | untested | invalidation is a queue drained by cron, and each purger POSTs or PURGEs to a CDN. Both halves are deferrable; neither has to answer inside a render                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Queue Ui                   | verified | enabled against a real site; its admin routes are in the `router` table, and routes are the whole module. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                    |
+| Recaptcha                  | verified | enabled against a real site; captcha came with it, so dependency resolution ran, and it installed its own configuration. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                     |
+| Redirect                   | verified | enabled against a real site; the `redirect` table exists and 11 of its routes are in the `router` table, so both halves of a route subscriber over its own table are present. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                |
+| Redis                      | blocked  | drupal/redis needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** none needed: the Durable Object's own SQLite IS the cache backend, so this is a dependency the architecture removes                                                                                                                                                                                                                                                                                                                                          |
+| Scheduler                  | verified | enabled against a real site; it installed its own configuration and its routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                    |
+| Search Api                 | verified | enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                 |
+| Search Api Solr            | blocked  | drupal/search_api_solr needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** JSPI or an Asyncify build, which is the whole-binary change this project has priced and deferred. Use the Search API database backend instead                                                                                                                                                                                                                                                                                                      |
+| Simple Sitemap             | untested | generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Smtp                       | blocked  | drupal/smtp needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. What is still missing is the domain onboarding behind it, which `/setup/mail` now automates up to the verification click. So smtp stays blocked as a MODULE -- the socket is what refuses it -- while the capability it provides is covered |
+| Stage File Proxy           | verified | enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                   |
+| Svg Image                  | verified | enabled against a real site; the `image` field formatter is `Drupal\svg_image\...\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and the `image_image` widget moves the same way. It takes core's plugin ids over rather than adding its own. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                             |
+| Token                      | verified | enabled against a real site; `[random:hash:md5]` resolves to 32 hex digits, and it is declared by `token.tokens.inc` and by nothing in core -- with `ctools` enabled in its place the same call returns the literal. Controls both ways: `[nosuchtype:nosuchtoken]` comes back untouched, and core's `[site:name]` still answers                                                                                                                                                                                                                                                                     |
+| Twig Tweak                 | untested | Twig functions over local services                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Video Embed Field          | verified | enabled against a real site; the `video_embed_field` field type, its `video_embed_field_video` formatter and `video_embed_field.provider_manager` are all present afterwards and absent before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                              |
+| Views Bulk Operations      | verified | enabled against a real site; `views_bulk_operations.processor`, `views_bulk_operations.data` and its action plugin manager resolve, the `views_bulk_operations_delete_entity` action is registered, and four of its routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                        |
+| Views Data Export          | verified | enabled against a real site; the `data_export` views display and style plugins are registered, which is the whole module. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                    |
+| Webform                    | untested | form building and submission storage are local. Handlers that POST to a remote endpoint are the deferrable case and are per-handler, not per-module                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Xmlsitemap                 | untested | drupal/xmlsitemap does its work on cron, which runs from the Durable Object alarm and is ON by default; with DRUPAL_CRON=0 it installs and silently does nothing                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 <!-- module-table:end -->
 
@@ -641,12 +868,9 @@ notes, not in support tickets.
   is minted by that route and nowhere else — gating it would mean the only way to get your data out
   was to expose `/sql`, `/restore` and `/php` first. The window is the unprovisioned state only:
   once configured the route answers 409, and reconfiguring needs the token. Same model as Drupal's
-  own `install.php`. Run `/firstrun` as the first thing you do after deploying.
-- **A rejected form token stops later logins on the same instance.** After a submission fails
-  its CSRF check — a stale tab, a back button, a double submit — the login form on that
-  Durable Object stops being processed until the object drops its interpreter. It rebuilds
-  with no error message rather than reporting a wrong password. No data is affected and
-  nothing leaks between users.
+  own `install.php`. The window is signposted rather than silent: an unclaimed site answers a
+  browser navigation with the claim page instead of its front page, so the owner is told to close it
+  on the first visit. Claim the site as the first thing you do after deploying.
 
 ---
 
@@ -673,15 +897,16 @@ instrument rather than the system.
 ```sh
 bun install
 bun run typecheck
-bun run test # 2,066 across the workers and node lanes
+bun run test # 2,474 across the workers and node lanes
 bunx prettier --check .
 
 bun run test:e2e # excluded from the gate; needs a running server
 ```
 
-Run `bun run assets:driver` after any change under `drupal/` — composer never runs on the
-edge, so `assets/driver.json` is the copy that actually executes, and
-`tests/node/driver-pack.spec.ts` is what catches it going stale.
+Run `bun run assets:driver` after any change in `../drupflare`, `../rom` or `../stream-http` —
+composer never runs on the edge, so `assets/driver.json` is the copy that actually executes, and
+`tests/node/driver-pack.spec.ts` is what catches it going stale. The PHP suites live in those repos
+and are the authority on their own module.
 
 ## 📄 License
 

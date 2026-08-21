@@ -172,10 +172,16 @@ Two documented limits shape a revert:
   bump must never also add a migration tag. Lifecycle changes go out alone, through
   `wrangler deploy`.
 
-A rollback restores code, not data. Nothing about a PHP version change writes state that outlives
-it: opcache runs `file_cache_only=1` at `/tmp/opcache` in MEMFS, so no persistent artifact is keyed
-to the old interpreter. That changes if heap restore lands, because a heap image is binary-specific
-and restoring one across a version change is corruption.
+A rollback restores code, but a heap image is data and it is binary-specific. opcache runs
+`file_cache_only=1` in MEMFS, which belongs to the interpreter instance and outlives nothing. **The
+stored heap snapshot does outlive it.** `HEAP_SNAPSHOT` is on by default and each site holds
+31,784,960 bytes across 159 rows, so restoring an image taken on one interpreter into another is
+corruption rather than a slow path.
+
+`cfw_heap_snapshot` rows are keyed on the **pack generation** (`latestSnapshotMeta(sql,
+packGeneration())`), not on the interpreter. An interpreter bump that leaves the pack alone therefore
+selects a snapshot taken on the previous binary. Ship an interpreter bump with `HEAP_SNAPSHOT=0`, or
+move the pack generation with it, until the snapshot key carries the interpreter pin.
 
 ## Staged Rollout
 
@@ -272,9 +278,13 @@ from wrangler rather than assuming.
 - **Drupal.** `SHIPPED_LOCK_VERSIONS`, `assets/drupal/site.sqlite` and `assets/driver.json` are a
   separate lane, and `site.sqlite` has no reproducible recipe.
 - **Attestation.** Covered in [Trust](#trust).
-- **PHP 8.5 on the edge.** The shipping seam is 8.5 and it has not rendered a page on a deployed
-  worker; a `cfw-*` deploy returned 1101 with `ExitStatus: Program terminated with exit(-2)`. Size,
-  the recompression, the decoder and codegen are ruled out. See `src/runtime/php-binary-85.ts`.
+- **PHP 8.5 on the edge.** The shipping seam is 8.5. A `cfw-*` deploy once returned 1101 with
+  `ExitStatus: Program terminated with exit(-2)`; the cause was opcache, which reads
+  `opcache.file_cache` during PHP's module startup, before the mount sequence creates
+  `/tmp/opcache`. `src/site-do.ts:599` sets it to `/tmp`, which emscripten's MEMFS always creates.
+  8.5 has rendered on a deployed worker since — the opcache file-cache counts in that comment were
+  read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
+  bundle builds and fits.
 - **A minor-version bump.** 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
   wrangler's `alias`, changes `DEFAULT_PLATFORM.php` in `src/ops/packagist.ts`, and re-runs
   `tests/node/php-fragments.spec.ts` and `bun run test:health` under the new interpreter. The

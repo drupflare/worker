@@ -87,6 +87,25 @@ export const SHIPPED: Record<string, ShippedTable> = {
 )`
 		]
 	},
+	router: {
+		table: 'router',
+		ddl: [
+			`CREATE TABLE "router" (
+"name" VARCHAR(255) NOT NULL DEFAULT '',
+"path" VARCHAR(255) NOT NULL DEFAULT '',
+"pattern_outline" VARCHAR(255) NOT NULL DEFAULT '',
+"fit" INTEGER NOT NULL DEFAULT 0,
+"route" BLOB DEFAULT NULL,
+"number_parts" INTEGER NOT NULL DEFAULT 0,
+"alias" VARCHAR(255) DEFAULT NULL,
+ PRIMARY KEY ("name")
+)`,
+			`CREATE INDEX "router_pattern_outline_parts" ON "router" ("pattern_outline", "number_parts")`,
+			// partial: 402 of 419 routes store a NULL alias and pay nothing for this index.
+			// `CfwMatcherDumper::ensurePartialAliasIndex()` is what puts it in this form
+			`CREATE INDEX "router_alias" ON "router" ("alias") WHERE "alias" IS NOT NULL`
+		]
+	},
 	cachetags: {
 		table: 'cachetags',
 		ddl: [

@@ -53,39 +53,94 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 		// drupflare in the pack took 40 stale cache rows OUT -- rows keyed to the pre-install module
 		// list, which the runtime would have read as warm and wrong -- so the count falls while the
 		// ratio rises: a cache row is cheap in indexes and dropping it leaves the index-heavy tables
-		// a larger share
+		// a larger share. 3,883 -> 3,464 is the partial router_alias index
 		expect(audit.totals.dataRows).toBe(1316);
-		expect(audit.totals.chargedRows).toBe(3883);
-		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.6328, 3);
+		expect(audit.totals.chargedRows).toBe(3464);
+		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.5883, 3);
+	});
+
+	/**
+	 * The model prices a row that matches NO partial predicate, and that is a lower bound.
+	 *
+	 * `chargePerInsertedRow()` drops partial indexes from the count outright, which is exact for the
+	 * 402 routes storing a NULL alias and wrong by one for the 17 that carry one. Pinned here rather
+	 * than corrected in the model: per INSERTED row the model is right, because the row being priced
+	 * either matches the predicate or does not, and the audit cannot know which until it counts.
+	 */
+	it('under-reports the shipped total by exactly the rows a partial index does store', () => {
+		const aliased = ROUTES - 402;
+		expect(aliased).toBe(17);
+		expect(audit.totals.chargedRows + aliased).toBe(3481);
 	});
 });
 
-describe.skipIf(SKIP)('router_alias, verified against the shipped rows rather than quoted', () => {
-	it('is charged on all 419 routes while 402 of them store a NULL', () => {
-		const sparse = audit.sparse.find((s) => s.index === 'router_alias');
-		expect(sparse).toBeDefined();
-		expect(sparse?.rows).toBe(ROUTES);
-		expect(sparse?.nullRows).toBe(402);
-		// the figure this project has been quoting as "96% NULL" is 402/419 = 95.9%, so it stands
-		expect(sparse?.nullFraction).toBeCloseTo(0.959, 3);
+/**
+ * The alias index, after the lever was applied rather than priced.
+ *
+ * This block used to assert that `router_alias` was a full index over rows that are 96% NULL, and
+ * to price what a partial one WOULD save. `CfwMatcherDumper::ensurePartialAliasIndex()` now makes
+ * it partial and the pack ships it that way, so the same facts are asserted from the other side:
+ * the index is partial, the saving is realised, and the sweep that found it no longer lists it.
+ */
+describe.skipIf(SKIP)('router_alias, now partial in the pack that ships', () => {
+	it('ships as a partial index rather than one entry per route', () => {
+		const index = (audit.indexesByTable.get('router') ?? []).find(
+			(i) => i.name === 'router_alias'
+		);
+		expect(index, 'the pack must still carry an alias index at all').toBeDefined();
+		expect(index?.partial, 'a full index here is the regression this guards').toBe(true);
 	});
 
-	it('prices the partial index at 402 charged rows off every full rebuild', () => {
-		const sparse = audit.sparse.find((s) => s.index === 'router_alias');
-		// a rebuild is 1 DELETE row + 4 INSERT rows per route = 5 * 419 = 2,095 charged rows;
-		// a partial index stops paying for the 402 NULL routes, so 2,095 -> 1,693
-		const rebuild = ROUTES * 5;
-		expect(rebuild).toBe(2095);
-		expect(rebuild - (sparse?.savedPerRewrite ?? 0)).toBe(1693);
-		expect((sparse?.savedPerRewrite ?? 0) / rebuild).toBeCloseTo(0.192, 3);
+	it('drops the router charge from 4 rows per route to 3', () => {
+		const router = audit.perTable.find((t) => t.table === 'router');
+		expect(router?.dataRows).toBe(ROUTES);
+		expect(router?.chargePerRow).toBe(3);
+	});
+
+	it('takes 402 charged rows off every full rebuild, and not 419', () => {
+		// a rebuild is 1 DELETE row + the insert charge per route. Before: 5 * 419 = 2,095. After,
+		// the 402 NULL routes pay 4 and the 17 aliased ones still pay 5, because a partial index
+		// stores an entry for a row that MATCHES it
+		const before = ROUTES * 5;
+		const aliased = 17;
+		const after = (ROUTES - aliased) * 4 + aliased * 5;
+		expect(before).toBe(2095);
+		expect(after).toBe(1693);
+		expect(before - after).toBe(402);
+		expect((before - after) / before).toBeCloseTo(0.192, 3);
 	});
 
 	it('finds the sparse indexes by measurement, so a new one cannot hide', () => {
-		// the sweep is over every single-column index in the schema, not a lookup of a known name
-		expect(audit.sparse.map((s) => s.index)).toEqual([
-			'router_alias',
-			'users_field_data_user_field__mail'
-		]);
+		// the sweep is over every single-column index in the schema, not a lookup of a known name,
+		// and it skips indexes that are ALREADY partial -- so this list is the remaining candidates
+		expect(audit.sparse.map((s) => s.index)).toEqual(['users_field_data_user_field__mail']);
+	});
+});
+
+/**
+ * READ `savedPerRewrite`, NOT `nullFraction`. The one remaining candidate is a false positive.
+ *
+ * `users_field_data_user_field__mail` reports 50% NULL, which reads like the router finding and is
+ * nothing like it: the table ships TWO rows, anonymous with a NULL mail and admin with one. The
+ * fraction is a fact about a 2-row sample, not a prediction, and every user a real site registers
+ * arrives WITH a mail -- so the partial form would save one charged row once and never again, while
+ * giving up the `IS NULL` lookup the way router did.
+ *
+ * Pinned so the next sweep of this list does not apply the lever on the strength of a percentage.
+ */
+describe.skipIf(SKIP)('the remaining sparse index, and why it is left alone', () => {
+	it('is sparse only because the table ships two rows', () => {
+		const mail = audit.sparse.find((s) => s.index === 'users_field_data_user_field__mail');
+		expect(mail?.rows).toBe(2);
+		expect(mail?.nullRows).toBe(1);
+		expect(mail?.nullFraction).toBe(0.5);
+	});
+
+	it('would save ONE charged row, against router_alias 402', () => {
+		const mail = audit.sparse.find((s) => s.index === 'users_field_data_user_field__mail');
+		expect(mail?.savedPerRewrite).toBe(1);
+		// the ranking is by rows saved rather than by fraction, which is what keeps this honest
+		expect(audit.sparse[0]?.savedPerRewrite).toBe(1);
 	});
 });
 

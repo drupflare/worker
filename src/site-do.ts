@@ -1,6 +1,7 @@
 import '@drupflare/cartridge/shim';
 import type { SiteEnv } from './env';
 import { attemptBudget, deferredKey, isFresh, ttlFor } from './ops/deferred-post.js';
+import { FIRST_RUN_KEY, needsSetup, setupResponse } from './ops/setup-page.js';
 import { warmingResponse } from './ops/warming-page.js';
 
 import {
@@ -74,7 +75,7 @@ import {
 	emptyTally,
 	overheadShare,
 	rankTally,
-	routerRebuildPasses,
+	routerRebuilds,
 	type WriteTally
 } from './db/write-tally';
 import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php';
@@ -105,9 +106,28 @@ import {
 	DAILY_ROWS_QUOTA,
 	authAllowance,
 	authSpendHeaders,
+	secondsUntilUtcReset,
 	spendForToday,
 	type AuthSpend
 } from './ops/auth-budget';
+import {
+	authorizeUrl,
+	callbackUrl,
+	createPkce,
+	exchangeCode,
+	isTokenError,
+	pendingMatches,
+	randomToken,
+	resolveAccountId,
+	revoke,
+	type PendingAuth,
+	type TokenSet
+} from './ops/cf-oauth';
+import {
+	CORE_VERSION_KEY,
+	invalidateVersionPinnedCaches,
+	type InvalidationResult
+} from './ops/core-version';
 import { cronOptions, gcPass, writeCursor } from './ops/cron';
 import {
 	cronBudget,
@@ -116,6 +136,7 @@ import {
 	driveCron,
 	drupalCronEnabled
 } from './ops/cron-drive';
+import { dailyLimit, degradation, readOnlyResponse, type Degradation } from './ops/degrade';
 import {
 	ensureFleetTable,
 	reportSite,
@@ -123,9 +144,29 @@ import {
 	type FleetDb,
 	type FleetRow
 } from './ops/fleet';
+import { phpLogCeiling, phpLogPasses } from './ops/log-level';
+import {
+	drainMailQueue,
+	mailDrainEnabled,
+	mailDrainLimit,
+	queueMail,
+	resolveMailTransport
+} from './ops/mail';
+import {
+	applyDnsPlan,
+	createSendingSubdomain,
+	dnsPlan,
+	isVerified,
+	listDestinations,
+	listSendingSubdomains,
+	onboardState,
+	requiredDns,
+	zoneRecords,
+	type RecordAction
+} from './ops/mail-onboard';
 import { resolveInstallable } from './ops/oracle';
 import { drainPageMirrors, queuePageMirror } from './ops/page-mirror';
-import { isFree, isPaid, planFlag } from './ops/plan';
+import { KV_OVERRIDABLE, isFree, isPaid, planFlag, resolveSettings, type PlanKv } from './ops/plan';
 import { planProfile, resolvePlanNumber } from './ops/plan-profile';
 import {
 	isQuarantined,
@@ -135,7 +176,9 @@ import {
 	serialiseState,
 	shouldRollback
 } from './ops/repair';
+import { shellSafety } from './ops/shell-assembly';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock';
+import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
 import {
 	OWNER_TOKEN_KEY,
 	bearerToken,
@@ -166,6 +209,14 @@ import {
 	updbStep,
 	type UpdbDeps
 } from './ops/updb';
+
+// held in cfw_meta rather than KV: an operator-writable client id is a phishing surface, see
+// the docblock in ops/cf-oauth.ts
+const CF_OAUTH_CLIENT_ID_KEY = 'cf_oauth_client_id';
+const CF_OAUTH_PENDING_KEY = 'cf_oauth_pending';
+const CF_OAUTH_TOKEN_KEY = 'cf_oauth_token';
+const CF_OAUTH_ACCOUNT_KEY = 'cf_oauth_account';
+const MAIL_ZONE_KEY = 'mail_sending_zone';
 // the `.js` is load-bearing: wrangler.jsonc aliases the specifier `./runtime/php-binary.js`, and
 // without it esbuild resolves the default seam and bundles an 11 MB probe build over the ceiling
 import { PHPFactory, wasmModule } from './runtime/php-binary.js';
@@ -787,9 +838,15 @@ $class_loader->addPsr4('Drupal\\\\sqlite\\\\Driver\\\\Database\\\\sqlite\\\\', $
 // so no PSR-4 root can reach them and the require is the only mechanism; it has to run before
 // the first statement is constructed, and Settings::initialize() is the earliest place that does
 require_once $app_root . '/modules/custom/cfw_do_sqlite/src/pdo-shim.php';
-// drupflare is mounted but NOT enabled in the pack, so nothing registers its
-// namespace; without this its classes are invisible even though the files are there
+// the namespace is registered here rather than by the module system: the PSR-4 root has to exist
+// before Settings::initialize() returns, and the extension list is not read until after
 $class_loader->addPsr4('Drupal\\\\drupflare\\\\', $app_root . '/modules/custom/drupflare/src/');
+// php_mail cannot run in this runtime -- no sendmail binary, no sockets on PHP's side -- so the
+// mailer is a platform substitution like the database driver above, not a site preference. Forced
+// here rather than as a config row so a config import cannot revert a site into a mailer that
+// silently drops every message. Which TRANSPORT cfw_mail then uses is MAIL_TRANSPORT.
+// NO BACKTICKS IN THIS BLOCK: it is a template literal, and one truncates it
+$config['system.mail']['interface']['default'] = 'cfw_mail';
 // drupflare/stream-http, which drupflare's HttpsStreamWrapper now EXTENDS. Composer never runs
 // on the edge, so the packed tree is the vendor directory and this line is the autoloader entry
 // composer would otherwise have written. Without it the subclass fatals on its parent.
@@ -914,7 +971,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	// #region set on first use, so `undefined` tells "never happened" apart from a zero
 	logs?: Payload[];
-	mails?: Array<{ to: unknown; subject: unknown; bytes: number }>;
+	mails?: Array<{
+		to: unknown;
+		subject: unknown;
+		bytes: number;
+		/** the transport the message was committed to, or null when it was refused */
+		transport: string | null;
+		/** why it was refused; absent on a message that reached the queue */
+		refusal?: string;
+	}>;
 	httpTablesReady?: boolean;
 	serveTablesReady?: boolean;
 	suppressBump?: boolean;
@@ -947,6 +1012,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastGcAt?: number;
 	lastHttpDrain?: Payload;
 	lastHttpDrainAt?: number;
+	lastMailDrain?: Payload;
+	lastMailDrainAt?: number;
 	lastMirrorDrain?: Payload;
 	lastPageMirrorDrain?: Payload;
 	lastPageMirrorDrainAt?: number;
@@ -1171,7 +1238,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * The host half of `drupal/drupflare/`.
+	 * The host half of the `drupflare` module, packed from `../drupflare` into `assets/driver.json`.
 	 *
 	 * Every one of these is synchronous, which is the design constraint rather than a
 	 * shortcut. `Host::call()` in PHP does `$reply = $invoke($json)` and
@@ -1205,8 +1272,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.logs.push(entry);
 			if (this.logs.length > 100) this.logs.shift();
 			// console.log is what `wrangler tail` and Workers Logs collect, and it
-			// survives the isolate that produced it -- which a watchdog row does not
-			console.log(JSON.stringify({ cfw: 'php', ...entry }));
+			// survives the isolate that produced it -- which a watchdog row does not.
+			// the ring buffer is not gated, only the mirror: `/health` reads it back, so a quiet
+			// terminal must not also be a blind diagnostic surface
+			if (phpLogPasses(entry, phpLogCeiling(this.env?.PHP_LOG_LEVEL))) {
+				console.log(JSON.stringify({ cfw: 'php', ...entry }));
+			}
 			return reply({ ok: true });
 		};
 
@@ -1265,23 +1336,59 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			return reply({ ok: true, queued: url });
 		};
 
-		// no email binding is configured on this worker, so the answer is a
-		// refusal with a reason; CfwMail turns that into a logged failure rather than
-		// an exception inside a content save
+		/**
+		 * Resolves a transport and COMMITS the message; the send happens on the alarm.
+		 *
+		 * This used to push onto `this.mails` and answer `{ok: true}` whenever `CFW_EMAIL_BINDING`
+		 * was `'1'`, which gated a return value and not a transport -- nothing was ever sent. The
+		 * var is gone; see `src/ops/mail.ts` for the three transports and how one is chosen.
+		 *
+		 * `ok: true` now means "a transport resolved and the row is durably committed", which is
+		 * what a submission server means by 250. It cannot mean more than that from here: PHP calls
+		 * synchronously and the network needs an await, the same split `cfwFetch` lives under. A
+		 * refusal names what is missing, and `CfwMail` logs that sentence.
+		 */
 		binary.cfwMail = (json: string) => {
 			const msg = parse(json);
 			this.mails = this.mails ?? [];
+			const bytes = String(msg.text ?? '').length;
+			const refuse = (refusal: string) => {
+				this.mails!.push({
+					to: msg.to,
+					subject: msg.subject,
+					bytes,
+					transport: null,
+					refusal
+				});
+				return reply({ ok: false, error: refusal });
+			};
+
+			const message = {
+				to: String(msg.to ?? ''),
+				from: String(msg.from ?? ''),
+				replyTo: String(msg.replyTo ?? ''),
+				subject: String(msg.subject ?? ''),
+				text: String(msg.text ?? ''),
+				html: msg.html === undefined || msg.html === null ? null : String(msg.html),
+				headers: (msg.headers ?? {}) as Record<string, string>
+			};
+
+			const plan = resolveMailTransport(this.env ?? {});
+			if ('refusal' in plan) return refuse(plan.refusal);
+
+			const queued = queueMail(this.sql, message, plan.transport, this.nowMs());
+			if ('refusal' in queued) return refuse(queued.refusal);
+
 			this.mails.push({
 				to: msg.to,
 				subject: msg.subject,
-				bytes: String(msg.text ?? '').length
+				bytes,
+				transport: plan.transport.kind
 			});
-			const bound = this.env?.CFW_EMAIL_BINDING === '1';
-			return reply(
-				bound
-					? { ok: true }
-					: { ok: false, error: 'no email binding is configured for this Worker' }
-			);
+			// wake the drain, or a queued message waits for the 240 s keep-warm tick; same reason
+			// `queueHttp()` arms
+			if (mailDrainEnabled(this.env ?? {})) this.armFillAlarm();
+			return reply({ ok: true, queued: queued.id, transport: plan.transport.kind });
 		};
 
 		// Cloudflare Images resizes at delivery, so a style is a URL rather than a file
@@ -2056,6 +2163,79 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return total;
 	}
 
+	/**
+	 * Drops the caches that embed the Drupal core version, once, when that version has moved.
+	 *
+	 * Guarded by an in-memory flag so a warm object pays one `cfw_meta` read per lifetime rather
+	 * than one per request. The flag is deliberately NOT persisted: an object that is evicted
+	 * mid-upgrade must re-check, and the version comparison is itself idempotent.
+	 */
+	private coreVersionChecked = false;
+
+	invalidateOnCoreUpgrade(): InvalidationResult | null {
+		if (this.coreVersionChecked) return null;
+		this.coreVersionChecked = true;
+		try {
+			return invalidateVersionPinnedCaches(
+				this.sql,
+				this.metaGet(CORE_VERSION_KEY),
+				SHIPPED_CORE_VERSION,
+				(version) => this.metaSet(CORE_VERSION_KEY, version)
+			);
+		} catch {
+			// never take the serving path down over a cache-busting nicety
+			return null;
+		}
+	}
+
+	/**
+	 * How many stored pages are shareable shells, and why the rest are not.
+	 *
+	 * Authenticated HTML is never cached. What can be is the part identical for everyone, with the
+	 * per-user regions left as BigPipe placeholders -- so the question "is that worth building here"
+	 * is answerable from the pages a site has already rendered, without building it.
+	 *
+	 * Counted rather than assumed. A site whose theme does not auto-placeholder anything has zero
+	 * candidates and gains nothing from fragment assembly however well it is implemented.
+	 */
+	shellCandidates(): { safe: number; unsafe: number; reasons: Record<string, number> } {
+		// self-sufficient rather than relying on the caller: /__serve-stats happens to call
+		// ensureServeTables() first, and nothing enforced that ordering
+		this.ensureServeTables();
+		const rows = this.sql.exec<{ html: string }>('SELECT html FROM cfw_page').toArray();
+		let safe = 0;
+		let unsafe = 0;
+		const reasons: Record<string, number> = {};
+		for (const row of rows) {
+			const verdict = shellSafety(String(row.html ?? ''));
+			if (verdict.safe) {
+				safe++;
+				continue;
+			}
+			unsafe++;
+			reasons[verdict.reason] = (reasons[verdict.reason] ?? 0) + 1;
+		}
+		return { safe, unsafe, reasons };
+	}
+
+	/**
+	 * Where this site sits on the quota ladder.
+	 *
+	 * Reads the two DAILY meters this object already keeps and hands them to `degradation()`. Both
+	 * reset at midnight UTC, so a degraded site recovers on its own without anybody clearing a flag
+	 * -- which is why nothing here is persisted.
+	 *
+	 * Cheap enough for the serving path: two `cfw_meta` reads that are already warm, no await.
+	 */
+	degradation(nowMs = this.nowMs()): Degradation {
+		const rowsLimit = dailyLimit('rows-written', this.env);
+		const doLimit = dailyLimit('do-requests', this.env);
+		return degradation({
+			rowsFraction: rowsLimit > 0 ? this.dailyRows(nowMs) / rowsLimit : 0,
+			doFraction: doLimit > 0 ? this.dailyDoRequests(nowMs) / doLimit : 0
+		});
+	}
+
 	/** today's DO invocations, without flushing */
 	dailyDoRequests(nowMs = this.nowMs()): number {
 		const today = new Date(nowMs).toISOString().slice(0, 10);
@@ -2302,6 +2482,31 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * The `scheme://host[:port]` this site renders absolute URLs against.
+	 *
+	 * Reads the ladder in `src/ops/site-origin.ts` and PINS on first use, so the value stops being a
+	 * function of the request as soon as one real request has arrived. The pin is one `cfw_meta`
+	 * row; a local origin is never pinned, or running the suite against a persisted object would fix
+	 * a real site's canonical URL to a developer's laptop.
+	 *
+	 * @param observed - `url.origin` of the request being served, which in production IS the
+	 *   visitor's scheme and host: the Worker forwards `new URL(request.url)` with only the pathname
+	 *   swapped, so the origin crosses into the object unchanged. `do.local` in the specs is a
+	 *   harness artifact and is refused by {@link pinnable} for that reason.
+	 */
+	canonicalOrigin(observed?: string | null): string {
+		const chosen = chooseOrigin({
+			configured: this.env?.SITE_ORIGIN,
+			pinned: this.metaGet(ORIGIN_KEY),
+			observed
+		});
+		if (chosen.from === 'observed' && pinnable(chosen.origin)) {
+			this.metaSet(ORIGIN_KEY, chosen.origin);
+		}
+		return chosen.origin;
+	}
+
+	/**
 	 * The site generation: one integer that every edge cache key carries.
 	 *
 	 * Drupal's cache tags cannot purge a URL-keyed edge cache -- tag purge is an
@@ -2541,7 +2746,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					.toArray()[0]?.attempts ?? 0
 			);
 		}
-		const result = await this.runJson(renderPage(path, bins, destruct, request));
+		// defaulted here rather than at the call sites, because the alarm chain fills most pages and
+		// it has no request to read an origin from. Without this, an inline render carried the real
+		// host and the alarm-filled copy of the same page carried `localhost` -- so which absolute
+		// URLs a visitor got would depend on which lane happened to render their page.
+		const origin = request.origin ?? this.canonicalOrigin(null);
+		const result = await this.runJson(renderPage(path, bins, destruct, { ...request, origin }));
 		// Wall-clock, not the in-PHP clock: microtime() returns 0 on the edge.
 		//
 		// and the wall clock reads 0 out there too -- measured, 16 assembly renders and
@@ -2618,13 +2828,21 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// Drupal render its own error pages: before that an exception surfaced as `result.error` and
 		// took the retry path, where now it arrives as a perfectly well-formed 500 that would be
 		// stored and served to everyone until the next invalidation.
+		//
+		// a 3xx is not a page at all, and this one shipped: `cfw_page` has no `location` column and
+		// `pageResponse()` cannot set a header it has no value for, so a stored redirect replays
+		// forever as a bodyless 3xx pointing nowhere -- a dead end the visitor cannot follow and the
+		// next fill cannot clear. Found on Drupal's own asset controller, which 301s an aggregate
+		// whose hash does not match. The `page` branch below carries `location` through to
+		// `/__serve`, so refusing storage is also what makes the redirect WORK.
 		const setCookie = Array.isArray(result.setCookie) ? (result.setCookie as string[]) : [];
 		const status = Number(result.status ?? 200);
 		const cacheable =
 			(request.method ?? 'GET').toUpperCase() === 'GET' &&
 			!request.cookie &&
 			setCookie.length === 0 &&
-			status < 500;
+			status < 500 &&
+			!(status >= 300 && status < 400);
 		if (cacheable) {
 			this.sql.exec(
 				`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms)
@@ -3265,6 +3483,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// an alarm is a billed Durable Object invocation too, and the quota docs say so explicitly --
 		// which is why slicing work into more alarms spends the meter it is trying to dodge
 		this.doRequestsSinceFlush = (this.doRequestsSinceFlush ?? 0) + 1;
+		// BEFORE the budgets are read, because they are two of the levers being adopted. An alarm
+		// never passes through handle(), so without this the fill knobs stay at their deployed vars
+		// however many times an operator rewrites KV
+		await this.adoptSettings();
 		const outcomes: Array<Payload | null> = [];
 		const budgetMs = fillBatchWallMs(this.env);
 		const maxPages = fillBatchSize(this.env);
@@ -3536,6 +3758,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			await this.ctx.storage.put('cronLastRunMs', this.nowMs());
 		} else if (
 			drupalCronEnabled(this.env) &&
+			// the quota ladder's first rung: cron is regeneration nobody is waiting on, so it stops
+			// before anything a visitor can see
+			this.degradation().cron &&
 			cronDue(cronLastRun, this.nowMs(), cronIntervalMs(this.env))
 		) {
 			try {
@@ -3543,7 +3768,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				const driven = await driveCron(
 					await this.ctx.storage.get<string>('cronCursor'),
 					{ sql: this.sql, runJson: (code: string) => this.runJson(code) },
-					cronOptions(this.env),
+					// the origin is the site's, read from the pin rather than from a request:
+					// cron has none, and a mail link built against the default points the
+					// recipient at their own machine
+					{ ...cronOptions(this.env), origin: this.canonicalOrigin(null) },
 					cronBudget(this.env)
 				);
 				await this.ctx.storage.put('cronCursor', writeCursor(driven.cursor));
@@ -3577,6 +3805,36 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				}
 			} catch (e: any) {
 				this.lastHttpDrain = { error: String(e?.message ?? e) };
+			}
+		}
+
+		// Outbound mail, for the same reason and in the same place.
+		//
+		// `cfwMail` commits the message and returns; a Worker cannot send from inside a synchronous
+		// host call. The transport is re-resolved here rather than stored on the row, so an operator
+		// who fixes a credential drains the queue that was refused under the old one -- the row
+		// records which KIND was resolved at commit, which is diagnostics, not a routing decision.
+		if (mailDrainEnabled(this.env ?? {}) && (this.countOrNull('cfw_mail_queue') ?? 0) > 0) {
+			await this.adoptSettings();
+			const plan = resolveMailTransport(this.env ?? {});
+			if ('refusal' in plan) {
+				this.lastMailDrain = { refusal: plan.refusal };
+				this.lastMailDrainAt = Date.now();
+			} else {
+				try {
+					const drained = await drainMailQueue(this.sql, plan.transport, {
+						limit: mailDrainLimit(this.env ?? {}),
+						// so a rejected send can say "this is the free plan" rather than "403"
+						plan: isPaid(this.env) ? 'paid' : 'free'
+					});
+					if (drained.sent.length > 0) {
+						this.lastMailDrain = drained as unknown as Payload;
+						this.lastMailDrainAt = Date.now();
+					}
+				} catch (e: any) {
+					this.lastMailDrain = { error: String(e?.message ?? e) };
+					this.lastMailDrainAt = Date.now();
+				}
 			}
 		}
 
@@ -3671,6 +3929,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const httpRemaining = httpDrainEnabled(this.env)
 			? (this.countOrNull('cfw_http_queue') ?? 0)
 			: 0;
+		// mail counts the same way: a queue the limit could not empty must not wait 240 s for the
+		// keep-warm tick, which is exactly what made the HTTP drain look broken
+		const mailRemaining = mailDrainEnabled(this.env ?? {})
+			? (this.countOrNull('cfw_mail_queue') ?? 0)
+			: 0;
 		const cls = classifyAlarmOutcome(outcomes);
 		// A SITE THAT JUST QUARANTINED ITSELF MUST NOT RE-ARM AT +1 ms. `supervise()` ran after the
 		// fills, so the enforcement branch at the top of this method does not see the new state until
@@ -3681,7 +3944,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const delayMs = quarantined
 			? 60_000
 			: alarmRearmDelayMs(cls, {
-					queueNonEmpty: remaining > 0 || httpRemaining > 0,
+					queueNonEmpty: remaining > 0 || httpRemaining > 0 || mailRemaining > 0,
 					failures: this.consecutiveFillFailures ?? 0
 				});
 		this.consecutiveFillFailures =
@@ -3827,7 +4090,40 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		});
 	}
 
+	/**
+	 * Overlays EVERY KV lever override onto this object's env.
+	 *
+	 * `withSettings()` is applied in `src/site.ts`, to the FRONT worker's env, and the Durable Object
+	 * receives its own copy of the bindings -- so for the whole life of the convention no KV lever
+	 * reached a reader inside this class. Seven of the eleven are read here and only here
+	 * (`RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `HTTP_DRAIN_LIMIT`,
+	 * `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`, `PREFILL`), which made them knobs that configured
+	 * nothing. This used to overlay only the two mail names and say so.
+	 *
+	 * Awaited HERE and never in `fetch()`: the fast storage lane must stay await-free. That is safe
+	 * because the fast lane reads no lever at all -- it is one indexed `cfw_page` read -- so there is
+	 * nothing on it for an override to change.
+	 *
+	 * Called from `alarm()` as well, which is not optional: the fill chain is where four of the seven
+	 * are read, and an alarm never passes through `handle()`.
+	 */
+	async adoptSettings(): Promise<void> {
+		const kv = (this.env as { CONFIG_KV?: PlanKv } | undefined)?.CONFIG_KV;
+		if (!kv) return;
+		const settings = await resolveSettings(kv);
+		// spread once rather than per name; eleven successive object copies on the gated lane is
+		// eleven allocations for a map that is memoised anyway
+		const overrides: Record<string, string> = {};
+		for (const name of KV_OVERRIDABLE) {
+			const value = settings[name];
+			if (value !== undefined) overrides[name] = value;
+		}
+		if (Object.keys(overrides).length > 0) this.env = { ...this.env, ...overrides };
+	}
+
 	override async handle(request: Request, url: URL): Promise<Response> {
+		await this.adoptSettings();
+		this.invalidateOnCoreUpgrade();
 		{
 			switch (url.pathname) {
 				case '/__php': {
@@ -4128,6 +4424,197 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							)
 							.toArray(),
 						ledgerRows: this.countOrNull('cfw_health')
+					});
+				}
+
+				/**
+				 * The Cloudflare OAuth flow, held in the object because that is the only
+				 * store here that a KV writer cannot reach.
+				 *
+				 * `start` is owner-authenticated; `callback` cannot be, because it arrives
+				 * as a browser redirect carrying no header. `state` is what authenticates
+				 * it, which is the standard construction and why the comparison in
+				 * `pendingMatches()` is constant-time.
+				 */
+				/**
+				 * Sending-domain onboarding status, and the apply step behind it.
+				 *
+				 * Read-only on GET so an operator can watch a long DNS wait without
+				 * writing anything. The token is NOT taken from the query: it is the
+				 * deployed `CF_EMAIL_TOKEN`, because a token in a URL lands in every
+				 * log the request touches.
+				 */
+				case '/__mailonboard': {
+					const env = this.env as unknown as Record<string, string | undefined>;
+					const token = env.CF_EMAIL_TOKEN ?? '';
+					const accountId =
+						env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
+					const zoneId =
+						url.searchParams.get('zone') ?? this.metaGet(MAIL_ZONE_KEY) ?? '';
+					if (!token) {
+						return Response.json(
+							{ ok: false, error: 'no Cloudflare token; connect an account first' },
+							{ status: 400 }
+						);
+					}
+					if (url.searchParams.get('zone')) this.metaSet(MAIL_ZONE_KEY, zoneId);
+
+					const subs = zoneId ? await listSendingSubdomains(token, zoneId) : null;
+					if (subs && !subs.ok)
+						return Response.json({ ok: false, error: subs.error }, { status: 400 });
+					let subdomain = subs?.ok ? (subs.value[0] ?? null) : null;
+
+					if (url.searchParams.get('action') === 'apply' && zoneId) {
+						if (!subdomain) {
+							const made = await createSendingSubdomain(
+								token,
+								zoneId,
+								url.searchParams.get('name') ?? ''
+							);
+							if (!made.ok)
+								return Response.json(
+									{ ok: false, error: made.error },
+									{ status: 400 }
+								);
+							subdomain = made.value;
+						}
+					}
+
+					let plan: RecordAction[] = [];
+					if (subdomain) {
+						const [want, have] = await Promise.all([
+							requiredDns(token, zoneId, subdomain.id),
+							zoneRecords(token, zoneId)
+						]);
+						if (want.ok && have.ok) plan = dnsPlan(want.value, have.value);
+					}
+
+					let applied = null;
+					if (url.searchParams.get('action') === 'apply' && plan.length > 0) {
+						applied = await applyDnsPlan(token, zoneId, plan);
+					}
+
+					const dests = accountId ? await listDestinations(token, accountId) : null;
+					const wanted = url.searchParams.get('destination');
+					const destination = dests?.ok
+						? dests.value.find((d) => (wanted ? d.email === wanted : isVerified(d)))
+						: undefined;
+
+					return Response.json({
+						ok: true,
+						...onboardState({ zoneId: zoneId || null, subdomain, plan, destination }),
+						applied
+					});
+				}
+
+				case '/__cfoauth': {
+					const action = url.searchParams.get('action') ?? 'status';
+					const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY);
+
+					if (action === 'connect') {
+						const given = url.searchParams.get('client_id')?.trim();
+						if (given) this.metaSet(CF_OAUTH_CLIENT_ID_KEY, given);
+						const id = given || clientId;
+						if (!id) {
+							return Response.json(
+								{ ok: false, error: 'register an OAuth client and pass client_id' },
+								{ status: 400 }
+							);
+						}
+						const pkce = await createPkce();
+						const state = randomToken(24);
+						const redirectUri = callbackUrl(this.canonicalOrigin(url.origin));
+						this.metaSet(
+							CF_OAUTH_PENDING_KEY,
+							JSON.stringify({
+								state,
+								verifier: pkce.verifier,
+								redirectUri,
+								createdAt: this.nowMs()
+							} satisfies PendingAuth)
+						);
+						return Response.json({
+							ok: true,
+							authorizeUrl: authorizeUrl({
+								clientId: id,
+								redirectUri,
+								challenge: pkce.challenge,
+								state
+							})
+						});
+					}
+
+					if (action === 'callback') {
+						const raw = this.metaGet(CF_OAUTH_PENDING_KEY);
+						let pending: PendingAuth | null = null;
+						try {
+							pending = raw ? (JSON.parse(raw) as PendingAuth) : null;
+						} catch {
+							pending = null;
+						}
+						const check = pendingMatches(
+							pending,
+							url.searchParams.get('state') ?? '',
+							this.nowMs()
+						);
+						// consumed whatever the outcome, so a code cannot be replayed against it
+						this.metaSet(CF_OAUTH_PENDING_KEY, '');
+						if (!check.ok)
+							return Response.json(
+								{ ok: false, error: check.reason },
+								{ status: 400 }
+							);
+						const code = url.searchParams.get('code') ?? '';
+						if (!code || !clientId) {
+							return Response.json(
+								{ ok: false, error: 'no code returned' },
+								{ status: 400 }
+							);
+						}
+						const out = await exchangeCode({
+							clientId,
+							code,
+							verifier: (pending as PendingAuth).verifier,
+							redirectUri: (pending as PendingAuth).redirectUri
+						});
+						if (isTokenError(out))
+							return Response.json({ ok: false, error: out.error }, { status: 400 });
+						const accountId = await resolveAccountId(out.accessToken);
+						this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(out));
+						if (accountId) this.metaSet(CF_OAUTH_ACCOUNT_KEY, accountId);
+						// the grant replaces the pasted pair, which is the point of offering it
+						this.env = {
+							...this.env,
+							CF_EMAIL_TOKEN: out.accessToken,
+							...(accountId ? { CF_EMAIL_ACCOUNT_ID: accountId } : {})
+						};
+						return Response.json({ ok: true, accountId, scopes: out.scopes });
+					}
+
+					if (action === 'disconnect') {
+						const raw = this.metaGet(CF_OAUTH_TOKEN_KEY);
+						let revoked = false;
+						if (raw && clientId) {
+							try {
+								const set = JSON.parse(raw) as TokenSet;
+								revoked = await revoke({ clientId, token: set.accessToken });
+							} catch {
+								revoked = false;
+							}
+						}
+						// cleared either way; reporting `revoked` separately keeps a failed
+						// revocation visible rather than reading as a completed disconnect
+						this.metaSet(CF_OAUTH_TOKEN_KEY, '');
+						this.metaSet(CF_OAUTH_ACCOUNT_KEY, '');
+						return Response.json({ ok: true, revoked });
+					}
+
+					const stored = this.metaGet(CF_OAUTH_TOKEN_KEY);
+					return Response.json({
+						ok: true,
+						clientId: clientId ? `${clientId.slice(0, 6)}...` : null,
+						connected: Boolean(stored),
+						accountId: this.metaGet(CF_OAUTH_ACCOUNT_KEY) || null
 					});
 				}
 
@@ -4580,7 +5067,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						writeStatements: tally?.statements ?? 0,
 						routes,
 						routerStatements: tally?.statementsByTable['router'] ?? 0,
-						routerRebuilds: tally ? routerRebuildPasses(tally, routes) : null,
+						routerRebuilds: tally ? routerRebuilds(tally, routes) : null,
 						byTable: tally ? rankTally(tally) : [],
 						// charged rows per statement per table, which is where an index audit starts:
 						// a factor above 1 means something other than the row is being billed
@@ -4677,7 +5164,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							migrated: this.migrateCursorOrNull()?.state === 'done',
 							migratePartial: this.migratePartial(),
 							bootMs: this.bootMs,
-							firstRunAt: this.metaGet('first_run_at'),
+							firstRunAt: this.metaGet(FIRST_RUN_KEY),
 							serveRequests: Number(this.metaGet('serve_requests', '0')),
 							queueDepth: this.queueDepth()
 						}
@@ -4698,7 +5185,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * "has this site been configured yet" without configuring it.
 				 */
 				case '/__firstrun': {
-					const doneAt = this.metaGet('first_run_at');
+					const doneAt = this.metaGet(FIRST_RUN_KEY);
 					const force = url.searchParams.get('force') === '1';
 
 					if (url.searchParams.has('pass')) {
@@ -4791,7 +5278,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						})
 					);
 					if (applied?.ok) {
-						this.metaSet('first_run_at', this.nowMs());
+						this.metaSet(FIRST_RUN_KEY, this.nowMs());
+						// claiming a site also fixes its origin, which closes the window
+						// trust-on-first-use leaves open: the owner is here, deliberately, on the
+						// host they mean. Overwrites whatever a first visitor pinned.
+						if (pinnable(url.origin)) this.metaSet(ORIGIN_KEY, url.origin);
 						// the KEYS, never the values: this row is readable by anything that can read
 						// the database, and one of those values is a password
 						this.metaSet(
@@ -4985,12 +5476,44 @@ export class SitePhpDurableObject extends SiteDurableObject {
              ON CONFLICT(k) DO UPDATE SET v = CAST(cfw_meta.v AS INTEGER) + 1`
 					);
 
-					const hit = this.sql
-						.exec<PageRow>(
-							'SELECT status, content_type, html, rendered_at, render_ms FROM cfw_page WHERE path = ?',
-							path
-						)
-						.toArray()[0];
+					// an unclaimed site shows its owner the way in, rather than its front page.
+					// The pack ships an installed database, so `install.php` never runs and uid 1
+					// carries an empty hash no password can match: a site that looks finished has no
+					// way in until `/firstrun` mints one, and the claim window stays open for
+					// whoever reaches the URL first. Placed AFTER the migration guards so a site
+					// that is still replaying says so instead, and after the counter so an
+					// unclaimed site's traffic is still metered.
+					if (needsSetup(request, this.metaGet(FIRST_RUN_KEY) !== null)) {
+						return setupResponse(this.canonicalOrigin(url.origin), {
+							'x-cfw-serve-ms': String(Date.now() - t0),
+							'x-cfw-v': CFW_HEADER_VERSION
+						});
+					}
+
+					// THE READ-ONLY RUNG, checked before the cache read rather than after: a
+					// non-GET must be refused whether or not a cached copy of the path exists,
+					// because what it would do is WRITE
+					const degraded = this.degradation();
+					if (!degraded.writes && request.method !== 'GET' && request.method !== 'HEAD') {
+						return readOnlyResponse(secondsUntilUtcReset(Date.now()), degraded);
+					}
+
+					// A SUBMISSION MUST NEVER BE ANSWERED FROM `cfw_page`.
+					//
+					// The row holds an ANONYMOUS GET of this path. Returning it for a POST hands the
+					// submitter the empty form back with a 200 and never runs Drupal, so the
+					// submission silently does nothing -- no validation, no mail, no content. Found
+					// by the e2e mail lane: `/user/password` ships in `prefill.json`, so it is
+					// pre-cached on every site and every password reset was swallowed.
+					const cacheable = request.method === 'GET' || request.method === 'HEAD';
+					const hit = cacheable
+						? this.sql
+								.exec<PageRow>(
+									'SELECT status, content_type, html, rendered_at, render_ms FROM cfw_page WHERE path = ?',
+									path
+								)
+								.toArray()[0]
+						: undefined;
 
 					if (hit) {
 						return this.pageResponse(hit, 'HIT', Date.now() - t0, {
@@ -5037,6 +5560,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// RENDER_BUDGET_MS from 2,000 to 25,000 changed nothing. Paid is allowed to boot
 					// and then render -- ~1.4 s of wall clock the visitor waits through instead of a
 					// 503 -- because a 30 s CPU budget is what makes that affordable.
+					// a MISS at the top rung answers 503 rather than spending ~13 rows on a
+					// render the quota cannot pay for; the queue entry above still stands, so
+					// the page fills once the day rolls over
+					if (!degraded.render) {
+						return readOnlyResponse(secondsUntilUtcReset(Date.now()), degraded);
+					}
 					const mayBoot = planProfile(this.env).bootInline;
 					const coldBoot = !this.php && mayBoot;
 					let inline = '0';
@@ -5075,12 +5604,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// the same requirement seen twice: without it Drupal renders uid 0 and the
 						// routing layer denies every create-entity route before a form is built
 						const cookie = request.headers.get('cookie') ?? '';
+						// pinned on the way past, so every render after the first agrees on the
+						// host even if a later request arrives carrying a forged one
+						const origin = this.canonicalOrigin(url.origin);
 						const inbound: RenderRequest =
 							request.method === 'GET' || request.method === 'HEAD'
 								? cookie
-									? { cookie }
-									: {}
+									? { origin, cookie }
+									: { origin }
 								: {
+										origin,
 										method: request.method,
 										// decoded from bytes rather than `.text()`, which workerd
 										// warns may corrupt a non-text content type -- a form field
@@ -5307,6 +5840,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				case '/__serve-stats': {
 					this.ensureServeTables();
 					return Response.json({
+						// how many stored pages could be served as a shared shell with their
+						// personalised regions filled at the edge. The input for deciding whether
+						// authenticated caching is worth finishing on THIS site rather than in
+						// general: a site whose pages carry no placeholders has nothing to gain
+						shellCandidates: this.shellCandidates(),
 						cached: this.sql
 							.exec(
 								'SELECT path, status, length(html) AS bytes, render_ms, rendered_at FROM cfw_page ORDER BY path'
@@ -5355,6 +5893,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						httpQueue: this.countOrNull('cfw_http_queue'),
 						lastHttpDrain: this.lastHttpDrain ?? null,
 						lastHttpDrainAt: this.lastHttpDrainAt ?? null,
+						// the outbound mail queue, on the same terms. A send that failed at the
+						// relay is only visible here: `cfwMail` had already returned by then, so
+						// this is the surface that keeps a queued-but-undelivered message auditable
+						mailQueue: this.countOrNull('cfw_mail_queue'),
+						lastMailDrain: this.lastMailDrain ?? null,
+						lastMailDrainAt: this.lastMailDrainAt ?? null,
 						// null on a site that never ran an update; a live run holds the alarm chain
 						updb: this.lastUpdb ?? null,
 						updbActive: this.updbActive(),

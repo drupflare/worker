@@ -188,22 +188,55 @@ export function rankTally(
  *
  * A rebuild is exactly one `DELETE FROM router` plus `ceil(routes / routesPerStatement)` inserts,
  * because `MatcherDumper::dump()` empties the table once and then re-inserts everything
- * (`core/lib/Drupal/Core/Routing/MatcherDumper.php:98-143`). Core chunks at 50 routes, which is
- * 300 bound parameters and over the Durable Object ceiling of 100, so the driver re-chunks to 16.
+ * (`core/lib/Drupal/Core/Routing/MatcherDumper.php:98-143`).
  *
- * Returns `null` rather than 0 when the shape does not divide cleanly: a fractional answer means
- * the assumed chunk size is wrong, and reporting "2.4 rebuilds" as 2 would launder that away.
+ * **The default was 16 and the driver writes 1, so this returned `null` on every real enable.**
+ * Measured 2026-08-19 on a `token` install: **422 router statements over 420 routes**, 2,518 charged
+ * rows, 5.97 rows per statement -- one statement per route, not fourteen. The old default came from
+ * the 100-bound-parameter ceiling over a 7-column row, which is what the driver COULD batch rather
+ * than what it does. With `perPass` computed as 28 instead of 421, `422 / 28` is fractional and the
+ * function refused to answer -- so `/enable` has reported `routerRebuilds: null` for its whole life,
+ * and nobody noticed because a null reads as "not applicable" rather than as a broken instrument.
+ *
+ * The residual is reported rather than rejected. An enable pays one pass plus a handful of
+ * incidental statements, and demanding exact divisibility turned "1 rebuild, 1 statement
+ * unaccounted" into no answer at all. A caller that needs strictness reads `residual`.
+ *
+ * @param routesPerStatement - rows the driver puts in one INSERT; 1 is what it does today
  */
 export function routerRebuildPasses(
 	tally: WriteTally,
 	routes: number,
-	routesPerStatement = 16
+	routesPerStatement = 1
 ): number | null {
+	return routerRebuilds(tally, routes, routesPerStatement)?.passes ?? null;
+}
+
+/** a rebuild count with the statements it could not attribute, so neither half is guessed */
+export interface RouterRebuilds {
+	passes: number;
+	/** statements left over after the whole passes; a large one means the shape is not understood */
+	residual: number;
+	/** statements one full dump costs at the given chunk size */
+	perPass: number;
+}
+
+/**
+ * The full reading behind {@link routerRebuildPasses}.
+ *
+ * Returns null only when there is nothing to divide -- no router statements, or a route count that
+ * cannot describe a table. A residual larger than one pass means the chunk size is wrong, and the
+ * caller can see that rather than being handed a rounded number that hides it.
+ */
+export function routerRebuilds(
+	tally: WriteTally,
+	routes: number,
+	routesPerStatement = 1
+): RouterRebuilds | null {
 	const statements = tally.statementsByTable['router'] ?? 0;
-	if (statements === 0 || routes <= 0) return null;
+	if (statements === 0 || routes <= 0 || routesPerStatement <= 0) return null;
 	const perPass = 1 + Math.ceil(routes / routesPerStatement);
-	const passes = statements / perPass;
-	return Number.isInteger(passes) ? passes : null;
+	return { passes: Math.floor(statements / perPass), residual: statements % perPass, perPass };
 }
 
 /** One table's charged rows against the statements that caused them. */

@@ -11,6 +11,7 @@ import {
 	type AuthBudgetEnv,
 	type AuthSpend
 } from './ops/auth-budget';
+import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit';
 import {
 	ensureFleetTable,
 	fleetSummary,
@@ -20,7 +21,7 @@ import {
 } from './ops/fleet';
 import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store';
 import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan';
-import { resolveSite } from './ops/site-id';
+import { resolveSite, siteStubOptions } from './ops/site-id';
 import { bearerToken } from './ops/site-secrets';
 import { SitePhpDurableObject } from './site-do';
 import {
@@ -72,7 +73,12 @@ export { SitePhpDurableObject };
  * object answers 409, and `?force=1` (which resets the admin password) requires the owner token or
  * diagnostics -- enforced in the Durable Object, where the secret actually lives.
  */
-const PUBLIC_ROUTES = new Set(['/serve', '/firstrun']);
+/**
+ * `/setup/cf/callback` is PUBLIC because it cannot be anything else: it arrives as a redirect from
+ * Cloudflare's consent screen carrying no header drupflare controls. The `state` parameter is what
+ * authenticates it, matched constant-time against the pending record in the object.
+ */
+const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback']);
 
 /**
  * Routes that must never be reachable without PW_DIAGNOSTICS.
@@ -143,7 +149,7 @@ const DIAGNOSTIC_ROUTES = new Set([
  * These stay in `DIAGNOSTIC_ROUTES` as well, so `PW_DIAGNOSTICS=1` still reaches them and nothing
  * that worked stops working. The token is an ADDITIONAL way in, not a replacement.
  */
-const OWNER_ROUTES = new Set(['/export', '/health']);
+const OWNER_ROUTES = new Set(['/export', '/health', '/setup/cf', '/setup/mail']);
 
 const ROUTES = new Set([...PUBLIC_ROUTES, ...DIAGNOSTIC_ROUTES]);
 
@@ -157,7 +163,7 @@ async function ownerAuthorised(request: Request, env: SiteWorkerEnv, url: URL): 
 	const presented = bearerToken(request.headers.get('authorization'));
 	if (!presented) return false;
 	const site = url.searchParams.get('site') ?? 'site';
-	const stub = env.SITE.get(env.SITE.idFromName(site));
+	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const inner = new URL(url);
 	inner.pathname = '/__ownercheck';
 	const res = await stub.fetch(
@@ -186,6 +192,9 @@ const DO_ROUTE: Record<string, string> = {
 	'/armfill': '/__armfill',
 	'/keepwarm': '/__keepwarm',
 	'/serve': '/__serve',
+	'/setup/cf': '/__cfoauth',
+	'/setup/mail': '/__mailonboard',
+	'/setup/cf/callback': '/__cfoauth',
 	'/fill': '/__fill',
 	'/assemble': '/__assemble',
 	'/serve-stats': '/__serve-stats',
@@ -267,10 +276,70 @@ const NEVER_DRUPAL = [
 ];
 
 /**
+ * The largest non-file request body that may reach the interpreter, in bytes.
+ *
+ * 2 MiB, and it is a heap guard rather than a bandwidth one: `parse_str()` on a form body allocates
+ * inside a 128 MB isolate, and `foo[][][][][]=bar` repeated turns a few hundred kilobytes of wire
+ * into orders of magnitude more of it. Drupal's own `post_max_size` default is 8 MB, so this is
+ * tighter -- deliberately, because there is no separate process to lose here.
+ */
+
+/** what the guard decided, or null when the request may proceed */
+export interface BodyTooLarge {
+	limit: number;
+	declared: number;
+	reason: string;
+}
+
+/**
+ * Whether a request body is too large to hand to PHP.
+ *
+ * READS `Content-Length` AND NOTHING ELSE, which is the only check available before the body has
+ * been consumed -- and consuming it to measure it is the cost the guard exists to avoid. A chunked
+ * request declares none and falls through; the object's own limits still apply to it.
+ *
+ * A `multipart/form-data` body is EXEMPT. That is the file-upload shape, its size is the point, and
+ * it is not `parse_str()`d into a nested array -- so the memory-bomb argument does not apply to it
+ * and a 2 MiB cap on uploads would be a functional regression rather than a guard.
+ *
+ * @param env - `MAX_BODY_BYTES` overrides the default; `0` disables the guard entirely
+ */
+export function bodyTooLarge(
+	request: Request,
+	env?: { MAX_BODY_BYTES?: string | number | null }
+): BodyTooLarge | null {
+	const method = request.method.toUpperCase();
+	if (method === 'GET' || method === 'HEAD') return null;
+
+	const raw = Number(env?.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
+	const limit = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_MAX_BODY_BYTES;
+	if (limit === 0) return null;
+
+	const type = request.headers.get('content-type') ?? '';
+	if (type.toLowerCase().includes('multipart/form-data')) return null;
+
+	const declared = Number(request.headers.get('content-length') ?? '');
+	if (!Number.isFinite(declared) || declared <= limit) return null;
+
+	return {
+		limit,
+		declared,
+		reason: `request body of ${declared} bytes exceeds the ${limit} byte limit`
+	};
+}
+
+/**
  * True when the path cannot be a Drupal route under any configuration.
+ *
+ * The query string is stripped first, and that is a fix rather than a tidy-up. Four of the six
+ * patterns are `$`-anchored, and the only caller reads `?path=`, which the catch-all builds as
+ * `url.pathname + url.search` -- so `/.env` was refused and `/.env?x=1` walked straight through
+ * into a Durable Object hop and the permanent `cache_data` row this deny list exists to prevent.
+ * Appending a parameter is the first thing a scanner does.
  */
 export function isNeverDrupal(pathname: string): boolean {
-	return NEVER_DRUPAL.some((re) => re.test(pathname));
+	const bare = pathname.split(/[?#]/, 1)[0] ?? pathname;
+	return NEVER_DRUPAL.some((re) => re.test(bare));
 }
 
 const cacheKey = (origin: string, parts: string[]) =>
@@ -543,7 +612,7 @@ export default {
 		const t0 = Date.now();
 		// one object per site; the name is the site identity
 		const site = url.searchParams.get('site') ?? 'site';
-		const stub = env.SITE.get(env.SITE.idFromName(site));
+		const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 
 		const cache = caches.default;
 		const origin = url.origin;
@@ -584,6 +653,24 @@ export default {
 		// Refused here rather than in the Durable Object, because reaching the DO is what
 		// costs: one DO request, and a PERMANENT cache_data row per distinct URL that
 		// nothing garbage-collects. On a public site most traffic is scanners, so this is
+		// an oversized body is refused before it reaches wasm, and the interesting case is not a
+		// large file. A form body is `parse_str()`d inside a 128 MB isolate, and a nested-array
+		// bomb -- `foo[][][][][]=bar` repeated -- costs orders of magnitude more heap than it does
+		// bytes on the wire. Refusing at the edge costs no DO request and no interpreter, and a
+		// multipart upload is exempt because that is the one shape whose size is the point.
+		const oversized = bodyTooLarge(request, env);
+		if (oversized !== null) {
+			return new Response(`${oversized.reason}\n`, {
+				status: 413,
+				headers: {
+					'content-type': 'text/plain; charset=utf-8',
+					'cache-control': 'no-store',
+					'x-cfw-deny': 'body-too-large',
+					'x-cfw-body-limit': String(oversized.limit)
+				}
+			});
+		}
+
 		// the cheapest request in the system.
 		if (serving && isNeverDrupal(path)) {
 			return new Response('not found\n', {
@@ -687,6 +774,9 @@ export default {
 		const inner = new URL(request.url);
 		// every route in ROUTES has a DO_ROUTE entry except `/fillwindow`, which returned above
 		inner.pathname = DO_ROUTE[url.pathname] as string;
+		// the consent screen redirects to a PATH; the object switches on ?action=, and a caller
+		// cannot be trusted to add it -- Cloudflare builds this URL, not us
+		if (url.pathname === '/setup/cf/callback') inner.searchParams.set('action', 'callback');
 
 		// Awaited to completion, never raced against a timer.
 		//
@@ -1027,6 +1117,8 @@ export interface FillWindowEnv {
 	SITE: DurableObjectNamespace;
 	WINDOW_MAX_FILLS?: string | number;
 	WINDOW_WALL_MS?: string | number;
+	/** carried so the window reaches the SAME object placement the serving path does */
+	SITE_LOCATION_HINT?: string;
 }
 
 /** What the front end requires: the namespace is not optional for a Worker that only proxies. */
@@ -1122,7 +1214,7 @@ export async function runFillWindow(
 	const wallBudgetMs = Number(opts.wallBudgetMs ?? env?.WINDOW_WALL_MS ?? 60_000);
 	const startedAt = Date.now();
 
-	const stub = env.SITE.get(env.SITE.idFromName(site));
+	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const res = await stub.fetch('https://do.local/__fillsocket', {
 		headers: { Upgrade: 'websocket' }
 	});

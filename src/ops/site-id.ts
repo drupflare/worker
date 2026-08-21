@@ -48,6 +48,53 @@ export function siteKvKey(host: string): string {
 }
 
 /**
+ * The regions Cloudflare accepts as a Durable Object location hint.
+ *
+ * An allow-list rather than a pass-through, because the value reaches `SITE.get()` on the serving
+ * path: a typo that the platform rejects would take the site down for the sake of a latency
+ * preference, which is the wrong trade for a hint.
+ */
+const LOCATION_HINTS = new Set(['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac', 'oc', 'afr', 'me']);
+
+/**
+ * Where a site's Durable Object should be created, or undefined for "wherever it lands".
+ *
+ * **UNSET IS THE DEFAULT AND IT IS DELIBERATE.** Placement follows the first request, which for a
+ * deploy-button site is wherever the deployer was. Guessing a region on their behalf trades latency
+ * for one audience against latency for every other, and a one-click product has no way to ask - so
+ * an owner who knows their audience pins it, and nobody else pays for a guess.
+ *
+ * **KV FIRST, THEN THE VAR**, which is the ladder `resolveSettings()` already implements:
+ * `SITE_LOCATION_HINT` is on {@link KV_OVERRIDABLE}, so it can be changed without a redeploy. That
+ * ordering is the convention for any lever offered here, not a special case for this one.
+ *
+ * IT ONLY APPLIES TO CREATION. Cloudflare uses the hint when the object is first instantiated and
+ * ignores it afterwards, so setting this on a site that already exists moves nothing.
+ *
+ * @returns a validated hint, or undefined when unset or unrecognised
+ */
+export function locationHint(env?: { SITE_LOCATION_HINT?: string | null }): string | undefined {
+	const raw = String(env?.SITE_LOCATION_HINT ?? '')
+		.trim()
+		.toLowerCase();
+	return LOCATION_HINTS.has(raw) ? raw : undefined;
+}
+
+/**
+ * The options bag for `SITE.get()`, empty when there is no hint.
+ *
+ * Separate from {@link locationHint} so a call site cannot accidentally pass
+ * `{ locationHint: undefined }`, which is not the same as passing nothing to every runtime that
+ * checks for the key rather than its value.
+ */
+export function siteStubOptions(env?: {
+	SITE_LOCATION_HINT?: string | null;
+}): DurableObjectNamespaceGetDurableObjectOptions | undefined {
+	const hint = locationHint(env);
+	return hint === undefined ? undefined : { locationHint: hint as DurableObjectLocationHint };
+}
+
+/**
  * A site id derived from a request host, or null when the host names no site.
  *
  * The PORT is part of the identity only when it is not the default for the scheme. Two dev servers

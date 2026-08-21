@@ -44,13 +44,25 @@ class PhpWasmSyncFiber {
 /**
  * The $_SERVER block and the memoized kernel boot, matching renderPage().
  *
- * Identical to the preamble in src/site-php.js: a cron fragment that
- * booted differently from the render path would be measuring a different site.
+ * Identical to the preamble in `site-php.ts`: a cron fragment that booted differently from the
+ * render path would be measuring a different site.
+ *
+ * THE ORIGIN MATTERS MORE HERE THAN ON A RENDER. A render's absolute URLs are mostly relative in
+ * the markup, but cron is where mail is sent -- and `user_pass_reset_url()` builds an absolute link
+ * from the request. Booted against `localhost`, every link Drupal mails from cron points the
+ * recipient at their own machine. `Request::create()` builds its own server bag and never reads
+ * `$_SERVER`, so the URI it is given is the only thing that sets the host.
+ *
+ * @param origin - a `scheme://host[:port]`, already JSON-encoded as a PHP string literal
  */
-const KERNEL_BOOT = String.raw`
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
+const kernelBoot = (origin: string) => String.raw`
+$origin = json_decode(${origin});
+$__host = $origin === '' ? 'localhost' : (string) parse_url($origin, PHP_URL_HOST);
+$__port = $origin === '' ? 80 : (int) (parse_url($origin, PHP_URL_PORT) ?: (strncmp($origin, 'https:', 6) === 0 ? 443 : 80));
+$_SERVER['HTTP_HOST'] = $__port === 80 || $__port === 443 ? $__host : $__host . ':' . $__port;
+$_SERVER['SERVER_NAME'] = $__host;
+$_SERVER['SERVER_PORT'] = (string) $__port;
+if (strncmp($origin, 'https:', 6) === 0) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
 $_SERVER['REQUEST_URI'] = '/';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['SCRIPT_NAME'] = '/index.php';
@@ -67,7 +79,7 @@ if (!isset($GLOBALS['__pw_autoloader'])) {
 $autoloader = $GLOBALS['__pw_autoloader'];
 
 if (!isset($GLOBALS['__pw_kernel'])) {
-  $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+  $request = \Symfony\Component\HttpFoundation\Request::create($origin === '' ? '/' : rtrim($origin, '/') . '/', 'GET');
   $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
   \Drupal\Core\DrupalKernel::bootEnvironment();
   $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
@@ -77,6 +89,15 @@ if (!isset($GLOBALS['__pw_kernel'])) {
   $GLOBALS['__pw_kernel'] = $kernel;
   $out['bootedKernel'] = 1;
 }
+// the request stack is what Drupal's URL generator reads for the host, and a cron fragment
+// pushes none of its own -- so without this an absolute URL falls back to a default it invents
+try {
+  if ($origin !== '' && \Drupal::hasContainer()) {
+    \Drupal::service('request_stack')->push(
+      \Symfony\Component\HttpFoundation\Request::create(rtrim($origin, '/') . '/', 'GET')
+    );
+  }
+} catch (\Throwable $e) {}
 `;
 
 /**
@@ -119,7 +140,7 @@ function cfw_listener_shape($c) {
  * file, layout_builder, system, update, and a module added later has to show up
  * here before it can be scheduled.
  */
-export function cronHookList(): string {
+export function cronHookList(origin = ''): string {
 	return String.raw`<?php
 ${FIBER_SHIM}
 ${LISTENER_SHAPE}
@@ -130,7 +151,7 @@ $clock = function () { return microtime(true) * 1000; };
 $t0 = $clock();
 
 try {
-${KERNEL_BOOT}
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
 ${COLLECT_CRON_LISTENERS}
   $shapes = [];
   foreach ($found as $m => $listeners) {
@@ -178,7 +199,7 @@ echo json_encode($out);
  *
  * @param {string} module machine name; anything else returns a refusal
  */
-export function runCronHook(module: string): string {
+export function runCronHook(module: string, origin = ''): string {
 	const name = String(module ?? '');
 	if (!/^[a-z][a-z0-9_]*$/.test(name)) {
 		return String.raw`<?php echo json_encode(['ran' => false, 'error' => 'refused module name']);`;
@@ -193,7 +214,7 @@ $clock = function () { return microtime(true) * 1000; };
 $t0 = $clock();
 
 try {
-${KERNEL_BOOT}
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
 ${COLLECT_CRON_LISTENERS}
 
   if (!isset($found[$module])) {
@@ -253,7 +274,7 @@ echo json_encode($out);
  * @param {string} name queue (and queue worker plugin) id
  * @param {number} maxItems items this invocation may process
  */
-export function runCronQueue(name: string, maxItems = 5): string {
+export function runCronQueue(name: string, maxItems = 5, origin = ''): string {
 	const queue = String(name ?? '');
 	if (!/^[a-z][a-z0-9_:.-]*$/.test(queue)) {
 		return String.raw`<?php echo json_encode(['ran' => false, 'error' => 'refused queue name']);`;
@@ -273,7 +294,7 @@ $clock = function () { return microtime(true) * 1000; };
 $t0 = $clock();
 
 try {
-${KERNEL_BOOT}
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
 
   $manager = \Drupal::service('plugin.manager.queue_worker');
   $definitions = $manager->getDefinitions();

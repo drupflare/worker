@@ -88,6 +88,14 @@ export interface CronOptions {
 	hookPolicy?: Record<string, CronHookPolicy>;
 	includeQueue?: boolean;
 	includeCronLast?: boolean;
+	/**
+	 * the `scheme://host[:port]` a cron fragment boots Drupal against.
+	 *
+	 * Cron is where mail is sent, and `user_pass_reset_url()` builds an absolute link from the
+	 * request -- so booted against the default, every link Drupal mails points the recipient at
+	 * their own machine. Empty leaves the old behaviour, which is correct for a probe.
+	 */
+	origin?: string;
 }
 
 /** One unit of the chain. `module` is set only on the hook units. */
@@ -850,7 +858,9 @@ export async function cronStep(
 			result = { skipped: pending.reason, queues: pending.queues };
 		} else {
 			servedQueue = pending.name;
-			result = await deps.runJson(runCronQueue(pending.name, options.queueBatchSize ?? 5));
+			result = await deps.runJson(
+				runCronQueue(pending.name, options.queueBatchSize ?? 5, options.origin)
+			);
 			const remaining = Number(result?.remaining ?? 0);
 			const progressed = Number(result?.processed ?? 0) > 0;
 			const repeats = cursor.queueRepeats + 1;
@@ -865,7 +875,7 @@ export async function cronStep(
 		}
 	} else {
 		// the only module-less php unit is `queue`, handled by the branch above
-		result = await deps.runJson(runCronHook(unit.module as string));
+		result = await deps.runJson(runCronHook(unit.module as string, options.origin));
 	}
 
 	const ms = Date.now() - t0;

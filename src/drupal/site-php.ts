@@ -428,7 +428,7 @@ class PhpWasmSyncFiber {
  */
 const PW_SERVE_INLINE = String.raw`
 if (!function_exists('cfw_serve')) { eval('
-function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "") {
+function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "") {
   $kernel = $GLOBALS["__pw_kernel"];
 
   // PHP\x27S HEADER LIST OUTLIVES THE REQUEST ON A PERSISTENT INTERPRETER, and session_start()
@@ -467,10 +467,21 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
     $cookies[urldecode(substr($pair, 0, $split))] = urldecode(substr($pair, $split + 1));
   }
 
-  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($path, $method, $parameters, $cookies, [], $server, $body);
+  // THE ORIGIN IS PREPENDED SO SYMFONY PARSES IT, rather than set on $_SERVER afterwards.
+  // Request::create() builds its OWN server bag from defaults and does not read $_SERVER, so the
+  // HTTP_HOST assignments the fragments make were never what Drupal saw -- an absolute URI is. With
+  // a relative one Symfony fills in "localhost", which is why a deployed site put http://localhost
+  // into every canonical tag, form action, Location header and password-reset mail.
+  $url = $origin === "" ? $path : rtrim($origin, "/") . $path;
+  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($url, $method, $parameters, $cookies, [], $server, $body);
 
   // the superglobals follow the request rather than leading it, so a fragment reading $_POST and
-  // one reading the Request agree
+  // one reading the Request agree -- INCLUDING the host trio, which is read directly by code that
+  // predates the request object
+  $_SERVER["HTTP_HOST"] = $request->getHttpHost();
+  $_SERVER["SERVER_NAME"] = $request->getHost();
+  $_SERVER["SERVER_PORT"] = (string) $request->getPort();
+  if ($request->isSecure()) { $_SERVER["HTTPS"] = "on"; } else { unset($_SERVER["HTTPS"]); }
   $_SERVER["REQUEST_METHOD"] = $method;
   // EVERY input superglobal, not just $_POST. When a CSRF token fails, FormBuilder empties the
   // request and calls $request->overrideGlobals() to make the globals agree
@@ -572,12 +583,10 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
       $ref = new \\ReflectionObject($node);
       if ($ref->hasProperty("isCurrentFrontPage")) {
         $prop = $ref->getProperty("isCurrentFrontPage");
-        $prop->setAccessible(true);
         $prop->setValue($node, null);
       }
       if (!$ref->hasProperty("decorated")) { break; }
       $inner = $ref->getProperty("decorated");
-      $inner->setAccessible(true);
       $node = $inner->getValue($node);
     }
   } catch (\\Throwable $e) {}
@@ -1051,7 +1060,6 @@ try {
       try {
         $middleware = \Drupal::service('http_middleware.page_cache');
         $rp = new \ReflectionProperty($middleware, 'cid');
-        $rp->setAccessible(true);
         $rp->setValue($middleware, NULL);
       } catch (\Throwable $e) {}
     }
@@ -1122,6 +1130,14 @@ echo json_encode($mark);
  * @param {boolean|string} destruct true, false, or an allowlist to bisect with
  */
 export interface RenderRequest {
+	/**
+	 * the `scheme://host[:port]` Drupal renders absolute URLs against.
+	 *
+	 * Empty means "leave it to Symfony", which fills in `http://localhost` -- correct for a probe
+	 * and wrong for anything a visitor sees. `src/ops/site-origin.ts` decides the value; it is a
+	 * property of the site rather than of the request, so a forged `Host` cannot move it.
+	 */
+	origin?: string;
 	/** HTTP method; anything other than GET makes this a submission */
 	method?: string;
 	/** the raw request body, forwarded verbatim */
@@ -1163,16 +1179,18 @@ export function renderPage(
 	// JSON-encoded, never interpolated: a body carrying a quote would otherwise close the PHP
 	// literal and change what runs, which is the same hazard the file's backtick rule exists for.
 	const method = String(request.method ?? 'GET').toUpperCase();
-	// an ANONYMOUS GET still emits nothing extra, so every pre-existing caller's source is
-	// byte-identical; a cookie is enough on its own to need the argument list, because an
+	const origin = String(request.origin ?? '');
+	// an ANONYMOUS GET with no origin still emits nothing extra, so every pre-existing caller's
+	// source is byte-identical; a cookie is enough on its own to need the argument list, because an
 	// authenticated GET is exactly the case this exists for
 	const requestArgs =
-		method === 'GET' && !request.body && !request.cookie
+		method === 'GET' && !request.body && !request.cookie && origin === ''
 			? ''
 			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})`;
+				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(origin))})`;
 
 	return String.raw`<?php
 ${FIBER_SHIM}
@@ -1181,10 +1199,16 @@ ${PW_SERVE_INLINE}
 chdir('/drupal');
 
 $path = json_decode(${JSON.stringify(safePath)});
+$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
 
-$_SERVER['HTTP_HOST'] = 'localhost';
-$_SERVER['SERVER_NAME'] = 'localhost';
-$_SERVER['SERVER_PORT'] = '80';
+// the host trio is derived from the ORIGIN rather than hardcoded, and cfw_serve() overwrites it
+// again from the request it builds, so the superglobals and the Request object cannot disagree
+$__host = $origin === '' ? 'localhost' : (string) parse_url($origin, PHP_URL_HOST);
+$__port = $origin === '' ? 80 : (int) (parse_url($origin, PHP_URL_PORT) ?: (strncmp($origin, 'https:', 6) === 0 ? 443 : 80));
+$_SERVER['HTTP_HOST'] = $__port === 80 || $__port === 443 ? $__host : $__host . ':' . $__port;
+$_SERVER['SERVER_NAME'] = $__host;
+$_SERVER['SERVER_PORT'] = (string) $__port;
+if (strncmp($origin, 'https:', 6) === 0) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
 $_SERVER['REQUEST_URI'] = $path;
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['SCRIPT_NAME'] = '/index.php';
@@ -1224,7 +1248,6 @@ try {
   try {
     $middleware = \Drupal::service('http_middleware.page_cache');
     $rp = new \ReflectionProperty($middleware, 'cid');
-    $rp->setAccessible(true);
     $rp->setValue($middleware, NULL);
   } catch (\Throwable $e) {}
 
@@ -1693,7 +1716,6 @@ const SCHEMA_REPAIR = String.raw`
       if ($db->schema()->tableExists($table)) { continue; }
       if (!class_exists($class)) { $failed[$table] = 'class absent: ' . $class; continue; }
       $rm = new \ReflectionMethod($class, 'schemaDefinition');
-      $rm->setAccessible(TRUE);
       $spec = $rm->isStatic() ? $rm->invoke(NULL) : $rm->invoke($rm->getDeclaringClass()->newInstanceWithoutConstructor());
       // some return one table spec, some a map of them
       $specs = isset($spec['fields']) ? [$table => $spec] : $spec;
@@ -1997,7 +2019,6 @@ ${SCHEMA_REPAIR}
     try {
       $middleware = \Drupal::service('http_middleware.page_cache');
       $rp = new \ReflectionProperty($middleware, 'cid');
-      $rp->setAccessible(true);
       $rp->setValue($middleware, NULL);
     } catch (\Throwable $e) {}
     $b = $statements();
@@ -2034,7 +2055,7 @@ echo json_encode($out);
 /**
  * Executes the capability plugins, which until now were only lint-clean.
  *
- * Five classes in `drupal/drupflare/` had never run. Lint proves a class
+ * Five classes in the `drupflare` module had never run. Lint proves a class
  * parses; it says nothing about whether `stream_wrapper_register()` accepts it, or
  * whether the host reply shape the class expects is the shape the host sends. Both
  * of those are exactly the kind of contract this project has already got wrong on
@@ -2360,7 +2381,6 @@ try {
   // #region walls 2 and 3: build id and token, read off what the handler answers
   try {
     $rp = new \ReflectionProperty(\Drupal\Core\DrupalKernel::class, 'prepared');
-    $rp->setAccessible(true);
     $rp->setValue($kernel, false);
   } catch (\Throwable $e) {}
   try {
@@ -2401,6 +2421,468 @@ try {
 } catch (\Throwable $e) {
   $out['error'] = get_class($e) . ': ' . $e->getMessage();
   $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+
+echo json_encode($out);
+`;
+}
+
+/**
+ * Everything that must not survive a request boundary, read WITHOUT running a request.
+ *
+ * The instrument for the static-state family: `Html::$seenIds`, `PathMatcher::isFrontPage`,
+ * `PageCache::$cid`, `drupal_static()`, the uid-1 cache poisoning and `FormState::$anyErrors` were
+ * every one of them found by accident, because nothing enumerated the class of defect. This does.
+ *
+ * Two halves. The NAMED half reports the specific carriers a leak has already been found in, plus
+ * the ones a reading of core says are next. The BLIND half fingerprints every static property of
+ * every declared class, so a carrier nobody has thought of shows up as a diff rather than as
+ * nothing at all.
+ *
+ * Read-only by construction: `Messenger::all()` peeks rather than takes, `getValue()` does not
+ * initialise, and no service is instantiated that the request did not already instantiate --
+ * asking a container for a service it never built would create the state this is looking for.
+ * The one exception is the output buffer, which is CLEARED because an unclosed one from the
+ * previous request would swallow this report and read as a dead interpreter.
+ */
+export const BOUNDARY_STATE = String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$obFound = ob_get_level();
+while (ob_get_level() > 0) { @ob_end_clean(); }
+
+$out = ['obLevel' => $obFound];
+$out['headers'] = function_exists('headers_list') ? count(headers_list()) : -1;
+$out['sessionStatus'] = function_exists('session_status') ? session_status() : -1;
+$out['sessionId'] = function_exists('session_id') ? (string) @session_id() : '';
+$out['sessionKeys'] = isset($_SESSION) && is_array($_SESSION) ? array_keys($_SESSION) : [];
+$out['booted'] = isset($GLOBALS['__pw_kernel']) ? 1 : 0;
+$out['post'] = isset($_POST) && is_array($_POST) ? array_keys($_POST) : [];
+$out['cookies'] = isset($_COOKIE) && is_array($_COOKIE) ? array_keys($_COOKIE) : [];
+
+$ask = function (callable $fn) {
+  try { return $fn(); } catch (\Throwable $e) { return 'ERR: ' . substr($e->getMessage(), 0, 120); }
+};
+
+// #region the named carriers
+$out['uid'] = $ask(function () { return (int) \Drupal::currentUser()->id(); });
+
+// memoised by ThemeManager::getActiveTheme() and cleared only by resetActiveTheme(), which on a
+// normal request nothing calls -- so the FIRST route to negotiate decides the theme for the object
+$out['theme'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('theme.manager')) { return null; }
+  $manager = $container->get('theme.manager');
+  return $manager->hasActiveTheme() ? $manager->getActiveTheme()->getName() : null;
+});
+
+$out['formErrors'] = $ask(function () {
+  return \Drupal\Core\Form\FormState::hasAnyErrors() ? 1 : 0;
+});
+
+$out['seenIds'] = $ask(function () {
+  $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'seenIds');
+  $value = $property->getValue();
+  return is_array($value) ? count($value) : -1;
+});
+
+// keyed by the Request OBJECT in a static SplObjectStorage, so every request ever served stays
+// referenced; correct per request and unbounded across them
+$out['renderContexts'] = $ask(function () {
+  $property = new \ReflectionProperty(\Drupal\Core\Render\Renderer::class, 'contextCollection');
+  $value = $property->getValue();
+  return $value instanceof \SplObjectStorage ? $value->count() : -1;
+});
+
+$out['requestStack'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('request_stack')) { return null; }
+  $stack = $container->get('request_stack');
+  $property = new \ReflectionProperty($stack, 'requests');
+  $value = $property->getValue($stack);
+  return is_array($value) ? count($value) : -1;
+});
+
+// the flash bag lives on a session service that outlives the request, so a message queued for one
+// visitor and never rendered is rendered to the next
+$out['messages'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('messenger')) { return null; }
+  $counts = [];
+  foreach ($container->get('messenger')->all() as $type => $list) { $counts[$type] = count($list); }
+  return $counts;
+});
+
+// LocaleLookup::getCid() folds the CURRENT USER'S ROLE IDS into the key and memoises it, so the
+// first request to translate anything decides the key every later one reads; null unless locale is on
+$out['localeCids'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  $id = 'string_translator.locale.lookup';
+  if ($container === null || !$container->has($id) || !$container->initialized($id)) { return null; }
+  $service = $container->get($id);
+  $held = new \ReflectionProperty($service, 'translations');
+  $memo = new \ReflectionProperty(\Drupal\Core\Cache\CacheCollector::class, 'cid');
+  $cids = [];
+  foreach ((array) $held->getValue($service) as $langcode => $contexts) {
+    foreach ((array) $contexts as $context => $lookup) {
+      $cids[$langcode . '|' . $context] = is_object($lookup) ? $memo->getValue($lookup) : null;
+    }
+  }
+  return $cids;
+});
+
+$out['db'] = $ask(function () {
+  $connection = \Drupal\Core\Database\Database::getConnection();
+  return [
+    'buffering' => method_exists($connection, 'isBuffering') ? (int) $connection->isBuffering() : -1,
+    'inTransaction' => (int) $connection->inTransaction(),
+    'hostTransactions' => method_exists($connection, 'transactionCount') ? $connection->transactionCount() : -1,
+  ];
+});
+
+// which of the seeded ids the resetter can actually reset; method_exists() is the gate it applies,
+// so an id with no reset() is skipped in silence
+$out['resetAudit'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->has('drupflare.request_resetter')) { return null; }
+  $resetter = $container->get('drupflare.request_resetter');
+  $property = new \ReflectionProperty($resetter, 'resettable');
+  $audit = [];
+  foreach ((array) $property->getValue($resetter) as $id) {
+    if (!$container->has($id)) { $audit[$id] = 'absent'; continue; }
+    if (!$container->initialized($id)) { $audit[$id] = 'uninitialized'; continue; }
+    $service = $container->get($id);
+    $audit[$id] = is_object($service) && method_exists($service, 'reset') ? 'reset' : 'no-reset';
+  }
+  return $audit;
+});
+// #endregion
+
+// #region the blind half
+$fingerprint = function ($value, $depth = 0) use (&$fingerprint) {
+  if ($depth > 2) { return 'deep'; }
+  if ($value === null) { return 'null'; }
+  if (is_bool($value)) { return $value ? 'true' : 'false'; }
+  if (is_int($value) || is_float($value)) { return 'n' . $value; }
+  if (is_string($value)) { return 's' . strlen($value) . ':' . substr(md5($value), 0, 6); }
+  if (is_array($value)) {
+    $parts = [];
+    foreach ($value as $key => $item) { $parts[] = $key . '=' . $fingerprint($item, $depth + 1); }
+    return 'a' . count($value) . ':' . substr(md5(implode('|', $parts)), 0, 6);
+  }
+  if ($value instanceof \Closure) { return 'fn'; }
+  if ($value instanceof \Countable) { return 'C' . get_class($value) . ':' . count($value); }
+  if (is_object($value)) { return 'o:' . get_class($value); }
+  return 'x';
+};
+
+$statics = [];
+$skipped = 0;
+foreach (get_declared_classes() as $class) {
+  try {
+    $reflection = new \ReflectionClass($class);
+    foreach ($reflection->getProperties(\ReflectionProperty::IS_STATIC) as $property) {
+      if ($property->getDeclaringClass()->getName() !== $class) { continue; }
+      try {
+        $name = $class . '::' . $property->getName();
+        $statics[$name] = $property->isInitialized() ? $fingerprint($property->getValue()) : 'uninit';
+      } catch (\Throwable $e) { $skipped++; }
+    }
+  } catch (\Throwable $e) { $skipped++; }
+}
+ksort($statics);
+$out['statics'] = $statics;
+$out['staticCount'] = count($statics);
+$out['staticSkipped'] = $skipped;
+$out['classCount'] = count(get_declared_classes());
+// #endregion
+
+echo json_encode($out);
+`;
+
+/**
+ * Leaves output buffers open the way a handler that forgot its `ob_end_clean()` would.
+ *
+ * The question is whether PHP's buffer stack is per-script or per-interpreter here. On a real SAPI
+ * request shutdown flushes and pops every level, so a forgotten `ob_start()` costs one response. If
+ * the stack survives a `_run()` boundary it costs every response after it, because the next
+ * script's output goes into a buffer nobody will ever close and the host reads nothing at all.
+ *
+ * The report is echoed BEFORE the buffers open, so this fragment can answer even while it is
+ * creating the condition that would silence it.
+ *
+ * @param {number} depth how many levels to leave open
+ */
+export function leakOutputBuffer(depth = 2): string {
+	const levels = Math.max(1, Math.min(8, Math.trunc(depth)));
+	return String.raw`<?php
+$out = ['ok' => true, 'before' => ob_get_level(), 'opening' => ${levels}];
+echo json_encode($out);
+for ($i = 0; $i < ${levels}; $i++) { ob_start(); }
+`;
+}
+
+/**
+ * Leaves the session manager open the way a request that never reached `save()` would.
+ *
+ * `Drupal\Core\StackMiddleware\Session::handle()` calls `$request->getSession()->save()` after the
+ * kernel, and skips it for a `ResponseKeepSessionOpenInterface` -- which `BigPipeResponse` is,
+ * because BigPipe closes the session itself inside `sendContent()`. A `sendContent()` that throws,
+ * or a caller that reads `getContent()` instead, therefore ends the request with `started` TRUE and
+ * `closed` FALSE.
+ *
+ * That state is what makes the next request's `SessionManager::start()` return at its first line
+ * (`($started || $startedLazy) && !$closed`), so `loadSession()` never runs -- and `loadSession()`
+ * is the ONLY thing in core that re-binds the session bags to the current `$_SESSION`. Without it
+ * the flash bag still references the previous visitor's array, message and all.
+ *
+ * Manufactured rather than provoked, and measured rather than assumed: an anonymous GET, a login
+ * POST, an authenticated GET, a node-save POST and a `drupalRequest()` render all leave `started`
+ * FALSE on this runtime, so no ordinary request reaches the state and a probe is the only way to
+ * exercise the reset that clears it. Same reason `leakOutputBuffer()` exists.
+ *
+ * @returns the flags it set and the flash bag it left behind, so a vacuous run is visible
+ */
+export const LEAK_OPEN_SESSION = String.raw`<?php
+$out = ['ok' => false];
+try {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('session_manager')) {
+    $out['error'] = 'session_manager was never initialised';
+  } else {
+    $manager = $container->get('session_manager');
+    $reflection = new \ReflectionObject($manager);
+    $reflection->getProperty('started')->setValue($manager, true);
+    $reflection->getProperty('closed')->setValue($manager, false);
+    $out['started'] = (bool) $reflection->getProperty('started')->getValue($manager);
+    $out['closed'] = (bool) $reflection->getProperty('closed')->getValue($manager);
+    $out['flashes'] = isset($_SESSION['_symfony_flashes'])
+      ? array_map('count', (array) $_SESSION['_symfony_flashes'])
+      : [];
+    $out['ok'] = true;
+  }
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+echo json_encode($out);
+`;
+
+/**
+ * Leaves a Drupal transaction open the way a halted request would, so the next one can be asked.
+ *
+ * `cfw_do_sqlite` withholds every write while a transaction is open and replays it on commit, and
+ * the buffer lives on the Connection -- which `Database::$connections` holds for the life of the
+ * interpreter. So the question is not whether a rollback works but whether a request that never
+ * reaches its commit leaves the NEXT request buffering into a transaction nobody owns.
+ *
+ * Two abandonments, because they fail differently. `scope` drops the last reference at the end of
+ * the script, which is where a real SAPI would run the destructor and roll back. `global` parks the
+ * object where nothing will collect it, which is what an unwind interrupted by a host-level throw
+ * leaves behind -- a JavaScript exception is not a `Throwable` and no PHP handler sees it.
+ *
+ * @param {'scope'|'global'} mode which reference the abandoned transaction keeps
+ */
+export function abandonTransaction(mode: 'scope' | 'global' = 'scope'): string {
+	const safeMode = mode === 'global' ? 'global' : 'scope';
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$mode = json_decode(${JSON.stringify(JSON.stringify(safeMode))});
+$out = ['ok' => false, 'mode' => $mode];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+    $out['bootedKernel'] = 1;
+  }
+
+  $connection = \Drupal\Core\Database\Database::getConnection();
+  $transaction = $connection->startTransaction();
+  \Drupal::state()->set('cfw_orphan_probe', $mode);
+  $out['buffering'] = method_exists($connection, 'isBuffering') ? (int) $connection->isBuffering() : -1;
+
+  if ($mode === 'global') {
+    $GLOBALS['__cfw_orphan_txn'] = $transaction;
+  }
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+echo json_encode($out);
+`;
+}
+
+/**
+ * Turns on `locale.settings.translate_english`, which is what makes `locale` translate at all here.
+ *
+ * `LocaleTranslation::getStringTranslation()` returns FALSE for langcode `en` unless this is set, so
+ * on the packed English site enabling `locale` builds no `LocaleLookup` and the per-user cid this
+ * exists to exercise never comes into being. A multilingual site reaches the same state by
+ * negotiating a non-English language; this is the one-boolean way to reach it from an English one.
+ *
+ * `loadAll()` FIRST, and it is not optional: `LocaleConfigSubscriber` runs on the config save and
+ * calls `locale_is_translatable()`, a plain function in `locale.module`. A bare kernel boot has
+ * loaded no `.module` file, so the save writes the value and then dies with
+ * "Call to undefined function Drupal\locale\locale_is_translatable()" -- which reads as a failed
+ * setup while having already changed the setting.
+ */
+export const TRANSLATE_ENGLISH = String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$out = ['ok' => false];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+
+  \Drupal::moduleHandler()->loadAll();
+  \Drupal::configFactory()->getEditable('locale.settings')->set('translate_english', true)->save();
+  $out['translateEnglish'] = (bool) \Drupal::config('locale.settings')->get('translate_english');
+  $out['localeEnabled'] = \Drupal::moduleHandler()->moduleExists('locale');
+  $out['ok'] = $out['translateEnglish'] && $out['localeEnabled'];
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+echo json_encode($out);
+`;
+
+/**
+ * Creates one authenticated user with a known password, so a sequence can change identity.
+ *
+ * The packed site ships exactly one account, and one account cannot show a cross-USER leak -- only
+ * a cross-REQUEST one. Two ordinary users plus uid 1 plus anonymous is the smallest set where
+ * "whose state is this" has a wrong answer that is visible.
+ *
+ * Through the entity API rather than by inserting rows, so the password hasher, the presave hooks
+ * and the role reference all run; a hand-built row authenticates against nothing.
+ *
+ * @param {{name: string, pass: string, roles?: string[]}} options
+ */
+export function createUser(options: { name: string; pass: string; roles?: string[] }): string {
+	const payload = JSON.stringify({
+		name: String(options.name),
+		pass: String(options.pass),
+		roles: (Array.isArray(options.roles) ? options.roles : []).filter((r) =>
+			/^[a-z0-9_]+$/.test(r)
+		)
+	});
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$opt = json_decode(${JSON.stringify(payload)}, true);
+$out = ['ok' => false, 'name' => $opt['name']];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+    $out['bootedKernel'] = 1;
+  }
+
+  if (!defined('SAVED_NEW')) {
+    require_once '/drupal/core/includes/common.inc';
+    $out['loadedCommonInc'] = true;
+  }
+
+${SCHEMA_REPAIR}
+
+  $existing = \Drupal::entityTypeManager()->getStorage('user')
+    ->loadByProperties(['name' => $opt['name']]);
+  $account = $existing ? reset($existing) : \Drupal\user\Entity\User::create(['name' => $opt['name']]);
+  $account->setEmail($opt['name'] . '@example.invalid');
+  $account->setPassword($opt['pass']);
+  $account->activate();
+  foreach ($opt['roles'] as $role) { $account->addRole($role); }
+  $account->save();
+
+  $out['uid'] = (int) $account->id();
+  $out['roles'] = array_values($account->getRoles());
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['trace'] = substr($e->getTraceAsString(), 0, 600);
 }
 
 echo json_encode($out);

@@ -16,10 +16,12 @@
  *
  * MIRROR TO THE OPTIMUM, NOT TO EVERYTHING. Once R2's read meter binds, moving more traffic off the
  * Worker spends a 333,333/day meter faster to save a 100,000/day one, so the lever has a maximum
- * rather than a limit: modelled on the default mix, 77% off-Worker peaks at 432,900 views/day while
- * 99% falls back to 336,700. A drain that mirrors every page gives up 22% of the ceiling it exists to
- * buy. The optimum moves with the traffic mix and with CDN absorption, so compute it rather than
- * hardcoding 0.77.
+ * rather than a limit. **Do not hardcode a share -- call `optimalOffWorker()`** in
+ * `scripts/measure/free-envelope.ts`, which derives it from the same model every other caller uses.
+ * On the default mix at zero CDN absorption it computes 0.769 for 432,900 views/day, against 336,700
+ * for mirroring everything: maximising gives up 96,200 views/day, a fifth of what the mirror is for.
+ * Raising absorption does not walk that towards "mirror everything" either -- at absorption 1, where
+ * R2 reads cannot bind, the peak lands at 0.888 and is bound by ROWS instead.
  *
  * @see scripts/measure/free-envelope.ts for the model this feeds
  */

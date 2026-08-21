@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import {
+	claimSite,
+	cookieJar,
+	credentials,
+	encodeForm,
+	formPost as form,
+	hiddenFields,
+	render
+} from '../helpers/drupal-forms';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -18,56 +26,11 @@ const PASS = 'cfw-Csrf-Pass-2260';
 /** the message Drupal produces for a token that does not validate */
 const OUTDATED = 'The form has become outdated';
 
-const render = (site: ServeDo, path: string, request: RenderRequest = {}) =>
-	site.runJson(renderPage(path, [], false, request)) as Promise<Payload>;
-
-const form = (body: string, cookie: string): RenderRequest => ({
-	method: 'POST',
-	body,
-	contentType: 'application/x-www-form-urlencoded',
-	cookie
-});
-
-function hiddenFields(html: string): Record<string, string> {
-	const fields: Record<string, string> = {};
-	for (const tag of html.match(/<input[^>]*type="hidden"[^>]*>/g) ?? []) {
-		const name = /name="([^"]*)"/.exec(tag)?.[1];
-		const value = (/value="([^"]*)"/.exec(tag)?.[1] ?? '')
-			.replace(/&amp;/g, '&')
-			.replace(/&quot;/g, '"')
-			.replace(/&#0?39;/g, "'");
-		if (name) fields[name] = value;
-	}
-	return fields;
-}
-
-const encodeForm = (fields: Record<string, string>) =>
-	Object.entries(fields)
-		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-		.join('&');
-
-function jarOf(result: Payload): string {
-	const lines = Array.isArray(result['setCookie']) ? (result['setCookie'] as string[]) : [];
-	const session = lines.find((line) => /^S?SESS/.test(line));
-	return session ? (session.split(';')[0] ?? '') : '';
-}
-
 /** everything four of the five cases share, so each case differs in exactly one field */
 async function loggedInWithForm(site: ServeDo) {
-	await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
-	await site.fetch(
-		new Request('https://do.local/__firstrun', {
-			method: 'POST',
-			body: JSON.stringify({ adminPass: PASS, siteName: 'Csrf' }),
-			headers: { 'content-type': 'application/json' }
-		})
-	);
-	const login = await render(
-		site,
-		'/user/login',
-		form(`name=admin&pass=${encodeURIComponent(PASS)}&form_id=user_login_form&op=Log+in`, '')
-	);
-	const jar = jarOf(login);
+	await claimSite(site, PASS, 'Csrf');
+	const login = await render(site, '/user/login', form(credentials('admin', PASS)));
+	const jar = cookieJar(login);
 	const built = await render(site, '/node/add/page', { cookie: jar });
 	return { jar, fields: hiddenFields(String(built['html'] ?? '')) };
 }
@@ -173,30 +136,35 @@ describe('the CSRF token, accepted and refused', () => {
 	);
 
 	/**
-	 * A DEFECT, PINNED RATHER THAN DESCRIBED.
+	 * A CSRF REJECTION USED TO POISON THE INTERPRETER. Fixed 2026-08-19; this is the regression test.
 	 *
-	 * A CSRF rejection poisons the interpreter: after one, no later form submission on the same
-	 * instance is PROCESSED. Not rejected -- not processed. The login form comes back rebuilt with
-	 * no error message of any kind, `currentUser()` is 0, and no session cookie is issued, so it is
-	 * indistinguishable from a page that was never submitted.
+	 * After one rejection, no later form submission on that instance was PROCESSED -- not rejected,
+	 * not processed. The login form came back rebuilt with no error message of any kind,
+	 * `currentUser()` was 0 and no session cookie was issued, so it was indistinguishable from a page
+	 * that was never submitted.
 	 *
-	 * What is established: it is the CSRF-rejection path specifically, not form POSTs in general.
-	 * Three logins in a row succeed; a login after an authenticated form GET succeeds; a login after
-	 * a token-REJECTED POST fails, and every login after that one fails too. The mechanism is not
-	 * established. `FormBuilder::buildForm()` empties the request and calls
-	 * `$request->overrideGlobals()` on that path (`FormBuilder.php:1024-1030`), which is the only
-	 * process-global mutation in it, but re-initialising `$_POST`, `$_GET`, `$_FILES` and `$_REQUEST`
-	 * per request does NOT fix it -- measured, so the superglobals are ruled out rather than blamed.
+	 * **THE MECHANISM: `FormState::$anyErrors` is a CLASS STATIC**, set by `setErrorByName()` and
+	 * read by `FormBuilder::processForm()` to decide whether to run submit handlers at all. Core
+	 * resets it only in `FormState::clearErrors()`, which is reached from the PROGRAMMATIC
+	 * `FormBuilder::submitForm()` path -- never on a normal HTTP request, because on a real SAPI the
+	 * process dies instead. `RequestResetter::clearFormErrors()` clears it per request now.
 	 *
-	 * BLAST RADIUS. A visitor who fails a token check -- a stale tab, a back button, a double submit
-	 * -- takes out logins for everyone sharing that warm interpreter until it is dropped. It does not
-	 * corrupt data and it does not leak across users; it denies service to the login form.
+	 * The token rejection was never the trigger, only the first way it was found: a plain failed
+	 * LOGIN reaches the same state, which is why the second reproducer lives in
+	 * `tests/integration/submission-wall.spec.ts`. Both are kept -- they enter the same gate from
+	 * different forms, and a fix that only cleared the flag on one path would pass one of them.
 	 *
-	 * Written as an assertion on the broken behaviour so that fixing it turns this file RED, which is
-	 * the signal to delete this case. A comment would not do that.
+	 * Two things were ruled out along the way and stay ruled out: the superglobals
+	 * (`FormBuilder.php:1024-1030` calls `$request->overrideGlobals()` on the rejection path, and
+	 * re-initialising `$_POST`/`$_GET`/`$_FILES`/`$_REQUEST` per request did NOT fix it), and flood
+	 * control (stock config, and core's own threshold-1 probe fires on any failed-login row).
+	 *
+	 * BLAST RADIUS while it was live: a visitor who failed a token check -- a stale tab, a back
+	 * button, a double submit -- denied the login form to everyone sharing that warm interpreter
+	 * until it was dropped. No data corruption and no cross-user leak.
 	 */
 	it(
-		'PINNED DEFECT: a CSRF rejection stops later logins being processed at all',
+		'lets a later login through after a CSRF rejection, which a static used to prevent',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
 				const { jar, fields } = await loggedInWithForm(site);
@@ -210,14 +178,7 @@ describe('the CSRF token, accepted and refused', () => {
 				);
 
 				// a login that should succeed exactly as the first one did
-				const again = await render(
-					site,
-					'/user/login',
-					form(
-						`name=admin&pass=${encodeURIComponent(PASS)}&form_id=user_login_form&op=Log+in`,
-						''
-					)
-				);
+				const again = await render(site, '/user/login', form(credentials('admin', PASS)));
 
 				return {
 					rejectedSaysOutdated: String(rejected['html'] ?? '').includes(OUTDATED),
@@ -232,12 +193,11 @@ describe('the CSRF token, accepted and refused', () => {
 			expect(out['rejectedSaysOutdated'], 'the setup must actually be a CSRF rejection').toBe(
 				true
 			);
-			expect(out['status'], 'DEFECT: should be 303').toBe(200);
-			expect(out['uid'], 'DEFECT: should be 1').toBe(0);
-			expect(out['cookies'], 'DEFECT: should issue a session cookie').toBe(0);
-			expect(out['message'], 'and it does not even say the credentials were wrong').toBe(
-				false
-			);
+			// the rejection must not outlive its own request
+			expect(out['status']).toBe(303);
+			expect(out['uid']).toBe(1);
+			expect(out['cookies']).toBeGreaterThan(0);
+			expect(out['message'], 'and the credentials were never in question').toBe(false);
 		},
 		REQUEST_TIMEOUT
 	);

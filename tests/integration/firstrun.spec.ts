@@ -182,3 +182,48 @@ describe('the trust-on-first-use window closes once the site is provisioned', ()
 		expect(res.status).not.toBe(409);
 	});
 });
+
+/**
+ * Claiming a site also fixes the host it renders absolute URLs against.
+ *
+ * The render origin is trust-on-first-use (`src/ops/site-origin.ts`), which leaves one window open:
+ * the first request after a deploy pins it, and that request is not necessarily the owner's. This
+ * closes it from the other end -- the owner is here, deliberately, on the host they mean -- and it
+ * overwrites whatever a first visitor pinned.
+ */
+describe('claiming a site pins its render origin', () => {
+	/**
+	 * A REAL claim, against a migrated database. The pin rides the SUCCESS branch, so a
+	 * `freshSite()` with no database would leave it untouched and both cases here would pass
+	 * without exercising anything.
+	 */
+	async function claimFrom(host: string, existing: string | null): Promise<string | null> {
+		const stub = freshSite();
+		await stub.fetch('https://do.local/__migrate?all=1&prefill=0');
+		if (existing !== null) {
+			await inObject(stub, (site) => site.metaSet('site_origin', existing));
+		}
+		const res = await stub.fetch(`${host}/__firstrun`, {
+			method: 'POST',
+			body: JSON.stringify({ siteName: 'Owned' }),
+			headers: { 'content-type': 'application/json' }
+		});
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok, 'the claim itself has to succeed or this measures nothing').toBe(true);
+		return inObject(stub, (site) => site.metaGet('site_origin'));
+	}
+
+	it('pins the host the claim arrived on, overwriting an earlier pin', async () => {
+		const pinned = await claimFrom(
+			'https://the-owners-host.example',
+			'https://whoever-got-here-first.example'
+		);
+		expect(pinned).toBe('https://the-owners-host.example');
+	}, 900_000);
+
+	// the same rule the serve path follows: a dev claim must not fix a real site to a laptop
+	it('leaves the pin alone when the claim arrives over a local host', async () => {
+		const pinned = await claimFrom('https://do.local', 'https://real.example');
+		expect(pinned).toBe('https://real.example');
+	}, 900_000);
+});

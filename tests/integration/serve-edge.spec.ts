@@ -1,8 +1,9 @@
-import { SELF, createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
+import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_MAX_BODY_BYTES } from '../../src/ops/body-limit';
 import { ensureFleetTable, reportSite, type FleetDb } from '../../src/ops/fleet';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
-import worker, { isNeverDrupal } from '../../src/site';
+import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
 import {
 	inObject,
 	namedSite,
@@ -56,6 +57,135 @@ async function untilEdge(site: string, path: string, tries = 6): Promise<ServePr
 
 const serveRequestsOf = (site: string) =>
 	inObject(namedSite(site), (obj) => Number(obj.metaGet('serve_requests', '0')));
+
+/**
+ * An oversized body is refused at the edge, before any Durable Object hop.
+ *
+ * The threat is not bandwidth. A form body is `parse_str()`d inside a 128 MB isolate, and
+ * `foo[][][][][]=bar` repeated turns a modest number of wire bytes into orders of magnitude more
+ * heap -- and this runtime has no separate process to lose, so an OOM takes the site's object with
+ * it. Refusing here costs no DO request and no interpreter.
+ *
+ * `multipart/form-data` is exempt on purpose: that is the upload shape, its size is the point, and
+ * it is not parsed into a nested array. A 2 MiB cap on uploads would be a regression wearing a
+ * guard's clothes.
+ */
+describe('an oversized request body never reaches the interpreter', () => {
+	const post = (body: string, headers: Record<string, string>) =>
+		SELF.fetch('https://cfw.local/serve?site=guarded&path=%2Fuser%2Flogin', {
+			method: 'POST',
+			body,
+			headers
+		});
+
+	it('refuses a form body over the limit with 413 and names the limit', async () => {
+		const res = await post('x'.repeat(64), {
+			'content-type': 'application/x-www-form-urlencoded',
+			'content-length': String(4 * 1024 * 1024)
+		});
+		expect(res.status).toBe(413);
+		expect(res.headers.get('x-cfw-deny')).toBe('body-too-large');
+		expect(res.headers.get('x-cfw-body-limit')).toBe(String(DEFAULT_MAX_BODY_BYTES));
+		expect(res.headers.get('cache-control')).toBe('no-store');
+	});
+
+	it('lets a body at the limit through, so the boundary is not off by one', () => {
+		const at = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'a=1',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				'content-length': String(DEFAULT_MAX_BODY_BYTES)
+			}
+		});
+		expect(bodyTooLarge(at)).toBeNull();
+	});
+
+	it('exempts an upload, which is the one shape whose size is the point', () => {
+		const upload = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'a=1',
+			headers: {
+				'content-type': 'multipart/form-data; boundary=----x',
+				'content-length': String(64 * 1024 * 1024)
+			}
+		});
+		expect(bodyTooLarge(upload)).toBeNull();
+	});
+
+	it('never refuses a GET, which carries no body to parse', () => {
+		const get = new Request('https://cfw.local/x', {
+			headers: { 'content-length': String(64 * 1024 * 1024) }
+		});
+		expect(bodyTooLarge(get)).toBeNull();
+	});
+
+	// a chunked request declares no length; measuring it means consuming it, which is the cost
+	// the guard exists to avoid. The object's own limits still apply
+	it('falls through when no Content-Length is declared', () => {
+		const chunked = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'a=1',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' }
+		});
+		expect(bodyTooLarge(chunked)).toBeNull();
+	});
+
+	it('takes the limit from MAX_BODY_BYTES, and 0 disables it', () => {
+		const big = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'a=1',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				'content-length': '5000'
+			}
+		});
+		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 4096 })?.limit).toBe(4096);
+		expect(bodyTooLarge(big, { MAX_BODY_BYTES: 0 })).toBeNull();
+
+		// a nonsense value falls back to the default rather than disabling the guard by accident,
+		// which needs a body over the DEFAULT to be visible at all
+		const huge = new Request('https://cfw.local/x', {
+			method: 'POST',
+			body: 'a=1',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				'content-length': String(DEFAULT_MAX_BODY_BYTES + 1)
+			}
+		});
+		expect(bodyTooLarge(huge, { MAX_BODY_BYTES: 'lots' })?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
+		expect(bodyTooLarge(huge, { MAX_BODY_BYTES: -5 })?.limit).toBe(DEFAULT_MAX_BODY_BYTES);
+	});
+});
+
+/**
+ * The setup page an unclaimed site serves must never reach the edge cache.
+ *
+ * It is a 200, which is the one status `putPage()` stores, and it is keyed by path like any other
+ * page -- so a stored copy would keep telling visitors to claim a site that has already been
+ * claimed, for the whole edge TTL, with no way to tell it apart from the real front page. What
+ * actually refuses it is structural rather than a status check: the response carries no
+ * `x-cfw-cache`, and `putPage()` stores only `HIT` and `RENDER`. Asserted because that is a
+ * property of a header this module does not set, which is exactly the kind of guarantee that
+ * disappears silently.
+ */
+describe('the setup page is never stored at the edge', () => {
+	it('answers the claim page and puts nothing in the cache', async () => {
+		const site = 'unclaimed';
+		await provisionedNamedSite(site);
+		const res = await SELF.fetch(`https://cfw.local/serve?site=${site}&path=%2F`, {
+			headers: { accept: 'text/html,application/xhtml+xml' }
+		});
+		const body = await res.text();
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-setup')).toBe('required');
+		expect(body).toContain('Claim This Site');
+		// the two that decide storage, read off the response the Worker actually returned
+		expect(res.headers.get('x-cfw-cache')).toBeNull();
+		expect(res.headers.get('x-cfw-edge-put')).not.toBe('stored');
+	});
+});
 
 describe('the three tiers are distinguishable, and only one of them costs a DO request', () => {
 	it('walks MISS to DO HIT to EDGE, and the edge copy never reaches the object', async () => {
@@ -229,6 +359,27 @@ describe('a scanner probe is refused before the object is reached', () => {
 		['/.well-known/security.txt', false],
 		['/sites/default/files/image.png', false]
 	])('isNeverDrupal(%s) is %s', (path, expected) => {
+		expect(isNeverDrupal(path)).toBe(expected);
+	});
+
+	/**
+	 * A REGRESSION. The only caller passes `?path=`, which the catch-all builds as
+	 * `url.pathname + url.search`, and four of the six patterns are `$`-anchored -- so appending any
+	 * parameter walked a scanner straight past the deny list into a DO hop and the permanent
+	 * `cache_data` row the list exists to prevent. Every anchored pattern is covered, since one
+	 * fixed in isolation would leave the other three open.
+	 */
+	it.each([
+		['/.env?x=1', true],
+		['/x.sql?v=2', true],
+		['/config.json?cb=9', true],
+		['/backup/db.sql?dl=1', true],
+		['/xmlrpc.php?a=1', true],
+		['/wp-login.php?redirect_to=%2F', true],
+		['/.env#frag', true],
+		['/about-us?page=2', false],
+		['/node/1?destination=/admin', false]
+	])('isNeverDrupal(%s) ignores the query string and is %s', (path, expected) => {
 		expect(isNeverDrupal(path)).toBe(expected);
 	});
 });

@@ -153,3 +153,35 @@ describe('the shipping config does not enable diagnostics', () => {
 		expect(imported![1]).toBe(specifier);
 	});
 });
+
+/**
+ * THE ENTRYPOINT MAY EXPORT ONLY FUNCTIONS AND CLASSES.
+ *
+ * workerd inspects every named export of the main module and refuses anything else at STARTUP:
+ *
+ *   Incorrect type for map entry 'DEFAULT_MAX_BODY_BYTES':
+ *   the provided value is not of type 'function or ExportedHandler'.
+ *
+ * A single exported `const` therefore takes the whole worker down before it serves a byte. It is an
+ * easy trap because exported FUNCTIONS are fine -- `bodyTooLarge` and `isNeverDrupal` sit in the
+ * same file and are accepted -- so the file looks like it already proves constants are allowed.
+ * Caught by `bun run dev` failing to boot, not by any test, which is why this exists.
+ */
+describe('what src/site.ts is allowed to export', () => {
+	it('exports nothing that is not a function or a class', async () => {
+		const mod = (await import('../../../src/site')) as Record<string, unknown>;
+		const offenders = Object.entries(mod)
+			.filter(([name]) => name !== 'default')
+			.filter(([, value]) => typeof value !== 'function')
+			.map(([name]) => name);
+		expect(
+			offenders,
+			'workerd rejects a non-function export from the entrypoint and the worker will not boot'
+		).toEqual([]);
+	});
+
+	it('still exports a default handler with a fetch', async () => {
+		const mod = (await import('../../../src/site')) as { default?: { fetch?: unknown } };
+		expect(typeof mod.default?.fetch).toBe('function');
+	});
+});

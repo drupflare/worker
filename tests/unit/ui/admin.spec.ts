@@ -196,11 +196,30 @@ describe('renderDeploy: it must not render a button that lies', () => {
 		expect(html).toContain('will not pretend otherwise');
 	});
 
-	it('renders NO submit control at all', () => {
-		// the control: every other surface has a button, so "no button" is a real assertion here
+	/**
+	 * The page now HAS a form, and the assertion had to change rather than the page.
+	 *
+	 * It used to assert no submit control at all, which was right while the page could do nothing.
+	 * Connecting a Cloudflare account is a real action that really works, so a button for it is not
+	 * a button that lies. What must stay absent is a control claiming to DEPLOY -- that is the
+	 * property the original assertion was protecting, and it is now stated directly instead of
+	 * approximated by counting elements.
+	 */
+	it('offers no control that claims to deploy', () => {
 		const html = renderDeploy();
-		expect(html).not.toContain('<button');
-		expect(html).not.toContain('<form');
+		const controls = [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1] ?? '');
+		expect(controls.length, 'the connect button is the only one').toBe(1);
+		for (const label of controls) {
+			expect(label.toLowerCase()).not.toContain('deploy');
+			expect(label.toLowerCase()).not.toContain('provision');
+			expect(label.toLowerCase()).not.toContain('create');
+		}
+		expect(controls[0]).toBe('Connect With Cloudflare');
+	});
+
+	it('still refuses to imply provisioning exists', () => {
+		const html = renderDeploy();
+		expect(html).toContain('no one-click deploy yet');
 		expect(renderExtend(null, [], null, null)).toContain('<button');
 	});
 

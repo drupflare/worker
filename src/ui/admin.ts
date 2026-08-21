@@ -310,6 +310,9 @@ export const PROVISION_STEPS: readonly ProvisionStep[] = [
  * step list a provisioner has to perform, which two of the steps cannot be automated, and the command
  * that does work today.
  */
+/** shown so an operator can copy it into their OAuth client's redirect list */
+export const CFW_CALLBACK_PATH = 'https://<your-site>/setup/cf/callback';
+
 export function renderDeploy(): string {
 	const rows = PROVISION_STEPS.map(
 		(s) =>
@@ -319,7 +322,36 @@ export function renderDeploy(): string {
 
 	return `<h1>Deploy</h1>
 <div class="card bad"><p><strong>There is no one-click deploy yet, and this page will not pretend otherwise.</strong>
-No provisioning exists in this repository: no API-token flow, no account picker, no namespace creation. A button here that appeared to work would be worse than no button, so what follows is the requirement a provisioner has to satisfy.</p></div>
+No provisioning exists in this repository: no account picker and no namespace creation. A button here that appeared to work would be worse than no button, so what follows is the requirement a provisioner has to satisfy. Credentials are the one step that is now covered, below.</p></div>
+<h2>Connect a Cloudflare Account</h2>
+<p class="sub">Two ways in. Pasting an account ID and API token still works and needs no setup. OAuth issues a short-lived scoped grant instead, revocable from your Cloudflare dashboard, and drupflare never stores a long-lived secret.</p>
+<div class="card"><p><strong>OAuth needs a client you register once.</strong> Cloudflare registers a redirect URI against the client, and every drupflare deployment answers on a different origin, so there is no shared client that could work for all of them. In your dashboard go to <em>Manage account &rsaquo; OAuth clients</em>, create one with <strong>private</strong> visibility, and register this callback:</p>
+<pre style="margin:0;overflow-x:auto"><code>${escapeHtml(CFW_CALLBACK_PATH)}</code></pre>
+<p class="sub">Private visibility is enough: you are a member of the account you are authorising. Then paste the client ID here. The client ID is not a secret, but it is stored in this site's own database rather than in KV, because a KV writer who could change it could point the consent screen at an application they control.</p>
+<form id="cfoauth"><label>Client ID<input name="client_id" autocomplete="off" spellcheck="false"></label>
+<button type="submit">Connect With Cloudflare</button></form>
+<p id="cfoauth-out" class="sub"></p></div>
+<script>
+document.getElementById('cfoauth').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const out = document.getElementById('cfoauth-out');
+  const id = new FormData(e.target).get('client_id');
+  if (!id) { out.textContent = 'Enter the client ID from your OAuth client.'; return; }
+  const token = window.prompt('Owner token for this site');
+  if (!token) return;
+  out.textContent = 'Starting...';
+  try {
+    const res = await fetch('/setup/cf?action=connect&client_id=' + encodeURIComponent(id), {
+      headers: { authorization: 'Bearer ' + token }
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'refused');
+    window.location.href = data.authorizeUrl;
+  } catch (err) {
+    out.textContent = 'Could not start: ' + err.message;
+  }
+});
+</script>
 <h2>What deploying actually involves</h2>
 <table><thead><tr><th>Step</th><th>Detail</th><th>Can it be scripted?</th></tr></thead><tbody>${rows}</tbody></table>
 <h2>What works today</h2>

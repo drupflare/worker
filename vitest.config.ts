@@ -56,6 +56,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/firstrun.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
+	'tests/integration/mail-drupal.spec.ts',
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
@@ -63,6 +64,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/serve-invalidation.spec.ts',
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
+	'tests/integration/static-sweep.spec.ts',
 	'tests/integration/submission-wall.spec.ts',
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];

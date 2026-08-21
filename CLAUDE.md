@@ -216,7 +216,7 @@ It never fails the install; offline you get a stub and a printed list of what wa
 **The pack cannot be restored that way.** `assets/drupal-pf` and `assets/drupal-sql` need a native
 PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere, so they
 arrive only in a published release payload via `bun run hydrate`. Until one exists,
-`ARTIFACT_SPECS` in `vitest.config.ts` -- **17 files, measured from CI, never guessed** -- is
+`ARTIFACT_SPECS` in `vitest.config.ts` -- **19 files, measured from CI, never guessed** -- is
 excluded and the lane prints what it dropped. **Count it, do not quote it**: this line said 15 while
 the list held 17, and the "51 files / 1,521 tests still run" that used to follow moved with it and
 was never re-measured. The lane prints both numbers when it skips.

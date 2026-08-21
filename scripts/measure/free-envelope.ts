@@ -437,6 +437,72 @@ export function envelope(
 	};
 }
 
+/** what a mirror share is worth, and what maximising it would cost */
+export type MirrorOptimum = {
+	/** the `offWorker` share that maximises serving views */
+	share: number;
+	viewsPerDay: number;
+	boundBy: Envelope['servingBoundBy'];
+	/** mirroring everything that CAN be mirrored, which is the intuitive move and the wrong one */
+	atFullMirror: { share: number; viewsPerDay: number };
+	/** mirroring nothing, so the win is measured against a baseline rather than asserted */
+	atNoMirror: { viewsPerDay: number };
+	/** views/day given up by maximising instead of optimising; zero when they coincide */
+	costOfMaximising: number;
+	/** sweep resolution, so a caller can see how precise `share` is */
+	step: number;
+};
+
+/**
+ * The mirror share that maximises serving views, because this lever has a MAXIMUM and not a limit.
+ *
+ * Moving a view off the Worker spends R2's 333,333/day Class B meter to save the 100,000/day Worker
+ * meter, so past the crossing point mirroring more makes the site smaller. On the default mix at zero
+ * CDN absorption the peak is around 77% and mirroring everything falls back to roughly 337,000 --
+ * giving up about a fifth of the ceiling the mirror exists to buy.
+ *
+ * **Numeric rather than analytic, deliberately.** The ceilings do cross at a solvable point, but
+ * `envelope()` drains `edgeHit` before `doHit`, so the Worker cost is piecewise-linear with a knee at
+ * `edgeHit` and the closed form needs a case per piece. A sweep evaluates the real function -- the
+ * one every other caller uses -- so it cannot drift away from it, which a parallel derivation would.
+ *
+ * The optimum MOVES with the traffic mix and with `cdnAbsorption`, so call this rather than
+ * hardcoding a share. Raising absorption does NOT walk the answer towards "mirror everything":
+ * measured at absorption 1, where R2's read meter cannot bind at all, the peak arrives at 0.888 and
+ * is bound by ROWS -- so past that point mirroring more buys nothing and still costs writes. The
+ * ceiling always ends up on some other meter.
+ */
+export function optimalOffWorker(
+	mix: TrafficMix = DEFAULT_MIX,
+	opts: Parameters<typeof envelope>[1] & { step?: number } = {}
+): MirrorOptimum {
+	const step = Math.max(0.0001, Math.min(0.1, opts.step ?? 0.001));
+	const mirrorable = Math.max(0, mix.edgeHit + mix.doHit);
+
+	const at = (share: number) => envelope({ ...mix, offWorker: share }, opts);
+
+	let best = { share: 0, env: at(0) };
+	for (let share = step; share <= mirrorable + 1e-9; share += step) {
+		const capped = Math.min(share, mirrorable);
+		const env = at(capped);
+		// strict >, so the SMALLEST share achieving the peak wins: mirroring more for the same
+		// ceiling is pure R2 spend with nothing bought
+		if (env.servingViewsPerDay > best.env.servingViewsPerDay) best = { share: capped, env };
+	}
+
+	const full = at(mirrorable);
+	const none = at(0);
+	return {
+		share: best.share,
+		viewsPerDay: best.env.servingViewsPerDay,
+		boundBy: best.env.servingBoundBy,
+		atFullMirror: { share: mirrorable, viewsPerDay: full.servingViewsPerDay },
+		atNoMirror: { viewsPerDay: none.servingViewsPerDay },
+		costOfMaximising: best.env.servingViewsPerDay - full.servingViewsPerDay,
+		step
+	};
+}
+
 export type Verdict = {
 	targetVisitsPerMonth: number;
 	targetVisitsPerDay: number;

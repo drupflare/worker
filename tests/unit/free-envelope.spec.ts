@@ -11,6 +11,7 @@ import {
 	STEADY_STATE_WARMTH,
 	WORKFLOW_STEP_CPU_MS,
 	envelope,
+	optimalOffWorker,
 	rowsForWarmthMix,
 	scoreInstall,
 	scoreWorkload
@@ -498,5 +499,74 @@ describe('THE ANSWER: the realRender default survives being priced as a distribu
 		});
 		expect(v.verdict).toBe('fits');
 		expect(v.envelope.regenerationBoundBy).toBe('rows');
+	});
+});
+
+/**
+ * The mirror share, computed rather than quoted.
+ *
+ * RULE 0b says the off-Worker lever has a MAXIMUM and not a limit: past the crossing point, moving a
+ * view off the Worker spends R2's 333,333/day read meter to save the 100,000/day Worker meter, so
+ * mirroring more makes the site smaller. Two figures were carried as constants in the report and in
+ * `page-mirror.ts` for months; `optimalOffWorker()` now derives them from the same `envelope()` every
+ * other caller uses, which is what stops the two drifting apart.
+ */
+describe('the optimal mirror share', () => {
+	it('reproduces the 77% / 432,900 the report quotes, from the model rather than a constant', () => {
+		const o = optimalOffWorker();
+		expect(o.share).toBeCloseTo(0.769, 3);
+		expect(o.viewsPerDay).toBe(432_900);
+		// the Worker meter is what it is still bound by at the peak, which is why the peak is a peak
+		expect(o.boundBy).toBe('worker');
+	});
+
+	it('shows what maximising gives up, which is the whole point of the entry', () => {
+		const o = optimalOffWorker();
+		// mirroring everything mirrorable falls BACK, and by a fifth
+		expect(o.atFullMirror.share).toBeCloseTo(0.99, 3);
+		expect(o.atFullMirror.viewsPerDay).toBe(336_700);
+		expect(o.costOfMaximising).toBe(96_200);
+		expect(o.costOfMaximising / o.viewsPerDay).toBeGreaterThan(0.22);
+	});
+
+	it('is measured against mirroring nothing, which is exactly the Worker ceiling', () => {
+		const o = optimalOffWorker();
+		expect(o.atNoMirror.viewsPerDay).toBe(FREE_QUOTAS.workerRequestsPerDay);
+		expect(o.viewsPerDay).toBeGreaterThan(o.atNoMirror.viewsPerDay);
+	});
+
+	it('never proposes mirroring more than the cacheable share', () => {
+		const o = optimalOffWorker();
+		expect(o.share).toBeLessThanOrEqual(DEFAULT_MIX.edgeHit + DEFAULT_MIX.doHit);
+	});
+
+	/**
+	 * CDN absorption raises the peak and does NOT walk the answer to "mirror everything".
+	 *
+	 * At absorption 1 the R2 read meter cannot bind at all, and the ceiling still lands on another
+	 * meter -- rows -- so past that share mirroring buys nothing and still costs writes. Anyone
+	 * reasoning "if R2 reads were free we would mirror the lot" is wrong, and this is why.
+	 */
+	it('moves with cdnAbsorption, and the ceiling lands on another meter rather than vanishing', () => {
+		const none = optimalOffWorker();
+		const half = optimalOffWorker(undefined, { cdnAbsorption: 0.5 });
+		const all = optimalOffWorker(undefined, { cdnAbsorption: 1 });
+
+		expect(half.viewsPerDay).toBeGreaterThan(none.viewsPerDay);
+		expect(all.viewsPerDay).toBeGreaterThanOrEqual(half.viewsPerDay);
+
+		expect(all.boundBy).toBe('rows');
+		expect(all.share).toBeLessThan(DEFAULT_MIX.edgeHit + DEFAULT_MIX.doHit);
+		expect(all.costOfMaximising).toBeGreaterThanOrEqual(0);
+	});
+
+	it('picks the SMALLEST share that reaches the peak, so nothing is mirrored for free', () => {
+		const o = optimalOffWorker(undefined, { cdnAbsorption: 1 });
+		// one step below the reported share must be strictly worse, or the share is not minimal
+		const justUnder = envelope(
+			{ ...DEFAULT_MIX, offWorker: o.share - o.step },
+			{ cdnAbsorption: 1 }
+		);
+		expect(justUnder.servingViewsPerDay).toBeLessThan(o.viewsPerDay);
 	});
 });

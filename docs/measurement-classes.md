@@ -53,6 +53,12 @@ wrangler's own compressor prints, so the wrangler version travels with the numbe
 The collected case count comes from `vitest list`, which is collection without execution. A version
 bump moves either one, the gate reports it, and the next master document records the move.
 
+The case count is collected under `DRUPFLARE_LIST_ALL=1`, which is what keeps it a property of the
+checkout. `vitest list` otherwise honours the `ARTIFACT_SPECS` exclusion, so it read 1,862 in CI
+against 2,066 on a checkout carrying the pack -- the same lane dependence that kept coverage out of
+Class A, in a metric that had already been accepted. The gap held still while the exclusion list
+did; the commit that added two files to it was reported as deleting 21 tests.
+
 ### What Was Rejected From Class A
 
 **Coverage percentage.** It depends on which specs ran. Artifact-gated specs skip when

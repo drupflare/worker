@@ -1,0 +1,16 @@
+name: drupflare-worker
+
+services:
+  greenmail:
+    image: greenmail/standalone:2.1.11@sha256:53cf220d34e4f2ca9e216f9ae5d9051624780ee510740370b8026915094b87fa
+    environment:
+      GREENMAIL_OPTS: '-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=drupflare:drupflarepass@localhost -Dgreenmail.verbose'
+    ports:
+      - '127.0.0.1:3025:3025'
+      - '127.0.0.1:3465:3465'
+      - '127.0.0.1:8080:8080'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:8080/api/service/readiness || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 40

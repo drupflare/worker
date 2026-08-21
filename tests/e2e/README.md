@@ -94,3 +94,17 @@ tail` silently omits every `durableObject` event -- so it has to be read through
   Observability API. Anything added for that MUST tear down what it deploys: the account this
   was developed against carries unrelated production workers, so a probe uses a `cfw-*` name
   and is deleted immediately.
+
+## The mail lane
+
+`mail.spec.ts` needs an SMTP server as well as a worker. It asserts the half no other mail test
+reaches: that a message LEAVES. Everything else stops at `cfw_mail_queue`.
+
+```bash
+docker compose -f docker/compose.yml up -d # GreenMail on 3025, its API on 8080
+MAIL_TRANSPORT=smtp SMTP_HOST=127.0.0.1 SMTP_PORT=3025 SMTP_TLS=off bun run dev
+CFW_E2E_SITE=e2e bun run test:e2e
+```
+
+`CFW_E2E_MAIL_API` and `CFW_E2E_MAILBOX` point it at a different rig. Without the rig the specs
+skip locally and fail in CI, the same asymmetry as the rest of the lane.

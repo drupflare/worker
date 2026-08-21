@@ -1,0 +1,54 @@
+name: Check Core Freshness
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - src/ops/shipped-lock.ts
+      - scripts/qa/core-freshness.ts
+      - .github/workflows/core-freshness.yml
+  schedule:
+    - cron: '40 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  freshness:
+    name: Compare Shipped Core Against drupal.org
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Check the Release History
+        id: check
+        run: bun run qa:core-freshness | tee /tmp/freshness.txt
+      - name: Freshness to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Drupal core freshness"
+            echo
+            echo "Two ways to be stale: a newer release on our branch, or the branch dropped"
+            echo "from \`supported_branches\`. The job fails only on a pending SECURITY release"
+            echo "or an unsupported branch; a bugfix release behind is reported, not failed."
+            echo
+            echo '```txt'
+            cat /tmp/freshness.txt || echo 'no output'
+            echo '```'
+            echo
+            echo "A code-only core patch is \`DRUPAL_VERSION=<v> bun run build:local\`. A patch"
+            echo "touching a route, schema or config default also needs \`site.sqlite\` surgery,"
+            echo "which nothing in the repo reproduces."
+          } >> "$GITHUB_STEP_SUMMARY"

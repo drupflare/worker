@@ -50,16 +50,21 @@ const STAGE_TEXT: Record<WarmingOptions['stage'], { title: string; detail: strin
  * Inline everything and reference nothing. This page is served BEFORE the site can render, so a
  * stylesheet or an image would be a request the object cannot answer either -- and a broken asset on
  * the "please wait" page is a worse first impression than no styling at all.
+ *
+ * @param refresh - whether to auto-retry. FALSE for a submission: see {@link warmingResponse}.
  */
-export function warmingHtml(stage: WarmingOptions['stage'], retrySeconds: number): string {
+export function warmingHtml(
+	stage: WarmingOptions['stage'],
+	retrySeconds: number,
+	refresh = true
+): string {
 	const { title, detail } = STAGE_TEXT[stage];
 	return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${retrySeconds}">
-<meta name="robots" content="noindex">
+${refresh ? `<meta http-equiv="refresh" content="${retrySeconds}">\n` : ''}<meta name="robots" content="noindex">
 <title>${title}...</title>
 <style>
 :root { color-scheme: light dark }
@@ -78,7 +83,11 @@ p { margin: 0; opacity: .75 }
 <main>
 <h1><span class="dot"></span>${title}...</h1>
 <p>${detail}</p>
-<p><small>This page refreshes itself.</small></p>
+<p><small>${
+		refresh
+			? 'This page refreshes itself.'
+			: 'Your submission was not accepted. Go back and send it again in a moment.'
+	}</small></p>
 </main>
 </body>
 </html>
@@ -94,7 +103,11 @@ p { margin: 0; opacity: .75 }
 export function warmingResponse(opts: WarmingOptions): Response {
 	const retry = Math.max(1, Math.round(opts.retryAfterSeconds ?? 1));
 	const html = opts.request !== undefined && wantsHtml(opts.request);
-	return new Response(html ? warmingHtml(opts.stage, retry) : `${opts.stage}\n`, {
+	// a meta refresh is a GET, so on a submission it discards the body and lands on the cached
+	// anonymous copy of the form; `Retry-After` still says when to come back
+	const method = (opts.request?.method ?? 'GET').toUpperCase();
+	const refresh = method === 'GET' || method === 'HEAD';
+	return new Response(html ? warmingHtml(opts.stage, retry, refresh) : `${opts.stage}\n`, {
 		status: 503,
 		headers: {
 			'content-type': html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',

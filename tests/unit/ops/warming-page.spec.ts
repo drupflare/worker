@@ -128,6 +128,58 @@ describe('the html the browser gets', () => {
 	});
 });
 
+/**
+ * A META REFRESH IS A GET, so on a submission it is not a retry -- it discards the body and
+ * navigates to the same URL, which for a form path is the cached anonymous copy of the form that
+ * was just submitted.
+ *
+ * Measured as a login loop on a dev server: `POST /user/login` took the cold path, the interstitial
+ * navigated the browser to `GET /user/login`, and that answered from `cfw_page` with a logged-out
+ * form. Repeatable indefinitely, with the account never signed in. The header still says when to
+ * come back; only the automatic navigation is withheld, because the browser is holding the body and
+ * the visitor is not.
+ */
+describe('a submission is never auto-retried, because the retry would drop it', () => {
+	const post = () =>
+		new Request('https://site.local/user/login', {
+			method: 'POST',
+			headers: { accept: 'text/html' },
+			body: 'name=admin'
+		});
+
+	it('withholds the meta refresh from a POST', async () => {
+		const res = warmingResponse({ stage: 'warming', retryAfterSeconds: 2, request: post() });
+		const html = await res.text();
+		expect(html).not.toContain('http-equiv="refresh"');
+		// and says why, so the visitor is not left looking at a page that never moves
+		expect(html).toContain('Go back and send it again');
+	});
+
+	it('CONTROL: a GET still refreshes itself, and on the same second as Retry-After', async () => {
+		const res = warmingResponse({
+			stage: 'warming',
+			retryAfterSeconds: 2,
+			request: new Request('https://site.local/', { headers: { accept: 'text/html' } })
+		});
+		expect(await res.text()).toContain('<meta http-equiv="refresh" content="2">');
+		expect(res.headers.get('retry-after')).toBe('2');
+	});
+
+	it('still answers 503 with a Retry-After, since only the navigation was withheld', () => {
+		const res = warmingResponse({ stage: 'warming', retryAfterSeconds: 5, request: post() });
+		expect(res.status).toBe(503);
+		expect(res.headers.get('retry-after')).toBe('5');
+	});
+
+	it('leaves the plain-text body alone, which no client auto-follows anyway', async () => {
+		const res = warmingResponse({
+			stage: 'warming',
+			request: new Request('https://site.local/', { method: 'POST', body: 'x' })
+		});
+		expect(await res.text()).toBe('warming\n');
+	});
+});
+
 describe('what counts as a browser', () => {
 	it('is what the request asked for, not a guess from anything else', () => {
 		expect(wantsHtml(req('text/html'))).toBe(true);

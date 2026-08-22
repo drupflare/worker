@@ -25,11 +25,13 @@ import { resolveSite, siteStubOptions } from './ops/site-id';
 import { bearerToken } from './ops/site-secrets';
 import { SitePhpDurableObject } from './site-do';
 import {
+	ADMIN_PAGES,
 	renderCommands,
 	renderDeploy,
 	renderExtend,
 	renderShell,
 	renderThresholds,
+	SURFACE_PREFIX,
 	type OpsEntry
 } from './ui/admin';
 
@@ -127,14 +129,11 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/enable',
 	'/fleet',
 	'/health',
-	// the product surfaces, diagnostic-gated: /admin/commands proxies to /__ops, which runs cache
-	// rebuilds and module installs, and there is no administrator authentication in this Worker.
-	// Unauthenticated, that is a remote shell. They move to PUBLIC_ROUTES when an admin
+	// the product surfaces, diagnostic-gated: `${SURFACE_PREFIX}/commands` proxies to /__ops, which
+	// runs cache rebuilds and module installs, and there is no administrator authentication in this
+	// Worker. Unauthenticated, that is a remote shell. They move to PUBLIC_ROUTES when an admin
 	// credential exists, not before
-	'/admin',
-	'/admin/extend',
-	'/admin/commands',
-	'/admin/deploy'
+	...ADMIN_PAGES.map((p) => p.path)
 ]);
 
 /**
@@ -151,7 +150,34 @@ const DIAGNOSTIC_ROUTES = new Set([
  */
 const OWNER_ROUTES = new Set(['/export', '/health', '/setup/cf', '/setup/mail']);
 
-const ROUTES = new Set([...PUBLIC_ROUTES, ...DIAGNOSTIC_ROUTES]);
+/**
+ * Every path this Worker answers, and the reason `OWNER_ROUTES` is in the union.
+ *
+ * A route absent from here is rewritten to `/serve` and rendered as a Drupal page, so `/setup/cf`
+ * and `/setup/mail` -- owner routes with `DO_ROUTE` entries, documented as live in three places --
+ * were unreachable, and the request that tried carried `?client_id=` into the fill queue, the page
+ * cache and the edge key as part of the path.
+ */
+const ROUTES = new Set([...PUBLIC_ROUTES, ...DIAGNOSTIC_ROUTES, ...OWNER_ROUTES]);
+
+/**
+ * Which object answers, with `?site=` refused on the routes that take no credential.
+ *
+ * The catch-all rewrite already refused the parameter and said why -- `customer-a.example/about?site=b`
+ * must not serve customer B -- but that guard only covers paths this Worker does NOT own, and
+ * `/serve` is in `PUBLIC_ROUTES`. So the one route reachable by anybody was the one with no check on
+ * it: measured, `GET /serve?site=<a name nobody had used>` provisions an entire Drupal database from
+ * one unauthenticated request, and a name belonging to another tenant serves their pages.
+ *
+ * An OWNER route may still name a site, because the object validates the token itself -- naming
+ * somebody else's gets a 401 from them rather than their data. A diagnostic route may too, which is
+ * what keeps `?site=` working for dev and for the measurement scripts.
+ */
+async function siteFor(url: URL, env: SiteWorkerEnv): Promise<string> {
+	const uncredentialed = PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1';
+	const { site } = await resolveSite(url, env, { allowParam: !uncredentialed });
+	return site;
+}
 
 /**
  * Whether the caller proved ownership of this site.
@@ -162,7 +188,7 @@ const ROUTES = new Set([...PUBLIC_ROUTES, ...DIAGNOSTIC_ROUTES]);
 async function ownerAuthorised(request: Request, env: SiteWorkerEnv, url: URL): Promise<boolean> {
 	const presented = bearerToken(request.headers.get('authorization'));
 	if (!presented) return false;
-	const site = url.searchParams.get('site') ?? 'site';
+	const site = await siteFor(url, env);
 	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const inner = new URL(url);
 	inner.pathname = '/__ownercheck';
@@ -611,7 +637,7 @@ export default {
 
 		const t0 = Date.now();
 		// one object per site; the name is the site identity
-		const site = url.searchParams.get('site') ?? 'site';
+		const site = await siteFor(url, env);
 		const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 
 		const cache = caches.default;
@@ -644,7 +670,7 @@ export default {
 		// touching an object. It is named explicitly: it has no DO_ROUTE entry, so falling through
 		// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
 		// including `scripts/security-update.mjs --fleet=`
-		if (url.pathname.startsWith('/admin') || url.pathname === '/fleet') {
+		if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
 			return await renderAdmin(url, env, stub);
 		}
 
@@ -774,6 +800,9 @@ export default {
 		const inner = new URL(request.url);
 		// every route in ROUTES has a DO_ROUTE entry except `/fillwindow`, which returned above
 		inner.pathname = DO_ROUTE[url.pathname] as string;
+		// the RESOLVED name, overwriting whatever the caller sent: the object stores this as its own
+		// identity and keys its R2 mirror on it, so it has to be the value that chose the object
+		inner.searchParams.set('site', site);
 		// the consent screen redirects to a PATH; the object switches on ?action=, and a caller
 		// cannot be trusted to add it -- Cloudflare builds this URL, not us
 		if (url.pathname === '/setup/cf/callback') inner.searchParams.set('action', 'callback');
@@ -788,7 +817,23 @@ export default {
 		// lets the runtime cancel a render mid-flight and leaves the interpreter
 		// parked mid-request for the next entrant. So the render budget is enforced
 		// inside the DO, BEFORE the render starts: see estimateRenderMs().
-		const innerRequest = new Request(inner, request);
+		// buffered rather than streamed onward: the object may answer a POST without reading it,
+		// and workerd then throws an UNCAUGHT `read from request stream after response has been sent`
+		const buffered =
+			request.method === 'GET' || request.method === 'HEAD'
+				? undefined
+				: await request.arrayBuffer();
+		const innerRequest =
+			buffered === undefined
+				? new Request(inner, request)
+				: new Request(inner, {
+						method: request.method,
+						headers: request.headers,
+						body: buffered
+					});
+		// cleared first, always: every inbound header is copied onto the subrequest, so a client
+		// could otherwise send this one and have the object read it as this worker's own decision
+		innerRequest.headers.delete(AUTH_REQUEST_HEADER);
 		if (personalised) {
 			// the object charges the allowance and reports the counter back on this same response, so
 			// learning the spend costs no extra hop
@@ -945,11 +990,11 @@ async function renderAdmin(
 			}
 		});
 
-	if (url.pathname === '/admin/deploy') {
+	if (url.pathname === `${SURFACE_PREFIX}/deploy`) {
 		return html(renderShell('deploy', renderDeploy(), env));
 	}
 
-	if (url.pathname === '/admin/extend') {
+	if (url.pathname === `${SURFACE_PREFIX}/extend`) {
 		const q = url.searchParams.get('q');
 		if (!q) return html(renderShell('extend', renderExtend(null, [], null, env), env));
 		// the one page that reaches the object: /__installable is where catalog.ts, packagist.ts and
@@ -989,7 +1034,7 @@ async function renderAdmin(
 		return html(renderShell('extend', renderExtend(q, entries, note, env), env));
 	}
 
-	if (url.pathname === '/admin/commands') {
+	if (url.pathname === `${SURFACE_PREFIX}/commands`) {
 		const op = url.searchParams.get('op');
 		let result: string | null = null;
 		const entries: OpsEntry[] = [];

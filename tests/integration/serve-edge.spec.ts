@@ -450,6 +450,26 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.headers.get('www-authenticate')).toContain('Bearer');
 	});
 
+	/**
+	 * AN OWNER ROUTE HAS TO BE IN `ROUTES` TO BE ONE.
+	 *
+	 * `ROUTES` was `PUBLIC ∪ DIAGNOSTIC`, and `/setup/cf` and `/setup/mail` are in neither -- so the
+	 * catch-all rewrote them into `/serve?path=/setup/cf?...` and rendered them as Drupal pages. Both
+	 * are documented as live in the README, `docs/configuration.md` and the admin UI, and the request
+	 * that tried carried `?client_id=` into the fill queue, `cfw_page` and the edge key as part of
+	 * the path.
+	 */
+	it.each(['/setup/cf', '/setup/mail'])('%s is an owner route, not a page', async (route) => {
+		const res = await worker.fetch(new Request(`https://cfw.local${route}`), {
+			...env,
+			PW_DIAGNOSTICS: '0'
+		});
+		// 401 with a challenge: the route EXISTS and wants a credential. A rewrite would render
+		// Drupal's 404 page instead, which is how this shipped
+		expect(res.status).toBe(401);
+		expect(res.headers.get('www-authenticate')).toMatch(/Bearer/);
+	});
+
 	it('401s /export for a WRONG token, not just an absent one', async () => {
 		const res = await worker.fetch(
 			new Request('https://cfw.local/export?site=x', {
@@ -579,8 +599,8 @@ describe('the catch-all rewrite', () => {
 		// `?site=` straight into /serve's own parameters, and one link would serve another
 		// customer's database from this hostname
 		const { inner, res } = await hop('/about-guard?site=someone-elses-site');
-		expect(inner?.searchParams.get('site')).toBe('cfw-local');
-		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw-local');
+		expect(inner?.searchParams.get('site')).toBe('cfw.local');
+		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw.local');
 		// not discarded either -- Drupal still sees the parameter it was sent
 		expect(inner?.searchParams.get('path')).toBe('/about-guard?site=someone-elses-site');
 	});
@@ -597,10 +617,32 @@ describe('the catch-all rewrite', () => {
 	});
 
 	it('leaves a route the Worker owns alone', async () => {
+		// `PW_DIAGNOSTICS` is on in this lane, which is what makes `?site=` an instruction here;
+		// the case below is the same request with it off
 		const { inner } = await hop('/serve?site=named&path=%2Fnode');
 		// still one hop, but the explicit parameters are the caller's, not a rewrite's
 		expect(inner?.searchParams.get('site')).toBe('named');
 		expect(inner?.searchParams.get('path')).toBe('/node');
+	});
+
+	/**
+	 * `/serve` IS IN `PUBLIC_ROUTES`, so it skips the rewrite above and used to read `?site=` raw.
+	 *
+	 * The rewrite's guard was the only one, and it only covers paths the Worker does not own -- so
+	 * the one route reachable by anybody was the one route with no protection. Measured on a dev
+	 * server before the fix: `GET /serve?path=/&site=<a name nobody had used>` provisioned an entire
+	 * Drupal database from one unauthenticated request, and a name belonging to another tenant
+	 * served their pages from this hostname.
+	 */
+	it('refuses ?site= on /serve itself once diagnostics are off', async () => {
+		const { inner, res } = await hop('/serve?site=someone-elses-site&path=%2Fnode', {
+			PW_DIAGNOSTICS: '0'
+		});
+		// the object that answered is derived from the HOST, not from the parameter
+		expect(res.headers.get('x-cfw-spy-site')).toBe('cfw.local');
+		// and the object is handed the RESOLVED name, so the value it pins as its own identity --
+		// and keys its R2 mirror on -- is never the one the caller asked for
+		expect(inner?.searchParams.get('site')).toBe('cfw.local');
 	});
 
 	it("does not swallow the object's own routes, which must stay unreachable", async () => {

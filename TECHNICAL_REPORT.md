@@ -210,6 +210,16 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     show it. It also caps item 3's render replicas -- two always-warm objects exceed the daily
     allowance before serving anything -- which is a second, independent reason not to keep objects
     warm after item 8 discarded it on boot grounds. Tracked as P35 in project memory.
+13. **The POST-swallowed-by-the-cache regression is no longer guarded on a clean checkout.** The
+    serving-lane fix made a non-GET fall THROUGH to the gated lane, which means those assertions now
+    end in a real render, so on 2026-08-22 three specs moved into `ARTIFACT_SPECS` and eight
+    assertions became release-lane only. The behaviour under them is the worst defect this project
+    has shipped -- every password reset silently swallowed, found by e2e and never by the gate. The
+    assertions are about ROUTING rather than about rendered output, so a seam that exposes the lane
+    decision over a stubbed render would bring them back. **Falsify any such seam by reintroducing
+    the read-order defect and requiring red with no pack present**: the spec that used to cover this
+    asserted `cache === 'HIT'` and was pinning the bug in place, so a test written from the current
+    implementation would agree with it and prove nothing. Tracked as P38 in project memory.
 
 ---
 

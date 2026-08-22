@@ -864,6 +864,26 @@ $config['system.mail']['interface']['default'] = 'cfw_mail';
 // on the edge, so the packed tree is the vendor directory and this line is the autoloader entry
 // composer would otherwise have written. Without it the subclass fatals on its parent.
 $class_loader->addPsr4('Drupflare\\\\StreamHttp\\\\', $app_root . '/libraries/drupflare-stream-http/src/');
+// A FORGED HOST CANNOT MOVE THE SITE, so the pattern list is the origin the object already pinned
+// rather than a wildcard. cfw_serve() builds every request from that same origin, so anything else
+// is a request this site did not issue to itself. Empty until the origin is known, which is the one
+// state where the check has nothing to compare against.
+$cfw_host = (string) parse_url(CFW_SITE_ORIGIN_PLACEHOLDER, PHP_URL_HOST);
+if ($cfw_host !== '') {
+  $settings['trusted_host_patterns'] = ['^' . str_replace('.', '\\\\.', $cfw_host) . '$'];
+}
+// Drupal derives this from the hash salt and then reports that it does not exist. Nothing in this
+// runtime creates it, and config import/export is the one feature that reads it.
+$settings['config_sync_directory'] = $app_root . '/sites/default/files/config/sync';
+// created HERE, not once at claim time: the filesystem is remounted from the pack on every boot,
+// so a directory made during provisioning is gone by the next request
+if (!is_dir($settings['config_sync_directory'])) {
+  @mkdir($settings['config_sync_directory'], 0777, true);
+}
+// FALSE is what core asks for: SystemRequirementsHooks warns on TRUE *and* on NULL, and both
+// messages say to set FALSE. It is the Drupal 12 default and the Drupal 13 behaviour, and it only
+// adds a novalidate attribute to forms -- server-side validation is untouched
+$settings['enable_html5_validation'] = false;
 `;
 
 /**
@@ -1186,7 +1206,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// failed to run leaves Settings::getHashSalt() throwing rather than every site on the
 			// payload signing password-reset links with one public value
 			const salt = hashSaltAssignment(ensureHashSalt(this.secretStore()));
-			binary.FS.writeFile(settingsPath, existing + SETTINGS_OVERRIDE + salt);
+			// the PINNED origin, interpolated here because settings.php is evaluated once per boot
+			// and the pin is a property of the site rather than of the request
+			const override = SETTINGS_OVERRIDE.replace(
+				'CFW_SITE_ORIGIN_PLACEHOLDER',
+				JSON.stringify(this.canonicalOrigin(null))
+			);
+			binary.FS.writeFile(settingsPath, existing + override + salt);
 		}
 		// the path settings.php already registered but that never existed; see SERVICES_YAML
 		binary.FS.writeFile('/drupal/sites/default/services.yml', SERVICES_YAML);

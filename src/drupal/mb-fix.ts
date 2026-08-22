@@ -107,28 +107,83 @@ function cfw_mb_sanitize($s) {
 `;
 
 /**
+ * Two corrections that need no host call and no table, kept separate from the
+ * wrappers so `scripts/measure/mb-parity.ts` can price each on its own.
+ *
+ * THE ASCII FAST PATH is not only a speed lever, though it is a large one -- the
+ * polyfill routes every call through iconv even for bytes it cannot possibly
+ * change. Drupal's hot `mb_strtolower` inputs are machine names, field names,
+ * langcodes and header names, all ASCII.
+ *
+ * `strtolower()` is safe to substitute only because this is PHP 8: it became
+ * locale-insensitive and ASCII-only in 8.2, so the C-locale trap that made this
+ * wrong on older builds is gone.
+ *
+ * THE FINAL SIGMA post-pass closes the divergence that has been on record longest.
+ * Lowercasing a word-final capital sigma must give U+03C2, and the polyfill's flat
+ * table gives U+03C3, so a Greek title produces a different search key, sort order
+ * and URL alias in wasm than on a normal host. The rule is contextual rather than
+ * per-codepoint, which is why a table cannot express it: sigma is final when a
+ * letter precedes it and none follows.
+ */
+export const MB_ASCII = String.raw`
+// NO eval(), unlike the wrappers below: these two names are ours, so they cannot collide
+// with an internal function and nothing has to be deferred to runtime. Plain PHP is what
+// lets tests/node/php-fragments.spec.ts see inside the body.
+if (!function_exists('cfw_mb_ascii')) {
+	/** true when no byte is >= 0x80, so the single-byte string functions are exact */
+	function cfw_mb_ascii($s) {
+		return is_string($s) && !preg_match('/[\x80-\xff]/', $s);
+	}
+
+	/**
+	 * Applies Unicode SpecialCasing final-sigma to an ALREADY-lowercased string.
+	 *
+	 * Deliberately not applied to mb_strtoupper: there is no uppercase counterpart and
+	 * running it there would corrupt correct output. The strpos() guard is the common
+	 * case -- a string with no sigma in it cannot need this.
+	 */
+	function cfw_mb_final_sigma($lo) {
+		if (strpos($lo, "\xcf\x83") === false) { return $lo; }
+		return preg_replace(
+			'/(?<=\p{Ll}|\p{Lu}|\p{Lt}|\p{Lm}|\p{Lo})\x{03C3}(?!\p{L})/u',
+			"\xcf\x82",
+			$lo
+		);
+	}
+}
+`;
+
+/**
  * The wrappers. Each is defined only if the real extension is absent, so this is
  * inert on a build that has mbstring compiled in.
  */
 export const MB_FIX = String.raw`
 ${MB_SANITIZE}
+${MB_ASCII}
 if (!extension_loaded('mbstring') && !function_exists('cfw_mb_installed')) { eval('
 function cfw_mb_installed() { return true; }
 
 function mb_substr($string, $start, $length = null, $encoding = null) {
+  if (cfw_mb_ascii($string)) { return substr($string, $start, $length); }
   return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_substr(cfw_mb_sanitize($string), $start, $length, $encoding);
 }
 function mb_strlen($string, $encoding = null) {
+  if (cfw_mb_ascii($string)) { return strlen($string); }
   return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strlen(cfw_mb_sanitize($string), $encoding);
 }
 function mb_strtolower($string, $encoding = null) {
-  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strtolower(cfw_mb_sanitize($string), $encoding);
+  if (cfw_mb_ascii($string)) { return strtolower($string); }
+  return cfw_mb_final_sigma(\\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strtolower(cfw_mb_sanitize($string), $encoding));
 }
 function mb_strtoupper($string, $encoding = null) {
+  if (cfw_mb_ascii($string)) { return strtoupper($string); }
   return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strtoupper(cfw_mb_sanitize($string), $encoding);
 }
 function mb_convert_case($string, $mode, $encoding = null) {
-  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_convert_case(cfw_mb_sanitize($string), $mode, $encoding);
+  $out = \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_convert_case(cfw_mb_sanitize($string), $mode, $encoding);
+  // 0 is MB_CASE_UPPER, which has no final-sigma rule; LOWER and TITLE both do
+  return $mode === 0 ? $out : cfw_mb_final_sigma($out);
 }
 function mb_strpos($haystack, $needle, $offset = 0, $encoding = null) {
   return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strpos(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $offset, $encoding);
@@ -144,6 +199,31 @@ function mb_str_split($string, $length = 1, $encoding = null) {
 }
 function mb_substr_count($haystack, $needle, $encoding = null) {
   return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_substr_count(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $encoding);
+}
+function mb_strstr($haystack, $needle, $before_needle = false, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strstr(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $before_needle, $encoding);
+}
+function mb_stristr($haystack, $needle, $before_needle = false, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_stristr(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $before_needle, $encoding);
+}
+function mb_strrchr($haystack, $needle, $before_needle = false, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strrchr(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $before_needle, $encoding);
+}
+function mb_strrichr($haystack, $needle, $before_needle = false, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strrichr(cfw_mb_sanitize($haystack), cfw_mb_sanitize($needle), $before_needle, $encoding);
+}
+function mb_strwidth($string, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_strwidth(cfw_mb_sanitize($string), $encoding);
+}
+function mb_scrub($string, $encoding = null) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_scrub(cfw_mb_sanitize($string), $encoding);
+}
+function mb_encode_numericentity($string, $map, $encoding = null, $hex = false) {
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_encode_numericentity(cfw_mb_sanitize($string), $map, $encoding, $hex);
+}
+function mb_convert_encoding($string, $to_encoding, $from_encoding = null) {
+  $clean = is_array($string) ? array_map("cfw_mb_sanitize", $string) : cfw_mb_sanitize($string);
+  return \\Symfony\\Polyfill\\Mbstring\\Mbstring::mb_convert_encoding($clean, $to_encoding, $from_encoding);
 }
 '); }
 `;

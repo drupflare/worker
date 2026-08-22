@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { MB_SANITIZE } from '../../src/drupal/mb-fix';
+import { ICONV_STRRPOS } from '../../src/drupal/iconv-fix';
+import { MB_ASCII, MB_SANITIZE } from '../../src/drupal/mb-fix';
 
 /**
  * The two controls the workers project CANNOT run, recovered.
@@ -71,6 +72,170 @@ describeIfPhp('CONTROL: real iconv is not the fix', () => {
 		// what makes the polyfill path work rather than any change to iconv
 		const out = php(`echo @iconv_substr(mb_substr("${BAD}", 0, 100), 0, 100, "UTF-8");`);
 		expect(out).toBe('abc??def');
+	});
+});
+
+/**
+ * The cases that separate the upstream line from the corrected one. Every entry is
+ * a match at index 0 except the two controls, because index 0 is the only input the
+ * falsy-ternary reaches.
+ */
+const STRRPOS_CASES: [string, string][] = [
+	['a', 'a'],
+	['ab\\0cd', 'a'],
+	['AbC-123_xyz', 'A'],
+	['caf\\xc3\\xa9x', 'c'],
+	['Hello World', 'o'],
+	['Hello', 'z']
+];
+
+/**
+ * Drives `cfw_iconv_strrpos` against the extension, and the upstream line beside it.
+ *
+ * The `Iconv` stand-in implements only `iconv()` and `iconv_strlen()`, over the real
+ * extension. That is deliberate rather than a shortcut: those two helpers were never
+ * what was wrong, the fix is one index expression, and depending on the vendored
+ * polyfill would mean depending on `drupal-src`, which is gitignored -- so this spec
+ * would land in `ARTIFACT_SPECS` and stop running on a clean checkout. The wide
+ * comparison against the REAL polyfill is `scripts/measure/mb-parity.ts`.
+ */
+function runStrrposProbe(): { input: string; native: string; fixed: string; upstream: string }[] {
+	const rows = STRRPOS_CASES.map(([h, n]) => `["${h}", "${n}"]`).join(', ');
+	const src = `<?php
+namespace Symfony\\Polyfill\\Iconv {
+	class Iconv {
+		public static $internalEncoding = 'utf-8';
+		public static function iconv($f, $t, $s) { return \\iconv($f, $t, $s); }
+		public static function iconv_strlen($s, $e = null) { return \\iconv_strlen($s, $e ?? 'utf-8'); }
+	}
+}
+namespace {
+	use Symfony\\Polyfill\\Iconv\\Iconv;
+${ICONV_STRRPOS}
+	// symfony/polyfill-iconv v1.37.0 Iconv.php:495, verbatim
+	function upstream_strrpos($haystack, $needle, $encoding = null) {
+		$pos = isset($needle[0]) ? strrpos($haystack, $needle) : false;
+		return false === $pos
+			? false
+			: Iconv::iconv_strlen($pos ? substr($haystack, 0, $pos) : $haystack, 'utf-8');
+	}
+	$out = [];
+	foreach ([${rows}] as [$h, $n]) {
+		$out[] = [
+			'input' => $h,
+			'native' => var_export(@iconv_strrpos($h, $n, 'UTF-8'), true),
+			'fixed' => var_export(@cfw_iconv_strrpos($h, $n, 'UTF-8'), true),
+			'upstream' => var_export(@upstream_strrpos($h, $n), true),
+		];
+	}
+	echo json_encode($out);
+}
+`;
+	return JSON.parse(
+		execFileSync(
+			'php',
+			['-d', 'error_reporting=0', '-d', 'opcache.enable_cli=0', '-r', src.slice(6)],
+			{
+				encoding: 'utf8'
+			}
+		)
+	);
+}
+
+describeIfPhp('REGRESSION: iconv_strrpos reports 0 for a match at index 0', () => {
+	const rows = available ? runStrrposProbe() : [];
+
+	it('the corrected copy agrees with the extension on every case', () => {
+		expect(rows.map((r) => [r.input, r.fixed])).toEqual(rows.map((r) => [r.input, r.native]));
+	});
+
+	it('the upstream line does NOT, which is what makes this a regression test', () => {
+		// falsification: remove the fix and these four come back. If this ever passes,
+		// upstream has fixed it and ICONV_FIX can be deleted rather than carried
+		const wrong = rows.filter((r) => r.upstream !== r.native);
+		expect(wrong.length).toBe(4);
+		expect(wrong.every((r) => r.native === '0')).toBe(true);
+	});
+
+	it('answers false for a needle that is absent, not 0', () => {
+		const miss = rows.find((r) => r.input === 'Hello');
+		expect(miss?.native).toBe('false');
+		expect(miss?.fixed).toBe('false');
+	});
+});
+
+/**
+ * The two corrections in `MB_ASCII`, driven against the extension.
+ *
+ * Both are pure PHP, so they can be sourced straight into a native process and
+ * compared with the real thing. `cfw_mb_final_sigma` is fed the value the POLYFILL
+ * produces -- spelled here as an explicit U+03C3 rather than obtained from the
+ * polyfill -- so this needs no `drupal-src`.
+ */
+describeIfPhp('MB_ASCII: the ASCII fast path and the final-sigma rule', () => {
+	function probe(body: string): string {
+		return execFileSync('php', ['-d', 'error_reporting=0', '-r', `${MB_ASCII}\n${body}`], {
+			encoding: 'utf8'
+		}).trim();
+	}
+
+	it('the ASCII fast path agrees with mbstring on every ASCII byte', () => {
+		// the substitution is only legal because strtolower() became locale-insensitive
+		// in PHP 8.2; on an older build this test is what would have caught it
+		const out = probe(`
+			$bad = 0;
+			for ($i = 0; $i < 128; $i++) {
+				$c = chr($i);
+				if (strtolower($c) !== mb_strtolower($c)) { $bad++; }
+				if (strtoupper($c) !== mb_strtoupper($c)) { $bad++; }
+				if (strlen($c) !== mb_strlen($c)) { $bad++; }
+			}
+			echo $bad;
+		`);
+		expect(out).toBe('0');
+	});
+
+	it('classifies ASCII and non-ASCII correctly, including the empty string', () => {
+		const out = probe(`
+			$cases = ['' => 1, 'abc' => 1, "a\\x7f" => 1, "caf\\xc3\\xa9" => 0, "\\xff" => 0];
+			$bad = [];
+			foreach ($cases as $s => $want) {
+				if (cfw_mb_ascii($s) !== (bool) $want) { $bad[] = bin2hex($s); }
+			}
+			echo implode(',', $bad);
+		`);
+		expect(out).toBe('');
+	});
+
+	it('turns the polyfill sigma into the extension sigma, in context', () => {
+		// U+03C3 where native yields U+03C2, plus the cases that must NOT change
+		const out = probe(`
+			$cases = [
+				"\\u{3bf}\\u{3b4}\\u{3bf}\\u{3c3}" => "\\u{3bf}\\u{3b4}\\u{3bf}\\u{3c2}",
+				"\\u{3c3}\\u{3bf}\\u{3c6}\\u{3bf}\\u{3c3}" => "\\u{3c3}\\u{3bf}\\u{3c6}\\u{3bf}\\u{3c2}",
+				"\\u{3b1}\\u{3c3}\\u{3b1}" => "\\u{3b1}\\u{3c3}\\u{3b1}",
+				"\\u{3c3}" => "\\u{3c3}",
+				"abc" => "abc"
+			];
+			$bad = [];
+			foreach ($cases as $in => $want) {
+				if (cfw_mb_final_sigma($in) !== $want) { $bad[] = bin2hex($in); }
+			}
+			echo implode(',', $bad);
+		`);
+		expect(out).toBe('');
+	});
+
+	it('agrees with the extension end to end on a Greek phrase', () => {
+		// the falsification: the polyfill's answer is asserted to be WRONG in the same run
+		const out = probe(`
+			$upper = "\\u{39f}\\u{394}\\u{39f}\\u{3a3} \\u{3a3}\\u{39f}\\u{3a6}\\u{39f}\\u{3a3}";
+			$polyfillWould = "\\u{3bf}\\u{3b4}\\u{3bf}\\u{3c3} \\u{3c3}\\u{3bf}\\u{3c6}\\u{3bf}\\u{3c3}";
+			echo (cfw_mb_final_sigma($polyfillWould) === mb_strtolower($upper) ? 'fixed' : 'BROKEN'),
+				',',
+				($polyfillWould === mb_strtolower($upper) ? 'NOT-A-BUG' : 'bug-real');
+		`);
+		expect(out).toBe('fixed,bug-real');
 	});
 });
 

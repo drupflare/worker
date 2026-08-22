@@ -80,6 +80,7 @@ import {
 } from './db/write-tally';
 import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php';
 import { FILES_PROBE } from './drupal/files-php';
+import { ICONV_FIX } from './drupal/iconv-fix';
 import { MB_FIX } from './drupal/mb-fix';
 import {
 	BOOT_KERNEL,
@@ -1270,6 +1271,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// Symfony's polyfill bootstrap, or its function_exists() guards win
 		await this.run(`<?php ${PHP_CODEC}`);
 		await this.run(`<?php ${MB_FIX}`);
+		// same window as MB_FIX: polyfill-iconv's bootstrap must find the name already
+		// taken, since its own iconv_strrpos() is wrong whenever the match is at index 0
+		await this.run(`<?php ${ICONV_FIX}`);
 		// the gz* functions have to exist before AssetDumper runs, and it runs inside a render;
 		// same shape as MB_FIX, and inert on a build that has the real extension
 		await this.run(`<?php ${ZLIB_FIX}`);

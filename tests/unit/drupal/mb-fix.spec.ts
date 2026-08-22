@@ -233,6 +233,35 @@ describe('mb-fix: the controls', () => {
 		expect(MB_FIX).toContain('cfw_mb_sanitize($string)');
 	});
 
+	// WHICH functions are wrapped is a measured decision, not a taste. Every name below
+	// was added because `bun run measure:mb-parity` showed sanitising STRICTLY reduced
+	// its divergence from native mbstring. Do not quote a total here -- an earlier
+	// version of this comment named one and it was stale within the hour; run the tool.
+	it('wraps every function the parity harness showed sanitising improves', () => {
+		for (const fn of [
+			'mb_strstr',
+			'mb_stristr',
+			'mb_strrchr',
+			'mb_strrichr',
+			'mb_strwidth',
+			'mb_scrub',
+			'mb_encode_numericentity',
+			'mb_convert_encoding'
+		]) {
+			expect(MB_FIX, fn).toContain(`function ${fn}(`);
+		}
+	});
+
+	// the other direction, and the one that is easy to get wrong: sanitising is NOT a
+	// free win everywhere. Native mb_str_pad pads to a width it measures on the RAW
+	// bytes, and the two detectors must see the original, so wrapping these three
+	// turns 19 passing cases into failures. Measured, not assumed.
+	it('leaves the three functions sanitising would BREAK alone', () => {
+		for (const fn of ['mb_check_encoding', 'mb_detect_encoding', 'mb_str_pad']) {
+			expect(MB_FIX, fn).not.toContain(`function ${fn}(`);
+		}
+	});
+
 	// the sync guard that replaces the live PHP oracle: sanitize() above is a copy, so pin
 	// it to the shipped PHP's decision table rather than trusting the copy to stay in sync
 	it('mirrors the shipped PHP lead-byte table', () => {

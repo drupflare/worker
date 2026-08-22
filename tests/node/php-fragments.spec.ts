@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
+import { ICONV_FIX } from '../../src/drupal/iconv-fix';
+import { MB_ASCII } from '../../src/drupal/mb-fix';
 import {
 	abandonTransaction,
 	BOOT_KERNEL,
@@ -119,7 +121,15 @@ const FRAGMENTS: Array<[string, string]> = [
 	// prefixed with the tag the way `src/site-do.ts` runs it, since it is a bare fragment. It is
 	// worth linting where MB_FIX is not: MB_FIX's body is inside an eval(), so `php -l` sees a
 	// string literal, whereas this one is plain PHP and a parse error in it is really caught here
-	['ZLIB_FIX', `<?php ${ZLIB_FIX}`]
+	['ZLIB_FIX', `<?php ${ZLIB_FIX}`],
+	// same reason as ZLIB_FIX: no eval(), so php -l sees the body. It carries a
+	// backtick-free comment on purpose -- a backtick inside a String.raw block
+	// truncates the template literal and this fragment hit that while being written
+	['ICONV_FIX', `<?php ${ICONV_FIX}`],
+	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
+	// read. Both bodies carry regexes with backslash escapes, which is exactly the
+	// shape that survives a botched unescaping as valid JS and broken PHP
+	['MB_ASCII', `<?php ${MB_ASCII}`]
 ];
 
 // A MISSING PHP BINARY MUST NOT SILENTLY PASS THIS FILE. A local developer without php should not

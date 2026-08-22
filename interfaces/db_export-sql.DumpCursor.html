@@ -20,7 +20,7 @@ enter the wrong table and produce a dump that restores cleanly and is wrong.</p>
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">DumpCursor</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#afterrowid">afterRowid</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#emitted">emitted</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#offset">offset</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#phase">phase</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;done&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;rows&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;ddl&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;later&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#shape">shape</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#table">table</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L444">src/db/export-sql.ts:444</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L444">src/db/export-sql.ts:444</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -47,26 +47,26 @@ signed, so 0 is an ordinary position a row can occupy -- Drupal's anonymous user
 rowid 0 -- and using it as the start sentinel dropped that row from every dump.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L455">src/db/export-sql.ts:455</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L455">src/db/export-sql.ts:455</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="emitted"><code class="tsd-tag">Optional</code><span>emitted</span><a href="#emitted" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">emitted</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows emitted from this table so far, so <code>limitPerTable</code> survives a resume</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L459">src/db/export-sql.ts:459</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L459">src/db/export-sql.ts:459</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="offset"><code class="tsd-tag">Optional</code><span>offset</span><a href="#offset" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">offset</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div>
 <div class="tsd-comment tsd-typography"><p>OFFSET position, used only for a <code>WITHOUT ROWID</code> table</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L457">src/db/export-sql.ts:457</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L457">src/db/export-sql.ts:457</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="phase"><span>phase</span><a href="#phase" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">phase</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;done&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;rows&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;ddl&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;later&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L445">src/db/export-sql.ts:445</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L445">src/db/export-sql.ts:445</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="shape"><code class="tsd-tag">Optional</code><span>shape</span><a href="#shape" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">shape</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -77,14 +77,14 @@ with the default options would splice two different dumps into one that looks wh
 rather than trusted -- <a href="../functions/db_export-sql.dumpChunk.html" class="tsd-kind-function">dumpChunk</a> throws instead of splicing.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L468">src/db/export-sql.ts:468</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L468">src/db/export-sql.ts:468</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="table"><code class="tsd-tag">Optional</code><span>table</span><a href="#table" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">table</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div>
 <div class="tsd-comment tsd-typography"><p>the table being emitted, by name</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/614502dcc6bb34891cc5b3630b12cc5a754d9605/src/db/export-sql.ts#L447">src/db/export-sql.ts:447</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/41d6260f8e1f01516dabd706548322f3a42f2b94/src/db/export-sql.ts#L447">src/db/export-sql.ts:447</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

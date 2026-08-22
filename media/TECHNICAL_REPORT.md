@@ -199,6 +199,17 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     no longer a reason. The arithmetic still has to be redone before anything is built on it: at ~3
     operations per message, 10,000/day is ~3,333 messages, which is a third meter of the same order
     rather than relief.
+12. **A FOURTH meter exists and the cost model has never had it: Durable Object DURATION.** Workers
+    Free includes 13,000 GB-s/day, billed against the 128 MB an object is allocated regardless of
+    use, and billed on **wall clock rather than CPU**. Computed, it does not bind -- a warm render at
+    0.266 GB-s allows ~48,900/day against the 1,052-7,575 that rows allow, and a cache hit is
+    negligible -- so add it to `free-envelope.ts` as reported slack rather than as a constraint, and
+    note that the render figures feeding it are `cpuTime` and therefore understate the wall clock.
+    **The exposure is hibernation, not arithmetic**: an idle object that cannot hibernate bills
+    10,800 GB-s/day, 83% of the free allowance, for doing nothing, and no request or row count would
+    show it. It also caps item 3's render replicas -- two always-warm objects exceed the daily
+    allowance before serving anything -- which is a second, independent reason not to keep objects
+    warm after item 8 discarded it on boot grounds. Tracked as P35 in project memory.
 
 ---
 

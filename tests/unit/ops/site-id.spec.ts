@@ -24,8 +24,8 @@ const kvWith = (entries: Record<string, string>): SiteIdEnv['CONFIG_KV'] => ({
 
 describe('deriving a site from the request host', () => {
 	it('takes a plain domain', () => {
-		expect(siteFromHost('example.com')).toBe('example-com');
-		expect(siteFromHost('blog.example.co.uk')).toBe('blog-example-co-uk');
+		expect(siteFromHost('example.com')).toBe('example.com');
+		expect(siteFromHost('blog.example.co.uk')).toBe('blog.example.co.uk');
 	});
 
 	it('is case-insensitive, because a host is', () => {
@@ -41,18 +41,48 @@ describe('deriving a site from the request host', () => {
 	});
 
 	it('ignores a default port, so a proxy rewriting the URL cannot split a site in two', () => {
-		expect(siteFromHost('example.com:443', 'https:')).toBe('example-com');
-		expect(siteFromHost('example.com:80', 'http:')).toBe('example-com');
+		expect(siteFromHost('example.com:443', 'https:')).toBe('example.com');
+		expect(siteFromHost('example.com:80', 'http:')).toBe('example.com');
 	});
 
 	it('keeps a non-default port, because two dev servers on one box are two sites', () => {
-		expect(siteFromHost('example.com:8080', 'https:')).toBe('example-com-8080');
-		expect(siteFromHost('example.com:443', 'http:')).toBe('example-com-443');
+		expect(siteFromHost('example.com:8080', 'https:')).toBe('example.com_3a8080');
+		expect(siteFromHost('example.com:443', 'http:')).toBe('example.com_3a443');
 	});
 
 	it('produces an id usable as a Durable Object name', () => {
-		expect(siteFromHost('xn--bcher-kva.example.com')).toMatch(/^[a-z0-9-]+$/);
-		expect(siteFromHost('under_score.example.com')).toMatch(/^[a-z0-9-]+$/);
+		expect(siteFromHost('xn--bcher-kva.example.com')).toMatch(/^[a-z0-9._-]+$/);
+		expect(siteFromHost('under_score.example.com')).toMatch(/^[a-z0-9._-]+$/);
+	});
+
+	/**
+	 * ONE HOST, ONE ID, AND NO TWO HOSTS SHARING ONE.
+	 *
+	 * `[^a-z0-9]+` collapsing to a dash made every pair below the same id, and a site id IS the
+	 * Durable Object's name -- so two unrelated hostnames pointed at one deployment shared one
+	 * database and served each other's pages.
+	 */
+	it.each([
+		['a.b.example.com', 'a-b.example.com'],
+		['a.b.example.com', 'a_b.example.com'],
+		['a-b.example.com', 'a_b.example.com'],
+		['x.example.com', 'x..example.com'],
+		['example.com', 'example.com:8080']
+	])('gives %s and %s different ids', (left, right) => {
+		expect(siteFromHost(left)).not.toBe(siteFromHost(right));
+	});
+
+	/**
+	 * `_` is the escape, so it cannot also be a literal, or the escaping is not a bijection: an
+	 * `_3a` a visitor put in a hostname would decode as the `:` this produces for a port.
+	 */
+	it('escapes rather than passes through anything outside the kept set', () => {
+		expect(siteFromHost('under_score.example.com')).toBe('under_5fscore.example.com');
+		expect(siteFromHost('a_5f.example.com')).not.toBe(siteFromHost('a_.example.com'));
+	});
+
+	it('keeps the two characters a hostname is actually made of', () => {
+		expect(siteFromHost('a-b.c-d.example.com')).toBe('a-b.c-d.example.com');
 	});
 
 	it('answers null rather than an empty name for a host that is not one', () => {
@@ -83,7 +113,7 @@ describe('the resolution order, which follows from which layers can be absent', 
 			await resolveSite(at('https://customer-a.example/about?site=customer-b'), env, {
 				allowParam: false
 			})
-		).toEqual({ site: 'customer-a-example', from: 'host' });
+		).toEqual({ site: 'customer-a.example', from: 'host' });
 	});
 
 	it('still refuses it when every other layer is absent, rather than falling back to it', async () => {
@@ -126,7 +156,7 @@ describe('the resolution order, which follows from which layers can be absent', 
 	it('derives from the host when neither optional layer answers', async () => {
 		expect(
 			await resolveSite(at('https://example.com/about'), { CONFIG_KV: kvWith({}) })
-		).toEqual({ site: 'example-com', from: 'host' });
+		).toEqual({ site: 'example.com', from: 'host' });
 	});
 
 	it('falls back to the literal on a host that names no site', async () => {
@@ -142,7 +172,7 @@ describe('the resolution order, which follows from which layers can be absent', 
 		// var makes both unreachable on exactly the hosts they exist to configure
 		const derived = await resolveSite(at('https://example.com/'), undefined);
 		expect(derived.from).toBe('host');
-		expect(derived.site).toBe('example-com');
+		expect(derived.site).toBe('example.com');
 	});
 });
 
@@ -178,7 +208,7 @@ describe('a KV miss or outage must not take the site down', () => {
 
 	it('resolves with no bindings at all', async () => {
 		expect(await resolveSite(new URL('https://example.com/'), undefined)).toMatchObject({
-			site: 'example-com'
+			site: 'example.com'
 		});
 	});
 });

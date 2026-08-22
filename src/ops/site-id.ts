@@ -116,9 +116,33 @@ export function siteFromHost(host: string, protocol = 'https:'): string | null {
 
 	const isDefaultPort = port === '' || (protocol === 'https:' ? port === '443' : port === '80');
 	const identity = isDefaultPort ? hostname : `${hostname}:${port}`;
-	// anything outside [a-z0-9-] becomes a dash, so the id is readable in a log and in a DO name
-	const id = identity.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	const id = encodeSiteId(identity);
 	return id === '' ? null : id;
+}
+
+/**
+ * One host, one id, and no two hosts sharing one.
+ *
+ * `[^a-z0-9]+` collapsing to a dash made `a.b.example.com` and `a-b.example.com` the same id, and a
+ * site id IS the Durable Object's name -- so two unrelated hostnames pointed at one deployment
+ * shared one database. `.` and `-` are the ordinary furniture of a hostname and are now kept as
+ * themselves; anything else becomes `_<hex>`, which cannot be produced any other way because `_` is
+ * outside the kept set. That makes the mapping injective rather than merely tidier.
+ *
+ * Readable in a log, and safe everywhere it is used: a DO name takes any string, and the cache, KV,
+ * and R2 keys that carry it percent-encode their parts.
+ */
+export function encodeSiteId(identity: string): string {
+	let out = '';
+	for (const ch of identity) {
+		out += /[a-z0-9.-]/.test(ch)
+			? ch
+			: [...new TextEncoder().encode(ch)]
+					.map((b) => `_${b.toString(16).padStart(2, '0')}`)
+					.join('');
+	}
+	// a leading or trailing dot is not identity, and a bare one would name nothing
+	return out.replace(/^[.-]+|[.-]+$/g, '');
 }
 
 /** what a site resolution decided, and which layer decided it */

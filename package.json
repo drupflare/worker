@@ -64,6 +64,7 @@
 		"backup:verify": "bun scripts/backup-cdn.ts --verify",
 		"qa:core-freshness": "bun scripts/qa/core-freshness.ts",
 		"measure:index-audit": "bun scripts/measure/index-audit.ts",
+		"measure:mb-parity": "bun scripts/measure/mb-parity.ts",
 		"metrics": "bun scripts/measure/collect-metrics.ts",
 		"metrics:gate": "bun scripts/measure/metrics-gate.ts",
 		"docs:module-table": "bun scripts/module-table.ts",

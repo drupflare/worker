@@ -41,6 +41,10 @@ export type RenderResult = {
 	location?: string | null;
 	/** `Set-Cookie` lines, which is what makes a response uncacheable from the other direction */
 	setCookie?: string[];
+	/** who Drupal decided the render was for; anything but 0 must never reach the shared cache */
+	uid?: number | null;
+	/** Drupal's own `Cache-Control`; `no-store` or `private` is an explicit refusal to store */
+	cacheControl?: string | null;
 };
 
 /** one entry into the stubbed interpreter, read back out of the emitted PHP fragment */
@@ -50,6 +54,8 @@ export type RenderCall = {
 	destruct: string;
 	/** the `scheme://host[:port]` the fragment renders absolute URLs against */
 	origin: string;
+	/** what Drupal will see as `REMOTE_ADDR`, and therefore what flood control keys on */
+	clientIp: string;
 	code: string;
 };
 
@@ -368,15 +374,43 @@ export function decodeRenderCall(code: string): RenderCall {
 	// body, content type, cookie, origin -- do not land in the destruct field
 	const destruct = /=\s*cfw_serve\(\$path, ([^,)]*)/.exec(code)?.[1] ?? '';
 	const origin = /\$origin = json_decode\("\\"(.*?)\\""\)/.exec(code)?.[1] ?? '';
-	return { path, bins, destruct, origin, code };
+	// the last of the trailing request arguments, so it is read off the CALL rather than off the
+	// `$origin` assignment the origin above matches
+	const clientIp =
+		/cfw_serve\(\$path,[^;]*?,\s*json_decode\("\\"([^"\\]*)\\""\)\);/.exec(code)?.[1] ?? '';
+	return { path, bins, destruct, origin, clientIp, code };
 }
 
-/** one `/__serve` against the object, bypassing the Worker and its edge cache */
-export async function serveDirect(site: ServeDo, path: string, query = ''): Promise<ServeProbe> {
+/**
+ * One `/__serve` against the object, bypassing the Worker and its edge cache.
+ *
+ * `init` reaches the request the object sees, which is how a spec drives the two things the lane
+ * split reads off the request rather than the URL: a session cookie, and an `Accept` that makes the
+ * request a browser navigation.
+ */
+export async function serveDirect(
+	site: ServeDo,
+	path: string,
+	query = '',
+	init: RequestInit = {}
+): Promise<ServeProbe> {
 	const res = await site.fetch(
-		new Request(`https://do.local/__serve?path=${encodeURIComponent(path)}${query}`)
+		new Request(`https://do.local/__serve?path=${encodeURIComponent(path)}${query}`, init)
 	);
 	return probe(res);
+}
+
+/** a session-shaped cookie, matching what `hasSessionCookie()` recognises */
+export const SESSION_COOKIE = `SESS${'0123456789abcdef'.repeat(2)}`;
+
+/** the headers a logged-in browser sends */
+export function asBrowser(cookie?: string): RequestInit {
+	return {
+		headers: {
+			accept: 'text/html,application/xhtml+xml',
+			...(cookie === undefined ? {} : { cookie })
+		}
+	};
 }
 
 /** one `/serve` through the Worker, so the edge tier and the generation pointer are involved */

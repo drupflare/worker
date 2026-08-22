@@ -813,6 +813,110 @@ describe('the render origin is pinned, not believed', () => {
 	 * `do.local` -- so a pin would mean the first suite run against a persisted object fixed a real
 	 * site's canonical URL to a developer's laptop, permanently and invisibly.
 	 */
+	/**
+	 * WHO THE RENDER WAS FOR, which is a different question from what the request carried.
+	 *
+	 * Every other clause in the `cacheable` predicate reasons about the REQUEST. `uid` is Drupal's
+	 * own conclusion, and the fragment computing it already said why it exists -- a render that
+	 * comes back as the wrong user is not distinguishable from a correct one by its bytes. It was
+	 * transported to JavaScript and read by nobody, so the failure this project actually shipped,
+	 * uid 1 surviving inside the persistent interpreter with no cookie anywhere, was invisible to a
+	 * guard made on the cookie.
+	 */
+	it('refuses to store a render that came back as somebody', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), uid: 1 }));
+			await serveDirect(site, '/leaked');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/leaked')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(0);
+	});
+
+	/**
+	 * `page_cache_kill_switch` SAYS SO IN `Cache-Control`, and nothing read it.
+	 *
+	 * A module with a reason to opt one page out of caching has exactly this header to say it with.
+	 * The render captured `x-drupal-cache` and `x-drupal-dynamic-cache` and neither is the refusal;
+	 * the page was stored, promoted to KV, to the edge and to R2 regardless.
+	 */
+	it.each(['no-store', 'private, no-store', 'private'])(
+		'refuses to store a render Drupal marked %s',
+		async (header) => {
+			const stub = await provisionedSite();
+			const rows = await inObject(stub, async (site) => {
+				stubRender(site, ({ path }) => ({ ...pageFor(path), cacheControl: header }));
+				await serveDirect(site, '/killed');
+				return site.sql
+					.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/killed')
+					.toArray()[0];
+			});
+			expect(Number(rows?.c ?? -1)).toBe(0);
+		}
+	);
+
+	it('CONTROL: an ordinary public max-age is still stored', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({
+				...pageFor(path),
+				cacheControl: 'public, max-age=0, must-revalidate'
+			}));
+			await serveDirect(site, '/kept');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/kept')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(1);
+	});
+
+	it('CONTROL: an anonymous render of the same path IS stored', async () => {
+		const stub = await provisionedSite();
+		const rows = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => ({ ...pageFor(path), uid: 0 }));
+			await serveDirect(site, '/leaked');
+			return site.sql
+				.exec('SELECT COUNT(*) AS c FROM cfw_page WHERE path = ?', '/leaked')
+				.toArray()[0];
+		});
+		expect(Number(rows?.c ?? -1)).toBe(1);
+	});
+
+	/**
+	 * DRUPAL'S FLOOD CONTROL IDENTIFIES BY `getClientIp()`, and every render reported `127.0.0.1`.
+	 *
+	 * `user.flood.yml` ships `ip_limit: 50`, `ip_window: 3600`, and `UserLoginForm` checks
+	 * `user.failed_login_ip` -- so with one address for the whole site, fifty bad passwords locked
+	 * EVERY visitor out of `/user/login` for an hour, and per-IP throttling of contact forms and
+	 * password resets did nothing. `CF-Connecting-IP` is overwritten by Cloudflare at the edge, so
+	 * the object may read it directly.
+	 */
+	it('hands the visitor address to the render, so flood control is per-visitor', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { 'cf-connecting-ip': '203.0.113.7' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.clientIp).toBe('203.0.113.7');
+	});
+
+	it('CONTROL: emits no address when the request carried none', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(new Request('https://real.example/__serve?path=%2F'));
+			return calls;
+		});
+		expect(out[0]?.clientIp).toBe('');
+	});
+
 	it('uses a local origin without pinning it', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {

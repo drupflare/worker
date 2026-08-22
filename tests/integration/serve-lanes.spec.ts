@@ -1,12 +1,15 @@
 import { evictDurableObject } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { FIRST_RUN_KEY } from '../../src/ops/setup-page';
 import {
+	asBrowser,
 	inObject,
 	pageFor,
 	probe,
 	provisionedSite,
 	seedPage,
 	serveDirect,
+	SESSION_COOKIE,
 	statsOf,
 	stubRender,
 	tick
@@ -235,6 +238,145 @@ describe('a storage-lane HIT is answered while the PHP lane is occupied', () => 
 		// it waited for the render, so by the time it answered the gate was empty again; the
 		// gated lane reports no gate headers at all
 		expect(out.gated.gateActive).toBeNull();
+	});
+});
+
+/**
+ * WHAT THE LANE SPLIT MUST AGREE ABOUT.
+ *
+ * The fast lane is a second implementation of the gated lane's cache read, and every guard added to
+ * the gated lane since has to be added here too. Two were not, and both shipped:
+ *
+ *   - a session was answered from `cfw_page`, which holds an ANONYMOUS render. Only the WRITE side
+ *     enforced this -- `fillOne()` refuses to store a page rendered with a cookie and says so at
+ *     length -- so the invariant was true of storing and false of serving.
+ *   - an unclaimed site was answered from `cfw_page` too, and the pack prefills `/`, so the claim
+ *     page was unreachable on any object that had served one request.
+ *
+ * Measured on a dev server before the fix, same object and same instant: the fast lane returned
+ * `Welcome! | CFW Bench` where `lane=gate` returned `Set Up This Site`, and a logged-in admin asking
+ * for `/admin/reports/status` was handed the `Access denied` that the fill chain had rendered
+ * anonymously on their behalf.
+ *
+ * Each case below asserts the ANONYMOUS request too. Without it a lane that stopped answering
+ * anything at all would pass.
+ */
+describe('the two lanes agree about who may be answered from cfw_page', () => {
+	it('refuses the storage lane to a request carrying a session', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			site.metaSet(FIRST_RUN_KEY, '1');
+			seedPage(site, '/', '<title>anonymous</title>');
+			return {
+				anon: await serveDirect(site, '/', '&edge=0', asBrowser()),
+				auth: await serveDirect(site, '/', '&edge=0', asBrowser(`${SESSION_COOKIE}=x`))
+			};
+		});
+		// CONTROL: the lane is working, so the refusal below is a refusal and not a broken fixture
+		expect(out.anon.lane).toBe('storage');
+		expect(out.anon.cache).toBe('HIT');
+		expect(out.auth.cache).not.toBe('HIT');
+	});
+
+	it('refuses the gated lane too, so forcing the slow path is not a way round it', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			site.metaSet(FIRST_RUN_KEY, '1');
+			seedPage(site, '/', '<title>anonymous</title>');
+			return {
+				anon: await serveDirect(site, '/', '&edge=0&lane=gate', asBrowser()),
+				auth: await serveDirect(
+					site,
+					'/',
+					'&edge=0&lane=gate',
+					asBrowser(`${SESSION_COOKIE}=x`)
+				)
+			};
+		});
+		expect(out.anon.cache).toBe('HIT');
+		expect(out.auth.cache).not.toBe('HIT');
+	});
+
+	/**
+	 * A cookie that is not a session must still HIT, or the guard is a blanket refusal of every
+	 * browser that has ever been given a preference cookie.
+	 */
+	it('CONTROL: an ordinary cookie is not a session and still takes the fast lane', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			site.metaSet(FIRST_RUN_KEY, '1');
+			seedPage(site, '/', '<title>anonymous</title>');
+			return serveDirect(site, '/', '&edge=0', asBrowser('Drupal.toolbar.collapsed=1'));
+		});
+		expect(out.lane).toBe('storage');
+		expect(out.cache).toBe('HIT');
+	});
+
+	it('refuses the storage lane while the site is unclaimed, so the claim page wins', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			// the pack prefills the front page, which is what made this reachable
+			seedPage(site, '/', '<title>Welcome</title>');
+			const unclaimed = await serveDirect(site, '/', '&edge=0', asBrowser());
+			site.metaSet(FIRST_RUN_KEY, '1');
+			return { unclaimed, claimed: await serveDirect(site, '/', '&edge=0', asBrowser()) };
+		});
+		expect(out.unclaimed.cache).not.toBe('HIT');
+		// CONTROL: claiming it is the only thing that changed, and the lane comes back
+		expect(out.claimed.lane).toBe('storage');
+		expect(out.claimed.cache).toBe('HIT');
+	});
+
+	/**
+	 * The claim page is an HTML navigation only, so an asset fetch and a `curl` must not be diverted
+	 * -- turning an unclaimed site into a site-wide block is what `needsSetup()` exists to avoid.
+	 */
+	it('CONTROL: a non-browser request to an unclaimed site still takes the fast lane', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			seedPage(site, '/', '<title>Welcome</title>');
+			return serveDirect(site, '/', '&edge=0');
+		});
+		expect(out.lane).toBe('storage');
+		expect(out.cache).toBe('HIT');
+	});
+});
+
+/**
+ * A path only a session asked for is not a path the public asked for.
+ *
+ * The queue is a warmer for anonymous pages, and an authenticated MISS used to be queued like any
+ * other. The chain then rendered it with NO session, so an admin walking their own admin UI filled
+ * `cfw_page` with Drupal's 403 for every path they touched -- and, before the read guard above,
+ * was served those 403s back. Measured: `/admin/reports/status` answered `Access denied` to the
+ * account that had just been told it was `within allowance`.
+ */
+describe('an authenticated MISS does not queue a fill', () => {
+	it('queues nothing for a session, and still queues for everyone else', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			await serveDirect(site, '/');
+			site.metaSet(FIRST_RUN_KEY, '1');
+			// a delta, because the request that created the tables queued itself
+			const base = site.queueDepth();
+			await serveDirect(
+				site,
+				'/private',
+				'&edge=0&inline=0',
+				asBrowser(`${SESSION_COOKIE}=x`)
+			);
+			const afterAuth = site.queueDepth();
+			await serveDirect(site, '/public', '&edge=0&inline=0', asBrowser());
+			return { base, afterAuth, afterAnon: site.queueDepth() };
+		});
+		expect(out.afterAuth).toBe(out.base);
+		// CONTROL: the queue works; the line above is a refusal, not an empty table
+		expect(out.afterAnon).toBe(out.base + 1);
 	});
 });
 

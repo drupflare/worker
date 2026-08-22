@@ -428,7 +428,7 @@ class PhpWasmSyncFiber {
  */
 const PW_SERVE_INLINE = String.raw`
 if (!function_exists('cfw_serve')) { eval('
-function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "") {
+function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "", $clientIp = "") {
   $kernel = $GLOBALS["__pw_kernel"];
 
   // PHP\x27S HEADER LIST OUTLIVES THE REQUEST ON A PERSISTENT INTERPRETER, and session_start()
@@ -453,6 +453,9 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   if ($contentType !== "") { $server["CONTENT_TYPE"] = $contentType; }
   if ($body !== "") { $server["CONTENT_LENGTH"] = (string) strlen($body); }
   if ($cookieHeader !== "") { $server["HTTP_COOKIE"] = $cookieHeader; }
+  // ON THE REQUEST BAG, not just \$_SERVER: flood control reads \$request->getClientIp(), and
+  // Request::create() builds its own bag, so an assignment afterwards is invisible to it
+  if ($clientIp !== "") { $server["REMOTE_ADDR"] = $clientIp; }
 
   // THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
   // so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
@@ -483,6 +486,7 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   $_SERVER["SERVER_PORT"] = (string) $request->getPort();
   if ($request->isSecure()) { $_SERVER["HTTPS"] = "on"; } else { unset($_SERVER["HTTPS"]); }
   $_SERVER["REQUEST_METHOD"] = $method;
+  if ($clientIp !== "") { $_SERVER["REMOTE_ADDR"] = $clientIp; }
   // EVERY input superglobal, not just $_POST. When a CSRF token fails, FormBuilder empties the
   // request and calls $request->overrideGlobals() to make the globals agree
   // (FormBuilder.php:1024-1030); on a real SAPI those globals die with the process and here they
@@ -1152,6 +1156,16 @@ export interface RenderRequest {
 	 * named that wall before this existed.
 	 */
 	cookie?: string;
+	/**
+	 * the visitor's address, from `CF-Connecting-IP`.
+	 *
+	 * Drupal's flood control identifies by `getClientIp()`, and every render used to report
+	 * `127.0.0.1` -- so `user.failed_login_ip` (limit 50, window 3600) was ONE bucket for the whole
+	 * site: fifty bad passwords locked every visitor out of `/user/login` for an hour, and per-IP
+	 * throttling of contact forms and password resets did nothing. Cloudflare overwrites this header
+	 * at the edge, so it is trustworthy there and is whatever the client sent under `wrangler dev`.
+	 */
+	clientIp?: string;
 }
 
 export function renderPage(
@@ -1183,14 +1197,16 @@ export function renderPage(
 	// an ANONYMOUS GET with no origin still emits nothing extra, so every pre-existing caller's
 	// source is byte-identical; a cookie is enough on its own to need the argument list, because an
 	// authenticated GET is exactly the case this exists for
+	const clientIp = String(request.clientIp ?? '');
 	const requestArgs =
-		method === 'GET' && !request.body && !request.cookie && origin === ''
+		method === 'GET' && !request.body && !request.cookie && origin === '' && clientIp === ''
 			? ''
 			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(origin))})`;
+				`, json_decode(${JSON.stringify(JSON.stringify(origin))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})`;
 
 	return String.raw`<?php
 ${FIBER_SHIM}
@@ -1283,6 +1299,9 @@ try {
   $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
   $out['contentType'] = $response->headers->get('content-type');
   $out['location'] = $response->headers->get('location');
+  // what Drupal said about storing this, which page_cache_kill_switch and any module with a
+  // reason to opt out both express here and nowhere else
+  $out['cacheControl'] = $response->headers->get('cache-control');
   // BOTH SOURCES, because Drupal sets a session cookie through neither one consistently:
   // a logout or a Symfony-managed cookie lands on the Response, while session_start() emits its
   // own Set-Cookie into PHP's header list, which the Response never sees. Reading one of them

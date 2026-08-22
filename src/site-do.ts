@@ -101,11 +101,11 @@ import {
 } from './drupal/site-php';
 import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
 import {
-	AUTH_REQUEST_HEADER,
 	DAILY_DO_QUOTA,
 	DAILY_ROWS_QUOTA,
 	authAllowance,
 	authSpendHeaders,
+	hasSessionCookie,
 	secondsUntilUtcReset,
 	spendForToday,
 	type AuthSpend
@@ -239,6 +239,19 @@ export const CFW_HEADER_VERSION = '1';
 const RENDER_BYTES_SAMPLES = 8;
 const RENDER_BYTES_MIN_SAMPLES = 3;
 const RENDER_BYTES_PATHS = 200;
+
+/**
+ * How many paths may wait for a fill.
+ *
+ * A MISS on any distinct path queued one, with nothing bounding the table -- so an anonymous visitor
+ * asking for `/a1`, `/a2`, ... grew it forever, and the chain rendered every one at ~13 rows against
+ * the daily allowance. The cap is generous next to a real site's cold set and small next to the
+ * quota: past it a MISS is still answered, it just is not promised a fill.
+ */
+const FILL_QUEUE_MAX = 500;
+
+/** the `cfw_meta` key holding which site this object is; see {@link SitePhpDurableObject.siteName} */
+const SITE_NAME_KEY = 'site_name';
 
 /** the two globals `src/runtime/worker-shim.ts` installs; it reaches them through the same cast */
 const shimGlobals = globalThis as unknown as {
@@ -2507,6 +2520,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * Which site this object is, pinned the way the origin is.
+	 *
+	 * The object had no notion of its own identity at all, so `drainPageMirrors()` could not be
+	 * given one and fell back to the literal `'site'`. On a deployment serving several sites with
+	 * one bound bucket, every object wrote `p/site/<gen>/index.html` and the last one to drain won.
+	 */
+	siteName(observed?: string | null): string {
+		const pinned = this.metaGet(SITE_NAME_KEY);
+		if (pinned !== null && pinned !== '') return pinned;
+		const seen = (observed ?? '').trim();
+		if (seen === '') return 'site';
+		this.metaSet(SITE_NAME_KEY, seen);
+		return seen;
+	}
+
+	/**
 	 * The site generation: one integer that every edge cache key carries.
 	 *
 	 * Drupal's cache tags cannot purge a URL-keyed edge cache -- tag purge is an
@@ -2835,12 +2864,27 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// next fill cannot clear. Found on Drupal's own asset controller, which 301s an aggregate
 		// whose hash does not match. The `page` branch below carries `location` through to
 		// `/__serve`, so refusing storage is also what makes the redirect WORK.
+		// AND THE RENDER'S OWN ANSWER TO "WHO WAS THIS FOR". Every clause above reasons about the
+		// REQUEST; `uid` is what Drupal concluded, and the fragment that computes it already says why
+		// -- a render that comes back as the wrong user is not distinguishable from a correct one by
+		// its bytes. It was transported and read by nobody, so the one failure this project actually
+		// shipped, uid 1 surviving inside the persistent interpreter with no cookie in sight, was
+		// invisible to a check made on the cookie.
 		const setCookie = Array.isArray(result.setCookie) ? (result.setCookie as string[]) : [];
 		const status = Number(result.status ?? 200);
+		const renderedFor =
+			result.uid === null || result.uid === undefined ? 0 : Number(result.uid);
+		// and what Drupal ASKED FOR: `page_cache_kill_switch` and every module with a reason to
+		// opt out say so here, and nothing read it, so an explicitly uncacheable page was stored
+		const refused = /(^|,)\s*(no-store|private)\s*(,|$)/i.test(
+			String(result.cacheControl ?? '')
+		);
 		const cacheable =
 			(request.method ?? 'GET').toUpperCase() === 'GET' &&
 			!request.cookie &&
 			setCookie.length === 0 &&
+			renderedFor === 0 &&
+			!refused &&
 			status < 500 &&
 			!(status >= 300 && status < 400);
 		if (cacheable) {
@@ -2868,7 +2912,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// Queued on FILL rather than on request, so the queue depth tracks regeneration and not
 		// traffic. Only when a bucket is bound: with none, this table would grow forever behind a
 		// drain that can never run, and no bucket is the free-tier default rather than an error.
-		if (this.mirrorBucket()) {
+		//
+		// and only when the page was STORED: the drain re-reads `cfw_page`, so queuing a refused
+		// render publishes the previous bytes under the new generation key
+		if (cacheable && this.mirrorBucket()) {
 			queuePageMirror(this.sql, path, this.generation(), this.nowMs());
 		}
 
@@ -3855,7 +3902,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (bucket) {
 			try {
 				const drained = await drainMirrors(this.sql, bucket, {
-					limit: mirrorLimit(this.env)
+					limit: mirrorLimit(this.env),
+					site: this.siteName()
 				});
 				if (drained.mirrored + drained.deleted + drained.refused > 0) {
 					this.lastMirrorDrain = drained;
@@ -3888,7 +3936,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 								status: Number(r.status),
 								contentType: String(r.content_type)
 							}))[0] ?? null,
-					{ limit: mirrorLimit(this.env), hits: this.pageHits }
+					{ limit: mirrorLimit(this.env), hits: this.pageHits, site: this.siteName() }
 				);
 				if (pages.mirrored + pages.failed + pages.refused > 0) {
 					this.lastPageMirrorDrain = pages;
@@ -4024,6 +4072,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			url.searchParams.get('lane') !== 'gate' &&
 			// condition 1: no DDL from this lane, so it only runs once the tables exist
 			this.serveTablesReady === true &&
+			// the row is an ANONYMOUS render; `fillOne()` refuses to store one for a session and
+			// nothing refused to serve one
+			!hasSessionCookie(request.headers.get('cookie')) &&
 			// A RESTORE WRITES THIS CURSOR TOO. The gated lane has always refused a
 			// half-migrated site, but this lane answers before the gate and never looked, so a
 			// warm site returned 200 from `cfw_page` while a rollback was overwriting the
@@ -4031,7 +4082,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// pack ships no pages and `serveTablesReady` is false, which is why the migration
 			// specs never saw it. One indexed read of a single row, no DDL and no await, so all
 			// three fast-lane conditions still hold.
-			this.migratePartial() === null
+			this.migratePartial() === null &&
+			// the claim page is the gated lane's decision, and the pack prefills `/`, so answering
+			// here made it unreachable
+			!needsSetup(request, this.metaGet(FIRST_RUN_KEY) !== null)
 		) {
 			const fast = this.serveFromStorage(url);
 			if (fast) return fast;
@@ -4123,6 +4177,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	override async handle(request: Request, url: URL): Promise<Response> {
 		await this.adoptSettings();
+		// learned once, from the name the front worker RESOLVED; the alarm chain has no request to
+		// read it from, which is exactly where the R2 mirror needs it
+		this.siteName(url.searchParams.get('site'));
 		this.invalidateOnCoreUpgrade();
 		{
 			switch (url.pathname) {
@@ -4557,13 +4614,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							url.searchParams.get('state') ?? '',
 							this.nowMs()
 						);
-						// consumed whatever the outcome, so a code cannot be replayed against it
-						this.metaSet(CF_OAUTH_PENDING_KEY, '');
+						// consumed only on a MATCH: this route is public and takes no credential, so
+						// clearing on every inbound request let anyone cancel an owner's connect
+						// mid-flight with `GET /setup/cf/callback?state=x`, one `cfw_meta` write each
 						if (!check.ok)
 							return Response.json(
 								{ ok: false, error: check.reason },
 								{ status: 400 }
 							);
+						// still before the exchange, so a code cannot be replayed against it
+						this.metaSet(CF_OAUTH_PENDING_KEY, '');
 						const code = url.searchParams.get('code') ?? '';
 						if (!code || !clientId) {
 							return Response.json(
@@ -4646,6 +4706,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				case '/__export': {
 					const options = {
 						limitPerTable: Number(url.searchParams.get('limit') ?? 0),
+						// asked for by name, and NOT implied by `all=1`: that flag widens which
+						// TABLES carry rows, and rolling the credentials into it would mean the
+						// byte-exact copy a restore wants is also the one nobody may store
+						...(url.searchParams.get('secrets') === '1' ? { secrets: true } : {}),
 						...(url.searchParams.get('all') === '1' ? { includeRows: () => true } : {}),
 						...(url.searchParams.get('chunkChars')
 							? { maxCharsPerChunk: Number(url.searchParams.get('chunkChars')) }
@@ -4888,7 +4952,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// assumed.
 					const bucket = this.mirrorBucket();
 					const limit = Number(url.searchParams.get('limit') ?? mirrorLimit(this.env));
-					const drained = await drainMirrors(this.sql, bucket, { limit });
+					const drained = await drainMirrors(this.sql, bucket, {
+						limit,
+						site: this.siteName()
+					});
 					return Response.json({
 						ok: true,
 						...drained,
@@ -5505,7 +5572,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// submission silently does nothing -- no validation, no mail, no content. Found
 					// by the e2e mail lane: `/user/password` ships in `prefill.json`, so it is
 					// pre-cached on every site and every password reset was swallowed.
-					const cacheable = request.method === 'GET' || request.method === 'HEAD';
+					//
+					// and neither is a session: same row, same reason, and `fillOne()` already
+					// refuses to STORE one, so only the write half of this was ever enforced
+					const authenticated = hasSessionCookie(request.headers.get('cookie'));
+					const cacheable =
+						(request.method === 'GET' || request.method === 'HEAD') && !authenticated;
 					const hit = cacheable
 						? this.sql
 								.exec<PageRow>(
@@ -5523,15 +5595,27 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						});
 					}
 
-					// Queued BEFORE the inline attempt, unconditionally. The alarm chain is
-					// the safety net for a render this invocation cannot finish -- the free
-					// tier kills it at 10 ms of CPU, and the caller can walk away -- and a
-					// successful fill deletes the row again.
-					this.sql.exec(
-						'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
-						path,
-						this.nowMs()
-					);
+					// Queued BEFORE the inline attempt. The alarm chain is the safety net for a
+					// render this invocation cannot finish -- the free tier kills it at 10 ms of
+					// CPU, and the caller can walk away -- and a successful fill deletes the row
+					// again.
+					//
+					// never for a session: the chain renders anonymously, so an admin's path filled
+					// `cfw_page` with Drupal's 403 and published it as the public page
+					//
+					// `degraded.queue` is the 80% rung, and it had NO READER -- so the reduced band
+					// between 80% and 95% stopped nothing, and each queued path costs ~13 rows on the
+					// meter that put the site there. `FILL_QUEUE_MAX` bounds the table itself: an
+					// anonymous visitor asking for distinct paths grew it without limit
+					const queueable =
+						!authenticated && degraded.queue && this.queueDepth() < FILL_QUEUE_MAX;
+					if (queueable) {
+						this.sql.exec(
+							'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
+							path,
+							this.nowMs()
+						);
+					}
 					// A pending alarm is not good enough: once the queue drains, alarm()
 					// re-arms 240 s out for keep-warm, so a later MISS would sit behind it
 					// for up to four minutes. Found by the integration test, which watched
@@ -5566,29 +5650,37 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					if (!degraded.render) {
 						return readOnlyResponse(secondsUntilUtcReset(Date.now()), degraded);
 					}
-					const mayBoot = planProfile(this.env).bootInline;
+					// `bootInline: false` defers an anonymous GET to the chain, which is a wait. The
+					// chain can render neither of these, so for them the same refusal is a dead end
+					const submission = request.method !== 'GET' && request.method !== 'HEAD';
+					const unfillable = submission || authenticated;
+					const mayBoot = planProfile(this.env).bootInline || unfillable;
 					const coldBoot = !this.php && mayBoot;
 					let inline = '0';
 					if (budgetMs <= 0 || url.searchParams.get('inline') === '0') {
+						// an explicit lever is honoured even here; it is how a test forces a MISS
 						inline = 'off';
 					} else if (!this.php && !mayBoot) {
 						inline = 'cold';
-					} else if (estimateMs > budgetMs) {
+					} else if (estimateMs > budgetMs && !unfillable) {
+						// diverting to the chain is the same dead end the boot gate just declined
 						inline = 'over-budget';
 					} else {
 						// charge the authenticated allowance, and only here. A render is the thing
 						// that costs -- a cache HIT above returned already, and an authenticated
-						// request can never be served from `cfw_page` because that copy is
-						// per-site, not per-user. So this is the one point where a logged-in
-						// visitor actually spends the reserved budget.
+						// request is refused `cfw_page` a few lines up. So this is the one point
+						// where a logged-in visitor actually spends the reserved budget.
 						//
 						// Without this the counter had NO WRITER: `authAllowance()` enforced
 						// against a spend that never incremented, so the allowance permitted
 						// everything and the surface looked live while doing nothing.
 						//
+						// charged on the COOKIE, not on `x-cfw-auth`: that header rides in on a
+						// request a client composed, so anyone could spend an operator's allowance
+						//
 						// One `ctx.storage.put`, inside the ~13 rows a real render already writes,
 						// so the accounting does not meaningfully change what it accounts for.
-						if (request.headers.get(AUTH_REQUEST_HEADER) === '1') {
+						if (authenticated) {
 							const stored = await this.ctx.storage.get<AuthSpend>('authSpend');
 							// spendForToday() discards a record from another UTC day rather than
 							// carrying it, which is what makes the budget daily rather than forever
@@ -5607,13 +5699,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// pinned on the way past, so every render after the first agrees on the
 						// host even if a later request arrives carrying a forged one
 						const origin = this.canonicalOrigin(url.origin);
+						// Drupal's flood control keys on this; without it the whole site shares one
+						// bucket and 50 bad passwords lock everyone out of /user/login for an hour
+						const clientIp = request.headers.get('cf-connecting-ip') ?? '';
 						const inbound: RenderRequest =
 							request.method === 'GET' || request.method === 'HEAD'
 								? cookie
-									? { origin, cookie }
-									: { origin }
+									? { origin, cookie, clientIp }
+									: { origin, clientIp }
 								: {
 										origin,
+										clientIp,
 										method: request.method,
 										// decoded from bytes rather than `.text()`, which workerd
 										// warns may corrupt a non-text content type -- a form field

@@ -486,9 +486,26 @@ describe('what may leave the object, and what may never', () => {
 	it('keeps the scheme in the R2 key, so two schemes cannot collide', () => {
 		// stripping it would map public://a and private://a onto one object, which is the exact
 		// failure this module is arranged to prevent
-		expect(mirrorKey('public://a.png')).toBe('public/a.png');
-		expect(mirrorKey('private://a.png')).toBe('private/a.png');
+		expect(mirrorKey('public://a.png')).toBe('f/site/public/a.png');
+		expect(mirrorKey('private://a.png')).toBe('f/site/private/a.png');
 		expect(mirrorKey('nonsense')).toBeNull();
+	});
+
+	/**
+	 * ONE DEPLOYMENT CAN SERVE MANY OBJECTS INTO ONE BUCKET, and this key had no site component at
+	 * all: `public://logo.png` was `public/logo.png` for every one of them, so site B's upload
+	 * overwrote site A's in the public mirror.
+	 */
+	it('scopes the key to the site, so two sites cannot overwrite each other', () => {
+		expect(mirrorKey('public://logo.png', 'alpha')).toBe('f/alpha/public/logo.png');
+		expect(mirrorKey('public://logo.png', 'beta')).toBe('f/beta/public/logo.png');
+		expect(mirrorKey('public://logo.png', 'alpha')).not.toBe(
+			mirrorKey('public://logo.png', 'beta')
+		);
+	});
+
+	it('encodes a site name that would otherwise add a path segment', () => {
+		expect(mirrorKey('public://a.png', 'a/b')).toBe('f/a%2Fb/public/a.png');
 	});
 
 	it('never QUEUES a private file in the first place', async () => {
@@ -573,7 +590,7 @@ describe('draining the queue to R2', () => {
 				mirrored: statFile(site.sql, 'public://a.bin')?.mirrored
 			};
 		});
-		expect(bucket.puts).toEqual(['public/a.bin:300']);
+		expect(bucket.puts).toEqual(['f/site/public/a.bin:300']);
 		expect(out.drained.mirrored).toBe(1);
 		expect(out.queued).toBe(0);
 		expect(out.mirrored).toBe(true);
@@ -586,7 +603,7 @@ describe('draining the queue to R2', () => {
 			putFile(site.sql, 'public://big.bin', bytes(FILE_CHUNK_BYTES + 1234), { nowMs: 1 });
 			await drainMirrors(site.sql, bucket);
 		});
-		expect(bucket.puts).toEqual([`public/big.bin:${FILE_CHUNK_BYTES + 1234}`]);
+		expect(bucket.puts).toEqual([`f/site/public/big.bin:${FILE_CHUNK_BYTES + 1234}`]);
 	});
 
 	it('removes the object for a queued delete', async () => {
@@ -597,7 +614,7 @@ describe('draining the queue to R2', () => {
 			deleteFile(site.sql, 'public://gone.bin', 2);
 			return drainMirrors(site.sql, bucket);
 		});
-		expect(bucket.deletes).toEqual(['public/gone.bin']);
+		expect(bucket.deletes).toEqual(['f/site/public/gone.bin']);
 		expect(out.deleted).toBe(1);
 	});
 
@@ -653,13 +670,13 @@ describe('draining the queue to R2', () => {
 	});
 
 	it('does not let one failure stop the rest of the pass', async () => {
-		const bucket = fakeBucket((key) => key === 'public/bad.bin');
+		const bucket = fakeBucket((key) => key === 'f/site/public/bad.bin');
 		const out = await inObject(freshSite(), async (site) => {
 			putFile(site.sql, 'public://bad.bin', bytes(16), { nowMs: 1 });
 			putFile(site.sql, 'public://good.bin', bytes(16), { nowMs: 2 });
 			return drainMirrors(site.sql, bucket);
 		});
-		expect(bucket.puts).toEqual(['public/good.bin:16']);
+		expect(bucket.puts).toEqual(['f/site/public/good.bin:16']);
 		expect(out.mirrored).toBe(1);
 		expect(out.failed).toBe(1);
 	});
@@ -737,7 +754,7 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 		await inObject(stub, (site) => site.ctx.storage.setAlarm(Date.now() - 1));
 		await driveAlarms(stub, (site) => pendingMirrors(site.sql).length === 0, 6);
 
-		expect(puts).toEqual(['public/alarm.bin:48']);
+		expect(puts).toEqual(['f/site/public/alarm.bin:48']);
 	});
 
 	it('does not disturb a site with no bucket bound', async () => {

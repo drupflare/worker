@@ -533,10 +533,12 @@ export type MirrorDrain = {
  * between an access-controlled file and a public one is the failure this whole module is arranged
  * to prevent. Costs seven characters.
  */
-export function mirrorKey(uri: string): string | null {
+export function mirrorKey(uri: string, site = 'site'): string | null {
 	const key = normaliseUri(uri);
 	if (key === null) return null;
-	return key.replace('://', '/');
+	// SITE-SCOPED, because one deployment can serve many objects into one bucket and this key had
+	// no site component at all: `public://logo.png` was `public/logo.png` for every one of them
+	return `f/${encodeURIComponent(site)}/${key.replace('://', '/')}`;
 }
 
 /**
@@ -558,7 +560,7 @@ export function mirrorKey(uri: string): string | null {
 export async function drainMirrors(
 	sql: FileSql,
 	bucket: MirrorBucket | null | undefined,
-	opts: { limit?: number } = {}
+	opts: { limit?: number; site?: string } = {}
 ): Promise<MirrorDrain> {
 	const out: MirrorDrain = {
 		mirrored: 0,
@@ -572,7 +574,7 @@ export async function drainMirrors(
 	if (!bucket) return { ...out, noBucket: true };
 
 	for (const task of pendingMirrors(sql, opts.limit ?? 10)) {
-		const key = mirrorKey(task.uri);
+		const key = mirrorKey(task.uri, opts.site ?? 'site');
 		if (key === null || !isMirrorable(task.uri)) {
 			// dropped rather than left to be re-read every pass: it can never become sendable,
 			// so holding it would make the queue permanently non-empty and starve real work

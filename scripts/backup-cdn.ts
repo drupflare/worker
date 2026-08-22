@@ -29,6 +29,41 @@ import { dirname, join, resolve } from 'node:path';
 export const BUCKET = 'drupflare-cdn';
 export const ORIGIN = 'https://drupflare-cdn.gmitch215.dev';
 
+/**
+ * The same bucket under a second name, tried when the first is unreachable.
+ *
+ * Not a different store and not a different manifest -- every key, size and hash is identical, so a
+ * fetch that falls through here is still verified against `cdn-manifest.json`. It exists because
+ * some networks blocklist the whole `.dev` TLD, which surfaces as
+ * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy.
+ * `ORIGIN` stays the documented one.
+ */
+export const ORIGIN_FALLBACK = 'https://drupflare-cdn.gmitch215.xyz';
+
+/** the origins to try, in order */
+export const ORIGINS = [ORIGIN, ORIGIN_FALLBACK];
+
+/**
+ * Fetches one key, trying each origin in turn.
+ *
+ * Returns the first response that arrives at all, including a 404 -- a reachable origin answering
+ * "no such key" is an answer, and retrying it elsewhere would mask a real manifest drift. Only a
+ * transport failure moves to the next.
+ */
+export async function fetchFromCdn(key: string, init?: RequestInit): Promise<Response> {
+	let last: unknown;
+	for (const origin of ORIGINS) {
+		try {
+			return await fetch(`${origin}/${key}`, init);
+		} catch (cause) {
+			last = cause;
+		}
+	}
+	throw new Error(
+		`no CDN origin answered for ${key}: ${last instanceof Error ? last.message : String(last)}`
+	);
+}
+
 /** where the committed manifest lives, repo-relative */
 export const MANIFEST_PATH = 'cdn-manifest.json';
 

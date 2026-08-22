@@ -6,10 +6,13 @@ import {
 	ARCHIVED,
 	BUCKET,
 	driftBetween,
+	fetchFromCdn,
 	MANIFEST_PATH,
 	manifestFromDisk,
 	mirrorProblems,
 	ORIGIN,
+	ORIGIN_FALLBACK,
+	ORIGINS,
 	verdictFor,
 	type CdnEntry,
 	type CdnManifest
@@ -182,5 +185,69 @@ describe('what the backup is allowed to contain', () => {
 
 	it('agrees with the archive list the script carries', () => {
 		expect(committed.archived.map((e) => e.key)).toEqual(ARCHIVED.map((e) => e.key));
+	});
+});
+
+/**
+ * THE SAME BUCKET UNDER A SECOND NAME.
+ *
+ * Some networks blocklist the whole `.dev` TLD, and it surfaces as
+ * `UNABLE_TO_VERIFY_LEAF_SIGNATURE` rather than as anything that reads like a DNS policy -- so a
+ * restore or a verify fails in a way that looks like the bucket is wrong. The mirror is tried only
+ * on a TRANSPORT failure: a reachable origin answering 404 is an answer, and retrying it elsewhere
+ * would hide real manifest drift.
+ */
+describe('the CDN mirror, tried when the documented origin cannot be reached', () => {
+	it('keeps the documented origin first', () => {
+		expect(ORIGINS[0]).toBe(ORIGIN);
+		expect(ORIGIN).toContain('.dev');
+		expect(ORIGIN_FALLBACK).toContain('.xyz');
+	});
+
+	it('falls through to the mirror when the first origin throws', async () => {
+		const tried: string[] = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const url = String(input);
+			tried.push(url);
+			if (url.startsWith(ORIGIN)) throw new Error('UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+			return new Response('ok', { status: 200 });
+		}) as typeof fetch;
+		try {
+			const res = await fetchFromCdn('some/key');
+			expect(res.status).toBe(200);
+		} finally {
+			globalThis.fetch = original;
+		}
+		expect(tried).toHaveLength(2);
+		expect(tried[1]?.startsWith(ORIGIN_FALLBACK)).toBe(true);
+	});
+
+	/** a 404 is an ANSWER; retrying it on the mirror would mask a manifest that has drifted */
+	it('does NOT retry a reachable origin that answered', async () => {
+		const tried: string[] = [];
+		const original = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			tried.push(String(input));
+			return new Response('no', { status: 404 });
+		}) as typeof fetch;
+		try {
+			expect((await fetchFromCdn('missing/key')).status).toBe(404);
+		} finally {
+			globalThis.fetch = original;
+		}
+		expect(tried).toHaveLength(1);
+	});
+
+	it('names the failure when no origin answers at all', async () => {
+		const original = globalThis.fetch;
+		globalThis.fetch = (async () => {
+			throw new Error('offline');
+		}) as unknown as typeof fetch;
+		try {
+			await expect(fetchFromCdn('k')).rejects.toThrow(/no CDN origin answered/);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 });

@@ -28,7 +28,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
 	ARCHIVED,
 	MANIFEST_PATH,
-	ORIGIN,
+	fetchFromCdn,
 	type ArchivedEntry,
 	type CdnManifest
 } from './backup-cdn';
@@ -56,7 +56,7 @@ function current(path: string, sha256: string, bytes: number): boolean {
 }
 
 async function restore(entry: ArchivedEntry, target: string): Promise<void> {
-	const res = await fetch(`${ORIGIN}/${entry.key}`, {
+	const res = await fetchFromCdn(entry.key, {
 		headers: { 'accept-encoding': 'identity' }
 	});
 	if (!res.ok) throw new Error(`${entry.key}: HTTP ${res.status}`);

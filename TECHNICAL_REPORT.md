@@ -188,6 +188,17 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     linear memory plateaus at 110.6 MiB against a 128 MB cap. argon2id's default arena is 64 MiB, and
     wasm64 grows `Bucket` by 33% and `zend_string` by 60%. Neither is blocked by bytes, by a vendor,
     or by the platform. Bringing the heap to ~90 MB unblocks both at once.
+11. **Eight items opened 2026-08-21 from an external review, tracked as P27-P34 in project memory.**
+    The three worth naming here: an **authenticated workload matrix**, which is the input items 3 and
+    8 are both already waiting on and which nothing has measured; **64-bit `zend_long` on 32-bit
+    pointers**, which could retire the 2038 warning and most of item 10's wasm64 track cheaply, since
+    `zval` measured 16 bytes on both targets and alignment is already paying for the slot; and
+    **removing `AUTOINCREMENT` from the 17 `sqlite_sequence` writers**, which charges two rows per
+    insert against the meter that binds regeneration. The same review found one platform fact that
+    invalidated a closed decision -- **Cloudflare Queues went free on 2026-02-04**, so "paid-only" is
+    no longer a reason. The arithmetic still has to be redone before anything is built on it: at ~3
+    operations per message, 10,000/day is ~3,333 messages, which is a third meter of the same order
+    rather than relief.
 
 ---
 

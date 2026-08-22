@@ -38,11 +38,15 @@ const STATIC_TREE = 'assets/core/misc/drupal.js';
  * The specs that need a BUILD ARTIFACT: the interpreter, the pack, the migration chunks, or the
  * browser-fetchable core tree.
  *
- * Measured from CI rather than guessed, twice. With the interpreter stubbed, 11 files fail on the
- * stub's own "no PHP interpreter in this lane" error. With the interpreter RESTORED but no pack, 15
- * fail -- the same 11 plus four that mount the tree or replay a migration, on
- * `per-file pack not reachable: core.pf.json 404` and `dump contains no statements`. The wider list
- * is the one that matters, because the pack is the artifact a clean checkout cannot obtain at all.
+ * Measured from CI rather than guessed, and the list only ever grows by being MEASURED. Two errors
+ * put a file here: the interpreter stub's "no PHP interpreter in this lane", and
+ * `per-file pack not reachable: core.pf.json 404` / `dump contains no statements` once the
+ * interpreter is restored but the pack is not. The pack is the wider and the binding case, because
+ * it is the artifact a clean checkout cannot obtain at all.
+ *
+ * **No count in this sentence, deliberately.** It has said 15 while the list held 17 and 19, and
+ * CLAUDE.md records that drift twice over. The skip message below reads `ARTIFACT_SPECS.length`, so
+ * the lane reports the real number every run.
  *
  * A new spec that needs an artifact and is not listed here fails with one of those named errors,
  * which is the intended way to find out -- an exclusion list that silently grew would be worse.
@@ -53,6 +57,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/cron-wire.spec.ts',
 	'tests/integration/crud-journey.spec.ts',
 	'tests/integration/csrf.spec.ts',
+	'tests/integration/degrade-serve.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/firstrun.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
@@ -61,7 +66,13 @@ const ARTIFACT_SPECS = [
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
 	'tests/integration/render-origin.spec.ts',
+	// these three joined the list on 2026-08-22 rather than being written into it: the serving-lane
+	// work made a non-GET and a session-carrying request fall THROUGH to the gated lane instead of
+	// being answered from cfw_page, so eight assertions that used to stop at the cache now end in a
+	// real render. The behaviour is the C77 fix working; needing the pack is the consequence
+	'tests/integration/serve-chain.spec.ts',
 	'tests/integration/serve-invalidation.spec.ts',
+	'tests/integration/serve-lanes.spec.ts',
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
 	'tests/integration/static-sweep.spec.ts',

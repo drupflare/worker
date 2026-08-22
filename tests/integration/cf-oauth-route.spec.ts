@@ -78,13 +78,31 @@ describe('the /__cfoauth route', () => {
 
 	/**
 	 * A pending record is single-use, so a leaked `state` cannot be replayed.
+	 *
+	 * SINGLE-USE MEANS CONSUMED ON A MATCH, which is not what this used to assert. It consumed the
+	 * record on EVERY callback, and the stated reason -- anti-replay -- does not need that: a replay
+	 * presents the leaked state, so it matches, so it is consumed either way. What consuming on a
+	 * MISMATCH added was a way for anyone to cancel an owner's connect mid-flight, on a route that
+	 * is public and takes no credential, at one `cfw_meta` write per request.
 	 */
-	it('consumes the pending record even when the callback fails', async () => {
+	it('consumes the pending record when the state MATCHES, so a replay finds nothing', async () => {
+		const site = freshSite();
+		await call(site, 'action=connect&client_id=abc123');
+		const stored = await inObject(site, (obj) => obj.metaGet('cf_oauth_pending'));
+		const state = JSON.parse(String(stored)).state as string;
+		// the exchange still fails -- there is no real code -- and the record is gone regardless
+		await call(site, `action=callback&code=c&state=${encodeURIComponent(state)}`);
+		const left = await inObject(site, (obj) => obj.metaGet('cf_oauth_pending'));
+		expect(left === '' || left === null).toBe(true);
+	});
+
+	it('keeps it when the state does not, so a stranger cannot cancel a connect', async () => {
 		const site = freshSite();
 		await call(site, 'action=connect&client_id=abc123');
 		await call(site, 'action=callback&code=c&state=wrong');
 		const left = await inObject(site, (obj) => obj.metaGet('cf_oauth_pending'));
-		expect(left === '' || left === null).toBe(true);
+		expect(left).not.toBe('');
+		expect(left).not.toBeNull();
 	});
 
 	it('reports a disconnect that could not revoke, rather than claiming success', async () => {

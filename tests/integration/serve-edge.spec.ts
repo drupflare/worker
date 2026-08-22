@@ -797,3 +797,118 @@ __afterAll(() => {
 	console.log(`ASSERTIONS tests/integration/serve-edge.spec.ts ${__asserts}`);
 });
 // #endregion
+
+/**
+ * A FORM SUBMISSION REACHES DRUPAL THROUGH THE CATCH-ALL, or the site cannot be used.
+ *
+ * Reported from a `drangler dev` session: creating a page answered "not found" and the node was
+ * created anyway. `POST /user/login` reproduces it -- the same shape, on the route every visitor
+ * uses first. A GET of the same path works, and `POST /serve?path=...` works, so the failure is
+ * specific to a non-GET taking the rewrite.
+ */
+describe('a submission survives the catch-all rewrite', () => {
+	function spy() {
+		const seen: URL[] = [];
+		const methods: string[] = [];
+		const bodies: string[] = [];
+		return {
+			seen,
+			methods,
+			bodies,
+			namespace: {
+				idFromName: (name: string) => ({ name, toString: () => name }),
+				newUniqueId: () => ({ toString: () => 'unique' }),
+				get: () => ({
+					fetch: async (r: Request) => {
+						seen.push(new URL(r.url));
+						methods.push(r.method);
+						bodies.push(await r.text());
+						return new Response('rendered\n', {
+							status: 200,
+							headers: { 'x-cfw-cache': 'RENDER' }
+						});
+					}
+				})
+			}
+		};
+	}
+
+	it('rewrites a POST to /__serve, with its method and body intact', async () => {
+		const s = spy();
+		const res = await worker.fetch(
+			new Request('https://cfw.local/user/login', {
+				method: 'POST',
+				body: 'name=admin&pass=hunter2',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' }
+			}),
+			{ ...env, SITE: s.namespace } as unknown as typeof env
+		);
+		expect(res.status, await res.text()).toBe(200);
+		expect(s.seen[0]?.pathname).toBe('/__serve');
+		expect(s.seen[0]?.searchParams.get('path')).toBe('/user/login');
+		expect(s.methods[0]).toBe('POST');
+		// the body is what the submission IS; a rewrite that drops it saves nothing
+		expect(s.bodies[0]).toBe('name=admin&pass=hunter2');
+	});
+
+	/**
+	 * A SUBREQUEST FOLLOWS A 3xx BY DEFAULT, and that ate every submission.
+	 *
+	 * Drupal answers a successful login with `303 -> /user/1?check_logged_in=1` and a successful
+	 * node save with `303 -> /node/N`. The runtime followed it against the OBJECT, which has no
+	 * route by that name, so its base class answered `not found` -- measured on a dev server, with
+	 * `Session opened for admin.` in the log immediately before the 404. The write had landed; the
+	 * visitor was told it had not.
+	 *
+	 * The 3xx belongs to the browser, which re-enters through the catch-all and gets the page.
+	 */
+	it('hands a redirect back to the browser instead of chasing it into the object', async () => {
+		const seen: URL[] = [];
+		const modes: string[] = [];
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					seen.push(new URL(r.url));
+					modes.push(r.redirect);
+					// what a real login answers, once
+					return seen.length === 1
+						? new Response(null, {
+								status: 303,
+								headers: { location: 'https://cfw.local/user/1?check_logged_in=1' }
+							})
+						: new Response('rendered\n', { status: 200 });
+				}
+			})
+		};
+		const res = await worker.fetch(
+			new Request('https://cfw.local/user/login', {
+				method: 'POST',
+				body: 'name=admin',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' }
+			}),
+			{ ...env, SITE: namespace } as unknown as typeof env
+		);
+		expect(res.status).toBe(303);
+		expect(res.headers.get('location')).toBe('https://cfw.local/user/1?check_logged_in=1');
+		// ONE hop. A second means the runtime chased the redirect, which is the defect.
+		//
+		// AND THE MODE, which is the half this lane can actually fail on: miniflare's stub does not
+		// follow a 3xx, so the hop count alone passes with the fix removed. Deployed workerd does
+		// follow it -- that is how this was found -- so what a spec here can pin is the request the
+		// worker BUILDS, not what the runtime then does with it.
+		expect(modes[0]).toBe('manual');
+		expect(seen).toHaveLength(1);
+	});
+
+	it('CONTROL: the same path as a GET already worked', async () => {
+		const s = spy();
+		const res = await worker.fetch(new Request('https://cfw.local/user/login'), {
+			...env,
+			SITE: s.namespace
+		} as unknown as typeof env);
+		expect(res.status).toBe(200);
+		expect(s.seen[0]?.pathname).toBe('/__serve');
+	});
+});

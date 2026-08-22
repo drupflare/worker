@@ -823,14 +823,25 @@ export default {
 			request.method === 'GET' || request.method === 'HEAD'
 				? undefined
 				: await request.arrayBuffer();
-		const innerRequest =
+		// `redirect: 'manual'`, and it is the difference between a working CMS and one that loses
+		// every submission. A subrequest FOLLOWS a 3xx by default, so Drupal's post-submit redirect
+		// -- `303 -> /user/1?check_logged_in=1` after a login, `/node/N` after a save -- was followed
+		// by the runtime against the OBJECT, which has no route by that name and answered its
+		// `not found` default. The write had already landed, so the visitor saw a 404 for something
+		// that worked. The 3xx belongs to the browser, which re-enters through the catch-all.
+		//
+		// Wrapped rather than spread: a `Request`'s method, headers and body live on the prototype,
+		// so `{ ...request }` is an empty object and would have dropped the cookie.
+		const innerRequest = new Request(
 			buffered === undefined
 				? new Request(inner, request)
 				: new Request(inner, {
 						method: request.method,
 						headers: request.headers,
 						body: buffered
-					});
+					}),
+			{ redirect: 'manual' }
+		);
 		// cleared first, always: every inbound header is copied onto the subrequest, so a client
 		// could otherwise send this one and have the object read it as this worker's own decision
 		innerRequest.headers.delete(AUTH_REQUEST_HEADER);

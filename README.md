@@ -12,37 +12,33 @@ the database. **8.5 is what ships**, with every extension intact, at **2,659,444
 against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 
 > [!NOTE]
-> No release is published yet, and the deploy button needs a release payload to pull from. `assets/`
-> is 121 MB of generated packs and is gitignored, so a clean checkout builds nothing: `bun run build`
-> hydrates that payload instead, which is a plain HTTPS GET of a release asset and needs no Docker,
-> no token and no PHP.
+> No release is published yet, and the deploy button pulls from a release payload. `assets/` is
+> 121 MB of generated packs and is gitignored, so `bun run build` hydrates that payload: a plain
+> HTTPS GET of a release asset, with no Docker, no token and no PHP.
 
-> [!NOTE]
-> **The bundle fits with 241,603 bytes to spare.** The interpreter ships as a zstd frame inflated
-> at module scope, so Cloudflare's own gzip meter reads **2,904,125 bytes** against the free plan's
-> 3 MiB ceiling, with nothing removed to get there. That figure moves whenever `src/` does, so run
-> `bun run release:check` for the current one. Boot is not the constraint either: cold boot is
-> **1,398 ms** of absolute `cpuTime` on a deployed worker, but boot-directed work is saturated —
-> cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written is what
-> binds. See [Free vs Paid](#-free-vs-paid).
+The interpreter ships as a zstd frame inflated at module scope, so Cloudflare's gzip meter reads
+**2,904,125 bytes** against the free plan's 3 MiB ceiling — **241,603 to spare**, with every
+extension intact. The figure moves whenever `src/` does; `bun run release:check` prints the current
+one. Cold boot is **1,398 ms** of absolute `cpuTime` on a deployed worker, and boot work is
+saturated: cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written
+is the meter that binds. See [Free vs Paid](#-free-vs-paid).
 
 ---
 
 ## ⚖️ Drupflare vs a Traditional VPS
 
-The point of this project is to make Drupal viable for **solo, indie and budget-bound sites** — the
-ones where the hosting bill is not the problem, the _hours_ are.
+Drupflare targets **solo, indie and budget-bound sites**, where the cost is the hours rather than the
+hosting bill.
 
-**Read the provenance column.** Every Drupflare figure marked **M** is measured on deployed
-Cloudflare infrastructure or on this machine, and says which. Alternatives are **L** (a vendor's
-published list price) or **—** (not measured; stated as a range or omitted). Nothing in this table
-is a benchmark of someone else's host.
+Every Drupflare figure marked **M** is measured, on deployed Cloudflare infrastructure or on this
+machine, and the column says which. **L** is a vendor's published list price. **—** is not measured,
+and is stated as a range or omitted.
 
 |                                            | Drupflare                                                                                                                                         | Traditional VPS                                                      | prov.   |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------- |
 | **Setup, from zero to a rendering site**   | one deploy, no server                                                                                                                             | provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups | —       |
 | **Local toolchain you must learn first**   | none for deploy; `bun` to develop                                                                                                                 | ddev or Lando, Composer, Drush, ssh, a database client               | —       |
-| **Monthly infrastructure**                 | itemised in [The Cost Model, Exactly](#the-cost-model-exactly)                                                                                    | the same table                                                       | L       |
+| **Monthly infrastructure**                 | itemised in [The Cost Model](#the-cost-model)                                                                                                     | the same table                                                       | L       |
 | **What "scaling up" means**                | nothing to do — the edge absorbs it                                                                                                               | resize the box, tune PHP-FPM workers, add a cache layer              | —       |
 | **OS patching, PHP upgrades, kernel CVEs** | none exist to patch                                                                                                                               | yours, forever                                                       | —       |
 | **Anonymous page served from**             | edge cache, **~85%** of traffic, **0** Durable Object requests                                                                                    | your box, every request                                              | M edge  |
@@ -57,13 +53,12 @@ is a benchmark of someone else's host.
 | **When something breaks at 3am**           | a self-repair ladder runs: L0 observe → L1 reset → L2 reconstruct → L3 reconfigure → L4 quarantine → L5 rollback, with a decaying circuit breaker | you, or someone you pay                                              | M built |
 | **Failure detection**                      | **19 tripwires** (12 host, 7 PHP) plus a mandatory boot self-test                                                                                 | uptime ping, if configured                                           | M built |
 
-### The Cost Model, Exactly
+### The Cost Model
 
-**The infrastructure saving is small. The labour saving is the product.** Anyone pitching this on
-hosting price is pitching the wrong thing.
+**The infrastructure saving is small; the labour saving is the large one.**
 
-Infrastructure, for one small content site. Vendor figures are **list prices**, not measurements, and
-are marked so:
+Infrastructure, for one small content site. Vendor figures are list prices rather than measurements,
+and are marked so:
 
 | line item         | Drupflare free                  | Drupflare paid                 | small VPS                                  | prov. |
 | ----------------- | ------------------------------- | ------------------------------ | ------------------------------------------ | ----- |
@@ -206,7 +201,7 @@ measured, **zero** rows of a fill go to `watchdog`. And past ~85% off-Worker ser
 becomes **DO requests**, not rows, so trimming rows per fill beyond that point moves the rows meter and
 does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.
 
-### A Third Meter Neither Ceiling Sees
+### The Image Transform Cap
 
 Cloudflare Images allows **5,000 unique transformations per month** on free, and it fails as a **hard
 cap rather than a bill**. Every image style is a transformation, so ten styles over 2,000 images is
@@ -217,7 +212,7 @@ It is **projected rather than counted**, because it is a function of the site's 
 configuration and both are known in advance. The object multiplies its image styles by its managed
 images on every alarm and records `budget.image_transforms` in the health ledger at 80% of the
 allowance. A warning, never a repair: the remedies are dropping a style or cutting the image count,
-and both are decisions a human makes. `/health` shows it, and `/admin` shows the full projection with
+and both are decisions a human makes. `/health` shows it, and `/_cfw` shows the full projection with
 the largest style count that still fits.
 
 > [!CAUTION]
@@ -442,15 +437,19 @@ and it is the only credential that reaches the administrative UI.
 **The owner token is a different credential and is not a login.** It is sent as
 `Authorization: Bearer <ownerToken>` and reaches four routes without turning on `PW_DIAGNOSTICS`:
 
-| route         | what it does                                                          |
-| ------------- | --------------------------------------------------------------------- |
-| `/export`     | dumps the site database, which is the "a customer can leave" property |
-| `/health`     | the health ledger, the repair state and the budget projections        |
-| `/setup/cf`   | connect, inspect or revoke a Cloudflare account for the site          |
-| `/setup/mail` | onboard a sending domain onto a zone                                  |
+| route         | what it does                                                   |
+| ------------- | -------------------------------------------------------------- |
+| `/export`     | dumps the site database; the "a customer can leave" property   |
+| `/health`     | the health ledger, the repair state and the budget projections |
+| `/setup/cf`   | connect, inspect or revoke a Cloudflare account for the site   |
+| `/setup/mail` | onboard a sending domain onto a zone                           |
 
 Without it those four answer **401** with a `WWW-Authenticate: Bearer` challenge; a diagnostic route
 answers 404 to the same caller.
+
+A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
+rows it held back. `?secrets=1` carries them: a faithful restore needs the salt, since it signs
+one-time login links and form tokens, and a backup kept anywhere else should not have it.
 
 A lost `adminPass` is recovered through Drupal's own password reset, which needs mail configured. A
 lost `ownerToken` is read back by setting `PW_DIAGNOSTICS=1` and calling `POST /firstrun?force=1`,
@@ -469,18 +468,32 @@ drangler health my-site.example # is it up, and which cache tier answered
 drangler doctor                 # the local toolchain and the Cloudflare credential
 ```
 
-`build`, `dev`, `deploy` and `migrate install` are the four commands that write; `status`, `doctor`,
-`health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README covers the
-migration commands in both directions.
+Moving to a newer Drupflare is `drangler update`. With no argument it fast-forwards the local
+checkout and rebuilds the artifacts that belong to the version it left behind; naming a deployed
+worker updates the checkout and then deploys it there.
+
+```sh
+drangler update             # the local .drupflare checkout, to the latest
+drangler update --to v0.3.0 # or to a named version
+drangler update my-site     # and then deploy it to an existing worker
+```
+
+`build`, `dev`, `deploy`, `update` and `migrate install` are the five commands that write; `status`,
+`doctor`, `health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README
+covers the migration commands in both directions.
 
 ### URL Routing
 
 **Drupal owns the URL space.** Any path the Worker does not claim is served as a page, so `/`,
-`/user/login` and `/node/1` all work; `/serve?site=X&path=Y` still does the same thing explicitly.
+`/user/login`, `/admin` and `/node/1` all work. The Worker's own surfaces live under `/_cfw`, which
+Drupal does not generate; its diagnostic and owner routes are single-segment names like `/health`
+and `/export`.
+
 Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/site-id.ts): a KV
 mapping for the host, then the `SITE_ID` var, then the hostname itself, then `site`. On `localhost`
-the hostname names no site, so it lands on `site`. A `?site=` on a path the visitor typed is ignored;
-it names the site only on `/serve`, where the caller wrote the URL.
+the hostname names no site, so it lands on `site`. `?site=` is refused on the public routes, so a
+link cannot choose which site answers; an owner route accepts it because the object checks the token
+itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which is what `/serve?site=X&path=Y` uses.
 
 ### Scripts
 
@@ -694,7 +707,7 @@ Specs under `tests/integration/` use `ctx.storage.sql`, `transactionSync()`, `se
 `caches.default`. A mock of any of those would be testing the mock, and `runInDurableObject` from
 `cloudflare:test` gives the real thing without a manually started server.
 
-### Why the Tests Run Inside workerd
+### Testing Inside workerd
 
 Every one of these has already produced a defect that a Node-hosted mock passed:
 

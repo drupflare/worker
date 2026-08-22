@@ -98,6 +98,21 @@ describe('session detection', () => {
 		expect(hasSessionCookie('SSESS' + 'a'.repeat(32) + '=x')).toBe(true);
 		expect(hasSessionCookie('SSESS' + 'a'.repeat(31) + '=x')).toBe(false);
 	});
+
+	/**
+	 * BOTH PREFIXES AND ONLY THOSE TWO. `SessionConfiguration.php:79` is
+	 * `$prefix = $request->isSecure() ? 'SSESS' : 'SESS'`, so a site reached over HTTP and the same
+	 * site over HTTPS name their cookie differently -- matching only one would read every request on
+	 * the other scheme as anonymous, and serve a logged-in visitor the shared page.
+	 */
+	it('matches both the secure and the plain prefix, and nothing shaped like them', () => {
+		const id = 'a'.repeat(32);
+		expect(hasSessionCookie(`SESS${id}=x`)).toBe(true);
+		expect(hasSessionCookie(`SSESS${id}=x`)).toBe(true);
+		for (const name of [`SSSESS${id}`, `XSESS${id}`, `SES${id}`, `SESS${id.toUpperCase()}`]) {
+			expect(hasSessionCookie(`${name}=x`), name).toBe(false);
+		}
+	});
 });
 
 describe('authAllowance: the reservation splits the meter', () => {

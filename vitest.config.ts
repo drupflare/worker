@@ -69,15 +69,8 @@ const ARTIFACT_SPECS = [
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 
-/**
- * Collect the artifact specs anyway, without running them.
- *
- * `vitest list` is how the metrics collector counts cases, and a count that moves with what this
- * machine happens to have on disk is an environment reading rather than a measurement -- CI has no
- * pack, so it counted 204 fewer cases than a developer's checkout and read a lane boundary as
- * deleted tests. Collection only imports a spec file; nothing here reads an artifact at module
- * scope, so the enumeration is the same either way.
- */
+// collect the artifact specs without running them, so the metrics case count is a property of the
+// checkout rather than of this machine; collection only imports, and nothing here reads at module scope
 const listAll = process.env.DRUPFLARE_LIST_ALL === '1';
 
 const haveShipping = existsSync(SHIPPING_WASM) && existsSync(SHIPPING_GLUE);

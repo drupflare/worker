@@ -344,8 +344,8 @@ loading it. `--` inside an XML comment is invalid.
 ## The binary ships pre-compressed, and that is why the size levers are no longer urgent
 
 **The interpreter travels as a zstd frame in a `Data` module and is inflated at module scope**, so
-Cloudflare's gzip measures bytes it cannot compress further. On 2026-08-15 the shipping bundle is
-**2,898,319**, **247,409 under the 3,145,728 ceiling**; the interpreter alone is 2,658,002 with
+Cloudflare's gzip measures bytes it cannot compress further. On 2026-08-21 the shipping bundle is
+**2,924,073**, **221,655 under the 3,145,728 ceiling**; the interpreter alone is 2,658,002 with
 nothing dropped.
 
 **Do not quote that number, run `bun run release:check`.** It has now been stale in THREE documents
@@ -428,8 +428,25 @@ never been touched.
 
 **Still do not do**: boot micro-optimisation below the heap snapshot. `-O3`, PGO and
 `ZEND_VM_KIND=SWITCH` are a few percent of a once-per-object cost, and SWITCH was measured at
-**+129,760 gzipped bytes** -- it costs bytes. Spend headroom on real mbstring (+586,648 gz, and it closes
-the Greek final-sigma and emoji-width divergences outright) and on keeping lexbor.
+**+129,760 gzipped bytes** -- it costs bytes. Spend headroom on keeping lexbor.
+
+**"Spend headroom on real mbstring" used to be the sentence above and it was UNFOLLOWABLE**, which is
+the failure mode this file warns about elsewhere: mbstring is +586,648 gz against ~222,000 of
+headroom, so it is 2.6x a budget it was being recommended out of. Nobody could have obeyed it.
+
+What replaced it is measured rather than argued. `bun run measure:mb-parity` runs 1,232 cases through
+the shipping polyfill stack with the real extension as the oracle: the bare polyfill diverges on 238,
+the shipping stack on **86**, and **0** of those 86 would close by wrapping another function. So the
+cheap half is finished and the rest is real Unicode work, itemised in project memory as P24. Two
+things that settle the recurring "just register the extension name" idea: 12 of the 22 functions with
+no polyfill are `mb_ereg*`, which is oniguruma, and a stub module entry **segfaults** -- both Symfony
+bootstraps branch on `extension_loaded('mbstring')`, so the stub makes `iconv_strrpos()` and
+`mb_strrpos()` call each other forever. Measured, exit 139.
+
+**argon2 costs ~7,000 bytes and wasm64 is accepted by workerd**, both measured 2026-08-21, and both
+are blocked by the same thing instead: linear memory is 110.6 MiB against a 128 MB cap. argon2id's
+default arena is 64 MiB; wasm64 grows `Bucket` 33% and `zend_string` 60%. So `INITIAL_MEMORY` is the
+gate on two capability items, not a size tweak. Do not re-price either against the bundle.
 
 **One refinement measured today**: a cold object refuses an inline render because `!this.php`, not
 because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000 did not move it. So

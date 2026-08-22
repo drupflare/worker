@@ -36,7 +36,7 @@ tell which ones to distrust.
 Drupal 11.4.5 renders on Cloudflare Workers with PHP executing as WebAssembly inside a Durable
 Object, using that object's own SQLite as the database. On 2026-08-14 a throwaway deployment served a
 real Drupal page -- 12,304 bytes of Olivero markup, `<title>Welcome! | CFW Bench</title>` -- from a
-bundle that measures **2,898,319 gzipped bytes on 2026-08-15, 247,409 under the free plan's 3 MiB
+bundle that measures **2,924,073 gzipped bytes on 2026-08-21, 221,655 under the free plan's 3 MiB
 ceiling**.
 
 That figure has now been wrong in three documents at once, each quoting a different stale number from
@@ -165,6 +165,29 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
    Two of mantle2's other four (`smtp`, `redis`) are SUBSTITUTED rather than blocked, by `CfwMail`
    and `CfwCacheBackendFactory`; those are dependencies this platform removes rather than
    compatibility it owes.
+9. **Close the residual mbstring divergences.** `bun run measure:mb-parity` scores the shipping
+   polyfill stack against the real extension over 1,232 cases: the bare polyfill diverges on 238, the
+   shipping stack on **77**, and Drupal core can reach **33**. Item 8's rule applies here too -- the
+   cheap half is done and the harness proves it, reporting **0** cases another wrapper would close.
+   What is left, biggest first: `mb_convert_encoding`'s substitute-character semantics (21),
+   `mb_str_split`'s grouping of invalid bytes (16), `mb_convert_case` title-casing (8).
+   **The corpus is a SAMPLE**: a full codepoint sweep finds 190 case mappings and 9,733 widths wrong
+   from a stale Unicode table that these 1,232 cases never touch, so read a zero here as "on the
+   corpus", never as parity. **The size argument everyone reaches for is the wrong one** -- a PHP
+   table ships on the asset layer, where the case tables cost +632 gz and the width table 682 gz,
+   not against the ~222,000 bytes of bundle headroom. Generate them **through workerd**, whose
+   `toLowerCase` is byte-exact against native mbstring over all 194,528 codepoints; node's ICU is 28
+   codepoints off and would bake that in. **Compiling the extension is not the escape hatch** -- it
+   is +586,648 gz of bundle -- and neither is faking it: a stub module entry segfaults, because both
+   Symfony bootstraps branch on `extension_loaded('mbstring')` and the stub makes `iconv_strrpos()`
+   and `mb_strrpos()` recurse into each other. Measured, exit 139.
+10. **`INITIAL_MEMORY` is the gate on two capability items, not a size tweak.** Measured 2026-08-21:
+    argon2 costs only **~7,000 bytes** in the shipping zstd frame, and workerd **does** accept a
+    memory64 module through a `CompiledWasm` import -- with Emscripten's wasm64 being LP64, so it
+    really would take `PHP_INT_SIZE` to 8 and retire the 2038 warning. Both die on the same fact:
+    linear memory plateaus at 110.6 MiB against a 128 MB cap. argon2id's default arena is 64 MiB, and
+    wasm64 grows `Bucket` by 33% and `zend_string` by 60%. Neither is blocked by bytes, by a vendor,
+    or by the platform. Bringing the heap to ~90 MB unblocks both at once.
 
 ---
 

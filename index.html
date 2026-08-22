@@ -19,28 +19,23 @@
 the database. <strong>8.5 is what ships</strong>, with every extension intact, at <strong>2,659,444</strong> zstd bytes
 against the 3,145,728 free-plan ceiling (<code>interp.lock.json</code>).</p>
 <div class="tsd-alert tsd-alert-note"><div class="tsd-alert-title"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertNote"></use></svg><span>Note</span></div><p>
-No release is published yet, and the deploy button needs a release payload to pull from. <code>assets/</code>
-is 121 MB of generated packs and is gitignored, so a clean checkout builds nothing: <code>bun run build</code>
-hydrates that payload instead, which is a plain HTTPS GET of a release asset and needs no Docker,
-no token and no PHP.</p>
+No release is published yet, and the deploy button pulls from a release payload. <code>assets/</code> is
+121 MB of generated packs and is gitignored, so <code>bun run build</code> hydrates that payload: a plain
+HTTPS GET of a release asset, with no Docker, no token and no PHP.</p>
 </div>
-<div class="tsd-alert tsd-alert-note"><div class="tsd-alert-title"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertNote"></use></svg><span>Note</span></div><p>
-<strong>The bundle fits with 241,603 bytes to spare.</strong> The interpreter ships as a zstd frame inflated
-at module scope, so Cloudflare's own gzip meter reads <strong>2,904,125 bytes</strong> against the free plan's
-3 MiB ceiling, with nothing removed to get there. That figure moves whenever <code>src/</code> does, so run
-<code>bun run release:check</code> for the current one. Boot is not the constraint either: cold boot is
-<strong>1,398 ms</strong> of absolute <code>cpuTime</code> on a deployed worker, but boot-directed work is saturated —
-cutting boot cost per fill by 20x moves the regeneration ceiling <strong>1.1%</strong>. Rows written is what
-binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
-</div>
+<p>The interpreter ships as a zstd frame inflated at module scope, so Cloudflare's gzip meter reads
+<strong>2,904,125 bytes</strong> against the free plan's 3 MiB ceiling — <strong>241,603 to spare</strong>, with every
+extension intact. The figure moves whenever <code>src/</code> does; <code>bun run release:check</code> prints the current
+one. Cold boot is <strong>1,398 ms</strong> of absolute <code>cpuTime</code> on a deployed worker, and boot work is
+saturated: cutting boot cost per fill by 20x moves the regeneration ceiling <strong>1.1%</strong>. Rows written
+is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
 <hr>
 <h2 id="⚖️-drupflare-vs-a-traditional-vps" class="tsd-anchor-link">⚖️ Drupflare vs a Traditional VPS<a href="#⚖️-drupflare-vs-a-traditional-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>The point of this project is to make Drupal viable for <strong>solo, indie and budget-bound sites</strong> — the
-ones where the hosting bill is not the problem, the <em>hours</em> are.</p>
-<p><strong>Read the provenance column.</strong> Every Drupflare figure marked <strong>M</strong> is measured on deployed
-Cloudflare infrastructure or on this machine, and says which. Alternatives are <strong>L</strong> (a vendor's
-published list price) or <strong>—</strong> (not measured; stated as a range or omitted). Nothing in this table
-is a benchmark of someone else's host.</p>
+<p>Drupflare targets <strong>solo, indie and budget-bound sites</strong>, where the cost is the hours rather than the
+hosting bill.</p>
+<p>Every Drupflare figure marked <strong>M</strong> is measured, on deployed Cloudflare infrastructure or on this
+machine, and the column says which. <strong>L</strong> is a vendor's published list price. <strong>—</strong> is not measured,
+and is stated as a range or omitted.</p>
 <table>
 <thead>
 <tr>
@@ -65,7 +60,7 @@ is a benchmark of someone else's host.</p>
 </tr>
 <tr>
 <td><strong>Monthly infrastructure</strong></td>
-<td>itemised in <a href="#the-cost-model-exactly">The Cost Model, Exactly</a></td>
+<td>itemised in <a href="#the-cost-model">The Cost Model</a></td>
 <td>the same table</td>
 <td>L</td>
 </tr>
@@ -149,11 +144,10 @@ is a benchmark of someone else's host.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="the-cost-model-exactly" class="tsd-anchor-link">The Cost Model, Exactly<a href="#the-cost-model-exactly" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p><strong>The infrastructure saving is small. The labour saving is the product.</strong> Anyone pitching this on
-hosting price is pitching the wrong thing.</p>
-<p>Infrastructure, for one small content site. Vendor figures are <strong>list prices</strong>, not measurements, and
-are marked so:</p>
+<h3 id="the-cost-model" class="tsd-anchor-link">The Cost Model<a href="#the-cost-model" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><strong>The infrastructure saving is small; the labour saving is the large one.</strong></p>
+<p>Infrastructure, for one small content site. Vendor figures are list prices rather than measurements,
+and are marked so:</p>
 <table>
 <thead>
 <tr>
@@ -445,7 +439,7 @@ writes -- notably the <code>cfw_page</code> insert that stores the whole rendere
 measured, <strong>zero</strong> rows of a fill go to <code>watchdog</code>. And past ~85% off-Worker serving the binding meter
 becomes <strong>DO requests</strong>, not rows, so trimming rows per fill beyond that point moves the rows meter and
 does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.</p>
-<h3 id="a-third-meter-neither-ceiling-sees" class="tsd-anchor-link">A Third Meter Neither Ceiling Sees<a href="#a-third-meter-neither-ceiling-sees" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<h3 id="the-image-transform-cap" class="tsd-anchor-link">The Image Transform Cap<a href="#the-image-transform-cap" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Cloudflare Images allows <strong>5,000 unique transformations per month</strong> on free, and it fails as a <strong>hard
 cap rather than a bill</strong>. Every image style is a transformation, so ten styles over 2,000 images is
 20,000 -- 4x over. It is the only quota here measured per month rather than per day, so it does not
@@ -454,7 +448,7 @@ clear at midnight.</p>
 configuration and both are known in advance. The object multiplies its image styles by its managed
 images on every alarm and records <code>budget.image_transforms</code> in the health ledger at 80% of the
 allowance. A warning, never a repair: the remedies are dropping a style or cutting the image count,
-and both are decisions a human makes. <code>/health</code> shows it, and <code>/admin</code> shows the full projection with
+and both are decisions a human makes. <code>/health</code> shows it, and <code>/_cfw</code> shows the full projection with
 the largest style count that still fits.</p>
 <div class="tsd-alert tsd-alert-caution"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertCaution"></use></svg><span>Caution</span></div><p>
 Do <strong>not</strong> enable the Workers Caching feature on free. It bills every request at the standard rate
@@ -707,7 +701,7 @@ and it is the only credential that reaches the administrative UI.</p>
 <tbody>
 <tr>
 <td><code>/export</code></td>
-<td>dumps the site database, which is the &quot;a customer can leave&quot; property</td>
+<td>dumps the site database; the &quot;a customer can leave&quot; property</td>
 </tr>
 <tr>
 <td><code>/health</code></td>
@@ -725,6 +719,9 @@ and it is the only credential that reaches the administrative UI.</p>
 </table>
 <p>Without it those four answer <strong>401</strong> with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route
 answers 404 to the same caller.</p>
+<p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
+rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
+one-time login links and form tokens, and a backup kept anywhere else should not have it.</p>
 <p>A lost <code>adminPass</code> is recovered through Drupal's own password reset, which needs mail configured. A
 lost <code>ownerToken</code> is read back by setting <code>PW_DIAGNOSTICS=1</code> and calling <code>POST /firstrun?force=1</code>,
 which returns the stored token and resets the administrator password at the same time.</p>
@@ -734,16 +731,25 @@ needs no checkout of anything:</p>
 <pre><code class="sh"><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">add</span><span class="hl-1"> </span><span class="hl-3">-g</span><span class="hl-1"> </span><span class="hl-2">@drupflare/drangler</span><br/><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">status</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1"> </span><span class="hl-5"># plan, generation, header contract, claim state, diagnostics</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">health</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1"> </span><span class="hl-5"># is it up, and which cache tier answered</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">doctor</span><span class="hl-1">                 </span><span class="hl-5"># the local toolchain and the Cloudflare credential</span>
 </code><button type="button">Copy</button></pre>
 
-<p><code>build</code>, <code>dev</code>, <code>deploy</code> and <code>migrate install</code> are the four commands that write; <code>status</code>, <code>doctor</code>,
-<code>health</code>, <code>config</code>, <code>cf</code>, <code>secrets</code>, <code>validate</code> and the rest of <code>migrate</code> read. Its README covers the
-migration commands in both directions.</p>
+<p>Moving to a newer Drupflare is <code>drangler update</code>. With no argument it fast-forwards the local
+checkout and rebuilds the artifacts that belong to the version it left behind; naming a deployed
+worker updates the checkout and then deploys it there.</p>
+<pre><code class="sh"><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">update</span><span class="hl-1">             </span><span class="hl-5"># the local .drupflare checkout, to the latest</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">update</span><span class="hl-1"> </span><span class="hl-3">--to</span><span class="hl-1"> </span><span class="hl-2">v0.3.0</span><span class="hl-1"> </span><span class="hl-5"># or to a named version</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">update</span><span class="hl-1"> </span><span class="hl-2">my-site</span><span class="hl-1">     </span><span class="hl-5"># and then deploy it to an existing worker</span>
+</code><button type="button">Copy</button></pre>
+
+<p><code>build</code>, <code>dev</code>, <code>deploy</code>, <code>update</code> and <code>migrate install</code> are the five commands that write; <code>status</code>,
+<code>doctor</code>, <code>health</code>, <code>config</code>, <code>cf</code>, <code>secrets</code>, <code>validate</code> and the rest of <code>migrate</code> read. Its README
+covers the migration commands in both directions.</p>
 <h3 id="url-routing" class="tsd-anchor-link">URL Routing<a href="#url-routing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><strong>Drupal owns the URL space.</strong> Any path the Worker does not claim is served as a page, so <code>/</code>,
-<code>/user/login</code> and <code>/node/1</code> all work; <code>/serve?site=X&amp;path=Y</code> still does the same thing explicitly.
-Which site a request resolves to is decided in <a href="modules/ops_site-id.html"><code>src/ops/site-id.ts</code></a>: a KV
+<code>/user/login</code>, <code>/admin</code> and <code>/node/1</code> all work. The Worker's own surfaces live under <code>/_cfw</code>, which
+Drupal does not generate; its diagnostic and owner routes are single-segment names like <code>/health</code>
+and <code>/export</code>.</p>
+<p>Which site a request resolves to is decided in <a href="modules/ops_site-id.html"><code>src/ops/site-id.ts</code></a>: a KV
 mapping for the host, then the <code>SITE_ID</code> var, then the hostname itself, then <code>site</code>. On <code>localhost</code>
-the hostname names no site, so it lands on <code>site</code>. A <code>?site=</code> on a path the visitor typed is ignored;
-it names the site only on <code>/serve</code>, where the caller wrote the URL.</p>
+the hostname names no site, so it lands on <code>site</code>. <code>?site=</code> is refused on the public routes, so a
+link cannot choose which site answers; an owner route accepts it because the object checks the token
+itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which is what <code>/serve?site=X&amp;path=Y</code> uses.</p>
 <h3 id="scripts" class="tsd-anchor-link">Scripts<a href="#scripts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <table>
 <thead>
@@ -1045,7 +1051,7 @@ all with <code>carryforward: true</code>.</p>
 <p>Specs under <code>tests/integration/</code> use <code>ctx.storage.sql</code>, <code>transactionSync()</code>, <code>setAlarm()</code> and
 <code>caches.default</code>. A mock of any of those would be testing the mock, and <code>runInDurableObject</code> from
 <code>cloudflare:test</code> gives the real thing without a manually started server.</p>
-<h3 id="why-the-tests-run-inside-workerd" class="tsd-anchor-link">Why the Tests Run Inside workerd<a href="#why-the-tests-run-inside-workerd" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<h3 id="testing-inside-workerd" class="tsd-anchor-link">Testing Inside workerd<a href="#testing-inside-workerd" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Every one of these has already produced a defect that a Node-hosted mock passed:</p>
 <ul>
 <li><code>ctx.storage.sql</code> is synchronous only from inside a Durable Object.</li>
@@ -1544,7 +1550,7 @@ and are the authority on their own module.</p>
 <li><a href="#⚖️-drupflare-vs-a-traditional-vps"><span>⚖️ <wbr/>Drupflare vs a <wbr/>Traditional <wbr/>VPS</span></a></li>
 <li>
 <ul>
-<li><a href="#the-cost-model-exactly"><span>The <wbr/>Cost <wbr/>Model, <wbr/>Exactly</span></a></li>
+<li><a href="#the-cost-model"><span>The <wbr/>Cost <wbr/>Model</span></a></li>
 <li><a href="#where-a-vps-still-wins"><span>Where a <wbr/>VPS <wbr/>Still <wbr/>Wins</span></a></li>
 <li><a href="#what-the-self-repair-layer-replaces"><span>What the <wbr/>Self-<wbr/>Repair <wbr/>Layer <wbr/>Replaces</span></a></li></ul></li>
 <li><a href="#🆓-free-vs-paid"><span>🆓 <wbr/>Free vs <wbr/>Paid</span></a></li>
@@ -1552,7 +1558,7 @@ and are the authority on their own module.</p>
 <ul>
 <li><a href="#the-two-ceilings"><span>The <wbr/>Two <wbr/>Ceilings</span></a></li>
 <li><a href="#where-the-work-pays"><span>Where the <wbr/>Work <wbr/>Pays</span></a></li>
-<li><a href="#a-third-meter-neither-ceiling-sees"><span>A <wbr/>Third <wbr/>Meter <wbr/>Neither <wbr/>Ceiling <wbr/>Sees</span></a></li></ul></li>
+<li><a href="#the-image-transform-cap"><span>The <wbr/>Image <wbr/>Transform <wbr/>Cap</span></a></li></ul></li>
 <li><a href="#📋-table-of-contents"><span>📋 <wbr/>Table of <wbr/>Contents</span></a></li>
 <li><a href="#🎯-why"><span>🎯 <wbr/>Why</span></a></li>
 <li><a href="#⚙-how-it-works"><span>⚙ <wbr/>How <wbr/>It <wbr/>Works</span></a></li>
@@ -1586,7 +1592,7 @@ and are the authority on their own module.</p>
 <ul>
 <li><a href="#two-vitest-projects"><span>Two <wbr/>Vitest <wbr/>Projects</span></a></li>
 <li><a href="#the-integration-lane"><span>The <wbr/>Integration <wbr/>Lane</span></a></li>
-<li><a href="#why-the-tests-run-inside-workerd"><span>Why the <wbr/>Tests <wbr/>Run <wbr/>Inside workerd</span></a></li>
+<li><a href="#testing-inside-workerd"><span>Testing <wbr/>Inside workerd</span></a></li>
 <li><a href="#coverage"><span>Coverage</span></a></li>
 <li><a href="#rules-for-a-new-test"><span>Rules for a <wbr/>New <wbr/>Test</span></a></li></ul></li>
 <li><a href="#📦-repositories"><span>📦 <wbr/>Repositories</span></a></li>

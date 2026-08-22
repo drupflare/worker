@@ -332,6 +332,8 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [THE SECURITY SWEEP](#the-security-sweep-and-what-nine-of-ten-findings-had-in-common) | **read before adding a route, a cache tier or a header the object trusts**: `/serve` read `?site=` raw and one request provisioned a whole database; `/setup/cf` was unreachable for its whole life; four values were computed and read by nobody; `/export` dumped the owner token and a live OAuth refresh token. One finding is deliberately NOT taken and says why |
+| [THE CACHE HAD NO IDEA WHO IT WAS TALKING TO](#the-cache-had-no-idea-who-it-was-talking-to) | **read before touching either serving lane, and before trusting any header the object reads**: the fast lane duplicated the gated lane's `cfw_page` read and missed both its guards, so a session was served the anonymous page and an unclaimed site hid its own claim page; an authenticated MISS filled `cfw_page` with Drupal's 403; `x-cfw-auth` was forgeable and spending it strips a real admin's cookie |
 | [THE STATIC THAT STOPPED EVERY FORM](#the-static-that-stopped-every-form-after-the-first-error) | **read before touching form handling, and before scoring the static-state class**: `FormState::$anyErrors` is a class static that gated every submit handler, so one form error stopped every later submission in the object. Two reproducers, one nine-character cause, and the sixth member of the family |
 | [THE SITE RENDERED AGAINST `localhost`](#the-site-rendered-against-localhost-and-seven-lines-that-looked-like-the-fix-were-inert) | **read before trusting any assignment that looks like configuration**: `Request::create()` never reads `$_SERVER`, so seven host assignments were inert and every mailed link pointed at `localhost`. Also: one mistyped password disables login on that object; the asset pipeline's three hypotheses were all wrong; the prefill bake was reading its own output |
 | [THE SITE HAD NO ROOT ROUTE](#the-site-had-no-root-route-and-nothing-in-the-suite-could-notice) | **read before scoring the product surface**: `/` answered 404 on a deployed site, not just locally; the only serving route was `/serve?site=X&path=Y`, and a test asserted the 404 as correct |
@@ -399,6 +401,265 @@ wherever it disagrees with the above.
 | --- | --- |
 | [DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING](#-deep-dive-a-memory-autoload-mbstring-) | [TASK A](#task-a--the-isolate-memory-ceiling) the 512 MiB build ceiling, [TASK B](#task-b--composer-dump-autoload---classmap-authoritative) autoload, [TASK C](#task-c--the-mbstring-polyfill) mbstring, [Caveats](#caveats-in-one-place) |
 | [DEEP DIVE B: THE cfw_do_sqlite DRIVER](#-deep-dive-b-the-cfw_do_sqlite-driver-) | transaction buffer, SQL function audit, integer safety, what the runtime refuses |
+---
+
+# THE CACHE HAD NO IDEA WHO IT WAS TALKING TO
+
+**Found and fixed 2026-08-21**, from a `drangler dev` session rather than from the suite. Five
+visible symptoms, four causes, and every one of them is the same shape: **an invariant enforced on
+one code path and merely asserted on another.**
+
+## What a visitor saw
+
+| symptom | what it actually was |
+| --- | --- |
+| first boot goes to the Drupal front page, not `Claim This Site` | the fast lane has no `needsSetup()` guard |
+| logging in, then navigating, serves you logged out | neither lane checks for a session before reading `cfw_page` |
+| logging in sometimes loops back to a logged-out form | the interstitial's meta refresh turns a POST into a GET |
+| the admin theme looks half-styled | a symptom of the second row: Olivero-themed anonymous pages on admin routes |
+| back and forward do not work | the same |
+
+## The four causes
+
+**1. Two lanes, one guard between them.** `serveFromStorage()` is a second implementation of the
+gated lane's `cfw_page` read, and guards added to the gated lane since were never mirrored onto it.
+Measured on one object at one instant, an unclaimed site:
+
+```
+GET /serve?path=/&edge=0            -> lane=storage   <title>Welcome! | CFW Bench</title>
+GET /serve?path=/&edge=0&lane=gate  -> lane=php-gate  <title>Set Up This Site</title>
+```
+
+The pack prefills `/`, so the fast lane answered first on every object that had served one request,
+and the claim page was unreachable. The claim window is exactly the unprovisioned state, so a site
+that looks finished and is unclaimed is one anyone who finds the URL can take.
+
+**2. The session guard existed only on the write side.** `fillOne()` refuses to STORE a page
+rendered with a cookie and explains why at length. Nothing refused to SERVE one. Measured:
+
+```
+GET /user/login              anonymous     -> HIT, lane=storage
+GET /user/login              with session  -> HIT, lane=storage, byte-identical
+```
+
+The front worker had already declined both shared tiers for that request and reported
+`x-cfw-auth-mode: render`; the object's own tier handed over the shared copy anyway. So two of three
+tiers enforced the invariant and the third did not.
+
+**3. An authenticated MISS queued an anonymous fill.** This is the one that makes it permanent. An
+admin asks for an uncached admin path; the object queues it; the alarm chain renders it **with no
+session**; Drupal answers 403; the 403 is stored in `cfw_page` as the public page; every later
+request for that path is served the 403 -- including the admin's. Measured end to end:
+
+```
+GET /admin/reports/status  with session -> MISS, queued
+   (alarm fills it anonymously)
+GET /admin/reports/status  with session -> HIT, lane=storage, <title>Access denied</title>
+```
+
+An admin walking their own admin UI poisons a `cfw_page` row per path they touch.
+
+**4. `queuePageMirror()` sat outside the `cacheable` block.** A render the store refused still
+queued an R2 mirror task at the CURRENT generation, and the drain re-reads `cfw_page` at drain time.
+On a path that already held an older anonymous row that publishes the OLD bytes under the NEW
+generation key -- the one thing a generation bump exists to prevent. Where no row exists it merely
+spends a charged row on a task the drain will refuse, on the meter that binds the regeneration
+ceiling.
+
+## The interstitial was navigating submissions away
+
+`warmingResponse()` emits `<meta http-equiv="refresh">`. A meta refresh is a **GET**, so on a POST it
+does not retry anything: it discards the body and navigates to the same URL, which for a form path
+is the cached anonymous copy of the form that was just submitted. The loop reads:
+
+```
+POST /user/login  -> 503 interstitial -> GET /user/login -> cached logged-out form -> repeat
+```
+
+`Retry-After` still says when to come back. Only the automatic navigation is withheld, because the
+browser is holding the body and the visitor is not.
+
+## Fixing it exposed a dead end that was always there
+
+With the session guard in place, a logged-in admin on the free profile got `Starting up...` on every
+attempt, forever. `bootInline: false` is not a refusal, it is a **deferral**: an anonymous GET is
+queued, the alarm renders it, and the retry succeeds. That reasoning holds for exactly one kind of
+request. The chain renders with no session, and `cfw_page` is now correctly refused to a session, so
+an **authenticated GET** has nothing that will ever satisfy it; a **submission** has less than that,
+since the chain cannot replay a POST at all. For those two, coldness is a dead end rather than a
+wait, and the same is true of the `estimateMs > budgetMs` diversion just below it.
+
+What a free site may spend on authenticated traffic is already decided, above that line, by
+`degradation()` and `authAllowance()`. Coldness is not a second meter for it. Anonymous traffic --
+the bulk, and the traffic the free ceiling is sized against -- is unchanged.
+
+## Two more, found by sweeping for the same shape
+
+**`x-cfw-auth` was trusted from the client.** The front worker copies every inbound header onto the
+subrequest, so a visitor who simply sent `x-cfw-auth: 1` had it arrive at the object as though the
+front worker had written it. Measured: three cookie-less requests took `x-cfw-auth-spent` from 4 to
+6. Spending that counter is how real admins get degraded into stale mode -- **where the front worker
+strips their session cookie and serves them the anonymous page** -- so a forgeable writer on it is a
+way to lock an operator out of their own site without logging in. Fixed at both ends: the front
+worker deletes the header before it may set it, and the object charges on the cookie it actually
+received, which is what the render was performed with.
+
+**A POST body was streamed to an object that may not read it.** `new Request(inner, request)` hands
+the subrequest a live stream, and a cold MISS answers before ever looking at the body. workerd then
+throws `Can't read from request stream after response has been sent` as an **uncaught** error that
+no `try` around `stub.fetch()` can see. Reproduced on every POST that took the 503 path. The body is
+now buffered before the hop.
+
+## What was checked and found clean
+
+- **No authenticated content reached a shared tier.** The write side was correct throughout:
+  `fillOne()` refuses a cookie-rendered page, `putPage()` refuses an authenticated request or a
+  `Set-Cookie` response, the KV tier answers `skipped:authenticated`, and the R2 drain refuses any
+  path whose `cfw_page` row is absent or not 200. The disclosure direction was hypothesised and
+  falsified by reading the path end to end.
+- **The theming was a symptom, not a cause.** After the session guard, `/admin/people` renders as
+  `People | CFW Bench` with 75 Claro asset references, no aggregation, and every referenced CSS and
+  JS file resolving with a real byte count. Before it, the same request returned an Olivero-themed
+  `Access denied`.
+- **`x-cfw-auth` was the only request header either side trusted.** Grepped; there is no second one.
+
+## Why the suite could not catch any of it
+
+Every one needs two requests that differ only in something the existing helpers could not vary: a
+cookie, an `Accept`, or a method. `serveDirect()` took a path and a query string and nothing else,
+so no spec could express "the same request, but signed in". It now takes a `RequestInit`, and the
+new cases in `serve-lanes.spec.ts` each assert the anonymous request too -- without that control, a
+lane that stopped answering anything at all would pass.
+
+---
+
+# THE SECURITY SWEEP, AND WHAT NINE OF TEN FINDINGS HAD IN COMMON
+
+**2026-08-21**, immediately after the serving-lane work above. An adversarial audit of the routes,
+the four cache tiers, the claim and OAuth flows, the mail path and the alarm chain. Ten findings;
+**every one was verified independently before anything was changed**, and each fix was falsified by
+removing it and watching a test go red.
+
+## The two that were reachable by anybody
+
+**`/serve` read `?site=` raw.** The catch-all rewrite resolves the site with `allowParam: false` and
+its comment says why -- `customer-a.example/about?site=b` must not serve customer B. That guard only
+covers paths this Worker does NOT own, and `/serve` is in `PUBLIC_ROUTES`. So the one route reachable
+with no credential was the one with no check. `resolveSite()` was never called with
+`allowParam: true` anywhere in the repository; the documented "on `/serve` the parameter is an
+instruction" path did not exist, only the raw read did.
+
+Observed rather than inferred: during the previous session's work, `curl '/serve?path=/&site=claimtest22705'`
+against a name nobody had used **provisioned an entire Drupal database from one unauthenticated
+request.** Site ids are host-derived and guessable, so the read direction is another tenant's pages
+served from your own hostname.
+
+The first fix was too wide and a real test caught it: gating the parameter on `PW_DIAGNOSTICS` alone
+also blocked it on the credentialed owner routes, where the object validates the token itself so
+naming somebody else's site returns a 401 from them rather than their data. Narrowed to
+public-and-uncredentialed. The front worker now also OVERWRITES the parameter on the inner URL with
+the resolved name, so the object never sees the caller's value at all -- which matters more since
+the object pins it as its own identity.
+
+**`x-cfw-auth` was trusted from the client.** Covered in the section above; it belongs to this family.
+
+## The one that had been unreachable the whole time
+
+`ROUTES` was `PUBLIC ∪ DIAGNOSTIC`, and `/setup/cf` and `/setup/mail` are in neither -- they are
+`OWNER_ROUTES`, which had `DO_ROUTE` entries and were documented as live in the README, in
+`docs/configuration.md` and in the admin UI. A route absent from `ROUTES` is rewritten to `/serve`,
+so both rendered as Drupal pages, and the request that tried carried `?client_id=` into the fill
+queue, `cfw_page` and the edge key as part of the path.
+
+## Four that were built, tested, and read by nobody
+
+This is the `src/ops/supervisor.ts` shape again, four more times.
+
+| what | reader count | consequence |
+| --- | ---: | --- |
+| `degraded.queue` | **0** | the 80% rung stopped nothing; each queued path costs ~13 rows on the meter that put the site there |
+| `degraded.watchdog`, `degraded.imageRegeneration` | **0** each | rungs the ladder claims and does not have |
+| the render's `uid` | **0** | the `cacheable` predicate reasoned only about the REQUEST |
+| the render's `Cache-Control` | **0** | `page_cache_kill_switch` said no and the page was stored anyway |
+
+`uid` is the sharp one. The fragment computing it already explained itself -- *a render that comes
+back as the wrong user is not distinguishable from a correct one by its bytes* -- and the one failure
+this project actually shipped was uid 1 surviving inside the persistent interpreter with **no cookie
+anywhere**, which a guard made on the cookie cannot see.
+
+`cfw_fill_queue` had no bound at all, so an anonymous visitor asking for distinct paths grew it
+forever and the chain rendered each at ~13 rows. Capped at 500 alongside wiring the rung.
+
+## Three about a key that was not what it claimed
+
+**The R2 mirror was not site-scoped, and could not be.** `drainPageMirrors()` was never passed a
+site, so it fell back to the literal `'site'`; the file mirror key had no site component whatsoever.
+Underneath both: **the object had no notion of its own identity** -- `SITE_ID` and `siteId` appear
+nowhere in `site-do.ts` -- so there was nothing to pass. It now pins the resolved name in `cfw_meta`
+the way it pins the origin, learned in `handle()` because the alarm chain has no request to read it
+from and the alarm chain is where the drain runs. Keys become `p/<site>/<gen>/...` and
+`f/<site>/public/...`. **This orphans existing R2 objects**; nothing ships a bucket binding, and the
+queue re-drains, but the old objects need a sweep.
+
+**`/export` dumped the credentials.** `cfw_meta` is not regenerable, so a dump carried the owner
+token that reaches `/export` and `/firstrun?force=1`, a live Cloudflare OAuth access AND refresh
+token with `email:write`, and the salt that signs one-time login links -- on the one path whose
+output is meant to be handed to migration tooling and backup storage. Withheld by default, `?secrets=1`
+asks by name, and the count rides on the envelope so a dump says what it is not carrying.
+
+The first version of that guard **could not fire**: it compared the key against `t<i>`, which the row
+reader defines as `typeof(col)`, so it matched `'text'` for every row and no key ever. The test found
+it; the comparison is against `hex(col)` now and the mistake is written into the file.
+
+## One where the existing test's stated reason did not hold
+
+`/setup/cf/callback` is public and takes no credential, and it cleared the pending OAuth record on
+EVERY inbound request. A test pinned that, with the reason *a pending record is single-use, so a
+leaked `state` cannot be replayed*.
+
+The reason does not need it. A replay presents the **leaked state**, so it matches, so it is consumed
+either way. What consuming on a MISMATCH added was a way for anyone to cancel an owner's connect
+mid-flight, at one `cfw_meta` write per request. Consumed on a match now, still before the exchange,
+and the test asserts both halves.
+
+## One threaded through to PHP
+
+Drupal's flood control identifies by `getClientIp()`, and every render reported `127.0.0.1` --
+`CF-Connecting-IP` appeared nowhere in `src/`. Verified against the vendored core:
+`user.flood.yml` ships `ip_limit: 50`, `ip_window: 3600`, and `UserLoginForm` checks
+`user.failed_login_ip`. So fifty bad passwords locked EVERY visitor out of `/user/login` for an hour,
+per-IP throttling of contact forms and password resets did nothing, and `watchdog` recorded
+`127.0.0.1` for everyone.
+
+Set on the request bag passed to `Request::create()` and not only on `$_SERVER`: Symfony builds its
+own bag and `getClientIp()` reads that, so an assignment afterwards is invisible to the thing being
+fixed.
+
+## The one NOT taken, and why
+
+`siteFromHost()` collapses `[^a-z0-9]+` to `-`, so `a.b.example.com` and `a-b.example.com` derive one
+id and share one database. The fix is a different derivation -- and **a site's id is the Durable
+Object's name**, so changing it makes every existing deployment's object unreachable and its database
+orphaned, with no migration path in this repository. That is a data-loss-shaped change to close a
+collision needing two specific hostnames pointed at one deployment. It stays open deliberately; the
+safe shape is a new derivation behind a var, defaulting to the current one.
+
+## What was checked and found clean
+
+Worth recording, because a sweep that reports only findings does not say what it covered. All four
+cache tiers refuse authenticated content on the write side (`fillOne`, `putPage`, the KV tier, and
+the R2 drain, which refuses any path whose `cfw_page` row is absent or not 200) -- the disclosure
+direction was hypothesised and falsified by reading the path end to end. `/__*` stays 404 from
+outside. The `/firstrun` race is closed by the FIFO gate rather than by a check. `tokenMatches()`
+folds length into the accumulator. Edge cache keys percent-encode every part, and the query string is
+inside `path`, so `/foo?page=2` and `/foo?page=3` do not collide. `KV_OVERRIDABLE` holds to its
+"nothing reachable" promise: all eleven entries are numeric levers or a validated enum. Every PHP
+fragment interpolation goes through `JSON.stringify` or a regex allow-list.
+
+Two things were NOT verified and should not be read as clean: whether `SESSION_COOKIE_RE` covers
+prefixed or overridden Drupal session names, and whether edgeport's SMTP encoder admits CRLF in a
+subject.
+
 ---
 
 # THE STATIC THAT STOPPED EVERY FORM AFTER THE FIRST ERROR

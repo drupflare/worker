@@ -1753,6 +1753,71 @@ const SCHEMA_REPAIR = String.raw`
   if ($failed) { $out['schemaRepair']['failed'] = $failed; }
 `;
 
+/**
+ * The three ways the shipped pack disagrees with itself, each reported by Drupal's own status page.
+ *
+ * THE DRIVER MODULE IS NOT IN `core.extension`. Drupal resolves the driver class off the filesystem,
+ * so the site works -- and `system_requirements()` checks `moduleExists()` separately and answers
+ * "The current database driver is provided by the module: cfw_do_sqlite. The module is currently not
+ * installed. You should immediately install the module." Enabled through the module installer rather
+ * than by writing the config row, so the container and the router are rebuilt the way any other
+ * enable would.
+ *
+ * `node.body` IS INSTALLED EVERYWHERE EXCEPT THE REGISTRY. `field.storage.node.body` exists,
+ * `node__body` and `node_revision__body` exist, and a saved node's body reaches the table -- measured.
+ * What is missing is the entry in `entity.definitions.installed`, so
+ * `EntityDefinitionUpdateManager` reports a mismatch and every later field change is blocked behind
+ * it. Installing the definition is a metadata write against tables that are already correct.
+ */
+const PACK_CONSISTENCY = String.raw`
+  $fixed = [];
+  try {
+    $installer = \Drupal::service('module_installer');
+    $driverModule = \Drupal::database()->getProvider();
+    if ($driverModule && $driverModule !== 'core' && !\Drupal::moduleHandler()->moduleExists($driverModule)) {
+      $installer->install([$driverModule]);
+      $fixed[] = 'module:' . $driverModule;
+    }
+  } catch (\Throwable $e) {
+    $fixed[] = 'module-failed:' . substr($e->getMessage(), 0, 120);
+  }
+
+  try {
+    $udm = \Drupal::service('entity.definition_update_manager');
+    $changes = $udm->getChangeList();
+    foreach ($changes as $entityTypeId => $change) {
+      foreach (($change['field_storage_definitions'] ?? []) as $fieldName => $op) {
+        // 1 is CREATE; an UPDATE or DELETE is a schema change this must not perform silently
+        if ((int) $op !== 1) { continue; }
+        $definition = \Drupal::service('entity_field.manager')
+          ->getFieldStorageDefinitions($entityTypeId)[$fieldName] ?? null;
+        if ($definition === null) { continue; }
+        $udm->installFieldStorageDefinition($fieldName, $entityTypeId, $definition->getProvider(), $definition);
+        $fixed[] = 'field:' . $entityTypeId . '.' . $fieldName;
+      }
+    }
+  } catch (\Throwable $e) {
+    $fixed[] = 'field-failed:' . substr($e->getMessage(), 0, 120);
+  }
+  // THE TOOLKIT SHIPS AND WAS NEVER SELECTED. system.image says gd, which is not in this build, so
+  // Drupal reports "No image toolkit is configured" while cfw_images sits in the packed module
+  // unused. It is a real toolkit rather than a stub -- getimagesize() is ext-standard and needs no
+  // gd, so dimensions stay correct and resizing defers to delivery.
+  try {
+    $manager = \Drupal::service('image.toolkit.manager');
+    $available = array_keys($manager->getAvailableToolkits());
+    $imageConfig = \Drupal::configFactory()->getEditable('system.image');
+    $selected = $imageConfig->get('toolkit');
+    if (!in_array($selected, $available, true) && in_array('cfw_images', $available, true)) {
+      $imageConfig->set('toolkit', 'cfw_images')->save();
+      $fixed[] = 'toolkit:cfw_images';
+    }
+  } catch (\Throwable $e) {
+    $fixed[] = 'toolkit-failed:' . substr($e->getMessage(), 0, 120);
+  }
+  $out['packConsistency'] = $fixed;
+`;
+
 /** the site identity and uid-1 account a first run establishes; every field is validated below */
 export type FirstRunOptions = {
 	siteName?: string;
@@ -1853,6 +1918,8 @@ try {
   }
 
 ${SCHEMA_REPAIR}
+
+${PACK_CONSISTENCY}
 
   // uid 1 through the entity API so the password hasher and the presave hooks run
   $admin = \Drupal\user\Entity\User::load(1);

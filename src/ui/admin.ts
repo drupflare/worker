@@ -37,12 +37,23 @@ export function escapeHtml(value: unknown): string {
 /** the four surfaces */
 export type AdminPage = 'thresholds' | 'extend' | 'commands' | 'deploy';
 
+/**
+ * The prefix every product surface lives under.
+ *
+ * NOT `/admin`, which is Drupal core's own administration dashboard -- these pages used to sit on
+ * it, so a site owner who reached for their admin UI got the hosting product's Limits page instead.
+ * Every other admin route worked, because only the ones named here are claimed. The underscore is
+ * the same reasoning the object's `__` routes already use: Drupal owns the URL space, so anything
+ * this Worker claims has to be somewhere Drupal will not generate.
+ */
+export const SURFACE_PREFIX = '/_cfw';
+
 /** every page, with the path that renders it */
 export const ADMIN_PAGES: readonly { page: AdminPage; path: string; label: string }[] = [
-	{ page: 'thresholds', path: '/admin', label: 'Limits' },
-	{ page: 'extend', path: '/admin/extend', label: 'Extend' },
-	{ page: 'commands', path: '/admin/commands', label: 'Commands' },
-	{ page: 'deploy', path: '/admin/deploy', label: 'Deploy' }
+	{ page: 'thresholds', path: SURFACE_PREFIX, label: 'Limits' },
+	{ page: 'extend', path: `${SURFACE_PREFIX}/extend`, label: 'Extend' },
+	{ page: 'commands', path: `${SURFACE_PREFIX}/commands`, label: 'Commands' },
+	{ page: 'deploy', path: `${SURFACE_PREFIX}/deploy`, label: 'Deploy' }
 ] as const;
 
 const STYLE = `:root{color-scheme:light dark;--fg:#111;--bg:#fff;--dim:#666;--line:#d8d8d8;--ok:#1a7f37;--warn:#9a6700;--over:#b42318;--card:#fafafa}
@@ -84,7 +95,7 @@ export function renderShell(page: AdminPage, body: string, env?: PlanEnv | null)
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(ADMIN_PAGES.find((p) => p.page === page)?.label ?? 'Admin')}</title>
 <style>${STYLE}</style></head><body>
-<nav>${nav}<a class="dim" style="margin-left:auto;border:0" href="/admin">plan: ${escapeHtml(plan)}</a></nav>
+<nav>${nav}<a class="dim" style="margin-left:auto;border:0" href="${SURFACE_PREFIX}">plan: ${escapeHtml(plan)}</a></nav>
 <main>${body}</main></body></html>`;
 }
 
@@ -198,7 +209,7 @@ export function renderExtend(
 
 	return `<h1>Extend</h1>
 <p class="sub">Check whether a module can be installed here before trying. Type a package name the way you would to Composer.</p>
-<form method="GET" action="/admin/extend">
+<form method="GET" action="${SURFACE_PREFIX}/extend">
 <input type="text" name="q" placeholder="drupal/pathauto" value="${escapeHtml(query ?? '')}" spellcheck="false">
 <button type="submit">Check</button></form>
 ${note ? `<div class="card"><p>${escapeHtml(note)}</p></div>` : ''}
@@ -242,7 +253,7 @@ export function renderCommands(
 
 	return `<h1>Commands</h1>
 <p class="sub">A Drush-shaped field over the operations this site registers. ${escapeHtml(String(runnable))} of ${escapeHtml(String(entries.length))} have a driver that can actually run here.</p>
-<form method="GET" action="/admin/commands">
+<form method="GET" action="${SURFACE_PREFIX}/commands">
 <input type="text" name="op" placeholder="cr" value="${escapeHtml(submitted ?? '')}" spellcheck="false">
 <button type="submit">Run</button></form>
 ${result ? `<div class="card"><pre style="margin:0;overflow-x:auto"><code>${escapeHtml(result)}</code></pre></div>` : ''}

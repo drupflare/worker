@@ -3,13 +3,14 @@ import siteDoSource from '../../../src/site-do.ts?raw';
 import siteSource from '../../../src/site.ts?raw';
 import {
 	ADMIN_PAGES,
-	PROVISION_STEPS,
 	escapeHtml,
+	PROVISION_STEPS,
 	renderCommands,
 	renderDeploy,
 	renderExtend,
 	renderShell,
-	renderThresholds
+	renderThresholds,
+	SURFACE_PREFIX
 } from '../../../src/ui/admin';
 
 /**
@@ -62,7 +63,7 @@ describe('renderShell', () => {
 		const html = renderShell('deploy', '', null);
 		const nav = html.slice(html.indexOf('<nav>'), html.indexOf('</nav>'));
 		expect(nav.match(/aria-current/g)).toHaveLength(1);
-		expect(nav).toContain('href="/admin/deploy"');
+		expect(nav).toContain(`href="${SURFACE_PREFIX}/deploy"`);
 	});
 
 	it('reports the plan it rendered against', () => {
@@ -240,6 +241,43 @@ describe('renderDeploy: it must not render a button that lies', () => {
 	});
 });
 
+/**
+ * DRUPAL OWNS `/admin`.
+ *
+ * These pages sat on it, so `GET /admin` -- core's administration dashboard, the front door of the
+ * thing being hosted -- returned the product's `Limits` page. Measured on a dev server: `/admin`
+ * answered `<title>Limits</title>` while `/admin/content` answered `<title>Content | CFW Bench</title>`,
+ * so every admin route worked except the one a site owner reaches for first.
+ *
+ * The rule is the one `src/site.ts` already states and the object's `__` routes already follow: this
+ * Worker may only claim paths Drupal will not generate.
+ */
+describe('the product surfaces stay out of Drupal url space', () => {
+	it('claims a prefix Drupal does not use', () => {
+		expect(SURFACE_PREFIX.startsWith('/_')).toBe(true);
+	});
+
+	it('puts every page under it, and none of them under /admin', () => {
+		for (const page of ADMIN_PAGES) {
+			expect(page.path.startsWith(SURFACE_PREFIX), page.label).toBe(true);
+			// `/administrator` would pass a bare `startsWith`, so the boundary is checked too
+			expect(page.path === '/admin' || page.path.startsWith('/admin/'), page.label).toBe(
+				false
+			);
+		}
+	});
+
+	it('links nowhere under /admin, so no rendered page walks back into Drupal', () => {
+		const rendered = [
+			renderShell('thresholds', '', null),
+			renderExtend(null, [], null, null),
+			renderCommands([], null, null),
+			renderDeploy()
+		].join('\n');
+		expect(rendered).not.toMatch(/(href|action)="\/admin/);
+	});
+});
+
 describe('the surfaces stay honest against the code behind them', () => {
 	it('every admin route in site.ts is behind the diagnostic gate', () => {
 		// these pages drive /__ops, which runs cache rebuilds and module installs. Unauthenticated,
@@ -248,7 +286,9 @@ describe('the surfaces stay honest against the code behind them', () => {
 			siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
 			siteSource.indexOf('const ROUTES =')
 		);
-		for (const p of ADMIN_PAGES) expect(diag).toContain(`'${p.path}'`);
+		// spread from ADMIN_PAGES rather than written out, so the derivation is what is asserted;
+		// a page added to the table cannot miss the gate by being forgotten here
+		expect(diag).toContain('ADMIN_PAGES.map((p) => p.path)');
 		const pub = siteSource.slice(
 			siteSource.indexOf('const PUBLIC_ROUTES'),
 			siteSource.indexOf('const DIAGNOSTIC_ROUTES')

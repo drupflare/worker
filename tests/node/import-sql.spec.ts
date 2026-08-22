@@ -844,6 +844,50 @@ describe('what a dump carries and what it deliberately leaves behind', () => {
 		return db;
 	}
 
+	/**
+	 * `cfw_meta` IS NOT REGENERABLE, so it was dumped whole.
+	 *
+	 * `/export` is the "a customer can leave" path, so the file it produces goes to migration
+	 * tooling, to support, and to backup storage -- carrying the owner token that reaches `/export`
+	 * and `/firstrun?force=1`, a live Cloudflare OAuth access AND refresh token with `email:write`
+	 * on the operator's account, and the salt that signs one-time login links.
+	 */
+	function withSecrets(): DatabaseSync {
+		const db = new DatabaseSync(':memory:');
+		db.exec(`CREATE TABLE cfw_meta (k TEXT PRIMARY KEY, v TEXT)`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('owner_token', 'tok-SECRET')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('cf_oauth_token', '{"access":"AT-SECRET"}')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('hash_salt', 'salt-SECRET')`);
+		db.exec(`INSERT INTO cfw_meta VALUES ('site_origin', 'https://real.example')`);
+		return db;
+	}
+
+	it('withholds the credentials in cfw_meta, and says how many', () => {
+		const dump = dumpDatabase(storageOver(withSecrets()).sql);
+		expect(dump.sql).not.toContain('SECRET');
+		// CONTROL: the table is still dumped, so this is a redaction and not a dropped table
+		expect(dump.sql).toContain('https://real.example');
+		expect(dump.sql).toContain('CREATE TABLE cfw_meta');
+		expect(dump.redacted).toBe(3);
+	});
+
+	it('carries them when a restore asks by name', () => {
+		const dump = dumpDatabase(storageOver(withSecrets()).sql, { secrets: true });
+		expect(dump.sql).toContain('tok-SECRET');
+		expect(dump.sql).toContain('salt-SECRET');
+		expect(dump.redacted).toBe(0);
+	});
+
+	/**
+	 * `all=1` widens which TABLES carry rows. Rolling the credentials into it would mean the
+	 * byte-exact copy a restore wants is also the one nobody may store.
+	 */
+	it('CONTROL: a byte-exact copy is still redacted unless secrets were asked for', () => {
+		const dump = dumpDatabase(storageOver(withSecrets()).sql, { includeRows: () => true });
+		expect(dump.sql).not.toContain('SECRET');
+		expect(dump.redacted).toBe(3);
+	});
+
 	it('names a regenerable table by pattern, not by a hand-kept list of exact names', () => {
 		for (const t of [
 			'cache_container',

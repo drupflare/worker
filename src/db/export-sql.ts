@@ -68,6 +68,54 @@ export function isRegenerable(table: string): boolean {
 	return REGENERABLE_TABLES.some((p) => p.test(table));
 }
 
+/**
+ * The `cfw_meta` keys a dump withholds by default.
+ *
+ * `/export` is the "a customer can leave" path, so its output is handed to migration tooling, to
+ * support, and to backup storage. `cfw_meta` is not regenerable, so it was dumped whole -- carrying
+ * the owner token that reaches `/export` and `/firstrun?force=1`, and a live Cloudflare OAuth access
+ * AND refresh token with `email:write` on the operator's account.
+ *
+ * `hash_salt` is here for a different reason and it is the one a restore genuinely needs: it signs
+ * one-time login links and form tokens, so anyone holding a dump that carries it can mint a valid
+ * password-reset URL. `?secrets=1` is how a restore asks for all three on purpose.
+ */
+export const SECRET_META_KEYS = new Set([
+	'owner_token',
+	'cf_oauth_token',
+	'cf_oauth_client_id',
+	'hash_salt'
+]);
+
+/**
+ * The same keys as SQLite's `hex()` renders them.
+ *
+ * The row reader selects `typeof(col) AS t<i>` and `hex(col) AS h<i>`, so `t<i>` is the TYPE NAME
+ * and the value only exists as uppercase hex. Comparing against `t<i>` matches `'text'` for every
+ * row and nothing else, which is how the first version of this passed its own read-through and
+ * failed its test.
+ */
+const SECRET_META_HEX = new Set(
+	[...SECRET_META_KEYS].map((k) =>
+		[...new TextEncoder().encode(k)]
+			.map((b) => b.toString(16).padStart(2, '0'))
+			.join('')
+			.toUpperCase()
+	)
+);
+
+/** whether this row is one of them; the key is column `k` of `cfw_meta` and nothing else */
+export function isSecretMetaRow(
+	table: string,
+	columns: readonly string[],
+	raw: Record<string, unknown>
+): boolean {
+	if (table !== 'cfw_meta') return false;
+	const at = columns.indexOf('k');
+	if (at < 0) return false;
+	return SECRET_META_HEX.has(String(raw[`h${at}`] ?? '').toUpperCase());
+}
+
 export interface DumpOptions {
 	/** rows per table, for a cheap sample; 0 or absent is every row */
 	limitPerTable?: number;
@@ -85,6 +133,8 @@ export interface DumpOptions {
 	maxLiteralChars?: number;
 	/** characters per chunk for {@link dumpChunk}; see {@link DUMP_CHARS_PER_CHUNK} */
 	maxCharsPerChunk?: number;
+	/** carry {@link SECRET_META_KEYS} in the dump; a faithful restore needs them, a backup does not */
+	secrets?: boolean;
 }
 
 /**
@@ -170,6 +220,8 @@ export interface DumpResult {
 	replayable: boolean;
 	/** values too wide for one statement, rebuilt with `col = col || ...` appends */
 	splitValues: number;
+	/** rows withheld by {@link SECRET_META_KEYS}; a dump must say what it is not carrying */
+	redacted: number;
 	/**
 	 * The tables emitted STRUCTURE-ONLY, resolved rather than described.
 	 *
@@ -336,6 +388,7 @@ export function dumpDatabase(sql: SqlLike, opts: DumpOptions = {}): DumpResult {
 	const lines: string[] = [];
 	const counts: Record<string, number> = {};
 	let splitValues = 0;
+	let redacted = 0;
 	let structureOnly: string[] = [];
 	let offsetPaged: string[] = [];
 	let cursor: DumpCursor = DUMP_START;
@@ -355,6 +408,7 @@ export function dumpDatabase(sql: SqlLike, opts: DumpOptions = {}): DumpResult {
 		for (const [table, n] of Object.entries(chunk.tables))
 			counts[table] = (counts[table] ?? 0) + n;
 		splitValues += chunk.splitValues;
+		redacted += chunk.redacted;
 		statements += chunk.statements;
 		maxStatementChars = Math.max(maxStatementChars, chunk.maxStatementChars);
 		replayable = replayable && chunk.replayable;
@@ -373,6 +427,7 @@ export function dumpDatabase(sql: SqlLike, opts: DumpOptions = {}): DumpResult {
 		maxStatementChars,
 		replayable,
 		splitValues,
+		redacted,
 		structureOnly,
 		offsetPaged
 	};
@@ -443,6 +498,8 @@ export interface DumpChunk {
 	maxStatementChars: number;
 	replayable: boolean;
 	splitValues: number;
+	/** rows withheld by {@link SECRET_META_KEYS}; a dump must say what it is not carrying */
+	redacted: number;
 	structureOnly: string[];
 	/** tables paged by OFFSET because they have no rowid; see {@link pagedRowReader} */
 	offsetPaged: string[];
@@ -623,6 +680,7 @@ export function dumpChunk(
 	const lines: string[] = [];
 	const counts: Record<string, number> = {};
 	let splitValues = 0;
+	let redacted = 0;
 	let chars = 0;
 
 	const finish = (next: DumpCursor): DumpChunk => {
@@ -635,6 +693,7 @@ export function dumpChunk(
 			maxStatementChars: lines.reduce((n, line) => Math.max(n, line.length), 0),
 			replayable: lines.every((line) => line.length <= DO_MAX_STATEMENT_CHARS),
 			splitValues,
+			redacted,
 			structureOnly,
 			offsetPaged,
 			cursor: next.phase === 'done' ? { phase: 'done', shape } : { ...next, shape },
@@ -698,6 +757,16 @@ export function dumpChunk(
 			}
 			let consumed = 0;
 			for (const raw of rows) {
+				if (isSecretMetaRow(table, columns, raw) && opts.secrets !== true) {
+					// consumed rather than skipped, so the cursor advances and the count still
+					// reports the row; what is withheld is its VALUE, and the envelope says so
+					counts[table] = (counts[table] ?? 0) + 1;
+					redacted++;
+					emitted++;
+					consumed++;
+					if (keyed) afterRowid = Number(raw.__rid);
+					continue;
+				}
 				const { statements, split } = emitRow(
 					table,
 					columns,

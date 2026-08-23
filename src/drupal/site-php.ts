@@ -2359,6 +2359,117 @@ echo json_encode([
 `;
 
 /**
+ * Does `Drupal::httpClient()` return a body, on the shipping binary?
+ *
+ * It did not, for the whole life of the project, and the comment saying it did is the finding:
+ * `DrupflareServiceProvider` left core's `StreamHandler` in place on a non-suspending build and
+ * called that "the behaviour that actually works today". It works for `file_get_contents()`. For
+ * Guzzle the fetch SUCCEEDS and the result is thrown away one line later --
+ * `StreamHandler::createStream()` reads `$http_response_header`, a magic local only PHP's own http
+ * wrapper populates, so `HeaderProcessor::parseHeaders([])` raises and every call rejects with
+ * `RequestException: An error was encountered while creating the response`.
+ *
+ * THE CONTROL IS THE POINT OF THIS FRAGMENT. It drives core's handler over the same wrapper and
+ * the same cached row and requires it to STILL fail; a seam whose control goes green is measuring
+ * something other than the defect and must be thrown away rather than kept. The caller seeds
+ * `cfw_http_cache` itself, so nothing here touches the network.
+ */
+export const GUZZLE_HANDLER_CHECK = String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$checks = [];
+$assert = function (string $label, bool $ok, $detail = null) use (&$checks) {
+  $checks[] = ['label' => $label, 'ok' => $ok, 'detail' => $detail];
+};
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  $autoloader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
+  $autoloader->addPsr4('Drupflare\\StreamHttp\\', '/drupal/libraries/drupflare-stream-http/src/');
+
+  \Drupal\drupflare\StreamWrapper\HttpsStreamWrapper::register();
+  $url = getenv('CFW_TEST_URL') ?: 'https://example.com/';
+
+  // the mechanism, measured rather than reasoned: no userland wrapper can populate either the
+  // magic local or its 8.4 replacement, so the consumer has nothing to read
+  $fh = @fopen($url, 'r');
+  $assert('the wrapper opens the seeded url', is_resource($fh));
+  if (is_resource($fh)) {
+    $assert('and the body is there to be read', stream_get_contents($fh) !== '');
+    $assert('but $http_response_header is not set', !isset($http_response_header));
+    if (function_exists('http_get_last_response_headers')) {
+      $assert(
+        'and the 8.4 replacement answers NULL for the same reason',
+        http_get_last_response_headers() === null
+      );
+    }
+    fclose($fh);
+  }
+
+  // CONTROL: core's handler, over the working wrapper. It must still fail.
+  $core = \GuzzleHttp\HandlerStack::create(new \GuzzleHttp\Handler\StreamHandler());
+  $coreClient = new \GuzzleHttp\Client(['handler' => $core]);
+  $coreFailed = false;
+  $coreReason = '';
+  try {
+    $coreClient->get($url);
+  } catch (\Throwable $e) {
+    $coreFailed = true;
+    $coreReason = get_class($e) . ': ' . $e->getMessage();
+  }
+  $assert('CONTROL: core StreamHandler still cannot build a response', $coreFailed, $coreReason);
+  $assert(
+    'and it fails where the report says it does',
+    str_contains($coreReason, 'creating the response'),
+    $coreReason
+  );
+
+  // the fix, through the class the service provider now installs
+  $stack = \GuzzleHttp\HandlerStack::create(new \Drupal\drupflare\Http\CachedFetchHandler());
+  $client = new \GuzzleHttp\Client(['handler' => $stack]);
+  $response = $client->get($url);
+  $assert('CachedFetchHandler answers 200', $response->getStatusCode() === 200, $response->getStatusCode());
+  $assert('with a body', strlen((string) $response->getBody()) > 0, strlen((string) $response->getBody()));
+  $assert(
+    'and the headers the drain stored',
+    $response->getHeaderLine('content-type') !== '',
+    $response->getHeaderLine('content-type')
+  );
+
+  // the negative case: an uncached url is a refusal a caller's error path already handles, never
+  // a 2xx carrying an explanation
+  $missing = 'https://example.invalid/never-prefetched-' . bin2hex(random_bytes(3));
+  $refused = '';
+  try {
+    $client->get($missing);
+  } catch (\Throwable $e) {
+    $refused = get_class($e);
+  }
+  $assert('an uncached url rejects', $refused !== '', $refused);
+  $assert(
+    'as a ConnectException, which is what a failed socket raises too',
+    $refused === 'GuzzleHttp\\Exception\\ConnectException',
+    $refused
+  );
+}
+catch (\Throwable $e) {
+  $assert('no exception escaped the guzzle check', false, get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+}
+
+$passed = count(array_filter($checks, fn ($c) => $c['ok']));
+echo json_encode([
+  'passed' => $passed,
+  'failed' => count($checks) - $passed,
+  'checks' => $checks,
+]);
+`;
+
+/**
  * Where exactly does a form submission stop?
  *
  * The method now reaches Drupal, and a submission still does not take effect. "The form does not

@@ -870,8 +870,12 @@ notes, not in support tickets.
 - **The interpreter loads 25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
   ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
   tokenizer, uri, vrzno, xml, yaml and zlib. `mbstring` and `iconv` are supplied by Symfony's
-  polyfills, which diverge from the real extensions on 86 measured cases. There is no `gd`, no
-  `curl` and no `pdo_sqlite`. `/php` reports the live list.
+  polyfills, which diverge from the real extensions on 86 measured cases. There is no `gd` and no
+  `pdo_sqlite`. `/php` reports the live list.
+- **`curl_*` works without `ext-curl`.** The functions are supplied over the same deferred-HTTP
+  queue as the rest of outbound traffic, so an SDK that bundles its own curl transport runs
+  unmodified. `curl_version()` reports `0.0.0-drupflare-shim`, and an option the shim does not
+  understand is refused rather than ignored.
 - **Image styles are applied at delivery, not by rewriting files.** Without `gd` there is no image
   toolkit that produces derivatives, so Cloudflare Images resizes from the URL. A module that reads
   a derivative's own pixels sees the full-size image.
@@ -886,8 +890,9 @@ notes, not in support tickets.
   not.
 - **A module install leaves the object with no room to do anything else.** It costs 6,810 ms of CPU
   — the installer is 1,570 ms of that and the kernel boot 3,101 ms — and ends with the wasm heap at
-  ~110 MB of the isolate's 128 MB. `memory.grow` has no inverse, so the next event on that isolate
-  is refused until it is re-created. The install therefore queues the pages it invalidated instead
+  ~110 MB of the isolate's 128 MB. `memory.grow` has no inverse, so the heap never shrinks; a
+  further growth is served at a smaller step rather than refused. The install queues the pages it
+  invalidated instead
   of re-rendering them, and the cache is cold for one visit. Restoring a heap snapshot instead of
   booting removes 2,310–3,578 ms of that (n=8 per arm, present in both modes of a bimodal
   population). It is **on by default**; each site pays 31,784,960 bytes across 159 rows for the

@@ -71,17 +71,21 @@ import {
 } from './db/migrate-sql';
 import {
 	amplification,
+	chargeFactorsFromSchema,
 	countingSql,
 	emptyTally,
 	overheadShare,
 	rankTally,
 	routerRebuilds,
+	splitChargedRows,
 	type WriteTally
 } from './db/write-tally';
+import { CURL_FIX } from './drupal/curl-fix';
 import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php';
 import { FILES_PROBE } from './drupal/files-php';
 import { ICONV_FIX } from './drupal/iconv-fix';
 import { MB_FIX } from './drupal/mb-fix';
+import { OPENSSL_FIX, installSign } from './drupal/openssl-fix';
 import {
 	BOOT_KERNEL,
 	BOOT_PHASES,
@@ -100,6 +104,7 @@ import {
 	type BootPhase,
 	type RenderRequest
 } from './drupal/site-php';
+import { SODIUM_FIX, installBlake2b } from './drupal/sodium-fix';
 import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
 import {
 	DAILY_DO_QUOTA,
@@ -152,6 +157,7 @@ import {
 	type FleetDb,
 	type FleetRow
 } from './ops/fleet';
+import { hibernationEligible } from './ops/hibernation';
 import { phpLogCeiling, phpLogPasses } from './ops/log-level';
 import {
 	drainMailQueue,
@@ -1036,6 +1042,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	crossingNames?: string[];
 	/** the tally at the start of the last render, so `/serve-stats` can report a per-render figure */
 	lastRenderCrossings?: CrossingTally;
+
+	/**
+	 * Whether an SMTP send is holding an outbound TCP socket right now.
+	 *
+	 * The only thing in `src/` that can make this object non-hibernateable, so it is the only input
+	 * `/__serve-stats` needs to answer whether idle time is billed.
+	 */
+	mailSocketOpen?: boolean;
 	windowOpenedAt?: number;
 	windowClosedAt?: number;
 	windowFills?: number;
@@ -1183,6 +1197,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// stack. Installed even on a build that HAS zlib: the PHP half checks
 		// extension_loaded('zlib') and defines nothing, so an unused Module key is the whole cost
 		installZlib(binary as unknown as Record<string, unknown>, withMask);
+		// RSA/ECDSA over node:crypto, which is SYNCHRONOUS in workerd -- measured, so this needs
+		// no deferred queue and is an ordinary masked bridge like the zlib one
+		installSign(binary as unknown as Record<string, unknown>, withMask);
+		// BLAKE2b over blakejs; no build here has ext-sodium and no layer under it has the digest
+		// either, so this is the only place strata's content address can come from
+		installBlake2b(binary as unknown as Record<string, unknown>, withMask);
 		// LAST, after every installer. A wrapper applied before one is silently overwritten by it,
 		// and the tally then reads 0 for a capability being called constantly -- which is the
 		// failure this instrument exists to avoid in the first place
@@ -1298,6 +1318,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the gz* functions have to exist before AssetDumper runs, and it runs inside a render;
 		// same shape as MB_FIX, and inert on a build that has the real extension
 		await this.run(`<?php ${ZLIB_FIX}`);
+		// curl_* must exist before any SDK that bundles its own transport constructs a client.
+		// The shim class is resolved on first CALL rather than here, because Drupal's autoloader
+		// does not exist yet at this point in the boot
+		await this.run(`<?php ${CURL_FIX}`);
+		// openssl_sign/openssl_verify, so firebase/php-jwt and the Google auth client work
+		// unmodified; inert on a build that has the real extension
+		await this.run(`<?php ${OPENSSL_FIX}`);
+		// sodium_crypto_generichash*, which strata needs before its first frame is written
+		await this.run(`<?php ${SODIUM_FIX}`);
 		return this.php;
 	}
 
@@ -3933,6 +3962,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				this.lastMailDrainAt = Date.now();
 			} else {
 				try {
+					// SMTP dials `cloudflare:sockets`, and an outbound TCP socket is on
+					// Cloudflare's no-hibernation list -- so the object is billed for duration
+					// across the whole drain, not just while a send is on the wire
+					this.mailSocketOpen = plan.transport.kind === 'smtp';
 					const drained = await drainMailQueue(this.sql, plan.transport, {
 						limit: mailDrainLimit(this.env ?? {}),
 						// so a rejected send can say "this is the free plan" rather than "403"
@@ -3945,6 +3978,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				} catch (e: any) {
 					this.lastMailDrain = { error: String(e?.message ?? e) };
 					this.lastMailDrainAt = Date.now();
+				} finally {
+					this.mailSocketOpen = false;
 				}
 			}
 		}
@@ -5013,6 +5048,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						ranked: rankTally(this.writeTally),
 						amplification: amplification(this.writeTally),
 						overheadShare: overheadShare(this.writeTally),
+						// the split `overheadShare` cannot give, against THIS object's schema rather
+						// than against the pack: a module enable creates tables no pack contains
+						indexSplit: splitChargedRows(
+							this.writeTally.byTable,
+							chargeFactorsFromSchema(this.sql, Object.keys(this.writeTally.byTable))
+						),
 						note: 'an ?unattributed share means writeTargetTable() is missing a form and the breakdown is not trustworthy'
 					});
 				}
@@ -6029,6 +6070,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						crossings: this.lastRenderCrossings ?? null,
 						crossingsTotal: this.crossings?.total ?? 0,
 						crossingCapabilities: this.crossingNames ?? [],
+						// whether this object is billed for duration while idle. An armed alarm is
+						// deliberately reported and deliberately not disqualifying -- it is absent
+						// from Cloudflare's condition list, so the keep-warm chain costs a row per
+						// arm and buys no residency
+						hibernation: hibernationEligible({
+							pendingAlarm: (this.alarmFirings ?? 0) > 0,
+							outboundSocket: this.mailSocketOpen === true
+						}),
 						cached: this.sql
 							.exec(
 								'SELECT path, status, length(html) AS bytes, render_ms, rendered_at FROM cfw_page ORDER BY path'

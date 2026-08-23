@@ -17,7 +17,7 @@ against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 > HTTPS GET of a release asset, with no Docker, no token and no PHP.
 
 The interpreter ships as a zstd frame inflated at module scope, so Cloudflare's gzip meter reads
-**2,925,281 bytes** against the free plan's 3 MiB ceiling — **220,447 to spare**, with nothing
+**2,925,701 bytes** against the free plan's 3 MiB ceiling — **220,027 to spare**, with nothing
 dropped to fit. The figure moves whenever `src/` does; `bun run release:check` prints the current
 one. Cold boot is **1,398 ms** of absolute `cpuTime` on a deployed worker, and boot work is
 saturated: cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written

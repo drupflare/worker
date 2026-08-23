@@ -1,0 +1,12 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-duration-probe",
+	"main": "./probe.ts",
+	"compatibility_date": "2026-08-01",
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"durable_objects": {
+		"bindings": [{ "name": "PROBE", "class_name": "DurationProbe" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["DurationProbe"] }]
+}

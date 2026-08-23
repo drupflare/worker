@@ -323,6 +323,52 @@ export type ChargeSplit = {
 	exact: boolean;
 };
 
+/** the reads a live charge-factor lookup needs; narrower than `SqlLike`, which only writes */
+export type SchemaReader = {
+	exec(sql: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
+};
+
+/** a table name safe to interpolate, which a PRAGMA needs because it will not take a binding */
+const SAFE_TABLE = /^[A-Za-z0-9_]+$/;
+
+/**
+ * Charge factors read off the LIVE database rather than off the pack.
+ *
+ * `chargePerInsertedRow()` in `scripts/measure/index-audit.ts` derives the same number by parsing the
+ * shipped DDL, which is the right instrument for a pack and the wrong one for a running site: a
+ * module enable creates tables no pack contains, and a workload measured inside a Durable Object can
+ * only be decomposed against the schema that object actually has.
+ *
+ * `PRAGMA index_list` is the engine's own answer, so implicit primary-key and UNIQUE indexes arrive
+ * as `sqlite_autoindex_*` rows without being inferred, and PARTIAL indexes are excluded on the
+ * engine's `partial` flag rather than on a regex over the DDL. `AUTOINCREMENT` is still read from the
+ * DDL text because no pragma reports it, and it costs a charged row of its own -- the
+ * `sqlite_sequence` rewrite measured in `tests/unit/db/index-charge-model.spec.ts`.
+ *
+ * A table that does not exist is OMITTED rather than given a factor of 0, so `splitChargedRows()`
+ * reports it as inexact instead of silently pricing it as pure data.
+ */
+export function chargeFactorsFromSchema(
+	sql: SchemaReader,
+	tables: readonly string[]
+): Record<string, number> {
+	const factors: Record<string, number> = {};
+	for (const table of tables) {
+		if (!SAFE_TABLE.test(table)) continue;
+		const ddl = sql
+			.exec("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", table)
+			.toArray()[0];
+		if (!ddl) continue;
+		const indexes = sql
+			.exec(`PRAGMA index_list("${table}")`)
+			.toArray()
+			.filter((row) => Number(row['partial'] ?? 0) === 0).length;
+		factors[table] =
+			1 + indexes + (/\bAUTOINCREMENT\b/i.test(String(ddl['sql'] ?? '')) ? 1 : 0);
+	}
+	return factors;
+}
+
 /**
  * Divides measured charged rows into data and index maintenance, given the schema's charge factors.
  *

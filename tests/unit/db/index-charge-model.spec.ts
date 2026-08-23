@@ -7,6 +7,7 @@ import {
 	splitFill,
 	type PackStatement
 } from '../../../scripts/measure/index-audit';
+import { chargeFactorsFromSchema, splitChargedRows } from '../../../src/db/write-tally';
 import type { Sql } from '../../helpers/serve-do';
 import { freshSite, inObject } from '../../helpers/serve-do';
 import { CFW_PAGE_DDL, SHIPPED } from '../../helpers/shipped-ddl';
@@ -382,5 +383,68 @@ describe('the decomposition the audit reports', () => {
 		const split = splitFill({ watchdog: 9 }, auditSchema(statements));
 		expect(split.rows[0]?.chargePerRow).toBe(0);
 		expect(split.rows[0]?.exact).toBe(false);
+	});
+});
+
+/**
+ * The same charge model read off a LIVE database instead of off the pack.
+ *
+ * `chargePerInsertedRow()` parses shipped DDL, which is the right instrument for an artifact and the
+ * wrong one for a running object: a module enable creates tables no pack contains, and
+ * `write-amplification.spec.ts` decomposes a workload measured inside a Durable Object. So the two
+ * have to agree wherever both can answer, and that agreement is what makes either one quotable.
+ */
+describe('chargeFactorsFromSchema, the same model against the engine', () => {
+	it('agrees with the pack parser on every primary-key form the schema contains', async () => {
+		const cases = [
+			SHIPPED.cacheDynamicPageCache!.ddl,
+			SHIPPED.watchdog!.ddl,
+			SHIPPED.keyValue!.ddl,
+			SHIPPED.usersFieldData!.ddl,
+			SHIPPED.cachetags!.ddl,
+			[CFW_PAGE_DDL]
+		];
+		const live = await inObject(freshSite(), (site) => {
+			for (const ddl of cases) for (const statement of ddl) site.sql.exec(statement);
+			const names = cases.map((ddl) => parseCreateTable(ddl[0] as string)!.name);
+			return chargeFactorsFromSchema(site.sql, names);
+		});
+		for (const ddl of cases) {
+			const name = parseCreateTable(ddl[0] as string)!.name;
+			expect(live[name], name).toBe(predict(ddl));
+		}
+	});
+
+	it('excludes a PARTIAL index, on the engine flag rather than on a regex', async () => {
+		const live = await inObject(freshSite(), (site) => {
+			site.sql.exec('CREATE TABLE partial_t (id INTEGER PRIMARY KEY, a TEXT, b TEXT)');
+			site.sql.exec('CREATE INDEX partial_t_a ON partial_t (a)');
+			site.sql.exec('CREATE INDEX partial_t_b ON partial_t (b) WHERE b IS NOT NULL');
+			return chargeFactorsFromSchema(site.sql, ['partial_t']);
+		});
+		// a partial index stores an entry only for the rows its WHERE admits, which is the whole
+		// reason it is worth proposing -- counting it would price the fix as if it changed nothing
+		expect(live['partial_t']).toBe(2);
+	});
+
+	it('reads AUTOINCREMENT off the DDL, because no pragma reports it', async () => {
+		const live = await inObject(freshSite(), (site) => {
+			site.sql.exec('CREATE TABLE auto_live (id INTEGER PRIMARY KEY AUTOINCREMENT, a TEXT)');
+			site.sql.exec('CREATE TABLE plain_live (id INTEGER PRIMARY KEY, a TEXT)');
+			return chargeFactorsFromSchema(site.sql, ['auto_live', 'plain_live']);
+		});
+		expect(live['plain_live']).toBe(1);
+		expect(live['auto_live']).toBe(2);
+	});
+
+	it('omits a table it cannot find rather than pricing it as pure data', async () => {
+		const live = await inObject(freshSite(), (site) =>
+			// the second name would be interpolated into a PRAGMA, so it is refused before the read
+			chargeFactorsFromSchema(site.sql, ['no_such_table', 'bad"; DROP TABLE x; --'])
+		);
+		expect(live).toStrictEqual({});
+		// omitted, not zero: `splitChargedRows()` reports an absent factor as inexact, where a 0
+		// would silently attribute every charged row to index maintenance
+		expect(splitChargedRows({ no_such_table: 9 }, live).rows[0]?.exact).toBe(false);
 	});
 });

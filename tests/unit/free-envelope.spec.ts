@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+	billedGbS,
 	COST_PER_VIEW,
+	CPU_UNDERSTATEMENT,
 	DEFAULT_MIX,
 	DO_GB_ALLOCATED,
 	DO_INVOCATIONS_PER_COLD_FILL,
+	DURATION_CALIBRATION,
 	envelope,
 	FILL_WINDOW_AMORTISATION,
 	fleetIdleGbS,
 	FREE_QUOTAS,
 	IDLE_GB_S_PER_DAY,
 	INSTALL_CPU_MS,
+	KEEP_WARM_MS,
+	keepWarmFleetCost,
 	optimalOffWorker,
 	PAID_DURATION,
 	paidDurationCost,
@@ -818,5 +823,65 @@ describe('the optimal mirror share', () => {
 			{ cdnAbsorption: 1 }
 		);
 		expect(justUnder.servingViewsPerDay).toBeLessThan(o.viewsPerDay);
+	});
+});
+
+describe('the keep-warm chain, priced across a FLEET rather than one site', () => {
+	it('costs 360 arms a day per site, which is the figure that reads as noise', () => {
+		const one = keepWarmFleetCost(1);
+		expect(one.armsPerSitePerDay).toBe(360);
+		expect(one.rowsPerDay).toBe(360);
+		// 0.36% of the write allowance. Correct, and the reason nobody multiplied it
+		expect(one.rowShare).toBeCloseTo(0.0036, 6);
+	});
+
+	it('spends TWO account-wide meters, not one', () => {
+		const fleet = keepWarmFleetCost(100);
+		expect(fleet.rowsPerDay).toBe(36_000);
+		// the DO request quota "includes alarm invocations", so the same 360 arms are charged
+		// twice over -- the model had a line for neither
+		expect(fleet.doRequestsPerDay).toBe(36_000);
+		expect(fleet.rowShare).toBeCloseTo(0.36, 6);
+		expect(fleet.doRequestShare).toBeCloseTo(0.36, 6);
+	});
+
+	it('saturates a free account at 277 sites with ZERO visitors', () => {
+		expect(keepWarmFleetCost(1).saturatingSites).toBe(277);
+		const saturated = keepWarmFleetCost(277);
+		expect(saturated.rowShare).toBeLessThanOrEqual(1);
+		expect(keepWarmFleetCost(278).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
+	});
+
+	it('scales inversely with the interval, so the lever is arithmetic rather than a rewrite', () => {
+		const shipping = keepWarmFleetCost(100, KEEP_WARM_MS);
+		const halved = keepWarmFleetCost(100, KEEP_WARM_MS * 2);
+		expect(halved.rowsPerDay).toBe(shipping.rowsPerDay / 2);
+		expect(halved.saturatingSites).toBe(shipping.saturatingSites * 2 + 1);
+	});
+});
+
+describe('the duration meter, calibrated on a deployed object', () => {
+	it('reproduces the billed GB-s from the wall clock, exactly', () => {
+		// 10.026244 s * 0.128 GB. If this ever drifts, either the allocation changed or the
+		// reading was taken from the wrong dataset again
+		const seconds = DURATION_CALIBRATION.activeTimeUs / 1_000_000;
+		expect(billedGbS(seconds)).toBeCloseTo(DURATION_CALIBRATION.durationGbS, 9);
+	});
+
+	it('confirms 0.128 from BILLING rather than from a docs example', () => {
+		const seconds = DURATION_CALIBRATION.activeTimeUs / 1_000_000;
+		expect(DURATION_CALIBRATION.durationGbS / seconds).toBeCloseTo(DO_GB_ALLOCATED, 9);
+	});
+
+	it('records how far cpuTime understates it, which is the caveat with a number on it', () => {
+		// 2,612x on a workload that spends its time awaiting. Every ceiling computed from
+		// SECONDS_PER is a LOWER bound and the gap is unbounded, not small
+		expect(CPU_UNDERSTATEMENT).toBeGreaterThan(2_000);
+		expect(DURATION_CALIBRATION.cpuTimeUs).toBeLessThan(DURATION_CALIBRATION.activeTimeUs);
+	});
+
+	it('bills nothing for negative or zero wall clock', () => {
+		expect(billedGbS(0)).toBe(0);
+		expect(billedGbS(-5)).toBe(0);
 	});
 });

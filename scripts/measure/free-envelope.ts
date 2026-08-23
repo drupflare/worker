@@ -130,9 +130,12 @@ export const SECONDS_PER_DAY = 86_400;
  *
  * **83% of the entire free allowance.** The docs are explicit that an object which is idle and
  * ELIGIBLE for hibernation is not billed even before the runtime hibernates it -- but one that is
- * idle and UNABLE to hibernate bills the whole time. A pending promise, an un-awaited `waitUntil`,
- * an open non-hibernatable WebSocket or a dangling timer is enough. No request count and no row
- * count would show it.
+ * idle and UNABLE to hibernate bills the whole time. No request count and no row count would show it.
+ *
+ * The five disqualifying conditions are Cloudflare's and are transcribed in `src/ops/hibernation.ts`
+ * rather than paraphrased here, because an earlier version of this comment listed "an un-awaited
+ * `waitUntil`" and "a dangling timer" from memory and omitted the one that actually fires in this
+ * codebase: an outbound TCP socket, which `src/ops/mail.ts` opens for every SMTP send.
  */
 export const IDLE_GB_S_PER_DAY = SECONDS_PER_DAY * DO_GB_ALLOCATED;
 
@@ -160,6 +163,55 @@ export type ReplicaMode = 'alwaysWarm' | 'hibernating';
  */
 export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 	return mode === 'alwaysWarm' ? Math.max(0, replicas) * IDLE_GB_S_PER_DAY : 0;
+}
+
+/** the keep-warm chain's re-arm interval, `KEEP_WARM_MS` in `src/ops/cron.ts` */
+export const KEEP_WARM_MS = 240_000;
+
+/**
+ * What the keep-warm chain costs a FLEET before a single visitor arrives.
+ *
+ * **THE PER-SITE FIGURE IS SMALL AND THE FLEET FIGURE IS NOT, and only the per-site one was ever
+ * written down.** 360 rows/day is 0.36% of the write allowance, which reads as noise. But the free
+ * DO quotas are ACCOUNT-WIDE, so a host running N sites on one account multiplies it, and the same
+ * 360 arms also spend the DO REQUEST allowance because that quota "includes alarm invocations".
+ * Two meters, same multiplier, neither modelled.
+ *
+ * **AND THE CHAIN BUYS NOTHING IT IS BELIEVED TO BUY.** An armed alarm is absent from Cloudflare's
+ * hibernation-eligibility list, so it does not hold the object resident -- see
+ * {@link ../../src/ops/hibernation.ts}. It costs two meters and delivers no warmth. This function
+ * exists so that trade is arithmetic rather than an assumption.
+ *
+ * @param sites how many sites share one account's daily allowance.
+ * @param keepWarmMs the re-arm interval; the default is what ships.
+ */
+export function keepWarmFleetCost(
+	sites: number,
+	keepWarmMs: number = KEEP_WARM_MS
+): {
+	armsPerSitePerDay: number;
+	rowsPerDay: number;
+	doRequestsPerDay: number;
+	rowShare: number;
+	doRequestShare: number;
+	/** sites at which keep-warm alone saturates the tighter of the two meters */
+	saturatingSites: number;
+} {
+	const armsPerSitePerDay = Math.floor((SECONDS_PER_DAY * 1000) / Math.max(1, keepWarmMs));
+	const perDay = Math.max(0, sites) * armsPerSitePerDay;
+	const rowsPerDay = perDay * FREE_QUOTAS.rowsPerAlarmArm;
+	return {
+		armsPerSitePerDay,
+		rowsPerDay,
+		// an alarm invocation is itself a billed DO request, so the chain spends both meters
+		doRequestsPerDay: perDay,
+		rowShare: rowsPerDay / FREE_QUOTAS.rowsWrittenPerDay,
+		doRequestShare: perDay / FREE_QUOTAS.doRequestsPerDay,
+		saturatingSites: Math.floor(
+			Math.min(FREE_QUOTAS.rowsWrittenPerDay, FREE_QUOTAS.doRequestsPerDay) /
+				Math.max(1, armsPerSitePerDay)
+		)
+	};
 }
 
 /**
@@ -198,6 +250,51 @@ export function paidDurationCost(
  * spends awaiting, and this meter charges for that too. Treat every duration ceiling computed from
  * these as an upper bound.
  */
+/**
+ * The duration meter, calibrated against a deployed object rather than inferred.
+ *
+ * MEASURED 2026-08-23 on `cfw-duration-probe`, a Durable Object with no PHP in it, driven with ten
+ * 1,000 ms holds and read back from `durableObjectsPeriodicGroups`:
+ *
+ * | field        | reading    |
+ * | ------------ | ---------- |
+ * | `activeTime` | 10,026,244 |
+ * | `cpuTime`    | 3,838      |
+ * | `duration`   | 1.283359232 |
+ *
+ * `10.026244 s * 0.128 GB` is 1.283359232 GB-s exactly, so `activeTime` is MICROSECONDS of wall
+ * clock, `duration` is GB-s, and {@link DO_GB_ALLOCATED} is confirmed from billing data rather than
+ * from a docs example.
+ *
+ * **AND THE INSTRUMENT THAT SAID THIS WAS UNMEASURABLE WAS THE WRONG DATASET.** The model carried
+ * "GraphQL exposes requests, body size, stored bytes and cpuTime but not duration", which is true
+ * of `durableObjectsInvocationsAdaptiveGroups` and false of the periodic one. Suspect the
+ * instrument first.
+ *
+ * **THE RATIO IS THE POINT.** That object spent 3,838 us of CPU and was billed for 10,026,244 us of
+ * wall clock -- **2,612x**. cpuTime does not see time spent awaiting and this meter charges for it,
+ * so every duration figure derived from {@link SECONDS_PER} is a LOWER bound, and the gap is
+ * unbounded rather than small.
+ */
+export const DURATION_CALIBRATION = {
+	/** microseconds of wall clock the probe was held for */
+	activeTimeUs: 10_026_244,
+	/** microseconds of CPU the same invocations spent */
+	cpuTimeUs: 3_838,
+	/** GB-s Cloudflare billed for it */
+	durationGbS: 1.283359232,
+	measured: true
+} as const;
+
+/** how far cpuTime understates billed duration, on a workload that spends its time awaiting */
+export const CPU_UNDERSTATEMENT =
+	DURATION_CALIBRATION.activeTimeUs / DURATION_CALIBRATION.cpuTimeUs;
+
+/** GB-s an object bills for a measured number of wall-clock seconds */
+export function billedGbS(wallClockSeconds: number): number {
+	return Math.max(0, wallClockSeconds) * DO_GB_ALLOCATED;
+}
+
 export const SECONDS_PER = {
 	/** answered by the Worker or the edge; the object is never woken */
 	edgeHit: 0,

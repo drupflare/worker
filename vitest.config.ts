@@ -53,8 +53,10 @@ const STATIC_TREE = 'assets/core/misc/drupal.js';
  */
 const ARTIFACT_SPECS = [
 	'tests/integration/admin-config.spec.ts',
+	'tests/integration/autoincrement.spec.ts',
 	'tests/integration/contrib-verify.spec.ts',
 	'tests/integration/cron-wire.spec.ts',
+	'tests/integration/crossings.spec.ts',
 	'tests/integration/crud-journey.spec.ts',
 	'tests/integration/csrf.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
@@ -63,6 +65,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/guzzle-handler.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/loaded-extensions.spec.ts',
+	'tests/integration/linear-memory.spec.ts',
 	'tests/integration/mail-drupal.spec.ts',
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
@@ -80,6 +83,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/serve-restore.spec.ts',
 	'tests/integration/static-sweep.spec.ts',
 	'tests/integration/submission-wall.spec.ts',
+	'tests/integration/workload-matrix.spec.ts',
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 

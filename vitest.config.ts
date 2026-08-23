@@ -60,11 +60,14 @@ const ARTIFACT_SPECS = [
 	'tests/integration/degrade-serve.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/firstrun.spec.ts',
+	'tests/integration/guzzle-handler.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
+	'tests/integration/loaded-extensions.spec.ts',
 	'tests/integration/mail-drupal.spec.ts',
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
+	'tests/integration/php-clock.spec.ts',
 	'tests/integration/render-origin.spec.ts',
 	// these three joined the list on 2026-08-22 rather than being written into it: the serving-lane
 	// work made a non-GET and a session-carrying request fall THROUGH to the gated lane instead of

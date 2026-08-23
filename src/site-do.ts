@@ -4213,10 +4213,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.invalidateOnCoreUpgrade();
 		{
 			switch (url.pathname) {
+				// `extensions` is the only route in this project that MEASURES what the binary
+				// loads. Every other extension claim here was inferred, and three were wrong --
+				// `DEFAULT_PLATFORM` listed `ext-mbstring` on a build that has none. Function-name
+				// evidence cannot substitute: opcache's optimizer carries a `func_info` table
+				// naming `curl_init` and `imagecreatetruecolor` in a binary that has neither.
 				case '/__php': {
-					const version = await this.run('<?php echo PHP_VERSION;');
+					const out = await this.runJson(
+						`<?php $e = get_loaded_extensions(); sort($e); echo json_encode(['v' => PHP_VERSION, 'e' => $e]);`
+					);
 					return Response.json({
-						version: version.trim(),
+						version: String(out.v ?? '').trim(),
+						extensions: Array.isArray(out.e) ? out.e : [],
 						bootMs: this.bootMs,
 						mount: this.mountInfo,
 						diag: this.bootDiag

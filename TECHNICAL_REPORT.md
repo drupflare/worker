@@ -221,6 +221,75 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     asserted `cache === 'HIT'` and was pinning the bug in place, so a test written from the current
     implementation would agree with it and prove nothing. Tracked as P38 in project memory.
 
+14. **Every `Drupal::httpClient()` call fails on the shipping build, and the stream wrapper is not
+    the reason.** Found 2026-08-22 in a `wrangler dev` log: `/admin/reports/status` logs
+    `Failed to retrieve security advisory data.` with
+    `RequestException: An error was encountered while creating the response`. The trace carries a
+    LIVE `Resource id`, so `HttpsStreamWrapper::stream_open()` fetched successfully; the failure is
+    `StreamHandler.php:510` reading `$http_response_header`, which **a userland stream wrapper
+    cannot populate** -- probed with a fake wrapper registered over `https`: `fopen` returns a
+    handle, `isset($http_response_header)` is FALSE, and `wrapper_data` is the wrapper object.
+    `HeaderProcessor::parseHeaders([])` then throws. This falsifies
+    `DrupflareServiceProvider.php:62-65`, which states the wrapper fallback "is the behaviour that
+    actually works today" -- true for `file_get_contents()`, false for all ten Guzzle seams in the
+    table below. The fix needs no JSPI: `HttpsStreamWrapper::responseMeta()` already exposes status
+    and headers via `stream_get_meta_data($fh)['wrapper_data']`, so a `StreamHandler` subclass that
+    reads it builds a real response on the shipping binary. Tracked as P39 in project memory.
+
+15. **There is no way to add a custom module to a running site, and the loader for one already
+    exists.** Drupal's value is that it is extensible; a host that cannot accept a custom module is a
+    demo. `mountDriver()` (`cartridge/src/mount.ts:351-369`) is 18 lines that fetch a
+    `Record<path, source>` over ASSETS and write it into MEMFS, and it already mounts two whole
+    modules at `modules/custom/`. What is missing is that the map is baked from a hardcoded list, and
+    that the PSR-4 roots are written down in **three** places
+    (`gen-driver-assets.ts:83-87`, `site-php.ts:2176-2179`, `site-do.ts:850-867`). One correction
+    worth stating: PHP costs **zero** bundle bytes because the pack is fetched rather than imported,
+    so the 3 MiB ceiling does not govern module source -- only a module shipping its own JavaScript
+    would touch it. Two lanes are needed because **composer never runs on the edge**: a build lane for
+    composer-managed trees (Workers Builds covers GitHub and GitLab, not Bitbucket, and cannot be
+    connected by API) and a runtime lane for module-shaped repos, whose pull must be JS-side since
+    item 14 has Guzzle broken. Inseparable from it is a capability contract before mount: a stub
+    `extension_loaded('mbstring')` **segfaults, exit 139, measured**, so third-party PHP can take the
+    isolate down rather than merely fail. Tracked as P40 in project memory; P8 is its other half.
+
+16. **Two real third-party modules were scored against this runtime for the first time, and the
+    frozen clock turned out to be an application defect rather than a measurement one.** `mantle2`
+    and `strata` (an R2-backed backup and rollback module) were read call-site by call-site. Five
+    items opened, P41-P45 in project memory:
+
+    - **P41, and it is the highest-leverage item found.** `microtime()` returning 0 leaves mantle2's
+      re-authentication window permanently open -- `0 - 0 = 0` passes a `0 <= age <= 300` check, so
+      account deletion never demands a re-type -- and makes strata throw on the FIRST node save,
+      because `JournalOp` rejects a non-positive timestamp. A `cfwNow` host function plus a
+      `microtime-fix.ts` fragment closes both and the `Cron::processQueues()` hang this report
+      already records as unfixed. RULE 0 forbids deriving a DURATION from the isolate clock; an
+      absolute instant is a different claim and `Date.now()` supplies it correctly.
+    - **P42**: four host bridges on the `zlib-fix.ts` pattern. `cfwBlake2b` (strata's content address
+      is `blake2b-256` and neither sodium nor ext-hash provides it; `blakejs` is ~5 KB and
+      synchronous), `curl-fix.ts` (`CurlShim.php` is complete, tested and **declared by nothing** --
+      another green-but-unreachable case), a dictionary-capable deflate (`fflate` already ships and
+      takes a `dictionary` option, which turns strata's delta coding back on), and `cfwSign` over
+      WebCrypto.
+    - **P43**: the 50-byte LIKE cap has no driver accommodation and six mantle2 controllers trip it;
+      `splitPointFor()` correctly refuses to split a non-SELECT, so strata's GC dies on a 101-frame
+      `DELETE ... IN`.
+    - **P44**: three capability claims in this project's own records are false -- `ext-mbstring` in
+      `DEFAULT_PLATFORM`, "GD, which this build has" for focal_point, and "`driveCron()` is imported
+      by nothing" when `site-do.ts:137` imports it. All three are P39's family. The instrument that
+      would prevent them is a `get_loaded_extensions()` route, which does not exist; **function-name
+      evidence is actively misleading**, because opcache's `func_info` table names functions from
+      extensions the build does not have.
+    - **P45**: **no module-side fixes are permitted** -- an unmodified module is the whole
+      compatibility claim, so every gap is the host's to shim, to accommodate in the driver, or to
+      DECLARE. The rule that produces: a capability is shimmed, accommodated, or declared, never
+      silently absent, where declared means a no-op that cannot fatal, logs once per boot, and raises
+      a `hook_requirements()` row. Its first real use is `CfwFileStreamWrapper::realpath()`, which
+      returns FALSE by design and makes `strata_files` capture nothing, silently -- the host has to
+      materialise the bytes on demand or say out loud that it did not. Also scopes Cloudflare KV as a
+      redis substitute: free KV is **100,000 reads/day but only 1,000 writes/day**, read-cheap and
+      write-poor, so it replaces redis's read-mostly role and never the cache, lock, queue or flood
+      roles -- and never anything authorization-bearing, since it is eventually consistent.
+
 ---
 
 ## 📖 The story, in plain terms

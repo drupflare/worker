@@ -37,7 +37,7 @@ tell which ones to distrust.
 Drupal 11.4.5 renders on Cloudflare Workers with PHP executing as WebAssembly inside a Durable
 Object, using that object's own SQLite as the database. On 2026-08-14 a throwaway deployment served a
 real Drupal page -- 12,304 bytes of Olivero markup, `<title>Welcome! | CFW Bench</title>` -- from a
-bundle that measures **2,925,281 gzipped bytes on 2026-08-22, 220,447 under the free plan's 3 MiB
+bundle that measures **2,925,701 gzipped bytes on 2026-08-23, 220,027 under the free plan's 3 MiB
 ceiling**.
 
 That figure has now been wrong in three documents at once, each quoting a different stale number from
@@ -17427,3 +17427,231 @@ The constant moved to `src/ops/body-limit.ts`. `tests/unit/runtime/route-gate.sp
 the entrypoint exports nothing that is not a function, so the next one fails a test instead of a dev
 server. No test covered this because every lane imports `src/site.ts` as a module rather than
 booting it as a worker.
+
+---
+
+# THE DAY FIVE ITEMS WERE CLOSED AND FOUR HAD TO BE REOPENED (2026-08-23)
+
+The measurements below are all sound. The conclusions drawn from four of them were one step too
+wide, and the correction is now [RULE 0c](#rule-0c-a-negative-result-closes-a-mechanism-never-an-objective)
+in `CLAUDE.md`: **a negative result closes a MECHANISM, never an OBJECTIVE.**
+
+The failure is subtler than being wrong. Each item measured a real thing, found it did not move the
+ceiling the project scores against, and left the backlog attached to the implementation that failed.
+The resource stayed unexamined and the entry read as resolved.
+
+## P36: the RPC billing question, settled by deploying
+
+**Asserted, withdrawn, then measured.** The first version claimed a warm render's 48 host crossings
+would become 48 billed DO requests after an RPC migration. Cloudflare's rule is about an RPC method
+call on a STUB, and `Host::call()` is a wasm import into JavaScript inside the already-running
+object, so the claim was an inference about billing that no crossing count can support. It shipped
+in a test.
+
+A throwaway worker settled it. Three arms, each driven a distinct number of times against a fresh
+object, read from `durableObjectsInvocationsAdaptiveGroups`:
+
+| arm | driven | requests billed |
+| --- | --: | --: |
+| `stub.ping()`, an RPC method | 7 | **7** |
+| `stub.fetch()` | 11 | **11** |
+| N loops INSIDE one invocation | 13 | **1** |
+
+Confirmed at n=25 on a first run, where both boundary arms billed 25.
+
+**RPC is not special; the stub BOUNDARY is what is billed.** `stub.fetch()` costs the same one-for-
+one, which matters because this project crosses that boundary on every request already. And the
+third row is why today's bridge is free: 13 operations inside one invocation billed one request,
+which is exactly the shape of `Host::call()`. So the 48 crossings cost **zero** DO requests today,
+and re-expressing them as RPC would cost 48 -- taking regeneration from 7,575 (rows-bound) to
+~2,083 (DO-bound).
+
+**The first analytics read said the opposite and was wrong.** Three objects came back at
+`requests: 1`, which reads exactly like "RPC calls are not billed per call". It was incomplete
+ingestion; the same object read 25 later. This document already records that trap for
+`wrangler tail`, and it applies to a PARTIAL result as much as to an empty one. Giving each arm a
+distinct count is what made the second read self-identifying.
+
+## The surviving P36 question, which the batching answer does not touch
+
+`batchableShare()` reports **0** for a warm render: every crossing is `cfwSqlExec`, and Drupal's read
+path is read-decide-read. That closes coalescing and nothing else. **Why a warm render needs 48
+statements at all is untouched**, and the levers there are fewer queries, fewer rows read, prepared-
+statement reuse and cache-miss reduction. `SqlStorageCursor` exposes `rowsRead`/`rowsWritten` per
+statement, so a per-query decomposition is available whenever anybody wants it.
+
+## P16: the peak is one growth event, and the gate is the STEP not `INITIAL_MEMORY`
+
+Measured on the shipping 8.5 build, `/heap?op=status` now reporting `linearMemoryBytes`:
+
+| quantity | bytes | MiB |
+| --- | --- | --- |
+| booted and idle (`INITIAL_MEMORY`) | 100,663,296 | 96.00 |
+| after one real fill | 120,848,384 | 115.25 |
+| isolate limit | 134,217,728 | 128.00 |
+
+Lowering `INITIAL_MEMORY` does not lower the peak, because the peak is reached by growth. That
+refutes P16 as specified. **It does not refute reducing peak linear memory**, and the first writeup
+implied it did.
+
+**The peak is exactly one geometric step.** Emscripten's `MEMORY_GROWTH_GEOMETRIC_STEP` defaults to
+0.20 and growth rounds up to a 64 KiB page:
+
+```
+ceil(100,663,296 * 1.2 / 65,536) * 65,536 = 120,848,384
+```
+
+which is the measured peak to the byte. The same rule reproduces this document's 64 MiB arm
+(80,543,744). So live demand is **bounded rather than unknown** -- `100,663,296 < demand <=
+120,848,384` -- and over-reservation is between 0 and **20,185,088 bytes (19.25 MiB)**, unmeasured.
+
+The 61,440-byte shortfall that once cost 13,434,880 bytes is the step behaving as documented. With
+the step at 0 the same shortfall costs one 64 KiB page. `MEMORY_GROWTH_GEOMETRIC_STEP` and
+`MEMORY_GROWTH_LINEAR_STEP` are link-only settings and **have never been tested here**.
+
+**And it is urgent.** One further step from the current peak is
+`ceil(120,848,384 * 1.2 / 65,536) * 65,536 = 145,031,168` bytes, 138.31 MiB, over the isolate limit
+on either the binary or the decimal reading. The shipping build is one growth event from OOM.
+
+This also corrects a claim in `CLAUDE.md`: `INITIAL_MEMORY` was named as the gate on argon2 and
+wasm64. It is not. It sets where the geometric series starts, not how coarsely it advances.
+
+## P17: three replica architectures, and only one was scored
+
+Always-warm replicas were priced and the item was closed as "dead on free". That prices ONE of
+three:
+
+| | architecture | duration cost | status |
+| --- | --- | --- | --- |
+| A | one permanently hot object | full day per object | priced |
+| B | N replicas that HIBERNATE | a wake, not a day | **unmeasured** |
+| C | N replicas kept explicitly warm | full day per object | priced |
+
+Cloudflare bills duration for an object that is idle and UNABLE to hibernate; one that is idle and
+eligible accrues nothing. **B is the interesting free-plan design and nothing scored it**, because
+the wake on this runtime is a 96 MiB interpreter restore.
+
+**A pending alarm is absent from Cloudflare's hibernation-eligibility list.** The list requires no
+`setTimeout`/`setInterval`, no in-progress awaited `fetch()`, no standard-API WebSocket, no request
+still being processed and no active outbound socket. So the 240 s keep-warm re-arm does not hold the
+object resident: it wakes it, runs, and lets it hibernate about ten seconds later, discarding the
+interpreter. The WebSockets page asserts the opposite in passing and the two do not reconcile, so
+this is documented rather than measured; a persisted constructor counter read across an idle gap
+settles it.
+
+**Duration is not observable per object.** The four Durable Object GraphQL datasets expose
+`requests`, `responseBodySize`, `storedBytes` and `cpuTime`. There is **no GB-s or wall-clock field
+on any of them**, and `cpuTime` is precisely the meter that excludes what duration bills.
+
+## The billed GB figure was wrong by 2.4%, and paid inverts the free conclusion
+
+`DO_GB_ALLOCATED` was 0.125, the binary reading. Cloudflare's own worked example --
+"1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s" -- fixes it at **0.128**, decimal. Corrected
+figures:
+
+| | old (0.125) | corrected (0.128) |
+| --- | --- | --- |
+| idle object, per day | 10,800 GB-s (83.1%) | **11,059.2 GB-s (85.1%)** |
+| one always-warm object, 30 days | 324,000 | **331,776** |
+| two, 30 days | 648,000 | **663,552** |
+
+Paid is 400,000 GB-s/month included, then $12.50/million. So **one always-warm object fits inside
+the included allowance in every month length**, and two bill 263,552 GB-s -- **$3.29/month**, ranging
+$2.74 to $3.57 with month length, on top of the $5 minimum.
+
+**"Always-warm replicas are expensive" is a statement about the free duration allowance and is false
+on paid by about the price of a coffee.** The real paid objections are throughput, consistency and
+snapshot distribution, none of which the duration meter answers. The same reading undercuts RULE
+0b's "always-warm objects are worth ~1%", which was computed against a meter that stops binding the
+moment the plan changes.
+
+## P35: non-binding in the MODEL, which is not the same as measured
+
+`durationGbS` is in `free-envelope.ts` and reports slack: **271 of 13,000 GB-s/day** at the serving
+ceiling. Two caveats the first writeup dropped:
+
+- every figure feeding it is `cpuTime`, and duration bills WALL CLOCK, so the slack is an upper
+  bound rather than a margin;
+- 271 is CURRENT traffic, not the capacity frontier. The comparison that matters is duration at the
+  row-bound and request-bound frontiers, with replicas, with authenticated renders and with cold
+  renders.
+
+So the status is **integrated and non-binding under the current model**, with platform wall-clock
+calibration and a hibernation probe still required. The useful metric going forward is GB-s per
+completed Drupal operation rather than GB-s per day.
+
+## P29: the fill answer is right and it was the wrong question
+
+`AUTOINCREMENT` charges **exactly 2.00x** per insert, measured against real Durable Object storage:
+10 inserts cost 20 rows with the keyword and 10 without, linear at 4x the inserts. The packed
+database declares it on **18 tables**, and on a content-free site only three have ever been written
+(`menu_tree`, `users`, `watchdog`).
+
+No cache bin and no `cfw_page` declares it, so it does not move rows-per-fill. That closes it as a
+REGENERATION lever and settles one workload out of a dozen.
+
+**Rows written is charged on every write the site makes.** A node save touches `node`,
+`node_revision` and `path_alias`, all three of which declare it, so the operation pays three extra
+rows before a field table is counted. SQLite separately documents extra CPU, memory, disk space and
+disk I/O for the keyword, none of which a row count sees. The reframed question is write
+amplification per SEMANTIC OPERATION, and the compatibility question behind it is crisp and
+per-table: the keyword exists to guarantee a rowid is never reused, which is observable and is now
+asserted both ways.
+
+Two further rules, verified and previously unmodelled: **each `setAlarm()` is billed as one row
+written** -- the 240 s keep-warm chain costs 360 rows/day before doing any work -- and Cloudflare's
+index wording is CONDITIONAL: an index adds a written row "when writes include the indexed column",
+so an index's cost is a function of which columns the hot statements touch rather than of the index
+existing. Read `overheadShare()` with that in mind.
+
+**Rows READ on free is 5,000,000/day, not 100,000.** The model never had a read meter, so no code
+was wrong, but the 50:1 ratio is the point: a workload must read 50 rows per row written before
+reads bind, which a render does not approach.
+
+## P28: the integer width cannot be bought without the hash width
+
+`Zend/zend_long.h` typedefs `zend_long` and `zend_ulong` together under one `#ifdef`, defined only
+for `__x86_64__ || __LP64__ || _LP64 || _WIN64`. `Zend/zend_types.h` puts a `zend_ulong h` in both
+`Bucket` and `zend_string`. Measured with a compiler over an explicit wasm32 ABI model:
+
+| struct | today | with LONG64 | delta | P26's wasm64 figure |
+| --- | --- | --- | --- | --- |
+| zval | 16 | 16 | 0% | - |
+| Bucket | 24 | 32 | **+33%** | **33%** |
+| zend_string | 20 | 24 | +20% | 60% |
+
+`zval` is unchanged, which is the prior the item rested on and it holds. **Bucket lands on exactly
+the wasm64 number.** And a case written to show the hash was the cause FAILED: widening either
+`zend_ulong h` or `zend_string *key` alone takes Bucket to 32, because `zval` is 16 and the
+remaining two members fill an 8-aligned tail. There is no arrangement that keeps Bucket at 24, so
+"buy the integer width without the pointer width" has nothing to buy on the structure that decides
+the cost.
+
+## P7: the shell artifact cannot exist, which is upstream of the missing fragment source
+
+P7 says the remaining work is the PHP fragment source. Measured, the blocker is one layer above it.
+
+An anonymous render of `/` on the packed site carries **zero** `data-big-pipe-placeholder-id` spans
+and the string `big_pipe` does not appear in the markup, even though `big_pipe` IS enabled in
+`core.extension`. An AUTHENTICATED render of the same path carries **6**, with ids like
+`callback=Drupal%5Cblock%5CBlockViewBuilder%3A%3AlazyBuilder&args%5B0%5D=olivero_main_menu...`.
+
+BigPipe applies only to a request that HAS a session. `cfw_page` stores only anonymous, cookieless
+GETs -- by contract, enforced in `fillOne()`. **So the artifact `shellCandidates()` reads can never
+contain placeholders**, and its `safe: 0` is structural rather than conservative. A shell has to come
+from a session-carrying render stored somewhere other than `cfw_page`, and that is a different design
+from the one the entry describes.
+
+One thing the probe settles in the feature's favour: the placeholder ID is a query string carrying
+`callback`, `args` and `token`, so a fragment renderer needs nothing stored beyond the shell -- the
+id is the render array.
+
+## What each item closes, and what it does not
+
+| item | closed | still open |
+| --- | --- | --- |
+| P16 | `INITIAL_MEMORY` 96 -> 80 as a way to lower the peak | **peak linear memory.** Growth step untested; build is one step from OOM |
+| P17 | always-warm replicas on FREE | **hibernating replicas**, unmeasured; paid replicas cost ~$3/month |
+| P35 | duration as today's binding meter | wall-clock calibration; duration at the frontier; GB-s per operation |
+| P36 | coalescing the bridge; the unmeasured billing claim | **why a warm render needs 48 statements** |
+| P29 | `AUTOINCREMENT` as a rows-per-FILL lever | **write amplification per semantic operation**, and the id-reuse audit |

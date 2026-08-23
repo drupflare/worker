@@ -17655,3 +17655,302 @@ id is the render array.
 | P35 | duration as today's binding meter | wall-clock calibration; duration at the frontier; GB-s per operation |
 | P36 | coalescing the bridge; the unmeasured billing claim | **why a warm render needs 48 statements** |
 | P29 | `AUTOINCREMENT` as a rows-per-FILL lever | **write amplification per semantic operation**, and the id-reuse audit |
+
+---
+
+# THE DAY THE FIVE REOPENED ITEMS WERE MEASURED (2026-08-23, second pass)
+
+The five items above were reopened because a correct measurement had been read one step too wide.
+This pass measured each surviving objective. Four of the five moved, one on an instrument error that
+was mine, and two of my own conclusions from the morning were overturned by a second workload.
+
+## P16: the growth step is JavaScript, and the install arm reverses the render's answer
+
+**`MEMORY_GROWTH_GEOMETRIC_STEP` is not a link-time setting.** It is emitted into
+`_emscripten_resize_heap` in the glue as the literal `.2`; the `.wasm` carries no growth policy at
+all. So the ladder needed no phasm rebuild -- one binary, N rewritten glue variants.
+`scripts/measure/growth-glue.ts` emits them, `growth-ladder.ts` drives them, and
+`tests/node/growth-glue.spec.ts` fails if emscripten ever changes the emitted form.
+
+At a step of 0 the geometric candidate collapses to `oldSize`, so the new size is
+`align(requestedSize, 64 KiB)` and the peak IS live demand.
+
+| step | render peak | install peak | over-reservation (render) | worst-case headroom |
+| ---- | ----------- | ------------ | ------------------------- | ------------------- |
+| 0.20 | 120,848,384 | 120,848,384  | 16,121,856                | 12.75 MiB           |
+| 0.10 | 110,755,840 | 121,896,960  | 6,029,312                 | 11.75 MiB           |
+| 0.05 | 105,709,568 | 116,588,544  | 983,040                   | 16.81 MiB           |
+| 0.01 | 104,857,600 | 115,015,680  | 131,072                   | 18.31 MiB           |
+| 0    | 104,726,528 | 114,229,248  | 0                         | 19.06 MiB           |
+
+**The install column is the finding.** Measured against a render alone, 0.05 recovers 14.44 MiB and
+0.10 is a strict improvement. Measured against the install -- the workload that peaks highest -- 0.05
+recovers 4.06 MiB and **0.10 is a REGRESSION on the shipping 0.20**. Growth compounds from the
+previous size, so a finer step can take more steps and land on a worse rung for the same demand. This
+is RULE 0c's "under which workload?" with a number attached, and it caught a recommendation that had
+already been written down.
+
+Over-reservation against the binding workload is **6,619,136 bytes (6.31 MiB), 5.5% of the peak**,
+not the 15.38 MiB the render column implies. The best arm recovers ~6.3 MiB, which does **not** unlock
+argon2id (64 MiB default arena, ~16 MiB at the lowest sane setting) or wasm64. **P16 improves headroom
+and does not close P25 or P26.**
+
+**"One growth event from OOM" is refuted.** `getHeapMax()` returns 4,294,901,760, so the module
+declares no maximum and the 128 MiB ceiling is workerd's, enforced by `grow()` throwing. Emscripten
+catches it and retries: `cutDown` 1, 2, 4 gives 145,031,168, then 132,972,544, then 126,943,232, and
+the third fits. A growth from the shipping peak degrades rather than aborting.
+
+## P35: duration IS observable, and cpuTime understates it by 2,612x
+
+The report carried "the GraphQL datasets expose requests, response body size, stored bytes and CPU
+time, but not duration". That is true of `durableObjectsInvocationsAdaptiveGroups` and false of
+**`durableObjectsPeriodicGroups`**, which carries `duration`, `activeTime`, `cpuTime`, `rowsRead`,
+`rowsWritten` and `exceededMemoryErrors`, dimensioned by `objectId`. The instrument was wrong, again.
+
+Deployed `cfw-duration-probe`, a Durable Object with no PHP in it, and drove ten 1,000 ms holds:
+
+| field        | reading     |
+| ------------ | ----------- |
+| `activeTime` | 10,026,244  |
+| `cpuTime`    | 3,838       |
+| `duration`   | 1.283359232 |
+
+`10.026244 s * 0.128 GB` is 1.283359232 GB-s **exactly**. So `activeTime` is microseconds of wall
+clock, `duration` is GB-s, and `DO_GB_ALLOCATED = 0.128` is confirmed from billing rather than from
+Cloudflare's worked example.
+
+**The ratio is the result: 3,838 us of CPU against 10,026,244 us of billed wall clock, 2,612x.**
+cpuTime does not count time spent awaiting and this meter charges for it, so every duration ceiling
+in the model derived from cpuTime is a **lower bound**, and the gap is unbounded rather than small.
+`DURATION_CALIBRATION` and `CPU_UNDERSTATEMENT` in `scripts/measure/free-envelope.ts` carry it.
+
+Ingestion lags about 8 minutes. An empty result before then is not evidence, which cost one wrong
+"the probe did not record" reading during this pass.
+
+## P17: a pending alarm buys no residency, and that is the whole keep-warm premise
+
+Hibernation ELIGIBILITY is the billing boundary, not hibernation: Cloudflare does not bill an object
+that is idle and eligible "even before the runtime has hibernated them". The five disqualifying
+conditions are transcribed into `src/ops/hibernation.ts` rather than paraphrased, because the model's
+own comment had listed two from memory and omitted the one that fires in this codebase.
+
+**A pending alarm is absent from that list, and the probe confirms it**: the armed-alarm object
+accrued 0.177 s across a 60 s pending window. So the keep-warm chain costs a row and a DO request per
+arm and delivers no warmth.
+
+`keepWarmFleetCost()` prices what nobody had multiplied: 360 arms/day/site is 0.36% of the write
+allowance and reads as noise, but the free DO quotas are **account-wide**, and the same arms spend the
+DO request quota too because it counts alarm invocations. **277 sites saturate both meters with zero
+visitors.**
+
+**`connect()` IS on the list**, and `src/ops/mail.ts:674` is the only place in `src/` that opens one.
+An SMTP send makes the object non-hibernateable for the length of the send, and `drainMailQueue()`
+sends sequentially, so a batch holds it for the batch. `sendViaSmtp()` closes in a `finally`, so the
+15-minute per-connection pin is the worst case rather than the normal one. Plain `fetch()` never keeps
+an object alive, even while its body is still streaming -- the opposite of the intuitive reading.
+
+The consequence for P17: **a hibernating replica accrues no idle duration**, so the always-warm
+arithmetic that closed replicas never applied to it. What remains unmeasured is the WAKE cost, which
+on this runtime means restoring or re-booting a 96 MiB interpreter.
+
+## P36: 48 is the first render; a regeneration is 18, and bridge overhead is zero
+
+The 48 crossings figure is the FIRST render of a path on a warm object. A **repeat** render, which is
+what a regeneration actually is, costs **18**. Both n=2, every count identical across runs.
+
+| reading                      | first render | repeat render |
+| ---------------------------- | -----------: | ------------: |
+| crossings = statements       |           48 |            18 |
+| distinct fingerprints        |           23 |            10 |
+| rows read                    |           53 |            33 |
+| rows written (charged)       |           46 |             8 |
+| bytes returned to PHP        |     ~240,036 |      ~128,771 |
+
+Category split, first / repeat: necessary 15 / 8, duplicated 25 / 8, same-table repeated reads 4 / 0,
+cache misses 4 / 2, **pure bridge overhead 0 / 0**. There is no setup or teardown chatter to remove;
+every crossing is a `cfwSqlExec`. The 25 duplicates are the same fingerprint with DIFFERENT bindings,
+so merging them needs the caller to know every cid up front -- stating them as a saving would be an
+inference the count does not support.
+
+Three candidates, with the layer that owns each:
+
+1. **`fillOne()` empties `dynamic_page_cache` on itself** -- 4 of 18 statements, **6 of 8 charged
+   rows**. Host-level, and not free: keeping DPC warm means a regenerated page may reuse the previous
+   render's dynamic fragments. A correctness call, and the largest lever on the meter that binds.
+2. **`cache_discovery`'s result SIZE** -- one statement carrying 97,749 bytes, **75.9% of everything
+   the bridge moves in a regeneration**. Removes zero statements, which is exactly why a crossing
+   count could never find it.
+3. **Eight single-row `INSERT INTO cache_render` upserts.** `cache_routes` in the same render used a
+   multi-row form, so both driver and engine accept it. A statement/CPU lever, not a rows lever.
+
+## P29: AUTOINCREMENT costs 4x, and the mechanism is the DRIVER, not the schema
+
+Write amplification per semantic operation, measured on a warm interpreter with charged rows counted
+either side:
+
+| operation                | charged rows | write stmts | rows stored | index share |
+| ------------------------ | -----------: | ----------: | ----------: | ----------: |
+| node create              |          118 |          30 |           5 |       81.5% |
+| node edit (new revision) |          229 |          73 |           3 |           - |
+| user create              |           36 |          14 |           2 |       80.0% |
+| file record create       |           21 |           5 |           1 |       85.7% |
+| url alias create         |           58 |          15 |           3 |       76.9% |
+
+**The A/B that reframes the item.** Two tables identical except for the keyword, one buffered insert
+each, id read back: plain rowid charges **1 row, 0 speculative replays**; AUTOINCREMENT charges
+**4 rows, 1 replay**. The cause is cited rather than inferred --
+`Connection::predictBufferedInsertId()` answers `max(rowid) + offset` arithmetically for an ordinary
+rowid table and **refuses AUTOINCREMENT**, because that table's next id lives in `sqlite_sequence`.
+The refusal falls through to `speculate()`, which re-sends the buffer and charges every buffered write
+again. Cost is therefore quadratic in buffer length.
+
+So total amplification factors as **schema x re-execution** -- 5.4x x 4.37x for a node create -- and
+the second factor belongs to the driver. **What this does NOT establish**: `speculate()` has three
+call sites and only one is the keyword's, so 4.37x is what the replay machinery costs today, not what
+dropping AUTOINCREMENT returns.
+
+**The id-reuse audit corrects the premise too.** Dropping the keyword does not make ids generally
+reusable -- SQLite gives an ordinary rowid table `max(rowid) + 1`, so an id is reusable only when the
+row holding the MAXIMUM is deleted, or the table is emptied. Deleting id 3 of 5 frees nothing.
+Verdicts: **14 MUST KEEP** (content-entity tables; an inbound entity reference stores the integer id
+and core ships no generic cleanup, so a reused id resolves to the wrong entity rather than failing),
+**3 SAFE TO DROP** (`watchdog`, whose cron deletes the OLDEST rows so the max never decreases;
+`sequences`, deprecated and never inserted into; `cfw_health`, same argument as watchdog), and **1
+UNKNOWN** (`menu_tree`, whose materialized `p1..p9` path stores mlids under a stated invariant that
+needs the delete/rebuild interleaving traced).
+
+## P7: the shell can exist, but only as the first authenticated render in an interpreter
+
+| render                                  |   bytes | holes |
+| --------------------------------------- | ------: | ----: |
+| anonymous                               |  17,670 |     0 |
+| FIRST authenticated, session A          | 122,186 |     6 |
+| second authenticated, session B         |  96,147 |     0 |
+| third authenticated, session A replayed |  96,147 |     0 |
+| anonymous again                         |  17,670 |     0 |
+
+**A shell is only ever produced by the first authenticated render in an interpreter.** Every later
+one comes back holeless whatever session asks, because the placeholders have already been substituted
+inline; the ~26 KB difference is BigPipe's appended replacement scripts. Replaying session A after
+session B is also holeless, so the trigger is ORDINAL rather than per-session. Nothing had recorded
+this, and it is a hard constraint on harvesting a shell.
+
+**The authentication boundary holds.** Two sessions returning identical markup is also what a leaking
+cache looks like, so it was checked: the anonymous render is 17,670 bytes before and after and is
+never the authenticated body. The identity is benign -- both sessions are the same user.
+
+**The token is content-derived, which is what makes a shared shell possible.** Read from core rather
+than inferred, because a second sample cannot be obtained:
+`PlaceholderGenerator::createPlaceholder()` builds it as
+`Crypt::hashBase64(serialize($placeholder_render_array))` -- no session, no user, and **no hash salt**,
+so the id is stable across sessions, users and installs.
+
+So the architecture is viable and the remaining work is NORMALISATION: strip the identity markers
+outside the holes, which `shellSafety()` already enumerates and refuses on. That is a host-side
+transform over a stored artifact rather than a patch to Drupal, which is what P45 requires.
+
+## P45: shimmed, accommodated, or declared
+
+`Drupal\drupflare\Degradation` implements the contract: recording cannot fatal (the log is
+best-effort inside a `try`), it logs once per BOOT rather than per call (a degraded function inside a
+render loop would otherwise spend the meter that binds regeneration), and every declaration surfaces
+a `hook_runtime_requirements()` row in the `verified`/`untested`/`blocked` vocabulary the module table
+already uses. An unrecognised state is recorded as `blocked`, because an unknown state must never
+read as a weaker claim than it is.
+
+Its first real use is `CfwFileStreamWrapper::realpath()`, which used to return FALSE always. That was
+defensible and it was SILENT -- `strata_files` captured nothing precisely because
+`ManagedFileCapture` early-returns on a FALSE realpath, so a module that looked installed captured no
+files and nothing said so. It now materialises into MEMFS under `/tmp/cfw-realpath` and returns that
+path, so `is_file()` and `Hash::ofStream(fopen($path))` work against an unmodified module. Above
+`REALPATH_MAX_BYTES` it still returns FALSE and DECLARES.
+
+## P42.2: curl was complete, tested, and reached by nothing
+
+`Drupal\drupflare\Shim\CurlShim` implements the whole surface against `CfwDeferredHttp` and is covered
+by the sibling's health suite, while **nothing declared the global `curl_init()`** -- so no SDK could
+reach it. Another [[tested-but-never-called]], and a unit test of the class could never have caught
+it, because the class was fine.
+
+`src/drupal/curl-fix.ts` declares the eight functions plus `curl_version()` and the constants they are
+called with, following `zlib-fix`'s conditional-declaration pattern so `php -l` covers the body. The
+shim class is resolved on FIRST CALL rather than at declaration time: the fragment runs from
+`ensurePhp()`, before Drupal's autoloader exists, so a `class_exists` guard around the declarations
+would never pass and the functions would never exist at all. With no module loaded, each function
+declares the gap through `Degradation` and returns curl's own failure.
+
+## P42.4: `node:crypto` is synchronous in workerd, so signing needs no deferred queue
+
+The entry scoped this as "`crypto.subtle` covers RS256/ES256 but is **async**, so it takes the
+queue/read-later pair" -- meaning every signature would be a two-invocation round trip, and a caller
+would have to be written for it. **That premise is refuted.** Measured 2026-08-23 inside workerd:
+
+```
+createSign: function   createVerify: function   generateKeyPairSync: function
+getHashes(): md4, md5, sha1, sha224, sha256, sha384, sha512, RSA-SHA256, ecdsa-with-SHA1, ...
+RS256 sign of a 2048-bit key: 256 bytes, returned in-line
+```
+
+So `openssl_sign()` and `openssl_verify()` are an ordinary masked bridge like `cfwZlib`, and a
+caller sees a normal synchronous function.
+
+**Shimmed as `openssl_*` rather than as a new `cfwSign()`**, because P45's rule is that an unmodified
+module is the whole claim: `firebase/php-jwt`, Google's auth client and Stripe's webhook verifier all
+call `openssl_sign()`/`openssl_verify()` directly, so shimming the names PHP already uses makes them
+work untouched. A new function would have required patching every one of them.
+
+`openssl_verify()` is kept as a **tri-state** -- 1, 0, -1 -- because -1 means the call failed and 0
+means the signature was read and did not match. Collapsing it to a boolean would report a broken key
+as a forged token. `tests/unit/drupal/openssl-fix.spec.ts` asserts both, and round-trips RSA and
+ECDSA rather than pinning a vector, since an ECDSA signature is randomised by design.
+
+**Not shipped, deliberately**: key generation, certificate parsing, `openssl_encrypt` and the
+PKCS#7/CMS family. They have no caller in this project, and shipping an unused surface is the
+tested-but-never-called failure this same pass just ended for curl.
+
+## P42.1 and P42.3: BLAKE2b is absent everywhere, and a dictionary costs zero bytes
+
+**BLAKE2b has nothing to fall back to.** `sodium` is not among the 25 loaded extensions;
+`hash_algos()` returns **62 algorithms, zero matching `blake`** -- and native PHP 8.5.7 with the full
+extension returns the same 0, so ext-hash has never carried it. workerd has none either:
+`node:crypto.createHash('blake2b512')` answers "Digest method not supported" and
+`crypto.subtle.digest('BLAKE2b-256')` answers "Unrecognized or unimplemented digest algorithm". So
+`blakejs` was added: **2,803 gzipped bytes**, oracle-tested at 448 generated cases plus 3 published
+vectors against native ext-sodium, **0 divergences**.
+
+`extension_loaded('sodium')` deliberately stays `false`. A stub module entry is what segfaulted at
+exit 139 for mbstring, and the same two Symfony bootstraps branch on it.
+
+**`node:zlib` honours `{ dictionary }` inside workerd, at zero bundle cost.** 51 bytes to 15 on the
+probe input, header `78bb` plus the dictionary's adler32 with FDICT set, clean round trip, and
+`inflateSync` without the dictionary answers "Missing dictionary". The dry-run bundle contains one
+`from"node:zlib"` -- an external import to the builtin, not a polyfill.
+
+**A measurement chose the implementation, and it was not the expected one.** `fflate` also accepts
+`dictionary` and is byte-interoperable with `node:zlib` both ways. But given the WRONG dictionary,
+`node:zlib` answers "Bad dictionary" while **fflate returned plausible garbage with no error**.
+Silent corruption is precisely what a content-addressed store cannot survive, so the dictionary path
+goes through `node:zlib` and the six existing `gz*` ops stay on fflate untouched.
+
+**A DECORATIVE SHIM WAS NEARLY SHIPPED, and it is the same family as the supervisor.** The shipping
+binary **does load ext-zlib**, so the entire `!extension_loaded('zlib')` block in `zlib-fix.ts` is
+inert on the edge -- `cfw_zlib_dict()` written inside that guard would have been unreachable on every
+deployed site while passing its own unit tests. `ZLIB_FIX` is now two blocks, with the dictionary
+function declared unconditionally.
+
+That finding generalises, so the same trap was checked for the two bridges added beside it:
+`extension_loaded('curl')` and `extension_loaded('openssl')` are both **false** on the shipping
+binary, both guards therefore pass, and `tests/integration/host-bridges.spec.ts` asserts the
+functions and constants are really declared -- plus a real 2048-bit RSA sign and verify from PHP,
+returning 1, 0 and -1 for valid, tampered and unreadable-key.
+
+**RULE 0c -- what P42.3 does NOT unblock.** It does not turn strata's delta coding on.
+`GzipCodec::supportsDictionary()` returns a hardcoded `false` and `compress()` ignores its
+`$dictionary`; `Engine::codecs()` builds `CodecRegistry::withShippedCodecs()` into a private field
+with no service and no injection point, so a host module cannot register a dictionary-capable codec
+either. Under P45 both mechanisms are closed. What survives is the CAPABILITY, which now exists
+host-side; strata needs a one-line change of its own.
+
+**And P42.1 does not close sodium.** strata also calls
+`sodium_crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` at three call sites. That is a cipher,
+not a digest, shares no mechanism with this, and remains missing.

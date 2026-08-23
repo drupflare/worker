@@ -8,7 +8,7 @@
 
 **Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server — PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. **8.5 is what ships**, with every extension intact, at **2,659,444** zstd bytes
+the database. **8.5 is what ships**, with nothing dropped to fit, at **2,659,444** zstd bytes
 against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 
 > [!NOTE]
@@ -17,8 +17,8 @@ against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 > HTTPS GET of a release asset, with no Docker, no token and no PHP.
 
 The interpreter ships as a zstd frame inflated at module scope, so Cloudflare's gzip meter reads
-**2,904,125 bytes** against the free plan's 3 MiB ceiling — **241,603 to spare**, with every
-extension intact. The figure moves whenever `src/` does; `bun run release:check` prints the current
+**2,925,281 bytes** against the free plan's 3 MiB ceiling — **220,447 to spare**, with nothing
+dropped to fit. The figure moves whenever `src/` does; `bun run release:check` prints the current
 one. Cold boot is **1,398 ms** of absolute `cpuTime` on a deployed worker, and boot work is
 saturated: cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written
 is the meter that binds. See [Free vs Paid](#-free-vs-paid).
@@ -863,6 +863,22 @@ notes, not in support tickets.
 - **A statement caps at 100 bound parameters.**
 - **`REGEXP` does not exist**, so Views regex filters do not work.
 - **Reading an integer above 2^53 is lossy** — the cursor returns doubles. Writing is exact.
+- **PHP integers are 32-bit.** `PHP_INT_SIZE` is 4 and `PHP_INT_MAX` is 2,147,483,647, so a cast of
+  epoch milliseconds or microseconds to `int` wraps modulo 2^32 rather than saturating. Code that
+  stores `(int) (microtime(true) * 1000)` stores a wrapped value. `microtime()` itself returns a
+  correct float.
+- **The interpreter loads 25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
+  ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
+  tokenizer, uri, vrzno, xml, yaml and zlib. `mbstring` and `iconv` are supplied by Symfony's
+  polyfills, which diverge from the real extensions on 86 measured cases. There is no `gd`, no
+  `curl` and no `pdo_sqlite`. `/php` reports the live list.
+- **Image styles are applied at delivery, not by rewriting files.** Without `gd` there is no image
+  toolkit that produces derivatives, so Cloudflare Images resizes from the URL. A module that reads
+  a derivative's own pixels sees the full-size image.
+- **Outbound HTTP is answered from cache or refused.** A Worker cannot open a socket synchronously,
+  so `Drupal::httpClient()` and `file_get_contents('https://...')` return a previous fetch's
+  response, or fail while queueing the request for the next background drain. The call after it
+  succeeds. Request headers are not carried across that queue.
 - **Greek word-final sigma lowercases differently** from native PHP, and `mb_strwidth`
   under-counts emoji. Neither affects Drupal core.
 - **Uncached traffic does not scale.** One site is one Durable Object is one thread, and you

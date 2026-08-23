@@ -24,8 +24,9 @@ tell which ones to distrust.
 - Before quoting any performance number, read
   [THE MEASUREMENT RULES THIS DOCUMENT PAID FOR](#the-measurement-rules-this-document-paid-for).
   The single most important one: **an absolute CPU figure comes only from `cpuTime` on a
-  deployed worker**, because in-PHP `microtime()` and JS `Date.now()` both return 0 on the
-  edge.
+  deployed worker**, because in-PHP `microtime()` and JS `Date.now()` do not ADVANCE on the
+  edge, so every delta taken from them reads 0. The absolute is a real epoch -- see
+  [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width).
 
 ---
 
@@ -36,7 +37,7 @@ tell which ones to distrust.
 Drupal 11.4.5 renders on Cloudflare Workers with PHP executing as WebAssembly inside a Durable
 Object, using that object's own SQLite as the database. On 2026-08-14 a throwaway deployment served a
 real Drupal page -- 12,304 bytes of Olivero markup, `<title>Welcome! | CFW Bench</title>` -- from a
-bundle that measures **2,924,073 gzipped bytes on 2026-08-21, 221,655 under the free plan's 3 MiB
+bundle that measures **2,925,281 gzipped bytes on 2026-08-22, 220,447 under the free plan's 3 MiB
 ceiling**.
 
 That figure has now been wrong in three documents at once, each quoting a different stale number from
@@ -221,20 +222,29 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     asserted `cache === 'HIT'` and was pinning the bug in place, so a test written from the current
     implementation would agree with it and prove nothing. Tracked as P38 in project memory.
 
-14. **Every `Drupal::httpClient()` call fails on the shipping build, and the stream wrapper is not
-    the reason.** Found 2026-08-22 in a `wrangler dev` log: `/admin/reports/status` logs
+14. **Every `Drupal::httpClient()` call failed on the shipping build, and the stream wrapper was not
+    the reason. FIXED 2026-08-22.** Found in a `wrangler dev` log: `/admin/reports/status` logs
     `Failed to retrieve security advisory data.` with
     `RequestException: An error was encountered while creating the response`. The trace carries a
     LIVE `Resource id`, so `HttpsStreamWrapper::stream_open()` fetched successfully; the failure is
     `StreamHandler.php:510` reading `$http_response_header`, which **a userland stream wrapper
     cannot populate** -- probed with a fake wrapper registered over `https`: `fopen` returns a
-    handle, `isset($http_response_header)` is FALSE, and `wrapper_data` is the wrapper object.
-    `HeaderProcessor::parseHeaders([])` then throws. This falsifies
-    `DrupflareServiceProvider.php:62-65`, which states the wrapper fallback "is the behaviour that
-    actually works today" -- true for `file_get_contents()`, false for all ten Guzzle seams in the
-    table below. The fix needs no JSPI: `HttpsStreamWrapper::responseMeta()` already exposes status
-    and headers via `stream_get_meta_data($fh)['wrapper_data']`, so a `StreamHandler` subclass that
-    reads it builds a real response on the shipping binary. Tracked as P39 in project memory.
+    handle, `isset($http_response_header)` is FALSE, and `wrapper_data` is the wrapper object. PHP
+    8.4's supported replacement `http_get_last_response_headers()` answers NULL for the same reason,
+    measured on 8.5.7, so the gap is structural in both directions. `HeaderProcessor::parseHeaders([])`
+    then throws. This falsified `DrupflareServiceProvider.php:62-65`, which stated that the wrapper
+    fallback "is the behaviour that actually works today" -- true for `file_get_contents()`, false
+    for all ten Guzzle seams in the table below.
+
+    **The fix is a handler, not a `StreamHandler` subclass**, and the reason is worth recording:
+    `createStream()` and `lastHeaders` are both PRIVATE, so a subclass cannot override the line that
+    fails and would have to reimplement `__invoke()` around 200 lines of context building.
+    `Drupal\drupflare\Http\CachedFetchHandler` reads the SAME `cfwFetch` capability the wrapper opens
+    through -- cache hit gives a real PSR-7 response, a miss arms the queue and rejects with
+    `ConnectException`. A 202 was rejected as the default: Guzzle's `http_errors` middleware does not
+    raise on 2xx, so `SecurityAdvisoriesFetcher` would `Json::decode()` the deferral note and iterate
+    it. `tests/integration/guzzle-handler.spec.ts` drives real Guzzle on the real interpreter and
+    **keeps core's handler as a control that must still fail**. Was P39.
 
 15. **There is no way to add a custom module to a running site, and the loader for one already
     exists.** Drupal's value is that it is extensible; a host that cannot accept a custom module is a
@@ -257,13 +267,23 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     and `strata` (an R2-backed backup and rollback module) were read call-site by call-site. Five
     items opened, P41-P45 in project memory:
 
-    - **P41, and it is the highest-leverage item found.** `microtime()` returning 0 leaves mantle2's
-      re-authentication window permanently open -- `0 - 0 = 0` passes a `0 <= age <= 300` check, so
-      account deletion never demands a re-type -- and makes strata throw on the FIRST node save,
-      because `JournalOp` rejects a non-positive timestamp. A `cfwNow` host function plus a
-      `microtime-fix.ts` fragment closes both and the `Cron::processQueues()` hang this report
-      already records as unfixed. RULE 0 forbids deriving a DURATION from the isolate clock; an
-      absolute instant is a different claim and `Date.now()` supplies it correctly.
+    - **P41 was WRONG, and what replaced it is a different defect in a different layer. RETRACTED
+      AND RE-MEASURED 2026-08-22.** The claim was that `microtime()` returns 0, leaving mantle2's
+      re-authentication window permanently open and making strata throw on the first node save. It
+      does not return 0. Measured through the shipping interpreter,
+      `microtime(true)` is **1787454264.88** -- a real epoch -- because PHP's clock is the glue's
+      `_emscripten_date_now = () => Date.now()` and Workers FREEZE that between I/O rather than
+      zeroing it. Every reading behind "returns 0" was a DELTA. The item's own two consequences
+      invert: a re-auth window comparing two stamps across two requests works, and the module's
+      `if (!$atMs) return [false, null]` guard means the premise would have failed it CLOSED anyway.
+      **What is really wrong is `PHP_INT_SIZE` 4**: `(int) (microtime(true) * 1000)` overflows, and
+      the cast is MODULAR -- `1787454172276.0` casts to `747777140`, exactly `mod 2^32`. So strata's
+      `(int) round(microtime(true) * 1e6)` lands in the negative half for roughly half of every
+      2^32-microsecond cycle (~35.8 minutes in 71.6) and throws THEN, unpredictably, rather than
+      always. `cfwNow` would return the same float `microtime()` already gives; 64-bit `zend_long`
+      (P28) is the fix, so P41 folds into P28 and closes. `Cron::processQueues()` is unreachable on
+      the shipping cron path -- `runCronHook()`/`runCronQueue()` never call it. Pinned by
+      `tests/integration/php-clock.spec.ts`.
     - **P42**: four host bridges on the `zlib-fix.ts` pattern. `cfwBlake2b` (strata's content address
       is `blake2b-256` and neither sodium nor ext-hash provides it; `blakejs` is ~5 KB and
       synchronous), `curl-fix.ts` (`CurlShim.php` is complete, tested and **declared by nothing** --
@@ -273,12 +293,19 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     - **P43**: the 50-byte LIKE cap has no driver accommodation and six mantle2 controllers trip it;
       `splitPointFor()` correctly refuses to split a non-SELECT, so strata's GC dies on a 101-frame
       `DELETE ... IN`.
-    - **P44**: three capability claims in this project's own records are false -- `ext-mbstring` in
-      `DEFAULT_PLATFORM`, "GD, which this build has" for focal_point, and "`driveCron()` is imported
-      by nothing" when `site-do.ts:137` imports it. All three are P39's family. The instrument that
-      would prevent them is a `get_loaded_extensions()` route, which does not exist; **function-name
-      evidence is actively misleading**, because opcache's `func_info` table names functions from
-      extensions the build does not have.
+    - **P44: three capability claims in this project's own records were false. CLOSED 2026-08-22,
+      and the instrument came with them.** `ext-mbstring` sat in `DEFAULT_PLATFORM`, focal_point's
+      note said "GD, which this build has", and a `driveCron()` lift said nothing imported it while
+      `site-do.ts:137` did -- staling six more lift texts behind it. `/__php` now reports
+      `get_loaded_extensions()`, and `tests/integration/loaded-extensions.spec.ts` asserts the
+      platform map against it BOTH ways, so a native claim the binary does not load and a polyfill
+      the binary does load both fail the gate. **Measured, 25 extensions**: Core, PDO, Reflection,
+      SPL, SimpleXML, Zend OPcache, ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib,
+      random, session, standard, tokenizer, uri, vrzno, xml, yaml, zlib. No mbstring, no iconv, no
+      gd, no curl. `DEFAULT_PLATFORM` split into `NATIVE_PLATFORM` and `POLYFILLED_PLATFORM`, and a
+      requirement met only by a polyfill now answers `unverifiable` rather than `installable`.
+      **Function-name evidence remains actively misleading**, because opcache's `func_info` table
+      names functions from extensions the build does not have.
     - **P45**: **no module-side fixes are permitted** -- an unmodified module is the whole
       compatibility claim, so every gap is the host's to shim, to accommodate in the driver, or to
       DECLARE. The rule that produces: a capability is shimmed, accommodated, or declared, never
@@ -439,7 +466,7 @@ looks the way it does.
 | 9 | **Cold start was 3,754 ms, of which 3,066 ms was mounting the pack** -- pure JavaScript, so no PHP-side work could touch it | Per-file compression plus a lazy MEMFS mount that inflates a file only when PHP opens it | [THE COLD START IS A JAVASCRIPT PROBLEM](#the-cold-start-is-a-javascript-problem-not-a-php-one--and-the-lazy-fs-works) |
 | 10 | **The lazy FS and JSPI slicing are in direct conflict** -- the lazy mount puts a JS frame under the PHP stack, and JSPI cannot suspend across one | A refcounted interrupt mask over every host call that enters JS, with a pending-interrupt flag so a masked boundary is deferred rather than lost | [RULE 0d](#rule-0d-the-lazy-fs-and-jspi-slicing-are-in-direct-conflict), [THE MASK SEAM](#the-mask-seam-every-host-call-that-enters-js-refcounted) |
 | 11 | **Every functional number was measured on a binary that could never ship** -- 586,923 bytes over the free ceiling | Removing PDO from the shipping path let the real binary run the real workload, resolving the question against one artifact | [RULE 0b](#rule-0b-the-bundle-figure-and-the-working-binary-are-different-binaries) through [0b-iv](#rule-0b-iv-four-undocumented-behaviours-are-stacked-and-have-never-been-composed) |
-| 12 | **In-PHP `microtime()` returns 0 on the edge**, so every local timing was a ratio and four free-tier verdicts were instrument artefacts | Read per-invocation `cpuTime` through the Workers Observability API. `wrangler tail` silently omits every `durableObject` event | [RULE 0](#rule-0-above-everything-else) |
+| 12 | **In-PHP `microtime()` does not advance on the edge**, so every local timing was a ratio and four free-tier verdicts were instrument artefacts. It does not return 0; that shorthand was itself an instrument error, corrected 2026-08-22 | Read per-invocation `cpuTime` through the Workers Observability API. `wrangler tail` silently omits every `durableObject` event | [RULE 0](#rule-0-above-everything-else) |
 
 **Not cleared:** cold boot is **1,398 ms** of edge cpuTime in one indivisible synchronous call, 140x
 the free-plan cap. Migration became divisible because it is a JavaScript loop; boot is one
@@ -456,6 +483,9 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [GUZZLE FETCHED THE BODY AND THREW IT AWAY](#guzzle-fetched-the-body-and-threw-it-away) | **read before touching outbound HTTP**: every `Drupal::httpClient()` call rejected on the shipping build with the body already in memory, because no userland stream wrapper can populate `$http_response_header` and PHP 8.4's replacement answers NULL for the same reason. Fixed by a handler over `cfwFetch`; a 202 default was rejected and the reason is recorded |
+| [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width) | **read before quoting RULE 0's "microtime returns 0"**: it does not. Every reading behind that was a DELTA; the absolute is a real epoch. The defect is `PHP_INT_SIZE` 4, the cast is modular, and both module consequences invert |
+| [THE EXTENSION LIST WAS INFERRED](#the-extension-list-was-inferred-and-three-inferences-were-wrong) | **read before claiming an extension**: 25 measured, no mbstring/iconv/gd/curl. Function-name evidence is misleading; `/__php` reports the real list and the gate asserts the platform map against it both ways |
 | [THE SECURITY SWEEP](#the-security-sweep-and-what-nine-of-ten-findings-had-in-common) | **read before adding a route, a cache tier or a header the object trusts**: `/serve` read `?site=` raw and one request provisioned a whole database; `/setup/cf` was unreachable for its whole life; four values were computed and read by nobody; `/export` dumped the owner token and a live OAuth refresh token. One finding is deliberately NOT taken and says why |
 | [THE CACHE HAD NO IDEA WHO IT WAS TALKING TO](#the-cache-had-no-idea-who-it-was-talking-to) | **read before touching either serving lane, and before trusting any header the object reads**: the fast lane duplicated the gated lane's `cfw_page` read and missed both its guards, so a session was served the anonymous page and an unclaimed site hid its own claim page; an authenticated MISS filled `cfw_page` with Drupal's 403; `x-cfw-auth` was forgeable and spending it strips a real admin's cookie |
 | [THE STATIC THAT STOPPED EVERY FORM](#the-static-that-stopped-every-form-after-the-first-error) | **read before touching form handling, and before scoring the static-state class**: `FormState::$anyErrors` is a class static that gated every submit handler, so one form error stopped every later submission in the object. Two reproducers, one nine-character cause, and the sixth member of the family |
@@ -525,6 +555,259 @@ wherever it disagrees with the above.
 | --- | --- |
 | [DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING](#-deep-dive-a-memory-autoload-mbstring-) | [TASK A](#task-a--the-isolate-memory-ceiling) the 512 MiB build ceiling, [TASK B](#task-b--composer-dump-autoload---classmap-authoritative) autoload, [TASK C](#task-c--the-mbstring-polyfill) mbstring, [Caveats](#caveats-in-one-place) |
 | [DEEP DIVE B: THE cfw_do_sqlite DRIVER](#-deep-dive-b-the-cfw_do_sqlite-driver-) | transaction buffer, SQL function audit, integer safety, what the runtime refuses |
+---
+
+# GUZZLE FETCHED THE BODY AND THREW IT AWAY
+
+**Found and fixed 2026-08-22.** Every `Drupal::httpClient()` call on the shipping build rejected,
+and the comment in the code saying it worked is the finding.
+
+## The symptom, and why it is not the class the report already catalogues
+
+`/admin/reports/status` logs `Failed to retrieve security advisory data.` with
+`GuzzleHttp\Exception\RequestException: An error was encountered while creating the response`. This
+document elsewhere catalogues a "no https wrapper" failure class; this is not it. The trace carries
+
+```
+StreamHandler->createResponse(Request, Array, Resource id #1353, NULL)
+```
+
+A LIVE resource. `HttpsStreamWrapper::stream_open()` ran its `$fetch` and returned true, so the
+body was already in memory. **The failure is one line later.**
+
+## The mechanism, measured in three places
+
+`StreamHandler::createStream()` ends with
+
+```php
+if (function_exists('http_get_last_response_headers')) {
+    $http_response_header = \http_get_last_response_headers();
+}
+$this->lastHeaders = $http_response_header ?? [];
+```
+
+and `createResponse()` immediately does `HeaderProcessor::parseHeaders($hdrs)`, which throws
+`RuntimeException('Expected a non-empty array of header data')` on `[]`.
+
+| what was checked | how | result |
+| --- | --- | --- |
+| can a userland wrapper set `$http_response_header`? | a 20-line probe with a fake wrapper registered over `https` | **no.** `fopen` returns a handle, `isset($http_response_header)` is FALSE, and `stream_get_meta_data($fp)['wrapper_data']` is the wrapper OBJECT |
+| does PHP 8.4's replacement help? | `http_get_last_response_headers()` on real PHP 8.5.7 after opening through the wrapper | **no.** Returns NULL, for the same reason. Both routes are closed |
+| does the function even exist on this build? | `/__php` reports `get_loaded_extensions()` and `function_exists()` | **yes**, so Guzzle takes the 8.4 branch and gets NULL rather than an undefined local |
+
+Only PHP's own http wrapper populates either. The gap is structural and no amount of work inside
+`drupflare/stream-http` closes it.
+
+## What it falsified
+
+`DrupflareServiceProvider.php:62-65` explained why `FetchHandler` is left uninstalled on a
+non-JSPI build and ended: "Leaving core's handler in place means outbound HTTP goes through the
+https stream wrapper the host registers, **which is the behaviour that actually works today**."
+
+It works for `file_get_contents()`, which never asks for headers. It fails for every
+`Drupal::httpClient()` caller -- all ten core seams in this document's own table, plus any contrib
+module with an API client. Same family as [[decorative-configuration]]: a fallback that reads as a
+working path and is not one.
+
+## The fix, and why it is not a `StreamHandler` subclass
+
+The obvious shape -- subclass `StreamHandler` and read `responseMeta()` instead of the magic local
+-- **does not work, and the reason is a language rule rather than a preference.** `createStream()`
+and `lastHeaders` are both `private`, so a subclass cannot override the failing line; it would have
+to reimplement `__invoke()` around ~200 lines of context building it does not own.
+
+`Drupal\drupflare\Http\CachedFetchHandler` is a plain Guzzle handler over the SAME `cfwFetch`
+capability the wrapper opens through, so a cache hit here and a successful `file_get_contents()` are
+one row rather than two caches that can disagree. Two outcomes, both of which every caller already
+handles:
+
+- the response a previous drain fetched, as a real PSR-7 response;
+- `ConnectException`, after `cfwFetch` has armed the queue, so the NEXT call hits.
+
+**A 202 was rejected as the default and the reason is worth recording.** `CfwDeferredHttp` answers
+202 with a JSON body explaining the deferral, which is right for a service that opted in and wrong
+globally: Guzzle's `http_errors` middleware does not raise on a 2xx, so `SecurityAdvisoriesFetcher`
+would `Json::decode()` the explanation and iterate four scalars. A refusal is what a caller's
+existing error path is written for, and it is what core's own handler raises when a socket cannot
+open. `CfwDeferredHttp` is unchanged and stays opt-in.
+
+The provider now installs one of the two handlers unconditionally -- `FetchHandler` when the runtime
+can suspend, `CachedFetchHandler` when it cannot -- instead of returning early and leaving core's.
+
+## Two things not to conflate with it
+
+- **`system.advisories.enabled` is `b:1` in the shipped `assets/drupal/site.sqlite`.** Flipping it
+  silences the symptom for two of ten seams and fixes nothing.
+- **`TECHNICAL_REPORT.md` records `system.advisories.enabled` TRUE -> FALSE elsewhere**; that was the
+  minimal-tree measurement, not the shipped tree.
+
+## The guard
+
+`tests/integration/guzzle-handler.spec.ts` seeds `cfw_http_cache` directly -- hermetic, no network --
+and runs `GUZZLE_HANDLER_CHECK` on the real interpreter: 11 assertions, all green.
+
+**The control is what makes it a regression test.** The same fragment builds a client on core's
+`StreamHandler`, over the same wrapper and the same row, and REQUIRES it to fail with
+`creating the response`. Remove `CachedFetchHandler` and the fix assertions go red while the control
+stays green; if the control ever goes green the seam has stopped measuring the defect. Same family
+as [[regression-test-never-seen-fail]], which is where a green test that proved nothing was found by
+removing the fix and watching nothing happen.
+
+`../drupflare/tests/health-suite.php` covers the handler against a spy host and the provider against
+a fake container: 566 -> **584** assertions.
+
+## What is declared rather than fixed
+
+**Request headers do not cross.** `cfwFetch` keys the cache on method + URL + body and
+`cfw_http_queue` has no header column, so a request's own headers reach neither the lookup nor the
+eventual `fetch()`. Every deferred path has always had that gap -- the stream wrapper collects
+headers and the host ignores them -- and it is stated in the handler's docblock rather than left
+silent: an API client sending `Authorization` gets an unauthenticated 401 back as a real response,
+which is visible, not a silent success. Closing it is a schema change against the meter that binds
+regeneration, so it is priced separately.
+
+---
+
+# THE FROZEN CLOCK STILL TELLS THE TIME, AND THE REAL DEFECT IS THE INT WIDTH
+
+**2026-08-22. A retraction, and the fifth time in this project the instrument was wrong rather than
+the system.**
+
+## What was claimed
+
+RULE 0 has said since the beginning that in-PHP `microtime()` **returns 0** on the edge. A review of
+two real third-party modules turned that into a scheduled security fix: `mantle2`'s
+re-authentication window would be permanently open, because `0 - 0 = 0` passes a `0 <= age <= 300`
+check; `strata` would throw on the first node save, because `JournalOp` refuses a non-positive
+microtime. The proposed fix was a `cfwNow` host capability plus a `microtime-fix.ts` fragment on the
+`zlib-fix.ts` pattern.
+
+## What is actually true
+
+**`microtime()` returns a real epoch.** Measured through the shipping PHP 8.5 interpreter inside
+workerd:
+
+| quantity | reading |
+| --- | --- |
+| `microtime(true)` | **1787454264.88** |
+| `time()` | 1787454264 |
+| `$_SERVER['REQUEST_TIME']` | 1787454264 |
+| advance across a 200,000-iteration loop | 13-14 ms |
+
+The mechanism was always readable: the emscripten glue defines
+`_emscripten_date_now = () => Date.now()`, there is no `clock_gettime` in the build, and **Workers
+FREEZE `Date.now()` between I/O boundaries rather than zeroing it** -- which this document already
+says, two sections away, in
+[THE WALL CLOCK CANNOT TIME A RENDER ON THE EDGE EITHER](#the-wall-clock-cannot-time-a-render-on-the-edge-either-and-that-had-disabled-a-guard).
+
+**Every reading behind "returns 0" was a DELTA.** `steadySeqMs: [0]`, `wallMs: 0`,
+`x-cfw-render-ms: 0`, and `/clock`'s `busyMicrotimeMs` are all differences. No instrument in this
+repository ever reported the ABSOLUTE, so the claim was never measured in the form it was written
+down in. The sentence "in-PHP timing does not advance on the edge, so it cannot produce an absolute"
+is the exact point where a correct observation became a wrong conclusion: a stopped clock still
+reads a time.
+
+**The host itself depends on it.** `nowMs()` is `Date.now()`, and it arms every alarm and stamps
+every `expires_at` on deployed sites. If it returned 0 the fill chain would not work, and it does.
+
+## The defect that IS there, and it is a different layer
+
+`PHP_INT_SIZE` is **4**. `PHP_INT_MAX` is **2147483647**. Epoch milliseconds are 1.79e12 and epoch
+microseconds are 1.79e15, so both idioms overflow, and the cast is **modular rather than
+saturating**:
+
+| expression | reads |
+| --- | --- |
+| `(int) 1787454172276.0` | **747777140** -- exactly `1787454172276 mod 2^32` |
+| `(int) 2147483648` | **-2147483648** |
+| `(int) (microtime(true) * 1000)` | a wrapped value in +/-2^31 |
+| `(int) round(microtime(true) * 1e6)` | a wrapped value in +/-2^31 |
+
+This inverts both consequences:
+
+- **The re-authentication window is not permanently open. It is CORRECT.** Both stamps wrap
+  identically, so their difference survives; the wrap period for milliseconds is 2^32 ms ~ 49.7 days,
+  and crossing a boundary inside a 300-second window makes the older stamp the LARGER one, so the
+  age goes negative and an `age >= 0` guard fails CLOSED. The module also has
+  `if (!$atMs) { return [false, null]; }`, so even under the original premise the window would have
+  been permanently SHUT rather than open. The claim was wrong in the direction that matters.
+- **The journal does not throw on every save. It throws for about half of every 71.6 minutes.**
+  The microsecond wrap period is 2^32 us = 4294.97 s, and the wrapped value is negative for half of
+  each cycle. "Never works" and "works half the time, unpredictably" need different fixes and
+  different urgency.
+
+## Consequences for the roadmap
+
+- **Do not build `microtime-fix.ts`.** A host bridge returning `Date.now()` hands PHP the same float
+  `microtime()` already gives it. It would be a no-op that reads as a fix -- the
+  [[decorative-configuration]] family the item was written to fight.
+- **P41 folds into P28**, 64-bit `zend_long` on 32-bit pointers, which is the only thing that closes
+  an int-width defect. It also already carried the 2038 warning, which is the same fact.
+- **`Cron::processQueues()` needs no P-number.** It is unreachable on the shipping cron path:
+  `runCronHook()` runs one hook and `runCronQueue()` claims items directly; neither calls
+  `Cron::run()`, and `automated_cron.interval` is 0.
+- **The frozen clock is still a hang risk and that has not moved.** A deadline computed and tested
+  inside ONE invocation never passes. That is what made `Lock::wait()` spin for its full 30 s and
+  burn 32,500 ms of cpuTime, and `CfwLockBackend` closing it is unaffected by anything here.
+
+## One more claim in the same paragraph that does not hold
+
+The report records `memory_get_usage()` and `memory_get_peak_usage()` as "also read 0 on the edge,
+exactly like `microtime()`". They read **0 in the gate lane too**, where the clock demonstrably
+works, so it is a BUILD property with no relation to the platform's clock. Two unrelated facts had
+been merged into one symptom because they were observed in the same session.
+
+## The guards
+
+`tests/integration/php-clock.spec.ts` pins the epoch, the int width, the modular cast, and the
+`memory_get_usage()` contrast. `/clock` on `src/probes/min.ts` now reports `absoluteS`,
+`absoluteIso`, `requestTime` and `jsAbsoluteMs` alongside its existing deltas, so one deployed
+request settles the edge reading rather than another session re-deriving it from the deltas.
+
+---
+
+# THE EXTENSION LIST WAS INFERRED, AND THREE INFERENCES WERE WRONG
+
+**2026-08-22.** Every extension verdict in this project was reasoned rather than read. Three of them
+were false, each read as verified, and none had an instrument that could have disagreed.
+
+| claim | where | truth |
+| --- | --- | --- |
+| `ext-mbstring` is provided by the platform | `packagist.ts` `DEFAULT_PLATFORM` | **absent.** `mb-fix.ts` exists precisely because Symfony's polyfill supplies it, with 86 measured divergences |
+| "The transform is GD, which this build has" | `module-tiers.ts`, focal_point | **absent.** `CfwImageToolkit` says so outright: gd cost 684,821 bytes and was not compiled in |
+| "`driveCron()` ... nothing imports it" | `module-tiers.ts`, scheduler | **wired.** `src/site-do.ts:137` imports it and `alarm()` calls it, on by default. Six more lift texts were stale behind it |
+
+## The instrument, which is one line and did not exist
+
+`/__php` now reports `get_loaded_extensions()`. Measured on the shipping binary, **25 extensions**:
+
+```
+Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache, ctype, date, dom, filter, hash,
+json, lexbor, libxml, pcre, pib, random, session, standard, tokenizer, uri, vrzno,
+xml, yaml, zlib
+```
+
+No mbstring, no iconv, no gd, no curl, no pdo_sqlite. `ext-zlib` IS present, which is why `ZLIB_FIX`
+is inert on this build and correct to keep.
+
+**Function-name evidence is actively misleading and must never be substituted for this.**
+`curl_init`, `mysqli_stmt_init`, `pg_select` and `imagecreatetruecolor` all appear as strings in a
+binary carrying none of those extensions, because opcache's optimizer ships a `func_info` table
+naming functions across every bundled extension.
+
+## What the route feeds
+
+A route an operator must remember to curl is not a guard, so the measurement is wired into the gate.
+`tests/integration/loaded-extensions.spec.ts` asserts the platform map **both ways**: a name in
+`NATIVE_PLATFORM` the binary does not load fails, and so does a name in `POLYFILLED_PLATFORM` that it
+DOES -- because a polyfill that became an extension must move rather than keep degrading every
+verdict resting on it.
+
+`DEFAULT_PLATFORM` is now `NATIVE_PLATFORM` + `POLYFILLED_PLATFORM`, and a requirement satisfied only
+by the polyfilled half answers **`unverifiable`** rather than `installable`. A site that really has
+the extension still wins, because `installed` is checked before either map. The verdict vocabulary
+stays three words; the difference lives in each conflict's `detail`.
+
 ---
 
 # THE CACHE HAD NO IDEA WHO IT WAS TALKING TO
@@ -1834,8 +2117,10 @@ here, so `usleep()` spins, and every one of those seconds is billed as CPU.
 `microtime()`-derived deadline in a dependency is a latent hang, not a latent mis-measurement.
 `Lock::wait()` was one. `Cron::processQueues()` is another shape of the same thing -- it computes
 `usleep((int) round($process_from - $this->time->getCurrentMicroTime(), 3) * 1000000)`, so a
-non-zero `process_from` against a zero clock sleeps for the whole interval. That one is unexercised
-and unfixed; it is named here so the next reader does not rediscover it.
+non-zero `process_from` against a FROZEN clock sleeps for the whole interval. **Checked 2026-08-22
+and it is unreachable**: `runCronHook()` runs one hook and `runCronQueue()` claims items directly,
+so nothing on the shipping cron path calls `Cron::run()`, and `automated_cron.interval` is 0. It
+needs no P-number; it is a hazard only for code calling `drupal_cron()` itself.
 
 ## The fix, and why it is a grant rather than a repair
 
@@ -2894,7 +3179,10 @@ First render of a NEW path on a warm interpreter is much worse -- `/user/login` 
    leaving **143,299 B** under 3 MiB, not the 268,873 the binary figure implies. The binary's headroom
    is not the bundle's. Superseded by the current measurement of **3,006,761 gz / 138,967 B** below.
 4. **`memory_get_usage()` and `memory_get_peak_usage()` also read 0 on the edge**, exactly like
-   `microtime()`, while `ini_get('memory_limit')` correctly returns `128M`.
+   `microtime()`, while `ini_get('memory_limit')` correctly returns `128M`. **"Exactly like
+   `microtime()`" is retracted, 2026-08-22**: `memory_get_usage()` reads 0 in the gate lane too,
+   where the clock works, so it is a BUILD property and shares no mechanism with the clock. See
+   [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width).
 
 Also: observability has ingestion lag and silently truncates a 100-event page. **An empty result means
 "not yet ingested", not "did not happen"** -- the same trap as an empty `wrangler tail`.
@@ -5203,9 +5491,11 @@ host call that enters JS**: the SQL bridge, the codec, `cfwLog`, every
 **An absolute CPU figure comes from `cpuTime` in `wrangler tail` on a DEPLOYED
 worker. Nothing else counts.**
 
-In-PHP `microtime()` and `hrtime()` **return 0 on the edge** — measured. They work
-under `wrangler dev` and only there, so an in-PHP number is a local ratio, never an
-absolute. Local-to-edge factors measured so far: **2.2x** warm render, **2.5x** cold
+In-PHP `microtime()` and `hrtime()` **do not advance on the edge** — measured. They
+advance under `wrangler dev` and only there, so an in-PHP DELTA is a local ratio, never an
+absolute. **"Return 0" is what this paragraph said until 2026-08-22 and it is retracted**:
+every reading behind it was a delta, and the value itself is a real epoch. See
+[THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width). Local-to-edge factors measured so far: **2.2x** warm render, **2.5x** cold
 boot, **6.1x** pack mount.
 
 **The free-tier verdict has moved five times. Four of those were instrumentation,
@@ -7293,7 +7583,7 @@ plausible-looking corruption rather than a clean failure:
    re-inflate exactly those, in order. This is new work created by enabling `LAZY_MOUNT`.
 
 And one inversion to know before interpreting a local failure: **`microtime()` advances locally
-and returns 0 on the edge.** If two boots ever are compared and differ, the difference may be
+and stands still on the edge** (it does not return 0; retracted 2026-08-22). If two boots ever are compared and differ, the difference may be
 clock-derived entropy that does not exist in production. Freeze the clock and stub the entropy
 sources before concluding boot is nondeterministic.
 

@@ -198,14 +198,14 @@ reason to abort rather than as health data.
 
 Read the result out of `cfw_health`, which is capped at `LEDGER_MAX_ROWS` and indexed on `ts DESC`.
 
-| signal                                       | catches                                                   |
-| -------------------------------------------- | --------------------------------------------------------- |
-| `boot.capability_missing`                    | a build that silently dropped an extension                |
-| `boot.bridge_missing`, `boot.sqlite_too_old` | a glue or host mismatch before any page is served         |
-| `render.empty`, `render.size_anomaly`        | "it rendered, but wrong", the class a new binary produces |
-| `bridge.asyncify_called`                     | a `.mjs` glue that does not match the `.wasm`             |
-| `pack.generation_mismatch`                   | packed assets disagreeing with the database               |
-| `budget.rows_written`                        | a regression in the meter that binds regeneration         |
+| signal                                       | catches                                                                                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `boot.capability_missing`                    | a build that silently dropped an extension. `/php` reports `get_loaded_extensions()`, and the release lane asserts opcache, lexbor and the platform map against it |
+| `boot.bridge_missing`, `boot.sqlite_too_old` | a glue or host mismatch before any page is served                                                                                                                  |
+| `render.empty`, `render.size_anomaly`        | "it rendered, but wrong", the class a new binary produces                                                                                                          |
+| `bridge.asyncify_called`                     | a `.mjs` glue that does not match the `.wasm`                                                                                                                      |
+| `pack.generation_mismatch`                   | packed assets disagreeing with the database                                                                                                                        |
+| `budget.rows_written`                        | a regression in the meter that binds regeneration                                                                                                                  |
 
 Do not gate on CPU. An absolute figure comes only from `cpuTime` on a deployed version, and the
 platform's 400-600 ms spread means a canary window cannot support a boot-time verdict at n=1 or n=3.

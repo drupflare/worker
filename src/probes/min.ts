@@ -526,7 +526,7 @@ export default {
 					const php = parse(await exec(inst, BOOT_BREAKDOWN_CODE(route)));
 					return Response.json({
 						freshInstance: true,
-						clock: 'local wall clock; Date.now() and microtime() both read 0 on the edge',
+						clock: 'local wall clock; on the edge neither Date.now() nor microtime() ADVANCES, so every delta below reads 0. The absolute is real -- /clock reports it',
 						mount,
 						mountMs,
 						prelude,
@@ -541,8 +541,16 @@ export default {
 					// Bucket attribution is only as good as the clock. workerd freezes
 					// Date.now() between I/O in some configurations and coarsens timers for
 					// Spectre, so measure the real granularity rather than assuming it.
+					//
+					// `absoluteS` and `jsAbsoluteMs` are the ADDITIVE half, and they are what this
+					// probe could not answer. Every reading that made it into the report was a
+					// DELTA -- `steadySeqMs`, `wallMs`, the fields below -- so "microtime() returns
+					// 0 on the edge" was recorded as a fact about the value when the measurement
+					// was about the advance. Frozen and zero are different claims and only one of
+					// them was ever measured.
 					const code = `<?php
 echo json_encode((function() {
+	$abs = microtime(true);
 	$m = [];
 	for ($i = 0; $i < 4000; $i++) { $m[] = microtime(true); }
 	$h = [];
@@ -563,6 +571,9 @@ echo json_encode((function() {
 	$s2 = hrtime(true);
 	for ($i = 0; $i < 400000; $i++) { $x += sqrt($i); }
 	return [
+		'absoluteS' => $abs,
+		'absoluteIso' => gmdate('c', (int) $abs),
+		'requestTime' => $_SERVER['REQUEST_TIME'] ?? null,
 		'microtimeDistinct' => count(array_unique($m)),
 		'microtimeMinStepMs' => $dm ? $dm[0] : null,
 		'hrtimeDistinct' => count(array_unique($h)),
@@ -573,7 +584,13 @@ echo json_encode((function() {
 	];
 })());
 `;
-					return Response.json(parse(await exec(warm!, code)));
+					// jsAbsoluteMs is the JS side of the same question, read in the same
+					// invocation: if these two agree, PHP's clock IS Date.now() and a frozen
+					// reading is still a real instant
+					return Response.json({
+						...parse(await exec(warm!, code)),
+						jsAbsoluteMs: Date.now()
+					});
 				}
 
 				case '/version':

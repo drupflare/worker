@@ -2811,7 +2811,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// URLs a visitor got would depend on which lane happened to render their page.
 		const origin = request.origin ?? this.canonicalOrigin(null);
 		const result = await this.runJson(renderPage(path, bins, destruct, { ...request, origin }));
-		// Wall-clock, not the in-PHP clock: microtime() returns 0 on the edge.
+		// Wall-clock, not the in-PHP clock: neither ADVANCES on the edge.
+		//
+		// Not "returns 0", which is what this comment used to say and what RULE 0 still says as
+		// shorthand: `microtime()` returns a real epoch (measured -- 1787454264.88 in workerd,
+		// through the glue's `_emscripten_date_now = () => Date.now()`), it just does not move.
+		// A DELTA taken from it is 0 and that is the part that matters here.
 		//
 		// and the wall clock reads 0 out there too -- measured, 16 assembly renders and
 		// 6 full renders all reported wallMs 0 on a deployed worker while tail charged

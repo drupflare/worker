@@ -137,6 +137,13 @@ import {
 	driveCron,
 	drupalCronEnabled
 } from './ops/cron-drive';
+import {
+	crossingsSince,
+	emptyCrossings,
+	snapshotCrossings,
+	wrapCrossings,
+	type CrossingTally
+} from './ops/crossings';
 import { dailyLimit, degradation, readOnlyResponse, type Degradation } from './ops/degrade';
 import {
 	ensureFleetTable,
@@ -1023,6 +1030,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	bumps?: number;
 	lastRenderMs?: number;
 	renderClockUnmeasurable?: boolean;
+	/** PHP-to-host crossings, per capability; see `src/ops/crossings.ts` */
+	crossings?: CrossingTally;
+	/** which capability names were actually present to wrap, so a 0 is not read as "never called" */
+	crossingNames?: string[];
+	/** the tally at the start of the last render, so `/serve-stats` can report a per-render figure */
+	lastRenderCrossings?: CrossingTally;
 	windowOpenedAt?: number;
 	windowClosedAt?: number;
 	windowFills?: number;
@@ -1170,6 +1183,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// stack. Installed even on a build that HAS zlib: the PHP half checks
 		// extension_loaded('zlib') and defines nothing, so an unused Module key is the whole cost
 		installZlib(binary as unknown as Record<string, unknown>, withMask);
+		// LAST, after every installer. A wrapper applied before one is silently overwritten by it,
+		// and the tally then reads 0 for a capability being called constantly -- which is the
+		// failure this instrument exists to avoid in the first place
+		this.crossings = emptyCrossings();
+		this.crossingNames = wrapCrossings(
+			binary as unknown as Record<string, unknown>,
+			this.crossings
+		);
 		// before any PHP runs, because a handle minted before the pin is installed cannot be
 		// pinned retroactively -- see pinHandles()
 		this.pinHandles(binary);
@@ -2810,7 +2831,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// host and the alarm-filled copy of the same page carried `localhost` -- so which absolute
 		// URLs a visitor got would depend on which lane happened to render their page.
 		const origin = request.origin ?? this.canonicalOrigin(null);
+		// bracket the render so the tally is PER RENDER rather than per object lifetime; the boot
+		// crossings that precede the first render would otherwise be charged to it
+		const crossingsBefore = this.crossings
+			? snapshotCrossings(this.crossings)
+			: emptyCrossings();
 		const result = await this.runJson(renderPage(path, bins, destruct, { ...request, origin }));
+		if (this.crossings) {
+			this.lastRenderCrossings = crossingsSince(crossingsBefore, this.crossings);
+		}
 		// Wall-clock, not the in-PHP clock: neither ADVANCES on the edge.
 		//
 		// Not "returns 0", which is what this comment used to say and what RULE 0 still says as
@@ -4418,7 +4447,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						packGeneration: this.packGeneration(),
 						latest: latestSnapshotMeta(this.sql, String(this.packGeneration() ?? '')),
 						enabled: heapSnapshotEnabled(this.env),
-						chunkBudget: heapRestoreChunkBudget(this.env) ?? 'all'
+						chunkBudget: heapRestoreChunkBudget(this.env) ?? 'all',
+						// wasm linear memory RIGHT NOW, which is the quantity `INITIAL_MEMORY`
+						// governs and the one every proposal to lower it has to be measured
+						// against. null on an object that has not booted PHP: 0 would read as a
+						// measured empty heap rather than as "there is nothing to measure"
+						linearMemoryBytes: this.php
+							? (this.heapBytes(this.php.binary)?.byteLength ?? null)
+							: null
 					});
 				}
 
@@ -5984,6 +6020,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// authenticated caching is worth finishing on THIS site rather than in
 						// general: a site whose pages carry no placeholders has nothing to gain
 						shellCandidates: this.shellCandidates(),
+						// PHP-to-host crossings for the LAST render, per capability. Not a billed
+						// meter today -- a `cfw*` call is a wasm import into the same isolate -- so
+						// this prices the refactor risk the docs create: an RPC method call IS
+						// billed as a DO request, so a migration would convert each of these into
+						// one. `crossingCapabilities` says which names were present to wrap, so a
+						// 0 cannot be read as "never called" when it means "never installed"
+						crossings: this.lastRenderCrossings ?? null,
+						crossingsTotal: this.crossings?.total ?? 0,
+						crossingCapabilities: this.crossingNames ?? [],
 						cached: this.sql
 							.exec(
 								'SELECT path, status, length(html) AS bytes, render_ms, rendered_at FROM cfw_page ORDER BY path'

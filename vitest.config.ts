@@ -63,6 +63,8 @@ const ARTIFACT_SPECS = [
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/firstrun.spec.ts',
 	'tests/integration/guzzle-handler.spec.ts',
+	'tests/integration/heap-growth.spec.ts',
+	'tests/integration/host-bridges.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/loaded-extensions.spec.ts',
 	'tests/integration/linear-memory.spec.ts',
@@ -81,9 +83,12 @@ const ARTIFACT_SPECS = [
 	'tests/integration/serve-lanes.spec.ts',
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
+	'tests/integration/shell-derivation.spec.ts',
+	'tests/integration/statement-census.spec.ts',
 	'tests/integration/static-sweep.spec.ts',
 	'tests/integration/submission-wall.spec.ts',
 	'tests/integration/workload-matrix.spec.ts',
+	'tests/integration/write-amplification.spec.ts',
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 
@@ -91,7 +96,27 @@ const ARTIFACT_SPECS = [
 // checkout rather than of this machine; collection only imports, and nothing here reads at module scope
 const listAll = process.env.DRUPFLARE_LIST_ALL === '1';
 
-const haveShipping = existsSync(SHIPPING_WASM) && existsSync(SHIPPING_GLUE);
+/**
+ * A heap-growth arm, selected by env so the ladder runs the SAME binary at a different policy.
+ *
+ * `scripts/measure/growth-glue.ts` writes the variant; emscripten's growth step lives in the glue
+ * rather than in the wasm, so an arm costs a file rewrite instead of a phasm rebuild. Unset is the
+ * shipping 0.20.
+ */
+const growthStep = process.env.DRUPFLARE_GROWTH_STEP;
+const growthGlue = growthStep
+	? `.interp/php8.5-worker.growth-${growthStep.replace('.', 'p')}.mjs`
+	: null;
+
+if (growthGlue && !existsSync(growthGlue)) {
+	throw new Error(
+		`DRUPFLARE_GROWTH_STEP=${growthStep} but ${growthGlue} is absent; ` +
+			`run \`bun scripts/measure/growth-glue.ts ${growthStep}\` first`
+	);
+}
+
+const activeGlue = growthGlue ?? SHIPPING_GLUE;
+const haveShipping = existsSync(SHIPPING_WASM) && existsSync(activeGlue);
 const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 
 const havePack = existsSync(PACK_INDEX);
@@ -100,7 +125,9 @@ const haveArtifacts = haveBinary && havePack && haveStatic;
 
 // stderr, not stdout: `vitest list --json` is parsed by the metrics collector, and a banner on
 // stdout made every run answer `JSON Parse error: Unexpected identifier "vitest"`
-if (haveShipping) {
+if (haveShipping && growthGlue) {
+	console.error(`[vitest] PHP 8.5 with the heap-growth step forced to ${growthStep}`);
+} else if (haveShipping) {
 	console.error('[vitest] running the SHIPPING PHP 8.5 interpreter from .interp/');
 } else if (haveBinary) {
 	console.error(`[vitest] no ${SHIPPING_WASM}: falling back to PHP 8.3 from ${DEFAULT_SEAM}.`);
@@ -132,7 +159,7 @@ const seamAlias = (from: string, to: string) => ({
 });
 
 const binaryAlias = haveShipping
-	? [seamAlias(`${DEFAULT_SEAM}.wasm`, SHIPPING_WASM), seamAlias(DEFAULT_SEAM, SHIPPING_GLUE)]
+	? [seamAlias(`${DEFAULT_SEAM}.wasm`, SHIPPING_WASM), seamAlias(DEFAULT_SEAM, activeGlue)]
 	: haveBinary
 		? []
 		: [

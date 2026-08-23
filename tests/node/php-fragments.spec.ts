@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
+import { CURL_FIX } from '../../src/drupal/curl-fix';
 import { ICONV_FIX } from '../../src/drupal/iconv-fix';
 import { MB_ASCII } from '../../src/drupal/mb-fix';
+import { OPENSSL_FIX } from '../../src/drupal/openssl-fix';
 import {
 	abandonTransaction,
 	BOOT_KERNEL,
@@ -26,8 +28,11 @@ import {
 	OPS_REGISTRY,
 	PROBE_RUNTIME,
 	renderPage,
-	saveNode
+	saveNode,
+	WRITE_WORKLOADS,
+	writeWorkload
 } from '../../src/drupal/site-php';
+import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
 import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
 
@@ -117,6 +122,11 @@ const FRAGMENTS: Array<[string, string]> = [
 	['abandonTransaction_global', abandonTransaction('global')],
 	['leakOutputBuffer', leakOutputBuffer(2)],
 	['createUser', createUser({ name: 'probe', pass: 'p', roles: ['content_editor'] })],
+	// one per branch of the switch, since each arm is its own block of PHP and only the arm
+	// that is emitted gets linted
+	...WRITE_WORKLOADS.map(
+		(op) => [`writeWorkload_${op}`, writeWorkload(op, { seq: 3, nid: 1 })] as [string, string]
+	),
 	['cronHookList', cronHookList()],
 	['runCronHook', runCronHook('system')],
 	['runCronQueue', runCronQueue('my_queue', 3)],
@@ -128,6 +138,15 @@ const FRAGMENTS: Array<[string, string]> = [
 	// backtick-free comment on purpose -- a backtick inside a String.raw block
 	// truncates the template literal and this fragment hit that while being written
 	['ICONV_FIX', `<?php ${ICONV_FIX}`],
+	// same shape again: no eval(), so php -l reads the eight curl_* declarations and the
+	// ~17 constants. It is the fragment that made CurlShim reachable at all
+	['CURL_FIX', `<?php ${CURL_FIX}`],
+	// openssl_sign takes its signature BY REFERENCE and openssl_verify returns a tri-state,
+	// so a signature typo here is a silently wrong verdict rather than a parse error
+	['OPENSSL_FIX', `<?php ${OPENSSL_FIX}`],
+	// same shape again, and it is the only fragment declaring a CLASS conditionally
+	// (SodiumException), which php -l checks here and nothing else would
+	['SODIUM_FIX', `<?php ${SODIUM_FIX}`],
 	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
 	// read. Both bodies carry regexes with backslash escapes, which is exactly the
 	// shape that survives a botched unescaping as valid JS and broken PHP

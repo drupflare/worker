@@ -3085,3 +3085,222 @@ ${SCHEMA_REPAIR}
 echo json_encode($out);
 `;
 }
+
+/**
+ * The write workloads the regeneration ceiling is not computed from.
+ *
+ * The two `txn-` cases are not Drupal operations. They are the controlled A/B behind the others:
+ * one buffered insert whose id is read back, over two tables identical except for `AUTOINCREMENT`.
+ */
+export const WRITE_WORKLOADS = [
+	'node-create',
+	'node-revision',
+	'user-create',
+	'file-create',
+	'alias-create',
+	'txn-autoinc',
+	'txn-rowid'
+] as const;
+
+export type WriteWorkload = (typeof WRITE_WORKLOADS)[number];
+
+export interface WriteWorkloadOptions {
+	/** distinguishes one run from the next, so a repeat is a fresh insert rather than an update */
+	seq: number;
+	/** the node `node-revision` revises and `alias-create` points at */
+	nid?: number;
+}
+
+/**
+ * One entity write, and nothing else, so the host's tally prices the OPERATION.
+ *
+ * The regeneration ceiling is computed from a page fill, and every AUTOINCREMENT table in the
+ * shipped schema is on the CONTENT path instead -- `node`, `node_revision`, `path_alias`,
+ * `file_managed`, `users`. None of them appears in a fill, so none of them has ever been priced.
+ *
+ * THE ENTITY API RATHER THAN A FORM, deliberately, and the difference is stated rather than
+ * implied: a form submission also writes `sessions`, the form cache and flood control, so its total
+ * is the operation PLUS the wrapper. This fragment isolates the entity write, which is the half the
+ * per-table breakdown and the AUTOINCREMENT audit are about; `write-amplification.spec.ts` prices
+ * the form wrapper separately so neither number stands in for the other.
+ *
+ * `SCHEMA_REPAIR` runs at most once per interpreter. It creates the tables whose backends declare no
+ * `hook_schema`, which is setup rather than workload, and leaving it unguarded would charge the
+ * first measured operation for DDL every later one gets free.
+ *
+ * The acting user is switched to uid 1 and restored in `finally` for the reason `saveNode()` records:
+ * an unrestored switch renders later pages as the admin and stores that HTML in the anonymous cache.
+ */
+export function writeWorkload(op: WriteWorkload, options: WriteWorkloadOptions): string {
+	const payload = JSON.stringify({
+		op,
+		seq: Math.max(0, Math.trunc(Number(options.seq) || 0)),
+		nid: Math.max(0, Math.trunc(Number(options.nid) || 0))
+	});
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$opt = json_decode(${JSON.stringify(payload)}, true);
+$out = ['ok' => false, 'op' => $opt['op']];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+    $out['bootedKernel'] = 1;
+  }
+
+  if (!defined('SAVED_NEW')) {
+    require_once '/drupal/core/includes/common.inc';
+  }
+
+  if (empty($GLOBALS['__cfw_schema_repaired'])) {
+    $GLOBALS['__cfw_schema_repaired'] = true;
+${SCHEMA_REPAIR}
+  }
+
+  $db = \Drupal::database();
+  // the driver's own counters, which the host tally cannot see: a speculative replay re-sends
+  // buffered statements to resolve an insert id, and that is CPU the rows meter never charges
+  $counter = function ($method) use ($db) {
+    return method_exists($db, $method) ? (int) $db->$method() : -1;
+  };
+  $before = [
+    'statements' => $counter('statementCount'),
+    'transactions' => $counter('transactionCount'),
+    'speculative' => $counter('speculativeCount'),
+    'replayed' => $counter('replayedStatementCount'),
+  ];
+
+  $seq = (int) $opt['seq'];
+  $nid = (int) $opt['nid'];
+  $previousAccount = \Drupal::currentUser()->getAccount();
+  $admin = \Drupal\user\Entity\User::load(1);
+  if ($admin !== NULL) { \Drupal::currentUser()->setAccount($admin); }
+
+  switch ($opt['op']) {
+    case 'node-create':
+      $types = array_keys(\Drupal\node\Entity\NodeType::loadMultiple());
+      $type = in_array('page', $types, true) ? 'page' : ($types[0] ?? null);
+      if ($type === null) { throw new \RuntimeException('no node type exists in this site'); }
+      $node = \Drupal\node\Entity\Node::create([
+        'type' => $type,
+        'title' => 'Amplification ' . $seq,
+        'uid' => 1,
+        'status' => 1,
+      ]);
+      $node->save();
+      $out['id'] = (int) $node->id();
+      $out['vid'] = (int) $node->getRevisionId();
+      break;
+
+    case 'node-revision':
+      $node = \Drupal\node\Entity\Node::load($nid);
+      if ($node === NULL) { throw new \RuntimeException('no node ' . $nid . ' to revise'); }
+      // explicit rather than relying on the content type default, which is configuration
+      $node->setNewRevision(true);
+      $node->setRevisionLogMessage('amplification ' . $seq);
+      $node->setRevisionCreationTime((int) \Drupal::time()->getRequestTime());
+      $node->setRevisionUserId(1);
+      $node->setTitle('Amplification revised ' . $seq);
+      $node->save();
+      $out['id'] = (int) $node->id();
+      $out['vid'] = (int) $node->getRevisionId();
+      break;
+
+    case 'user-create':
+      $account = \Drupal\user\Entity\User::create(['name' => 'amp' . $seq]);
+      $account->setEmail('amp' . $seq . '@example.invalid');
+      $account->setPassword('cfw-Amp-' . $seq . '-pass');
+      $account->activate();
+      $account->save();
+      $out['id'] = (int) $account->id();
+      break;
+
+    case 'file-create':
+      // the ROW, not the bytes: a real upload also writes the stream, and that lands in MEMFS and
+      // the R2 mirror rather than in Durable Object SQL, so it is a different meter
+      $file = \Drupal\file\Entity\File::create([
+        'uri' => 'public://amplification-' . $seq . '.txt',
+        'filename' => 'amplification-' . $seq . '.txt',
+        'filemime' => 'text/plain',
+        'filesize' => 11,
+        'status' => 1,
+        'uid' => 1,
+      ]);
+      $file->save();
+      $out['id'] = (int) $file->id();
+      break;
+
+    case 'alias-create':
+      $alias = \Drupal::entityTypeManager()->getStorage('path_alias')->create([
+        'path' => '/node/' . ($nid > 0 ? $nid : 1),
+        'alias' => '/amplification-' . $seq,
+        'langcode' => 'en',
+      ]);
+      $alias->save();
+      $out['id'] = (int) $alias->id();
+      break;
+
+    case 'txn-autoinc':
+    case 'txn-rowid':
+      // THE A/B. Both tables are created by the caller and differ only in the keyword, so what this
+      // measures is whether predictBufferedInsertId() could answer -- it refuses AUTOINCREMENT,
+      // because that table's next id comes from sqlite_sequence rather than from max(rowid) + 1,
+      // and the fallback replays the whole buffer through the host
+      $table = $opt['op'] === 'txn-autoinc' ? 'amp_txn_auto' : 'amp_txn_rowid';
+      $txn = $db->startTransaction();
+      $db->query('INSERT INTO {' . $table . '} (v) VALUES (:v)', [':v' => 'row ' . $seq]);
+      $out['id'] = (int) $db->lastInsertId();
+      unset($txn);
+      $out['table'] = $table;
+      break;
+
+    default:
+      throw new \RuntimeException('unknown workload ' . $opt['op']);
+  }
+
+  $out['driver'] = [
+    'statements' => $counter('statementCount') - $before['statements'],
+    'transactions' => $counter('transactionCount') - $before['transactions'],
+    'speculative' => $counter('speculativeCount') - $before['speculative'],
+    'replayed' => $counter('replayedStatementCount') - $before['replayed'],
+  ];
+  $out['ok'] = ($out['id'] ?? 0) > 0;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
+} finally {
+  if (isset($previousAccount)) {
+    try { \Drupal::currentUser()->setAccount($previousAccount); } catch (\Throwable $e2) {}
+  }
+}
+
+echo json_encode($out);
+`;
+}

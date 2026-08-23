@@ -18,10 +18,20 @@
  * counted without anybody remembering to.
  */
 
+import { recordCrossing, type CensusCall } from './statement-census.js';
+
 /** what the tally hands back: total crossings and the per-capability split */
 export type CrossingTally = {
 	total: number;
 	byName: Record<string, number>;
+	/**
+	 * per-statement detail, appended only when a caller has armed it with an array.
+	 *
+	 * Off by default and deliberately not a route: a cold fill crosses 233 times and each record
+	 * decodes both sides of the payload, so leaving it on would put a diagnostic's allocation on
+	 * every render. `tests/integration/statement-census.spec.ts` is what arms it.
+	 */
+	calls?: CensusCall[];
 };
 
 /** an empty tally; NOT named `emptyTally`, which `write-tally.ts` already exports */
@@ -86,7 +96,9 @@ export function wrapCrossings(
 		binary[name] = (...args: unknown[]) => {
 			tally.total += 1;
 			tally.byName[name] = (tally.byName[name] ?? 0) + 1;
-			return inner(...args);
+			const result = inner(...args);
+			if (tally.calls) recordCrossing(tally.calls, name, args[0], result);
+			return result;
 		};
 		wrapped.push(name);
 	}

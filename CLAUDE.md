@@ -144,10 +144,10 @@ Five items were closed this way on 2026-08-23 and four had to be reopened the sa
 | what was measured                                          | what it closes                         | what it does NOT close                                                                                                                       |
 | ---------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `INITIAL_MEMORY` is a floor, the peak is reached by growth | lowering 96 -> 80 MB to lower the peak | **reducing peak linear memory.** Growth over-reservation, MEMFS, snapshot staging and SQLite buffers are all unmeasured shares of 115.25 MiB |
-| two always-warm objects exceed the free duration allowance | permanently resident replicas on free  | **replicas.** A replica that HIBERNATES between requests accrues no duration, and nobody has measured one                                    |
-| duration spends 2.1% at today's traffic                    | duration as today's binding meter      | **duration.** The figure is `cpuTime`-derived and taken at current traffic, not at the capacity frontier                                     |
-| a warm render crosses the bridge 48 times, 0 batchable     | coalescing the bridge                  | **the 48 SQL statements.** Fewer queries, fewer rows read and prepared-statement reuse are untouched levers                                  |
-| no cache bin declares `AUTOINCREMENT`                      | it as a rows-per-FILL lever            | **write amplification.** Rows written is charged on content writes too, and SQLite documents extra CPU, memory and I/O                       |
+| two always-warm objects exceed the free duration allowance | permanently resident replicas on free  | **replicas.** A hibernating replica accrues no idle duration -- MEASURED 2026-08-23, see below                                               |
+| duration spends 2.1% at today's traffic                    | duration as today's binding meter      | **duration.** The figure was `cpuTime`-derived, and cpuTime understates it by a measured **2,612x**                                          |
+| a warm render crosses the bridge 48 times, 0 batchable     | coalescing the bridge                  | **the 48 SQL statements.** 48 is the FIRST render; a repeat one is 18, and bridge overhead is 0 of both                                      |
+| no cache bin declares `AUTOINCREMENT`                      | it as a rows-per-FILL lever            | **write amplification.** Measured: the keyword costs 4 charged rows against 1, through driver speculative replay                             |
 
 **The habit that prevents it.** After any "this does not matter", answer three questions in writing
 before closing anything:
@@ -165,6 +165,39 @@ percentage. A capability item that dies wrongly - argon2, wasm64, 64-bit integer
 a whole class of sites with it, and it dies quietly because nobody is waiting for the feature. For
 those, "the obvious implementation does not fit" is the START of the question. Ask where the work
 must EXECUTE, not only whether it fits where it currently runs.
+
+## RULE 0d: duration is WALL CLOCK, and `cpuTime` understates it by 2,612x
+
+**Measured 2026-08-23 on a deployed throwaway with no PHP in it.** Ten 1,000 ms holds on one object:
+`activeTime` 10,026,244 us, `cpuTime` 3,838 us, `duration` 1.283359232 GB-s. `10.026244 * 0.128` is
+that figure exactly, so `activeTime` is microseconds of wall clock, `duration` is GB-s, and
+`DO_GB_ALLOCATED = 0.128` is confirmed from BILLING rather than from a docs example.
+
+**The dataset matters and the report named the wrong one.** `durableObjectsInvocationsAdaptiveGroups`
+has no duration; **`durableObjectsPeriodicGroups`** carries `duration`, `activeTime`, `cpuTime`,
+`rowsRead`, `rowsWritten` and `exceededMemoryErrors`, dimensioned by `objectId`. "GraphQL does not
+expose duration" was an instrument error, not a platform limit. Ingestion lags ~8 minutes; an empty
+result before then is not evidence.
+
+**So every duration ceiling derived from `cpuTime` is a LOWER bound, and the gap is unbounded.**
+cpuTime does not count time spent awaiting; this meter charges for it.
+
+**Hibernation eligibility is the billing boundary, not hibernation itself.** Cloudflare bills an
+object that is idle and UNABLE to hibernate, and does not bill one that is idle and eligible "even
+before the runtime has hibernated them". The five disqualifying conditions are transcribed in
+`src/ops/hibernation.ts` rather than paraphrased -- no `setTimeout`/`setInterval`, no in-progress
+awaited `fetch()`, no standard WebSocket, no request still being processed, no outbound TCP socket
+or WebSocket.
+
+- **A PENDING ALARM IS NOT ON THAT LIST, and the probe confirms it**: the armed-alarm object accrued
+  0.177 s over a 60 s pending window. The keep-warm chain costs a row and a DO request per arm and
+  buys **no residency**. `keepWarmFleetCost()` prices it: 360 arms/day/site, and because the free DO
+  quotas are ACCOUNT-WIDE, **277 sites saturate both meters with zero visitors**.
+- **`connect()` IS on the list, and `src/ops/mail.ts:674` is the only place in `src/` that opens
+  one.** An SMTP send makes the object non-hibernateable for the length of the send; the drain sends
+  sequentially, so a batch holds it for the whole batch. `sendViaSmtp()` closes in a `finally`, so
+  the 15-minute per-connection pin is the worst case rather than the normal one. Plain `fetch()`
+  never keeps an object alive, even while its body streams.
 
 ## Never touch `vendor/`
 
@@ -328,7 +361,7 @@ bun run test      # vitest: --project=workers --project=node
 bun run typecheck # tsc --noEmit
 bunx prettier --check .
 bun run assets:driver      # repack after ANY change in a sibling
-bun run test:health        # the sibling's health suite, 566 PHP assertions
+bun run test:health        # the sibling's health suite, 604 PHP assertions
 bun run check:reachability # which modules the edge imports; which are dead
 
 bun run hydrate         # a clean checkout -> deployable, from the release payload
@@ -358,9 +391,9 @@ PHP suites live in the siblings, and **they are the authority on their own modul
 
 | suite                                                            | repo           | assertions |
 | ---------------------------------------------------------------- | -------------- | ---------- |
-| `php tests/health-suite.php`                                     | `../drupflare` | 566        |
+| `php tests/health-suite.php`                                     | `../drupflare` | 604        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/load-classes.php`     | `../drupflare` | 94         |
-| `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 219        |
+| `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 238        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-installer.php`    | `../rom`       | 16         |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/pdo-shim.php`         | `../rom`       | 61         |
 
@@ -506,12 +539,37 @@ two capability items, not a size tweak. Do not re-price either against the bundl
 
 **`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** Measured 2026-08-23: the
 heap starts at 100,663,296 and peaks at 120,848,384 after one fill, and the peak is EXACTLY one
-geometric growth event -- `ceil(100,663,296 * 1.2 / 65,536) * 65,536` is the measured figure to the
-byte. `INITIAL_MEMORY` sets where the series starts; `MEMORY_GROWTH_GEOMETRIC_STEP` (default 0.20)
-sets how coarsely it advances, and it has never been tested here. Live demand is bounded at
-`100,663,296 < demand <= 120,848,384`, so over-reservation is 0-19.25 MiB and unmeasured -- which is
-where the room for argon2 would have to come from. **One further step is 145,031,168 bytes, over the
-cap: the shipping build is one growth event from OOM.**
+geometric growth event. `INITIAL_MEMORY` sets where the series starts; `MEMORY_GROWTH_GEOMETRIC_STEP`
+(default 0.20) sets how coarsely it advances.
+
+**THE STEP IS NOT A LINK-TIME SETTING AND NEEDS NO PHASM REBUILD.** Emscripten emits it into
+`_emscripten_resize_heap` as the JavaScript literal `.2`; the `.wasm` carries no growth policy at
+all. `scripts/measure/growth-glue.ts` re-emits the glue at any step and `growth-ladder.ts` drives the
+arms -- one binary, N variants. At a step of 0 the peak IS live demand rounded to a 64 KiB page,
+which collapses the interval this file used to call unmeasured.
+
+| step | render peak | install peak | worst-case headroom |
+| ---- | ----------- | ------------ | ------------------- |
+| 0.20 | 120,848,384 | 120,848,384  | 12.75 MiB           |
+| 0.10 | 110,755,840 | 121,896,960  | 11.75 MiB           |
+| 0.05 | 105,709,568 | 116,588,544  | 16.81 MiB           |
+| 0.01 | 104,857,600 | 115,015,680  | 18.31 MiB           |
+| 0    | 104,726,528 | 114,229,248  | 19.06 MiB           |
+
+**SCORE A STEP AGAINST THE INSTALL, NEVER A RENDER.** Read the render column alone and 0.05 recovers
+14.44 MiB and 0.10 looks like a strict improvement. Neither survives the install, which peaks
+highest: 0.05 recovers 4.06 MiB and **0.10 is a REGRESSION on the shipping 0.20**. Growth compounds
+from the previous size, so a finer step can take more steps and land on a worse rung. Over-reservation
+against the binding workload is **6,619,136 bytes (6.31 MiB), 5.5% of the peak** -- not the 15.38 MiB
+the render column implies. The best measured arm recovers ~6.3 MiB, which does NOT unlock argon2
+(64 MiB default arena, ~16 MiB at the lowest sane setting) or wasm64. P16 improves headroom; it does
+not close P25 or P26.
+
+**AND THE BUILD IS NOT "ONE GROWTH EVENT FROM OOM", which is what this file used to say.** The same
+arithmetic read to its end refutes it: `getHeapMax()` returns 4,294,901,760, so the module declares no
+maximum and the 128 MiB ceiling is workerd's, enforced by `grow()` THROWING. Emscripten catches that
+and retries -- `for (cutDown = 1; cutDown <= 4; cutDown *= 2)` gives 145,031,168, then 132,972,544,
+then 126,943,232, and the third fits. A growth from the shipping peak DEGRADES; it does not abort.
 
 **`PHP_INT_SIZE` 8 is not available at a discount either.** `zend_ulong` is typedef'd from
 `zend_long`, and both `Bucket` and `zend_string` carry a `zend_ulong h`. Modelled against the wasm32

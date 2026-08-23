@@ -83,7 +83,8 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/crop': { needs: [], why: 'an entity type storing crop geometry; no I/O of its own' },
 	'drupal/focal_point': {
 		needs: [],
-		why: 'an image effect over crop. The transform is GD, which this build has'
+		why: 'an image effect over crop. The CROP GEOMETRY is what it stores and that needs nothing. The transform is GD, which this build does NOT have -- `get_loaded_extensions()` on the shipping binary reports 25 extensions and gd is not among them, and `CfwImageToolkit` says so outright -- so the effect is applied by Cloudflare Images at delivery. That toolkit reports full-size dimensions to contrib reading derivative pixels, which is exactly what focal_point does',
+		lift: 'none for the stored focal point. The preview widget and any effect chained AFTER the crop are the parts that would need a real toolkit'
 	},
 	'drupal/views_bulk_operations': {
 		needs: [],
@@ -98,7 +99,7 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/backup_migrate': {
 		needs: ['cron'],
 		why: 'schedules are drained by cron, and a backup is a read of the database plus a write to a destination. A remote destination is outbound per destination, not per module',
-		lift: 'cron wiring for the schedules. Sizing is the open question rather than the capability: a full backup as one record meets the 2,199,995-byte ceiling, so a destination here has to chunk'
+		lift: 'none for the schedules; the alarm drains them. Sizing is the open question rather than the capability: a full backup as one record meets the 2,199,995-byte ceiling, so a destination here has to chunk'
 	},
 	'drupal/module_filter': {
 		needs: [],
@@ -142,36 +143,36 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	},
 	// #endregion
 
-	// #region cron: the driver exists and nothing calls it
+	// #region cron: driven from the alarm, interval-gated and budgeted
 	'drupal/scheduler': {
 		needs: ['cron'],
 		why: 'publishes and unpublishes on cron; the work is a bounded query per run',
-		lift: 'wire `driveCron()` into `alarm()`. The driver, the cursor and the budget already exist in `src/ops/cron-drive.ts`; nothing imports it. Small: the patch is about a dozen lines. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'none. `driveCron()` is imported and called by `src/site-do.ts`, so scheduler publishes on the alarm. This entry said the driver was unimported for as long as it had been wired, which is what shipping a lift text nobody re-reads costs. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	'drupal/simple_sitemap': {
 		needs: ['cron'],
 		why: 'generation is a queue drained by cron, plus a filesystem write per chunk',
-		lift: 'the same cron wiring, plus confirming a sitemap chunk fits under the 2,199,995-byte record ceiling. Medium: the queue is already sliced, the size question is unmeasured. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'confirming a sitemap chunk fits under the 2,199,995-byte record ceiling. Medium: the queue is already sliced, the size question is unmeasured. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	'drupal/search_api': {
 		needs: ['cron'],
 		why: 'indexing runs on cron. The DATABASE backend needs nothing else and is the supported shape here',
-		lift: 'cron wiring alone for the database backend. A remote backend is a different module and a different tier. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'none for the database backend. A remote backend is a different module and a different tier. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	'drupal/queue_ui': {
 		needs: ['cron'],
 		why: 'a UI over Drupal queues; the queues themselves only move when cron runs them',
-		lift: 'cron wiring. It also becomes the natural operator view of `cronStep()` queue units, which today have no surface at all. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'none. It also becomes the natural operator view of `cronStep()` queue units, which today have no surface at all. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	'drupal/image_optimize': {
 		needs: ['cron'],
 		why: 'batch optimisation over managed files. The BINARY pipelines shell out and cannot work; the pure-PHP and remote-service pipelines are the ones in scope',
-		lift: 'cron wiring for the batch, and a pipeline that is neither a subprocess nor a blocking call. Large: most shipped pipelines are subprocess-based, so this needs a pipeline written for the platform. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'a pipeline that is neither a subprocess nor a blocking call; the batch itself is already driven. Large: most shipped pipelines are subprocess-based, so this needs a pipeline written for the platform. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	'drupal/migrate_plus': {
 		needs: ['cron'],
 		why: 'migrations run as batches. A local source (JSON on disk, another table) needs only the batch driver; a remote source is deferrable outbound on top',
-		lift: 'cron wiring covers the local-source case. Remote sources additionally need the deferred tier and a fetcher written against it. Note the cadence: cron is interval-gated at 15 minutes (`cronDue()`), so work lands within a quarter hour rather than immediately'
+		lift: 'none for the local-source case; the alarm drives the batch. Remote sources additionally need the deferred tier and a fetcher written against it. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
 	// #endregion
 
@@ -194,7 +195,7 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/purge': {
 		needs: ['deferrable-outbound', 'cron'],
 		why: 'invalidation is a queue drained by cron, and each purger POSTs or PURGEs to a CDN. Both halves are deferrable; neither has to answer inside a render',
-		lift: 'cron wiring plus the POST tier. Worth noting this runtime already invalidates its OWN edge by bumping the generation, so purge is only needed for a CDN in front of it'
+		lift: 'the POST tier; the cron half is already driven. Worth noting this runtime already invalidates its OWN edge by bumping the generation, so purge is only needed for a CDN in front of it'
 	},
 	// #endregion
 

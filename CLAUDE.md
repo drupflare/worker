@@ -7,9 +7,28 @@ Durable Object. This repo is the deployable product; the reusable pieces live in
 
 **An absolute CPU figure comes ONLY from `cpuTime` in `wrangler tail` on a DEPLOYED worker.**
 
-In-PHP `microtime()` returns **0** on the edge, and `Date.now()` inside the isolate returns 0 or, worse,
-a **plausible wrong number** - it has reported 114 ms for a 1,374 ms invocation. 0 is obviously broken;
-114 survives review. A local `wrangler dev` wall clock cannot even ORDER two profiles correctly.
+In-PHP `microtime()` **does not advance** on the edge, and neither does `Date.now()` inside the
+isolate: a DELTA taken from either reads 0, or worse, a **plausible wrong number** - 114 ms has been
+reported for a 1,374 ms invocation. 0 is obviously broken; 114 survives review. A local
+`wrangler dev` wall clock cannot even ORDER two profiles correctly.
+
+**"Returns 0" is what this file used to say, and it is a claim about the DELTA that was read as a
+claim about the value.** Measured 2026-08-22: `microtime()` returns a real epoch
+(1787454264.88 in workerd), because PHP's clock is the glue's
+`_emscripten_date_now = () => Date.now()` and Workers FREEZE that between I/O rather than zeroing
+it. The host depends on the same fact - `nowMs()` is `Date.now()` and arms every alarm and every
+`expires_at` on deployed sites. So a frozen clock breaks a duration and an application timestamp is
+fine, which is the opposite of what P41 had scheduled a security fix for. `tests/integration/php-clock.spec.ts`
+pins it and `/clock` reports `absoluteS`/`jsAbsoluteMs` for the deployed reading.
+
+**What IS broken about a timestamp here is `PHP_INT_SIZE` 4.** `(int) (microtime(true) * 1000)`
+overflows and the cast is MODULAR rather than saturating - measured, `1787454172276.0` casts to
+`747777140`, exactly `mod 2^32`. So any module storing epoch milliseconds or microseconds as an int
+stores a wrapped value. A `cfwNow` bridge would not help; 64-bit `zend_long` (P28) is the fix.
+
+**`memory_get_usage()` reading 0 is a BUILD property, not an edge one** - it reads 0 in the gate
+lane too, where the clock demonstrably works. The report grouped the two as one platform symptom
+and they share no mechanism.
 
 `wrangler tail` **silently omits `durableObject` events** unless you ask for them, so a tail that
 looks empty is not proof of anything.
@@ -345,7 +364,7 @@ loading it. `--` inside an XML comment is invalid.
 
 **The interpreter travels as a zstd frame in a `Data` module and is inflated at module scope**, so
 Cloudflare's gzip measures bytes it cannot compress further. On 2026-08-21 the shipping bundle is
-**2,924,073**, **221,655 under the 3,145,728 ceiling**; the interpreter alone is 2,658,002 with
+**2,925,281**, **220,447 under the 3,145,728 ceiling** (2026-08-22); the interpreter alone is 2,658,002 with
 nothing dropped.
 
 **Do not quote that number, run `bun run release:check`.** It has now been stale in THREE documents

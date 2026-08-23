@@ -26,19 +26,38 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * (80,543,744). So the heap takes exactly ONE geometric step across boot and first render, and:
  *
  *   - **live demand is bounded, not unknown**: `100,663,296 < demand <= 120,848,384`;
- *   - **over-reservation is between 0 and 20,185,088 bytes (19.25 MiB)**, and is UNMEASURED;
  *   - the 61,440-byte shortfall that once cost 13,434,880 bytes is the step doing exactly what it
  *     is documented to do. With the step at 0 the same shortfall costs ONE 64 KiB page.
  *
- * **SO THE GATE IS THE GROWTH STEP, NOT `INITIAL_MEMORY`**, and the first version of this file
- * closed the memory objective along with the lever. `MEMORY_GROWTH_GEOMETRIC_STEP` and
- * `MEMORY_GROWTH_LINEAR_STEP` are link-only settings and have never been tested here. See
- * `docs/memory-growth.md` for the ladder.
+ * **THE INTERVAL IS NOW COLLAPSED, and it took a glue rewrite rather than a rebuild.** The growth
+ * policy is NOT a link-only setting: emscripten emits `MEMORY_GROWTH_GEOMETRIC_STEP` into
+ * `_emscripten_resize_heap` as the JavaScript literal `.2`, and the `.wasm` carries no growth policy
+ * at all. `scripts/measure/growth-glue.ts` re-emits it, `growth-ladder.ts` drives the arms, and at a
+ * step of 0 the peak IS demand rounded to a page:
  *
- * **AND IT IS URGENT RATHER THAN OPTIONAL.** One further step from the current peak is
- * `ceil(120,848,384 * 1.2 / 65,536) * 65,536 = 145,031,168` bytes, 138.31 MiB, which exceeds the
- * isolate limit under either the binary or the decimal reading. The shipping build is ONE GROWTH
- * EVENT from OOM.
+ * | step | render peak | install peak | worst-case headroom |
+ * | ---- | ----------- | ------------ | ------------------- |
+ * | 0.20 | 120,848,384 | 120,848,384  | 12.75 MiB           |
+ * | 0.10 | 110,755,840 | 121,896,960  | 11.75 MiB           |
+ * | 0.05 | 105,709,568 | 116,588,544  | 16.81 MiB           |
+ * | 0.01 | 104,857,600 | 115,015,680  | 18.31 MiB           |
+ * | 0    | 104,726,528 | 114,229,248  | 19.06 MiB           |
+ *
+ * **SCORE A STEP AGAINST THE INSTALL, NEVER AGAINST A RENDER.** Read the render column alone and
+ * 0.05 looks like it recovers 14.44 MiB and 0.10 looks like a strict improvement. Neither survives
+ * the install, which is the workload that peaks highest: 0.05 recovers 4.06 MiB and **0.10 is a
+ * REGRESSION on 0.20**. Growth compounds from the previous size, so a finer step can take more steps
+ * and land on a worse rung. This is RULE 0c's "under which workload?" with a number attached.
+ *
+ * So over-reservation against the BINDING workload is `120,848,384 - 114,229,248` = **6,619,136
+ * bytes (6.31 MiB), 5.5% of the peak** -- not the 15.38 MiB the render column implies.
+ *
+ * **AND THE BUILD IS NOT ONE GROWTH EVENT FROM OOM**, which is what this file used to say. The same
+ * arithmetic, read to its end, refutes it: `getHeapMax()` returns 4,294,901,760, so the module
+ * declares no maximum and the 128 MiB ceiling is workerd's, enforced by `grow()` THROWING. Emscripten
+ * catches that and retries at a smaller step -- `for (cutDown = 1; cutDown <= 4; cutDown *= 2)` gives
+ * 145,031,168 then 132,972,544 then 126,943,232, and the third fits. A growth from the shipping peak
+ * degrades; it does not abort.
  *
  * ASSERTED AS BOUNDS AND A RELATIONSHIP, never as equalities: the absolutes move with the pack and
  * the workload, and this repository is full of pinned figures that went stale in a direction nobody
@@ -112,18 +131,28 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		// the peak is not an allocator high-water; it is `INITIAL_MEMORY` grown once
 		expect(grown(heap.bootedIdle)).toBe(heap.afterRender);
 
-		// which BOUNDS live demand rather than revealing it: somewhere in this interval, and
-		// the width of the interval is the over-reservation nobody has measured
+		// the interval this once only BOUNDED. `growth-ladder.ts` collapsed it: render demand
+		// is 104,726,528 and install demand is 114,229,248, so the shipping peak carries
+		// 6,619,136 bytes of over-reservation against the workload that binds
 		expect(heap.afterRender - heap.bootedIdle).toBe(20_185_088);
+		expect(heap.afterRender).toBeGreaterThan(114_229_248);
 	}, 900_000);
 
-	it('is ONE growth event from exceeding the isolate limit', async () => {
+	it('DEGRADES rather than aborting when the next geometric step will not fit', async () => {
 		const heap = await readHeap();
-		const next = Math.ceil((heap.afterRender * 1.2) / 65_536) * 65_536;
-		// 145,031,168 bytes, 138.31 MiB. Over the limit on the binary reading AND on the
-		// decimal one, so a workload that allocates a little more than a front-page render
-		// does not get a slightly bigger heap -- it gets an OOM
-		expect(next).toBeGreaterThan(ISOLATE_LIMIT);
-		expect(next).toBeGreaterThan(128_000_000);
+		const PAGE = 65_536;
+		// emscripten's retry loop, transcribed: `cutDown` 1, 2, 4 gives 0.20, 0.10, 0.05
+		const tries = [1, 2, 4].map(
+			(cutDown) => Math.ceil((heap.afterRender * (1 + 0.2 / cutDown)) / PAGE) * PAGE
+		);
+
+		// the first try IS over the limit, which is the true half of the old claim
+		expect(tries[0]).toBeGreaterThan(ISOLATE_LIMIT);
+		// and the third fits, which is the half that refutes "one growth event from OOM".
+		// `grow()` throwing is caught and retried, so the object gets a smaller heap rather
+		// than an abort. An OOM needs a single allocation larger than the whole ceiling
+		expect(tries[2]).toBeLessThan(ISOLATE_LIMIT);
+		expect(tries[1]).toBeLessThan(tries[0]!);
+		expect(tries[2]).toBeLessThan(tries[1]!);
 	}, 900_000);
 });

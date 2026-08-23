@@ -55,6 +55,23 @@ export const FREE_QUOTAS = {
 	doRequestsPerDay: 100_000,
 	rowsWrittenPerDay: 100_000,
 	/**
+	 * Rows READ per day on free, which is 50x the write allowance and was never modelled.
+	 *
+	 * Nothing here was wrong -- the model simply had no read meter -- but the omission made it easy
+	 * to assume reads and writes shared the 100,000. They do not, and the ratio is the point: a
+	 * workload has to read 50 rows for every row it writes before reads become the binding meter,
+	 * which a Drupal render does not come close to.
+	 */
+	rowsReadPerDay: 5_000_000,
+	/**
+	 * A `setAlarm()` call is billed as ONE ROW WRITTEN, documented.
+	 *
+	 * Not a quota; a cost this model had no line for. The keep-warm chain re-arms every 240 s, so
+	 * an idle site spends 360 rows/day before serving anything -- 0.36% of the write allowance for
+	 * doing nothing, and it scales with how often anything arms an alarm.
+	 */
+	rowsPerAlarmArm: 1,
+	/**
 	 * R2 operations, per MONTH, and they are what actually bound an off-Worker serving path.
 	 *
 	 * Class B is a READ, so it is the serving meter; Class A is a WRITE, so it is a regeneration one.
@@ -82,7 +99,114 @@ export const FREE_QUOTAS = {
 	 */
 	workflowStepsPerDay: 3_000,
 	/** steps in ONE workflow instance on free; paid defaults to 10,000 and configures to 25,000 */
-	workflowStepsPerInstance: 1_024
+	workflowStepsPerInstance: 1_024,
+	/**
+	 * Durable Object DURATION, GB-seconds per day. A FIFTH meter, and the model shipped without it.
+	 *
+	 * Billed against the **128 MB an object is allocated regardless of what it uses**, and billed on
+	 * **WALL CLOCK rather than CPU** -- so every render figure this model carries is `cpuTime` and
+	 * therefore an UNDERSTATEMENT of what this meter charges. Read the slack it reports as an upper
+	 * bound, never as a margin.
+	 */
+	durationGbSPerDay: 13_000
+} as const;
+
+/**
+ * GB a Durable Object is billed for while it is alive, whatever it actually uses.
+ *
+ * **0.128, THE DECIMAL READING, AND THIS WAS 0.125 UNTIL 2026-08-23.** Cloudflare's own worked
+ * example fixes it: "1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s". 128 MB over 1 GB is 0.128
+ * when both are decimal, and the binary reading (128 MiB / 1 GiB = 0.125) is what this model used.
+ * 2.4% low everywhere it appeared, which took the idle-object figure from 11,059.2 to 10,800 GB-s
+ * and understated every duration cost derived from it.
+ */
+export const DO_GB_ALLOCATED = 0.128;
+
+/** seconds in a day, named because the idle-object arithmetic below is the whole point of it */
+export const SECONDS_PER_DAY = 86_400;
+
+/**
+ * GB-s an object bills for existing continuously for a day while doing nothing.
+ *
+ * **83% of the entire free allowance.** The docs are explicit that an object which is idle and
+ * ELIGIBLE for hibernation is not billed even before the runtime hibernates it -- but one that is
+ * idle and UNABLE to hibernate bills the whole time. A pending promise, an un-awaited `waitUntil`,
+ * an open non-hibernatable WebSocket or a dangling timer is enough. No request count and no row
+ * count would show it.
+ */
+export const IDLE_GB_S_PER_DAY = SECONDS_PER_DAY * DO_GB_ALLOCATED;
+
+/**
+ * The three replica architectures, which are NOT one item and were scored as one.
+ *
+ * P17 was closed as "dead on free" on the strength of the always-warm arithmetic below. That closes
+ * ONE of these and says nothing about the other two -- an object that is idle and eligible for
+ * hibernation accrues no duration at all, so a replica that hibernates between requests costs its
+ * wake and its work and nothing else.
+ *
+ * `hibernating` is the interesting free-plan design and **nobody has measured one**. What it trades
+ * is wall-clock latency on the wake for duration it never spends, and on this runtime a wake means
+ * restoring or re-booting a 96 MiB interpreter. Score it with a measured wake, not with this.
+ */
+export type ReplicaMode = 'alwaysWarm' | 'hibernating';
+
+/**
+ * Duration a replica fleet spends per day, before serving anything.
+ *
+ * @param replicas how many objects the fleet holds.
+ * @param mode `alwaysWarm` bills the whole day per object; `hibernating` bills only what it works,
+ *   which this function reports as ZERO because the work is already priced per view by
+ *   `envelope()`. That is the whole difference between the two, stated as arithmetic.
+ */
+export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
+	return mode === 'alwaysWarm' ? Math.max(0, replicas) * IDLE_GB_S_PER_DAY : 0;
+}
+
+/**
+ * Paid-plan duration, which inverts the free-plan conclusion at small replica counts.
+ *
+ * **SUPPLIED BY GREGORY 2026-08-23 FROM CLOUDFLARE'S PRICING PAGE, NOT VERIFIED BY THIS PROJECT.**
+ * Marked because a pricing figure nobody re-read is exactly the class of number this repository has
+ * had go stale three times. `paidDurationCost()` returns `verified: false` so the caveat travels
+ * with the answer rather than staying in a comment.
+ */
+export const PAID_DURATION = {
+	includedGbSPerMonth: 400_000,
+	usdPerMillionGbS: 12.5
+} as const;
+
+/** what a fleet costs per month on the paid plan, above the included allowance */
+export function paidDurationCost(
+	replicas: number,
+	mode: ReplicaMode = 'alwaysWarm',
+	daysPerMonth = 30
+): { gbSPerMonth: number; billableGbS: number; usd: number; verified: false } {
+	const gbSPerMonth = fleetIdleGbS(replicas, mode) * daysPerMonth;
+	const billableGbS = Math.max(0, gbSPerMonth - PAID_DURATION.includedGbSPerMonth);
+	return {
+		gbSPerMonth,
+		billableGbS,
+		usd: (billableGbS / 1_000_000) * PAID_DURATION.usdPerMillionGbS,
+		verified: false
+	};
+}
+
+/**
+ * Wall-clock seconds a Durable Object is alive for, per event class.
+ *
+ * DERIVED FROM `cpuTime`, which is the honest caveat: cpuTime excludes the time an invocation
+ * spends awaiting, and this meter charges for that too. Treat every duration ceiling computed from
+ * these as an upper bound.
+ */
+export const SECONDS_PER = {
+	/** answered by the Worker or the edge; the object is never woken */
+	edgeHit: 0,
+	/** one indexed read on the fast storage lane */
+	doHit: 0.003,
+	/** a warm render, 2,127 ms measured */
+	warmRender: 2.127,
+	/** a cold render, 6,140 ms measured: boot plus render in one invocation */
+	coldRender: 6.14
 } as const;
 
 /**
@@ -312,12 +436,36 @@ export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 
 export type Envelope = {
 	/** max page views/day before the first meter runs out, and which meter that is */
 	servingViewsPerDay: number;
-	servingBoundBy: 'worker' | 'do' | 'rows' | 'r2ClassB';
-	perMeterViewCeiling: { worker: number; do: number; rows: number; r2ClassB: number };
+	servingBoundBy: 'worker' | 'do' | 'rows' | 'r2ClassB' | 'duration';
+	perMeterViewCeiling: {
+		worker: number;
+		do: number;
+		rows: number;
+		r2ClassB: number;
+		duration: number;
+	};
 	/** distinct pages that can be RENDERED per day, which is the real product question */
 	regenerationsPerDay: number;
-	regenerationBoundBy: 'do' | 'rows' | 'r2ClassA';
+	regenerationBoundBy: 'do' | 'rows' | 'r2ClassA' | 'duration';
 	windowed: boolean;
+	/**
+	 * The duration meter, reported whether or not it binds.
+	 *
+	 * `alwaysWarmGbS` is spent BEFORE any traffic, so it is the number that prices always-warm
+	 * render replicas: two objects held alive for a day is 21,600 GB-s against an allowance of
+	 * 13,000, over on their own.
+	 */
+	duration: {
+		allowanceGbS: number;
+		alwaysWarmGbS: number;
+		availableGbS: number;
+		perViewGbS: number;
+		perFillGbS: number;
+		/** how much of the allowance a day at `servingViewsPerDay` would actually use */
+		servingUseGbS: number;
+		/** fraction of the allowance left after the always-warm objects; negative means over */
+		slackFraction: number;
+	};
 };
 
 /**
@@ -350,6 +498,25 @@ export function envelope(
 		 * a measurement, and the report says so.
 		 */
 		cdnAbsorption?: number;
+		/**
+		 * Objects held alive continuously, which is what a render replica IS.
+		 *
+		 * Charged against the duration allowance before a single request is served, because an
+		 * object that cannot hibernate bills for wall clock rather than for work. Defaults to 0:
+		 * the shipping design lets an idle object hibernate.
+		 */
+		alwaysWarmObjects?: number;
+		/**
+		 * How the replica fleet behaves when idle.
+		 *
+		 * `alwaysWarm` is what `alwaysWarmObjects` used to mean unconditionally, and scoring every
+		 * replica design that way is what closed P17 too widely. `hibernating` spends no idle
+		 * duration at all -- it pays a WAKE instead, which this model does not price and which has
+		 * never been measured on this runtime.
+		 */
+		replicaMode?: ReplicaMode;
+		/** which render a fill pays for; a cold object pays the boot again */
+		fillWarmth?: 'warm' | 'cold';
 	} = {}
 ): Envelope {
 	// the batch amortises the re-arm row across N pages, so rows/fill is per-page rows + 1/N rather
@@ -384,6 +551,24 @@ export function envelope(
 		r2ClassB: wanted * (1 - absorption)
 	};
 
+	// DURATION, the meter nothing counted. An off-Worker read never wakes the object, a DO hit is
+	// one indexed read, and a miss holds the object for a whole render
+	const renderSeconds =
+		opts.fillWarmth === 'cold' ? SECONDS_PER.coldRender : SECONDS_PER.warmRender;
+	const perViewSeconds =
+		(mix.edgeHit - offEdge) * SECONDS_PER.edgeHit +
+		(mix.doHit - offDo) * SECONDS_PER.doHit +
+		mix.miss * renderSeconds;
+	const perViewGbS = perViewSeconds * DO_GB_ALLOCATED;
+	const perFillGbS = renderSeconds * DO_GB_ALLOCATED;
+	// spent before any traffic, and ONLY when the fleet cannot hibernate. A hibernating replica
+	// bills for its wake and its work, both of which are already priced per view above
+	const alwaysWarmGbS = fleetIdleGbS(
+		opts.alwaysWarmObjects ?? 0,
+		opts.replicaMode ?? 'alwaysWarm'
+	);
+	const availableGbS = FREE_QUOTAS.durationGbSPerDay - alwaysWarmGbS;
+
 	const ceilings = {
 		worker: perView.worker > 0 ? FREE_QUOTAS.workerRequestsPerDay / perView.worker : Infinity,
 		do: perView.do > 0 ? FREE_QUOTAS.doRequestsPerDay / perView.do : Infinity,
@@ -391,13 +576,21 @@ export function envelope(
 		r2ClassB:
 			perView.r2ClassB > 0
 				? FREE_QUOTAS.r2ClassBPerMonth / DAYS_PER_MONTH / perView.r2ClassB
-				: Infinity
+				: Infinity,
+		// a negative allowance is a ceiling of 0, not of Infinity: the always-warm objects have
+		// already spent the day before a visitor arrives
+		duration:
+			perViewGbS > 0
+				? Math.max(0, availableGbS) / perViewGbS
+				: availableGbS < 0
+					? 0
+					: Infinity
 	};
 
 	const servingViewsPerDay = Math.floor(
-		Math.min(ceilings.worker, ceilings.do, ceilings.rows, ceilings.r2ClassB)
+		Math.min(ceilings.worker, ceilings.do, ceilings.rows, ceilings.r2ClassB, ceilings.duration)
 	);
-	const servingBoundBy = (['worker', 'do', 'rows', 'r2ClassB'] as const).reduce(
+	const servingBoundBy = (['worker', 'do', 'rows', 'r2ClassB', 'duration'] as const).reduce(
 		(best, meter) => (ceilings[meter] < ceilings[best] ? meter : best),
 		'worker' as const
 	);
@@ -413,6 +606,8 @@ export function envelope(
 	const byDo = FREE_QUOTAS.doRequestsPerDay / invocationsPerFill;
 	const byRows = FREE_QUOTAS.rowsWrittenPerDay / rowsPerFill;
 	const byR2ClassA = FREE_QUOTAS.r2ClassAPerMonth / DAYS_PER_MONTH;
+	const byDuration = perFillGbS > 0 ? Math.max(0, availableGbS) / perFillGbS : Infinity;
+	const regenCeilings = { do: byDo, rows: byRows, r2ClassA: byR2ClassA, duration: byDuration };
 
 	return {
 		servingViewsPerDay,
@@ -421,18 +616,33 @@ export function envelope(
 			worker: Math.floor(ceilings.worker),
 			do: Math.floor(ceilings.do),
 			rows: Math.floor(ceilings.rows),
-			r2ClassB: Math.floor(ceilings.r2ClassB)
+			r2ClassB: Math.floor(ceilings.r2ClassB),
+			duration: Math.floor(ceilings.duration)
+		},
+		duration: {
+			allowanceGbS: FREE_QUOTAS.durationGbSPerDay,
+			alwaysWarmGbS,
+			availableGbS,
+			perViewGbS,
+			perFillGbS,
+			servingUseGbS:
+				Math.min(
+					ceilings.worker,
+					ceilings.do,
+					ceilings.rows,
+					ceilings.r2ClassB,
+					ceilings.duration
+				) * perViewGbS,
+			slackFraction: availableGbS / FREE_QUOTAS.durationGbSPerDay
 		},
 		// Class A is a WRITE, so it prices regeneration rather than serving: one mirrored page per
 		// fill. 1M/month is 33,333/day against a rows-bound ceiling of ~7,575, so it is not close --
 		// but it is in the model now rather than assumed away
-		regenerationsPerDay: Math.floor(Math.min(byDo, byRows, byR2ClassA)),
-		regenerationBoundBy:
-			byDo <= byRows && byDo <= byR2ClassA
-				? 'do'
-				: byRows <= byR2ClassA
-					? 'rows'
-					: 'r2ClassA',
+		regenerationsPerDay: Math.floor(Math.min(byDo, byRows, byR2ClassA, byDuration)),
+		regenerationBoundBy: (['do', 'rows', 'r2ClassA', 'duration'] as const).reduce(
+			(best, meter) => (regenCeilings[meter] < regenCeilings[best] ? meter : best),
+			'do' as const
+		),
 		windowed: Boolean(opts.windowed)
 	};
 }
@@ -503,6 +713,76 @@ export function optimalOffWorker(
 	};
 }
 
+/**
+ * What rejecting bad traffic saves, per meter.
+ *
+ * P37. The number every WAF reports is "requests blocked", and it is the one number that does not
+ * matter here: what matters is which of the four meters the blocked traffic was going to spend.
+ *
+ * **THE DISTINCTION THAT DECIDES IT: where the rejection happens.** An in-Worker refusal --
+ * `isNeverDrupal()` and `bodyTooLarge()` in `src/site.ts` -- still costs ONE WORKER REQUEST,
+ * because the Worker has to run to refuse. It saves the DO hop, the rows and the duration and
+ * saves nothing at all on the meter that binds SERVING. A WAF or Turnstile rule evaluated before
+ * the Worker is invoked costs zero Worker requests and is the only kind that moves that ceiling.
+ *
+ * Same shape as "a cache hit is not free": the intuitive saving is on the meter that is already
+ * saturated, and the real saving is on the meters that were not binding.
+ */
+export type RejectionSaving = {
+	/** requests/day the rejection removes */
+	rejectedPerDay: number;
+	/** where the refusal is evaluated, which is what decides the Worker column */
+	at: 'worker' | 'edge';
+	saved: { worker: number; do: number; rows: number; durationGbS: number };
+	/** what fraction of each daily allowance that is */
+	savedShare: { worker: number; do: number; rows: number; duration: number };
+};
+
+/**
+ * Scores a rejection rate against every meter.
+ *
+ * @param rejectedPerDay
+ *   Requests/day the rule would refuse.
+ * @param at
+ *   `worker` for a refusal inside the Worker, `edge` for one evaluated before it is invoked.
+ * @param wouldHaveCost
+ *   What a refused request would have cost had it been served. Defaults to the miss-and-fill
+ *   profile, which is the pessimistic and the interesting case: a scanner asks for paths that are
+ *   never cached, so every one of them is a MISS.
+ */
+export function scoreRejection(
+	rejectedPerDay: number,
+	at: 'worker' | 'edge' = 'worker',
+	wouldHaveCost: { worker: number; do: number; rows: number; seconds: number } = {
+		worker: COST_PER_VIEW.missAndFill.worker,
+		do: COST_PER_VIEW.missAndFill.do,
+		rows: ROWS_PER_FILL.realRender,
+		seconds: SECONDS_PER.warmRender
+	}
+): RejectionSaving {
+	const n = Math.max(0, rejectedPerDay);
+	// the Worker request is saved ONLY when the refusal happens before the Worker runs
+	const savedWorker = at === 'edge' ? n * wouldHaveCost.worker : 0;
+	const saved = {
+		worker: savedWorker,
+		do: n * wouldHaveCost.do,
+		rows: n * wouldHaveCost.rows,
+		durationGbS: n * wouldHaveCost.seconds * DO_GB_ALLOCATED
+	};
+
+	return {
+		rejectedPerDay: n,
+		at,
+		saved,
+		savedShare: {
+			worker: saved.worker / FREE_QUOTAS.workerRequestsPerDay,
+			do: saved.do / FREE_QUOTAS.doRequestsPerDay,
+			rows: saved.rows / FREE_QUOTAS.rowsWrittenPerDay,
+			duration: saved.durationGbS / FREE_QUOTAS.durationGbSPerDay
+		}
+	};
+}
+
 export type Verdict = {
 	targetVisitsPerMonth: number;
 	targetVisitsPerDay: number;
@@ -542,6 +822,9 @@ export function scoreWorkload(
 		 * a measurement, and the report says so.
 		 */
 		cdnAbsorption?: number;
+		/** objects held alive continuously; see `envelope()` */
+		alwaysWarmObjects?: number;
+		fillWarmth?: 'warm' | 'cold';
 	} = {}
 ): Verdict {
 	const perDay = targetVisitsPerMonth / 30;
@@ -550,7 +833,10 @@ export function scoreWorkload(
 		rowsPerFill: opts.rowsPerFill,
 		fillBatch: opts.fillBatch,
 		warmth: opts.warmth,
-		warmthMix: opts.warmthMix
+		warmthMix: opts.warmthMix,
+		cdnAbsorption: opts.cdnAbsorption,
+		alwaysWarmObjects: opts.alwaysWarmObjects,
+		fillWarmth: opts.fillWarmth
 	});
 	const fillsNeededPerDay = perDay * dynamicFraction;
 	const servingFits = perDay <= env.servingViewsPerDay;
@@ -620,6 +906,11 @@ if (import.meta.main) {
 		);
 		console.log(
 			`regen ceiling     ${v.envelope.regenerationsPerDay.toLocaleString()}/day (bound by ${v.envelope.regenerationBoundBy}) -> ${v.regenerationFits ? 'FITS' : 'OVER'} (${v.headroom.regenerationRatio.toFixed(2)}x)`
+		);
+		// reported whether or not it binds; a meter nobody looks at is how the first four were missed
+		const d = v.envelope.duration;
+		console.log(
+			`duration          ${Math.round(d.servingUseGbS).toLocaleString()} of ${d.availableGbS.toLocaleString()} GB-s/day used at the serving ceiling (${(d.slackFraction * 100).toFixed(0)}% of the allowance available; cpuTime-derived, so an UNDERSTATEMENT)`
 		);
 		console.log(`VERDICT           ${v.verdict.toUpperCase()}`);
 	}

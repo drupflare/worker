@@ -2,19 +2,27 @@ import { describe, expect, it } from 'vitest';
 import {
 	COST_PER_VIEW,
 	DEFAULT_MIX,
+	DO_GB_ALLOCATED,
 	DO_INVOCATIONS_PER_COLD_FILL,
+	envelope,
 	FILL_WINDOW_AMORTISATION,
+	fleetIdleGbS,
 	FREE_QUOTAS,
+	IDLE_GB_S_PER_DAY,
 	INSTALL_CPU_MS,
+	optimalOffWorker,
+	PAID_DURATION,
+	paidDurationCost,
 	ROWS_PER_FILL,
 	ROWS_PER_FILL_NO_DBLOG,
-	STEADY_STATE_WARMTH,
-	WORKFLOW_STEP_CPU_MS,
-	envelope,
-	optimalOffWorker,
 	rowsForWarmthMix,
 	scoreInstall,
-	scoreWorkload
+	scoreRejection,
+	scoreWorkload,
+	SECONDS_PER,
+	SECONDS_PER_DAY,
+	STEADY_STATE_WARMTH,
+	WORKFLOW_STEP_CPU_MS
 } from '../../scripts/measure/free-envelope';
 
 /**
@@ -145,6 +153,39 @@ describe('the constants are the measured ones', () => {
 		// the one that makes slicing cost something: it explicitly includes alarm invocations
 		expect(FREE_QUOTAS.doRequestsPerDay).toBe(100_000);
 		expect(FREE_QUOTAS.rowsWrittenPerDay).toBe(100_000);
+		expect(FREE_QUOTAS.durationGbSPerDay).toBe(13_000);
+	});
+
+	it('bills duration against the 128 MB an object is ALLOCATED, not what it uses', () => {
+		// 0.128, the DECIMAL reading, and this asserted 0.125 until 2026-08-23. Cloudflare's own
+		// worked example fixes it: "1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s". The binary
+		// reading was 2.4% low everywhere it appeared
+		expect(DO_GB_ALLOCATED).toBe(0.128);
+		expect(SECONDS_PER_DAY).toBe(86_400);
+		expect(IDLE_GB_S_PER_DAY).toBe(SECONDS_PER_DAY * DO_GB_ALLOCATED);
+		expect(IDLE_GB_S_PER_DAY).toBeCloseTo(11_059.2, 4);
+		// 85.1% of the daily allowance for an object doing nothing, not the 83.1% the binary
+		// reading implied
+		expect(IDLE_GB_S_PER_DAY / FREE_QUOTAS.durationGbSPerDay).toBeCloseTo(0.851, 3);
+	});
+
+	it('carries the read meter, which is 50x the write meter and was never modelled', () => {
+		// nothing was wrong -- there was simply no read meter -- but the omission made it easy to
+		// assume reads and writes shared the 100,000. A workload has to read 50 rows per row
+		// written before reads bind, which a render does not approach
+		expect(FREE_QUOTAS.rowsReadPerDay).toBe(5_000_000);
+		expect(FREE_QUOTAS.rowsReadPerDay / FREE_QUOTAS.rowsWrittenPerDay).toBe(50);
+	});
+
+	it('counts a setAlarm() as one row written, which an idle site pays 360 times a day', () => {
+		expect(FREE_QUOTAS.rowsPerAlarmArm).toBe(1);
+		// the keep-warm chain re-arms every 240 s: 86,400 / 240 = 360 arms, 360 rows, before the
+		// site serves anything
+		const armsPerDay = SECONDS_PER_DAY / 240;
+		expect(armsPerDay * FREE_QUOTAS.rowsPerAlarmArm).toBe(360);
+		expect(
+			(armsPerDay * FREE_QUOTAS.rowsPerAlarmArm) / FREE_QUOTAS.rowsWrittenPerDay
+		).toBeCloseTo(0.0036, 5);
 	});
 
 	it('an edge hit costs one Worker request and nothing else', () => {
@@ -154,6 +195,215 @@ describe('the constants are the measured ones', () => {
 	it('carries the cold-fill slicing cost and the window amortisation', () => {
 		expect(DO_INVOCATIONS_PER_COLD_FILL).toBe(475);
 		expect(FILL_WINDOW_AMORTISATION).toBe(25);
+	});
+});
+
+/**
+ * THE FIFTH METER: Durable Object DURATION.
+ *
+ * Billed on WALL CLOCK against the 128 MB an object is allocated regardless of use, and the model
+ * had never carried it. It does NOT bind -- which is why it is reported as slack rather than left
+ * out, because a meter nobody looks at is exactly how the first four were each missed in turn.
+ *
+ * Every figure feeding it is `cpuTime`, and cpuTime excludes time spent awaiting, so each ceiling
+ * below is an UPPER BOUND on what the meter allows.
+ */
+describe('the DURATION meter, which is reported whether or not it binds', () => {
+	it('does not bind at the serving ceiling, and says how much slack is left', () => {
+		const e = envelope(DEFAULT_MIX, { windowed: true });
+		expect(e.servingBoundBy).toBe('worker');
+		expect(e.duration.availableGbS).toBe(FREE_QUOTAS.durationGbSPerDay);
+		// ~271 of 13,000. The whole point of asserting it is that a later change which made a
+		// render hold the object 50x longer would move this and nothing else in the model
+		expect(e.duration.servingUseGbS).toBeGreaterThan(0);
+		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
+	});
+
+	it('does not bind regeneration either, by 6x', () => {
+		const e = envelope(DEFAULT_MIX, { windowed: true });
+		const byDuration = Math.floor(e.duration.availableGbS / e.duration.perFillGbS);
+		expect(e.regenerationBoundBy).toBe('rows');
+		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 5);
+	});
+
+	it('charges a cold fill ~2.9x a warm one, because boot is wall clock too', () => {
+		const warm = envelope(DEFAULT_MIX, { windowed: true });
+		const cold = envelope(DEFAULT_MIX, { windowed: true, fillWarmth: 'cold' });
+		expect(cold.duration.perFillGbS / warm.duration.perFillGbS).toBeCloseTo(
+			SECONDS_PER.coldRender / SECONDS_PER.warmRender,
+			5
+		);
+		// and even then rows still bind, so the boot is not the regeneration story
+		expect(cold.regenerationBoundBy).toBe('rows');
+	});
+});
+
+/**
+ * P17, PRICED -- AND THE FIRST VERSION OF THIS BLOCK CLOSED TOO MUCH.
+ *
+ * It priced ALWAYS-WARM replicas, found that two exceed the free duration allowance on their own,
+ * and wrote that up as "replicas are dead on free". Those are different claims. Cloudflare bills
+ * duration for an object that is idle and UNABLE to hibernate; an object that is idle and eligible
+ * accrues nothing. So there are three architectures here and the arithmetic below settles one:
+ *
+ *   A. one permanently hot object      -- duration-heavy, lowest latency, maximum serialisation
+ *   B. N replicas that HIBERNATE       -- pays a wake instead of a day; **unmeasured**
+ *   C. N replicas kept explicitly warm -- best latency, and the case priced below
+ *
+ * **B is the interesting free-plan design and nothing here scores it**, because the wake cost on
+ * this runtime is a 96 MiB interpreter restore and nobody has measured one.
+ *
+ * The independent objection stands and is unaffected by any of this: a replica buys NO QUOTA,
+ * because rows written is account-wide and daily. It buys throughput against a single-threaded
+ * object, which is a real thing to want and a different argument.
+ */
+describe('always-warm objects, which is only ONE of the replica architectures', () => {
+	it('fits exactly ONE on free, at 83% of the allowance', () => {
+		expect(FREE_QUOTAS.durationGbSPerDay / IDLE_GB_S_PER_DAY).toBeLessThan(2);
+		expect(FREE_QUOTAS.durationGbSPerDay / IDLE_GB_S_PER_DAY).toBeGreaterThan(1);
+
+		const one = envelope(DEFAULT_MIX, { windowed: true, alwaysWarmObjects: 1 });
+		expect(one.duration.availableGbS).toBeCloseTo(1_940.8, 4);
+		// serving still holds, because a cached view barely touches the meter
+		expect(one.servingViewsPerDay).toBe(100_000);
+
+		// BUT REGENERATION NO LONGER DOES, and the 0.125 error was hiding it. One always-warm
+		// object leaves 1,940.8 GB-s, and at 0.272256 GB-s per warm fill that funds ~7,128
+		// regenerations against the 7,575 rows allow -- so DURATION becomes the binding meter for
+		// regeneration at ONE replica, not at two. The binary reading said rows still bound
+		expect(one.regenerationBoundBy).toBe('duration');
+		expect(one.regenerationsPerDay).toBeLessThan(
+			envelope(DEFAULT_MIX, { windowed: true }).regenerationsPerDay
+		);
+	});
+
+	it('takes BOTH ceilings to zero at two, before a single visitor arrives', () => {
+		const two = envelope(DEFAULT_MIX, { windowed: true, alwaysWarmObjects: 2 });
+		expect(two.duration.alwaysWarmGbS).toBeCloseTo(22_118.4, 4);
+		expect(two.duration.availableGbS).toBeLessThan(0);
+		expect(two.servingViewsPerDay).toBe(0);
+		expect(two.servingBoundBy).toBe('duration');
+		expect(two.regenerationsPerDay).toBe(0);
+		expect(two.regenerationBoundBy).toBe('duration');
+	});
+
+	it('scores through scoreWorkload too, so a proposal cannot dodge it', () => {
+		const v = scoreWorkload(3_000_000, 0.01, { windowed: true, alwaysWarmObjects: 2 });
+		expect(v.verdict).toBe('both-over');
+	});
+});
+
+describe('HIBERNATING replicas, which the always-warm arithmetic does not touch', () => {
+	it('spends no idle duration at all, so eight of them still fit', () => {
+		expect(fleetIdleGbS(8, 'hibernating')).toBe(0);
+		const eight = envelope(DEFAULT_MIX, {
+			windowed: true,
+			alwaysWarmObjects: 8,
+			replicaMode: 'hibernating'
+		});
+		expect(eight.duration.alwaysWarmGbS).toBe(0);
+		expect(eight.servingViewsPerDay).toBe(100_000);
+		expect(eight.regenerationBoundBy).toBe('rows');
+	});
+
+	it('is the SAME fleet size that always-warm refuses, which is the whole point', () => {
+		const warm = envelope(DEFAULT_MIX, { windowed: true, alwaysWarmObjects: 2 });
+		const hibernating = envelope(DEFAULT_MIX, {
+			windowed: true,
+			alwaysWarmObjects: 2,
+			replicaMode: 'hibernating'
+		});
+		expect(warm.servingViewsPerDay).toBe(0);
+		expect(hibernating.servingViewsPerDay).toBeGreaterThan(0);
+	});
+
+	it('does NOT price the wake, and the model says so rather than implying zero', () => {
+		// an honest hole: a hibernating replica pays a wake, and on this runtime a wake means
+		// restoring or re-booting a 96 MiB interpreter. `envelope()` prices per-view work and
+		// knows nothing about a wake, so a 0 here is "not modelled", never "free"
+		expect(fleetIdleGbS(4, 'hibernating')).toBe(0);
+		expect(fleetIdleGbS(4, 'alwaysWarm')).toBe(4 * IDLE_GB_S_PER_DAY);
+	});
+});
+
+/**
+ * The PAID plan, where the free-tier conclusion inverts at small replica counts.
+ *
+ * Figures supplied 2026-08-23 and NOT verified by this project, which is why `paidDurationCost()`
+ * returns `verified: false`: 400,000 GB-s/month included, then $12.50 per million.
+ */
+describe('paid-plan duration, where "expensive" turns out to be wrong', () => {
+	it('carries the unverified flag with the number, not in a comment', () => {
+		expect(paidDurationCost(1).verified).toBe(false);
+	});
+
+	it('puts ONE always-warm replica INSIDE the included allowance', () => {
+		const one = paidDurationCost(1);
+		expect(one.gbSPerMonth).toBeCloseTo(331_776, 3);
+		expect(one.gbSPerMonth).toBeLessThan(PAID_DURATION.includedGbSPerMonth);
+		expect(one.billableGbS).toBe(0);
+		expect(one.usd).toBe(0);
+	});
+
+	it('makes TWO cost a few dollars a month, not a cliff', () => {
+		const two = paidDurationCost(2);
+		expect(two.gbSPerMonth).toBeCloseTo(663_552, 3);
+		expect(two.billableGbS).toBeCloseTo(263_552, 3);
+		expect(two.usd).toBeCloseTo(3.29, 2);
+	});
+
+	it('so the paid objection is throughput and consistency, never the duration bill', () => {
+		// four always-warm objects is $11.20/month. That is a line item, not a wall, which is why
+		// "replicas are expensive" was the wrong reason to refuse them on paid -- the real
+		// questions are whether they improve user-visible throughput, whether rows still bind, and
+		// how a replica stays consistent with the object that owns the data
+		expect(paidDurationCost(4).usd).toBeCloseTo(11.59, 2);
+		expect(paidDurationCost(4).usd).toBeLessThan(20);
+	});
+});
+
+/**
+ * P37: what rejecting bad traffic is worth, per meter.
+ *
+ * The number a WAF reports is "requests blocked" and it is the one number that does not decide
+ * anything here. These cases pin the distinction that does: an in-Worker refusal still spends a
+ * Worker request, so it cannot move the meter that binds serving, and only a rule evaluated before
+ * the Worker runs can.
+ */
+describe('rejecting bad traffic, scored against the meters rather than counted', () => {
+	it('saves NOTHING on the serving meter when the Worker does the rejecting', () => {
+		const saving = scoreRejection(10_000, 'worker');
+		// `isNeverDrupal()` and `bodyTooLarge()` are this case: the Worker has to run to refuse
+		expect(saving.saved.worker).toBe(0);
+		expect(saving.savedShare.worker).toBe(0);
+		// while the meters it DOES save on are the ones that were not binding
+		expect(saving.saved.do).toBeGreaterThan(0);
+		expect(saving.saved.rows).toBeGreaterThan(0);
+		expect(saving.saved.durationGbS).toBeGreaterThan(0);
+	});
+
+	it('saves the Worker request only when the rule runs BEFORE the Worker', () => {
+		const inWorker = scoreRejection(10_000, 'worker');
+		const atEdge = scoreRejection(10_000, 'edge');
+		expect(atEdge.saved.worker).toBe(10_000);
+		expect(atEdge.savedShare.worker).toBeCloseTo(0.1, 10);
+		// and the other three are identical, which is what makes the Worker column the whole
+		// argument for a WAF rule over an in-Worker check
+		expect(atEdge.saved.do).toBe(inWorker.saved.do);
+		expect(atEdge.saved.rows).toBe(inWorker.saved.rows);
+	});
+
+	it('shows the ROWS meter is where a scanner actually hurts', () => {
+		// a scanner asks for paths that are never cached, so every request is a MISS and a fill.
+		// 1,000 of them is 13,000 rows -- 13% of the day -- against 1% of the Worker meter
+		const saving = scoreRejection(1_000, 'edge');
+		expect(saving.savedShare.rows).toBeGreaterThan(saving.savedShare.worker * 5);
+		expect(saving.savedShare.rows).toBeCloseTo(0.13, 5);
+	});
+
+	it('is zero on every meter for zero traffic, so the model cannot flatter a rule', () => {
+		const saving = scoreRejection(0, 'edge');
+		expect(saving.saved).toEqual({ worker: 0, do: 0, rows: 0, durationGbS: 0 });
 	});
 });
 

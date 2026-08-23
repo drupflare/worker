@@ -1,5 +1,10 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import {
+	DO_GB_ALLOCATED,
+	FREE_QUOTAS,
+	IDLE_GB_S_PER_DAY
+} from '../../scripts/measure/free-envelope';
 import { runFillWindow } from '../../src/site';
 import {
 	freshSite,
@@ -148,6 +153,31 @@ describe('a window is bounded three ways, because it spends three budgets', () =
 		if (!win.ok) throw new Error(win.error);
 		expect(win.fills).toBe(1);
 		expect(win.drained).toBe(false);
+	});
+
+	/**
+	 * THE SOCKET IS THE ONLY THING IN THIS OBJECT THAT CAN BLOCK HIBERNATION, so its default bound
+	 * is a duration-meter number rather than a comfort setting.
+	 *
+	 * `openFillWindow()` calls `server.accept()`, not `ctx.acceptWebSocket()`, so the object stays
+	 * alive and BILLED for the socket's whole lifetime -- and an object idle-but-unable-to-hibernate
+	 * bills `86,400 x 0.125` = 10,800 GB-s for a day, 83% of the free allowance, which no request or
+	 * row count would show. The client bounds it; this asserts the bound is small against the meter
+	 * rather than merely present.
+	 */
+	it('costs a bounded, small share of the daily duration allowance', () => {
+		const defaultWallMs = 60_000;
+		// the platform caps a connection keeping an object alive at 15 minutes, which is the worst
+		// case when a client opens a window and then dies without sending `close`
+		const platformCapMs = 15 * 60_000;
+		const gbS = (ms: number) => (ms / 1000) * DO_GB_ALLOCATED;
+
+		expect(gbS(defaultWallMs)).toBeCloseTo(7.68, 5);
+		expect(gbS(defaultWallMs) / FREE_QUOTAS.durationGbSPerDay).toBeLessThan(0.001);
+		// even the abandoned-window worst case is under 1% of the day
+		expect(gbS(platformCapMs) / FREE_QUOTAS.durationGbSPerDay).toBeLessThan(0.01);
+		// and it is nowhere near the always-warm case, which is the thing that would eat the meter
+		expect(gbS(platformCapMs)).toBeLessThan(IDLE_GB_S_PER_DAY / 50);
 	});
 });
 

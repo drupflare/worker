@@ -106,7 +106,10 @@ Two traps this closes:
 - **BOOT WORK IS SATURATED, and this reorders the roadmap.** Once the fill window amortises the boot,
   the regeneration ceiling is bound by ROWS WRITTEN, not by DO requests. A 20x reduction in boot cost
   per fill moves the ceiling about **1%**, so JSPI, the A2 heap restore and always-warm objects are
-  worth ~1% until rows-per-fill falls. Rows work FIRST.
+  worth ~1% until rows-per-fill falls. Rows work FIRST. **The "always-warm objects" half of that
+  sentence is a FREE-TIER result and does not generalise** - on paid, one always-warm object fits
+  inside the included duration allowance and two cost ~$3.29/month, so what refuses them there is
+  throughput, consistency and snapshot distribution, never the bill. See RULE 0c.
 - **There is no single rows-per-fill figure, and the flat 17 this file used to quote was wrong twice
   over.** It came from an instrument hung off `execSql()`, which sees Drupal's statements and none of
   the host's - it never counted the `cfw_page` insert that stores the whole rendered page. Measured
@@ -128,6 +131,40 @@ at a rate incompatible with ~3M visits/month on both ceilings.
 
 This exists because the cost model that said "Worker requests bind first" was already in the report,
 was correct, and governed nothing. A right metric that scores no decisions is decoration.
+
+## RULE 0c: a negative result closes a MECHANISM, never an OBJECTIVE
+
+**When a measurement kills a proposed lever, close the lever and keep the resource on the board.**
+This is the single most common way work is lost here, and it is subtler than being wrong: the
+measurement is correct, the conclusion drawn from it is one step too wide, and an entire engineering
+objective quietly leaves the backlog attached to the implementation that failed.
+
+Five items were closed this way on 2026-08-23 and four had to be reopened the same day:
+
+| what was measured                                          | what it closes                         | what it does NOT close                                                                                                                       |
+| ---------------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INITIAL_MEMORY` is a floor, the peak is reached by growth | lowering 96 -> 80 MB to lower the peak | **reducing peak linear memory.** Growth over-reservation, MEMFS, snapshot staging and SQLite buffers are all unmeasured shares of 115.25 MiB |
+| two always-warm objects exceed the free duration allowance | permanently resident replicas on free  | **replicas.** A replica that HIBERNATES between requests accrues no duration, and nobody has measured one                                    |
+| duration spends 2.1% at today's traffic                    | duration as today's binding meter      | **duration.** The figure is `cpuTime`-derived and taken at current traffic, not at the capacity frontier                                     |
+| a warm render crosses the bridge 48 times, 0 batchable     | coalescing the bridge                  | **the 48 SQL statements.** Fewer queries, fewer rows read and prepared-statement reuse are untouched levers                                  |
+| no cache bin declares `AUTOINCREMENT`                      | it as a rows-per-FILL lever            | **write amplification.** Rows written is charged on content writes too, and SQLite documents extra CPU, memory and I/O                       |
+
+**The habit that prevents it.** After any "this does not matter", answer three questions in writing
+before closing anything:
+
+1. **Which resource did I measure**, and which OTHER mechanism could move that same resource?
+2. **Under which workload?** This project's ceilings are computed from a page fill. A node save, a
+   login, an upload and a cron run spend different meters, and an item scored against one of them
+   has not been scored against the others.
+3. **Is the claim I am about to write DOWNSTREAM of what I measured?** Counting 48 crossings is a
+   measurement. "48 crossings would be 48 billed DO requests" is an inference about billing that no
+   crossing count can support, and it shipped in a test before this rule existed.
+
+**Be hardest on this when the item unlocks CAPABILITY.** A capacity lever that dies costs a
+percentage. A capability item that dies wrongly - argon2, wasm64, 64-bit integers, replicas - takes
+a whole class of sites with it, and it dies quietly because nobody is waiting for the feature. For
+those, "the obvious implementation does not fit" is the START of the question. Ask where the work
+must EXECUTE, not only whether it fits where it currently runs.
 
 ## Never touch `vendor/`
 
@@ -364,7 +401,7 @@ loading it. `--` inside an XML comment is invalid.
 
 **The interpreter travels as a zstd frame in a `Data` module and is inflated at module scope**, so
 Cloudflare's gzip measures bytes it cannot compress further. On 2026-08-21 the shipping bundle is
-**2,925,281**, **220,447 under the 3,145,728 ceiling** (2026-08-22); the interpreter alone is 2,658,002 with
+**2,925,701**, **220,027 under the 3,145,728 ceiling** (2026-08-23); the interpreter alone is 2,658,002 with
 nothing dropped.
 
 **Do not quote that number, run `bun run release:check`.** It has now been stale in THREE documents
@@ -464,8 +501,23 @@ bootstraps branch on `extension_loaded('mbstring')`, so the stub makes `iconv_st
 
 **argon2 costs ~7,000 bytes and wasm64 is accepted by workerd**, both measured 2026-08-21, and both
 are blocked by the same thing instead: linear memory is 110.6 MiB against a 128 MB cap. argon2id's
-default arena is 64 MiB; wasm64 grows `Bucket` 33% and `zend_string` 60%. So `INITIAL_MEMORY` is the
-gate on two capability items, not a size tweak. Do not re-price either against the bundle.
+default arena is 64 MiB; wasm64 grows `Bucket` 33% and `zend_string` 60%. So MEMORY is the gate on
+two capability items, not a size tweak. Do not re-price either against the bundle.
+
+**`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** Measured 2026-08-23: the
+heap starts at 100,663,296 and peaks at 120,848,384 after one fill, and the peak is EXACTLY one
+geometric growth event -- `ceil(100,663,296 * 1.2 / 65,536) * 65,536` is the measured figure to the
+byte. `INITIAL_MEMORY` sets where the series starts; `MEMORY_GROWTH_GEOMETRIC_STEP` (default 0.20)
+sets how coarsely it advances, and it has never been tested here. Live demand is bounded at
+`100,663,296 < demand <= 120,848,384`, so over-reservation is 0-19.25 MiB and unmeasured -- which is
+where the room for argon2 would have to come from. **One further step is 145,031,168 bytes, over the
+cap: the shipping build is one growth event from OOM.**
+
+**`PHP_INT_SIZE` 8 is not available at a discount either.** `zend_ulong` is typedef'd from
+`zend_long`, and both `Bucket` and `zend_string` carry a `zend_ulong h`. Modelled against the wasm32
+ABI with a real compiler, forcing `ZEND_ENABLE_ZVAL_LONG64` leaves `zval` at 16 and takes `Bucket`
+from 24 to 32 -- exactly wasm64's 33%. Widening EITHER the hash or the pointer alone produces 32, so
+there is no arrangement that keeps `Bucket` at 24.
 
 **One refinement measured today**: a cold object refuses an inline render because `!this.php`, not
 because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000 did not move it. So

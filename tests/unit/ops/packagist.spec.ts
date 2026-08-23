@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
 	DEFAULT_PLATFORM,
+	NATIVE_PLATFORM,
+	POLYFILLED_PLATFORM,
 	checkInstallable,
 	checkRequirements,
 	isValidPackageName,
@@ -145,11 +147,33 @@ describe('the refusal names the conflict', () => {
 
 	it('satisfies a platform requirement the build does provide', () => {
 		const { conflicts, satisfied } = checkRequirements(
-			{ php: '>=8.3', 'ext-mbstring': '*' },
+			{ php: '>=8.3', 'ext-dom': '*' },
 			INSTALLED
 		);
 		expect(conflicts).toEqual([]);
 		expect(satisfied).toHaveLength(2);
+	});
+
+	// `ext-mbstring` used to sit in the platform map and answer `installable`. It is not in the
+	// build -- `tests/integration/loaded-extensions.spec.ts` measures that -- and the polyfill
+	// behind it has 86 measured divergences from the real extension, so "yes" was a claim nobody
+	// had checked
+	it('degrades a requirement met only by a POLYFILL to unverifiable', () => {
+		const { conflicts, satisfied } = checkRequirements({ 'ext-mbstring': '*' }, INSTALLED);
+		expect(satisfied).toEqual([]);
+		expect(conflicts).toHaveLength(1);
+		expect(conflicts[0]!.reason).toBe('polyfilled');
+		expect(conflicts[0]!.detail).toContain('polyfill');
+		expect(verdictFor(conflicts)).toBe('unverifiable');
+	});
+
+	it('lets a site that really HAS the extension win over the polyfill note', () => {
+		const { conflicts, satisfied } = checkRequirements(
+			{ 'ext-mbstring': '*' },
+			{ ...INSTALLED, 'ext-mbstring': '8.5.2' }
+		);
+		expect(conflicts).toEqual([]);
+		expect(satisfied).toHaveLength(1);
 	});
 
 	it('reports an unjudgeable constraint as unverifiable, NOT as satisfied', () => {
@@ -272,5 +296,15 @@ describe('the whole check, end to end over an injected fetch', () => {
 
 	it('has php in the default platform, or every module would be blocked on it', () => {
 		expect(DEFAULT_PLATFORM.php).toBeTruthy();
+	});
+
+	// the split is the point: a name in both maps would make `polyfilled` depend on key order
+	it('keeps the native and polyfilled maps disjoint', () => {
+		const native = Object.keys(NATIVE_PLATFORM);
+		const overlap = Object.keys(POLYFILLED_PLATFORM).filter((k) => native.includes(k));
+		expect(overlap).toEqual([]);
+		expect(Object.keys(DEFAULT_PLATFORM).sort()).toEqual(
+			[...native, ...Object.keys(POLYFILLED_PLATFORM)].sort()
+		);
 	});
 });

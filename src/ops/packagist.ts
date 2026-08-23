@@ -100,10 +100,22 @@ export type PlatformVersions = Record<string, string>;
  */
 export const PLATFORM_PHP_VERSION = '8.5.2';
 
-export const DEFAULT_PLATFORM: PlatformVersions = {
+/**
+ * Extensions the interpreter really loads, measured rather than inferred.
+ *
+ * `tests/integration/loaded-extensions.spec.ts` drives `get_loaded_extensions()` through the
+ * shipping binary and asserts this map both ways -- every name here is loaded, and no name in
+ * {@link POLYFILLED_PLATFORM} is. Until that spec existed the list was a belief, and it was wrong:
+ * `ext-mbstring` sat here while `mb-fix.ts` existed precisely because the build has no mbstring.
+ *
+ * Function-name evidence cannot replace it. `curl_init`, `mysqli_stmt_init` and
+ * `imagecreatetruecolor` all appear as strings in a binary that has none of those extensions,
+ * because opcache's optimizer carries a `func_info` table naming functions across every bundled
+ * extension.
+ */
+export const NATIVE_PLATFORM: PlatformVersions = {
 	php: PLATFORM_PHP_VERSION,
 	'ext-json': PLATFORM_PHP_VERSION,
-	'ext-mbstring': PLATFORM_PHP_VERSION,
 	'ext-pcre': PLATFORM_PHP_VERSION,
 	'ext-spl': PLATFORM_PHP_VERSION,
 	'ext-tokenizer': PLATFORM_PHP_VERSION,
@@ -113,12 +125,31 @@ export const DEFAULT_PLATFORM: PlatformVersions = {
 	'ext-zlib': PLATFORM_PHP_VERSION
 };
 
+/**
+ * Extensions supplied by PHP code rather than by the build.
+ *
+ * A polyfill is not the extension. `bun run measure:mb-parity` drives 1,232 cases through the
+ * shipping mbstring stack with the real extension as the oracle and reports **86** divergences, so
+ * a module requiring `ext-mbstring` gets `unverifiable` here, never `installable` -- see
+ * {@link checkRequirements}. `ext-iconv` rides the same stack through `iconv-fix.ts`.
+ */
+export const POLYFILLED_PLATFORM: PlatformVersions = {
+	'ext-mbstring': PLATFORM_PHP_VERSION,
+	'ext-iconv': PLATFORM_PHP_VERSION
+};
+
+/** everything a requirement can resolve against; the split is what the verdict reports */
+export const DEFAULT_PLATFORM: PlatformVersions = {
+	...NATIVE_PLATFORM,
+	...POLYFILLED_PLATFORM
+};
+
 export type Conflict = {
 	requires: string;
 	constraint: string;
 	/** the version this site has, or null when the requirement is absent entirely */
 	installed: string | null;
-	reason: 'missing' | 'version' | 'unverifiable';
+	reason: 'missing' | 'version' | 'unverifiable' | 'polyfilled';
 	detail: string;
 };
 
@@ -163,6 +194,11 @@ export function newestVersion(
  *
  * An `unknown` from the constraint checker becomes an `unverifiable` conflict rather than being
  * dropped, so the overall verdict degrades to `unverifiable` instead of quietly reading as installable.
+ *
+ * A requirement met only by {@link POLYFILLED_PLATFORM} degrades the same way, and that is the
+ * point of the split: answering `installable` to `ext-mbstring` on the strength of a polyfill with
+ * 86 measured divergences reads as a considered yes. `installed` still wins over both maps, so a
+ * site that really has the extension is unaffected.
  */
 export function checkRequirements(
 	require: Record<string, string>,
@@ -174,6 +210,7 @@ export function checkRequirements(
 
 	for (const [dep, constraint] of Object.entries(require)) {
 		const have = installed[dep] ?? platform[dep] ?? null;
+		const polyfilled = installed[dep] === undefined && POLYFILLED_PLATFORM[dep] !== undefined;
 		if (have === null) {
 			conflicts.push({
 				requires: dep,
@@ -186,6 +223,16 @@ export function checkRequirements(
 		}
 		const result: Satisfaction = satisfies(have, constraint);
 		if (result === 'yes') {
+			if (polyfilled) {
+				conflicts.push({
+					requires: dep,
+					constraint,
+					installed: have,
+					reason: 'polyfilled',
+					detail: `${dep} is supplied by a PHP polyfill rather than by the build, so ${constraint} cannot be verified`
+				});
+				continue;
+			}
 			satisfied.push(`${dep} ${have} satisfies ${constraint}`);
 			continue;
 		}
@@ -210,7 +257,13 @@ export function checkRequirements(
 	return { conflicts, satisfied };
 }
 
-/** turns a set of conflicts into the single verdict word */
+/**
+ * Turns a set of conflicts into the single verdict word.
+ *
+ * `polyfilled` and `unverifiable` both land on `unverifiable` rather than getting a word of their
+ * own: the vocabulary an operator reads has three states and a fourth would need its own meaning
+ * everywhere it is rendered. The `detail` on each conflict is where the difference lives.
+ */
 export function verdictFor(conflicts: Conflict[]): 'installable' | 'blocked' | 'unverifiable' {
 	if (conflicts.some((c) => c.reason === 'missing' || c.reason === 'version')) return 'blocked';
 	if (conflicts.length > 0) return 'unverifiable';

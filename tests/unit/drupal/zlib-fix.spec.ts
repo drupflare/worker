@@ -277,4 +277,127 @@ describe('what the PHP fragment must say', () => {
 	it('reaches the bridge the way every other host call does', () => {
 		expect(ZLIB_FIX).toContain("function_exists('vrzno_env')");
 	});
+
+	it('declares cfw_zlib_dict OUTSIDE the extension guard, or nothing could ever call it', () => {
+		// THE SHIPPING BINARY LOADS ext-zlib -- measured, it is one of the 25 extensions
+		// get_loaded_extensions() reports -- so the whole `!extension_loaded('zlib')` block is
+		// inert on the edge. A dictionary is not something ext-zlib provides at any version, so
+		// declaring it under that guard would have shipped a decorative function
+		const dictAt = ZLIB_FIX.indexOf('function cfw_zlib_dict(');
+		const guardAt = ZLIB_FIX.indexOf("!extension_loaded('zlib')");
+		expect(dictAt).toBeGreaterThan(-1);
+		expect(guardAt).toBeGreaterThan(-1);
+		expect(dictAt).toBeLessThan(guardAt);
+	});
+
+	it('and so does the bridge caller it needs', () => {
+		expect(ZLIB_FIX.indexOf('function cfw_zlib(')).toBeLessThan(
+			ZLIB_FIX.indexOf("!extension_loaded('zlib')")
+		);
+		expect(ZLIB_FIX.indexOf('function cfw_zlib_fail(')).toBeLessThan(
+			ZLIB_FIX.indexOf("!extension_loaded('zlib')")
+		);
+	});
+
+	it('sends the dictionary on every call, so one payload shape serves both', () => {
+		expect(ZLIB_FIX).toContain("'dict' => base64_encode((string) $dict)");
+	});
+
+	it('names the two ops that take one, and does not widen a gz* signature', () => {
+		expect(ZLIB_FIX).toContain("if ($op !== 'zlib' && $op !== 'unzlib') {");
+		// a dictionary is not part of gzcompress()'s contract in any PHP version
+		expect(ZLIB_FIX).not.toContain(
+			'function gzcompress($data, $level = -1, $encoding = 15, $dict'
+		);
+	});
+});
+
+/**
+ * The dictionary lever, measured rather than reasoned from the RFCs.
+ *
+ * `node:zlib` HONOURS `{ dictionary }` inside workerd -- asserted below, because the finding is
+ * what decided the implementation. It means the capability costs zero bundle bytes either way, and
+ * `fflate` was chosen only because `zlibApply()` already routes all six ops through it.
+ */
+describe('a preset dictionary', () => {
+	const dict = strToU8('body{color:red}.a{b:c}#id{x:y}');
+	const data = strToU8(SAMPLE);
+
+	it('is honoured by node:zlib inside workerd, which is why this costs no bundle bytes', async () => {
+		const zlib = await import('node:zlib');
+		const withDict = zlib.deflateSync(Buffer.from(data), { dictionary: Buffer.from(dict) });
+		const plain = zlib.deflateSync(Buffer.from(data));
+		expect(withDict.length).toBeLessThan(plain.length);
+		const back = zlib.inflateSync(withDict, { dictionary: Buffer.from(dict) });
+		expect(strFromU8(new Uint8Array(back.buffer, back.byteOffset, back.byteLength))).toBe(
+			SAMPLE
+		);
+		// and a decompress without it fails loudly rather than returning something plausible
+		expect(() => zlib.inflateSync(withDict)).toThrow(/dictionary/i);
+	});
+
+	it('shrinks the stream, which is the entire reason it exists', () => {
+		const plain = zlibApply('zlib', data, 9);
+		const primed = zlibApply('zlib', data, 9, dict);
+		expect(primed.length).toBeLessThan(plain.length);
+	});
+
+	it('round-trips zlib/unzlib', () => {
+		const primed = zlibApply('zlib', data, 9, dict);
+		expect(strFromU8(zlibApply('unzlib', primed, -1, dict))).toBe(SAMPLE);
+	});
+
+	it('sets FDICT and records the dictionary checksum, so the stream is self-describing', () => {
+		const primed = zlibApply('zlib', data, 9, dict);
+		// FLG bit 5 is FDICT; the four bytes after the two-byte header are the dictionary's adler32
+		expect(primed[1]! & 0x20).toBe(0x20);
+		expect(primed.length).toBeGreaterThan(6);
+	});
+
+	it('refuses to decompress without it rather than answering something plausible', () => {
+		const primed = zlibApply('zlib', data, 9, dict);
+		expect(() => zlibApply('unzlib', primed, -1)).toThrow();
+	});
+
+	it('CATCHES A WRONG DICTIONARY, which fflate does not and which chose node:zlib', () => {
+		// measured through fflate's own unzlibSync: the wrong dictionary decompressed CLEANLY to
+		// "g else entirelyg else entirely...". A content-addressed store that cannot tell a wrong
+		// dictionary from a right one corrupts itself silently, so the checked path is the only one
+		const primed = zlibApply('zlib', data, 9, dict);
+		expect(() => zlibApply('unzlib', primed, -1, strToU8('something else entirely'))).toThrow(
+			/dictionary/i
+		);
+	});
+
+	it.each(['gzip', 'gunzip', 'deflate', 'inflate'] as const)('refuses %s', (op) => {
+		// gzip: RFC1952 has no field for a preset dictionary, and fflate's frame made node answer
+		// "invalid distance too far back". raw deflate: no header, so nowhere for the checksum
+		expect(() => zlibApply(op, data, 9, dict)).toThrow(/does not carry a preset dictionary/);
+	});
+
+	it('travels over the bridge as base64, like the payload', () => {
+		const b64 = Buffer.from(data).toString('base64');
+		const d64 = Buffer.from(dict).toString('base64');
+		const enc = zlibHostCall({ op: 'zlib', b64, level: 9, dict: d64 });
+		expect(enc.ok).toBe(true);
+		const dec = zlibHostCall({ op: 'unzlib', b64: enc.ok ? enc.b64 : '', dict: d64 });
+		expect(dec.ok && strFromU8(new Uint8Array(Buffer.from(dec.b64, 'base64')))).toBe(SAMPLE);
+	});
+
+	it('is absent when the field is empty, so every existing caller is unchanged', () => {
+		const b64 = Buffer.from(data).toString('base64');
+		expect(zlibHostCall({ op: 'zlib', b64, level: 9, dict: '' })).toEqual(
+			zlibHostCall({ op: 'zlib', b64, level: 9 })
+		);
+	});
+
+	it('reports the refusal as a reply rather than a throw', () => {
+		const r = zlibHostCall({
+			op: 'gzip',
+			b64: Buffer.from(data).toString('base64'),
+			dict: Buffer.from(dict).toString('base64')
+		});
+		expect(r.ok).toBe(false);
+		expect(r.ok === false && r.error).toContain('does not carry a preset dictionary');
+	});
 });

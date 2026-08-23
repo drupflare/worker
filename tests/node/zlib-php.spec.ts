@@ -242,6 +242,27 @@ $css = str_repeat('.a{b:c}', 200);
 $dumped = cfwz_gzencode($css, 9, FORCE_GZIP);
 ok("AssetDumper's gzencode(\\$data, 9, FORCE_GZIP) produces a readable .gz", gzdecode($dumped) === $css);
 
+// THE DICTIONARY OP, which has no ext-zlib counterpart to compare against. What CAN be checked
+// against the extension is that a dictionary-primed zlib stream is still a zlib stream: native
+// gzuncompress() has no way to supply the dictionary, so it must REFUSE rather than return
+// something plausible, and the shim must read back what it wrote.
+$anchor = str_repeat('body{color:red}', 40);
+$next = $anchor . 'a{b:c}';
+$primed = cfw_zlib_dict('zlib', $next, $anchor, 9);
+ok('cfw_zlib_dict compressed against a dictionary', is_string($primed) && $primed !== '', gettype($primed));
+ok('and it beats the same op without one', is_string($primed) && strlen($primed) < strlen(cfwz_gzcompress($next, 9)), strlen((string) $primed) . ' vs ' . strlen((string) cfwz_gzcompress($next, 9)));
+ok('and it round-trips through the shim', cfw_zlib_dict('unzlib', $primed, $anchor) === $next);
+ok('native gzuncompress refuses it, since it cannot supply the dictionary', @gzuncompress($primed) === false);
+ok('a WRONG dictionary does not silently decode', @cfw_zlib_dict('unzlib', $primed, 'something else entirely') === false);
+ok('gzip is refused by name', @cfw_zlib_dict('gzip', $next, $anchor, 9) === false);
+ok('and so is the raw pair, which has nowhere to record the checksum', @cfw_zlib_dict('deflate', $next, $anchor, 9) === false);
+ok('and so is an empty dictionary', @cfw_zlib_dict('zlib', $next, '', 9) === false);
+$seenDict = null;
+set_error_handler(function ($no, $str) use (&$seenDict) { $seenDict = $str; return true; });
+cfw_zlib_dict('gzip', $next, $anchor, 9);
+restore_error_handler();
+ok('the refusal names the ops that do work', is_string($seenDict) && strpos($seenDict, 'use zlib to compress or unzlib to decompress') !== false, (string) $seenDict);
+
 // UrlHelper's pair, over its own base64 wrapper
 $payload = json_encode(['f' => ['a' => 1, 'b' => 2]]);
 $packed = str_replace(['+', '/', '='], ['-', '_', ''], base64_encode(cfwz_gzcompress($payload)));

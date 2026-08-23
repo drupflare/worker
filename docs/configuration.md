@@ -351,6 +351,13 @@ published Cloudflare range, and outbound TCP to those is blocked. Use `MAIL_TRAN
 binding for Cloudflare mail. `SMTP_TLS=off` together with `SMTP_USER` is refused, because it would
 put the relay password on the wire.
 
+SMTP is the only transport that opens an outbound TCP socket, and an outbound socket is on
+Cloudflare's list of conditions that prevent a Durable Object from hibernating. The object is
+therefore billed for compute duration for the length of the send, and the queue drains sequentially,
+so a batch is billed for the whole batch. The socket is closed in a `finally`, which keeps the
+exposure to the send itself rather than the 15-minute maximum a connection can defer eviction by.
+The `api` and `binding` transports use `fetch`, which never holds an object in memory.
+
 ### Limits and What a Refusal Means
 
 A message is refused at commit, where `CfwMail` logs the reason next to the operation that produced

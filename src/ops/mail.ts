@@ -221,6 +221,58 @@ export function defaultSmtpPort(tls: 'starttls' | 'implicit' | 'off'): number {
 	return tls === 'implicit' ? 465 : 587;
 }
 
+/**
+ * `smtp.settings`, mapped onto the transport vars.
+ *
+ * **`drupal/smtp` INSTALLS HERE AND ITS SOCKET NEVER RUNS**, because `system.mail` is forced to
+ * `cfw_mail`. So a site that installed it, filled in its relay and saved has a complete, correct
+ * SMTP configuration that nothing read -- the operator then had to type the same host, port and
+ * password again as Worker vars to get mail out. This closes that: the module's own settings become
+ * a transport source, and the module stays unmodified and inert.
+ *
+ * The module's `smtp_protocol` is `standard | tls | ssl`, where `standard` means no encryption at
+ * all; edgeport's `starttls` is what `tls` means there.
+ */
+export function mailEnvFromSite(settings: unknown): Partial<MailEnv> {
+	if (settings === null || typeof settings !== 'object') return {};
+	const s = settings as Record<string, unknown>;
+	// smtp_on off means the site turned the relay off; honouring it is the difference between a
+	// disabled configuration and a live one
+	if (s.smtp_on === false || s.smtp_on === 0 || s.smtp_on === '0') return {};
+
+	const host = str(s.smtp_host);
+	if (host === '') return {};
+
+	const protocol = str(s.smtp_protocol).toLowerCase();
+	const out: Partial<MailEnv> = {
+		SMTP_HOST: host,
+		SMTP_TLS: protocol === 'ssl' ? 'implicit' : protocol === 'standard' ? 'off' : 'starttls'
+	};
+	if (str(s.smtp_port) !== '') out.SMTP_PORT = str(s.smtp_port);
+	if (str(s.smtp_username) !== '') out.SMTP_USER = str(s.smtp_username);
+	if (str(s.smtp_password) !== '') out.SMTP_PASS = str(s.smtp_password);
+	if (str(s.smtp_from) !== '') out.MAIL_FROM = str(s.smtp_from);
+	return out;
+}
+
+/**
+ * The deployment's vars over the site's own settings.
+ *
+ * **THE ENV WINS, always.** A var is set by whoever can deploy the Worker; `smtp.settings` is set by
+ * whoever can reach a Drupal admin form, which is a wider set of people. So the site's settings fill
+ * gaps and never override a decision the deployer made -- and a deployer who wants to pin the relay
+ * only has to set `SMTP_HOST`.
+ */
+export function mergeMailEnv(env: MailEnv, fromSite: Partial<MailEnv>): MailEnv {
+	const merged: MailEnv = { ...fromSite };
+	for (const [key, value] of Object.entries(env)) {
+		// an absent var arrives as undefined or '' and must not shadow a configured setting
+		if (value === undefined || value === null || value === '') continue;
+		(merged as Record<string, unknown>)[key] = value;
+	}
+	return merged;
+}
+
 function smtpPlan(env: MailEnv, from: string): MailPlan {
 	const hostname = str(env.SMTP_HOST);
 	if (!hostname) {

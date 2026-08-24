@@ -17,8 +17,10 @@ import {
 	ensureMailTable,
 	mailDrainEnabled,
 	mailDrainLimit,
+	mailEnvFromSite,
 	mailLimitRefusal,
 	mailQueueDepth,
+	mergeMailEnv,
 	queueMail,
 	resolveMailTransport,
 	sendViaApi,
@@ -654,5 +656,86 @@ describe('the drain knobs', () => {
 	it('defaults to the real platform, so nothing ships pointing at a test double', () => {
 		expect(DEFAULT_MAIL_DEPS.fetch).toBeTypeOf('function');
 		expect(DEFAULT_MAIL_DEPS.connect).toBeTypeOf('function');
+	});
+});
+
+describe('drupal/smtp: the module installs, its socket never runs, and its settings now count', () => {
+	const SETTINGS = {
+		smtp_on: true,
+		smtp_host: 'relay.example',
+		smtp_port: '2525',
+		smtp_protocol: 'tls',
+		smtp_username: 'postmaster',
+		smtp_password: 'hunter2',
+		smtp_from: 'site@example.com'
+	};
+
+	it('maps the module’s own settings onto the transport vars', () => {
+		expect(mailEnvFromSite(SETTINGS)).toEqual({
+			SMTP_HOST: 'relay.example',
+			SMTP_PORT: '2525',
+			// the module's `tls` is STARTTLS; its `ssl` is the implicit one
+			SMTP_TLS: 'starttls',
+			SMTP_USER: 'postmaster',
+			SMTP_PASS: 'hunter2',
+			MAIL_FROM: 'site@example.com'
+		});
+	});
+
+	it('reads the three protocol values the way the module means them', () => {
+		const tls = (protocol: string) =>
+			mailEnvFromSite({ ...SETTINGS, smtp_protocol: protocol }).SMTP_TLS;
+		expect(tls('ssl')).toBe('implicit');
+		expect(tls('tls')).toBe('starttls');
+		// `standard` is the module's word for no encryption at all, not for a default
+		expect(tls('standard')).toBe('off');
+	});
+
+	it('honours the module’s own off switch and an unconfigured host', () => {
+		expect(mailEnvFromSite({ ...SETTINGS, smtp_on: false })).toEqual({});
+		expect(mailEnvFromSite({ ...SETTINGS, smtp_host: '' })).toEqual({});
+		expect(mailEnvFromSite(null)).toEqual({});
+		expect(mailEnvFromSite('not settings')).toEqual({});
+	});
+
+	/**
+	 * THE DIRECTION IS THE SECURITY PROPERTY.
+	 *
+	 * A var is set by whoever can deploy the Worker; this form is reachable by anyone who can get to
+	 * a Drupal admin page, which is a wider set of people. So the site fills gaps and never
+	 * overrides a decision the deployer made.
+	 */
+	it('lets the deployment win every field it set', () => {
+		const merged = mergeMailEnv(
+			{ SMTP_HOST: 'operator.example', SMTP_PASS: 'from-the-var' },
+			mailEnvFromSite(SETTINGS)
+		);
+		expect(merged.SMTP_HOST).toBe('operator.example');
+		expect(merged.SMTP_PASS).toBe('from-the-var');
+		// and the fields it did not set still come from the site
+		expect(merged.SMTP_PORT).toBe('2525');
+		expect(merged.SMTP_USER).toBe('postmaster');
+	});
+
+	// an unset var arrives as undefined or '' depending on how it was declared, and neither may
+	// shadow a configured setting -- otherwise declaring an empty var silently disables the site's
+	it('treats an empty var as absent rather than as an override', () => {
+		const merged = mergeMailEnv(
+			{ SMTP_HOST: '', SMTP_USER: undefined },
+			mailEnvFromSite(SETTINGS)
+		);
+		expect(merged.SMTP_HOST).toBe('relay.example');
+		expect(merged.SMTP_USER).toBe('postmaster');
+	});
+
+	it('resolves a working SMTP transport from the site settings alone', () => {
+		const plan = resolveMailTransport(mergeMailEnv({}, mailEnvFromSite(SETTINGS)));
+		if ('refusal' in plan) throw new Error(plan.refusal);
+		expect(plan.transport).toMatchObject({
+			kind: 'smtp',
+			hostname: 'relay.example',
+			port: 2525,
+			tls: 'starttls'
+		});
 	});
 });

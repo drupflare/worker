@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { argon2HostCall } from '../../src/drupal/argon2-fix';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -220,5 +221,94 @@ describe('the curl and openssl shims are LIVE, not inert', () => {
 		expect(Number(out.good)).toBe(1);
 		expect(Number(out.tampered)).toBe(0);
 		expect(Number(out.brokenKey)).toBe(-1);
+	}, 900_000);
+});
+
+describe('the argon2id bridge is LIVE, and does not shadow a built-in', () => {
+	it('declares helpers rather than password_hash, which PHP always provides', async () => {
+		const out = await run(`<?php
+			echo json_encode([
+				'sodiumLoaded' => extension_loaded('sodium'),
+				'passwordHashExists' => function_exists('password_hash'),
+				'argonDefined' => defined('PASSWORD_ARGON2ID'),
+				'algos' => password_algos(),
+				'bridgeDeclared' => function_exists('cfw_argon2_available'),
+				'hashDeclared' => function_exists('cfw_argon2_hash'),
+				'verifyDeclared' => function_exists('cfw_argon2_verify'),
+				'rehashDeclared' => function_exists('cfw_argon2_needs_rehash'),
+			]);`);
+
+		// the half that says WHY this is a service swap and not a shim: password_hash() is a
+		// built-in, so a conditional declaration of it could never bind
+		expect(out.passwordHashExists).toBe(true);
+		// and the half that says the capability is genuinely absent from the interpreter, so the
+		// bridge is not decorative -- ext-argon2 is not in the build, so PHP offers only bcrypt
+		expect(out.argonDefined).toBe(false);
+		expect(out.algos).not.toContain('argon2id');
+
+		expect(out.bridgeDeclared, 'argon2-fix did not run or vrzno_env returned null').toBe(true);
+		expect(out.hashDeclared).toBe(true);
+		expect(out.verifyDeclared).toBe(true);
+		expect(out.rehashDeclared).toBe(true);
+	}, 900_000);
+
+	it('hashes and verifies from PHP, in PHP own encoded form', async () => {
+		const out = await run(`<?php
+			$hash = cfw_argon2_hash('correct horse battery staple', 64, 1, 1);
+			$parts = explode('$', (string) $hash);
+			echo json_encode([
+				'hash' => $hash,
+				'prefix' => $parts[1] ?? null,
+				'version' => $parts[2] ?? null,
+				'params' => $parts[3] ?? null,
+				'good' => cfw_argon2_verify('correct horse battery staple', $hash),
+				'wrong' => cfw_argon2_verify('Correct horse battery staple', $hash),
+				'garbage' => cfw_argon2_verify('x', 'not a hash'),
+				// only the SALT and TAG fields; the version and parameter fields carry a real '='
+				'padding' => strpos((string) ($parts[4] ?? ''), '=') === false
+					&& strpos((string) ($parts[5] ?? ''), '=') === false,
+				'rehashSame' => cfw_argon2_needs_rehash($hash, 64, 1, 1),
+				'rehashStronger' => cfw_argon2_needs_rehash($hash, 19456, 2, 1),
+			]);`);
+
+		// PHP OWN ENCODING, so a hash written here still verifies on a site that leaves this
+		// platform for an ordinary PHP with ext-argon2
+		expect(out.prefix).toBe('argon2id');
+		expect(out.version).toBe('v=19');
+		expect(out.params).toBe('m=64,t=1,p=1');
+		expect(out.padding, 'PHP argon2 encoding is unpadded base64').toBe(true);
+
+		expect(out.good).toBe(true);
+		expect(out.wrong, 'a one-character change verified, which is a broken comparison').toBe(
+			false
+		);
+		expect(out.garbage).toBe(false);
+		// needsRehash is about PARAMETERS, so the same ones are fine and stronger ones are not
+		expect(out.rehashSame).toBe(false);
+		expect(out.rehashStronger).toBe(true);
+	}, 900_000);
+
+	it('agrees with the host implementation on the same inputs', async () => {
+		// the cross-check that makes the PHP half more than a wrapper nobody compared: the same
+		// password, salt and parameters must give the same 32 bytes on both sides of the bridge
+		const out = await run(`<?php
+			$salt = str_repeat("\\x07", 16);
+			$raw = cfw_argon2_raw('a password', $salt, 64, 2, 1, 32);
+			echo json_encode(['hex' => bin2hex((string) $raw)]);`);
+
+		const expected = argon2HostCall({
+			passB64: btoa('a password'),
+			saltB64: btoa(String.fromCharCode(...new Uint8Array(16).fill(7))),
+			m: 64,
+			t: 2,
+			p: 1,
+			tagLen: 32
+		});
+		expect(expected.ok).toBe(true);
+		if (!expected.ok) return;
+		const hostHex = [...atob(expected.tagB64)]
+			.map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+			.join('');
+		expect(out.hex).toBe(hostHex);
 	}, 900_000);
 });

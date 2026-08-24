@@ -104,7 +104,9 @@ export type ServeDo = {
 	php: unknown;
 	runJson: (code: string) => Promise<Record<string, unknown>>;
 	fetch: (request: Request) => Promise<Response>;
-	execSql: (sql: string, params?: unknown) => unknown;
+	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };
+	/** how many result sets needed a wide-integer re-read this lifetime; see `src/db/wide-integers.ts` */
+	wideRepairs?: number;
 	alarm: () => Promise<unknown>;
 	armFillAlarm: () => void;
 	ensureServeTables: () => void;
@@ -114,6 +116,16 @@ export type ServeDo = {
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
 	nowMs: () => number;
+	harvestShellFor: (
+		path: string,
+		cookies: readonly string[],
+		origin: string
+	) => Promise<{ stored: boolean; reason: string; holes?: number; permissionsHash?: string }>;
+	assembleFor: (
+		path: string,
+		cookie: string,
+		origin: string
+	) => Promise<{ html: string; holes: number } | null>;
 	/** first-run provisioning: the state check, the durable marker, and what acts on it */
 	neverMigrated: () => boolean;
 	provisionRequested: () => boolean;

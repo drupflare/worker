@@ -18,6 +18,8 @@ import { withMask } from '@drupflare/cartridge/mask';
 import { PHP_CODEC, decode, encode } from '@drupflare/durabledb/codec';
 import {
 	SiteDurableObject,
+	bindable,
+	toPositional,
 	type ExecSqlResult,
 	type SqlBindings
 } from '@drupflare/durabledb/do-sqlite';
@@ -69,6 +71,7 @@ import {
 	readMigrateCursor,
 	type MigrateCursor
 } from './db/migrate-sql';
+import { repairWideIntegers, type Row as WideRow } from './db/wide-integers';
 import {
 	amplification,
 	chargeFactorsFromSchema,
@@ -80,6 +83,7 @@ import {
 	splitChargedRows,
 	type WriteTally
 } from './db/write-tally';
+import { ARGON2_FIX, installArgon2 } from './drupal/argon2-fix';
 import { CURL_FIX } from './drupal/curl-fix';
 import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php';
 import { FILES_PROBE } from './drupal/files-php';
@@ -98,7 +102,9 @@ import {
 	bootPhaseFragment,
 	drupalRequest,
 	firstRunConfig,
+	harvestShell,
 	invalidateTags,
+	renderFragments,
 	renderPage,
 	saveNode,
 	type BootPhase,
@@ -190,7 +196,16 @@ import {
 	serialiseState,
 	shouldRollback
 } from './ops/repair';
-import { shellSafety } from './ops/shell-assembly';
+import {
+	assemble,
+	fillIdentity,
+	normaliseShell,
+	normalisedShellsAgree,
+	placeholderIds,
+	shellSafety,
+	type Identity,
+	type IdentitySlot
+} from './ops/shell-assembly';
 import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock';
 import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
 import {
@@ -223,6 +238,7 @@ import {
 	updbStep,
 	type UpdbDeps
 } from './ops/updb';
+import { DEFAULT_OPCACHE_MODE, opcacheIni, opcacheMode, type OpcacheMode } from './runtime/opcache';
 
 // held in cfw_meta rather than KV: an operator-writable client id is a phishing surface, see
 // the docblock in ops/cf-oauth.ts
@@ -635,7 +651,11 @@ class PhpStatic extends PhpBase {
 	/** the raw entry point php-wasm's published types omit; `run()` is a wrapper over it */
 	declare _run: (code: string) => Promise<unknown>;
 
-	constructor(args: PhpRuntimeArgs = {}, diag: string[] = []) {
+	constructor(
+		args: PhpRuntimeArgs = {},
+		diag: string[] = [],
+		mode: OpcacheMode = DEFAULT_OPCACHE_MODE
+	) {
 		const t0 = Date.now();
 		const note = (m: string) => diag.push(`+${Date.now() - t0}ms ${m}`);
 		// php-wasm types the loader's `default` as a CONSTRUCTOR, while every real php-wasm build
@@ -646,37 +666,9 @@ class PhpStatic extends PhpBase {
 			{
 				...args,
 				ini: [
-					'opcache.enable=1',
-					'opcache.enable_cli=1',
-					// /tmp, NOT /tmp/opcache, and the ordering is the whole reason. opcache reads this
-					// during PHP's MODULE STARTUP, which happens inside this constructor; the
-					// `mkdirp(FS, '/tmp/opcache')` in the mount sequence runs later, so on a binary
-					// that actually HAS opcache the directory does not exist yet and startup aborts
-					// with exit(-2). emscripten's MEMFS always creates /tmp.
-					//
-					// This was dead config until 8.5. `vendor/static-o2` (8.3, shipping) contains ZERO
-					// occurrences of `Zend OPcache`, so every line in this block was silently ignored
-					// for the life of the project; 8.5 makes opcache mandatory and they went live.
-					//
-					// MEASURED ON THE EDGE, and the file cache is WRITE-ONLY: 112 `.bin` files after a
-					// kernel boot and 1,301 across 425 directories after one render, and nothing ever
-					// reads them back. MEMFS belongs to the interpreter instance, so every cold boot
-					// starts with an empty `/tmp` and every lookup is a guaranteed miss; within one
-					// instance, three entries deleted by hand did not reappear across three further
-					// renders. So this buys nothing across boots and nothing within one.
-					//
-					// LEFT IN PLACE ANYWAY, deliberately. `file_cache_only=1` means the file cache is
-					// opcache's ONLY backing store, so removing the path may disable opcache rather
-					// than merely stop the writes -- and the CPU cost of the writes has not been
-					// measured, so there is no figure saying the removal wins. Removing opcache ini
-					// blind is exactly what produced the 8.5 exit(-2). The measurement needed is a
-					// build seam with and without it; until then this is a known no-op, not a bug.
-					'opcache.file_cache=/tmp',
-					'opcache.file_cache_only=1',
-					'opcache.validate_timestamps=0',
-					'opcache.file_cache_consistency_checks=0',
-					'opcache.max_accelerated_files=20011',
-					'opcache.optimization_level=0x7FFEBFFF',
+					// P30's seam. `src/runtime/opcache.ts` carries the three arms and why the
+					// write-only file cache is still the shipping one; `OPCACHE_MODE` selects
+					...opcacheIni(mode),
 					// a wasm-side OOM is otherwise completely silent: PHP turns the heap
 					// refusal into exit(1) with nothing on stderr (AGENT-FINDINGS A.1)
 					'memory_limit=96M'
@@ -784,6 +776,31 @@ function prefillDefault(env?: SiteEnv | null): boolean {
 	// paid default is FALSE: paid can afford to render, and an operator asking for the cold contract
 	// should get it
 	return planFlag(undefined, env?.PREFILL, false, env);
+}
+
+/**
+ * Whether an authenticated GET may be answered from a stored shell.
+ *
+ * OFF unless an operator says `1`, on both plans, and that default is the point rather than
+ * timidity: the failure mode of a wrong shell is one visitor seeing another's page, so it stays a
+ * decision an operator makes about a site they have harvested rather than something that turns
+ * itself on. `KV_OVERRIDABLE` carries it so turning it back off needs no redeploy.
+ */
+export function shellAssemblyEnabled(env?: SiteEnv | null): boolean {
+	return String(env?.SHELL_ASSEMBLY ?? '0') === '1';
+}
+
+/**
+ * Whether the password service hashes with argon2id.
+ *
+ * OFF unless an operator says `1`, on both plans. Two reasons and both are product decisions rather
+ * than caution: enabling it is a MIGRATION -- `needsRehash()` then returns true for every bcrypt
+ * hash on the site, so each account is upgraded at its owner's next login -- and a 19 MiB, two-pass
+ * hash is CPU a free-plan login invocation does not have. `KV_OVERRIDABLE` carries it so it can be
+ * turned back off without a redeploy.
+ */
+export function argon2Enabled(env?: SiteEnv | null): boolean {
+	return String(env?.ARGON2 ?? '0') === '1';
 }
 
 /** whether a generation bump re-queues the pages it just purged */
@@ -898,6 +915,10 @@ if (!is_dir($settings['config_sync_directory'])) {
 // messages say to set FALSE. It is the Drupal 12 default and the Drupal 13 behaviour, and it only
 // adds a novalidate attribute to forms -- server-side validation is untouched
 $settings['enable_html5_validation'] = false;
+// P25: whether the password service hashes with argon2id on the host. OFF unless the operator says
+// so -- turning it on rehashes every password at its owner's next login, and on the free plan a
+// 19 MiB two-pass hash is CPU a login invocation does not have
+$settings['drupflare.argon2'] = CFW_ARGON2_PLACEHOLDER;
 `;
 
 /**
@@ -1032,6 +1053,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	suppressBump?: boolean;
 	/** statement counter for PW_SQL_TRACE, so the tail can be read as a sequence */
 	sqlTraceSeq?: number;
+
+	/** how many result sets this lifetime needed a wide-integer re-read; 0 on an ordinary site */
+	wideRepairs?: number;
 	bumpCoalesced?: boolean;
 	bumps?: number;
 	lastRenderMs?: number;
@@ -1156,7 +1180,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 
 		const t0 = Date.now();
-		const php = new PhpStatic({}, this.bootDiag);
+		const php = new PhpStatic({}, this.bootDiag, opcacheMode(this.env?.OPCACHE_MODE));
 		php.addEventListener('output', (e) =>
 			this.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []))
 		);
@@ -1200,6 +1224,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// RSA/ECDSA over node:crypto, which is SYNCHRONOUS in workerd -- measured, so this needs
 		// no deferred queue and is an ordinary masked bridge like the zlib one
 		installSign(binary as unknown as Record<string, unknown>, withMask);
+		installArgon2(binary as unknown as Record<string, unknown>, withMask);
 		// BLAKE2b over blakejs; no build here has ext-sodium and no layer under it has the digest
 		// either, so this is the only place strata's content address can come from
 		installBlake2b(binary as unknown as Record<string, unknown>, withMask);
@@ -1253,7 +1278,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const override = SETTINGS_OVERRIDE.replace(
 				'CFW_SITE_ORIGIN_PLACEHOLDER',
 				JSON.stringify(this.canonicalOrigin(null))
-			);
+			).replace('CFW_ARGON2_PLACEHOLDER', argon2Enabled(this.env) ? 'true' : 'false');
 			binary.FS.writeFile(settingsPath, existing + override + salt);
 		}
 		// the path settings.php already registered but that never existed; see SERVICES_YAML
@@ -1325,6 +1350,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// openssl_sign/openssl_verify, so firebase/php-jwt and the Google auth client work
 		// unmodified; inert on a build that has the real extension
 		await this.run(`<?php ${OPENSSL_FIX}`);
+		await this.run(`<?php ${ARGON2_FIX}`);
 		// sodium_crypto_generichash*, which strata needs before its first frame is written
 		await this.run(`<?php ${SODIUM_FIX}`);
 		return this.php;
@@ -2193,6 +2219,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
         v TEXT NOT NULL
       )`
 		);
+		// P7's shared shells. KEYED BY (path, permissions_hash) rather than by path alone: two role
+		// sets render different markup outside the holes, and the hash is what tells them apart
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS cfw_shell (
+        path TEXT NOT NULL,
+        permissions_hash TEXT NOT NULL,
+        shell TEXT NOT NULL,
+        slots TEXT NOT NULL,
+        recipes TEXT NOT NULL,
+        harvested_at INTEGER NOT NULL,
+        PRIMARY KEY (path, permissions_hash)
+      )`
+		);
 		// the health ledger sits with the serve tables because `repair_state` lives in cfw_meta and
 		// the quarantine check reads it on every alarm; a lazily-created ledger would mean the first
 		// finding is the one that cannot be recorded
@@ -2309,6 +2348,142 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			reasons[verdict.reason] = (reasons[verdict.reason] ?? 0) + 1;
 		}
 		return { safe, unsafe, reasons };
+	}
+
+	/**
+	 * Harvests one path as a shareable shell, under TWO sessions of the same role set.
+	 *
+	 * TWO, and that is the authorisation rather than a robustness nicety. A marker list is a guess
+	 * about what varies between people; normalising two different visitors' renders and requiring
+	 * byte equality is a proof about THIS page, because anything person-varying the list missed
+	 * makes them differ and this refuses. The caller supplies both cookies; one cookie means one
+	 * sample and no proof, so it is rejected rather than trusted.
+	 *
+	 * Harvesting EMPTIES the `render` bin, which is what makes the holes exist at all -- see
+	 * `harvestShell()`. That is why this is an operator action and never a serving-path one.
+	 */
+	async harvestShellFor(
+		path: string,
+		cookies: readonly string[],
+		origin: string
+	): Promise<{ stored: boolean; reason: string; holes?: number; permissionsHash?: string }> {
+		if (cookies.length < 2) {
+			return { stored: false, reason: 'two sessions of one role set are required, not one' };
+		}
+		this.ensureServeTables();
+
+		const renders: string[] = [];
+		let recipes: Record<string, unknown> = {};
+		for (const cookie of cookies) {
+			const out = await this.runJson(harvestShell(path, { cookie, origin }));
+			if (out['ok'] !== true) {
+				return {
+					stored: false,
+					reason: `harvest failed: ${String(out['error'] ?? 'unknown')}`
+				};
+			}
+			renders.push(String(out['html'] ?? ''));
+			recipes = (out['recipes'] ?? {}) as Record<string, unknown>;
+		}
+
+		const agreement = normalisedShellsAgree(renders[0] as string, renders[1] as string);
+		if (!agreement.agree) return { stored: false, reason: agreement.reason };
+
+		const normalised = normaliseShell(renders[0] as string);
+		if (!normalised.ok) return { stored: false, reason: normalised.reason };
+
+		// the hash comes from a FRAGMENT render rather than from the shell, because the shell no
+		// longer contains it -- normalising it out is the whole point
+		const probe = await this.runJson(
+			renderFragments(path, recipes, { cookie: cookies[0] as string, origin })
+		);
+		const identity = (probe['identity'] ?? {}) as Identity;
+		const permissionsHash = String(identity.permissionsHash ?? '');
+		if (permissionsHash === '') {
+			return { stored: false, reason: 'no permissions hash, so the shell cannot be keyed' };
+		}
+
+		this.sql.exec(
+			`INSERT INTO cfw_shell (path, permissions_hash, shell, slots, recipes, harvested_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path, permissions_hash) DO UPDATE SET
+         shell = excluded.shell,
+         slots = excluded.slots,
+         recipes = excluded.recipes,
+         harvested_at = excluded.harvested_at`,
+			path,
+			permissionsHash,
+			normalised.shell,
+			JSON.stringify(normalised.slots),
+			JSON.stringify(recipes),
+			this.nowMs()
+		);
+		return {
+			stored: true,
+			reason: '',
+			holes: placeholderIds(normalised.shell).length,
+			permissionsHash
+		};
+	}
+
+	/**
+	 * Answers one authenticated GET from a stored shell, or null to fall through to a render.
+	 *
+	 * THE FRAGMENT RENDER COMES FIRST, which looks backwards and is not. The edge cannot know which
+	 * role set a cookie belongs to without asking PHP, so the shell cannot be selected before the
+	 * fragments are rendered -- and rendering them is what produces the permissions hash that
+	 * selects it. A miss therefore costs one fragment render (measured at 4-5 ms of gate-lane wall
+	 * clock against 20-21 for the render it would have replaced), not a wasted page.
+	 *
+	 * EVERY failure returns null. A shell that does not match, a fragment that did not render, a
+	 * hole with no fragment: all of them fall through to the ordinary render, because the
+	 * alternative to a correct page here is somebody else's page.
+	 */
+	async assembleFor(
+		path: string,
+		cookie: string,
+		origin: string
+	): Promise<{ html: string; holes: number } | null> {
+		this.ensureServeTables();
+		const candidates = this.sql
+			.exec<{ permissions_hash: string; shell: string; slots: string; recipes: string }>(
+				'SELECT permissions_hash, shell, slots, recipes FROM cfw_shell WHERE path = ?',
+				path
+			)
+			.toArray();
+		if (candidates.length === 0) return null;
+
+		// any row's recipe set is enough to render the fragments; they differ by role, and a wrong
+		// guess costs an unmatched fragment rather than a wrong page
+		const probeRecipes = JSON.parse(String(candidates[0]?.recipes ?? '{}')) as Record<
+			string,
+			unknown
+		>;
+		const rendered = await this.runJson(
+			renderFragments(path, probeRecipes, { cookie, origin })
+		);
+		if (rendered['ok'] !== true) return null;
+		const identity = (rendered['identity'] ?? {}) as Identity;
+		const row = candidates.find((c) => c.permissions_hash === identity.permissionsHash);
+		if (!row) return null;
+
+		let slots: IdentitySlot[];
+		try {
+			slots = JSON.parse(String(row.slots)) as IdentitySlot[];
+		} catch {
+			return null;
+		}
+		const filled = fillIdentity(String(row.shell), slots, identity);
+		if (!filled.ok) return null;
+
+		const fragments = Object.entries(
+			(rendered['fragments'] ?? {}) as Record<string, string>
+		).map(([id, html]) => ({ id, html }));
+		const out = assemble(filled.html, fragments);
+		// an unfilled hole is a region the visitor would simply not see, which is worse than paying
+		// for the render this was avoiding
+		if (out.unfilled.length > 0) return null;
+		return { html: out.html, holes: out.filled.length };
 	}
 
 	/**
@@ -2753,6 +2928,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 		}
 		const result = super.execSql(sql, params);
+		// P33: an INTEGER above 2^53 reaches here as an already-wrong double. Detected rather than
+		// predicted from the schema, and repaired by re-reading the SAME statement wrapped in a
+		// casting projection -- see `src/db/wide-integers.ts` for why that needs no SQL parser.
+		// Costs nothing on a site that stores no wide integers, which is every Drupal core site
+		const repaired = repairWideIntegers(sql, result.rows as WideRow[], (wrapped) => {
+			const { text, values } = toPositional(wrapped, params);
+			return this.sql.exec(text, ...values.map(bindable)).toArray() as WideRow[];
+		});
+		if (repaired.repair) {
+			result.rows = repaired.rows as typeof result.rows;
+			this.wideRepairs = (this.wideRepairs ?? 0) + 1;
+		}
 		// the tally used to be taken HERE, and that was the bug. This override is the PHP driver's
 		// entry point, so it sees Drupal's statements and nothing else -- every write the host makes
 		// on its own behalf goes through `this.sql.exec()` directly. Counting moved into
@@ -5809,6 +5996,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							await this.ctx.storage.put('authSpend', today);
 							this.authSpend = today;
 						}
+						// P7: try the stored shell before paying for a render. Never for a submission,
+						// whose response is for one submitter, and never when the lever is off
+						if (
+							authenticated &&
+							!submission &&
+							shellAssemblyEnabled(this.env) &&
+							this.php !== undefined
+						) {
+							const cookieHeader = request.headers.get('cookie') ?? '';
+							const assembled = await this.assembleFor(
+								path,
+								cookieHeader,
+								this.canonicalOrigin(url.origin)
+							);
+							if (assembled) {
+								return new Response(assembled.html, {
+									status: 200,
+									headers: new Headers({
+										'content-type': 'text/html; charset=UTF-8',
+										// a shell is shared; the ASSEMBLED page is one visitor's
+										'cache-control': 'private, no-store',
+										'x-cfw-cache': 'ASSEMBLED',
+										'x-cfw-shell-holes': String(assembled.holes),
+										'x-cfw-serve-ms': String(Date.now() - t0),
+										'x-cfw-v': CFW_HEADER_VERSION
+									})
+								});
+							}
+						}
 						// a submission is rendered with the method and body that arrived, and its
 						// response is answered from the outcome rather than from `cfw_page`, which
 						// deliberately never holds it
@@ -6051,6 +6267,38 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						rowsWritten: (this.rowsWritten ?? 0) - beforeWritten,
 						phpBooted: !!this.php
 					});
+				}
+
+				case '/__shell': {
+					// P7's operator surface. Harvests one path under TWO sessions of one role set and
+					// stores the shell only if they normalise to identical bytes; a single cookie is
+					// refused because one sample proves nothing about what varies between people
+					this.ensureServeTables();
+					const shellPath = url.searchParams.get('path') ?? '/';
+					const jars = url.searchParams
+						.getAll('cookie')
+						.map((c) => c.trim())
+						.filter((c) => c !== '');
+					if (request.method !== 'POST') {
+						return Response.json({
+							path: shellPath,
+							enabled: shellAssemblyEnabled(this.env),
+							stored: this.sql
+								.exec<{
+									path: string;
+									permissions_hash: string;
+									harvested_at: number;
+								}>('SELECT path, permissions_hash, harvested_at FROM cfw_shell')
+								.toArray()
+						});
+					}
+					await this.ensurePhp();
+					const outcome = await this.harvestShellFor(
+						shellPath,
+						jars,
+						this.canonicalOrigin(url.origin)
+					);
+					return Response.json(outcome, { status: outcome.stored ? 200 : 409 });
 				}
 
 				case '/__serve-stats': {

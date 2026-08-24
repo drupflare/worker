@@ -3304,3 +3304,341 @@ ${SCHEMA_REPAIR}
 echo json_encode($out);
 `;
 }
+
+/** what a shell harvest and a fragment fill both take */
+export type ShellRequest = {
+	/** the session cookie header the render runs under; empty renders anonymously */
+	cookie?: string;
+	/** `scheme://host[:port]`, threaded so absolute URLs are not built against localhost */
+	origin?: string;
+};
+
+/**
+ * Harvests a shareable shell and the recipes that fill its holes.
+ *
+ * P7's fragment SOURCE, and the reason it can exist at all: core NEVER decodes a placeholder id
+ * back into a render array -- `BigPipe::sendPlaceholders()` reads
+ * `$response->getAttachments()['big_pipe_placeholders']`, a map of escaped id to render array that
+ * the strategy attached on the way out. So the recipe has to be CAPTURED at harvest and replayed
+ * later; there is no parser to call. That is also the security property: a fragment fill never
+ * accepts a render array from a visitor, so `#lazy_builder` can never name a callback the visitor
+ * chose.
+ *
+ * BOTH BINS ARE EMPTIED, and `render` is the one that matters. The holes are gated by the `render`
+ * cache, not by how many renders an interpreter has served: with only `dynamic_page_cache` emptied
+ * every persona comes back holeless, and with `render` emptied too every persona comes back holed.
+ * `tests/integration/shell-normalise.spec.ts` carries the table.
+ */
+export function harvestShell(path = '/', request: ShellRequest = {}): string {
+	const safePath = JSON.stringify(String(path));
+	const cookie = String(request.cookie ?? '');
+	const origin = String(request.origin ?? '');
+
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+${PW_SERVE_INLINE}
+chdir('/drupal');
+
+$path = json_decode(${JSON.stringify(safePath)});
+$cookie = json_decode(${JSON.stringify(JSON.stringify(cookie))});
+$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
+$out = ['ok' => false, 'path' => $path];
+$clock = function () { return microtime(true) * 1000; };
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+
+  // the render bin is the gate on whether holes exist at all; emptying dynamic_page_cache alone
+  // produces a MISS with the placeholders already substituted, which reads as "no shell"
+  foreach (['dynamic_page_cache', 'render'] as $bin) {
+    try { \Drupal::cache($bin)->deleteAll(); } catch (\Throwable $e) {}
+  }
+  try {
+    $middleware = \Drupal::service('http_middleware.page_cache');
+    $rp = new \ReflectionProperty($middleware, 'cid');
+    $rp->setValue($middleware, null);
+  } catch (\Throwable $e) {}
+
+  $t0 = $clock();
+  $response = cfw_serve($path, false, 'GET', '', '', $cookie, $origin, '');
+  $out['harvestMs'] = round($clock() - $t0, 2);
+
+  // BEFORE sendContent(), which consumes them
+  $attachments = method_exists($response, 'getAttachments') ? $response->getAttachments() : [];
+  $recipes = $attachments['big_pipe_placeholders'] ?? [];
+  $out['recipes'] = $recipes;
+  $out['recipeCount'] = count($recipes);
+
+  $body = '';
+  if (method_exists($response, 'sendContent')) {
+    $depth = ob_get_level();
+    ob_start();
+    try {
+      $response->sendContent();
+      $body = (string) ob_get_clean();
+    } catch (\Throwable $e) {
+      while (ob_get_level() > $depth) { @ob_end_clean(); }
+      $body = (string) $response->getContent();
+    }
+  } else {
+    $body = (string) $response->getContent();
+  }
+
+  $out['html'] = $body;
+  $out['bytes'] = strlen($body);
+  $out['status'] = $response->getStatusCode();
+  $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
+  $out['uid'] = (int) \Drupal::currentUser()->id();
+  $out['roles'] = array_values(\Drupal::currentUser()->getRoles());
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
+}
+
+echo json_encode($out);
+`;
+}
+
+/**
+ * Fills a stored shell's holes for ONE session, without rendering the page.
+ *
+ * The context is built rather than served: a fragment request does the four things a front
+ * controller does that a placeholder render actually needs -- push the request, start the session,
+ * authenticate, match the route -- and then calls `Renderer::renderPlaceholder()` on each stored
+ * recipe. `$kernel->handle()` would do all four and then render the page, which is the cost this
+ * exists to avoid.
+ *
+ * THE ROUTE MATCH IS LOAD-BEARING and is the reason `matchRequest()` is here rather than skipped:
+ * breadcrumbs, local tasks and the active menu trail all read `current_route_match`, so without it
+ * they render for whatever route was matched last and the fragment is silently wrong rather than
+ * missing.
+ *
+ * @param recipes
+ *   The `big_pipe_placeholders` map `harvestShell()` captured. It never comes from a visitor.
+ */
+export function renderFragments(
+	path = '/',
+	recipes: Record<string, unknown> = {},
+	request: ShellRequest = {}
+): string {
+	const safePath = JSON.stringify(String(path));
+	const cookie = String(request.cookie ?? '');
+	const origin = String(request.origin ?? '');
+	const safeRecipes = JSON.stringify(JSON.stringify(recipes ?? {}));
+
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+${PW_SERVE_INLINE}
+chdir('/drupal');
+
+$path = json_decode(${JSON.stringify(safePath)});
+$cookie = json_decode(${JSON.stringify(JSON.stringify(cookie))});
+$origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
+$recipes = json_decode(${safeRecipes}, true);
+$out = ['ok' => false, 'path' => $path, 'fragments' => [], 'failed' => []];
+$clock = function () { return microtime(true) * 1000; };
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+
+  $t0 = $clock();
+
+  if (function_exists('header_remove')) { header_remove(); }
+
+  $cookies = [];
+  foreach (explode(';', $cookie) as $pair) {
+    $pair = trim($pair);
+    if ($pair === '') { continue; }
+    $split = strpos($pair, '=');
+    if ($split === false) { continue; }
+    $cookies[urldecode(substr($pair, 0, $split))] = urldecode(substr($pair, $split + 1));
+  }
+  $server = $cookie === '' ? [] : ['HTTP_COOKIE' => $cookie];
+  $url = $origin === '' ? $path : rtrim($origin, '/') . $path;
+  $request = \Symfony\Component\HttpFoundation\Request::create($url, 'GET', [], $cookies, [], $server);
+
+  // THE SUPERGLOBALS ARE NOT DECORATION HERE. session_start() reads its id out of $_COOKIE, not out
+  // of the Request object, so without this the fragment renders as whoever the interpreter served
+  // last -- measured: bob's cookie came back uid 1 because admin had rendered before him
+  $_SERVER['HTTP_HOST'] = $request->getHttpHost();
+  $_SERVER['SERVER_NAME'] = $request->getHost();
+  $_SERVER['SERVER_PORT'] = (string) $request->getPort();
+  if ($request->isSecure()) { $_SERVER['HTTPS'] = 'on'; } else { unset($_SERVER['HTTPS']); }
+  $_SERVER['REQUEST_METHOD'] = 'GET';
+  $_SERVER['REQUEST_URI'] = $path;
+  $_POST = [];
+  $_GET = [];
+  $_FILES = [];
+  $_REQUEST = [];
+  $_COOKIE = $cookies;
+  if ($cookie !== '') { $_SERVER['HTTP_COOKIE'] = $cookie; } else { unset($_SERVER['HTTP_COOKIE']); }
+
+  // AFTER the superglobals and BEFORE the session starts, which is the order cfw_serve() uses and
+  // the order that matters: the resetter closes the previous session, and a reset that runs before
+  // $_COOKIE is replaced closes one session and reopens the same one
+  try {
+    $container = \Drupal::getContainer();
+    if ($container !== null && $container->has('drupflare.request_resetter')) {
+      $GLOBALS['__pw_reset'] = $container->get('drupflare.request_resetter')->reset();
+    } elseif (function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE) {
+      @session_write_close();
+      $_SESSION = [];
+    }
+  } catch (\Throwable $e) {}
+
+  $stack = \Drupal::service('request_stack');
+  while ($stack->getCurrentRequest() !== null) { $stack->pop(); }
+  $stack->push($request);
+
+  // ids are deduplicated per RENDER, and this interpreter is where "per render" stops being
+  // automatic; without it the second fragment of a session gets id--2 suffixes
+  if (method_exists('\Drupal\Component\Utility\Html', 'resetSeenIds')) {
+    \Drupal\Component\Utility\Html::resetSeenIds();
+  }
+
+  // THE ID IS SET EXPLICITLY, and skipping it is a session HANDOVER rather than a missing session.
+  // session_write_close() leaves session_id() holding the previous visitor's id, and session_start()
+  // prefers that id over $_COOKIE -- so without this, bob's cookie loaded admin's row and the
+  // fragment rendered as uid 1 with no error anywhere. Measured; the middleware never has to do it
+  // because a real SAPI starts each request with no id at all.
+  $session = \Drupal::service('session');
+  // matched by SHAPE rather than asked of session_configuration, whose getName() is protected:
+  // Drupal names the cookie SESS/SSESS + md5 of the site url, and that is the only cookie with it
+  $sessionName = '';
+  foreach (array_keys($cookies) as $name) {
+    if (preg_match('/^S?SESS[0-9a-f]{32}$/', $name) === 1) { $sessionName = $name; break; }
+  }
+  if (function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE) {
+    @session_write_close();
+  }
+  if (isset($cookies[$sessionName])) {
+    try { $session->setId($cookies[$sessionName]); }
+    catch (\Throwable $e) { $out['setIdError'] = $e->getMessage(); }
+  }
+  $request->setSession($session);
+  try { $session->start(); } catch (\Throwable $e) { $out['sessionError'] = $e->getMessage(); }
+
+  $account = \Drupal::service('authentication')->authenticate($request);
+  if ($account !== null) { \Drupal::service('current_user')->setAccount($account); }
+  $out['uid'] = (int) \Drupal::currentUser()->id();
+
+  try {
+    $request->attributes->add(\Drupal::service('router')->matchRequest($request));
+  } catch (\Throwable $e) {
+    $out['routeError'] = get_class($e) . ': ' . $e->getMessage();
+  }
+
+  $renderer = \Drupal::service('renderer');
+  $out['contextMs'] = round($clock() - $t0, 2);
+
+  // the values normaliseShell() slots out of the stored shell, read for THIS session. Free here
+  // -- the context is already built -- and unobtainable at the edge, which has no PHP
+  $identity = ['uid' => (string) \Drupal::currentUser()->id()];
+  try {
+    $identity['permissionsHash'] = \Drupal::service('user_permissions_hash_generator')
+      ->generate(\Drupal::currentUser());
+  } catch (\Throwable $e) {}
+  try {
+    $identity['csrf'] = ['user/logout' => \Drupal::csrfToken()->get('user/logout')];
+  } catch (\Throwable $e) {}
+  $out['identity'] = $identity;
+
+  $t1 = $clock();
+  foreach ($recipes as $id => $recipe) {
+    if (!is_array($recipe)) { $out['failed'][] = $id; continue; }
+    try {
+      $elements = ['#markup' => $id, '#attached' => ['placeholders' => [$id => $recipe]]];
+      $rendered = $renderer->renderPlaceholder($id, $elements);
+      $out['fragments'][$id] = (string) ($rendered['#markup'] ?? '');
+    } catch (\Throwable $e) {
+      $out['failed'][] = $id;
+      $out['failure'][$id] = get_class($e) . ': ' . $e->getMessage();
+    }
+  }
+  $out['renderMs'] = round($clock() - $t1, 2);
+  $out['totalMs'] = round($clock() - $t0, 2);
+  $out['ok'] = count($out['failed']) === 0;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['trace'] = substr($e->getTraceAsString(), 0, 900);
+}
+
+echo json_encode($out);
+`;
+}
+
+/**
+ * Counts the files and bytes under one MEMFS directory.
+ *
+ * P30's A/B needs the WRITE VOLUME per opcache arm, and the write-only file cache is the thing
+ * being priced -- 1,301 `.bin` files across 425 directories after one render, measured on the edge.
+ * A count is a count, so unlike a millisecond it is honest from any lane (RULE 0).
+ */
+export function memfsCensus(root = '/tmp'): string {
+	const safeRoot = JSON.stringify(String(root).replace(/[^A-Za-z0-9_/.-]/g, ''));
+
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+$root = json_decode(${JSON.stringify(safeRoot)});
+$out = ['root' => $root, 'files' => 0, 'dirs' => 0, 'bytes' => 0, 'bin' => 0];
+
+try {
+  if (is_dir($root)) {
+    $it = new \RecursiveIteratorIterator(
+      new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+      \RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($it as $entry) {
+      if ($entry->isDir()) { $out['dirs']++; continue; }
+      $out['files']++;
+      $out['bytes'] += (int) $entry->getSize();
+      if (substr($entry->getFilename(), -4) === '.bin') { $out['bin']++; }
+    }
+  }
+  $out['opcacheEnabled'] = (int) ini_get('opcache.enable');
+  $out['fileCacheOnly'] = (int) ini_get('opcache.file_cache_only');
+  $out['opcacheLoaded'] = extension_loaded('Zend OPcache');
+  if (function_exists('opcache_get_status')) {
+    $status = @opcache_get_status(false);
+    $out['opcacheStatus'] = is_array($status)
+      ? ['enabled' => $status['opcache_enabled'] ?? null, 'scripts' => $status['opcache_statistics']['num_cached_scripts'] ?? null]
+      : null;
+  }
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+echo json_encode($out);
+`;
+}

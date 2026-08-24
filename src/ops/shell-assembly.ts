@@ -105,7 +105,10 @@ export type AssemblyResult = {
  * report it. Left in place, it is an empty span that BigPipe's own JavaScript can still fill.
  */
 export function assemble(shell: string, fragments: readonly Fragment[]): AssemblyResult {
-	const byId = new Map(fragments.map((f) => [f.id, f.html]));
+	// DECODED on both sides: BigPipe keys its `big_pipe_placeholders` attachment by the ESCAPED id
+	// (`&amp;`) while the span attribute decodes to the raw one, so an undecoded map matches nothing
+	// and every hole reads as unfilled
+	const byId = new Map(fragments.map((f) => [decodeEntities(f.id), f.html]));
 	const filled: string[] = [];
 	const unfilled: string[] = [];
 	const seen = new Set<string>();
@@ -126,7 +129,7 @@ export function assemble(shell: string, fragments: readonly Fragment[]): Assembl
 		html,
 		filled,
 		unfilled,
-		unmatched: fragments.map((f) => f.id).filter((id) => !seen.has(id))
+		unmatched: fragments.map((f) => decodeEntities(f.id)).filter((id) => !seen.has(id))
 	};
 }
 
@@ -180,4 +183,140 @@ export function shellDecision(input: {
 		return { assemble: false, reason: 'no fragment source, so the holes cannot be filled' };
 	}
 	return { assemble: true, reason: '' };
+}
+
+/**
+ * A value the stored shell must not carry, and where it was found.
+ *
+ * `nonce` is not identity -- views build `js-view-dom-id-<hash>` from `mt_rand()`, so it varies per
+ * RENDER rather than per person. It is slotted anyway because the safety property below is byte
+ * equality, and a nonce breaks that without meaning anything.
+ */
+export type SlotKind = 'uid' | 'permissions-hash' | 'csrf' | 'nonce';
+
+export type IdentitySlot = { name: string; kind: SlotKind; value: string };
+
+/**
+ * The patterns measured to vary between two DIFFERENT users of the SAME role, on a rendered front
+ * page, outside every BigPipe hole.
+ *
+ * Enumerated rather than guessed -- `tests/integration/shell-normalise.spec.ts` diffs alice against
+ * bob and these four classes are the entire difference. `permissionsHash` is in the list even
+ * though it did NOT vary: it varies by ROLE, so slotting it is what makes a shell harvested for one
+ * role set detectably wrong for another.
+ */
+const SLOT_PATTERNS: ReadonlyArray<{ kind: SlotKind; re: RegExp; group: number }> = [
+	{ kind: 'uid', re: /("uid":")(\d+)(")/g, group: 2 },
+	{ kind: 'permissions-hash', re: /("permissionsHash":")([0-9a-f]{64})(")/g, group: 2 },
+	// the slash before `logout` is NOT anchored, because BigPipe's appended scripts carry the same
+	// href JSON-escaped as `\/user\/logout?token=` and an anchored pattern misses every one of them
+	{ kind: 'csrf', re: /(logout\?token=)([A-Za-z0-9_-]{16,})/g, group: 2 },
+	{ kind: 'csrf', re: /(data-contextual-token=(?:\\u0022|\\?"))([A-Za-z0-9_-]{16,})/g, group: 2 },
+	{ kind: 'nonce', re: /(js-view-dom-id-)([0-9a-f]{16,})/g, group: 2 }
+];
+
+/** what a slot looks like in the stored shell; JSON-safe, URL-safe and attribute-safe at once */
+export const SLOT_PREFIX = 'cfw-slot-';
+
+export type NormaliseResult =
+	{ ok: true; shell: string; slots: IdentitySlot[] } | { ok: false; reason: string };
+
+/**
+ * Replaces every measured per-person value in a rendered page with a named slot.
+ *
+ * ## The safety property is byte equality, not this pattern list
+ *
+ * A list of markers is a guess about what varies, and a guess is what P7 refused to build against.
+ * The check that actually holds is differential: normalise the same page rendered for two different
+ * members of a role set, and REQUIRE the results to be byte-identical. Anything that varies by
+ * person and is not in the list above makes them differ, so the harvest refuses instead of storing
+ * a shell that leaks. {@link normalisedShellsAgree} is that check, and the harvest calls it.
+ *
+ * So this function may be incomplete without being unsafe. Adding a pattern turns a refusal into a
+ * shareable shell; omitting one costs a shell, never a disclosure.
+ */
+export function normaliseShell(html: string): NormaliseResult {
+	const placeholders = placeholderIds(html);
+	if (placeholders.length === 0) {
+		return { ok: false, reason: 'no placeholders, so there is nothing personalised to fill' };
+	}
+
+	const slots: IdentitySlot[] = [];
+	let shell = html;
+	for (const { kind, re, group } of SLOT_PATTERNS) {
+		shell = shell.replace(re, (whole, ...rest) => {
+			const value = String(rest[group - 1]);
+			const name = `${SLOT_PREFIX}${slots.length}`;
+			slots.push({ name, kind, value });
+			return whole.replace(value, name);
+		});
+	}
+	return { ok: true, shell, slots };
+}
+
+/**
+ * Whether two normalised shells may be stored as ONE shared artifact.
+ *
+ * Byte equality after normalisation is the whole authorisation. The slot VALUES are expected to
+ * differ -- that is what a slot is - so only the shells are compared.
+ */
+export function normalisedShellsAgree(a: string, b: string): { agree: boolean; reason: string } {
+	const left = normaliseShell(a);
+	const right = normaliseShell(b);
+	if (!left.ok) return { agree: false, reason: `left: ${left.reason}` };
+	if (!right.ok) return { agree: false, reason: `right: ${right.reason}` };
+	if (left.shell === right.shell) return { agree: true, reason: '' };
+
+	// the first divergent 80 characters, which is what makes a refusal actionable rather than a bare
+	// false; a whole-page diff is unreadable at 27 KB
+	let at = 0;
+	while (at < left.shell.length && left.shell[at] === right.shell[at]) at++;
+	return {
+		agree: false,
+		reason: `diverges at ${at}: ${JSON.stringify(left.shell.slice(at, at + 80))} vs ${JSON.stringify(right.shell.slice(at, at + 80))}`
+	};
+}
+
+/** the per-session values a fragment render reports, which is the only place they can come from */
+export type Identity = {
+	uid?: string;
+	permissionsHash?: string;
+	csrf?: Record<string, string>;
+};
+
+/**
+ * Puts one visitor's own values back into the slots.
+ *
+ * REFUSES ON A PERMISSIONS-HASH MISMATCH, which is the check that keeps a role-keyed shell inside
+ * its role set. The hash is derived from the account's permissions, so a visitor whose hash differs
+ * from the one harvested is entitled to different markup -- filling the slot anyway would hand them
+ * a shell built for somebody else's permissions.
+ */
+export function fillIdentity(
+	shell: string,
+	slots: readonly IdentitySlot[],
+	identity: Identity
+): { ok: true; html: string } | { ok: false; reason: string } {
+	let html = shell;
+	for (const slot of slots) {
+		let replacement: string | undefined;
+		if (slot.kind === 'uid') replacement = identity.uid;
+		else if (slot.kind === 'permissions-hash') {
+			if (identity.permissionsHash !== undefined && identity.permissionsHash !== slot.value) {
+				return {
+					ok: false,
+					reason: 'permissions hash differs from the shell, so this visitor is in another role set'
+				};
+			}
+			replacement = slot.value;
+		} else if (slot.kind === 'csrf') replacement = identity.csrf?.['user/logout'];
+		// a nonce is per-render and belongs to nobody, so the harvested one is as good as any
+		else replacement = slot.value;
+
+		if (replacement === undefined) {
+			return { ok: false, reason: `no value supplied for ${slot.kind} slot ${slot.name}` };
+		}
+		html = html.split(slot.name).join(replacement);
+	}
+	return { ok: true, html };
 }

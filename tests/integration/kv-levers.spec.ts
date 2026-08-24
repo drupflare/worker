@@ -121,6 +121,8 @@ describe('the KV lever seam inside the object', () => {
 		await writeSettings({
 			...PROBE,
 			SMTP_HOST: 'attacker.example',
+			REDIS_URL: 'redis://attacker.example:6379/0',
+			SYSLOG_URL: 'syslog://attacker.example:514',
 			PW_DIAGNOSTICS: '1',
 			PLAN: 'paid',
 			SITE_ID: 'somebody-else'
@@ -131,12 +133,18 @@ describe('the KV lever seam inside the object', () => {
 			const e = obj.env as Record<string, unknown>;
 			return {
 				smtp: e.SMTP_HOST ?? null,
+				redis: e.REDIS_URL ?? null,
+				syslog: e.SYSLOG_URL ?? null,
 				diag: e.PW_DIAGNOSTICS ?? null,
 				plan: e.PLAN ?? null,
 				id: e.SITE_ID ?? null
 			};
 		});
 		expect(seen.smtp, 'a KV writer must not redirect outbound mail').toBeNull();
+		// the TCP tier's endpoints are the same shape of secret: both carry credentials, and a
+		// writer who set one would receive whatever the site ships to it
+		expect(seen.redis, 'nor redirect the redis endpoint').toBeNull();
+		expect(seen.syslog, 'nor the log collector').toBeNull();
 		expect(seen.id, 'nor point the object at another site').toBeNull();
 		// PLAN and PW_DIAGNOSTICS both arrive as deployed bindings in this lane, so the claim is that
 		// KV did not CHANGE them rather than that they are absent -- the weaker "is null" assertion

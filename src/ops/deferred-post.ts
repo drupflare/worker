@@ -63,17 +63,121 @@ export class DeferredBodyTooLarge extends Error {
  * Length prefixes make the encoding injective for ANY field contents, because nothing has to guess
  * where a field ends.
  */
-export function deferredKey(method: string, url: string, body = ''): string {
+export function deferredKey(
+	method: string,
+	url: string,
+	body = '',
+	headers: Record<string, string> = {}
+): string {
 	const encoder = new TextEncoder();
 	const bytes = encoder.encode(body).length;
 	if (bytes > MAX_DEFERRED_BODY) throw new DeferredBodyTooLarge(bytes);
 	const upper = method.toUpperCase();
 	// BYTE lengths, not code-unit lengths, so the prefix describes what was actually encoded
-	return (
+	const base =
 		`${encoder.encode(upper).length}:${upper}` +
 		`${encoder.encode(url).length}:${url}` +
-		`${bytes}:${body}`
-	);
+		`${bytes}:${body}`;
+
+	// nothing appended when there are no headers, so every key minted before this parameter existed
+	// still names the same entry. The segment stays injective either way: the body's length prefix
+	// says exactly where it ends, so "absent" and "present" cannot be confused for one another
+	const canonical = canonicalHeaders(headers);
+	if (canonical.length === 0) return base;
+	let segment = `${canonical.length}:`;
+	for (const [name, value] of canonical) {
+		segment +=
+			`${encoder.encode(name).length}:${name}` + `${encoder.encode(value).length}:${value}`;
+	}
+	return base + segment;
+}
+
+/**
+ * Headers `fetch()` computes for itself. Never keyed and never sent, because sending one is either
+ * ignored or an error and keying on one fragments the cache on a value that never went out.
+ */
+const TRANSPORT_OWNED = new Set([
+	'host',
+	'content-length',
+	'connection',
+	'transfer-encoding',
+	'keep-alive',
+	'upgrade'
+]);
+
+/**
+ * SENT, but deliberately not part of the key.
+ *
+ * `user-agent` identifies the CLIENT, never the caller and never the representation, so keying on it
+ * splits one response into a row per client library. That is not theoretical: Guzzle's
+ * `StreamHandler` builds a stream context carrying its own `User-Agent` while a bare
+ * `file_get_contents()` sends none, so the two would stop sharing a row for the same URL -- which is
+ * a property `CachedFetchHandler` documents and `guzzle-handler.spec.ts` measures.
+ *
+ * **This is the ONLY category excluded for a reason other than the transport owning it, and it is
+ * deliberately small.** Under-keying is a DISCLOSURE -- serve one caller's authenticated response to
+ * another -- while over-keying only costs a fetch, so anything credential-bearing or
+ * representation-selecting stays in: `authorization`, `cookie`, `accept`, `accept-language` and
+ * every header this runtime has never heard of.
+ *
+ * A server that genuinely varies its body on `User-Agent` would be served the wrong variant here.
+ * The correct fix for that is `Vary` from the response, which needs a variant table rather than a
+ * longer deny-list; nothing has measured it as a real cost, so it is not built.
+ */
+const NOT_KEYED = new Set(['user-agent']);
+
+/**
+ * Lowercases, sorts and drops, so two equivalent header sets produce one key regardless of the order
+ * PHP happened to build them in.
+ *
+ * A duplicate name after lowercasing keeps the LAST value, matching what `Headers` does with a
+ * repeated `set()`; the alternative is two entries whose order decides the key.
+ */
+function canonicalise(
+	headers: Record<string, string>,
+	drop: (name: string) => boolean
+): Array<[string, string]> {
+	const seen = new Map<string, string>();
+	for (const [rawName, rawValue] of Object.entries(headers ?? {})) {
+		const name = String(rawName).trim().toLowerCase();
+		if (name === '' || drop(name)) continue;
+		seen.set(name, String(rawValue ?? ''));
+	}
+	return [...seen.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** the set the KEY is derived from: everything the caller chose that changes who or what is asked */
+export function canonicalHeaders(headers: Record<string, string>): Array<[string, string]> {
+	return canonicalise(headers, (n) => TRANSPORT_OWNED.has(n) || NOT_KEYED.has(n));
+}
+
+/**
+ * The set that goes on the WIRE, which is strictly larger than the keyed set.
+ *
+ * `user-agent` is here and absent from the key on purpose; dropping it from the wire too would be
+ * the P46 defect again, one header narrower.
+ */
+export function headersToSend(headers: Record<string, string>): Record<string, string> {
+	return Object.fromEntries(canonicalise(headers, (n) => TRANSPORT_OWNED.has(n)));
+}
+
+/**
+ * Narrows a host-call payload's `headers` member to a string map.
+ *
+ * PHP builds it, so anything can arrive: absent, a list, a nested array from a header sent twice.
+ * A non-string value is stringified rather than dropped, because dropping one silently sends a
+ * request without a header the caller set -- which is the defect this whole seam exists to close.
+ */
+export function requestHeaders(payload: { headers?: unknown }): Record<string, string> {
+	const raw = payload?.headers;
+	if (!raw || typeof raw !== 'object') return {};
+	const out: Record<string, string> = {};
+	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (value === null || value === undefined) continue;
+		// a repeated header arrives as a list; comma-join is how HTTP folds one anyway
+		out[name] = Array.isArray(value) ? value.map(String).join(', ') : String(value);
+	}
+	return out;
 }
 
 /** whether a queued request may be attempted again after a failure */

@@ -42,6 +42,9 @@ const PROBE: Record<KvOverridable, string> = {
 	GEN_BUCKET_MS: '2500',
 	MAIL_TRANSPORT: 'smtp',
 	MAIL_DRAIN_LIMIT: '4',
+	SHELL_ASSEMBLY: '1',
+	OPCACHE_MODE: 'file',
+	ARGON2: '1',
 	SITE_LOCATION_HINT: 'weur'
 };
 

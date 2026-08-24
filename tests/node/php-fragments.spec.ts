@@ -35,6 +35,7 @@ import {
 import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
 import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
+import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
 import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
 
 /** repo root, so the text guard below reads the real sources rather than a copy */
@@ -148,6 +149,10 @@ const FRAGMENTS: Array<[string, string]> = [
 	// same shape again, and it is the only fragment declaring a CLASS conditionally
 	// (SodiumException), which php -l checks here and nothing else would
 	['SODIUM_FIX', `<?php ${SODIUM_FIX}`],
+	// the biggest conditional class here, and it hit the backtick trap on its FIRST write --
+	// two of them in one docblock, which truncated the literal and left valid JavaScript
+	// behind. `xmlwriter-parity.spec.ts` proves it matches libxml; this proves it parses
+	['XMLWRITER_FIX', `<?php ${XMLWRITER_FIX}`],
 	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
 	// read. Both bodies carry regexes with backslash escapes, which is exactly the
 	// shape that survives a botched unescaping as valid JS and broken PHP

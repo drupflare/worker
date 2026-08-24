@@ -3642,3 +3642,64 @@ try {
 echo json_encode($out);
 `;
 }
+
+/**
+ * Runs every capability vector in one interpreter and reports what each answered.
+ *
+ * ONE BOOT FOR THE WHOLE MATRIX. A probe per script would pay the boot 28 times to answer 28
+ * booleans, and the boot is the expensive part.
+ *
+ * EACH PROBE IS WRAPPED, because a probe that throws must answer `false` rather than take the run
+ * down -- several of them deliberately reference symbols that may not exist, which is the whole
+ * point of asking.
+ *
+ * @param probes
+ *   `id` to a PHP EXPRESSION evaluating to a boolean.
+ */
+export function capabilityVectors(probes: Record<string, string> = {}): string {
+	const cases = Object.entries(probes)
+		.filter(([id]) => /^[a-z][a-z0-9_.]*$/.test(id))
+		.map(
+			([id, expr]) =>
+				`  $out[${JSON.stringify(id)}] = (function () { try { return (bool) (${expr}); } ` +
+				`catch (\\Throwable $e) { return false; } catch (\\Error $e) { return false; } })();`
+		)
+		.join('\n');
+
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$out = [];
+$meta = [];
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+  $meta['booted'] = true;
+} catch (\Throwable $e) {
+  // a probe that needs no kernel still answers; one that does will report false, which is honest
+  $meta['bootError'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+${cases}
+
+$meta['php'] = PHP_VERSION;
+$meta['intSize'] = PHP_INT_SIZE;
+$meta['extensions'] = get_loaded_extensions();
+echo json_encode(['vectors' => $out, 'meta' => $meta]);
+`;
+}

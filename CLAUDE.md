@@ -515,6 +515,14 @@ across only **7** dispatches (4.3x native -- Symfony listener resolution, not re
 is second at 73 calls/render (5.8x), and the renderer itself is the _cheapest_ at 1.6x. The top two have
 never been touched.
 
+**OPCACHE IS OFF, and the file cache it used to write was pure cost.** Measured per arm, boot plus
+one fill: `file` (what shipped) wrote 2,346 `.bin` files and 32,141,312 bytes into MEMFS while
+`opcache_get_status()` reported opcache DISABLED -- `file_cache_only=1` turns the shared-memory
+backend off, which is what that API answers about. `shm` genuinely accelerates (2,346 cached scripts,
+zero filesystem writes) and puts its arena in linear memory, reaching 191.25 MiB against a 128 MiB
+cap, so it cannot ship. `off` renders within 1 ms of `file` at n=5 and frees 5,046,272 bytes of
+linear memory plus 32,141,312 of MEMFS. `OPCACHE_MODE` is the seam and is KV-overridable.
+
 **Still do not do**: boot micro-optimisation below the heap snapshot. `-O3`, PGO and
 `ZEND_VM_KIND=SWITCH` are a few percent of a once-per-object cost, and SWITCH was measured at
 **+129,760 gzipped bytes** -- it costs bytes. Spend headroom on keeping lexbor.
@@ -523,47 +531,94 @@ never been touched.
 the failure mode this file warns about elsewhere: mbstring is +586,648 gz against ~222,000 of
 headroom, so it is 2.6x a budget it was being recommended out of. Nobody could have obeyed it.
 
-What replaced it is measured rather than argued. `bun run measure:mb-parity` runs 1,232 cases through
-the shipping polyfill stack with the real extension as the oracle: the bare polyfill diverges on 238,
-the shipping stack on **86**, and **0** of those 86 would close by wrapping another function. So the
-cheap half is finished and the rest is real Unicode work, itemised in project memory as P24. Two
-things that settle the recurring "just register the extension name" idea: 12 of the 22 functions with
-no polyfill are `mb_ereg*`, which is oniguruma, and a stub module entry **segfaults** -- both Symfony
-bootstraps branch on `extension_loaded('mbstring')`, so the stub makes `iconv_strrpos()` and
-`mb_strrpos()` call each other forever. Measured, exit 139.
+What replaced it is measured rather than argued. `bun run measure:mb-parity` runs the shipping
+polyfill stack against the real extension as the oracle, and a full sweep now runs the whole
+codepoint space rather than a 1,232-case sample:
 
-**argon2 costs ~7,000 bytes and wasm64 is accepted by workerd**, both measured 2026-08-21, and both
-are blocked by the same thing instead: linear memory is 110.6 MiB against a 128 MB cap. argon2id's
-default arena is 64 MiB; wasm64 grows `Bucket` 33% and `zend_string` 60%. So MEMORY is the gate on
-two capability items, not a size tweak. Do not re-price either against the bundle.
+| measurement                             | before | after |
+| --------------------------------------- | ------ | ----- |
+| the original 1,232 cases                | 77     | 37    |
+| Drupal core's exposure within them      | 33     | **0** |
+| `mb_strtolower` over 1,112,064 scalars  | 95     | 0     |
+| `mb_strtoupper` over 1,112,064 scalars  | 95     | 0     |
+| `mb_convert_case` titlecase, same space | 273    | 0     |
+| `mb_strwidth`, same space               | 9,733  | 0     |
 
-**`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** Measured 2026-08-23: the
-heap starts at 100,663,296 and peaks at 120,848,384 after one fill, and the peak is EXACTLY one
-geometric growth event. `INITIAL_MEMORY` sets where the series starts; `MEMORY_GROWTH_GEOMETRIC_STEP`
-(default 0.20) sets how coarsely it advances.
+**The scalar space is 1,112,064, not 194,528**, which this file and the backlog both had wrong:
+`0x110000` minus 2,048 surrogates. The tables are generated FROM mbstring and live in
+`../drupflare/src/unicode-tables.php` on the asset layer -- +1,034 gz there against +4,690 inlined
+into the bundle. `tests/unit/drupal/unicode-workerd.spec.ts` runs the casing sweep inside workerd on
+every commit as a vintage control.
+
+The 37 that remain are all invalid-byte input to `mb_str_split`, `mb_lcfirst`, `mb_trim` and
+`mb_str_pad`, none reachable from core, and they are NOT closed by sanitising harder -- measured,
+that regresses 19 cases that pass today. What survives is reproducing mbstring's error-marker model.
+
+**A TextDecoder bridge for legacy charsets is REFUTED, not deferred.** The premise was that workerd
+decodes 23 labels the polyfill refuses; measured, the polyfill decodes `Shift_JIS`, `CP936`, `CP950`
+and `CP949` from its own 55 charmaps and refused `SJIS`, `GBK`, `BIG5` and `EUC-KR` only because four
+ALIASES were missing. Six alias entries closed 35 of 70 decode cases. A host bridge would have
+replaced working charmaps with a dependency.
+
+**ARGON2 SHIPPED, and the memory objection was true of one mechanism and not of the objective.**
+What was closed is a 64 MiB arena INSIDE PHP's linear memory, where `memory.grow` has no inverse so
+the first hash raises that object's floor for life. What was not closed is argon2id: OWASP's floor is
+m=19456 KiB (19 MiB), not 64, and a HOST-side arena is garbage-collected. Measured on a deployed
+throwaway with every OS page touched, 19 MiB of transient JS allocation coexists with a 117 MiB wasm
+heap, ten times consecutively. `src/drupal/argon2-fix.ts` is the bridge, `CfwPassword` in the sibling
+decorates Drupal's `password` service, the RFC 9106 vector passes, and `ARGON2` is off by default
+because enabling it rehashes every account at its owner's next login.
+
+Two traps that cost real time there. `password_hash()` is a BUILT-IN, so the conditional-declaration
+pattern `curl-fix` and `openssl-fix` use can never bind -- Drupal's service is the only seam. And
+`new Definition()` is PRIVATE by default in Symfony while Drupal's dumper drops private services from
+the public map, so a decorator without `setPublic(true)` fails 45 specs with
+`ServiceNotFoundException: password`.
+
+**wasm64 is accepted by workerd** and is still blocked by memory: it grows `Bucket` 33% and
+`zend_string` 60%. Do not re-price it against the bundle.
+
+**`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** The heap starts at
+100,663,296; where it PEAKS is set by `MEMORY_GROWTH_GEOMETRIC_STEP`.
 
 **THE STEP IS NOT A LINK-TIME SETTING AND NEEDS NO PHASM REBUILD.** Emscripten emits it into
 `_emscripten_resize_heap` as the JavaScript literal `.2`; the `.wasm` carries no growth policy at
 all. `scripts/measure/growth-glue.ts` re-emits the glue at any step and `growth-ladder.ts` drives the
-arms -- one binary, N variants. At a step of 0 the peak IS live demand rounded to a 64 KiB page,
-which collapses the interval this file used to call unmeasured.
+arms -- one binary, N variants.
 
-| step | render peak | install peak | worst-case headroom |
-| ---- | ----------- | ------------ | ------------------- |
-| 0.20 | 120,848,384 | 120,848,384  | 12.75 MiB           |
-| 0.10 | 110,755,840 | 121,896,960  | 11.75 MiB           |
-| 0.05 | 105,709,568 | 116,588,544  | 16.81 MiB           |
-| 0.01 | 104,857,600 | 115,015,680  | 18.31 MiB           |
-| 0    | 104,726,528 | 114,229,248  | 19.06 MiB           |
+**THE SHIPPING STEP IS 0.05, NOT EMSCRIPTEN'S 0.20**, since 2026-08-23. `restore-artifacts.ts`
+emits the tuned glue AFTER verifying the pristine download against `cdn-manifest.json` (a hash that
+covered a locally-rewritten file would guarantee nothing), `src/runtime/php-binary-85.ts` imports
+`.interp/php8.5-worker.tuned.mjs`, and `vitest.config.ts` emits the same file when it is missing so
+the GATE cannot run a different growth policy from production -- that divergence has happened at this
+exact seam before.
 
-**SCORE A STEP AGAINST THE INSTALL, NEVER A RENDER.** Read the render column alone and 0.05 recovers
-14.44 MiB and 0.10 looks like a strict improvement. Neither survives the install, which peaks
-highest: 0.05 recovers 4.06 MiB and **0.10 is a REGRESSION on the shipping 0.20**. Growth compounds
-from the previous size, so a finer step can take more steps and land on a worse rung. Over-reservation
-against the binding workload is **6,619,136 bytes (6.31 MiB), 5.5% of the peak** -- not the 15.38 MiB
-the render column implies. The best measured arm recovers ~6.3 MiB, which does NOT unlock argon2
-(64 MiB default arena, ~16 MiB at the lowest sane setting) or wasm64. P16 improves headroom; it does
-not close P25 or P26.
+**SCORE A STEP AGAINST THE AUTHENTICATED RENDER, WHICH IS THE BINDING WORKLOAD.** Measured with
+opcache off, which is what ships:
+
+| step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB | grow events |
+| ---- | ---------- | ----------- | -------- | ------ | ------------------- | ----------- |
+| 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75               | 1           |
+| 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38               | 1           |
+| 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13               | 2           |
+| 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | ~7          |
+| 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44               | many        |
+
+Read the render column alone and every arm is identical; read install-and-render and the answer is
+"worth about 1%". The AUTH column is where the peak lives, and it did not exist until 2026-08-23.
+0.05 rather than 0.01 or 0 because those buy 2.75 and 3.31 MiB more while a grow event COPIES the
+heap. Grow counts are derived from the series, not counted -- RULE 0 forbids reading the CPU off a
+local clock.
+
+**A RENDER NO LONGER GROWS THE HEAP AT ALL**, on any arm. That is P30 rather than P16: opcache's
+compile-time working set was ~5 MiB of a render and **19 MiB of an install**, and none of it is spent
+now. `enable-memory.spec.ts` asserted 15-35 MB of growth for an enable and now asserts none.
+
+**AND THE FIRST VERSION OF THAT TABLE DID NOT SURVIVE ITS OWN RE-MEASUREMENT.** Taken with opcache
+still on, it read 138.31 MiB for the authenticated arm at 0.20 and concluded emscripten's default
+"does not fit inside the isolate AT ALL". True of that build, false of the one that ships. Two
+changes landed in one session and each was first measured against a tree the other had not touched.
+Neither is worth its own headline alone.
 
 **AND THE BUILD IS NOT "ONE GROWTH EVENT FROM OOM", which is what this file used to say.** The same
 arithmetic read to its end refutes it: `getHeapMax()` returns 4,294,901,760, so the module declares no
@@ -581,6 +636,38 @@ there is no arrangement that keeps `Bucket` at 24.
 because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000 did not move it. So
 "render inline on MISS" on a cold object is **boot-dominated at ~1.4 s**, not 34 ms. Still the largest
 latency win available; price it honestly.
+
+## Two capability seams landed on 2026-08-23 and both have a trap worth reading
+
+**WIDE INTEGERS ARE READ EXACTLY NOW, and it took no SQL parser.** `ctx.storage.sql` still hands
+INTEGERs back as JS doubles -- re-measured, `9007199254740993` arrives as `...992` -- so the read is
+lossy and the storage is not. The backlog scoped the fix as a schema-aware rewrite of `SELECT id`
+and then listed the shapes such a rewrite must survive, which is a parser. Unnecessary: the RESULT
+ROWS already carry the output column names, so `src/db/wide-integers.ts` re-runs the original
+statement wrapped as a subquery with those names cast to TEXT. `SELECT *`, aliases, JOINs,
+aggregates, `UNION` and bound parameters are covered by CONSTRUCTION rather than by enumeration, and
+each is asserted. Triggered by DETECTION, so a site storing no wide integers pays nothing; `WITH`,
+`PRAGMA` and non-SELECT are refused and keep the value they already had.
+
+**AUTHENTICATED SHELLS ARE HARVESTABLE ON DEMAND, and the constraint that said otherwise was an
+artifact of the arm that measured it.** `shell-derivation.spec.ts` reported that only the FIRST
+authenticated render in an interpreter carries BigPipe placeholders. It emptied no cache bins, so
+render two answered from `dynamic_page_cache`. **The gate is the `render` bin**: empty
+`dynamic_page_cache` alone and every persona comes back holeless with the placeholders substituted
+inline, which reads as "this page has no shell"; empty `render` too and every persona comes back
+holed, repeatably.
+
+The authorisation is BYTE EQUALITY, not a marker list. Two different members of one role set are
+normalised and required to be byte-identical; anything person-varying the pattern list missed makes
+them differ and the harvest refuses. Measured, exactly four classes vary: the uid in drupalSettings
+and in BigPipe's appended scripts, `/user/logout?token=`, `data-contextual-token=`, and views'
+`js-view-dom-id-` nonce. `permissionsHash` does NOT vary between two members and DOES vary by role,
+which is what keys a shell to a role set.
+
+A fragment render costs 4-5 ms against 20-22 for the render it replaces, gate-lane wall clock, ratio
+only. The recipe is captured at harvest and replayed -- core never decodes a placeholder id back into
+a render array, so there is no parser to call, and that is also the security property: a visitor's
+input never becomes a `#lazy_builder`.
 
 ## A lever is offered through KV FIRST, then a var
 

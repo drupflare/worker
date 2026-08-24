@@ -25,6 +25,14 @@ import {
 /** the server half of a mock connection, driven by the spec */
 export type MockServerEnd = {
 	readLine(timeoutMs?: number): Promise<string>;
+	/**
+	 * Reads one RFC 6587 octet-counted frame: `<length> <payload>`, with NO trailing newline.
+	 *
+	 * `readLine()` cannot be used on that framing and does not fail either -- it waits for a
+	 * delimiter that is never sent, so the spec times out instead of failing. Syslog's default
+	 * framing is octet-counting, so this is the read a syslog assertion needs.
+	 */
+	readFrame(timeoutMs?: number): Promise<string>;
 	writeLine(line: string): Promise<void>;
 	close(): Promise<void>;
 };
@@ -106,6 +114,14 @@ export function mockConnection(): MockConnection {
 		socket,
 		server: {
 			readLine: (timeoutMs) => serverReader.readLine(timeoutMs),
+			readFrame: async (timeoutMs) => {
+				const header = await serverReader.readUntil(new Uint8Array([0x20]), 16, timeoutMs);
+				const length = Number(new TextDecoder().decode(header).trim());
+				if (!Number.isInteger(length) || length < 0) {
+					throw new Error(`not an octet-counted frame: ${JSON.stringify(header)}`);
+				}
+				return new TextDecoder().decode(await serverReader.readN(length, timeoutMs));
+			},
 			writeLine: (line) => serverWriter.writeLine(line),
 			close: () => serverWriter.close()
 		},
@@ -188,6 +204,66 @@ export function smtpServer(
 				}
 			} catch {
 				// the client closed mid-script, which is how a QUIT-less teardown ends
+			}
+		})();
+		return conn.socket;
+	};
+
+	return { connect, script };
+}
+
+/** what one scripted RESP exchange recorded off the wire */
+export type RedisScript = {
+	/** every command the client sent, verb first, in order */
+	commands: string[][];
+	/** the `connect()` options the transport dialled with */
+	dialled: ConnectOptions | null;
+};
+
+/**
+ * A minimal RESP2 server, and the `connect` a spec passes as the TCP tier's dependency.
+ *
+ * Same reasoning as `smtpServer()`: replacing the SOCKET keeps edgeport's real RESP codec, the real
+ * handshake and the real reply parsing inside the test. Stubbing `runTcpExchange()` instead would
+ * assert that a stub returns what the stub was told to return.
+ *
+ * `reply` is the raw RESP for the one non-handshake command; the handshake verbs are answered `+OK`
+ * so the session reaches it. Pass an error frame (`-ERR ...`) to drive the server-said-no branch.
+ */
+export function redisServer(options: { reply?: string } = {}): {
+	connect: (opts: ConnectOptions) => Promise<CoreSocket>;
+	script: RedisScript;
+} {
+	const script: RedisScript = { commands: [], dialled: null };
+	const HANDSHAKE = new Set(['AUTH', 'SELECT', 'CLIENT', 'HELLO']);
+
+	const connect = async (opts: ConnectOptions): Promise<CoreSocket> => {
+		script.dialled = opts;
+		const conn = mockConnection();
+		void (async () => {
+			try {
+				for (;;) {
+					// a RESP command is `*N` then N `$len`/payload pairs, so the count decides how
+					// many lines belong to this command -- reading line-at-a-time would interleave
+					const header = await conn.server.readLine();
+					if (!header.startsWith('*')) return;
+					const argc = Number(header.slice(1));
+					const args: string[] = [];
+					for (let i = 0; i < argc; i++) {
+						await conn.server.readLine(); // the $len line
+						args.push(await conn.server.readLine());
+					}
+					script.commands.push(args);
+
+					const verb = (args[0] ?? '').toUpperCase();
+					if (HANDSHAKE.has(verb)) {
+						await conn.server.writeLine('+OK');
+						continue;
+					}
+					await conn.server.writeLine(options.reply ?? '$3\r\nabc');
+				}
+			} catch {
+				// the client closed, which is how a session teardown ends
 			}
 		})();
 		return conn.socket;

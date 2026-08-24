@@ -51,7 +51,26 @@ const ROM_SRC = process.env.ROM_SRC ?? '../rom';
  * wholesale would ship all of it into a 3 MiB bundle. `drupal/` happened to hold only the module
  * files, which is exactly what made it look like a safe input.
  */
-const MODULE_PARTS = ['src', '.info.yml', '.install', '.module', '.services.yml'] as const;
+/**
+ * The files a module REPO contributes to the mounted tree.
+ *
+ * An allow-list rather than a walk, because these are whole repository checkouts: walking one
+ * wholesale reaches `node_modules/`, `vendor/` and `coverage/`, every one of which contains `.php`.
+ *
+ * `.routing.yml` and `.permissions.yml` joined the list when `drupflare` grew an admin route. A
+ * route defined in a file the packer does not carry is a 404 on every deployed site while every
+ * local test passes, which is the same class of failure as a shim inside a dead guard.
+ */
+const MODULE_PARTS = [
+	'src',
+	'.info.yml',
+	'.install',
+	'.module',
+	'.services.yml',
+	'.routing.yml',
+	'.permissions.yml',
+	'.links.menu.yml'
+] as const;
 
 /**
  * Every host-side module, and where it lands in the mounted tree.

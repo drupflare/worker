@@ -23,6 +23,7 @@
 		"test:e2e:lifecycle": "bun scripts/e2e-lifecycle.ts --only=lifecycle",
 		"test:php": "php -d opcache.enable_cli=0 ../rom/tests/run-driver-suite.php ./drupal-src",
 		"test:health": "php ../drupflare/tests/health-suite.php",
+		"test:solarium": "php ../drupflare/tests/solarium-transport.php",
 		"test:coverage": "vitest run --project=workers --project=node --coverage",
 		"test:coverage:workers": "vitest run --project=workers --coverage",
 		"test:coverage:node": "vitest run --project=node --coverage",
@@ -96,7 +97,7 @@
 		"@drupflare/untarl": "^0.1.0",
 		"@noble/hashes": "2.3.0",
 		"blakejs": "^1.2.1",
-		"edgeport": "^1.0.5",
+		"edgeport": "1.0.6",
 		"fflate": "^0.8.3",
 		"fzstd": "^0.1.1",
 		"php-wasm": "0.1.0"

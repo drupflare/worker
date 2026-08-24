@@ -10,7 +10,7 @@
         "@drupflare/untarl": "^0.1.0",
         "@noble/hashes": "2.3.0",
         "blakejs": "^1.2.1",
-        "edgeport": "^1.0.5",
+        "edgeport": "1.0.6",
         "fflate": "^0.8.3",
         "fzstd": "^0.1.1",
         "php-wasm": "0.1.0",
@@ -351,7 +351,7 @@
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
-    "edgeport": ["edgeport@1.0.5", "", { "dependencies": { "@noble/ciphers": "^2.2.0", "bcrypt-pbkdf": "^1.0.2" } }, "sha512-01rlDwwtmLe5fj8GhwBlcZzSagqd3bWTonReEHlMnTJ7BAAF70CWuvjZp0AoTxX3SM8DvQfotpNzp/9gQJuGsQ=="],
+    "edgeport": ["edgeport@1.0.6", "", { "dependencies": { "@noble/ciphers": "^2.2.0", "bcrypt-pbkdf": "^1.0.2" } }, "sha512-3pvBm7JiNguC0nVspf1Pz211nE6QB1G04tN9vmfbmZ6/dpr9QRM3A1JyeQcq+Fvh5HnhD6xTUCLSmMu0XIIDgw=="],
 
     "electron-to-chromium": ["electron-to-chromium@1.5.412", "", {}, "sha512-z4rMe3esBzlzovKHj4gxJnsCGZRK5l4baUvm+gCGJBPE+gsyUMKsuU9tnEUtI1dOebXz1ytAPGjvXhmQ7rIPwA=="],
 

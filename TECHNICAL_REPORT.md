@@ -17954,3 +17954,193 @@ host-side; strata needs a one-line change of its own.
 **And P42.1 does not close sodium.** strata also calls
 `sodium_crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` at three call sites. That is a cipher,
 not a digest, shares no mechanism with this, and remains missing.
+
+---
+
+## 2026-08-23 — P7, P16, P24, P25, P27, P30 and P33
+
+Six items closed in one pass. Two of the six changed what another one had already measured, which is
+the part worth reading: every table below states which build it was taken on.
+
+### P7 — authenticated shells: the harvest constraint was an artifact
+
+`shell-derivation.spec.ts` reported that only the FIRST authenticated render in an interpreter
+carries BigPipe placeholders, and drew a hard architectural constraint from it. The spec emptied no
+cache bins, so render two answered out of `dynamic_page_cache`. Three personas, one object:
+
+| bins emptied                    | alice       | bob         | admin        |
+| ------------------------------- | ----------- | ----------- | ------------ |
+| none                            | 27,206 B, 5 | 18,234 B, 0 | 122,190 B, 6 |
+| `dynamic_page_cache`            | 18,234 B, 0 | 18,234 B, 0 | 96,151 B, 0  |
+| `dynamic_page_cache` + `render` | 27,206 B, 5 | 27,206 B, 5 | 122,191 B, 6 |
+
+The `render` bin is the gate. Emptying `dynamic_page_cache` alone produces a MISS with the
+placeholders already substituted inline, which reads as "this page has no shell" — the reading that
+produced the wrong constraint.
+
+**What varies between two people, diffed outside every hole.** Four classes and nothing else: the
+uid in `drupalSettings` and in BigPipe's appended scripts, `/user/logout?token=`,
+`data-contextual-token=`, and views' `js-view-dom-id-` nonce. `permissionsHash` did not vary between
+two members of one role set and does vary by role, so it is what keys a shell to a role set.
+
+**The authorisation is byte equality, not the marker list.** A list is a guess. `harvestShellFor()`
+renders under two sessions of one role set and stores nothing unless both normalise to identical
+bytes, so anything person-varying the list missed makes them differ and the harvest refuses. A
+single cookie is rejected: one sample proves nothing.
+
+**The fragment source.** Core never decodes a placeholder id back into a render array —
+`BigPipe::sendPlaceholders()` reads `big_pipe_placeholders` off the response attachments — so the
+recipe is captured at harvest and replayed later. That is also the security property: a visitor's
+input never becomes a `#lazy_builder`. A forged recipe naming an untrusted callback is refused by
+core's own `TrustedCallbackInterface` enforcement, asserted.
+
+| arm                                     | ms         |
+| --------------------------------------- | ---------- |
+| harvest (both bins emptied)             | 522–574    |
+| authenticated regeneration, DPC miss    | 20–22, n=5 |
+| dynamic_page_cache hit                  | 14         |
+| **fragments only** (context 1, render 3) | **4–5**    |
+
+Gate-lane wall clock, ratio only. End to end through `/__serve` the assembled response carries
+`x-cfw-cache: ASSEMBLED` with 5 holes filled in 44 ms. `SHELL_ASSEMBLY` is off by default.
+
+Two failures worth recording. `renderFragments()` first returned uid 1 for bob's cookie with no
+error anywhere: `session_start()` reads its id from `$_COOKIE`, and after `session_write_close()`
+`session_id()` still holds the previous visitor's, which `session_start()` prefers. The id is now set
+explicitly. And a jar minted by a render with no origin is invisible to a harvest that has one —
+Drupal names the cookie `SSESS` on https and `SESS` on http.
+
+### P16 — the growth step, and a table that did not survive its own re-measurement
+
+Emscripten emits `MEMORY_GROWTH_GEOMETRIC_STEP` into `_emscripten_resize_heap` as a JavaScript
+literal, so an arm is a file rewrite. Adding an AUTHENTICATED render to the ladder is what made the
+step worth changing: scored on an anonymous render and an install the answer was "worth about 1%".
+
+Measured with opcache ON, which is what shipped until this pass:
+
+| step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB |
+| ---- | ---------- | ----------- | -------- | ------ | ------------------- |
+| 0.20 | 115.25     | 115.25      | 138.31   | 138.31 | **−10.31**          |
+| 0.05 | 100.81     | 111.19      | 116.75   | 116.75 | 11.25               |
+
+Measured with opcache OFF, which is what ships now:
+
+| step | render MiB | install MiB | auth MiB | worst  | headroom | grow events |
+| ---- | ---------- | ----------- | -------- | ------ | -------- | ----------- |
+| 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75    | 1           |
+| 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38    | 1           |
+| 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13    | 2           |
+| 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88    | ~7          |
+| 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44    | many        |
+
+The first table's headline was "emscripten's default does not fit a logged-in render inside the
+isolate AT ALL". True of the build it was taken on, false of the one that ships. Two changes landed
+in one session and each was first measured against a tree the other had not touched yet.
+
+`SHIPPING_STEP` is 0.05: 0.01 and 0 buy 2.75 and 3.31 MiB more while a grow event copies the heap.
+`restore-artifacts.ts` emits the tuned glue after verifying the pristine download against
+`cdn-manifest.json`; `vitest.config.ts` emits the same file when it is missing, so the gate cannot
+run a different growth policy from production.
+
+A render no longer grows the heap on any arm. That is P30, not P16.
+
+### P30 — the opcache file cache was pure cost, and the arm that looked best cannot ship
+
+Three arms behind `OPCACHE_MODE`, boot plus one fill:
+
+| arm    | `.bin` files | MEMFS bytes | linear memory | `opcache_get_status()` | median render, n=5 |
+| ------ | ------------ | ----------- | ------------- | ---------------------- | ------------------ |
+| `file` | 2,346        | 32,141,312  | 105,709,568   | **enabled: false**     | 46 ms              |
+| `shm`  | 0            | 0           | **200,540,160** | enabled: true        | 42 ms              |
+| `off`  | 0            | 0           | 100,663,296   | —                      | 45 ms              |
+
+`file_cache_only=1` turns the shared-memory backend off, which is what `opcache_get_status()`
+answers about — so the shipping arm wrote 30.65 MiB into MEMFS for a cache that reported itself
+disabled and that nothing reads. `shm` accelerates for real and puts its arena in linear memory,
+63 MiB over the cap; the gate does not enforce that cap, which is the only reason the reading exists.
+`off` is within 1 ms of `file` and frees 5,046,272 bytes of linear memory plus 32,141,312 of MEMFS.
+
+Read the first four columns and `shm` is a strict win. The heap column is the one that binds.
+
+Consequences elsewhere: an enable on a fresh interpreter now grows the heap by **0** where it used
+to cost 15–35 MB, and the `keep=1` control no longer exceeds its absolute ceiling — it is now
+asserted as the relationship it always was, ~20 MiB between keeping the warm interpreter and
+dropping it.
+
+### P33 — exact wide integers, with no SQL parser
+
+Re-measured, unchanged: `9007199254740993` written exactly, read back as `9007199254740992`;
+`9223372036854775807` read back as `9223372036854776000`; `CAST(col AS TEXT)` exact on both.
+
+The item scoped the fix as a schema-aware rewrite of `SELECT id` and then listed the shapes such a
+rewrite must survive — `SELECT *`, aliases, expressions, JOINs, `ORDER BY`, aggregates. That is a
+parser, and it would cover the shapes it was written for and miss the rest.
+
+Unnecessary. The result rows already carry the output column names, whatever produced them, so the
+original statement is re-run wrapped as a subquery with those names cast:
+
+```sql
+SELECT "a", CAST("b" AS TEXT) AS "b" FROM ( <the original statement, untouched> )
+```
+
+Covered by construction and asserted shape by shape: `SELECT *`, alias, qualified column, JOIN,
+aggregate, `ORDER BY … LIMIT`, nested subquery, `UNION ALL`, bound parameter. Triggered by detection,
+so a site storing no wide integers pays nothing. `WITH`, `PRAGMA` and non-SELECT are refused and keep
+the value they already had.
+
+### P25 — argon2id, and where the work executes
+
+The recorded blocker was memory: a 64 MiB default arena against a 128 MB isolate. That is correct
+about one mechanism — an arena inside PHP's linear memory, where `memory.grow` has no inverse, so the
+first hash raises the object's floor for life. It is not correct about argon2id.
+
+Measured on a deployed throwaway, every OS page touched on both sides:
+
+| resident wasm         | transient JS arena    | result |
+| --------------------- | --------------------- | ------ |
+| 96 MiB                | 19 / 32 / 48 / 64 MiB | all ok |
+| 117 MiB (auth render) | 19 MiB                | ok     |
+| —                     | 19 MiB × 10 in a row  | 10/10  |
+
+The first version of that probe touched one byte per 64 KiB wasm page, making 1 OS page in 16
+resident and understating the footprint 16-fold.
+
+OWASP's floor is m=19456 KiB, t=2, p=1 — not 64 MiB. `@noble/hashes` supplies the algorithm
+(`hash-wasm` and `argon2-browser` instantiate their wasm from base64 on first call, which is request
+time, which workerd refuses). The RFC 9106 vector passes, and PHP and the host agree byte for byte on
+the same inputs.
+
+`password_hash()` is a built-in, so the conditional-declaration pattern the other shims use can never
+bind. Drupal's `password` service is the seam: `CfwPassword` decorates it, core's implementation
+becomes the inner service and still owns every bcrypt and legacy hash, and `needsRehash()` upgrades
+each account at its owner's next login. `new Definition()` is private by default in Symfony and
+Drupal's dumper drops private services from the public map — without `setPublic(true)` that failed 45
+specs with `ServiceNotFoundException: password`.
+
+Off by default: enabling it is a migration, and a 19 MiB two-pass hash is CPU a free-plan login
+invocation does not have.
+
+### P24 and P27 — Unicode
+
+The scalar space is **1,112,064**, not the 194,528 this report and the backlog both carried.
+
+| measurement                            | before | after |
+| -------------------------------------- | ------ | ----- |
+| the original 1,232 cases               | 77     | 37    |
+| Drupal core's exposure within them     | 33     | **0** |
+| `mb_strtolower` over 1,112,064 scalars | 95     | 0     |
+| `mb_strtoupper`, same space            | 95     | 0     |
+| `mb_convert_case` titlecase            | 273    | 0     |
+| `mb_strwidth`                          | 9,733  | 0     |
+
+Tables are generated from mbstring and ship on the asset layer: +1,034 gz there against +4,690
+inlined into the bundle. A workerd sweep runs on every commit as a vintage control.
+
+The 37 that remain are invalid-byte input to `mb_str_split`, `mb_lcfirst`, `mb_trim` and
+`mb_str_pad`, none reachable from core, and sanitising harder regresses 19 cases that pass today.
+
+**A TextDecoder bridge for legacy charsets is refuted rather than deferred.** The premise was that
+workerd decodes 23 labels the polyfill refuses. Measured, the polyfill decodes `Shift_JIS`, `CP936`,
+`CP950` and `CP949` from its own 55 charmaps and refused `SJIS`, `GBK`, `BIG5` and `EUC-KR` only
+because four ALIASES were missing. Six alias entries closed 35 of 70 decode cases; a host bridge
+would have replaced working charmaps with a dependency.

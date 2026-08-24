@@ -229,6 +229,43 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `MIGRATE_SELF_DRIVE`            | on                                    | whether a partial migration re-arms its own alarm                                                 |
 | `MIGRATE_CHUNKS_PER_INVOCATION` | 1 on free, all on paid                | chunks replayed per invocation                                                                    |
 
+### `OPCACHE_MODE`
+
+| value  | what it does                                             |
+| ------ | -------------------------------------------------------- |
+| `off`  | default; opcache disabled                                |
+| `file` | opcache on with the file cache as its only backing store |
+| `shm`  | opcache on with shared memory as its backing store       |
+
+The default is `off`, and the arms are measured. `file` writes 2,346 `.bin` files and 32,141,312
+bytes into the in-memory filesystem for a cache nothing ever reads, and `opcache_get_status()`
+reports opcache DISABLED on that arm because `file_cache_only=1` turns the shared-memory backend
+off. `shm` does accelerate -- 2,346 cached scripts, no filesystem writes -- and puts its arena in
+PHP's linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. `off` renders within
+1 ms of `file` and leaves 37 MiB more room.
+
+### `ARGON2`
+
+`1` hashes passwords with argon2id at m=19456 KiB, t=2, p=1, computed on the host. Default off.
+
+Turning it on is a migration: every bcrypt hash on the site reports as needing a rehash, and each
+account is upgraded at its owner's next login. Existing hashes keep working throughout; core's
+password service stays in place as the inner service and still owns bcrypt and legacy `$S$` hashes.
+Hashes are written in PHP's own `$argon2id$v=19$m=..,t=..,p=..$salt$tag` form, so a site that leaves
+this platform can verify them on any PHP with ext-argon2.
+
+A hash costs a 19 MiB transient allocation and two passes of CPU. That is more than a free-plan
+login invocation has.
+
+### `SHELL_ASSEMBLY`
+
+`1` allows an authenticated GET to be answered from a stored shell with its personalised regions
+filled at the edge. Default off, and nothing happens until a shell has been harvested for a path.
+
+A shell is harvested under two sessions of one role set and stored only when both normalise to
+identical bytes. A visitor whose permissions hash differs from the stored shell's falls through to
+an ordinary render.
+
 `HEAP_SNAPSHOT` is on and costs **31,784,960 bytes across 159 rows per site**, plus a 5,993 ms
 one-off to take the image. It buys 2,310 ms (fast mode) to 3,578 ms (slow mode) off every module
 install, n=8 per arm, present in both modes of a bimodal population.

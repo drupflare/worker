@@ -17,7 +17,7 @@ against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 > HTTPS GET of a release asset, with no Docker, no token and no PHP.
 
 The interpreter ships as a zstd frame inflated at module scope, so Cloudflare's gzip meter reads
-**2,925,701 bytes** against the free plan's 3 MiB ceiling — **220,027 to spare**, with nothing
+**2,951,158 bytes** against the free plan's 3 MiB ceiling — **194,570 to spare**, with nothing
 dropped to fit. The figure moves whenever `src/` does; `bun run release:check` prints the current
 one. Cold boot is **1,398 ms** of absolute `cpuTime` on a deployed worker, and boot work is
 saturated: cutting boot cost per fill by 20x moves the regeneration ceiling **1.1%**. Rows written
@@ -48,7 +48,7 @@ and is stated as a range or omitted.
 | **Wasm penalty**                           | **3.57x** warm / **3.94x** cold vs native PHP                                                                                                     | 1x by definition                                                     | M local |
 | **Cold start**                             | **1,398 ms** measured (n=3, and the platform is bimodal by 400-600 ms) — paid absorbs it, free amortises it off the request path                  | ~0; the box is already running                                       | M edge  |
 | **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not                                           | whatever the box does before it swaps                                | M edge  |
-| **Worker bundle**                          | **2,904,125 bytes** gzipped, **241,603 under** the 3 MiB free ceiling                                                                             | n/a                                                                  | M local |
+| **Worker bundle**                          | **2,951,158 bytes** gzipped, **194,570 under** the 3 MiB free ceiling                                                                             | n/a                                                                  | M local |
 | **First-run migration**                    | **62 chunks**, one per invocation on free, each sized to fit the 10 ms cap                                                                        | `drush si`, then hope                                                | M local |
 | **When something breaks at 3am**           | a self-repair ladder runs: L0 observe → L1 reset → L2 reconstruct → L3 reconfigure → L4 quarantine → L5 rollback, with a decaying circuit breaker | you, or someone you pay                                              | M built |
 | **Failure detection**                      | **19 tripwires** (12 host, 7 PHP) plus a mandatory boot self-test                                                                                 | uptime ping, if configured                                           | M built |
@@ -325,7 +325,7 @@ and every meter except Worker requests has roughly 5x headroom.
 
 | artifact               | size                                                                              | from                              |
 | ---------------------- | --------------------------------------------------------------------------------- | --------------------------------- |
-| Worker bundle, gzipped | **2,904,125 bytes** — **241,603 under** the 3 MiB free ceiling                    | `bun run release:check`           |
+| Worker bundle, gzipped | **2,951,158 bytes** — **194,570 under** the 3 MiB free ceiling                    | `bun run release:check`           |
 | PHP 8.5, nothing cut   | **2,659,444 bytes** zstd, from 12,218,396 raw; this is what ships                 | `interp.lock.json`                |
 | First-run migration    | **62 chunks**, 1,564 statements over 1,316 rows; one chunk per invocation on free | `assets/drupal-sql/manifest.json` |
 | Static asset tree      | **4,028 files** served by Workers Assets, never reaching the Worker               | `assets/core/`                    |
@@ -862,20 +862,25 @@ notes, not in support tickets.
   string fails in the engine.
 - **A statement caps at 100 bound parameters.**
 - **`REGEXP` does not exist**, so Views regex filters do not work.
-- **Reading an integer above 2^53 is lossy** — the cursor returns doubles. Writing is exact.
+- **Integers above 2^53** are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.
 - **PHP integers are 32-bit.** `PHP_INT_SIZE` is 4 and `PHP_INT_MAX` is 2,147,483,647, so a cast of
   epoch milliseconds or microseconds to `int` wraps modulo 2^32 rather than saturating. Code that
   stores `(int) (microtime(true) * 1000)` stores a wrapped value. `microtime()` itself returns a
   correct float.
 - **The interpreter loads 25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
   ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
-  tokenizer, uri, vrzno, xml, yaml and zlib. `mbstring` and `iconv` are supplied by Symfony's
-  polyfills, which diverge from the real extensions on 86 measured cases. There is no `gd` and no
+  tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see
+  `OPCACHE_MODE` in the configuration reference. `mbstring` and `iconv` are supplied by Symfony's
+  polyfills, which diverge from the real extensions on 37 of 1,232 measured cases and on none of the cases Drupal core reaches. There is no `gd` and no
   `pdo_sqlite`. `/php` reports the live list.
 - **`curl_*` works without `ext-curl`.** The functions are supplied over the same deferred-HTTP
   queue as the rest of outbound traffic, so an SDK that bundles its own curl transport runs
   unmodified. `curl_version()` reports `0.0.0-drupflare-shim`, and an option the shim does not
   understand is refused rather than ignored.
+- **Passwords hash with bcrypt by default, and argon2id is available.** `ARGON2=1` switches the
+  password service to argon2id at m=19456 KiB, t=2, p=1, computed on the host rather than in PHP.
+  Existing bcrypt hashes keep working and are upgraded at each account's next login. Hashes are
+  written in PHP's own encoded form, so they verify on any PHP with `ext-argon2`.
 - **Image styles are applied at delivery, not by rewriting files.** Without `gd` there is no image
   toolkit that produces derivatives, so Cloudflare Images resizes from the URL. A module that reads
   a derivative's own pixels sees the full-size image.

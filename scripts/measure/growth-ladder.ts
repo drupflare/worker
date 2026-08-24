@@ -19,7 +19,13 @@ import { emitVariant, growthLadder } from './growth-glue.js';
 const MIB = 1_048_576;
 const SPEC = 'tests/integration/heap-growth.spec.ts';
 
-type Arm = { step: number; bootedIdle: number; peak: number; installPeak: number };
+type Arm = {
+	step: number;
+	bootedIdle: number;
+	peak: number;
+	installPeak: number;
+	authPeak: number;
+};
 
 function readMarker(haystack: string[], marker: string, step: number): Record<string, number> {
 	const line = haystack.find((l) => l.includes(marker));
@@ -46,11 +52,13 @@ function runArm(step: number): Arm {
 	const lines = `${proc.stdout ?? ''}${proc.stderr ?? ''}`.split('\n');
 	const render = readMarker(lines, '[heap-profile]', step);
 	const install = readMarker(lines, '[heap-profile-install]', step);
+	const auth = readMarker(lines, '[heap-profile-auth]', step);
 	return {
 		step,
 		bootedIdle: render.bootedIdle!,
 		peak: render.afterFirstRender!,
-		installPeak: install.peak!
+		installPeak: install.peak!,
+		authPeak: auth.peak!
 	};
 }
 
@@ -68,7 +76,8 @@ for (const step of steps) {
 	arms.push(arm);
 	console.log(
 		`  step ${arm.step}: idle ${arm.bootedIdle}, render peak ${arm.peak} ` +
-			`(${mib(arm.peak)} MiB), install peak ${arm.installPeak} (${mib(arm.installPeak)} MiB)`
+			`(${mib(arm.peak)} MiB), install peak ${arm.installPeak} (${mib(arm.installPeak)} MiB), ` +
+			`auth peak ${arm.authPeak} (${mib(arm.authPeak)} MiB)`
 	);
 }
 
@@ -77,32 +86,44 @@ for (const step of steps) {
 const demand = arms.find((a) => a.step === 0)?.peak ?? null;
 
 console.log(
-	'\n| step | render peak | render MiB | over-reservation | install peak MiB | headroom to 128 MiB |'
+	'\n| step | render peak | render MiB | over-reservation | install MiB | auth MiB | worst | headroom to 128 MiB |'
 );
 console.log(
-	'| ---- | ----------- | ---------- | ---------------- | ---------------- | ------------------- |'
+	'| ---- | ----------- | ---------- | ---------------- | ----------- | -------- | ----- | ------------------- |'
 );
 for (const arm of arms) {
 	const over = demand === null ? 'n/a' : `${arm.peak - demand} (${mib(arm.peak - demand)} MiB)`;
-	// headroom is scored against the INSTALL peak, the higher of the two; scoring it against a
-	// render would report room an install has already spent
-	const worst = Math.max(arm.peak, arm.installPeak);
+	// headroom is scored against the WORST of the three workloads. Scoring it against a render
+	// reports room an install has already spent, and scoring it against those two reports room an
+	// authenticated render may have spent -- RULE 0c's second question, asked once per workload
+	const worst = Math.max(arm.peak, arm.installPeak, arm.authPeak);
 	console.log(
 		`| ${arm.step} | ${arm.peak} | ${mib(arm.peak)} | ${over} | ` +
-			`${mib(arm.installPeak)} | ${mib(128 * MIB - worst)} MiB |`
+			`${mib(arm.installPeak)} | ${mib(arm.authPeak)} | ${mib(worst)} | ${mib(128 * MIB - worst)} MiB |`
 	);
 }
 
-// On the RENDER arm a smaller step must never produce a larger peak, because every arm grows from
-// the same `INITIAL_MEMORY` to the same demand in one step. A violation there means the variant did
-// not take effect and the whole table is the control measured N times.
+// NO ARM IS MONOTONIC, and asserting it on the render arm was wrong. This exited 1 on
+// `0.01 > 0.05` (105,906,176 against 105,709,568) -- a real reading, not a broken variant: growth
+// compounds from the previous size, so a finer step can take more rungs and land higher. The same
+// path-dependence is why 0.10 regresses on 0.20 for an install. Reported, never enforced.
+//
+// What IS still a control: every arm must differ from the shipping one somewhere. All arms equal
+// means the variant did not take effect and the table is one measurement repeated N times.
 const sorted = [...arms].sort((a, b) => a.step - b.step);
-for (let i = 1; i < sorted.length; i++) {
-	const [lo, hi] = [sorted[i - 1]!, sorted[i]!];
-	if (lo.peak > hi.peak) {
-		console.error(`\nMONOTONICITY BROKEN on render: step ${lo.step} peaked ABOVE ${hi.step}.`);
-		process.exit(1);
-	}
+const distinct = new Set(arms.map((a) => `${a.peak}:${a.installPeak}:${a.authPeak}`));
+if (arms.length > 1 && distinct.size === 1) {
+	console.error('\nEVERY ARM IS IDENTICAL: the glue variant did not take effect.');
+	process.exit(1);
+}
+const renderAnomalies = sorted
+	.slice(1)
+	.filter((hi, i) => sorted[i]!.peak > hi.peak)
+	.map((hi, i) => `${sorted[i]!.step} > ${hi.step}`);
+if (renderAnomalies.length) {
+	console.log(
+		`\nnon-monotonic on RENDER (expected, path-dependent): ${renderAnomalies.join(', ')}`
+	);
 }
 
 // The INSTALL arm is a different matter and is REPORTED rather than enforced. Growth compounds from

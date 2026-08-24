@@ -1,5 +1,5 @@
 import { wasmModuleFromZstd, zstdDecoderFromWasm } from '@drupflare/cartridge/inflate';
-import PHPFactory from '../../.interp/php8.5-worker.mjs';
+import PHPFactory from '../../.interp/php8.5-worker.tuned.mjs';
 import blob from '../../.interp/php8.5.wasm.zst';
 import decoder from '../../.interp/zstddec.wasm';
 
@@ -34,6 +34,14 @@ import decoder from '../../.interp/zstddec.wasm';
  *
  * The binary lives in `.interp/` rather than `vendor/`, which holds unreproducible hand-built
  * artifacts and is never written to.
+ *
+ * THE GLUE IS THE TUNED ONE, not the pristine download, and that is a memory decision rather than a
+ * packaging one. Emscripten emits its heap-growth step into `_emscripten_resize_heap` as a
+ * JavaScript literal, and its default of 0.20 takes an AUTHENTICATED render to 138.31 MiB against a
+ * 128 MiB isolate -- measured, three workloads, `scripts/measure/growth-ladder.ts`. At 0.05 the
+ * worst of the three is 116.75 MiB. `restore-artifacts.ts` emits this file after verifying the
+ * pristine one against `cdn-manifest.json`; `tests/node/growth-glue.spec.ts` asserts the two differ
+ * at the growth site and nowhere else.
  */
 // NO `inflatedSize` cross-check here, deliberately, unlike the 8.3 seam. That binary is pinned in
 // `vendor/` and never changes, so a hardcoded size is a real guard there. This one is fetched from

@@ -32,6 +32,7 @@ import {
 	type ArchivedEntry,
 	type CdnManifest
 } from './backup-cdn';
+import { emitTunedGlue } from './measure/growth-glue.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -113,6 +114,16 @@ if (import.meta.main) {
 			process.exit(strict ? 1 : 0);
 		}
 	}
+	// AFTER verification, never instead of it. The shipping seam imports the TUNED glue, whose
+	// growth step is 0.05 rather than emscripten's 0.20 -- measured, 0.20 does not fit an
+	// authenticated render inside the 128 MiB isolate at all. See `SHIPPING_STEP`.
+	try {
+		console.log(`restore-artifacts: tuned glue -> ${emitTunedGlue(ROOT)}`);
+	} catch (e) {
+		console.warn(`restore-artifacts: could not emit the tuned glue: ${(e as Error).message}`);
+		if (strict) process.exit(1);
+	}
+
 	console.log(
 		`restore-artifacts: ${fetched} downloaded, ${held} already current` +
 			(fetched > 0 ? '' : ' (nothing to do)')

@@ -5,6 +5,8 @@ import {
 	emitVariant,
 	growthLadder,
 	SHIPPING_GLUE,
+	SHIPPING_STEP,
+	TUNED_GLUE,
 	variantPath
 } from '../../scripts/measure/growth-glue.js';
 
@@ -80,5 +82,25 @@ describe.skipIf(!have)('rewriting the shipping glue', () => {
 
 	it('throws rather than emitting a control arm when the site is gone', () => {
 		expect(() => emitVariant(0.1, '/nonexistent-root')).toThrow(/no shipping glue/);
+	});
+});
+
+describe('the tuned glue the shipping seam imports', () => {
+	it('carries SHIPPING_STEP and not emscripten default', () => {
+		// ASSERTED AGAINST THE FILE, not against a render. With `OPCACHE_MODE=off` an anonymous
+		// render no longer grows the heap at all, so nothing at runtime reveals the step any more --
+		// and the divergence this guards is exactly the one CLAUDE.md records at this seam, where
+		// the gate ran one interpreter for the life of the project while production ran another.
+		//
+		// The node lane rather than the workers one: this reads the filesystem, which workerd cannot
+		const tuned = resolve(process.cwd(), TUNED_GLUE);
+		if (!existsSync(tuned)) {
+			expect(existsSync(resolve(process.cwd(), SHIPPING_GLUE))).toBe(false);
+			return;
+		}
+		const glue = readFileSync(tuned, 'utf8');
+		expect(SHIPPING_STEP).toBe(0.05);
+		expect(glue).toContain(`oldSize*(1+${SHIPPING_STEP}/cutDown)`);
+		expect(glue).not.toContain('oldSize*(1+.2/cutDown)');
 	});
 });

@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+import { TUNED_GLUE, emitTunedGlue } from './scripts/measure/growth-glue.js';
+
 const SHIPPING_CODE = [
 	'src/site.ts',
 	'src/site-do.ts',
@@ -13,8 +15,21 @@ const SHIPPING_CODE = [
 ];
 
 const DEFAULT_SEAM = 'vendor/static-free-v1/php8.3-worker.mjs';
-const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
+const PRISTINE_GLUE = '.interp/php8.5-worker.mjs';
 const SHIPPING_WASM = '.interp/php8.5.wasm';
+
+/**
+ * The TUNED glue, which is what `src/runtime/php-binary-85.ts` imports.
+ *
+ * Emitted here when it is missing so the gate cannot run a different heap-growth policy from
+ * production. That divergence has happened before at this exact seam -- CLAUDE.md records the whole
+ * life of the project running PHP 8.3 in the test lane and 8.5 on the edge, because a wrangler
+ * alias applied to one and not the other.
+ */
+const SHIPPING_GLUE = TUNED_GLUE;
+if (!existsSync(SHIPPING_GLUE) && existsSync(PRISTINE_GLUE)) {
+	emitTunedGlue(process.cwd());
+}
 
 /**
  * The packed Drupal tree and the migration chunks, which a clean checkout cannot build.

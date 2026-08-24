@@ -94,11 +94,13 @@ describe('the PHP version the oracle claims, against the binary that ships', () 
 		// unsatisfiable by a platform that satisfies it -- and a refusal reads as a considered
 		// answer, so nothing looked broken. The twig bake and the drupal.org metadata path failed
 		// the same way. A constant compared only to itself cannot catch any of them.
+		// `.tuned` is optional in the pattern because P16 pointed the seam at the glue variant
+		// `restore-artifacts.ts` emits at `SHIPPING_STEP`; the MINOR is what this reads either way
 		const source = readFileSync(shippingSeam(), 'utf8');
-		const found = source.match(/php(\d+\.\d+)-worker\.mjs/);
+		const found = source.match(/php(\d+\.\d+)-worker(?:\.tuned)?\.mjs/);
 		expect(
 			found,
-			`no php<major>.<minor>-worker.mjs import in ${shippingSeam()}`
+			`no php<major>.<minor>-worker[.tuned].mjs import in ${shippingSeam()}`
 		).not.toBeNull();
 		const shipped = found![1];
 		expect(

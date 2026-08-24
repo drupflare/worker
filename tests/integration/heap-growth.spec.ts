@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderPage } from '../../src/drupal/site-php';
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -27,6 +28,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 
 const MIB = 1_048_576;
 const PAGE = 65_536;
+const AUTH_PASS = 'cfw-Growth-Pass-8821';
 
 /** the Durable Object isolate limit; a platform figure rather than a budget chosen here */
 const ISOLATE_LIMIT = 128 * MIB;
@@ -79,7 +81,7 @@ async function installProfile(): Promise<number> {
 		await site.fetch(
 			new Request('https://do.local/__firstrun', {
 				method: 'POST',
-				body: JSON.stringify({ adminPass: 'cfw-Growth-Pass-8821', siteName: 'Growth' }),
+				body: JSON.stringify({ adminPass: AUTH_PASS, siteName: 'Growth' }),
 				headers: { 'content-type': 'application/json' }
 			})
 		);
@@ -91,11 +93,55 @@ async function installProfile(): Promise<number> {
 	return peak;
 }
 
+/**
+ * The AUTHENTICATED render, which is the third workload and the one nobody had scored.
+ *
+ * Same RULE 0c question as the install, asked again: a step chosen against an anonymous render and
+ * an install has still not been scored against the workload P7 exists to serve. A logged-in render
+ * carries a session, a user entity, an account menu and BigPipe's whole delivery path, none of
+ * which an anonymous fill allocates.
+ */
+async function authProfile(): Promise<number> {
+	const peak = await inObject(freshSite(), async (site: ServeDo) => {
+		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+		await site.fetch(
+			new Request('https://do.local/__firstrun', {
+				method: 'POST',
+				body: JSON.stringify({ adminPass: AUTH_PASS, siteName: 'Growth' }),
+				headers: { 'content-type': 'application/json' }
+			})
+		);
+		const login = (await site.runJson(
+			renderPage('/user/login', [], false, {
+				method: 'POST',
+				body: `name=admin&pass=${encodeURIComponent(AUTH_PASS)}&form_id=user_login_form&op=Log+in`,
+				contentType: 'application/x-www-form-urlencoded',
+				cookie: ''
+			})
+		)) as Record<string, unknown>;
+		const lines = Array.isArray(login['setCookie']) ? (login['setCookie'] as string[]) : [];
+		const jar = (lines.find((l) => /^S?SESS/.test(l))?.split(';')[0] ?? '').trim();
+		// twice, because the peak has to be the workload's rather than the first render's staging
+		for (let i = 0; i < 2; i++) {
+			await site.runJson(
+				renderPage('/', ['dynamic_page_cache', 'render'], false, { cookie: jar })
+			);
+		}
+		return heapOf(site);
+	});
+
+	console.log(`[heap-profile-auth] ${JSON.stringify({ peak })}`);
+	return peak;
+}
+
 describe('the heap-growth profile, at whatever step the lane was given', () => {
-	it('grows for the first render and stays under the isolate limit', async () => {
+	it('stays under the isolate limit through the first render', async () => {
 		const heap = await profile();
 		expect(heap.bootedIdle).toBeGreaterThan(0);
-		expect(heap.afterFirstRender).toBeGreaterThan(heap.bootedIdle);
+		// >= rather than >: with `OPCACHE_MODE=off` an anonymous render completes inside
+		// `INITIAL_MEMORY` on every arm, so a strict inequality here would fail the whole ladder
+		// for the reason the ladder exists to report
+		expect(heap.afterFirstRender).toBeGreaterThanOrEqual(heap.bootedIdle);
 		expect(heap.afterFirstRender).toBeLessThanOrEqual(ISOLATE_LIMIT);
 		expect(heap.bootedIdle % PAGE, 'wasm pages are 64 KiB').toBe(0);
 		expect(heap.afterFirstRender % PAGE).toBe(0);
@@ -111,6 +157,13 @@ describe('the heap-growth profile, at whatever step the lane was given', () => {
 
 	it('survives an INSTALL, which peaks higher than a render, without exceeding the limit', async () => {
 		const peak = await installProfile();
+		expect(peak).toBeGreaterThan(0);
+		expect(peak).toBeLessThanOrEqual(ISOLATE_LIMIT);
+		expect(peak % PAGE).toBe(0);
+	}, 900_000);
+
+	it('survives an AUTHENTICATED render, the third workload, without exceeding the limit', async () => {
+		const peak = await authProfile();
 		expect(peak).toBeGreaterThan(0);
 		expect(peak).toBeLessThanOrEqual(ISOLATE_LIMIT);
 		expect(peak % PAGE).toBe(0);

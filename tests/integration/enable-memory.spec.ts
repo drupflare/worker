@@ -124,7 +124,7 @@ describe('the memory an enable costs', () => {
 	);
 
 	it(
-		'costs 15-35 MB of heap, which is what has to fit rather than a duration',
+		'costs NO heap growth on a fresh interpreter, since opcache stopped being on',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
 				await call(site, '/__migrate?all=1&prefill=0');
@@ -134,10 +134,19 @@ describe('the memory an enable costs', () => {
 			const heap = heapOf(out);
 			const grew = heap.after - heap.before;
 			expect(out['ok']).toBe(true);
-			// bounded on BOTH sides: a growth of zero would mean the instrument stopped reading the
-			// heap, which would make the ceiling assertion above pass for the wrong reason
-			expect(grew).toBeGreaterThan(15 * 1_048_576);
-			expect(grew).toBeLessThan(35 * 1_048_576);
+
+			// THIS ASSERTED 15-35 MB OF GROWTH AND NOW ASSERTS NONE, because P30 changed the
+			// answer rather than the instrument. With `OPCACHE_MODE=off` an enable on a fresh
+			// interpreter completes inside `INITIAL_MEMORY`: 96 MB in, 96 MB out. The 19 MB this
+			// used to cost was opcache's compile-time working set, and it is not spent any more
+			expect(grew).toBeLessThan(4 * 1_048_576);
+			// the instrument check the growth bound used to provide. A reading of zero from a
+			// BROKEN probe and a reading of zero from a heap that did not grow look identical, so
+			// the heap has to be a real, page-aligned, plausible figure either way
+			expect(heap.before).toBeGreaterThan(64 * 1_048_576);
+			expect(heap.after).toBeGreaterThan(64 * 1_048_576);
+			expect(heap.after % 65_536, 'wasm pages are 64 KiB').toBe(0);
+			expect(heap.after).toBeLessThan(HEAP_CEILING);
 
 			// THE OTHER HALF, and it has to be read or the ceiling above is a reading of one
 			// allocator. `LAZY_FS_BUDGET_BYTES` is 4 MB in the shipping config, and the blob and
@@ -270,21 +279,37 @@ echo json_encode([
 	it(
 		'reproduces the failing order under keep=1, which is what the deployed run did',
 		async () => {
-			const out = await inObject(freshSite(), async (site) => {
-				await call(site, '/__migrate?all=1&prefill=0');
-				await warmWithRenders(site);
-				return call(site, '/__enable?module=token&keep=1');
-			});
+			const keep = heapOf(
+				await inObject(freshSite(), async (site) => {
+					await call(site, '/__migrate?all=1&prefill=0');
+					await warmWithRenders(site);
+					return call(site, '/__enable?module=token&keep=1');
+				})
+			);
+			const dropped = heapOf(
+				await inObject(freshSite(), async (site) => {
+					await call(site, '/__migrate?all=1&prefill=0');
+					await warmWithRenders(site);
+					return call(site, '/__enable?module=token');
+				})
+			);
 
-			const heap = heapOf(out);
-			// THE CONTROL, and it has to keep failing its own ceiling for the fix above to mean
-			// anything. This lane does not enforce the isolate cap, so the assertion is that the
-			// bytes exceed what the edge would allow, not that the request failed
-			expect(heap.before).toBeGreaterThan(80 * 1_048_576);
+			// THE CONTROL, and it is now a RELATIONSHIP rather than an absolute ceiling. It used to
+			// assert `keep=1` exceeded 120 MB, which it no longer does: with opcache off the same
+			// order peaks at 116,588,544 instead. That is P30 removing part of the hazard, not the
+			// hazard disappearing -- keeping the warm interpreter still costs ~20 MB of heap that
+			// dropping it does not, and that difference is the whole reason the fix exists.
+			//
+			// An absolute would have to be re-pinned every time an unrelated memory change lands,
+			// and a re-pinned control is one nobody has seen fail
+			expect(keep.before).toBeGreaterThan(80 * 1_048_576);
 			expect(
-				heap.after,
-				'keep=1 no longer reproduces the highwater the fix exists to avoid'
-			).toBeGreaterThan(HEAP_CEILING);
+				keep.after - dropped.after,
+				`keep=1 peaked at ${Math.round(keep.after / 1_048_576)} MB against ` +
+					`${Math.round(dropped.after / 1_048_576)} MB dropped; the order no longer costs anything`
+			).toBeGreaterThan(8 * 1_048_576);
+			// and the fix still lands under the ceiling, which is the half that matters on the edge
+			expect(dropped.after).toBeLessThan(HEAP_CEILING);
 		},
 		REQUEST_TIMEOUT
 	);

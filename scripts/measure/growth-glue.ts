@@ -34,6 +34,74 @@ export function variantPath(step: number): string {
 	return `.interp/php8.5-worker.growth-${String(step).replace('.', 'p')}.mjs`;
 }
 
+/**
+ * The step the SHIPPING glue is tuned to, and why it is not emscripten's 0.20.
+ *
+ * Measured 2026-08-23 across three workloads, and re-measured after P30 turned opcache off. Both
+ * tables are here because the difference between them is the finding.
+ *
+ * WITH OPCACHE ON, which is what shipped until 2026-08-23:
+ *
+ * | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB |
+ * | ---- | ---------- | ----------- | -------- | ------ | ------------------- |
+ * | 0.20 | 115.25     | 115.25      | 138.31   | 138.31 | **-10.31**          |
+ * | 0.05 | 100.81     | 111.19      | 116.75   | 116.75 | 11.25               |
+ *
+ * WITH OPCACHE OFF, which is what ships now:
+ *
+ * | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB | grow events |
+ * | ---- | ---------- | ----------- | -------- | ------ | ------------------- | ----------- |
+ * | 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75               | 1           |
+ * | 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38               | 1           |
+ * | 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13               | 2           |
+ * | 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | ~7          |
+ * | 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44               | many        |
+ *
+ * **THE AUTHENTICATED RENDER IS THE BINDING WORKLOAD**, and adding it is what made the step worth
+ * changing at all. Scored on an anonymous render and an install the answer was "worth about 1%"; a
+ * logged-in render -- the workload P7 exists to serve -- is where the peak actually lives.
+ *
+ * **AND THE FIRST TABLE'S HEADLINE DID NOT SURVIVE ITS OWN RE-MEASUREMENT.** It read "emscripten's
+ * default does not fit a logged-in render inside the isolate AT ALL", which was true of the build it
+ * was taken on and false of the one that ships: with opcache off, 0.20 peaks at 115.25 MiB with
+ * 12.75 MiB to spare. P30 removed 23 MiB of that peak on its own. Neither change is worth its full
+ * headline alone, and quoting either in isolation overstates it.
+ *
+ * 0.05 RATHER THAN 0.01 OR 0, on the current table. Those two buy 2.75 and 3.31 MiB more, and a grow
+ * event COPIES the heap: 0.05 reaches the binding peak in 2 events against roughly 7 and
+ * unbounded-many. The grow counts are derived from the series rather than counted, and labelled that
+ * way because RULE 0 forbids reading the CPU cost off a local clock.
+ *
+ * A RENDER NO LONGER GROWS THE HEAP ON ANY ARM. 96.00 MiB across the whole column is not a broken
+ * instrument -- it is what removing opcache's compile-time working set did, and the install and auth
+ * columns still separate the arms, which is what makes the table a measurement rather than a control
+ * repeated five times.
+ */
+export const SHIPPING_STEP = 0.05;
+
+/** the tuned glue the shipping seam imports; emitted after the pristine one is sha256-verified */
+export const TUNED_GLUE = '.interp/php8.5-worker.tuned.mjs';
+
+/**
+ * Emits the shipping glue at {@link SHIPPING_STEP}.
+ *
+ * Written BESIDE the pristine file rather than over it. `restore-artifacts.ts` verifies the
+ * download against `cdn-manifest.json`, so rewriting in place would either break that check or
+ * force the hash to cover a file this repo edits -- and a hash that covers a locally-mutated file
+ * guarantees nothing.
+ */
+export function emitTunedGlue(root = process.cwd()): string {
+	const source = resolve(root, SHIPPING_GLUE);
+	if (!existsSync(source)) throw new Error(`no shipping glue at ${SHIPPING_GLUE}`);
+	const glue = readFileSync(source, 'utf8');
+	if (!STEP_SITE.test(glue)) {
+		throw new Error('growth site not found in the glue; emscripten changed its emitted form');
+	}
+	const out = resolve(root, TUNED_GLUE);
+	writeFileSync(out, glue.replace(STEP_SITE, `oldSize*(1+${SHIPPING_STEP}/cutDown)`));
+	return out;
+}
+
 /** the sizes emscripten will try, in order, for one growth event */
 export function growthLadder(oldSize: number, requestedSize: number, step: number): number[] {
 	const tries: number[] = [];

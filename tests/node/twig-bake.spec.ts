@@ -207,8 +207,11 @@ suite('the bake targeted the interpreter that ships', () => {
 		// the template class name, so a binary bump invalidates the whole cache in one step
 		const seamPath = shippingSeam();
 		const alias = await readFile(seamPath, 'utf8');
-		const found = alias.match(/php(\d+\.\d+)-worker\.mjs/);
-		expect(found, `no php<major>.<minor>-worker.mjs import in ${seamPath}`).not.toBeNull();
+		const found = alias.match(/php(\d+\.\d+)-worker(?:\.tuned)?\.mjs/);
+		expect(
+			found,
+			`no php<major>.<minor>-worker[.tuned].mjs import in ${seamPath}`
+		).not.toBeNull();
 		expect(
 			manifest.targetPhp,
 			`the cache was baked for PHP ${manifest.targetPhp} and the binary is ${found?.[1]}. Run: bun run assets:twig`

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterAll, describe, expect, it, type TestContext } from 'vitest';
 import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { vectorFor } from '../../src/ops/capability-contract';
 import { SHIPPED_CAPABILITIES } from '../../src/ops/catalog';
 import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
 import { SUSPEND_PROBE } from '../helpers/drupal-probes';
@@ -241,9 +242,170 @@ type Case = {
 	 * so the row is blocked against a measurement rather than against a constant.
 	 */
 	blocked?: string;
+	/**
+	 * A module whose own `hook_requirements()` REFUSES the install.
+	 *
+	 * A different thing from `blocked`, which covers a module that installs and then cannot do its
+	 * job. Here the installer declines, so there is no container to inspect and the observable is
+	 * the refusal itself. The value is the capability-contract vector the requirement rests on.
+	 */
+	refusesToInstall?: string;
 };
 
 const CASES: readonly Case[] = [
+	{
+		module: 'filefield_sources',
+		observable:
+			'its source plugin manager, its access check and its field-widget third-party settings',
+		ask: {
+			services: [
+				'plugin.manager.filefield_sources',
+				'access_check.filefield_sources.field',
+				'filefield_sources'
+			]
+		}
+	},
+	{
+		module: 'imageapi_optimize',
+		observable:
+			'its processor plugin manager, its settings and the pipeline config entity type',
+		ask: { services: ['plugin.manager.imageapi_optimize.processor'] },
+		config: ['imageapi_optimize.settings'],
+		types: ['imageapi_optimize_pipeline.entity_type']
+	},
+	{
+		module: 'coffee',
+		observable: 'its url generator service and the configuration entity it installs',
+		ask: { services: ['coffee.url_generator'] },
+		config: ['coffee.configuration']
+	},
+	{
+		module: 'devel',
+		observable: 'its dumper plugin manager, four event subscribers and its own menu',
+		ask: {
+			services: [
+				'devel.dumper',
+				'plugin.manager.devel_dumper',
+				'devel.route_subscriber',
+				'devel.error_subscriber'
+			]
+		},
+		config: ['devel.settings', 'system.menu.devel']
+	},
+	{
+		module: 'facets',
+		observable: 'its five plugin managers, which are the whole extension point',
+		ask: {
+			services: [
+				'plugin.manager.facets.query_type',
+				'plugin.manager.facets.widget',
+				'plugin.manager.facets.facet_source',
+				'plugin.manager.facets.processor',
+				'plugin.manager.facets.url_processor'
+			]
+		}
+	},
+	{
+		module: 'google_analytics',
+		observable: 'its visibility/accounts services and its settings config',
+		ask: {
+			services: [
+				'google_analytics.visibility',
+				'google_analytics.accounts',
+				'google_analytics.javascript_cache'
+			]
+		},
+		config: ['google_analytics.settings']
+	},
+	{
+		module: 'json_field',
+		observable: 'the field type it registers plus its own serializer normalizer',
+		// NOT `serializer.normalizer.json_item.native`. It is a TAGGED service, so the compiler
+		// folds it into the serializer's collection and drops it from the public map -- asking the
+		// container for it by id fails on a module that installed perfectly
+		ask: {
+			services: ['json_field.views'],
+			plugins: [['plugin.manager.field.field_type', 'json']]
+		}
+	},
+	{
+		module: 'key',
+		observable: 'its repository and three plugin managers',
+		ask: {
+			services: [
+				'key.repository',
+				'plugin.manager.key.key_type',
+				'plugin.manager.key.key_provider',
+				'plugin.manager.key.key_input'
+			]
+		},
+		types: ['key.entity_type']
+	},
+	{
+		module: 'linkit',
+		observable: 'its matcher and substitution managers plus the suggestion manager',
+		ask: {
+			services: [
+				'plugin.manager.linkit.matcher',
+				'plugin.manager.linkit.substitution',
+				'linkit.suggestion_manager'
+			]
+		},
+		types: ['linkit_profile.entity_type']
+	},
+	{
+		module: 'purge',
+		observable: 'its queue, processors and purgers services',
+		ask: {
+			services: [
+				'purge.queue',
+				'purge.processors',
+				'purge.purgers',
+				'purge.invalidation.factory'
+			]
+		}
+	},
+	{
+		module: 'simple_sitemap',
+		observable: 'that it REFUSES to install, on a requirement of its own',
+		// the case that forced the capability contract into `tierFor()`. Classified `cron`, scored
+		// installable, and then refused by `simple_sitemap_requirements()` over a missing
+		// `xmlwriter` extension before any of its cron or filesystem behaviour is reached
+		refusesToInstall: 'runtime.xmlwriter'
+	},
+	{
+		module: 'twig_tweak',
+		observable: 'its twig extension and the five view builders it adds',
+		ask: {
+			services: [
+				'twig_tweak.twig_extension',
+				'twig_tweak.block_view_builder',
+				'twig_tweak.region_view_builder',
+				'twig_tweak.entity_view_builder'
+			]
+		}
+	},
+	{
+		module: 'webform',
+		observable: 'its five plugin managers, its submission table and its shipped option sets',
+		ask: {
+			services: [
+				'plugin.manager.webform.element',
+				'plugin.manager.webform.handler',
+				'plugin.manager.webform.variant',
+				'plugin.manager.webform.exporter'
+			]
+		},
+		tables: ['webform'],
+		config: ['webform.webform_options.months']
+	},
+	{
+		module: 'xmlsitemap',
+		observable: 'its generator and link storage, its table and its settings',
+		ask: { services: ['xmlsitemap_generator', 'xmlsitemap.link_storage'] },
+		tables: ['xmlsitemap'],
+		config: ['xmlsitemap.settings']
+	},
 	{
 		module: 'address',
 		observable: 'field types address/address_country/address_zone, address.country_repository',
@@ -653,6 +815,31 @@ describe('contrib modules, enabled against a real site', () => {
 					verdict: 'failed'
 				};
 				report.push(row);
+
+				if (one.refusesToInstall) {
+					// the refusal IS the observable. Asserted on `requirementsPass` rather than on
+					// `ok` alone, so an install that failed for an unrelated reason cannot pass as
+					// this module declining on its own requirement
+					expect(
+						out.enabled['ok'],
+						`${one.module} installed, and it was expected to refuse on ${one.refusesToInstall}`
+					).toBe(false);
+					expect(
+						out.enabled['requirementsPass'],
+						`${one.module} failed for something other than its own requirements: ${JSON.stringify(out.enabled).slice(0, 300)}`
+					).toBe(false);
+					const vector = vectorFor(one.refusesToInstall);
+					expect(
+						vector,
+						`${one.refusesToInstall} is not a contract vector`
+					).toBeDefined();
+					expect(
+						vector?.expected,
+						`${one.module} is blocked on ${one.refusesToInstall}, which the runtime now satisfies`
+					).toBe(false);
+					row.verdict = 'blocked';
+					return;
+				}
 
 				expect(
 					out.enabled['ok'],

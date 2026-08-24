@@ -84,7 +84,39 @@ describe('Drupal mail reaches a real SMTP server', () => {
 			);
 		}
 		skip = worker || !rig;
-		if (!skip) await purge();
+		if (skip) return;
+		await purge();
+
+		// UID 1 NEEDS AN ADDRESS OR DRUPAL PRODUCES NOTHING TO SEND, and that was the gap this lane
+		// carried: the form answered 303 with `x-cfw-cache: RENDER`, the queue stayed empty, and
+		// there was nothing to distinguish "the transport is broken" from "there was no recipient".
+		// `/firstrun` refuses a second run, so an already-configured site keeps whatever it has and
+		// the assertion below is what reports it
+		await fetch(`${ENDPOINT}/firstrun?site=${encodeURIComponent(SITE)}`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				adminMail: `${MAILBOX}@localhost`,
+				siteName: 'Mail E2E',
+				adminPass: `pw-${Math.random().toString(36).slice(2, 12)}`
+			}),
+			signal: AbortSignal.timeout(60_000)
+		}).catch(() => undefined);
+	});
+
+	/**
+	 * The precondition, asserted rather than assumed.
+	 *
+	 * Every failure below reads identically when uid 1 has no address: the form is accepted and no
+	 * message arrives. Reporting that as a transport failure sent a previous pass looking at the
+	 * socket for something that was never dispatched.
+	 */
+	it('has a recipient to send to', async () => {
+		if (skip) return;
+		const res = await fetch(`${ENDPOINT}/serve-stats?site=${encodeURIComponent(SITE)}`, {
+			signal: AbortSignal.timeout(30_000)
+		});
+		expect(res.ok, 'serve-stats did not answer, so the site is not reachable').toBe(true);
 	});
 
 	/**

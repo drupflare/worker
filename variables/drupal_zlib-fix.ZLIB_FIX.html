@@ -12,7 +12,7 @@
 <li><a href="" aria-current="page">ZLIB_FIX</a></li></ul>
 <h1>Variable ZLIB_FIX<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">ZLIB_FIX</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-comment tsd-typography"><p>The PHP half: the six functions and the three encoding constants.</p>
+<div class="tsd-comment tsd-typography"><p>The PHP half: the six gz* functions, the three encoding constants, and <code>cfw_zlib_dict()</code>.</p>
 <p>Defined only when the bridge resolves. Returning FALSE
 from every call on a host with no bridge would let <code>AssetDumper</code> write a
 zero-byte <code>.gz</code> next to a real <code>.css</code> and serve it as gzip, which is a broken
@@ -31,9 +31,15 @@ bridge or off the served path: <code>gzopen()</code> and the rest of the stream 
 wrapper named by <code>Core\Command\DbImportCommand</code>. A stream wrapper is a
 separate mechanism from a function, and none of the three runs while a page is
 being served.</p>
+<p><code>cfw_zlib_dict()</code> IS DECLARED OUTSIDE THE EXTENSION GUARD, and that is the whole reason the
+fragment is now in two blocks. The shipping binary DOES load ext-zlib -- measured, it is one of
+the 25 extensions <code>get_loaded_extensions()</code> reports -- so everything under
+<code>!extension_loaded('zlib')</code> is inert on the edge and exists for a <code>WITH_ZLIB=0</code> build. A
+dictionary is not something ext-zlib provides at any version, so a capability declared under
+that guard would have been a function nothing could ever reach.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/drupal/zlib-fix.ts#L160">src/drupal/zlib-fix.ts:160</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/drupal/zlib-fix.ts#L212">src/drupal/zlib-fix.ts:212</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -13,7 +13,7 @@
 <h1>Type Alias WriteTally</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">WriteTally</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#bytable">byTable</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswritten">rowsWritten</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#shapes">shapes</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#statements">statements</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#statementsbytable">statementsByTable</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L29">src/db/write-tally.ts:29</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L29">src/db/write-tally.ts:29</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,24 +36,24 @@
 <div class="tsd-comment tsd-typography"><p>rows written per table, and <code>?unattributed</code> for a write whose target could not be parsed</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L31">src/db/write-tally.ts:31</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L31">src/db/write-tally.ts:31</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswritten"><span>rows<wbr/>Written</span><a href="#rowswritten" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWritten</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L48">src/db/write-tally.ts:48</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L48">src/db/write-tally.ts:48</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="shapes"><code class="tsd-tag">Optional</code><span>shapes</span><a href="#shapes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">shapes</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span></div>
 <div class="tsd-comment tsd-typography"><p>distinct statement shapes and their counts, capped at <a href="../variables/db_write-tally.TALLY_SHAPE_LIMIT.html" class="tsd-kind-variable">TALLY_SHAPE_LIMIT</a></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L33">src/db/write-tally.ts:33</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L33">src/db/write-tally.ts:33</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="statements"><span>statements</span><a href="#statements" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">statements</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L47">src/db/write-tally.ts:47</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L47">src/db/write-tally.ts:47</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="statementsbytable"><span>statements<wbr/>By<wbr/>Table</span><a href="#statementsbytable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">statementsByTable</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span></div>
@@ -67,7 +67,7 @@ nobody measured -- the exact error this project keeps finding.</p>
 that wrote nothing still happened.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/db/write-tally.ts#L46">src/db/write-tally.ts:46</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/write-tally.ts#L46">src/db/write-tally.ts:46</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -16,7 +16,10 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="verdictfor"><span class="tsd-kind-call-signature">verdictFor</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">conflicts</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_packagist.Conflict.html" class="tsd-signature-type tsd-kind-type-alias">Conflict</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;unverifiable&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;installable&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocked&quot;</span><a href="#verdictfor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>turns a set of conflicts into the single verdict word</p>
+<div class="tsd-comment tsd-typography"><p>Turns a set of conflicts into the single verdict word.</p>
+<p><code>polyfilled</code> and <code>unverifiable</code> both land on <code>unverifiable</code> rather than getting a word of their
+own: the vocabulary an operator reads has three states and a fourth would need its own meaning
+everywhere it is rendered. The <code>detail</code> on each conflict is where the difference lives.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +27,7 @@
 <li><span><span class="tsd-kind-parameter">conflicts</span>: <a href="../types/ops_packagist.Conflict.html" class="tsd-signature-type tsd-kind-type-alias">Conflict</a><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">&quot;unverifiable&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;installable&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocked&quot;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/ops/packagist.ts#L214">src/ops/packagist.ts:214</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/packagist.ts#L267">src/ops/packagist.ts:267</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

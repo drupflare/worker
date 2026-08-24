@@ -24,8 +24,9 @@ tell which ones to distrust.
 - Before quoting any performance number, read
   [THE MEASUREMENT RULES THIS DOCUMENT PAID FOR](#the-measurement-rules-this-document-paid-for).
   The single most important one: **an absolute CPU figure comes only from `cpuTime` on a
-  deployed worker**, because in-PHP `microtime()` and JS `Date.now()` both return 0 on the
-  edge.
+  deployed worker**, because in-PHP `microtime()` and JS `Date.now()` do not ADVANCE on the
+  edge, so every delta taken from them reads 0. The absolute is a real epoch -- see
+  [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width).
 
 ---
 
@@ -36,7 +37,7 @@ tell which ones to distrust.
 Drupal 11.4.5 renders on Cloudflare Workers with PHP executing as WebAssembly inside a Durable
 Object, using that object's own SQLite as the database. On 2026-08-14 a throwaway deployment served a
 real Drupal page -- 12,304 bytes of Olivero markup, `<title>Welcome! | CFW Bench</title>` -- from a
-bundle that measures **2,924,073 gzipped bytes on 2026-08-21, 221,655 under the free plan's 3 MiB
+bundle that measures **2,925,701 gzipped bytes on 2026-08-23, 220,027 under the free plan's 3 MiB
 ceiling**.
 
 That figure has now been wrong in three documents at once, each quoting a different stale number from
@@ -151,20 +152,24 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
 7. **Report the meters that are blank**, including the Cloudflare Images cap of 5,000 transforms per
    month, which fails rather than bills and which nothing currently counts.
 8. **Do not do boot work.** JSPI, heap restore and always-warm objects are worth ~1.1%, because the
-   fill window amortises boot. The 8.5 result does not reorder this. **One refinement**: JSPI as a
-   CAPABILITY unlock is a different question from JSPI as a performance lever, and only the
-   performance half is settled. Score it by how many contrib modules need a synchronous outbound
-   call inside one render.
-   **The count moved on 2026-08-18 and it moved the wrong way for deferring this.** Against the
-   shipped contrib table it is 1 of 30, which reads as a corner case. Against `earth-app/mantle2` --
-   the one real workload available, measured from its `composer.json` on disk -- it is **1 of that
-   site's 5 contrib dependencies**, and the module is `openid_connect`: an authorization-code
-   exchange must POST to the IdP's token endpoint and have the answer before it can finish the login
-   response. A site whose users cannot log in is not partially working, and the deferred-queue
-   workaround does not reach it -- a token exchange cannot return a placeholder and fill later.
+   fill window amortises boot. The 8.5 result does not reorder this.
+   **THE CAPABILITY HALF IS NOW SETTLED TOO, and it closes JSPI rather than scheduling it.** This
+   item used to say only the performance half was decided and to score the rest by how many contrib
+   modules need a synchronous outbound call inside one render. That count is now **zero of 62
+   classified rows**: `search_api_solr` was the last one and it left on 2026-08-24, measured --
+   Solarium's transport is interceptable above the adapter, so it is a deferred-tier module with no
+   module changes at all.
+   The decisive argument is not the count. **`WITH_OPENSSL=0`**, so PHP here cannot verify an RS256
+   `id_token` even if JSPI handed it one synchronously, and an unverified `id_token` is an
+   unauthenticated login. The host has `crypto.subtle`. So host-side pre-exchange is not the cheap
+   route to `openid_connect`, it is the only route, and JSPI does not reach the outcome at any price.
+   And the price rose after RULE 0d: duration is wall clock, `cpuTime` understates it 2,612x, a
+   suspended render trips two hibernation disqualifiers at once and stalls every other request to
+   that site behind one object.
    Two of mantle2's other four (`smtp`, `redis`) are SUBSTITUTED rather than blocked, by `CfwMail`
    and `CfwCacheBackendFactory`; those are dependencies this platform removes rather than
-   compatibility it owes.
+   compatibility it owes. `smtp`'s own `smtp.settings` now feeds the host transport, so a site that
+   configured the module needs no Worker vars for mail.
 9. **Close the residual mbstring divergences.** `bun run measure:mb-parity` scores the shipping
    polyfill stack against the real extension over 1,232 cases: the bare polyfill diverges on 238, the
    shipping stack on **77**, and Drupal core can reach **33**. Item 8's rule applies here too -- the
@@ -181,13 +186,29 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
    is +586,648 gz of bundle -- and neither is faking it: a stub module entry segfaults, because both
    Symfony bootstraps branch on `extension_loaded('mbstring')` and the stub makes `iconv_strrpos()`
    and `mb_strrpos()` recurse into each other. Measured, exit 139.
-10. **`INITIAL_MEMORY` is the gate on two capability items, not a size tweak.** Measured 2026-08-21:
-    argon2 costs only **~7,000 bytes** in the shipping zstd frame, and workerd **does** accept a
-    memory64 module through a `CompiledWasm` import -- with Emscripten's wasm64 being LP64, so it
-    really would take `PHP_INT_SIZE` to 8 and retire the 2038 warning. Both die on the same fact:
-    linear memory plateaus at 110.6 MiB against a 128 MB cap. argon2id's default arena is 64 MiB, and
-    wasm64 grows `Bucket` by 33% and `zend_string` by 60%. Neither is blocked by bytes, by a vendor,
-    or by the platform. Bringing the heap to ~90 MB unblocks both at once.
+10. **BOTH ITEMS THIS USED TO GATE HAVE MOVED, AND NEITHER MOVED FOR THE REASON WRITTEN HERE.** The
+    text was "`INITIAL_MEMORY` is the gate on two capability items", and its own two examples now
+    refute it.
+    **argon2 SHIPPED** (2026-08-23). The closed mechanism was a 64 MiB arena inside PHP's linear
+    memory, where `memory.grow` has no inverse; OWASP's floor is 19 MiB and a HOST-side arena is
+    garbage-collected. 19 MiB of transient JS allocation coexists with a 117 MiB wasm heap, measured
+    ten times consecutively on a deployed throwaway.
+    **wasm64 FITS, MEASURED END TO END** (2026-08-24). phasm run 32690008621; at the shipping
+    `--ultra -22` it is 2,720,787 against wasm32's 2,659,563, so **+61,224 zstd bytes into 220,027
+    of headroom**. `PHP_INT_SIZE` is **8** on a running interpreter, which is the capability the
+    item exists for. At the shipping growth step of 0.05 the authenticated render peaks at
+    **123.00 MiB against the 128 MiB cap** -- +17.12 MiB over wasm32's 105.88, a blended +16.2%
+    against a +20.9% break-even. At emscripten's default 0.20 it reads 138.44 MiB and does not fit,
+    so the step has to match what ships or the comparison is against a different policy.
+    Getting there took three separate silent Number/BigInt defects: vrzno's `ccall` types in both
+    directions, its `EM_ASM` argument bindings, and **emscripten's own `growMemory`**, which passes
+    a Number to `wasmMemory.grow` and swallows the throw in a bare `catch` -- so every grow failed,
+    PHP exited(1) with nothing on stderr, and a heap that COULD NOT grow read as a heap that did not
+    need to. Whether to ship it is now a product call: 5.00 MiB of margin is thin, and P28 buys the
+    same integer width on wasm32 far cheaper.
+    And `INITIAL_MEMORY` was never the lever anyway: it sets where the heap starts, not where it
+    peaks. `MEMORY_GROWTH_GEOMETRIC_STEP` does, it lives in the glue as a JavaScript literal, and it
+    ships at 0.05.
 11. **Eight items opened 2026-08-21 from an external review, tracked as P27-P34 in project memory.**
     The three worth naming here: an **authenticated workload matrix**, which is the input items 3 and
     8 are both already waiting on and which nothing has measured; **64-bit `zend_long` on 32-bit
@@ -210,6 +231,111 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     show it. It also caps item 3's render replicas -- two always-warm objects exceed the daily
     allowance before serving anything -- which is a second, independent reason not to keep objects
     warm after item 8 discarded it on boot grounds. Tracked as P35 in project memory.
+13. **The POST-swallowed-by-the-cache regression is no longer guarded on a clean checkout.** The
+    serving-lane fix made a non-GET fall THROUGH to the gated lane, which means those assertions now
+    end in a real render, so on 2026-08-22 three specs moved into `ARTIFACT_SPECS` and eight
+    assertions became release-lane only. The behaviour under them is the worst defect this project
+    has shipped -- every password reset silently swallowed, found by e2e and never by the gate. The
+    assertions are about ROUTING rather than about rendered output, so a seam that exposes the lane
+    decision over a stubbed render would bring them back. **Falsify any such seam by reintroducing
+    the read-order defect and requiring red with no pack present**: the spec that used to cover this
+    asserted `cache === 'HIT'` and was pinning the bug in place, so a test written from the current
+    implementation would agree with it and prove nothing. Tracked as P38 in project memory.
+
+14. **Every `Drupal::httpClient()` call failed on the shipping build, and the stream wrapper was not
+    the reason. FIXED 2026-08-22.** Found in a `wrangler dev` log: `/admin/reports/status` logs
+    `Failed to retrieve security advisory data.` with
+    `RequestException: An error was encountered while creating the response`. The trace carries a
+    LIVE `Resource id`, so `HttpsStreamWrapper::stream_open()` fetched successfully; the failure is
+    `StreamHandler.php:510` reading `$http_response_header`, which **a userland stream wrapper
+    cannot populate** -- probed with a fake wrapper registered over `https`: `fopen` returns a
+    handle, `isset($http_response_header)` is FALSE, and `wrapper_data` is the wrapper object. PHP
+    8.4's supported replacement `http_get_last_response_headers()` answers NULL for the same reason,
+    measured on 8.5.7, so the gap is structural in both directions. `HeaderProcessor::parseHeaders([])`
+    then throws. This falsified `DrupflareServiceProvider.php:62-65`, which stated that the wrapper
+    fallback "is the behaviour that actually works today" -- true for `file_get_contents()`, false
+    for all ten Guzzle seams in the table below.
+
+    **The fix is a handler, not a `StreamHandler` subclass**, and the reason is worth recording:
+    `createStream()` and `lastHeaders` are both PRIVATE, so a subclass cannot override the line that
+    fails and would have to reimplement `__invoke()` around 200 lines of context building.
+    `Drupal\drupflare\Http\CachedFetchHandler` reads the SAME `cfwFetch` capability the wrapper opens
+    through -- cache hit gives a real PSR-7 response, a miss arms the queue and rejects with
+    `ConnectException`. A 202 was rejected as the default: Guzzle's `http_errors` middleware does not
+    raise on 2xx, so `SecurityAdvisoriesFetcher` would `Json::decode()` the deferral note and iterate
+    it. `tests/integration/guzzle-handler.spec.ts` drives real Guzzle on the real interpreter and
+    **keeps core's handler as a control that must still fail**. Was P39.
+
+15. **There is no way to add a custom module to a running site, and the loader for one already
+    exists.** Drupal's value is that it is extensible; a host that cannot accept a custom module is a
+    demo. `mountDriver()` (`cartridge/src/mount.ts:351-369`) is 18 lines that fetch a
+    `Record<path, source>` over ASSETS and write it into MEMFS, and it already mounts two whole
+    modules at `modules/custom/`. What is missing is that the map is baked from a hardcoded list, and
+    that the PSR-4 roots are written down in **three** places
+    (`gen-driver-assets.ts:83-87`, `site-php.ts:2176-2179`, `site-do.ts:850-867`). One correction
+    worth stating: PHP costs **zero** bundle bytes because the pack is fetched rather than imported,
+    so the 3 MiB ceiling does not govern module source -- only a module shipping its own JavaScript
+    would touch it. Two lanes are needed because **composer never runs on the edge**: a build lane for
+    composer-managed trees (Workers Builds covers GitHub and GitLab, not Bitbucket, and cannot be
+    connected by API) and a runtime lane for module-shaped repos, whose pull must be JS-side since
+    item 14 has Guzzle broken. Inseparable from it is a capability contract before mount: a stub
+    `extension_loaded('mbstring')` **segfaults, exit 139, measured**, so third-party PHP can take the
+    isolate down rather than merely fail. Tracked as P40 in project memory; P8 is its other half.
+
+16. **Two real third-party modules were scored against this runtime for the first time, and the
+    frozen clock turned out to be an application defect rather than a measurement one.** `mantle2`
+    and `strata` (an R2-backed backup and rollback module) were read call-site by call-site. Five
+    items opened, P41-P45 in project memory:
+
+    - **P41 was WRONG, and what replaced it is a different defect in a different layer. RETRACTED
+      AND RE-MEASURED 2026-08-22.** The claim was that `microtime()` returns 0, leaving mantle2's
+      re-authentication window permanently open and making strata throw on the first node save. It
+      does not return 0. Measured through the shipping interpreter,
+      `microtime(true)` is **1787454264.88** -- a real epoch -- because PHP's clock is the glue's
+      `_emscripten_date_now = () => Date.now()` and Workers FREEZE that between I/O rather than
+      zeroing it. Every reading behind "returns 0" was a DELTA. The item's own two consequences
+      invert: a re-auth window comparing two stamps across two requests works, and the module's
+      `if (!$atMs) return [false, null]` guard means the premise would have failed it CLOSED anyway.
+      **What is really wrong is `PHP_INT_SIZE` 4**: `(int) (microtime(true) * 1000)` overflows, and
+      the cast is MODULAR -- `1787454172276.0` casts to `747777140`, exactly `mod 2^32`. So strata's
+      `(int) round(microtime(true) * 1e6)` lands in the negative half for roughly half of every
+      2^32-microsecond cycle (~35.8 minutes in 71.6) and throws THEN, unpredictably, rather than
+      always. `cfwNow` would return the same float `microtime()` already gives; 64-bit `zend_long`
+      (P28) is the fix, so P41 folds into P28 and closes. `Cron::processQueues()` is unreachable on
+      the shipping cron path -- `runCronHook()`/`runCronQueue()` never call it. Pinned by
+      `tests/integration/php-clock.spec.ts`.
+    - **P42**: four host bridges on the `zlib-fix.ts` pattern. `cfwBlake2b` (strata's content address
+      is `blake2b-256` and neither sodium nor ext-hash provides it; `blakejs` is ~5 KB and
+      synchronous), `curl-fix.ts` (`CurlShim.php` is complete, tested and **declared by nothing** --
+      another green-but-unreachable case), a dictionary-capable deflate (`fflate` already ships and
+      takes a `dictionary` option, which turns strata's delta coding back on), and `cfwSign` over
+      WebCrypto.
+    - **P43**: the 50-byte LIKE cap has no driver accommodation and six mantle2 controllers trip it;
+      `splitPointFor()` correctly refuses to split a non-SELECT, so strata's GC dies on a 101-frame
+      `DELETE ... IN`.
+    - **P44: three capability claims in this project's own records were false. CLOSED 2026-08-22,
+      and the instrument came with them.** `ext-mbstring` sat in `DEFAULT_PLATFORM`, focal_point's
+      note said "GD, which this build has", and a `driveCron()` lift said nothing imported it while
+      `site-do.ts:137` did -- staling six more lift texts behind it. `/__php` now reports
+      `get_loaded_extensions()`, and `tests/integration/loaded-extensions.spec.ts` asserts the
+      platform map against it BOTH ways, so a native claim the binary does not load and a polyfill
+      the binary does load both fail the gate. **Measured, 25 extensions**: Core, PDO, Reflection,
+      SPL, SimpleXML, Zend OPcache, ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib,
+      random, session, standard, tokenizer, uri, vrzno, xml, yaml, zlib. No mbstring, no iconv, no
+      gd, no curl. `DEFAULT_PLATFORM` split into `NATIVE_PLATFORM` and `POLYFILLED_PLATFORM`, and a
+      requirement met only by a polyfill now answers `unverifiable` rather than `installable`.
+      **Function-name evidence remains actively misleading**, because opcache's `func_info` table
+      names functions from extensions the build does not have.
+    - **P45**: **no module-side fixes are permitted** -- an unmodified module is the whole
+      compatibility claim, so every gap is the host's to shim, to accommodate in the driver, or to
+      DECLARE. The rule that produces: a capability is shimmed, accommodated, or declared, never
+      silently absent, where declared means a no-op that cannot fatal, logs once per boot, and raises
+      a `hook_requirements()` row. Its first real use is `CfwFileStreamWrapper::realpath()`, which
+      returns FALSE by design and makes `strata_files` capture nothing, silently -- the host has to
+      materialise the bytes on demand or say out loud that it did not. Also scopes Cloudflare KV as a
+      redis substitute: free KV is **100,000 reads/day but only 1,000 writes/day**, read-cheap and
+      write-poor, so it replaces redis's read-mostly role and never the cache, lock, queue or flood
+      roles -- and never anything authorization-bearing, since it is eventually consistent.
 
 ---
 
@@ -360,7 +486,7 @@ looks the way it does.
 | 9 | **Cold start was 3,754 ms, of which 3,066 ms was mounting the pack** -- pure JavaScript, so no PHP-side work could touch it | Per-file compression plus a lazy MEMFS mount that inflates a file only when PHP opens it | [THE COLD START IS A JAVASCRIPT PROBLEM](#the-cold-start-is-a-javascript-problem-not-a-php-one--and-the-lazy-fs-works) |
 | 10 | **The lazy FS and JSPI slicing are in direct conflict** -- the lazy mount puts a JS frame under the PHP stack, and JSPI cannot suspend across one | A refcounted interrupt mask over every host call that enters JS, with a pending-interrupt flag so a masked boundary is deferred rather than lost | [RULE 0d](#rule-0d-the-lazy-fs-and-jspi-slicing-are-in-direct-conflict), [THE MASK SEAM](#the-mask-seam-every-host-call-that-enters-js-refcounted) |
 | 11 | **Every functional number was measured on a binary that could never ship** -- 586,923 bytes over the free ceiling | Removing PDO from the shipping path let the real binary run the real workload, resolving the question against one artifact | [RULE 0b](#rule-0b-the-bundle-figure-and-the-working-binary-are-different-binaries) through [0b-iv](#rule-0b-iv-four-undocumented-behaviours-are-stacked-and-have-never-been-composed) |
-| 12 | **In-PHP `microtime()` returns 0 on the edge**, so every local timing was a ratio and four free-tier verdicts were instrument artefacts | Read per-invocation `cpuTime` through the Workers Observability API. `wrangler tail` silently omits every `durableObject` event | [RULE 0](#rule-0-above-everything-else) |
+| 12 | **In-PHP `microtime()` does not advance on the edge**, so every local timing was a ratio and four free-tier verdicts were instrument artefacts. It does not return 0; that shorthand was itself an instrument error, corrected 2026-08-22 | Read per-invocation `cpuTime` through the Workers Observability API. `wrangler tail` silently omits every `durableObject` event | [RULE 0](#rule-0-above-everything-else) |
 
 **Not cleared:** cold boot is **1,398 ms** of edge cpuTime in one indivisible synchronous call, 140x
 the free-plan cap. Migration became divisible because it is a JavaScript loop; boot is one
@@ -377,6 +503,10 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [OUTBOUND TCP CANNOT HAVE A SESSION API](#outbound-tcp-cannot-have-a-session-api-and-the-objective-survives-anyway) | **read before adding any outbound capability**: `cfw_tcp_connect/read/write/close` is unbuildable because a `read()` has nowhere to block, and a DECLARED exchange is not. Four of five "blocked" module rows closed on capability rather than on a socket, and the endpoint is the operator's by construction |
+| [GUZZLE FETCHED THE BODY AND THREW IT AWAY](#guzzle-fetched-the-body-and-threw-it-away) | **read before touching outbound HTTP**: every `Drupal::httpClient()` call rejected on the shipping build with the body already in memory, because no userland stream wrapper can populate `$http_response_header` and PHP 8.4's replacement answers NULL for the same reason. Fixed by a handler over `cfwFetch`; a 202 default was rejected and the reason is recorded |
+| [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width) | **read before quoting RULE 0's "microtime returns 0"**: it does not. Every reading behind that was a DELTA; the absolute is a real epoch. The defect is `PHP_INT_SIZE` 4, the cast is modular, and both module consequences invert |
+| [THE EXTENSION LIST WAS INFERRED](#the-extension-list-was-inferred-and-three-inferences-were-wrong) | **read before claiming an extension**: 25 measured, no mbstring/iconv/gd/curl. Function-name evidence is misleading; `/__php` reports the real list and the gate asserts the platform map against it both ways |
 | [THE SECURITY SWEEP](#the-security-sweep-and-what-nine-of-ten-findings-had-in-common) | **read before adding a route, a cache tier or a header the object trusts**: `/serve` read `?site=` raw and one request provisioned a whole database; `/setup/cf` was unreachable for its whole life; four values were computed and read by nobody; `/export` dumped the owner token and a live OAuth refresh token. One finding is deliberately NOT taken and says why |
 | [THE CACHE HAD NO IDEA WHO IT WAS TALKING TO](#the-cache-had-no-idea-who-it-was-talking-to) | **read before touching either serving lane, and before trusting any header the object reads**: the fast lane duplicated the gated lane's `cfw_page` read and missed both its guards, so a session was served the anonymous page and an unclaimed site hid its own claim page; an authenticated MISS filled `cfw_page` with Drupal's 403; `x-cfw-auth` was forgeable and spending it strips a real admin's cookie |
 | [THE STATIC THAT STOPPED EVERY FORM](#the-static-that-stopped-every-form-after-the-first-error) | **read before touching form handling, and before scoring the static-state class**: `FormState::$anyErrors` is a class static that gated every submit handler, so one form error stopped every later submission in the object. Two reproducers, one nine-character cause, and the sixth member of the family |
@@ -419,6 +549,125 @@ fill moves the regeneration ceiling ~1.1% -- see
 | [TIER 0: WHAT NOW EXISTS, MEASURED](#tier-0-what-now-exists-measured) | driver, codec, gate, memory, autoload, mbstring, pack trim, sliced updb |
 | [Memory: 110.6 MiB was misread](#memory-the-edge-ceiling-is-still-unmeasured-and-1106-mib-was-misread) | **canonical** for the memory ceiling |
 
+
+---
+
+# OUTBOUND TCP CANNOT HAVE A SESSION API, AND THE OBJECTIVE SURVIVES ANYWAY
+
+**2026-08-24.** Gregory's P47 asked for one network capability with adapters above it rather than four
+one-off bridges, and named the surface: `cfw_http()`, `cfw_tcp_connect()`, `cfw_tcp_read()`,
+`cfw_tcp_write()`, `cfw_tcp_close()`.
+
+## The session half cannot be built, and the reason is the interpreter
+
+`Host::call()` is `$reply = $invoke($json)` and this build carries no JSPI or Asyncify, so the wasm
+stack cannot suspend. A `read()` has to block for bytes that have not arrived, and there is nowhere
+for it to block: a host function that returned a Promise hands PHP an object it can only stringify.
+
+That closes the MECHANISM. It does not close the objective, which is RULE 0c's whole point. What
+`src/ops/tcp.ts` ships instead is a **declared exchange**: PHP names a whole operation, the host runs
+it in JavaScript between invocations over edgeport, and the answer is read on a later one. Same
+cached -> deferred -> sync layering `cfwFetch` lives under, with the sync tier absent for the same
+reason.
+
+## Four of the five rows never needed the TCP half at all
+
+The four blocked module rows were assumed to share a requirement. They did not.
+
+| row               | assumed         | measured                                                             |
+| ----------------- | --------------- | -------------------------------------------------------------------- |
+| `search_api_solr` | outbound HTTP   | the HTTP tier already existed; intercept ABOVE Solarium's adapter    |
+| `simple_sitemap`  | outbound        | **no network at all** -- it wanted `ext-xmlwriter`                   |
+| `smtp`            | outbound TCP    | the host already sends over edgeport; its CONFIG was what went unread |
+| `redis`           | outbound TCP    | the tier exists and still does not reach it, correctly               |
+| `openid_connect`  | outbound HTTPS  | the one that survives, and JSPI cannot fix it either                 |
+
+`simple_sitemap` is the one worth reading twice: it sat in a list of network-blocked modules for days
+and its blocker was a missing PHP class. A grouping made from the shape of a refusal rather than from
+its mechanism will do that.
+
+## The endpoint is the operator's, and that is a privilege boundary rather than a convenience
+
+`REDIS_URL` and `SYSLOG_URL` carry the host, port and credentials; PHP supplies only the operation.
+Letting module code name a `host:port` would put arbitrary outbound TCP behind anything that can call
+a host function -- a port scanner and a protocol-smuggling surface, strictly wider than the HTTP
+tier's SSRF because it is not confined to HTTP semantics. Both vars are secrets, neither may join
+`KV_OVERRIDABLE`, and `kv-levers.spec.ts` asserts they stay off it for the same reason `SMTP_HOST`
+does. Administrative Redis commands are refused before anything is dialled.
+
+The queue url is built without credentials and asserted so: the row is echoed by `/health` and by
+every drain report, and a password in the `url` column looks like nothing at all.
+
+## A Redis cache backend cannot be built on this
+
+A cache get has to answer inside the request that asked, and a deferred exchange always misses the
+first time. `drupal/redis` stays refused and that is the right answer rather than a gap -- the Durable
+Object's own SQLite is the backend. The tier reaches the deferrable half, and `syslog` with no
+compromise at all, because syslog over TCP never replies.
+
+## The alarm never sees the message, which is what the SMTP wiring turned on
+
+`drupal/smtp` installs here and its socket never runs, because `system.mail` is forced to `cfw_mail`.
+So a site that installed it, entered its relay and saved had a complete SMTP configuration that
+nothing read, while its operator typed the same host, port and password again as Worker vars.
+
+`CfwMail` now passes `smtp.settings` and `mailEnvFromSite()` maps it onto the transport vars, with the
+deployment's own vars winning every field they set -- a var is set by whoever can deploy the Worker,
+that form by anyone who can reach a Drupal admin page.
+
+**The trap was the drain.** It re-resolves the transport deliberately, so that an operator who fixes a
+credential drains the queue that was refused under the old one -- and it runs on the alarm, where
+there is no message. Merging only at `cfwMail` time would resolve one transport at commit and dial a
+different one, or refuse there, leaving a queue that never moves and a `/health` line blaming a var
+the operator did set. The settings are persisted to `cfw_meta` and both resolvers read the same slot.
+
+## Tier B: the exchange PHP could not do at any price
+
+The TCP half above is one of two tiers P47 produced. The other is `openid_connect`, and it did not
+need TCP at all.
+
+**`WITH_OPENSSL=0`.** The shipping interpreter cannot verify an RS256 `id_token`, so a JSPI build
+that let PHP fetch the token endpoint synchronously would hand PHP a token it still could not check
+-- and an unverified `id_token` is an unauthenticated login. That is what closed JSPI as a mechanism,
+not the module count: even at zero cost it does not reach the outcome.
+
+The host does the whole exchange at a route it owns -- discovery, PKCE S256, the token POST, the JWKS
+fetch and `crypto.subtle.verify` -- and hands PHP a decided result. The awaiting happens before PHP
+is entered, so nothing suspends. `src/ops/cf-oauth.ts` had been doing exactly this for Cloudflare's
+own dashboard OAuth since before the item was opened; the work was generalising it.
+
+**The claims never travel in a URL.** The browser carries a single-use ticket; the row is deleted
+before the claims are returned, so a replay finds nothing. A redirect lands in browser history, in a
+referrer and in every proxy log on the path, which is why single-use rather than a short TTL is the
+property that matters.
+
+Five refusals, each a silent failure if it is missing, each asserted against real generated keys: a
+signature from a key outside the JWKS, a foreign issuer, an audience belonging to another client of
+the same provider, an expired token, and a nonce from another login. `alg` is taken from the KEY --
+trusting the header is how `none` and the RS256-to-HS256 confusion attack work.
+
+The authmap key is scoped by ISSUER rather than by `sub`, because a subject is unique within one
+provider and means nothing across providers; keying on it alone would let a subject from a
+newly-configured issuer take over an existing account.
+
+**`drupal/openid_connect` stays refused, and the capability is covered instead.** The module wants a
+blocking call inside the login response; the site gets provider login without it, through
+`drupal/externalauth`, which is already `verified`.
+
+**It has never seen a real IdP.** 25 assertions on generated keys, 8 on the authmap scoping, and no
+round trip. There is no setup UI either -- `oidc_issuer` and `oidc_client_id` are set by hand.
+
+## What is asserted, and what is not
+
+19 TypeScript assertions drive edgeport's real RESP codec and real syslog framing over a scripted
+socket; 27 PHP assertions drive the contract over a scripted host. Three real bugs came out of
+writing them, and the first is the one worth recording: **`'redis:'.endsWith('s:')` is true**, so
+every plaintext Redis endpoint silently dialled implicit TLS. The TLS flag is a field on a scheme
+table now, not a suffix test.
+
+**No exchange has ever crossed a real network.** The tier has no `verified` row and should not be
+described as having one.
+
 **Historical record.** Below the [FOLD](#-fold-), in the order it was measured. Superseded
 wherever it disagrees with the above.
 
@@ -446,6 +695,259 @@ wherever it disagrees with the above.
 | --- | --- |
 | [DEEP DIVE A: MEMORY, AUTOLOAD, MBSTRING](#-deep-dive-a-memory-autoload-mbstring-) | [TASK A](#task-a--the-isolate-memory-ceiling) the 512 MiB build ceiling, [TASK B](#task-b--composer-dump-autoload---classmap-authoritative) autoload, [TASK C](#task-c--the-mbstring-polyfill) mbstring, [Caveats](#caveats-in-one-place) |
 | [DEEP DIVE B: THE cfw_do_sqlite DRIVER](#-deep-dive-b-the-cfw_do_sqlite-driver-) | transaction buffer, SQL function audit, integer safety, what the runtime refuses |
+---
+
+# GUZZLE FETCHED THE BODY AND THREW IT AWAY
+
+**Found and fixed 2026-08-22.** Every `Drupal::httpClient()` call on the shipping build rejected,
+and the comment in the code saying it worked is the finding.
+
+## The symptom, and why it is not the class the report already catalogues
+
+`/admin/reports/status` logs `Failed to retrieve security advisory data.` with
+`GuzzleHttp\Exception\RequestException: An error was encountered while creating the response`. This
+document elsewhere catalogues a "no https wrapper" failure class; this is not it. The trace carries
+
+```
+StreamHandler->createResponse(Request, Array, Resource id #1353, NULL)
+```
+
+A LIVE resource. `HttpsStreamWrapper::stream_open()` ran its `$fetch` and returned true, so the
+body was already in memory. **The failure is one line later.**
+
+## The mechanism, measured in three places
+
+`StreamHandler::createStream()` ends with
+
+```php
+if (function_exists('http_get_last_response_headers')) {
+    $http_response_header = \http_get_last_response_headers();
+}
+$this->lastHeaders = $http_response_header ?? [];
+```
+
+and `createResponse()` immediately does `HeaderProcessor::parseHeaders($hdrs)`, which throws
+`RuntimeException('Expected a non-empty array of header data')` on `[]`.
+
+| what was checked | how | result |
+| --- | --- | --- |
+| can a userland wrapper set `$http_response_header`? | a 20-line probe with a fake wrapper registered over `https` | **no.** `fopen` returns a handle, `isset($http_response_header)` is FALSE, and `stream_get_meta_data($fp)['wrapper_data']` is the wrapper OBJECT |
+| does PHP 8.4's replacement help? | `http_get_last_response_headers()` on real PHP 8.5.7 after opening through the wrapper | **no.** Returns NULL, for the same reason. Both routes are closed |
+| does the function even exist on this build? | `/__php` reports `get_loaded_extensions()` and `function_exists()` | **yes**, so Guzzle takes the 8.4 branch and gets NULL rather than an undefined local |
+
+Only PHP's own http wrapper populates either. The gap is structural and no amount of work inside
+`drupflare/stream-http` closes it.
+
+## What it falsified
+
+`DrupflareServiceProvider.php:62-65` explained why `FetchHandler` is left uninstalled on a
+non-JSPI build and ended: "Leaving core's handler in place means outbound HTTP goes through the
+https stream wrapper the host registers, **which is the behaviour that actually works today**."
+
+It works for `file_get_contents()`, which never asks for headers. It fails for every
+`Drupal::httpClient()` caller -- all ten core seams in this document's own table, plus any contrib
+module with an API client. Same family as [[decorative-configuration]]: a fallback that reads as a
+working path and is not one.
+
+## The fix, and why it is not a `StreamHandler` subclass
+
+The obvious shape -- subclass `StreamHandler` and read `responseMeta()` instead of the magic local
+-- **does not work, and the reason is a language rule rather than a preference.** `createStream()`
+and `lastHeaders` are both `private`, so a subclass cannot override the failing line; it would have
+to reimplement `__invoke()` around ~200 lines of context building it does not own.
+
+`Drupal\drupflare\Http\CachedFetchHandler` is a plain Guzzle handler over the SAME `cfwFetch`
+capability the wrapper opens through, so a cache hit here and a successful `file_get_contents()` are
+one row rather than two caches that can disagree. Two outcomes, both of which every caller already
+handles:
+
+- the response a previous drain fetched, as a real PSR-7 response;
+- `ConnectException`, after `cfwFetch` has armed the queue, so the NEXT call hits.
+
+**A 202 was rejected as the default and the reason is worth recording.** `CfwDeferredHttp` answers
+202 with a JSON body explaining the deferral, which is right for a service that opted in and wrong
+globally: Guzzle's `http_errors` middleware does not raise on a 2xx, so `SecurityAdvisoriesFetcher`
+would `Json::decode()` the explanation and iterate four scalars. A refusal is what a caller's
+existing error path is written for, and it is what core's own handler raises when a socket cannot
+open. `CfwDeferredHttp` is unchanged and stays opt-in.
+
+The provider now installs one of the two handlers unconditionally -- `FetchHandler` when the runtime
+can suspend, `CachedFetchHandler` when it cannot -- instead of returning early and leaving core's.
+
+## Two things not to conflate with it
+
+- **`system.advisories.enabled` is `b:1` in the shipped `assets/drupal/site.sqlite`.** Flipping it
+  silences the symptom for two of ten seams and fixes nothing.
+- **`TECHNICAL_REPORT.md` records `system.advisories.enabled` TRUE -> FALSE elsewhere**; that was the
+  minimal-tree measurement, not the shipped tree.
+
+## The guard
+
+`tests/integration/guzzle-handler.spec.ts` seeds `cfw_http_cache` directly -- hermetic, no network --
+and runs `GUZZLE_HANDLER_CHECK` on the real interpreter: 11 assertions, all green.
+
+**The control is what makes it a regression test.** The same fragment builds a client on core's
+`StreamHandler`, over the same wrapper and the same row, and REQUIRES it to fail with
+`creating the response`. Remove `CachedFetchHandler` and the fix assertions go red while the control
+stays green; if the control ever goes green the seam has stopped measuring the defect. Same family
+as [[regression-test-never-seen-fail]], which is where a green test that proved nothing was found by
+removing the fix and watching nothing happen.
+
+`../drupflare/tests/health-suite.php` covers the handler against a spy host and the provider against
+a fake container: 566 -> **584** assertions.
+
+## What is declared rather than fixed
+
+**Request headers do not cross.** `cfwFetch` keys the cache on method + URL + body and
+`cfw_http_queue` has no header column, so a request's own headers reach neither the lookup nor the
+eventual `fetch()`. Every deferred path has always had that gap -- the stream wrapper collects
+headers and the host ignores them -- and it is stated in the handler's docblock rather than left
+silent: an API client sending `Authorization` gets an unauthenticated 401 back as a real response,
+which is visible, not a silent success. Closing it is a schema change against the meter that binds
+regeneration, so it is priced separately.
+
+---
+
+# THE FROZEN CLOCK STILL TELLS THE TIME, AND THE REAL DEFECT IS THE INT WIDTH
+
+**2026-08-22. A retraction, and the fifth time in this project the instrument was wrong rather than
+the system.**
+
+## What was claimed
+
+RULE 0 has said since the beginning that in-PHP `microtime()` **returns 0** on the edge. A review of
+two real third-party modules turned that into a scheduled security fix: `mantle2`'s
+re-authentication window would be permanently open, because `0 - 0 = 0` passes a `0 <= age <= 300`
+check; `strata` would throw on the first node save, because `JournalOp` refuses a non-positive
+microtime. The proposed fix was a `cfwNow` host capability plus a `microtime-fix.ts` fragment on the
+`zlib-fix.ts` pattern.
+
+## What is actually true
+
+**`microtime()` returns a real epoch.** Measured through the shipping PHP 8.5 interpreter inside
+workerd:
+
+| quantity | reading |
+| --- | --- |
+| `microtime(true)` | **1787454264.88** |
+| `time()` | 1787454264 |
+| `$_SERVER['REQUEST_TIME']` | 1787454264 |
+| advance across a 200,000-iteration loop | 13-14 ms |
+
+The mechanism was always readable: the emscripten glue defines
+`_emscripten_date_now = () => Date.now()`, there is no `clock_gettime` in the build, and **Workers
+FREEZE `Date.now()` between I/O boundaries rather than zeroing it** -- which this document already
+says, two sections away, in
+[THE WALL CLOCK CANNOT TIME A RENDER ON THE EDGE EITHER](#the-wall-clock-cannot-time-a-render-on-the-edge-either-and-that-had-disabled-a-guard).
+
+**Every reading behind "returns 0" was a DELTA.** `steadySeqMs: [0]`, `wallMs: 0`,
+`x-cfw-render-ms: 0`, and `/clock`'s `busyMicrotimeMs` are all differences. No instrument in this
+repository ever reported the ABSOLUTE, so the claim was never measured in the form it was written
+down in. The sentence "in-PHP timing does not advance on the edge, so it cannot produce an absolute"
+is the exact point where a correct observation became a wrong conclusion: a stopped clock still
+reads a time.
+
+**The host itself depends on it.** `nowMs()` is `Date.now()`, and it arms every alarm and stamps
+every `expires_at` on deployed sites. If it returned 0 the fill chain would not work, and it does.
+
+## The defect that IS there, and it is a different layer
+
+`PHP_INT_SIZE` is **4**. `PHP_INT_MAX` is **2147483647**. Epoch milliseconds are 1.79e12 and epoch
+microseconds are 1.79e15, so both idioms overflow, and the cast is **modular rather than
+saturating**:
+
+| expression | reads |
+| --- | --- |
+| `(int) 1787454172276.0` | **747777140** -- exactly `1787454172276 mod 2^32` |
+| `(int) 2147483648` | **-2147483648** |
+| `(int) (microtime(true) * 1000)` | a wrapped value in +/-2^31 |
+| `(int) round(microtime(true) * 1e6)` | a wrapped value in +/-2^31 |
+
+This inverts both consequences:
+
+- **The re-authentication window is not permanently open. It is CORRECT.** Both stamps wrap
+  identically, so their difference survives; the wrap period for milliseconds is 2^32 ms ~ 49.7 days,
+  and crossing a boundary inside a 300-second window makes the older stamp the LARGER one, so the
+  age goes negative and an `age >= 0` guard fails CLOSED. The module also has
+  `if (!$atMs) { return [false, null]; }`, so even under the original premise the window would have
+  been permanently SHUT rather than open. The claim was wrong in the direction that matters.
+- **The journal does not throw on every save. It throws for about half of every 71.6 minutes.**
+  The microsecond wrap period is 2^32 us = 4294.97 s, and the wrapped value is negative for half of
+  each cycle. "Never works" and "works half the time, unpredictably" need different fixes and
+  different urgency.
+
+## Consequences for the roadmap
+
+- **Do not build `microtime-fix.ts`.** A host bridge returning `Date.now()` hands PHP the same float
+  `microtime()` already gives it. It would be a no-op that reads as a fix -- the
+  [[decorative-configuration]] family the item was written to fight.
+- **P41 folds into P28**, 64-bit `zend_long` on 32-bit pointers, which is the only thing that closes
+  an int-width defect. It also already carried the 2038 warning, which is the same fact.
+- **`Cron::processQueues()` needs no P-number.** It is unreachable on the shipping cron path:
+  `runCronHook()` runs one hook and `runCronQueue()` claims items directly; neither calls
+  `Cron::run()`, and `automated_cron.interval` is 0.
+- **The frozen clock is still a hang risk and that has not moved.** A deadline computed and tested
+  inside ONE invocation never passes. That is what made `Lock::wait()` spin for its full 30 s and
+  burn 32,500 ms of cpuTime, and `CfwLockBackend` closing it is unaffected by anything here.
+
+## One more claim in the same paragraph that does not hold
+
+The report records `memory_get_usage()` and `memory_get_peak_usage()` as "also read 0 on the edge,
+exactly like `microtime()`". They read **0 in the gate lane too**, where the clock demonstrably
+works, so it is a BUILD property with no relation to the platform's clock. Two unrelated facts had
+been merged into one symptom because they were observed in the same session.
+
+## The guards
+
+`tests/integration/php-clock.spec.ts` pins the epoch, the int width, the modular cast, and the
+`memory_get_usage()` contrast. `/clock` on `src/probes/min.ts` now reports `absoluteS`,
+`absoluteIso`, `requestTime` and `jsAbsoluteMs` alongside its existing deltas, so one deployed
+request settles the edge reading rather than another session re-deriving it from the deltas.
+
+---
+
+# THE EXTENSION LIST WAS INFERRED, AND THREE INFERENCES WERE WRONG
+
+**2026-08-22.** Every extension verdict in this project was reasoned rather than read. Three of them
+were false, each read as verified, and none had an instrument that could have disagreed.
+
+| claim | where | truth |
+| --- | --- | --- |
+| `ext-mbstring` is provided by the platform | `packagist.ts` `DEFAULT_PLATFORM` | **absent.** `mb-fix.ts` exists precisely because Symfony's polyfill supplies it, with 86 measured divergences |
+| "The transform is GD, which this build has" | `module-tiers.ts`, focal_point | **absent.** `CfwImageToolkit` says so outright: gd cost 684,821 bytes and was not compiled in |
+| "`driveCron()` ... nothing imports it" | `module-tiers.ts`, scheduler | **wired.** `src/site-do.ts:137` imports it and `alarm()` calls it, on by default. Six more lift texts were stale behind it |
+
+## The instrument, which is one line and did not exist
+
+`/__php` now reports `get_loaded_extensions()`. Measured on the shipping binary, **25 extensions**:
+
+```
+Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache, ctype, date, dom, filter, hash,
+json, lexbor, libxml, pcre, pib, random, session, standard, tokenizer, uri, vrzno,
+xml, yaml, zlib
+```
+
+No mbstring, no iconv, no gd, no curl, no pdo_sqlite. `ext-zlib` IS present, which is why `ZLIB_FIX`
+is inert on this build and correct to keep.
+
+**Function-name evidence is actively misleading and must never be substituted for this.**
+`curl_init`, `mysqli_stmt_init`, `pg_select` and `imagecreatetruecolor` all appear as strings in a
+binary carrying none of those extensions, because opcache's optimizer ships a `func_info` table
+naming functions across every bundled extension.
+
+## What the route feeds
+
+A route an operator must remember to curl is not a guard, so the measurement is wired into the gate.
+`tests/integration/loaded-extensions.spec.ts` asserts the platform map **both ways**: a name in
+`NATIVE_PLATFORM` the binary does not load fails, and so does a name in `POLYFILLED_PLATFORM` that it
+DOES -- because a polyfill that became an extension must move rather than keep degrading every
+verdict resting on it.
+
+`DEFAULT_PLATFORM` is now `NATIVE_PLATFORM` + `POLYFILLED_PLATFORM`, and a requirement satisfied only
+by the polyfilled half answers **`unverifiable`** rather than `installable`. A site that really has
+the extension still wins, because `installed` is checked before either map. The verdict vocabulary
+stays three words; the difference lives in each conflict's `detail`.
+
 ---
 
 # THE CACHE HAD NO IDEA WHO IT WAS TALKING TO
@@ -1755,8 +2257,10 @@ here, so `usleep()` spins, and every one of those seconds is billed as CPU.
 `microtime()`-derived deadline in a dependency is a latent hang, not a latent mis-measurement.
 `Lock::wait()` was one. `Cron::processQueues()` is another shape of the same thing -- it computes
 `usleep((int) round($process_from - $this->time->getCurrentMicroTime(), 3) * 1000000)`, so a
-non-zero `process_from` against a zero clock sleeps for the whole interval. That one is unexercised
-and unfixed; it is named here so the next reader does not rediscover it.
+non-zero `process_from` against a FROZEN clock sleeps for the whole interval. **Checked 2026-08-22
+and it is unreachable**: `runCronHook()` runs one hook and `runCronQueue()` claims items directly,
+so nothing on the shipping cron path calls `Cron::run()`, and `automated_cron.interval` is 0. It
+needs no P-number; it is a hazard only for code calling `drupal_cron()` itself.
 
 ## The fix, and why it is a grant rather than a repair
 
@@ -2815,7 +3319,10 @@ First render of a NEW path on a warm interpreter is much worse -- `/user/login` 
    leaving **143,299 B** under 3 MiB, not the 268,873 the binary figure implies. The binary's headroom
    is not the bundle's. Superseded by the current measurement of **3,006,761 gz / 138,967 B** below.
 4. **`memory_get_usage()` and `memory_get_peak_usage()` also read 0 on the edge**, exactly like
-   `microtime()`, while `ini_get('memory_limit')` correctly returns `128M`.
+   `microtime()`, while `ini_get('memory_limit')` correctly returns `128M`. **"Exactly like
+   `microtime()`" is retracted, 2026-08-22**: `memory_get_usage()` reads 0 in the gate lane too,
+   where the clock works, so it is a BUILD property and shares no mechanism with the clock. See
+   [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width).
 
 Also: observability has ingestion lag and silently truncates a 100-event page. **An empty result means
 "not yet ingested", not "did not happen"** -- the same trap as an empty `wrangler tail`.
@@ -5124,9 +5631,11 @@ host call that enters JS**: the SQL bridge, the codec, `cfwLog`, every
 **An absolute CPU figure comes from `cpuTime` in `wrangler tail` on a DEPLOYED
 worker. Nothing else counts.**
 
-In-PHP `microtime()` and `hrtime()` **return 0 on the edge** — measured. They work
-under `wrangler dev` and only there, so an in-PHP number is a local ratio, never an
-absolute. Local-to-edge factors measured so far: **2.2x** warm render, **2.5x** cold
+In-PHP `microtime()` and `hrtime()` **do not advance on the edge** — measured. They
+advance under `wrangler dev` and only there, so an in-PHP DELTA is a local ratio, never an
+absolute. **"Return 0" is what this paragraph said until 2026-08-22 and it is retracted**:
+every reading behind it was a delta, and the value itself is a real epoch. See
+[THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width). Local-to-edge factors measured so far: **2.2x** warm render, **2.5x** cold
 boot, **6.1x** pack mount.
 
 **The free-tier verdict has moved five times. Four of those were instrumentation,
@@ -7214,7 +7723,7 @@ plausible-looking corruption rather than a clean failure:
    re-inflate exactly those, in order. This is new work created by enabling `LAZY_MOUNT`.
 
 And one inversion to know before interpreting a local failure: **`microtime()` advances locally
-and returns 0 on the edge.** If two boots ever are compared and differ, the difference may be
+and stands still on the edge** (it does not return 0; retracted 2026-08-22). If two boots ever are compared and differ, the difference may be
 clock-derived entropy that does not exist in production. Freeze the clock and stub the entropy
 sources before concluding boot is nondeterministic.
 
@@ -17058,3 +17567,720 @@ The constant moved to `src/ops/body-limit.ts`. `tests/unit/runtime/route-gate.sp
 the entrypoint exports nothing that is not a function, so the next one fails a test instead of a dev
 server. No test covered this because every lane imports `src/site.ts` as a module rather than
 booting it as a worker.
+
+---
+
+# THE DAY FIVE ITEMS WERE CLOSED AND FOUR HAD TO BE REOPENED (2026-08-23)
+
+The measurements below are all sound. The conclusions drawn from four of them were one step too
+wide, and the correction is now [RULE 0c](#rule-0c-a-negative-result-closes-a-mechanism-never-an-objective)
+in `CLAUDE.md`: **a negative result closes a MECHANISM, never an OBJECTIVE.**
+
+The failure is subtler than being wrong. Each item measured a real thing, found it did not move the
+ceiling the project scores against, and left the backlog attached to the implementation that failed.
+The resource stayed unexamined and the entry read as resolved.
+
+## P36: the RPC billing question, settled by deploying
+
+**Asserted, withdrawn, then measured.** The first version claimed a warm render's 48 host crossings
+would become 48 billed DO requests after an RPC migration. Cloudflare's rule is about an RPC method
+call on a STUB, and `Host::call()` is a wasm import into JavaScript inside the already-running
+object, so the claim was an inference about billing that no crossing count can support. It shipped
+in a test.
+
+A throwaway worker settled it. Three arms, each driven a distinct number of times against a fresh
+object, read from `durableObjectsInvocationsAdaptiveGroups`:
+
+| arm | driven | requests billed |
+| --- | --: | --: |
+| `stub.ping()`, an RPC method | 7 | **7** |
+| `stub.fetch()` | 11 | **11** |
+| N loops INSIDE one invocation | 13 | **1** |
+
+Confirmed at n=25 on a first run, where both boundary arms billed 25.
+
+**RPC is not special; the stub BOUNDARY is what is billed.** `stub.fetch()` costs the same one-for-
+one, which matters because this project crosses that boundary on every request already. And the
+third row is why today's bridge is free: 13 operations inside one invocation billed one request,
+which is exactly the shape of `Host::call()`. So the 48 crossings cost **zero** DO requests today,
+and re-expressing them as RPC would cost 48 -- taking regeneration from 7,575 (rows-bound) to
+~2,083 (DO-bound).
+
+**The first analytics read said the opposite and was wrong.** Three objects came back at
+`requests: 1`, which reads exactly like "RPC calls are not billed per call". It was incomplete
+ingestion; the same object read 25 later. This document already records that trap for
+`wrangler tail`, and it applies to a PARTIAL result as much as to an empty one. Giving each arm a
+distinct count is what made the second read self-identifying.
+
+## The surviving P36 question, which the batching answer does not touch
+
+`batchableShare()` reports **0** for a warm render: every crossing is `cfwSqlExec`, and Drupal's read
+path is read-decide-read. That closes coalescing and nothing else. **Why a warm render needs 48
+statements at all is untouched**, and the levers there are fewer queries, fewer rows read, prepared-
+statement reuse and cache-miss reduction. `SqlStorageCursor` exposes `rowsRead`/`rowsWritten` per
+statement, so a per-query decomposition is available whenever anybody wants it.
+
+## P16: the peak is one growth event, and the gate is the STEP not `INITIAL_MEMORY`
+
+Measured on the shipping 8.5 build, `/heap?op=status` now reporting `linearMemoryBytes`:
+
+| quantity | bytes | MiB |
+| --- | --- | --- |
+| booted and idle (`INITIAL_MEMORY`) | 100,663,296 | 96.00 |
+| after one real fill | 120,848,384 | 115.25 |
+| isolate limit | 134,217,728 | 128.00 |
+
+Lowering `INITIAL_MEMORY` does not lower the peak, because the peak is reached by growth. That
+refutes P16 as specified. **It does not refute reducing peak linear memory**, and the first writeup
+implied it did.
+
+**The peak is exactly one geometric step.** Emscripten's `MEMORY_GROWTH_GEOMETRIC_STEP` defaults to
+0.20 and growth rounds up to a 64 KiB page:
+
+```
+ceil(100,663,296 * 1.2 / 65,536) * 65,536 = 120,848,384
+```
+
+which is the measured peak to the byte. The same rule reproduces this document's 64 MiB arm
+(80,543,744). So live demand is **bounded rather than unknown** -- `100,663,296 < demand <=
+120,848,384` -- and over-reservation is between 0 and **20,185,088 bytes (19.25 MiB)**, unmeasured.
+
+The 61,440-byte shortfall that once cost 13,434,880 bytes is the step behaving as documented. With
+the step at 0 the same shortfall costs one 64 KiB page. `MEMORY_GROWTH_GEOMETRIC_STEP` and
+`MEMORY_GROWTH_LINEAR_STEP` are link-only settings and **have never been tested here**.
+
+**And it is urgent.** One further step from the current peak is
+`ceil(120,848,384 * 1.2 / 65,536) * 65,536 = 145,031,168` bytes, 138.31 MiB, over the isolate limit
+on either the binary or the decimal reading. The shipping build is one growth event from OOM.
+
+This also corrects a claim in `CLAUDE.md`: `INITIAL_MEMORY` was named as the gate on argon2 and
+wasm64. It is not. It sets where the geometric series starts, not how coarsely it advances.
+
+## P17: three replica architectures, and only one was scored
+
+Always-warm replicas were priced and the item was closed as "dead on free". That prices ONE of
+three:
+
+| | architecture | duration cost | status |
+| --- | --- | --- | --- |
+| A | one permanently hot object | full day per object | priced |
+| B | N replicas that HIBERNATE | a wake, not a day | **unmeasured** |
+| C | N replicas kept explicitly warm | full day per object | priced |
+
+Cloudflare bills duration for an object that is idle and UNABLE to hibernate; one that is idle and
+eligible accrues nothing. **B is the interesting free-plan design and nothing scored it**, because
+the wake on this runtime is a 96 MiB interpreter restore.
+
+**A pending alarm is absent from Cloudflare's hibernation-eligibility list.** The list requires no
+`setTimeout`/`setInterval`, no in-progress awaited `fetch()`, no standard-API WebSocket, no request
+still being processed and no active outbound socket. So the 240 s keep-warm re-arm does not hold the
+object resident: it wakes it, runs, and lets it hibernate about ten seconds later, discarding the
+interpreter. The WebSockets page asserts the opposite in passing and the two do not reconcile, so
+this is documented rather than measured; a persisted constructor counter read across an idle gap
+settles it.
+
+**Duration is not observable per object.** The four Durable Object GraphQL datasets expose
+`requests`, `responseBodySize`, `storedBytes` and `cpuTime`. There is **no GB-s or wall-clock field
+on any of them**, and `cpuTime` is precisely the meter that excludes what duration bills.
+
+## The billed GB figure was wrong by 2.4%, and paid inverts the free conclusion
+
+`DO_GB_ALLOCATED` was 0.125, the binary reading. Cloudflare's own worked example --
+"1,000,000 seconds * 128 MB / 1 GB = 128,000 GB-s" -- fixes it at **0.128**, decimal. Corrected
+figures:
+
+| | old (0.125) | corrected (0.128) |
+| --- | --- | --- |
+| idle object, per day | 10,800 GB-s (83.1%) | **11,059.2 GB-s (85.1%)** |
+| one always-warm object, 30 days | 324,000 | **331,776** |
+| two, 30 days | 648,000 | **663,552** |
+
+Paid is 400,000 GB-s/month included, then $12.50/million. So **one always-warm object fits inside
+the included allowance in every month length**, and two bill 263,552 GB-s -- **$3.29/month**, ranging
+$2.74 to $3.57 with month length, on top of the $5 minimum.
+
+**"Always-warm replicas are expensive" is a statement about the free duration allowance and is false
+on paid by about the price of a coffee.** The real paid objections are throughput, consistency and
+snapshot distribution, none of which the duration meter answers. The same reading undercuts RULE
+0b's "always-warm objects are worth ~1%", which was computed against a meter that stops binding the
+moment the plan changes.
+
+## P35: non-binding in the MODEL, which is not the same as measured
+
+`durationGbS` is in `free-envelope.ts` and reports slack: **271 of 13,000 GB-s/day** at the serving
+ceiling. Two caveats the first writeup dropped:
+
+- every figure feeding it is `cpuTime`, and duration bills WALL CLOCK, so the slack is an upper
+  bound rather than a margin;
+- 271 is CURRENT traffic, not the capacity frontier. The comparison that matters is duration at the
+  row-bound and request-bound frontiers, with replicas, with authenticated renders and with cold
+  renders.
+
+So the status is **integrated and non-binding under the current model**, with platform wall-clock
+calibration and a hibernation probe still required. The useful metric going forward is GB-s per
+completed Drupal operation rather than GB-s per day.
+
+## P29: the fill answer is right and it was the wrong question
+
+`AUTOINCREMENT` charges **exactly 2.00x** per insert, measured against real Durable Object storage:
+10 inserts cost 20 rows with the keyword and 10 without, linear at 4x the inserts. The packed
+database declares it on **18 tables**, and on a content-free site only three have ever been written
+(`menu_tree`, `users`, `watchdog`).
+
+No cache bin and no `cfw_page` declares it, so it does not move rows-per-fill. That closes it as a
+REGENERATION lever and settles one workload out of a dozen.
+
+**Rows written is charged on every write the site makes.** A node save touches `node`,
+`node_revision` and `path_alias`, all three of which declare it, so the operation pays three extra
+rows before a field table is counted. SQLite separately documents extra CPU, memory, disk space and
+disk I/O for the keyword, none of which a row count sees. The reframed question is write
+amplification per SEMANTIC OPERATION, and the compatibility question behind it is crisp and
+per-table: the keyword exists to guarantee a rowid is never reused, which is observable and is now
+asserted both ways.
+
+Two further rules, verified and previously unmodelled: **each `setAlarm()` is billed as one row
+written** -- the 240 s keep-warm chain costs 360 rows/day before doing any work -- and Cloudflare's
+index wording is CONDITIONAL: an index adds a written row "when writes include the indexed column",
+so an index's cost is a function of which columns the hot statements touch rather than of the index
+existing. Read `overheadShare()` with that in mind.
+
+**Rows READ on free is 5,000,000/day, not 100,000.** The model never had a read meter, so no code
+was wrong, but the 50:1 ratio is the point: a workload must read 50 rows per row written before
+reads bind, which a render does not approach.
+
+## P28: the integer width cannot be bought without the hash width
+
+`Zend/zend_long.h` typedefs `zend_long` and `zend_ulong` together under one `#ifdef`, defined only
+for `__x86_64__ || __LP64__ || _LP64 || _WIN64`. `Zend/zend_types.h` puts a `zend_ulong h` in both
+`Bucket` and `zend_string`. Measured with a compiler over an explicit wasm32 ABI model:
+
+| struct | today | with LONG64 | delta | P26's wasm64 figure |
+| --- | --- | --- | --- | --- |
+| zval | 16 | 16 | 0% | - |
+| Bucket | 24 | 32 | **+33%** | **33%** |
+| zend_string | 20 | 24 | +20% | 60% |
+
+`zval` is unchanged, which is the prior the item rested on and it holds. **Bucket lands on exactly
+the wasm64 number.** And a case written to show the hash was the cause FAILED: widening either
+`zend_ulong h` or `zend_string *key` alone takes Bucket to 32, because `zval` is 16 and the
+remaining two members fill an 8-aligned tail. There is no arrangement that keeps Bucket at 24, so
+"buy the integer width without the pointer width" has nothing to buy on the structure that decides
+the cost.
+
+## P7: the shell artifact cannot exist, which is upstream of the missing fragment source
+
+P7 says the remaining work is the PHP fragment source. Measured, the blocker is one layer above it.
+
+An anonymous render of `/` on the packed site carries **zero** `data-big-pipe-placeholder-id` spans
+and the string `big_pipe` does not appear in the markup, even though `big_pipe` IS enabled in
+`core.extension`. An AUTHENTICATED render of the same path carries **6**, with ids like
+`callback=Drupal%5Cblock%5CBlockViewBuilder%3A%3AlazyBuilder&args%5B0%5D=olivero_main_menu...`.
+
+BigPipe applies only to a request that HAS a session. `cfw_page` stores only anonymous, cookieless
+GETs -- by contract, enforced in `fillOne()`. **So the artifact `shellCandidates()` reads can never
+contain placeholders**, and its `safe: 0` is structural rather than conservative. A shell has to come
+from a session-carrying render stored somewhere other than `cfw_page`, and that is a different design
+from the one the entry describes.
+
+One thing the probe settles in the feature's favour: the placeholder ID is a query string carrying
+`callback`, `args` and `token`, so a fragment renderer needs nothing stored beyond the shell -- the
+id is the render array.
+
+## What each item closes, and what it does not
+
+| item | closed | still open |
+| --- | --- | --- |
+| P16 | `INITIAL_MEMORY` 96 -> 80 as a way to lower the peak | **peak linear memory.** Growth step untested; build is one step from OOM |
+| P17 | always-warm replicas on FREE | **hibernating replicas**, unmeasured; paid replicas cost ~$3/month |
+| P35 | duration as today's binding meter | wall-clock calibration; duration at the frontier; GB-s per operation |
+| P36 | coalescing the bridge; the unmeasured billing claim | **why a warm render needs 48 statements** |
+| P29 | `AUTOINCREMENT` as a rows-per-FILL lever | **write amplification per semantic operation**, and the id-reuse audit |
+
+---
+
+# THE DAY THE FIVE REOPENED ITEMS WERE MEASURED (2026-08-23, second pass)
+
+The five items above were reopened because a correct measurement had been read one step too wide.
+This pass measured each surviving objective. Four of the five moved, one on an instrument error that
+was mine, and two of my own conclusions from the morning were overturned by a second workload.
+
+## P16: the growth step is JavaScript, and the install arm reverses the render's answer
+
+**`MEMORY_GROWTH_GEOMETRIC_STEP` is not a link-time setting.** It is emitted into
+`_emscripten_resize_heap` in the glue as the literal `.2`; the `.wasm` carries no growth policy at
+all. So the ladder needed no phasm rebuild -- one binary, N rewritten glue variants.
+`scripts/measure/growth-glue.ts` emits them, `growth-ladder.ts` drives them, and
+`tests/node/growth-glue.spec.ts` fails if emscripten ever changes the emitted form.
+
+At a step of 0 the geometric candidate collapses to `oldSize`, so the new size is
+`align(requestedSize, 64 KiB)` and the peak IS live demand.
+
+| step | render peak | install peak | over-reservation (render) | worst-case headroom |
+| ---- | ----------- | ------------ | ------------------------- | ------------------- |
+| 0.20 | 120,848,384 | 120,848,384  | 16,121,856                | 12.75 MiB           |
+| 0.10 | 110,755,840 | 121,896,960  | 6,029,312                 | 11.75 MiB           |
+| 0.05 | 105,709,568 | 116,588,544  | 983,040                   | 16.81 MiB           |
+| 0.01 | 104,857,600 | 115,015,680  | 131,072                   | 18.31 MiB           |
+| 0    | 104,726,528 | 114,229,248  | 0                         | 19.06 MiB           |
+
+**The install column is the finding.** Measured against a render alone, 0.05 recovers 14.44 MiB and
+0.10 is a strict improvement. Measured against the install -- the workload that peaks highest -- 0.05
+recovers 4.06 MiB and **0.10 is a REGRESSION on the shipping 0.20**. Growth compounds from the
+previous size, so a finer step can take more steps and land on a worse rung for the same demand. This
+is RULE 0c's "under which workload?" with a number attached, and it caught a recommendation that had
+already been written down.
+
+Over-reservation against the binding workload is **6,619,136 bytes (6.31 MiB), 5.5% of the peak**,
+not the 15.38 MiB the render column implies. The best arm recovers ~6.3 MiB, which does **not** unlock
+argon2id (64 MiB default arena, ~16 MiB at the lowest sane setting) or wasm64. **P16 improves headroom
+and does not close P25 or P26.**
+
+**"One growth event from OOM" is refuted.** `getHeapMax()` returns 4,294,901,760, so the module
+declares no maximum and the 128 MiB ceiling is workerd's, enforced by `grow()` throwing. Emscripten
+catches it and retries: `cutDown` 1, 2, 4 gives 145,031,168, then 132,972,544, then 126,943,232, and
+the third fits. A growth from the shipping peak degrades rather than aborting.
+
+## P35: duration IS observable, and cpuTime understates it by 2,612x
+
+The report carried "the GraphQL datasets expose requests, response body size, stored bytes and CPU
+time, but not duration". That is true of `durableObjectsInvocationsAdaptiveGroups` and false of
+**`durableObjectsPeriodicGroups`**, which carries `duration`, `activeTime`, `cpuTime`, `rowsRead`,
+`rowsWritten` and `exceededMemoryErrors`, dimensioned by `objectId`. The instrument was wrong, again.
+
+Deployed `cfw-duration-probe`, a Durable Object with no PHP in it, and drove ten 1,000 ms holds:
+
+| field        | reading     |
+| ------------ | ----------- |
+| `activeTime` | 10,026,244  |
+| `cpuTime`    | 3,838       |
+| `duration`   | 1.283359232 |
+
+`10.026244 s * 0.128 GB` is 1.283359232 GB-s **exactly**. So `activeTime` is microseconds of wall
+clock, `duration` is GB-s, and `DO_GB_ALLOCATED = 0.128` is confirmed from billing rather than from
+Cloudflare's worked example.
+
+**The ratio is the result: 3,838 us of CPU against 10,026,244 us of billed wall clock, 2,612x.**
+cpuTime does not count time spent awaiting and this meter charges for it, so every duration ceiling
+in the model derived from cpuTime is a **lower bound**, and the gap is unbounded rather than small.
+`DURATION_CALIBRATION` and `CPU_UNDERSTATEMENT` in `scripts/measure/free-envelope.ts` carry it.
+
+Ingestion lags about 8 minutes. An empty result before then is not evidence, which cost one wrong
+"the probe did not record" reading during this pass.
+
+## P17: a pending alarm buys no residency, and that is the whole keep-warm premise
+
+Hibernation ELIGIBILITY is the billing boundary, not hibernation: Cloudflare does not bill an object
+that is idle and eligible "even before the runtime has hibernated them". The five disqualifying
+conditions are transcribed into `src/ops/hibernation.ts` rather than paraphrased, because the model's
+own comment had listed two from memory and omitted the one that fires in this codebase.
+
+**A pending alarm is absent from that list, and the probe confirms it**: the armed-alarm object
+accrued 0.177 s across a 60 s pending window. So the keep-warm chain costs a row and a DO request per
+arm and delivers no warmth.
+
+`keepWarmFleetCost()` prices what nobody had multiplied: 360 arms/day/site is 0.36% of the write
+allowance and reads as noise, but the free DO quotas are **account-wide**, and the same arms spend the
+DO request quota too because it counts alarm invocations. **277 sites saturate both meters with zero
+visitors.**
+
+**`connect()` IS on the list**, and `src/ops/mail.ts:674` is the only place in `src/` that opens one.
+An SMTP send makes the object non-hibernateable for the length of the send, and `drainMailQueue()`
+sends sequentially, so a batch holds it for the batch. `sendViaSmtp()` closes in a `finally`, so the
+15-minute per-connection pin is the worst case rather than the normal one. Plain `fetch()` never keeps
+an object alive, even while its body is still streaming -- the opposite of the intuitive reading.
+
+The consequence for P17: **a hibernating replica accrues no idle duration**, so the always-warm
+arithmetic that closed replicas never applied to it. What remains unmeasured is the WAKE cost, which
+on this runtime means restoring or re-booting a 96 MiB interpreter.
+
+## P36: 48 is the first render; a regeneration is 18, and bridge overhead is zero
+
+The 48 crossings figure is the FIRST render of a path on a warm object. A **repeat** render, which is
+what a regeneration actually is, costs **18**. Both n=2, every count identical across runs.
+
+| reading                      | first render | repeat render |
+| ---------------------------- | -----------: | ------------: |
+| crossings = statements       |           48 |            18 |
+| distinct fingerprints        |           23 |            10 |
+| rows read                    |           53 |            33 |
+| rows written (charged)       |           46 |             8 |
+| bytes returned to PHP        |     ~240,036 |      ~128,771 |
+
+Category split, first / repeat: necessary 15 / 8, duplicated 25 / 8, same-table repeated reads 4 / 0,
+cache misses 4 / 2, **pure bridge overhead 0 / 0**. There is no setup or teardown chatter to remove;
+every crossing is a `cfwSqlExec`. The 25 duplicates are the same fingerprint with DIFFERENT bindings,
+so merging them needs the caller to know every cid up front -- stating them as a saving would be an
+inference the count does not support.
+
+Three candidates, with the layer that owns each:
+
+1. **`fillOne()` empties `dynamic_page_cache` on itself** -- 4 of 18 statements, **6 of 8 charged
+   rows**. Host-level, and not free: keeping DPC warm means a regenerated page may reuse the previous
+   render's dynamic fragments. A correctness call, and the largest lever on the meter that binds.
+2. **`cache_discovery`'s result SIZE** -- one statement carrying 97,749 bytes, **75.9% of everything
+   the bridge moves in a regeneration**. Removes zero statements, which is exactly why a crossing
+   count could never find it.
+3. **Eight single-row `INSERT INTO cache_render` upserts.** `cache_routes` in the same render used a
+   multi-row form, so both driver and engine accept it. A statement/CPU lever, not a rows lever.
+
+## P29: AUTOINCREMENT costs 4x, and the mechanism is the DRIVER, not the schema
+
+Write amplification per semantic operation, measured on a warm interpreter with charged rows counted
+either side:
+
+| operation                | charged rows | write stmts | rows stored | index share |
+| ------------------------ | -----------: | ----------: | ----------: | ----------: |
+| node create              |          118 |          30 |           5 |       81.5% |
+| node edit (new revision) |          229 |          73 |           3 |           - |
+| user create              |           36 |          14 |           2 |       80.0% |
+| file record create       |           21 |           5 |           1 |       85.7% |
+| url alias create         |           58 |          15 |           3 |       76.9% |
+
+**The A/B that reframes the item.** Two tables identical except for the keyword, one buffered insert
+each, id read back: plain rowid charges **1 row, 0 speculative replays**; AUTOINCREMENT charges
+**4 rows, 1 replay**. The cause is cited rather than inferred --
+`Connection::predictBufferedInsertId()` answers `max(rowid) + offset` arithmetically for an ordinary
+rowid table and **refuses AUTOINCREMENT**, because that table's next id lives in `sqlite_sequence`.
+The refusal falls through to `speculate()`, which re-sends the buffer and charges every buffered write
+again. Cost is therefore quadratic in buffer length.
+
+So total amplification factors as **schema x re-execution** -- 5.4x x 4.37x for a node create -- and
+the second factor belongs to the driver. **What this does NOT establish**: `speculate()` has three
+call sites and only one is the keyword's, so 4.37x is what the replay machinery costs today, not what
+dropping AUTOINCREMENT returns.
+
+**The id-reuse audit corrects the premise too.** Dropping the keyword does not make ids generally
+reusable -- SQLite gives an ordinary rowid table `max(rowid) + 1`, so an id is reusable only when the
+row holding the MAXIMUM is deleted, or the table is emptied. Deleting id 3 of 5 frees nothing.
+Verdicts: **14 MUST KEEP** (content-entity tables; an inbound entity reference stores the integer id
+and core ships no generic cleanup, so a reused id resolves to the wrong entity rather than failing),
+**3 SAFE TO DROP** (`watchdog`, whose cron deletes the OLDEST rows so the max never decreases;
+`sequences`, deprecated and never inserted into; `cfw_health`, same argument as watchdog), and **1
+UNKNOWN** (`menu_tree`, whose materialized `p1..p9` path stores mlids under a stated invariant that
+needs the delete/rebuild interleaving traced).
+
+## P7: the shell can exist, but only as the first authenticated render in an interpreter
+
+| render                                  |   bytes | holes |
+| --------------------------------------- | ------: | ----: |
+| anonymous                               |  17,670 |     0 |
+| FIRST authenticated, session A          | 122,186 |     6 |
+| second authenticated, session B         |  96,147 |     0 |
+| third authenticated, session A replayed |  96,147 |     0 |
+| anonymous again                         |  17,670 |     0 |
+
+**A shell is only ever produced by the first authenticated render in an interpreter.** Every later
+one comes back holeless whatever session asks, because the placeholders have already been substituted
+inline; the ~26 KB difference is BigPipe's appended replacement scripts. Replaying session A after
+session B is also holeless, so the trigger is ORDINAL rather than per-session. Nothing had recorded
+this, and it is a hard constraint on harvesting a shell.
+
+**The authentication boundary holds.** Two sessions returning identical markup is also what a leaking
+cache looks like, so it was checked: the anonymous render is 17,670 bytes before and after and is
+never the authenticated body. The identity is benign -- both sessions are the same user.
+
+**The token is content-derived, which is what makes a shared shell possible.** Read from core rather
+than inferred, because a second sample cannot be obtained:
+`PlaceholderGenerator::createPlaceholder()` builds it as
+`Crypt::hashBase64(serialize($placeholder_render_array))` -- no session, no user, and **no hash salt**,
+so the id is stable across sessions, users and installs.
+
+So the architecture is viable and the remaining work is NORMALISATION: strip the identity markers
+outside the holes, which `shellSafety()` already enumerates and refuses on. That is a host-side
+transform over a stored artifact rather than a patch to Drupal, which is what P45 requires.
+
+## P45: shimmed, accommodated, or declared
+
+`Drupal\drupflare\Degradation` implements the contract: recording cannot fatal (the log is
+best-effort inside a `try`), it logs once per BOOT rather than per call (a degraded function inside a
+render loop would otherwise spend the meter that binds regeneration), and every declaration surfaces
+a `hook_runtime_requirements()` row in the `verified`/`untested`/`blocked` vocabulary the module table
+already uses. An unrecognised state is recorded as `blocked`, because an unknown state must never
+read as a weaker claim than it is.
+
+Its first real use is `CfwFileStreamWrapper::realpath()`, which used to return FALSE always. That was
+defensible and it was SILENT -- `strata_files` captured nothing precisely because
+`ManagedFileCapture` early-returns on a FALSE realpath, so a module that looked installed captured no
+files and nothing said so. It now materialises into MEMFS under `/tmp/cfw-realpath` and returns that
+path, so `is_file()` and `Hash::ofStream(fopen($path))` work against an unmodified module. Above
+`REALPATH_MAX_BYTES` it still returns FALSE and DECLARES.
+
+## P42.2: curl was complete, tested, and reached by nothing
+
+`Drupal\drupflare\Shim\CurlShim` implements the whole surface against `CfwDeferredHttp` and is covered
+by the sibling's health suite, while **nothing declared the global `curl_init()`** -- so no SDK could
+reach it. Another [[tested-but-never-called]], and a unit test of the class could never have caught
+it, because the class was fine.
+
+`src/drupal/curl-fix.ts` declares the eight functions plus `curl_version()` and the constants they are
+called with, following `zlib-fix`'s conditional-declaration pattern so `php -l` covers the body. The
+shim class is resolved on FIRST CALL rather than at declaration time: the fragment runs from
+`ensurePhp()`, before Drupal's autoloader exists, so a `class_exists` guard around the declarations
+would never pass and the functions would never exist at all. With no module loaded, each function
+declares the gap through `Degradation` and returns curl's own failure.
+
+## P42.4: `node:crypto` is synchronous in workerd, so signing needs no deferred queue
+
+The entry scoped this as "`crypto.subtle` covers RS256/ES256 but is **async**, so it takes the
+queue/read-later pair" -- meaning every signature would be a two-invocation round trip, and a caller
+would have to be written for it. **That premise is refuted.** Measured 2026-08-23 inside workerd:
+
+```
+createSign: function   createVerify: function   generateKeyPairSync: function
+getHashes(): md4, md5, sha1, sha224, sha256, sha384, sha512, RSA-SHA256, ecdsa-with-SHA1, ...
+RS256 sign of a 2048-bit key: 256 bytes, returned in-line
+```
+
+So `openssl_sign()` and `openssl_verify()` are an ordinary masked bridge like `cfwZlib`, and a
+caller sees a normal synchronous function.
+
+**Shimmed as `openssl_*` rather than as a new `cfwSign()`**, because P45's rule is that an unmodified
+module is the whole claim: `firebase/php-jwt`, Google's auth client and Stripe's webhook verifier all
+call `openssl_sign()`/`openssl_verify()` directly, so shimming the names PHP already uses makes them
+work untouched. A new function would have required patching every one of them.
+
+`openssl_verify()` is kept as a **tri-state** -- 1, 0, -1 -- because -1 means the call failed and 0
+means the signature was read and did not match. Collapsing it to a boolean would report a broken key
+as a forged token. `tests/unit/drupal/openssl-fix.spec.ts` asserts both, and round-trips RSA and
+ECDSA rather than pinning a vector, since an ECDSA signature is randomised by design.
+
+**Not shipped, deliberately**: key generation, certificate parsing, `openssl_encrypt` and the
+PKCS#7/CMS family. They have no caller in this project, and shipping an unused surface is the
+tested-but-never-called failure this same pass just ended for curl.
+
+## P42.1 and P42.3: BLAKE2b is absent everywhere, and a dictionary costs zero bytes
+
+**BLAKE2b has nothing to fall back to.** `sodium` is not among the 25 loaded extensions;
+`hash_algos()` returns **62 algorithms, zero matching `blake`** -- and native PHP 8.5.7 with the full
+extension returns the same 0, so ext-hash has never carried it. workerd has none either:
+`node:crypto.createHash('blake2b512')` answers "Digest method not supported" and
+`crypto.subtle.digest('BLAKE2b-256')` answers "Unrecognized or unimplemented digest algorithm". So
+`blakejs` was added: **2,803 gzipped bytes**, oracle-tested at 448 generated cases plus 3 published
+vectors against native ext-sodium, **0 divergences**.
+
+`extension_loaded('sodium')` deliberately stays `false`. A stub module entry is what segfaulted at
+exit 139 for mbstring, and the same two Symfony bootstraps branch on it.
+
+**`node:zlib` honours `{ dictionary }` inside workerd, at zero bundle cost.** 51 bytes to 15 on the
+probe input, header `78bb` plus the dictionary's adler32 with FDICT set, clean round trip, and
+`inflateSync` without the dictionary answers "Missing dictionary". The dry-run bundle contains one
+`from"node:zlib"` -- an external import to the builtin, not a polyfill.
+
+**A measurement chose the implementation, and it was not the expected one.** `fflate` also accepts
+`dictionary` and is byte-interoperable with `node:zlib` both ways. But given the WRONG dictionary,
+`node:zlib` answers "Bad dictionary" while **fflate returned plausible garbage with no error**.
+Silent corruption is precisely what a content-addressed store cannot survive, so the dictionary path
+goes through `node:zlib` and the six existing `gz*` ops stay on fflate untouched.
+
+**A DECORATIVE SHIM WAS NEARLY SHIPPED, and it is the same family as the supervisor.** The shipping
+binary **does load ext-zlib**, so the entire `!extension_loaded('zlib')` block in `zlib-fix.ts` is
+inert on the edge -- `cfw_zlib_dict()` written inside that guard would have been unreachable on every
+deployed site while passing its own unit tests. `ZLIB_FIX` is now two blocks, with the dictionary
+function declared unconditionally.
+
+That finding generalises, so the same trap was checked for the two bridges added beside it:
+`extension_loaded('curl')` and `extension_loaded('openssl')` are both **false** on the shipping
+binary, both guards therefore pass, and `tests/integration/host-bridges.spec.ts` asserts the
+functions and constants are really declared -- plus a real 2048-bit RSA sign and verify from PHP,
+returning 1, 0 and -1 for valid, tampered and unreadable-key.
+
+**RULE 0c -- what P42.3 does NOT unblock.** It does not turn strata's delta coding on.
+`GzipCodec::supportsDictionary()` returns a hardcoded `false` and `compress()` ignores its
+`$dictionary`; `Engine::codecs()` builds `CodecRegistry::withShippedCodecs()` into a private field
+with no service and no injection point, so a host module cannot register a dictionary-capable codec
+either. Under P45 both mechanisms are closed. What survives is the CAPABILITY, which now exists
+host-side; strata needs a one-line change of its own.
+
+**And P42.1 does not close sodium.** strata also calls
+`sodium_crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` at three call sites. That is a cipher,
+not a digest, shares no mechanism with this, and remains missing.
+
+---
+
+## 2026-08-23 — P7, P16, P24, P25, P27, P30 and P33
+
+Six items closed in one pass. Two of the six changed what another one had already measured, which is
+the part worth reading: every table below states which build it was taken on.
+
+### P7 — authenticated shells: the harvest constraint was an artifact
+
+`shell-derivation.spec.ts` reported that only the FIRST authenticated render in an interpreter
+carries BigPipe placeholders, and drew a hard architectural constraint from it. The spec emptied no
+cache bins, so render two answered out of `dynamic_page_cache`. Three personas, one object:
+
+| bins emptied                    | alice       | bob         | admin        |
+| ------------------------------- | ----------- | ----------- | ------------ |
+| none                            | 27,206 B, 5 | 18,234 B, 0 | 122,190 B, 6 |
+| `dynamic_page_cache`            | 18,234 B, 0 | 18,234 B, 0 | 96,151 B, 0  |
+| `dynamic_page_cache` + `render` | 27,206 B, 5 | 27,206 B, 5 | 122,191 B, 6 |
+
+The `render` bin is the gate. Emptying `dynamic_page_cache` alone produces a MISS with the
+placeholders already substituted inline, which reads as "this page has no shell" — the reading that
+produced the wrong constraint.
+
+**What varies between two people, diffed outside every hole.** Four classes and nothing else: the
+uid in `drupalSettings` and in BigPipe's appended scripts, `/user/logout?token=`,
+`data-contextual-token=`, and views' `js-view-dom-id-` nonce. `permissionsHash` did not vary between
+two members of one role set and does vary by role, so it is what keys a shell to a role set.
+
+**The authorisation is byte equality, not the marker list.** A list is a guess. `harvestShellFor()`
+renders under two sessions of one role set and stores nothing unless both normalise to identical
+bytes, so anything person-varying the list missed makes them differ and the harvest refuses. A
+single cookie is rejected: one sample proves nothing.
+
+**The fragment source.** Core never decodes a placeholder id back into a render array —
+`BigPipe::sendPlaceholders()` reads `big_pipe_placeholders` off the response attachments — so the
+recipe is captured at harvest and replayed later. That is also the security property: a visitor's
+input never becomes a `#lazy_builder`. A forged recipe naming an untrusted callback is refused by
+core's own `TrustedCallbackInterface` enforcement, asserted.
+
+| arm                                     | ms         |
+| --------------------------------------- | ---------- |
+| harvest (both bins emptied)             | 522–574    |
+| authenticated regeneration, DPC miss    | 20–22, n=5 |
+| dynamic_page_cache hit                  | 14         |
+| **fragments only** (context 1, render 3) | **4–5**    |
+
+Gate-lane wall clock, ratio only. End to end through `/__serve` the assembled response carries
+`x-cfw-cache: ASSEMBLED` with 5 holes filled in 44 ms. `SHELL_ASSEMBLY` is off by default.
+
+Two failures worth recording. `renderFragments()` first returned uid 1 for bob's cookie with no
+error anywhere: `session_start()` reads its id from `$_COOKIE`, and after `session_write_close()`
+`session_id()` still holds the previous visitor's, which `session_start()` prefers. The id is now set
+explicitly. And a jar minted by a render with no origin is invisible to a harvest that has one —
+Drupal names the cookie `SSESS` on https and `SESS` on http.
+
+### P16 — the growth step, and a table that did not survive its own re-measurement
+
+Emscripten emits `MEMORY_GROWTH_GEOMETRIC_STEP` into `_emscripten_resize_heap` as a JavaScript
+literal, so an arm is a file rewrite. Adding an AUTHENTICATED render to the ladder is what made the
+step worth changing: scored on an anonymous render and an install the answer was "worth about 1%".
+
+Measured with opcache ON, which is what shipped until this pass:
+
+| step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB |
+| ---- | ---------- | ----------- | -------- | ------ | ------------------- |
+| 0.20 | 115.25     | 115.25      | 138.31   | 138.31 | **−10.31**          |
+| 0.05 | 100.81     | 111.19      | 116.75   | 116.75 | 11.25               |
+
+Measured with opcache OFF, which is what ships now:
+
+| step | render MiB | install MiB | auth MiB | worst  | headroom | grow events |
+| ---- | ---------- | ----------- | -------- | ------ | -------- | ----------- |
+| 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75    | 1           |
+| 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38    | 1           |
+| 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13    | 2           |
+| 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88    | ~7          |
+| 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44    | many        |
+
+The first table's headline was "emscripten's default does not fit a logged-in render inside the
+isolate AT ALL". True of the build it was taken on, false of the one that ships. Two changes landed
+in one session and each was first measured against a tree the other had not touched yet.
+
+`SHIPPING_STEP` is 0.05: 0.01 and 0 buy 2.75 and 3.31 MiB more while a grow event copies the heap.
+`restore-artifacts.ts` emits the tuned glue after verifying the pristine download against
+`cdn-manifest.json`; `vitest.config.ts` emits the same file when it is missing, so the gate cannot
+run a different growth policy from production.
+
+A render no longer grows the heap on any arm. That is P30, not P16.
+
+### P30 — the opcache file cache was pure cost, and the arm that looked best cannot ship
+
+Three arms behind `OPCACHE_MODE`, boot plus one fill:
+
+| arm    | `.bin` files | MEMFS bytes | linear memory | `opcache_get_status()` | median render, n=5 |
+| ------ | ------------ | ----------- | ------------- | ---------------------- | ------------------ |
+| `file` | 2,346        | 32,141,312  | 105,709,568   | **enabled: false**     | 46 ms              |
+| `shm`  | 0            | 0           | **200,540,160** | enabled: true        | 42 ms              |
+| `off`  | 0            | 0           | 100,663,296   | —                      | 45 ms              |
+
+`file_cache_only=1` turns the shared-memory backend off, which is what `opcache_get_status()`
+answers about — so the shipping arm wrote 30.65 MiB into MEMFS for a cache that reported itself
+disabled and that nothing reads. `shm` accelerates for real and puts its arena in linear memory,
+63 MiB over the cap; the gate does not enforce that cap, which is the only reason the reading exists.
+`off` is within 1 ms of `file` and frees 5,046,272 bytes of linear memory plus 32,141,312 of MEMFS.
+
+Read the first four columns and `shm` is a strict win. The heap column is the one that binds.
+
+Consequences elsewhere: an enable on a fresh interpreter now grows the heap by **0** where it used
+to cost 15–35 MB, and the `keep=1` control no longer exceeds its absolute ceiling — it is now
+asserted as the relationship it always was, ~20 MiB between keeping the warm interpreter and
+dropping it.
+
+### P33 — exact wide integers, with no SQL parser
+
+Re-measured, unchanged: `9007199254740993` written exactly, read back as `9007199254740992`;
+`9223372036854775807` read back as `9223372036854776000`; `CAST(col AS TEXT)` exact on both.
+
+The item scoped the fix as a schema-aware rewrite of `SELECT id` and then listed the shapes such a
+rewrite must survive — `SELECT *`, aliases, expressions, JOINs, `ORDER BY`, aggregates. That is a
+parser, and it would cover the shapes it was written for and miss the rest.
+
+Unnecessary. The result rows already carry the output column names, whatever produced them, so the
+original statement is re-run wrapped as a subquery with those names cast:
+
+```sql
+SELECT "a", CAST("b" AS TEXT) AS "b" FROM ( <the original statement, untouched> )
+```
+
+Covered by construction and asserted shape by shape: `SELECT *`, alias, qualified column, JOIN,
+aggregate, `ORDER BY … LIMIT`, nested subquery, `UNION ALL`, bound parameter. Triggered by detection,
+so a site storing no wide integers pays nothing. `WITH`, `PRAGMA` and non-SELECT are refused and keep
+the value they already had.
+
+### P25 — argon2id, and where the work executes
+
+The recorded blocker was memory: a 64 MiB default arena against a 128 MB isolate. That is correct
+about one mechanism — an arena inside PHP's linear memory, where `memory.grow` has no inverse, so the
+first hash raises the object's floor for life. It is not correct about argon2id.
+
+Measured on a deployed throwaway, every OS page touched on both sides:
+
+| resident wasm         | transient JS arena    | result |
+| --------------------- | --------------------- | ------ |
+| 96 MiB                | 19 / 32 / 48 / 64 MiB | all ok |
+| 117 MiB (auth render) | 19 MiB                | ok     |
+| —                     | 19 MiB × 10 in a row  | 10/10  |
+
+The first version of that probe touched one byte per 64 KiB wasm page, making 1 OS page in 16
+resident and understating the footprint 16-fold.
+
+OWASP's floor is m=19456 KiB, t=2, p=1 — not 64 MiB. `@noble/hashes` supplies the algorithm
+(`hash-wasm` and `argon2-browser` instantiate their wasm from base64 on first call, which is request
+time, which workerd refuses). The RFC 9106 vector passes, and PHP and the host agree byte for byte on
+the same inputs.
+
+`password_hash()` is a built-in, so the conditional-declaration pattern the other shims use can never
+bind. Drupal's `password` service is the seam: `CfwPassword` decorates it, core's implementation
+becomes the inner service and still owns every bcrypt and legacy hash, and `needsRehash()` upgrades
+each account at its owner's next login. `new Definition()` is private by default in Symfony and
+Drupal's dumper drops private services from the public map — without `setPublic(true)` that failed 45
+specs with `ServiceNotFoundException: password`.
+
+Off by default: enabling it is a migration, and a 19 MiB two-pass hash is CPU a free-plan login
+invocation does not have.
+
+### P24 and P27 — Unicode
+
+The scalar space is **1,112,064**, not the 194,528 this report and the backlog both carried.
+
+| measurement                            | before | after |
+| -------------------------------------- | ------ | ----- |
+| the original 1,232 cases               | 77     | 37    |
+| Drupal core's exposure within them     | 33     | **0** |
+| `mb_strtolower` over 1,112,064 scalars | 95     | 0     |
+| `mb_strtoupper`, same space            | 95     | 0     |
+| `mb_convert_case` titlecase            | 273    | 0     |
+| `mb_strwidth`                          | 9,733  | 0     |
+
+Tables are generated from mbstring and ship on the asset layer: +1,034 gz there against +4,690
+inlined into the bundle. A workerd sweep runs on every commit as a vintage control.
+
+The 37 that remain are invalid-byte input to `mb_str_split`, `mb_lcfirst`, `mb_trim` and
+`mb_str_pad`, none reachable from core, and sanitising harder regresses 19 cases that pass today.
+
+**A TextDecoder bridge for legacy charsets is refuted rather than deferred.** The premise was that
+workerd decodes 23 labels the polyfill refuses. Measured, the polyfill decodes `Shift_JIS`, `CP936`,
+`CP950` and `CP949` from its own 55 charmaps and refused `SJIS`, `GBK`, `BIG5` and `EUC-KR` only
+because four ALIASES were missing. Six alias entries closed 35 of 70 decode cases; a host bridge
+would have replaced working charmaps with a dependency.

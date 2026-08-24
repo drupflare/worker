@@ -229,6 +229,43 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `MIGRATE_SELF_DRIVE`            | on                                    | whether a partial migration re-arms its own alarm                                                 |
 | `MIGRATE_CHUNKS_PER_INVOCATION` | 1 on free, all on paid                | chunks replayed per invocation                                                                    |
 
+### `OPCACHE_MODE`
+
+| value  | what it does                                             |
+| ------ | -------------------------------------------------------- |
+| `off`  | default; opcache disabled                                |
+| `file` | opcache on with the file cache as its only backing store |
+| `shm`  | opcache on with shared memory as its backing store       |
+
+The default is `off`, and the arms are measured. `file` writes 2,346 `.bin` files and 32,141,312
+bytes into the in-memory filesystem for a cache nothing ever reads, and `opcache_get_status()`
+reports opcache DISABLED on that arm because `file_cache_only=1` turns the shared-memory backend
+off. `shm` does accelerate -- 2,346 cached scripts, no filesystem writes -- and puts its arena in
+PHP's linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. `off` renders within
+1 ms of `file` and leaves 37 MiB more room.
+
+### `ARGON2`
+
+`1` hashes passwords with argon2id at m=19456 KiB, t=2, p=1, computed on the host. Default off.
+
+Turning it on is a migration: every bcrypt hash on the site reports as needing a rehash, and each
+account is upgraded at its owner's next login. Existing hashes keep working throughout; core's
+password service stays in place as the inner service and still owns bcrypt and legacy `$S$` hashes.
+Hashes are written in PHP's own `$argon2id$v=19$m=..,t=..,p=..$salt$tag` form, so a site that leaves
+this platform can verify them on any PHP with ext-argon2.
+
+A hash costs a 19 MiB transient allocation and two passes of CPU. That is more than a free-plan
+login invocation has.
+
+### `SHELL_ASSEMBLY`
+
+`1` allows an authenticated GET to be answered from a stored shell with its personalised regions
+filled at the edge. Default off, and nothing happens until a shell has been harvested for a path.
+
+A shell is harvested under two sessions of one role set and stored only when both normalise to
+identical bytes. A visitor whose permissions hash differs from the stored shell's falls through to
+an ordinary render.
+
 `HEAP_SNAPSHOT` is on and costs **31,784,960 bytes across 159 rows per site**, plus a 5,993 ms
 one-off to take the image. It buys 2,310 ms (fast mode) to 3,578 ms (slow mode) off every module
 install, n=8 per arm, present in both modes of a bimodal population.
@@ -326,6 +363,20 @@ is the implementation.
 `auto` takes the first transport that is configured, in the order binding, api, smtp. The binding
 leads because it spends no credential.
 
+### The `smtp` Module's Own Settings
+
+A site with `drupal/smtp` installed and configured needs none of the `SMTP_*` vars. The module
+installs on this runtime and its socket never runs, because `system.mail` is forced to `cfw_mail`, so
+its settings would otherwise sit unread while an operator typed the same relay a second time. Its
+`smtp.settings` is read and mapped onto the transport: `smtp_host`, `smtp_port`, `smtp_username`,
+`smtp_password` and `smtp_from` map across directly, and `smtp_protocol` maps `ssl` to implicit TLS,
+`tls` to STARTTLS and `standard` to no encryption. `smtp_on` turned off is honoured.
+
+**A var always wins over the setting it corresponds to.** A var is set by whoever can deploy the
+Worker; the settings form is reachable by anyone who can get to a Drupal admin page. So the settings
+fill gaps and never override a deployment's decision, and setting `SMTP_HOST` pins the relay
+regardless of what the site is configured with.
+
 ### What Each Transport Reaches
 
 `binding` uses a `send_email` binding named `SEND_EMAIL`, declared in your own Wrangler config. `api`
@@ -350,6 +401,13 @@ than attempted. `smtp.mx.cloudflare.net` is refused too: it resolves inside `162
 published Cloudflare range, and outbound TCP to those is blocked. Use `MAIL_TRANSPORT=api` or the
 binding for Cloudflare mail. `SMTP_TLS=off` together with `SMTP_USER` is refused, because it would
 put the relay password on the wire.
+
+SMTP is the only transport that opens an outbound TCP socket, and an outbound socket is on
+Cloudflare's list of conditions that prevent a Durable Object from hibernating. The object is
+therefore billed for compute duration for the length of the send, and the queue drains sequentially,
+so a batch is billed for the whole batch. The socket is closed in a `finally`, which keeps the
+exposure to the send itself rather than the 15-minute maximum a connection can defer eviction by.
+The `api` and `binding` transports use `fetch`, which never holds an object in memory.
 
 ### Limits and What a Refusal Means
 
@@ -419,6 +477,67 @@ unauthenticated mail from senders that have nothing to do with this site. It app
 Destination-address verification is pollable: the address carries `status` and a `verified`
 timestamp, so the surface lights up on its own.
 
+## Outbound TCP
+
+Drupal reaches TCP through `Drupal\drupflare\Network\CfwTcp`, which declares a whole exchange and
+reads the answer on a later invocation. `src/ops/tcp.ts` runs it between PHP invocations, over
+[edgeport](https://github.com/gmitch215/edgeport). It shares the deferred HTTP tier's queue, cache
+and retry budget.
+
+| var               | default  | what it does                                            |
+| ----------------- | -------- | ------------------------------------------------------- |
+| `REDIS_URL`       | —        | `redis://user:pass@host:6379/0`, or `rediss://` for TLS |
+| `SYSLOG_URL`      | —        | `syslog://collector:514`, or `syslogs://` for RFC 5425  |
+| `SYSLOG_APP_NAME` | `drupal` | APP-NAME on every record this site ships                |
+
+Both carry credentials, so both are secrets rather than `vars` entries, and neither can be set from
+KV. A KV writer who could set `REDIS_URL` would receive whatever the site writes to it.
+
+**The endpoint is yours, not the caller's.** Module code names a protocol and an operation; the host
+supplies the host, port and credentials. Arbitrary `host:port` TCP behind any code that can call a
+host function would be a port scanner and a protocol-smuggling surface. Administrative Redis commands
+— `FLUSHALL`, `CONFIG`, `EVAL`, `SCRIPT`, `SHUTDOWN` and the rest of the list in `src/ops/tcp.ts` —
+are refused before anything is dialled.
+
+**A Redis cache backend cannot be built on this.** A cache get has to answer inside the request that
+asked, and a deferred exchange always misses the first time. What this reaches is the deferrable half:
+a publish, a counter, a write nobody blocks on, or a read a later request can use. The Durable
+Object's own SQLite is the cache backend.
+
+`syslog` is the shape this tier serves without compromise, because syslog over TCP never replies.
+
+## OIDC Login
+
+A login is completed by the Worker, not by PHP. The callback is an ordinary request, so the token
+exchange and the `id_token` signature check happen in JavaScript before PHP is entered, and PHP is
+handed a decided result. `src/ops/oidc.ts` is the implementation.
+
+This is not an optimisation. The interpreter carries no OpenSSL, so it cannot verify an RS256
+`id_token` at all, and an unverified `id_token` is an unauthenticated login.
+
+| setting              | where      | what it does                                        |
+| -------------------- | ---------- | --------------------------------------------------- |
+| `oidc_issuer`        | `cfw_meta` | the provider's issuer URL; must be https            |
+| `oidc_client_id`     | `cfw_meta` | the client registered with that provider            |
+| `OIDC_CLIENT_SECRET` | binding    | for a provider that issued one; a secret, not a var |
+
+The issuer and the client id sit in the object's own storage rather than in KV, and the secret is a
+binding. None of the three can be set from KV: a writer who could change the issuer would point the
+consent screen at a provider they control, and every login on the site would authenticate against it.
+
+Register `https://<your-site>/__oidc?action=callback` as the redirect URI. `/__oidc` starts a login
+and accepts an optional `return` path, which must be site-relative.
+
+**The claims never travel in a URL.** The browser carries a single-use ticket; the claims stay in the
+object's storage and the row is deleted before they are returned, so a second presentation of the
+same ticket finds nothing. A redirect lands in browser history, in a referrer and in any proxy log
+on the path.
+
+Five conditions refuse a login, each tested against real generated keys: a signature from a key
+outside the provider's JWKS, an issuer that is not the configured one, an audience belonging to
+another client of the same provider, an expired token, and a nonce from a different login. `none`
+and the HMAC algorithms are refused by omission.
+
 ## Database Updates
 
 `updb` slices Drupal's own update path across invocations. Every var here bounds one slice.
@@ -453,11 +572,14 @@ reads instead of eleven, and gives an operator one place to see every override i
 `LAZY_FS_BUDGET_BYTES`, `PREFILL`, `GEN_BUCKET_MS`, `SITE_LOCATION_HINT`, `MAIL_TRANSPORT`,
 `MAIL_DRAIN_LIMIT`.
 
-**Only the two mail names reach a reader inside the Durable Object.** `withSettings()` is applied in
-`src/site.ts`, to the front Worker's env, and the object receives its own copy of the bindings — so
-the other nine are read in `src/site-do.ts` and never see a KV override. `adoptMailSettings()`
-overlays the two this feature adds; extending that to the rest changes how nine existing knobs
-behave and has not been done.
+**All eleven reach a reader inside the Durable Object, and for a while only two did.**
+`withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
+own copy of the bindings, so seven of the eleven were knobs nothing read: `RENDER_BUDGET_MS`,
+`FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`
+and `PREFILL` are read in `src/site-do.ts` and only there. `adoptSettings()` now overlays every name
+on the allow-list, and is called from `alarm()` as well as `handle()`, because four of the seven are
+read on the fill chain and an alarm never passes through `handle()`. The fast storage lane adopts
+nothing and must not: it is await-free by construction and reads no lever.
 
 **A lever is offered here first, then as a var.** KV comes before `vars` so an operator can change a
 setting without a redeploy; the var is the fallback. That ordering applies to anything new, including
@@ -475,8 +597,95 @@ every password-reset link the site sends.
 A malformed document, an unknown key and a KV error all yield no overrides rather than throwing.
 Values are read once per isolate per minute.
 
+## R2 Page Origin Caching
+
+Mirroring pages to R2 moves them off the Worker, and an R2 public bucket on a custom domain serves
+them. How much of that traffic Cloudflare's CDN absorbs in front of the bucket decides whether the
+off-Worker lever is worth anything: an absorbed read costs neither a Worker request nor an R2 Class B
+operation.
+
+**Absorption is 0 without a Cache Rule and about 7/8 with one.** Measured 2026-08-21 with GET against
+a cold object each time:
+
+| Condition                   | Result                       |
+| --------------------------- | ---------------------------- |
+| Cache Rule on, cold object  | MISS, then **7 / 7 HIT**     |
+| Cache Rule off, cold object | MISS, then **7 / 7 DYNAMIC** |
+
+A second object under the same rule read 1 MISS, 7 HIT and 2 DYNAMIC across 10 requests, which is the
+same picture with two requests landing at a PoP that had not filled yet.
+
+**Measure with GET, never `curl -I`.** HEAD is what `curl -I` sends, Cloudflare does not populate its
+cache from a HEAD, and every reading comes back `DYNAMIC`. That method produced the conclusion "R2
+custom domains do not cache", which was an artifact of the instrument rather than a property of R2.
+
+### The Cache Rule
+
+One rule, scoped to the CDN hostname and nothing else:
+
+```
+expression:        (http.host eq "drupflare-cdn.example.com")
+action:            set_cache_settings
+action_parameters: { "cache": true, "edge_ttl": { "mode": "override_origin", "default": 3600 } }
+```
+
+In the dashboard it is **Caching > Cache Rules > Create rule**, with the hostname as the only
+condition and **Eligible for cache** plus an edge TTL override. Over the API it is
+`PUT /zones/{ZONE_ID}/rulesets/phases/http_request_cache_settings/entrypoint`.
+
+**A PUT to an entrypoint replaces every rule in it.** Read the entrypoint first and merge; on a zone
+that has never had a cache-phase ruleset the entrypoint does not exist yet and creating it destroys
+nothing.
+
+**One zone-scoped permission creates it: `Zone > Cache Rules > Edit`.** Cloudflare's documentation
+also lists the account-scoped `Account Rulesets: Edit` and `Account Filter Lists: Edit`; measured,
+this rule shape does not need them. That correction matters, because the account-scoped reading is
+what had rejected this lever as an account-wide write bought for one site.
+
+### Smart Tiered Cache
+
+Every PoP fills independently, so a request reaching a cold PoP is a MISS and an R2 Class B read.
+Tiering routes a PoP miss through an upper tier instead of to the bucket, which changes absorption
+from per-PoP to hierarchical.
+
+Enable it at **Caching > Tiered Cache**, or:
+
+```sh
+curl "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/cache/tiered_cache_smart_topology_enable" \
+  --request PATCH \
+  --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  --json '{ "value": "on" }'
+```
+
+The token needs `Zone Settings Write` or `Zone Write`. Tiered Cache and Smart Topology are both
+available on the Free plan; Generic Global, Regional and Custom topologies are Enterprise only.
+Cloudflare selects the upper tier automatically for a zone using R2 as an origin.
+
+### Why the Model Still Defaults to Zero
+
+`cdnAbsorption` in `scripts/measure/free-envelope.ts` defaults to **0** and should stay there.
+
+Absorption is not a property of the configuration. It is a function of reads per colo per TTL window,
+so a site at 10 views/day spread over 40 PoPs absorbs almost nothing and the same site at 10,000
+views/day absorbs nearly everything. Zero is the correct floor for a low-traffic site and for any site
+with no rule, and it is the only value that is true regardless of traffic.
+
+So the 4.33x peak is reachable, at traffic high enough to keep PoPs warm, with one operator-applied
+rule. Report anything derived from a non-zero absorption as a range rather than a point.
+
+**`cdnAbsorption` is a code-level option, not a CLI flag.** The command line takes `--visits`,
+`--dynamic` and `--warmth` only; absorption is passed to `envelope()`, `optimalOffWorker()` and
+`scoreWorkload()` in `scripts/measure/free-envelope.ts`, so a claim that depends on it comes from a
+caller that names the value rather than from the default run.
+
+**Drupflare does not create the rule.** It is a change to a zone the operator owns, its value depends
+on traffic the product cannot see, and the model's default does not move until an operator says they
+applied it.
+
 ## Related
 
 - `docs/repository-layout.md` — every path outside `src/` and how it arrives
 - `docs/building-from-source.md` — the fifteen steps a source build runs
 - `docs/measurement-classes.md` — which instrument may produce which class of number
+- `docs/recovery.md` — which primitive answers which failure
+- `docs/external-database.md` — why the site database lives in the Durable Object

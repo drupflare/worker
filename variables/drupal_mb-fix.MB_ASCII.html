@@ -12,8 +12,8 @@
 <li><a href="" aria-current="page">MB_ASCII</a></li></ul>
 <h1>Variable MB_ASCII<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">MB_ASCII</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-comment tsd-typography"><p>Two corrections that need no host call and no table, kept separate from the
-wrappers so <code>scripts/measure/mb-parity.ts</code> can price each on its own.</p>
+<div class="tsd-comment tsd-typography"><p>The corrections that need no host call and no generated table, kept separate from
+the wrappers so <code>scripts/measure/mb-parity.ts</code> can price each on its own.</p>
 <p>THE ASCII FAST PATH is not only a speed lever, though it is a large one -- the
 polyfill routes every call through iconv even for bytes it cannot possibly
 change. Drupal's hot <code>mb_strtolower</code> inputs are machine names, field names,
@@ -29,7 +29,7 @@ per-codepoint, which is why a table cannot express it: sigma is final when a
 letter precedes it and none follows.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79d9469c99e18871569c5dc337e4d18267889433/src/drupal/mb-fix.ts#L129">src/drupal/mb-fix.ts:129</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/drupal/mb-fix.ts#L134">src/drupal/mb-fix.ts:134</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

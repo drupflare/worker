@@ -1,10 +1,45 @@
 import '@drupflare/cartridge/shim';
 import type { SiteEnv } from './env';
-import { attemptBudget, deferredKey, isFresh, ttlFor } from './ops/deferred-post.js';
+import {
+	attemptBudget,
+	deferredKey,
+	headersToSend,
+	isFresh,
+	requestHeaders,
+	ttlFor
+} from './ops/deferred-post.js';
+import {
+	DEFAULT_SCOPES,
+	beginLogin,
+	completeLogin,
+	discoveryUrl,
+	mintTicket,
+	// aliased: `cf-oauth.ts` exports the same two names for Cloudflare's own dashboard flow
+	authorizeUrl as oidcAuthorizeUrl,
+	pendingMatches as oidcPendingMatches,
+	readProvider,
+	ticketRedeemable,
+	type ClaimsTicket,
+	type OidcConfig,
+	type OidcProvider,
+	type PendingLogin
+} from './ops/oidc.js';
 import { FIRST_RUN_KEY, needsSetup, setupResponse } from './ops/setup-page.js';
+import {
+	REDIS_REFUSED_COMMANDS,
+	TCP_PROTOCOLS,
+	isTcpUrl,
+	resolveTcpEndpoint,
+	runTcpExchange,
+	tcpMethod,
+	tcpQueueUrl,
+	type TcpProtocol,
+	type TcpResult
+} from './ops/tcp.js';
 import { warmingResponse } from './ops/warming-page.js';
 
 import {
+	mkdirp,
 	mountDriver,
 	mountDrupalLazy,
 	mountDrupalStreaming,
@@ -111,6 +146,7 @@ import {
 	type RenderRequest
 } from './drupal/site-php';
 import { SODIUM_FIX, installBlake2b } from './drupal/sodium-fix';
+import { XMLWRITER_FIX } from './drupal/xmlwriter-fix';
 import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
 import {
 	DAILY_DO_QUOTA,
@@ -169,8 +205,11 @@ import {
 	drainMailQueue,
 	mailDrainEnabled,
 	mailDrainLimit,
+	mailEnvFromSite,
+	mergeMailEnv,
 	queueMail,
-	resolveMailTransport
+	resolveMailTransport,
+	type MailEnv
 } from './ops/mail';
 import {
 	applyDnsPlan,
@@ -185,6 +224,7 @@ import {
 	type RecordAction
 } from './ops/mail-onboard';
 import { resolveInstallable } from './ops/oracle';
+import { distOf, metadataUrl, pickVersion, unpackZip, type Registry } from './ops/package-install';
 import { drainPageMirrors, queuePageMirror } from './ops/page-mirror';
 import { KV_OVERRIDABLE, isFree, isPaid, planFlag, resolveSettings, type PlanKv } from './ops/plan';
 import { planProfile, resolvePlanNumber } from './ops/plan-profile';
@@ -247,6 +287,13 @@ const CF_OAUTH_PENDING_KEY = 'cf_oauth_pending';
 const CF_OAUTH_TOKEN_KEY = 'cf_oauth_token';
 const CF_OAUTH_ACCOUNT_KEY = 'cf_oauth_account';
 const MAIL_ZONE_KEY = 'mail_sending_zone';
+/** the site's own `smtp.settings`, mapped to transport vars; the alarm reads it, see `mailEnv()` */
+const SITE_SMTP_KEY = 'site_smtp_settings';
+/** Tier B's OIDC provider, the login in flight, and the single-use claims ticket; see `src/ops/oidc.ts` */
+const OIDC_ISSUER_KEY = 'oidc_issuer';
+const OIDC_CLIENT_ID_KEY = 'oidc_client_id';
+const OIDC_PENDING_KEY = 'oidc_pending';
+const OIDC_TICKET_KEY = 'oidc_ticket';
 // the `.js` is load-bearing: wrangler.jsonc aliases the specifier `./runtime/php-binary.js`, and
 // without it esbuild resolves the default seam and bundles an 11 MB probe build over the ceiling
 import { PHPFactory, wasmModule } from './runtime/php-binary.js';
@@ -1056,6 +1103,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** how many result sets this lifetime needed a wide-integer re-read; 0 on an ordinary site */
 	wideRepairs?: number;
+
+	/** files written from `cfw_module_file` at boot; 0 on a site that has installed nothing */
+	installedModuleFiles?: number;
 	bumpCoalesced?: boolean;
 	bumps?: number;
 	lastRenderMs?: number;
@@ -1264,6 +1314,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						database: migrateEngine(null, this.env) === 'php'
 					});
 		this.mountInfo.driver = await mountDriver(binary, this.env);
+		// AFTER the packed driver, so a site-installed module can override a packed file rather than
+		// being shadowed by one. P18 (`composer require`) and P40 (a git-delivered module) both write
+		// into `cfw_module_file`; this is the only place either becomes reachable to PHP
+		this.installedModuleFiles = this.mountInstalledModules(binary);
 
 		// point the site at this driver, and at a salt only this site has
 		const settingsPath = '/drupal/sites/default/settings.php';
@@ -1353,6 +1407,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		await this.run(`<?php ${ARGON2_FIX}`);
 		// sodium_crypto_generichash*, which strata needs before its first frame is written
 		await this.run(`<?php ${SODIUM_FIX}`);
+		// XMLWriter must exist before any module class EXTENDS it, which is a compile-time
+		// requirement rather than a call-time one and is why this is a class and not a shim set
+		await this.run(`<?php ${XMLWRITER_FIX}`);
 		return this.php;
 	}
 
@@ -1409,7 +1466,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const row = this.httpCacheGet(
 				String(req.url ?? ''),
 				String(req.method ?? 'GET'),
-				String(req.body ?? '')
+				String(req.body ?? ''),
+				requestHeaders(req)
 			);
 			return reply(
 				row === null
@@ -1424,7 +1482,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const url = String(req.url ?? '');
 			const method = String(req.method ?? 'GET');
 			const body = String(req.body ?? '');
-			const row = this.httpCacheGet(url, method, body);
+			const headers = requestHeaders(req);
+			const row = this.httpCacheGet(url, method, body, headers);
 			if (row !== null) {
 				return reply({
 					ok: true,
@@ -1435,7 +1494,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 			// queued so the NEXT read succeeds, and the refusal names the reason rather
 			// than looking like a network error
-			this.queueHttp(url, method, body);
+			this.queueHttp(url, method, body, headers);
 			return reply({
 				ok: false,
 				error: `${url} is not in the fetch cache; queued for the next drain. A Worker cannot fetch synchronously without JSPI, so this capability is cached-or-deferred by construction.`,
@@ -1451,8 +1510,94 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const req = parse(json);
 			const url = String(req.url ?? '');
 			if (url === '') return reply({ ok: false, error: 'no url' });
-			this.queueHttp(url, String(req.method ?? 'GET'), String(req.body ?? ''));
+			this.queueHttp(
+				url,
+				String(req.method ?? 'GET'),
+				String(req.body ?? ''),
+				requestHeaders(req)
+			);
 			return reply({ ok: true, queued: url });
+		};
+
+		/**
+		 * Redeems a claims ticket, ONCE.
+		 *
+		 * Synchronous by construction, and that is the point of Tier B: the awaiting already
+		 * happened at the callback route, so PHP is handed a decided result rather than a promise.
+		 * The row is deleted before the claims are returned, so a replay finds nothing -- a ticket
+		 * rides in a redirect and therefore lands in history and in every proxy log on the path.
+		 */
+		binary.cfwOidcClaims = (json: string) => {
+			const req = parse(json);
+			let stored: ClaimsTicket | null = null;
+			try {
+				stored = JSON.parse(this.metaGet(OIDC_TICKET_KEY) || 'null') as ClaimsTicket | null;
+			} catch {
+				stored = null;
+			}
+			// deleted FIRST, so even a throw below cannot leave a redeemable ticket behind
+			this.metaSet(OIDC_TICKET_KEY, '');
+
+			const verdict = ticketRedeemable(stored, String(req.ticket ?? ''), this.nowMs());
+			if ('refusal' in verdict) return reply({ ok: false, error: verdict.refusal });
+			return reply({
+				ok: true,
+				sub: stored!.sub,
+				issuer: stored!.issuer,
+				email: stored!.email,
+				name: stored!.name
+			});
+		};
+
+		/**
+		 * The TCP tier: one declared exchange, run between invocations.
+		 *
+		 * PHP names a PROTOCOL and an OPERATION; the endpoint and its credentials come from the
+		 * operator's env, so module code cannot point this at an arbitrary `host:port`. See
+		 * `src/ops/tcp.ts` for why the `connect`/`read`/`write`/`close` shape cannot exist here.
+		 *
+		 * `redis` has a reply, so it is cached-or-deferred exactly like `cfwFetch`. `syslog` has
+		 * none, so it queues and answers immediately -- there is nothing to read back.
+		 */
+		binary.cfwTcp = (json: string) => {
+			const req = parse(json);
+			const protocol = String(req.protocol ?? '');
+			if (!(TCP_PROTOCOLS as readonly string[]).includes(protocol)) {
+				return reply({
+					ok: false,
+					error: `unknown TCP protocol ${protocol || '(none)'}; this host speaks ${TCP_PROTOCOLS.join(', ')}`
+				});
+			}
+			const resolved = resolveTcpEndpoint(this.env ?? {}, protocol as TcpProtocol);
+			if ('refusal' in resolved) return reply({ ok: false, error: resolved.refusal });
+
+			const url = tcpQueueUrl(resolved.endpoint);
+			if (protocol === 'syslog') {
+				this.queueHttp(url, 'POST', JSON.stringify(req.record ?? {}), {});
+				return reply({ ok: true, queued: url });
+			}
+
+			const args = Array.isArray(req.args) ? (req.args as unknown[]) : [];
+			if (args.length === 0) return reply({ ok: false, error: 'a redis call needs args' });
+			const command = String(args[0]).toUpperCase();
+			if (REDIS_REFUSED_COMMANDS.has(command)) {
+				return reply({
+					ok: false,
+					error: `${command} is not reachable from module code; it would change or erase state outside this site`
+				});
+			}
+			const body = JSON.stringify(args);
+			const method = tcpMethod('redis', command);
+			const row = this.httpCacheGet(url, method, body, {});
+			if (row !== null) {
+				return reply({ ok: row.status === 200, status: row.status, body: row.body });
+			}
+			this.queueHttp(url, method, body, {});
+			return reply({
+				ok: false,
+				error: `${command} is not in the exchange cache; queued for the next drain. PHP cannot await, so this tier is cached-or-deferred by construction.`,
+				queued: true
+			});
 		};
 
 		/**
@@ -1492,7 +1637,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				headers: (msg.headers ?? {}) as Record<string, string>
 			};
 
-			const plan = resolveMailTransport(this.env ?? {});
+			// `drupal/smtp` installs here and its socket never runs, so a site that configured it
+			// has a complete relay nothing was reading; persist it so the alarm resolves the same
+			const fromSite = mailEnvFromSite(msg.smtp);
+			if (Object.keys(fromSite).length > 0) {
+				this.metaSet(SITE_SMTP_KEY, JSON.stringify(fromSite));
+			}
+
+			const plan = resolveMailTransport(this.mailEnv());
 			if ('refusal' in plan) return refuse(plan.refusal);
 
 			const queued = queueMail(this.sql, message, plan.transport, this.nowMs());
@@ -1661,49 +1813,63 @@ export class SitePhpDurableObject extends SiteDurableObject {
         url TEXT NOT NULL,
         method TEXT NOT NULL,
         body TEXT NOT NULL DEFAULT '',
+        headers TEXT NOT NULL DEFAULT '{}',
         queued_at INTEGER NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT
       )`
 		);
+		// an existing site's queue predates the headers column, and ADD COLUMN keeps whatever is
+		// queued rather than dropping it the way the `key` migration above has to
+		const queueColumns = this.sql
+			.exec<Row<{ name: string }>>('SELECT name FROM pragma_table_info(?)', 'cfw_http_queue')
+			.toArray()
+			.map((r) => String(r.name));
+		if (!queueColumns.includes('headers')) {
+			this.sql.exec(
+				"ALTER TABLE cfw_http_queue ADD COLUMN headers TEXT NOT NULL DEFAULT '{}'"
+			);
+		}
 		this.httpTablesReady = true;
 	}
 
 	httpCacheGet(
 		url: string,
 		method = 'GET',
-		body = ''
+		body = '',
+		headers: Record<string, string> = {}
 	): { status: number; headers: Payload; body: string } | null {
 		this.ensureHttpTables();
 		const row = this.sql
 			.exec<Row<{ status: number; headers: string; body: string; expires_at: number }>>(
 				'SELECT status, headers, body, expires_at FROM cfw_http_cache WHERE key = ?',
-				deferredKey(method, url, body)
+				deferredKey(method, url, body, headers)
 			)
 			.toArray()[0];
 		if (!row) return null;
 		// an expired entry is NEVER served -- a cached verification that outlives its meaning is a
 		// replay window rather than a stale page. A missing or non-finite expiry counts as expired
 		if (!isFresh({ expiresAt: Number(row.expires_at) }, this.nowMs())) return null;
-		let headers: Payload = {};
+		let responseHeaders: Payload = {};
 		try {
-			headers = JSON.parse(String(row.headers));
+			responseHeaders = JSON.parse(String(row.headers));
 		} catch {
-			headers = {};
+			responseHeaders = {};
 		}
-		return { status: Number(row.status), headers, body: String(row.body) };
+		return { status: Number(row.status), headers: responseHeaders, body: String(row.body) };
 	}
 
-	queueHttp(url: string, method = 'GET', body = ''): void {
+	queueHttp(url: string, method = 'GET', body = '', headers: Record<string, string> = {}): void {
 		if (!url) return;
 		this.ensureHttpTables();
 		this.sql.exec(
-			`INSERT INTO cfw_http_queue (key, url, method, body, queued_at)
-       VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING`,
-			deferredKey(method, url, body),
+			`INSERT INTO cfw_http_queue (key, url, method, body, headers, queued_at)
+       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(key) DO NOTHING`,
+			deferredKey(method, url, body, headers),
 			url,
 			method,
 			body,
+			JSON.stringify(headersToSend(headers)),
 			this.nowMs()
 		);
 		// Wake the drain, or nothing does.
@@ -1725,9 +1891,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.ensureHttpTables();
 		const pending = this.sql
 			.exec<
-				Row<{ key: string; url: string; method: string; body: string; attempts: number }>
+				Row<{
+					key: string;
+					url: string;
+					method: string;
+					body: string;
+					headers: string;
+					attempts: number;
+				}>
 			>(
-				'SELECT key, url, method, body, attempts FROM cfw_http_queue ORDER BY queued_at LIMIT ?',
+				'SELECT key, url, method, body, headers, attempts FROM cfw_http_queue ORDER BY queued_at LIMIT ?',
 				Math.max(1, Math.min(limit, 25))
 			)
 			.toArray();
@@ -1737,14 +1910,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const url = String(item.url);
 			const method = String(item.method || 'GET');
 			const sent = String(item.body ?? '');
+			// a row queued before the column existed carries '{}', which is the same as no headers
+			let outbound: Record<string, string> = {};
 			try {
-				const res = await fetch(url, {
-					method,
-					...(sent ? { body: sent } : {})
-				});
-				const body = await res.text();
-				const headers: Record<string, string> = {};
-				for (const [k, v] of res.headers) headers[k.toLowerCase()] = v;
+				const parsed: unknown = JSON.parse(String(item.headers ?? '{}'));
+				if (parsed && typeof parsed === 'object') {
+					outbound = headersToSend(parsed as Record<string, string>);
+				}
+			} catch {
+				outbound = {};
+			}
+			try {
+				// the TCP tier shares this queue, this cache and this budget on purpose: dedup, TTL,
+				// attempt budget and the resubmit plan are already correct here, and a second queue
+				// would be a second place for them to drift
+				let res: TcpResult;
+				if (isTcpUrl(url)) {
+					res = await runTcpExchange(url, sent, this.env ?? {});
+				} else {
+					const http = await fetch(url, {
+						method,
+						...(Object.keys(outbound).length ? { headers: outbound } : {}),
+						...(sent ? { body: sent } : {})
+					});
+					const received: Record<string, string> = {};
+					for (const [k, v] of http.headers) received[k.toLowerCase()] = v;
+					res = { status: http.status, headers: received, body: await http.text() };
+				}
+				const body = res.body;
+				const headers = res.headers;
 				this.sql.exec(
 					`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -2219,6 +2413,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
         v TEXT NOT NULL
       )`
 		);
+		// Site-installed module source, from `composer require` (P18) or a git remote (P40). PER FILE
+		// rather than one archive blob: a Durable Object record caps at 2,199,995 bytes and a tarball
+		// clears that easily while a PHP file never does
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS cfw_module_file (
+        path TEXT PRIMARY KEY,
+        package TEXT NOT NULL,
+        version TEXT NOT NULL,
+        source TEXT NOT NULL,
+        installed_at INTEGER NOT NULL
+      )`
+		);
 		// P7's shared shells. KEYED BY (path, permissions_hash) rather than by path alone: two role
 		// sets render different markup outside the holes, and the hash is what tells them apart
 		this.sql.exec(
@@ -2318,6 +2524,125 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// never take the serving path down over a cache-busting nicety
 			return null;
 		}
+	}
+
+	/**
+	 * Resolves one package and writes its files into `cfw_module_file`.
+	 *
+	 * The host half of `composer require` (P18) and of a git-delivered module (P40): PHP cannot block
+	 * on a socket, so the terminal parses the intent and this performs it. Three fetches at most --
+	 * metadata, then the archive -- and every file lands as its own row, because a Durable Object
+	 * record caps at 2,199,995 bytes and an archive clears that easily while a PHP file does not.
+	 *
+	 * REPORTS WHAT IT DROPPED. `unpackZip()` keeps only mountable files, so an install of 40 files
+	 * that stores 12 is normal and has to be explainable rather than mysterious.
+	 */
+	async installPackage(
+		registry: Registry,
+		name: string,
+		constraint?: string | null
+	): Promise<Record<string, unknown>> {
+		this.ensureServeTables();
+		try {
+			const meta = await fetch(metadataUrl(registry, name));
+			if (!meta.ok) {
+				return { ok: false, name, error: `metadata ${meta.status} for ${name}` };
+			}
+			const entry = pickVersion(await meta.json(), name, constraint);
+			if (!entry) {
+				return {
+					ok: false,
+					name,
+					error: constraint
+						? `no version of ${name} matches ${constraint}`
+						: `${name} publishes no version this can read`
+				};
+			}
+			const dist = distOf(entry, name);
+			if (!dist) return { ok: false, name, error: `${name} has no downloadable archive` };
+			if (dist.type !== 'zip') {
+				// a tarball needs the tar reader rather than fflate; npm is the only source that
+				// serves one and no npm package is mountable as PHP, so this refuses rather than
+				// half-implementing it
+				return {
+					ok: false,
+					name,
+					error: `${name} ships a ${dist.type}, which is not read here`
+				};
+			}
+
+			const archive = await fetch(dist.url, { headers: { 'user-agent': 'drupflare' } });
+			if (!archive.ok) {
+				return { ok: false, name, error: `archive ${archive.status} from ${dist.url}` };
+			}
+			const unpacked = unpackZip(new Uint8Array(await archive.arrayBuffer()), dist.mount);
+
+			const decoder = new TextDecoder();
+			for (const file of unpacked.files) {
+				this.sql.exec(
+					`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+             package = excluded.package,
+             version = excluded.version,
+             source = excluded.source,
+             installed_at = excluded.installed_at`,
+					file.path,
+					name,
+					dist.version,
+					decoder.decode(file.bytes),
+					this.nowMs()
+				);
+			}
+			return {
+				ok: true,
+				name,
+				version: dist.version,
+				mount: dist.mount,
+				files: unpacked.files.length,
+				bytes: unpacked.totalBytes,
+				skipped: unpacked.skipped.length,
+				// the interpreter is dropped so the next boot mounts what was just written; a warm
+				// object would otherwise run a site whose `core.extension` names a module PHP cannot
+				// see, which is a fatal rather than a degradation
+				note: 'installed; the interpreter is dropped so the next request mounts it'
+			};
+		} catch (e: any) {
+			return { ok: false, name, error: String(e?.message ?? e) };
+		} finally {
+			this.php = null;
+		}
+	}
+
+	/**
+	 * Writes every site-installed module file into the interpreter's filesystem.
+	 *
+	 * The counterpart to `mountDriver()`, which serves the PACKED modules out of the ASSETS binding.
+	 * These come from `cfw_module_file`, which is where `composer require` (P18) and a git-delivered
+	 * module (P40) put what they fetched, so the two share one mount rather than one each.
+	 *
+	 * Synchronous and unconditional: a module the operator installed is not optional, and a boot that
+	 * skipped it would produce a site whose `core.extension` names a module PHP cannot find, which is
+	 * a fatal rather than a degradation.
+	 */
+	mountInstalledModules(binary: SiteBinary): number {
+		this.ensureServeTables();
+		const rows = this.sql
+			.exec<{ path: string; source: string }>('SELECT path, source FROM cfw_module_file')
+			.toArray();
+		let written = 0;
+		for (const row of rows) {
+			const path = `/drupal/${String(row.path).replace(/^\/+/, '')}`;
+			try {
+				mkdirp(binary.FS, path.slice(0, path.lastIndexOf('/')));
+				binary.FS.writeFile(path, String(row.source));
+				written++;
+			} catch {
+				// one unwritable file must not take the boot down; the module reports itself broken
+				// through Drupal's own missing-class path, which names the file
+			}
+		}
+		return written;
 	}
 
 	/**
@@ -2730,6 +3055,69 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			get: (key: string) => this.metaGet(key),
 			set: (key: string, value: string) => this.metaSet(key, value)
 		};
+	}
+
+	/**
+	 * The deployment's mail vars, with the site's own `smtp.settings` filling the gaps.
+	 *
+	 * **THE DRAIN NEVER SEES THE MESSAGE**, so merging only at `cfwMail` time would resolve one
+	 * transport at commit and dial a different one on the alarm -- or refuse there, leaving a queue
+	 * that never moves and a `/health` line blaming a var the operator did set. So the settings are
+	 * PERSISTED when PHP hands them over and both resolvers read the same slot.
+	 *
+	 * One slot rather than a per-row snapshot, which keeps the property the drain was designed
+	 * around: an operator who fixes a credential drains the queue that was refused under the old
+	 * one.
+	 */
+	mailEnv(): MailEnv {
+		let fromSite: Partial<MailEnv> = {};
+		try {
+			fromSite = JSON.parse(this.metaGet(SITE_SMTP_KEY) ?? '{}') as Partial<MailEnv>;
+		} catch {
+			fromSite = {};
+		}
+		return mergeMailEnv(this.env ?? {}, fromSite);
+	}
+
+	/**
+	 * The OIDC provider an operator configured, or why it is not usable.
+	 *
+	 * The issuer and client id come from `cfw_meta` because an operator sets them; **the SECRET is
+	 * an env binding and neither it nor the issuer may join `KV_OVERRIDABLE`** -- a KV writer who
+	 * could set the issuer would point the consent screen at a provider they control, and every
+	 * login on the site would authenticate against it.
+	 */
+	oidcConfig(origin: string): { config: OidcConfig } | { refusal: string } {
+		const issuer = this.metaGet(OIDC_ISSUER_KEY) ?? '';
+		const clientId = this.metaGet(OIDC_CLIENT_ID_KEY) ?? '';
+		if (issuer === '' || clientId === '') {
+			return { refusal: 'no OIDC provider is configured for this site' };
+		}
+		if (!issuer.startsWith('https://')) return { refusal: 'the OIDC issuer must be https' };
+		const secret = String(this.env?.OIDC_CLIENT_SECRET ?? '');
+		return {
+			config: {
+				issuer,
+				clientId,
+				...(secret ? { clientSecret: secret } : {}),
+				scopes: DEFAULT_SCOPES,
+				redirectUri: `${this.canonicalOrigin(origin)}/__oidc?action=callback`
+			}
+		};
+	}
+
+	/** the discovery document, fetched per callback rather than cached; a login is not a hot path */
+	async oidcProvider(issuer: string): Promise<{ provider: OidcProvider } | { refusal: string }> {
+		let doc: unknown;
+		try {
+			const res = await fetch(discoveryUrl(issuer));
+			if (!res.ok) return { refusal: `discovery answered ${res.status}` };
+			doc = await res.json();
+		} catch (e: any) {
+			return { refusal: `discovery failed: ${String(e?.message ?? e).slice(0, 120)}` };
+		}
+		const provider = readProvider(doc, issuer);
+		return 'refusal' in provider ? provider : { provider };
 	}
 
 	metaGet(key: string, fallback: string | null = null): string | null {
@@ -4143,7 +4531,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// records which KIND was resolved at commit, which is diagnostics, not a routing decision.
 		if (mailDrainEnabled(this.env ?? {}) && (this.countOrNull('cfw_mail_queue') ?? 0) > 0) {
 			await this.adoptSettings();
-			const plan = resolveMailTransport(this.env ?? {});
+			const plan = resolveMailTransport(this.mailEnv());
 			if ('refusal' in plan) {
 				this.lastMailDrain = { refusal: plan.refusal };
 				this.lastMailDrainAt = Date.now();
@@ -4863,6 +5251,101 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						...onboardState({ zoneId: zoneId || null, subdomain, plan, destination }),
 						applied
 					});
+				}
+
+				/**
+				 * Tier B: the OIDC login the HOST completes before PHP is entered.
+				 *
+				 * `src/ops/oidc.ts` carries the whole contract and why this cannot live in PHP:
+				 * `WITH_OPENSSL=0`, so the interpreter cannot verify an RS256 `id_token` at all, and an
+				 * unverified `id_token` is an unauthenticated login. The claims never travel in a URL --
+				 * the browser carries a single-use ticket and PHP redeems it through `cfwOidcClaims`.
+				 */
+				case '/__oidc': {
+					const action = url.searchParams.get('action') ?? 'start';
+					const config = this.oidcConfig(url.origin);
+					if ('refusal' in config) {
+						return Response.json({ ok: false, error: config.refusal }, { status: 400 });
+					}
+
+					const discovered = await this.oidcProvider(config.config.issuer);
+					if ('refusal' in discovered) {
+						return Response.json(
+							{ ok: false, error: discovered.refusal },
+							{ status: 502 }
+						);
+					}
+
+					if (action === 'start') {
+						const pending = await beginLogin(
+							url.searchParams.get('return') ?? '/',
+							this.nowMs()
+						);
+						const { pkce, ...stored } = pending;
+						this.metaSet(OIDC_PENDING_KEY, JSON.stringify(stored));
+						return Response.redirect(
+							oidcAuthorizeUrl(
+								discovered.provider,
+								config.config,
+								stored,
+								pkce.challenge
+							),
+							302
+						);
+					}
+
+					// the callback; every refusal below is a login that must NOT complete
+					let pending: PendingLogin | null = null;
+					try {
+						pending = JSON.parse(
+							this.metaGet(OIDC_PENDING_KEY) ?? 'null'
+						) as PendingLogin | null;
+					} catch {
+						pending = null;
+					}
+					// consumed whatever happens, so a failed attempt cannot be retried against a stale state
+					this.metaSet(OIDC_PENDING_KEY, '');
+
+					const matched = oidcPendingMatches(
+						pending,
+						url.searchParams.get('state') ?? '',
+						this.nowMs()
+					);
+					if ('refusal' in matched) {
+						return Response.json(
+							{ ok: false, error: matched.refusal },
+							{ status: 400 }
+						);
+					}
+
+					const code = url.searchParams.get('code') ?? '';
+					if (code === '') {
+						return Response.json(
+							{ ok: false, error: 'no authorization code' },
+							{ status: 400 }
+						);
+					}
+
+					const completed = await completeLogin(
+						code,
+						pending!,
+						config.config,
+						discovered.provider,
+						this.nowMs(),
+						{ fetch: (u, init) => fetch(u, init as RequestInit) }
+					);
+					if ('refusal' in completed) {
+						return Response.json(
+							{ ok: false, error: completed.refusal },
+							{ status: 401 }
+						);
+					}
+
+					const ticket = mintTicket(completed.claims, discovered.provider, this.nowMs());
+					this.metaSet(OIDC_TICKET_KEY, JSON.stringify(ticket));
+					const back = new URL(pending!.returnTo, this.canonicalOrigin(url.origin));
+					back.searchParams.set('cfw_oidc', ticket.ticket);
+					return Response.redirect(back.toString(), 302);
 				}
 
 				case '/__cfoauth': {
@@ -6309,6 +6792,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// authenticated caching is worth finishing on THIS site rather than in
 						// general: a site whose pages carry no placeholders has nothing to gain
 						shellCandidates: this.shellCandidates(),
+						// CRON STATE, which had no surface at all. Cron is driven from the alarm, so
+						// nothing on the request path writes it and nothing outside the object could
+						// see whether it had ever run -- `cron-wire.spec.ts` proves the wire in the
+						// gate and this is what makes a DEPLOYED firing observable
+						cron: {
+							enabled: drupalCronEnabled(this.env),
+							lastRunMs:
+								(await this.ctx.storage.get<number>('cronLastRunMs')) ?? null,
+							intervalMs: cronIntervalMs(this.env)
+						},
 						// PHP-to-host crossings for the LAST render, per capability. Not a billed
 						// meter today -- a `cfw*` call is a wasm import into the same isolate -- so
 						// this prices the refactor risk the docs create: an RPC method call IS

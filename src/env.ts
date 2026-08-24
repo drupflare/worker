@@ -92,4 +92,27 @@ export interface SiteEnv extends BaseSiteEnv {
 	SMTP_PASS?: string;
 	/** `PLAIN | LOGIN` */
 	SMTP_AUTH?: string;
+
+	/**
+	 * The TCP tier's endpoints, one var per protocol; see `src/ops/tcp.ts`.
+	 *
+	 * A whole URL rather than a host/port/user/pass set, because these carry credentials and a
+	 * secret is one binding: `redis://user:pass@host:6379/0` (or `rediss://` for TLS). The
+	 * ENDPOINT is deliberately the operator's -- PHP names an operation and never a host, or any
+	 * module able to call a host function could reach arbitrary TCP.
+	 */
+	REDIS_URL?: string;
+	/** `syslog://collector:514` or `syslogs://collector:6514` for RFC 5425 TLS */
+	SYSLOG_URL?: string;
+	/** APP-NAME on every record this site ships; defaults to `drupal` */
+	SYSLOG_APP_NAME?: string;
+
+	/**
+	 * The OIDC client secret, for a provider that issued one; see `src/ops/oidc.ts`.
+	 *
+	 * A secret rather than a `vars` entry, and it must never join `KV_OVERRIDABLE` -- neither may
+	 * the issuer, which lives in `cfw_meta`: a KV writer who could set it would point the consent
+	 * screen at a provider they control and every login would authenticate against it.
+	 */
+	OIDC_CLIENT_SECRET?: string;
 }

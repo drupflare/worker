@@ -39,7 +39,7 @@ const REQUESTED = [
 	'drupal/devel',
 	'drupal/migrate_plus',
 	'drupal/stage_file_proxy',
-	'drupal/image_optimize',
+	'drupal/imageapi_optimize',
 	'drupal/filefield_sources',
 	'drupal/queue_ui'
 ];
@@ -97,12 +97,11 @@ describe('tiers under the shipped capabilities', () => {
 	 * The `lift` field is where that gap is recorded.
 	 */
 	it('reports the cron modules against the capability, and records the unwired gap in lift', () => {
-		for (const name of [
-			'drupal/scheduler',
-			'drupal/search_api',
-			'drupal/simple_sitemap',
-			'drupal/queue_ui'
-		]) {
+		// `simple_sitemap` is NOT here any more, and the reason is the point: it is classified
+		// `cron` and refused before cron is ever reached, on a missing `XMLWriter`. Its lift
+		// describes that instead, so requiring the cron sentence would force it to carry a lift for
+		// a question downstream of an install that does not happen
+		for (const name of ['drupal/scheduler', 'drupal/search_api', 'drupal/queue_ui']) {
 			expect(merged[name]).toContain('cron');
 			expect(MODULE_TIER_NOTES[name]?.lift).toMatch(/cron wiring|driveCron/);
 		}
@@ -126,16 +125,51 @@ describe('tiers under the shipped capabilities', () => {
 		}
 	});
 
-	/** the one structural refusal, and it stays refused until the binary can suspend */
-	it('refuses only search_api_solr, and only on blocking outbound', () => {
+	/**
+	 * Nothing on the stress list refuses any more, and `simple_sitemap` was the last one.
+	 *
+	 * It was refused on a capability VECTOR rather than on the coarse three-value vocabulary --
+	 * `hook_requirements()` demanding `ext-xmlwriter`, which is neither outbound nor cron. The
+	 * host now supplies a pure-PHP `XMLWriter`, verified byte for byte against libxml, so the
+	 * vector passes and the refusal is gone. An empty set is a weak assertion on its own, which is
+	 * why the vector path is asserted separately below: the mechanism must still be WIRED, or this
+	 * test would keep passing after `tierFor()` stopped consulting vectors at all.
+	 */
+	it('leaves nothing on the stress list refused', () => {
 		const refused = REQUESTED.filter(
 			(m) => tierFor(m, SHIPPED_CAPABILITIES).tier === 'refused'
 		);
 		expect(refused).toEqual([]);
+	});
 
+	it('still scores the sitemap on its capability vector, not on the coarse vocabulary', () => {
+		const vectors = MODULE_TIER_NOTES['drupal/simple_sitemap']?.vectors ?? [];
+		expect(vectors).toContain('runtime.xmlwriter');
+
+		const sitemap = tierFor('drupal/simple_sitemap', SHIPPED_CAPABILITIES);
+		expect(sitemap.tier).not.toBe('refused');
+		// and never on the socket mechanism, which was always a different question about it
+		expect(sitemap.reason ?? '').not.toContain('INSIDE one render');
+	});
+
+	/**
+	 * `search_api_solr` LEFT the refused set on 2026-08-23, and it left for a measured reason.
+	 *
+	 * It was refused because a Solr query must answer inside the render that asked. Measured against
+	 * solarium 6.4.2, the transport is interceptable ABOVE the adapter -- `PreExecuteRequest` short-
+	 * circuits it and `search_api_solr` hands Drupal's dispatcher to the client -- so the deferred
+	 * tier reaches it after all. This assertion exists so the move is deliberate: if it ever reads
+	 * `refused` again, something regressed rather than a spec being tidied.
+	 */
+	it('reaches search_api_solr through the deferred tier now that its transport is interceptable', () => {
 		const solr = tierFor('drupal/search_api_solr', SHIPPED_CAPABILITIES);
-		expect(solr.tier).toBe('refused');
-		expect(solr.reason).toContain('INSIDE one render');
+		expect(solr.tier).toBe('needs-deferred-tier');
+		expect(solr.tier).not.toBe('refused');
+
+		// and it goes back to refused on a runtime with no deferred tier, which is what says the
+		// classification is driven by the capability rather than hardcoded
+		const none = { ...SHIPPED_CAPABILITIES, deferredOutbound: false };
+		expect(tierFor('drupal/search_api_solr', none).tier).toBe('refused');
 	});
 
 	it('would refuse the deferrable ones on a runtime with no deferred tier', () => {

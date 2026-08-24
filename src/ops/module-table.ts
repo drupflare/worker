@@ -28,6 +28,15 @@ import { MODULE_TIER_NOTES } from './module-tiers.js';
 export type SupportState = 'verified' | 'untested' | 'blocked';
 
 /**
+ * The same three, as a value, so a test can pin the VOCABULARY rather than today's census.
+ *
+ * The distinction earned its own export: the spec used to assert the exact set of states in use,
+ * which passed while every row happened to be `verified` or `blocked` and then failed the moment a
+ * module was honestly reclassified to `untested`.
+ */
+export const MODULE_STATES: readonly SupportState[] = ['verified', 'untested', 'blocked'];
+
+/**
  * The contrib modules the SHIPPING pack carries, which is four and has always been four.
  *
  * `scripts/pack-drupal.ts` puts `modules/contrib` behind `PACK_CONTRIB=1` and says why in its own
@@ -75,6 +84,32 @@ export const FIXTURE_CLAUSE =
  * is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CONTRIB}.
  */
 export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
+	'drupal/filefield_sources':
+		'enabled against a real site; `plugin.manager.filefield_sources`, its field access check and its own service all resolve. Ships no stable release, so this is the 2.0 development branch and the row says so',
+	'drupal/imageapi_optimize':
+		'enabled against a real site; its processor plugin manager resolves, `imageapi_optimize.settings` is installed and the pipeline config entity type is registered. The BINARY pipelines shell out and cannot run here; the pipeline plugin point is what was verified',
+	'drupal/coffee':
+		'enabled against a real site; `coffee.url_generator` resolves and `coffee.configuration` is installed, which is the config its command palette reads',
+	'drupal/devel':
+		'enabled against a real site; `devel.dumper` and `plugin.manager.devel_dumper` resolve, its route and error subscribers are in the container, and it installs its own menu',
+	'drupal/facets':
+		'enabled against a real site; all five of its plugin managers resolve. It creates no table and ships no config, so the container IS the observable',
+	'drupal/google_analytics':
+		'enabled against a real site; `google_analytics.visibility`, `.accounts` and `.javascript_cache` resolve and `google_analytics.settings` is installed. The tag it emits is client-side, so nothing outbound is involved',
+	'drupal/json_field':
+		"enabled against a real site; it registers the `json` field type with core's field-type manager and its `json_field.views` service resolves. Its normalizer is a TAGGED service, which the compiler folds into the serializer and removes from the public map, so asking the container for it by id fails on a module that installed correctly",
+	'drupal/key':
+		'enabled against a real site; its repository and three plugin managers resolve and the `key` config entity type is registered. A key PROVIDER that reads a file or an external service is a separate question',
+	'drupal/linkit':
+		'enabled against a real site; its matcher and substitution managers resolve alongside the suggestion manager, and `linkit_profile` is registered',
+	'drupal/purge':
+		'enabled against a real site; `purge.queue`, `purge.processors`, `purge.purgers` and the invalidation factory all resolve. What it would PURGE is this host, which already invalidates from cache tags',
+	'drupal/twig_tweak':
+		'enabled against a real site; its twig extension and four view builders resolve, which is the whole of what it adds',
+	'drupal/webform':
+		'enabled against a real site; four of its plugin managers resolve, the `webform` table exists and its shipped option sets are installed. Submissions are ordinary form POSTs',
+	'drupal/xmlsitemap':
+		'enabled against a real site; `xmlsitemap_generator` and `xmlsitemap.link_storage` resolve, the `xmlsitemap` table exists and its settings are installed',
 	'drupal/field_group':
 		'enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control',
 	'drupal/honeypot':
@@ -183,7 +218,7 @@ export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = {
 	'drupal/search_api':
 		'indexing runs on cron with the database backend, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
 	'drupal/simple_sitemap':
-		'generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack'
+		"generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. It used to be refused outright because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in and cannot be shimmed; the host supplies a pure-PHP `XMLWriter` verified byte for byte against libxml, and clears that one install block through `hook_requirements_alter()`. The module is unmodified and is not in the pack"
 };
 
 export interface TableRow {

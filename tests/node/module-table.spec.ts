@@ -6,6 +6,7 @@ import { tierFor } from '../../src/ops/catalog';
 import {
 	FIXTURE_CLAUSE,
 	labelFor,
+	MODULE_STATES,
 	moduleTable,
 	renderModuleTable,
 	SHIPPING_PACK_CONTRIB,
@@ -91,27 +92,36 @@ describe('moduleTable', () => {
 			'drupal/backup_migrate',
 			'drupal/better_exposed_filters',
 			'drupal/captcha',
+			'drupal/coffee',
 			'drupal/colorbox',
 			'drupal/config_ignore',
 			'drupal/crop',
 			'drupal/csv_serialization',
 			'drupal/ctools',
+			'drupal/devel',
 			'drupal/easy_breadcrumb',
 			'drupal/editor_advanced_link',
 			'drupal/entity',
 			'drupal/entity_browser',
 			'drupal/entity_reference_revisions',
 			'drupal/externalauth',
+			'drupal/facets',
 			'drupal/field_group',
+			'drupal/filefield_sources',
 			'drupal/focal_point',
+			'drupal/google_analytics',
 			'drupal/google_tag',
 			'drupal/honeypot',
+			'drupal/imageapi_optimize',
 			'drupal/imce',
 			'drupal/jquery_ui',
 			'drupal/jquery_ui_autocomplete',
 			'drupal/jquery_ui_datepicker',
 			'drupal/jquery_ui_menu',
+			'drupal/json_field',
+			'drupal/key',
 			'drupal/libraries',
+			'drupal/linkit',
 			'drupal/mailsystem',
 			'drupal/menu_block',
 			'drupal/metatag',
@@ -119,6 +129,7 @@ describe('moduleTable', () => {
 			'drupal/module_filter',
 			'drupal/paragraphs',
 			'drupal/pathauto',
+			'drupal/purge',
 			'drupal/queue_ui',
 			'drupal/recaptcha',
 			'drupal/redirect',
@@ -127,9 +138,12 @@ describe('moduleTable', () => {
 			'drupal/stage_file_proxy',
 			'drupal/svg_image',
 			'drupal/token',
+			'drupal/twig_tweak',
 			'drupal/video_embed_field',
 			'drupal/views_bulk_operations',
-			'drupal/views_data_export'
+			'drupal/views_data_export',
+			'drupal/webform',
+			'drupal/xmlsitemap'
 		]);
 		for (const [name, evidence] of Object.entries(VERIFIED_BEHAVIOURS)) {
 			// evidence must say what was exercised, not that it "works"
@@ -173,12 +187,18 @@ describe('moduleTable', () => {
 	 */
 	it('has no state that claims support without a gated run', () => {
 		const states = new Set(moduleTable().map((r) => r.state));
-		expect([...states].sort()).toEqual(['blocked', 'untested', 'verified']);
+		// THE VOCABULARY IS WHAT IS PINNED, not the census. This asserted `['blocked','verified']`
+		// while P8b had every row in one of those two, and that made a CORRECT reclassification fail:
+		// `search_api_solr` moved off `blocked` the day its transport was proven interceptable, and
+		// `untested` is the honest state for a module whose capability is measured and which no gated
+		// run has enabled. A test that fails on honesty is pinning a moment, not a rule.
+		for (const state of states) expect(MODULE_STATES).toContain(state);
 		expect(states.has('supported' as never)).toBe(false);
 
 		const table = renderModuleTable();
 		expect(table).not.toMatch(/\bsupported\b/i);
-		// and the summary has to say what untested means, or the rename is cosmetic
+		// the summary still has to define what the three states MEAN, or a row that lands in
+		// `untested` later arrives with no explanation attached
 		expect(table).toContain('untested');
 		expect(table).toMatch(/inference about\s+the runtime/);
 	});
@@ -300,10 +320,17 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		const verified = new Set(Object.keys(VERIFIED_BEHAVIOURS).map((n) => n.split('/')[1]));
 		const unclaimed = [...exercised()].filter((n) => !verified.has(n)).sort();
 		expect(unclaimed, 'a case runs for this module but the table makes no claim').toEqual([
+			'simple_sitemap',
 			'smtp'
 		]);
-		// and smtp is absent for a REASON, not an oversight
+		// and both are absent for a REASON rather than by oversight, though no longer the same two
+		// reasons. `smtp` still needs a socket the runtime cannot open. `simple_sitemap` is now
+		// SHIMMED -- a pure-PHP XMLWriter plus a host-side `hook_requirements_alter()` -- so it
+		// reaches the cron tier and what it is missing is a gated run, not a capability
 		expect(tierFor('drupal/smtp').tier).toBe('refused');
+		expect(tierFor('drupal/simple_sitemap').tier).not.toBe('refused');
+		// the vector is still what decides it; only the vector's answer moved
+		expect(tierFor('drupal/simple_sitemap').reason).not.toContain('runtime.xmlwriter');
 	});
 });
 

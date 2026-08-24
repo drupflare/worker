@@ -1,3 +1,4 @@
+import { refusalFor, scoreModule, vectorFor } from './capability-contract';
 import { satisfies } from './composer-constraint';
 
 /** one catalog entry: a pre-packed module and what it needs */
@@ -37,7 +38,7 @@ export type CatalogEntry = {
  * queue already solves; only a call whose answer must arrive inside the same render is truly
  * blocked.
  */
-import { allKnownCapabilities } from './module-tiers';
+import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers';
 
 export type ModuleCapability = 'deferrable-outbound' | 'blocking-outbound' | 'cron';
 
@@ -61,10 +62,29 @@ export type RuntimeCapabilities = {
  * `deferredOutbound` is TRUE and always has been -- the queue, the alarm drain and the response
  * cache all exist and ship. What is false is `blockingOutbound`, which needs JSPI or Asyncify.
  */
+/**
+ * DERIVED FROM THE CAPABILITY CONTRACT rather than written twice.
+ *
+ * These three booleans used to be literals, and a literal is a claim nothing checks. Every vector in
+ * `capability-contract.ts` is EXECUTED against the shipping interpreter by
+ * `capability-contract.spec.ts`, so reading them here means a capability that moves moves the tier
+ * with it -- and a capability that moves without anyone noticing fails the gate first.
+ *
+ * `cron` stays a literal, and the reason is worth stating: `async.cron` measures whether the
+ * RUNTIME declares cron to PHP, which it does not, while this flag means "the alarm exists and drives
+ * Drupal's cron", which it does. Two different questions with two different answers; collapsing them
+ * would refuse every cron module on a site where cron demonstrably runs.
+ */
+const SHIPPED_CRON = true;
+
+function vectorSatisfied(id: string): boolean {
+	return vectorFor(id)?.expected ?? false;
+}
+
 export const SHIPPED_CAPABILITIES: RuntimeCapabilities = {
-	deferredOutbound: true,
-	blockingOutbound: false,
-	cron: true
+	deferredOutbound: vectorSatisfied('http.outbound.deferred'),
+	blockingOutbound: vectorSatisfied('http.outbound.blocking'),
+	cron: SHIPPED_CRON
 };
 
 export type Catalog = {
@@ -287,9 +307,13 @@ export const KNOWN_MODULE_CAPABILITIES: Readonly<Record<string, readonly ModuleC
 	'drupal/captcha': ['deferrable-outbound'],
 	// fetches a missing file from an upstream site: a cache fill, the easiest deferred case
 	'drupal/stage_file_proxy': ['deferrable-outbound'],
-	// a query per keystroke against a remote index cannot be split across invocations without
-	// changing what the user sees, which is what makes this the real refusal
-	'drupal/search_api_solr': ['blocking-outbound'],
+	// MEASURED 2026-08-23 against solarium 6.4.2: the transport is interceptable ABOVE the adapter,
+	// so this is deferrable rather than refused. `SolariumTransport` in the sibling short-circuits
+	// `PreExecuteRequest`, and search_api_solr hands Drupal's own dispatcher to the client
+	'drupal/search_api_solr': ['deferrable-outbound'],
+	// the authorization-code exchange has to answer inside the login response, and there is no
+	// partial answer to render, which is what makes this the refusal the Solr entry used to be
+	'drupal/openid_connect': ['blocking-outbound'],
 	'drupal/scheduler': ['cron'],
 	'drupal/simple_sitemap': ['cron'],
 	'drupal/xmlsitemap': ['cron'],
@@ -331,6 +355,18 @@ export function tierFor(
 			tier: 'unknown',
 			reason: `${name} has not been classified against this runtime; it may still need outbound HTTP or cron`
 		};
+	}
+
+	// THE CAPABILITY CONTRACT COMES FIRST, because the three coarse values below cannot express most
+	// of what refuses a module. `simple_sitemap` is the case that proved it: classified `cron`,
+	// scored installable, and then refused by its own `hook_requirements()` over a missing
+	// `xmlwriter`. Every vector consulted here is executed against the shipping interpreter
+	const vectors = MODULE_TIER_NOTES[name]?.vectors;
+	if (vectors && vectors.length > 0) {
+		const verdict = scoreModule(vectors);
+		if (!verdict.installable) {
+			return { tier: 'refused', reason: `${name} needs ${refusalFor(verdict)}` };
+		}
 	}
 	if (needs.includes('blocking-outbound') && !capabilities.blockingOutbound) {
 		return {

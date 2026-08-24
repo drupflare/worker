@@ -22,6 +22,17 @@ export interface TierNote {
 	why: string;
 	/** what would move it up a tier, and roughly how big that is */
 	lift?: string;
+	/**
+	 * Capability-contract vector ids this module needs, beyond the three coarse ones.
+	 *
+	 * `needs` answers one question well -- can the module's outbound calls be split across
+	 * invocations -- and cannot express anything else. `simple_sitemap` is the case that forced
+	 * this: it refuses to install without `ext-xmlwriter`, which is neither outbound nor cron, so
+	 * the coarse vocabulary scored it as installable and the install then failed on its own
+	 * `hook_requirements`. Every id here is EXECUTED against the shipping interpreter by
+	 * `capability-contract.spec.ts`, so a refusal on this list rests on a measurement.
+	 */
+	vectors?: readonly string[];
 }
 
 export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
@@ -151,8 +162,12 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	},
 	'drupal/simple_sitemap': {
 		needs: ['cron'],
-		why: 'generation is a queue drained by cron, plus a filesystem write per chunk',
-		lift: 'confirming a sitemap chunk fits under the 2,199,995-byte record ceiling. Medium: the queue is already sliced, the size question is unmeasured. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
+		// still keyed on the vector, but the vector now asks whether the CLASS resolves rather than
+		// whether the extension was compiled in -- the second is unshimmable and is not what
+		// generating a sitemap needs
+		vectors: ['runtime.xmlwriter'],
+		why: "generation is a queue drained by cron, plus a filesystem write per chunk. It refused to install because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in and cannot be shimmed -- so the fix is Drupal's own `hook_requirements_alter()`, host-side, module unmodified",
+		lift: 'shipped: `XMLWRITER_FIX` supplies the eleven methods 4.2.1 calls, byte-identical to libxml across eight documents including both sitemap shapes, escaping, indentation depth and the flush semantics a chunked generator depends on. `Requirements::requirementsAlter()` clears the install block only when the class is present AND round-trips a document, so a build without the polyfill keeps the honest error. What remains for `verified` is a gated enable-and-assert run that generates a real sitemap'
 	},
 	'drupal/search_api': {
 		needs: ['cron'],
@@ -164,7 +179,11 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 		why: 'a UI over Drupal queues; the queues themselves only move when cron runs them',
 		lift: 'none. It also becomes the natural operator view of `cronStep()` queue units, which today have no surface at all. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
 	},
-	'drupal/image_optimize': {
+	// RENAMED from `drupal/image_optimize`, which does not exist. `composer show` answers
+	// "Package not found", so the row classified a package nobody could ever install and the
+	// unresolvable name survived every review because nothing tried to fetch it. The Drupal project
+	// is "Image Optimize" and its composer name is `imageapi_optimize`
+	'drupal/imageapi_optimize': {
 		needs: ['cron'],
 		why: 'batch optimisation over managed files. The BINARY pipelines shell out and cannot work; the pure-PHP and remote-service pipelines are the ones in scope',
 		lift: 'a pipeline that is neither a subprocess nor a blocking call; the batch itself is already driven. Large: most shipped pipelines are subprocess-based, so this needs a pipeline written for the platform. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
@@ -206,9 +225,9 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 		lift: 'none required with the database backend; it inherits the backend tier'
 	},
 	'drupal/search_api_solr': {
-		needs: ['blocking-outbound'],
-		why: 'a query per keystroke against a remote index has to answer inside the render that asked. Deferring it changes what the user sees rather than when they see it',
-		lift: 'JSPI or an Asyncify build, which is the whole-binary change this project has priced and deferred. Use the Search API database backend instead'
+		needs: ['deferrable-outbound'],
+		why: "MEASURED 2026-08-23 against solarium 6.4.2, and the transport IS interceptable, which is what moved this off blocking-outbound. The default connector picks `extension_loaded('curl') ? new Curl() : new Http()` and this build has no curl extension, so it lands on the stream adapter -- which then reads `$http_response_header` and gets [], the P39 defect in a second consumer. `SolariumTransport` subscribes to Solarium's own `PreExecuteRequest`, whose response short-circuits the adapter entirely, and search_api_solr hands Drupal's dispatcher to the client, so it needs NO module change. Indexing is fully deferrable; a query pays one round trip on first ask and is cached after",
+		lift: 'shipped: `Drupal\\drupflare\\Search\\SolariumTransport`, 17 assertions in `../drupflare/tests/solarium-transport.php` against real Solarium objects. What is NOT covered is a file-upload extract, which needs a streaming body and is DECLARED rather than sent empty. A live-Solr integration run is what would take this to `verified`'
 	},
 	// #endregion
 
@@ -226,17 +245,17 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/smtp': {
 		needs: ['blocking-outbound'],
 		why: 'it exists to open an SMTP socket inside the request that sends the mail, which this runtime cannot do. Measured 2026-08-20: it installs cleanly and `smtp.settings` lands, so what refuses it is the socket rather than the installer -- an install verdict was never a capability verdict',
-		lift: 'the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. What is still missing is the domain onboarding behind it, which `/setup/mail` now automates up to the verification click. So smtp stays blocked as a MODULE -- the socket is what refuses it -- while the capability it provides is covered'
+		lift: "the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. AND ITS CONFIGURATION IS NOW READ, 2026-08-24: the module installs here and its socket never runs, so a site that filled in its relay and saved had a complete SMTP configuration nothing looked at, and its operator had to type the same host, port and password again as Worker vars. `CfwMail` passes `smtp.settings` to `cfwMail`, `mailEnvFromSite()` maps it onto the transport vars and the deployment's own vars still win. The settings are persisted to `cfw_meta` because the ALARM re-resolves the transport and never sees the message. So the module stays blocked -- the socket is what refuses it -- while both the capability and now the configuration are covered"
 	},
 	'drupal/redis': {
 		needs: ['blocking-outbound'],
-		why: 'an external cache backend reached over a socket on every cache get',
-		lift: "none needed: the Durable Object's own SQLite IS the cache backend, so this is a dependency the architecture removes"
+		why: 'an external cache backend reached over a socket on every cache get. The TCP tier does NOT lift this and it is worth being exact about why: a cache get has to answer inside the request that asked, and a deferred exchange always misses the first time. What `cfwTcp` reaches is the deferrable half -- a publish, a counter, a write nobody blocks on',
+		lift: "none needed for the cache: the Durable Object's own SQLite IS the backend, so this is a dependency the architecture removes. `Drupal\\drupflare\\Network\\CfwTcp` covers the rest of what a site would reach Redis for"
 	},
 	'drupal/openid_connect': {
 		needs: ['blocking-outbound'],
 		why: 'the authorization-code exchange POSTs to the identity provider token endpoint and must have the answer before it can finish the login response. Unlike a search query there is no partial answer to render',
-		lift: 'JSPI or an Asyncify build. The deferred-outbound queue does NOT reach it -- a token exchange cannot return a placeholder and fill later, and a site whose users cannot log in is not partially working'
+		lift: 'the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\\drupflare\\Network\\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. What is missing is a run against a real IdP and the setup UI'
 	}
 	// #endregion
 };

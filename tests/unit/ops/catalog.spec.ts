@@ -446,10 +446,19 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 		expect(out.reason).toContain('alarm');
 	});
 
-	it('classifies Solr as REFUSED, because a per-keystroke query cannot be split', () => {
-		const out = tierFor('drupal/search_api_solr');
+	// Solr USED to be this assertion, and it moved on a measurement rather than on a tidy-up: the
+	// Solarium transport is interceptable above the adapter, so the deferred tier reaches it.
+	// `openid_connect` is the surviving refusal and it is a different mechanism -- a token exchange
+	// has no partial answer to render, so there is nothing to defer
+	it('classifies a token exchange as REFUSED, because a login has no partial answer', () => {
+		const out = tierFor('drupal/openid_connect');
 		expect(out.tier).toBe('refused');
 		expect(out.reason).toContain('INSIDE one render');
+	});
+
+	it('classifies Solr as DEFERRABLE, which is where the measurement put it', () => {
+		const out = tierFor('drupal/search_api_solr');
+		expect(out.tier).toBe('needs-deferred-tier');
 	});
 
 	it('names the failure mode a cron module has when cron is turned OFF', () => {
@@ -473,9 +482,17 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 		expect(out.reason).toContain('has not been classified');
 	});
 
+	/**
+	 * `openid_connect` rather than `search_api_solr`, and the swap is the point.
+	 *
+	 * Solr used to be the example here and stopped being one on 2026-08-23: its transport turned out
+	 * to be interceptable above the adapter, so it needs the DEFERRED tier rather than a suspending
+	 * one. A token exchange still cannot be deferred -- there is no placeholder to render while the
+	 * login completes -- so it is the honest remaining example of something only suspension fixes.
+	 */
 	it('promotes the refusal to works-today on a runtime that can suspend', () => {
 		expect(
-			tierFor('drupal/search_api_solr', {
+			tierFor('drupal/openid_connect', {
 				deferredOutbound: true,
 				blockingOutbound: true,
 				cron: true

@@ -361,7 +361,7 @@ bun run test      # vitest: --project=workers --project=node
 bun run typecheck # tsc --noEmit
 bunx prettier --check .
 bun run assets:driver      # repack after ANY change in a sibling
-bun run test:health        # the sibling's health suite, 604 PHP assertions
+bun run test:health        # the sibling's health suite, 633 PHP assertions
 bun run check:reachability # which modules the edge imports; which are dead
 
 bun run hydrate         # a clean checkout -> deployable, from the release payload
@@ -391,8 +391,10 @@ PHP suites live in the siblings, and **they are the authority on their own modul
 
 | suite                                                            | repo           | assertions |
 | ---------------------------------------------------------------- | -------------- | ---------- |
-| `php tests/health-suite.php`                                     | `../drupflare` | 604        |
-| `DRUPAL_ROOT=<worker>/drupal-src php tests/load-classes.php`     | `../drupflare` | 94         |
+| `php tests/health-suite.php`                                     | `../drupflare` | 633        |
+| `php tests/cfw-tcp.php`                                          | `../drupflare` | 27         |
+| `php tests/solarium-transport.php`                               | `../drupflare` | 17         |
+| `DRUPAL_ROOT=<worker>/drupal-src php tests/load-classes.php`     | `../drupflare` | 95         |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-driver-suite.php` | `../rom`       | 238        |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/run-installer.php`    | `../rom`       | 16         |
 | `DRUPAL_ROOT=<worker>/drupal-src php tests/pdo-shim.php`         | `../rom`       | 61         |
@@ -575,8 +577,49 @@ pattern `curl-fix` and `openssl-fix` use can never bind -- Drupal's service is t
 the public map, so a decorator without `setPublic(true)` fails 45 specs with
 `ServiceNotFoundException: password`.
 
-**wasm64 is accepted by workerd** and is still blocked by memory: it grows `Bucket` 33% and
-`zend_string` 60%. Do not re-price it against the bundle.
+**wasm64 RUNS, `PHP_INT_SIZE` IS 8, AND WHAT STOPS IT IS NOT MEMORY.** This paragraph has been
+wrong twice: first "still blocked by memory, do not re-price it against the bundle", then "blocked by
+vrzno". phasm run 32690008621 built it; at `--ultra -22` it is **2,720,787 against wasm32's
+2,659,563, so +61,224 zstd bytes into 220,027 of headroom**.
+
+`DRUPFLARE_ABI=wasm64` in `vitest.config.ts` points the gate's seam at
+`.interp/php8.5-wasm64.{wasm,-worker.mjs}`, which is how each wall was found in turn:
+
+- emscripten's `toIndexType` probes with `new WebAssembly.Memory({initial:1n,index:"i64"})`, which
+  **workerd refuses**, so it degrades to the identity and every `wasmTable.get()` throws. Replacing
+  that IIFE with `i=>BigInt(i)` gets past it -- a glue edit, no rebuild, the growth-step lever again.
+- **vrzno was not LP64-clean, and `phasm/src/patch-vrzno-lp64.{sh,mjs}` fixes it.** 60 `Module.ccall`
+  sites retyped in BOTH directions -- the argument half throws, the return half hands back a raw
+  BigInt that never matches a Number `Map` key, so it is silently wrong rather than loud. Plus 85
+  `EM_ASM` argument bindings coerced: `readEmAsmArgs` reads `p` as a Number but `j` as a BigInt, and
+  under LP64 every `size_t` / `zend_long` / `off_t` becomes `j`. Checking only the pointer case said
+  EM_ASM was unaffected.
+- **emscripten's `growMemory` passes a Number to `wasmMemory.grow` and a bare `catch(e){}` eats the
+  throw**, so EVERY grow fails silently, `_emscripten_resize_heap` gives up after four retries, PHP's
+  allocator gets NULL and the process exits(1) with nothing on stderr and no `onAbort`.
+  `phasm/src/patch-lp64-glue.mjs` fixes it and the `toIndexType` probe together, POST-BUILD, because
+  the glue is emitted at link time.
+
+**THAT DEFECT IS WHY A WASM64 HEAP LOOKED LIKE IT NEVER GREW**, and a whole pass concluded "the
+blocker is not memory" from a flat reading produced by broken memory. Two other readings died with
+it: `memory_limit` 96M -> 256M changed nothing because the limit was never reached, and `?all=1`
+looked like the culprit because chunking only postponed the first grow.
+
+**IT FITS, at the shipping growth step of 0.05:**
+
+| workload     | wasm32     | wasm64     | delta      | headroom to 128 MiB |
+| ------------ | ---------- | ---------- | ---------- | ------------------- |
+| booted idle  | 96.00 MiB  | 96.00 MiB  | +0.00      | 32.00               |
+| render       | 96.00 MiB  | 106.00 MiB | +10.00     | 22.00               |
+| install peak | 100.81 MiB | 117.06 MiB | +16.25     | 10.94               |
+| auth peak    | 105.88 MiB | 123.00 MiB | **+17.12** | **5.00**            |
+
++16.2% blended, under the +20.9% break-even. **At emscripten's DEFAULT step of 0.20 it does NOT
+fit** -- 138.44 MiB on both the install and auth arms. The step is a glue literal, so an unpatched
+wasm64 build measures a different growth policy from the one that ships.
+
+5.00 MiB of margin is thin, so whether to ship it is a product call rather than a measurement; P28
+buys the same `PHP_INT_SIZE` 8 on wasm32 for a fraction of the memory.
 
 **`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** The heap starts at
 100,663,296; where it PEAKS is set by `MEMORY_GROWTH_GEOMETRIC_STEP`.
@@ -668,6 +711,70 @@ A fragment render costs 4-5 ms against 20-22 for the render it replaces, gate-la
 only. The recipe is captured at harvest and replayed -- core never decodes a placeholder id back into
 a render array, so there is no parser to call, and that is also the security property: a visitor's
 input never becomes a `#lazy_builder`.
+
+## Outbound has THREE tiers, and the third one cannot have the shape it was asked for
+
+**`cfw_tcp_connect()` / `read()` / `write()` / `close()` CANNOT EXIST here.** `Host::call()` is
+`$reply = $invoke($json)` and the wasm stack cannot suspend without JSPI, so a `read()` that blocks
+for bytes that have not arrived has nowhere to block. That closes the SESSION mechanism, not the
+objective. What ships instead (`src/ops/tcp.ts`, 2026-08-24) is a DECLARED exchange: PHP names a
+whole operation, the host runs it in JavaScript between invocations over edgeport, and the answer is
+read on a later one -- the same cached -> deferred -> sync layering `cfwFetch` lives under, with the
+sync tier absent for the same reason.
+
+- **It shares the HTTP queue, cache and retry budget on purpose.** A `tcp+redis://` row goes in
+  `cfw_http_queue` and `drainHttpQueue()` dispatches on the scheme. Dedup, TTL, `attemptBudget()` and
+  the resubmit plan are already correct there, and a second queue is a second place for them to drift.
+  A Redis read borrows the GET budget, everything else the POST one -- a replayed `INCR` is a
+  different outcome, not a slower success.
+- **The ENDPOINT is the operator's, never the caller's.** `REDIS_URL` / `SYSLOG_URL` carry the host,
+  port and credentials; PHP supplies only the operation. Arbitrary `host:port` TCP behind anything
+  that can call a host function is a port scanner and a protocol-smuggling surface, which is strictly
+  wider than the HTTP tier's SSRF because it is not confined to HTTP semantics. Both vars are
+  therefore secrets and neither may join `KV_OVERRIDABLE`; `kv-levers.spec.ts` asserts it.
+- **A Redis CACHE BACKEND cannot be built on this**, and it is worth saying where someone would try:
+  a cache get has to answer inside the request that asked and a deferred exchange always misses the
+  first time. `drupal/redis` stays refused and that is the right answer -- the DO's own SQLite is the
+  backend. What the tier reaches is the deferrable half, and `syslog` with no compromise at all,
+  because syslog over TCP never replies.
+- **`drupal/smtp` installs here and its socket never runs**, so a site that configured its relay had
+  a complete SMTP setup nothing read. `CfwMail` now passes `smtp.settings` and `mailEnvFromSite()`
+  maps it onto the transport vars, with the deployment's own vars winning every field they set. The
+  settings are persisted to `cfw_meta` because **the ALARM re-resolves the transport and never sees
+  the message** -- merging only at `cfwMail` time resolves one transport at commit and dials another
+  on the drain.
+
+## Tier B: the exchange that must happen OUTSIDE PHP
+
+**`WITH_OPENSSL=0`, so the interpreter cannot verify an RS256 `id_token` at all.** That is the whole
+argument for the OIDC tier and it does not rest on a module count or a millisecond: a JSPI build that
+let PHP fetch the token endpoint synchronously would hand PHP a token it still could not check, and
+an unverified `id_token` is an unauthenticated login. The host has `crypto.subtle`. So host-side
+pre-exchange is not the cheap route to `openid_connect`, it is the only one -- and that is what
+closed P13 (C112) rather than the module count.
+
+`src/ops/oidc.ts` owns discovery, PKCE, state, the token exchange and the signature check;
+`/__oidc` starts and completes; `cfwOidcClaims` hands PHP a decided result synchronously, because
+the awaiting already happened at a route the host owns.
+
+- **The claims never travel in a URL.** The browser carries a single-use ticket, the row is deleted
+  before the claims are returned, and a replay finds nothing. A redirect lands in browser history,
+  in a referrer and in every proxy log on the path, so single-use is the property that matters and a
+  TTL only narrows the window.
+- **Five refusals, each silent if it is missing**: a signature from a key outside the JWKS, a foreign
+  issuer, an audience belonging to another client of the same provider (the confused deputy, and the
+  one that looks most valid), an expired token, and a nonce from another login. `none` and the HMAC
+  families are refused by omission, and `alg` is taken from the KEY -- trusting the header is how the
+  RS256-to-HS256 confusion attack works.
+- **The authmap key is scoped by ISSUER**, not by `sub` alone: a subject is unique within one
+  provider and says nothing across providers, so keying on it alone would let a subject from a
+  newly-configured issuer take over an existing account.
+- **`oidc_issuer` lives in `cfw_meta` and the secret is a binding; neither may join
+  `KV_OVERRIDABLE`.** A KV writer who could set the issuer would point the consent screen at a
+  provider they control, and every login on the site would authenticate against it -- the same
+  reasoning that keeps `CF_OAUTH_CLIENT_ID` off that list.
+- **It has never seen a real IdP.** 25 assertions on generated `crypto.subtle` keys and 8 on the
+  authmap scoping; the round trip is unexercised and there is no setup UI yet.
 
 ## A lever is offered through KV FIRST, then a var
 

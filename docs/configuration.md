@@ -363,6 +363,20 @@ is the implementation.
 `auto` takes the first transport that is configured, in the order binding, api, smtp. The binding
 leads because it spends no credential.
 
+### The `smtp` Module's Own Settings
+
+A site with `drupal/smtp` installed and configured needs none of the `SMTP_*` vars. The module
+installs on this runtime and its socket never runs, because `system.mail` is forced to `cfw_mail`, so
+its settings would otherwise sit unread while an operator typed the same relay a second time. Its
+`smtp.settings` is read and mapped onto the transport: `smtp_host`, `smtp_port`, `smtp_username`,
+`smtp_password` and `smtp_from` map across directly, and `smtp_protocol` maps `ssl` to implicit TLS,
+`tls` to STARTTLS and `standard` to no encryption. `smtp_on` turned off is honoured.
+
+**A var always wins over the setting it corresponds to.** A var is set by whoever can deploy the
+Worker; the settings form is reachable by anyone who can get to a Drupal admin page. So the settings
+fill gaps and never override a deployment's decision, and setting `SMTP_HOST` pins the relay
+regardless of what the site is configured with.
+
 ### What Each Transport Reaches
 
 `binding` uses a `send_email` binding named `SEND_EMAIL`, declared in your own Wrangler config. `api`
@@ -462,6 +476,67 @@ unauthenticated mail from senders that have nothing to do with this site. It app
 
 Destination-address verification is pollable: the address carries `status` and a `verified`
 timestamp, so the surface lights up on its own.
+
+## Outbound TCP
+
+Drupal reaches TCP through `Drupal\drupflare\Network\CfwTcp`, which declares a whole exchange and
+reads the answer on a later invocation. `src/ops/tcp.ts` runs it between PHP invocations, over
+[edgeport](https://github.com/gmitch215/edgeport). It shares the deferred HTTP tier's queue, cache
+and retry budget.
+
+| var               | default  | what it does                                            |
+| ----------------- | -------- | ------------------------------------------------------- |
+| `REDIS_URL`       | —        | `redis://user:pass@host:6379/0`, or `rediss://` for TLS |
+| `SYSLOG_URL`      | —        | `syslog://collector:514`, or `syslogs://` for RFC 5425  |
+| `SYSLOG_APP_NAME` | `drupal` | APP-NAME on every record this site ships                |
+
+Both carry credentials, so both are secrets rather than `vars` entries, and neither can be set from
+KV. A KV writer who could set `REDIS_URL` would receive whatever the site writes to it.
+
+**The endpoint is yours, not the caller's.** Module code names a protocol and an operation; the host
+supplies the host, port and credentials. Arbitrary `host:port` TCP behind any code that can call a
+host function would be a port scanner and a protocol-smuggling surface. Administrative Redis commands
+— `FLUSHALL`, `CONFIG`, `EVAL`, `SCRIPT`, `SHUTDOWN` and the rest of the list in `src/ops/tcp.ts` —
+are refused before anything is dialled.
+
+**A Redis cache backend cannot be built on this.** A cache get has to answer inside the request that
+asked, and a deferred exchange always misses the first time. What this reaches is the deferrable half:
+a publish, a counter, a write nobody blocks on, or a read a later request can use. The Durable
+Object's own SQLite is the cache backend.
+
+`syslog` is the shape this tier serves without compromise, because syslog over TCP never replies.
+
+## OIDC Login
+
+A login is completed by the Worker, not by PHP. The callback is an ordinary request, so the token
+exchange and the `id_token` signature check happen in JavaScript before PHP is entered, and PHP is
+handed a decided result. `src/ops/oidc.ts` is the implementation.
+
+This is not an optimisation. The interpreter carries no OpenSSL, so it cannot verify an RS256
+`id_token` at all, and an unverified `id_token` is an unauthenticated login.
+
+| setting              | where      | what it does                                        |
+| -------------------- | ---------- | --------------------------------------------------- |
+| `oidc_issuer`        | `cfw_meta` | the provider's issuer URL; must be https            |
+| `oidc_client_id`     | `cfw_meta` | the client registered with that provider            |
+| `OIDC_CLIENT_SECRET` | binding    | for a provider that issued one; a secret, not a var |
+
+The issuer and the client id sit in the object's own storage rather than in KV, and the secret is a
+binding. None of the three can be set from KV: a writer who could change the issuer would point the
+consent screen at a provider they control, and every login on the site would authenticate against it.
+
+Register `https://<your-site>/__oidc?action=callback` as the redirect URI. `/__oidc` starts a login
+and accepts an optional `return` path, which must be site-relative.
+
+**The claims never travel in a URL.** The browser carries a single-use ticket; the claims stay in the
+object's storage and the row is deleted before they are returned, so a second presentation of the
+same ticket finds nothing. A redirect lands in browser history, in a referrer and in any proxy log
+on the path.
+
+Five conditions refuse a login, each tested against real generated keys: a signature from a key
+outside the provider's JWKS, an issuer that is not the configured one, an audience belonging to
+another client of the same provider, an expired token, and a nonce from a different login. `none`
+and the HMAC algorithms are refused by omission.
 
 ## Database Updates
 

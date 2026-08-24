@@ -152,20 +152,24 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
 7. **Report the meters that are blank**, including the Cloudflare Images cap of 5,000 transforms per
    month, which fails rather than bills and which nothing currently counts.
 8. **Do not do boot work.** JSPI, heap restore and always-warm objects are worth ~1.1%, because the
-   fill window amortises boot. The 8.5 result does not reorder this. **One refinement**: JSPI as a
-   CAPABILITY unlock is a different question from JSPI as a performance lever, and only the
-   performance half is settled. Score it by how many contrib modules need a synchronous outbound
-   call inside one render.
-   **The count moved on 2026-08-18 and it moved the wrong way for deferring this.** Against the
-   shipped contrib table it is 1 of 30, which reads as a corner case. Against `earth-app/mantle2` --
-   the one real workload available, measured from its `composer.json` on disk -- it is **1 of that
-   site's 5 contrib dependencies**, and the module is `openid_connect`: an authorization-code
-   exchange must POST to the IdP's token endpoint and have the answer before it can finish the login
-   response. A site whose users cannot log in is not partially working, and the deferred-queue
-   workaround does not reach it -- a token exchange cannot return a placeholder and fill later.
+   fill window amortises boot. The 8.5 result does not reorder this.
+   **THE CAPABILITY HALF IS NOW SETTLED TOO, and it closes JSPI rather than scheduling it.** This
+   item used to say only the performance half was decided and to score the rest by how many contrib
+   modules need a synchronous outbound call inside one render. That count is now **zero of 62
+   classified rows**: `search_api_solr` was the last one and it left on 2026-08-24, measured --
+   Solarium's transport is interceptable above the adapter, so it is a deferred-tier module with no
+   module changes at all.
+   The decisive argument is not the count. **`WITH_OPENSSL=0`**, so PHP here cannot verify an RS256
+   `id_token` even if JSPI handed it one synchronously, and an unverified `id_token` is an
+   unauthenticated login. The host has `crypto.subtle`. So host-side pre-exchange is not the cheap
+   route to `openid_connect`, it is the only route, and JSPI does not reach the outcome at any price.
+   And the price rose after RULE 0d: duration is wall clock, `cpuTime` understates it 2,612x, a
+   suspended render trips two hibernation disqualifiers at once and stalls every other request to
+   that site behind one object.
    Two of mantle2's other four (`smtp`, `redis`) are SUBSTITUTED rather than blocked, by `CfwMail`
    and `CfwCacheBackendFactory`; those are dependencies this platform removes rather than
-   compatibility it owes.
+   compatibility it owes. `smtp`'s own `smtp.settings` now feeds the host transport, so a site that
+   configured the module needs no Worker vars for mail.
 9. **Close the residual mbstring divergences.** `bun run measure:mb-parity` scores the shipping
    polyfill stack against the real extension over 1,232 cases: the bare polyfill diverges on 238, the
    shipping stack on **77**, and Drupal core can reach **33**. Item 8's rule applies here too -- the
@@ -182,13 +186,29 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
    is +586,648 gz of bundle -- and neither is faking it: a stub module entry segfaults, because both
    Symfony bootstraps branch on `extension_loaded('mbstring')` and the stub makes `iconv_strrpos()`
    and `mb_strrpos()` recurse into each other. Measured, exit 139.
-10. **`INITIAL_MEMORY` is the gate on two capability items, not a size tweak.** Measured 2026-08-21:
-    argon2 costs only **~7,000 bytes** in the shipping zstd frame, and workerd **does** accept a
-    memory64 module through a `CompiledWasm` import -- with Emscripten's wasm64 being LP64, so it
-    really would take `PHP_INT_SIZE` to 8 and retire the 2038 warning. Both die on the same fact:
-    linear memory plateaus at 110.6 MiB against a 128 MB cap. argon2id's default arena is 64 MiB, and
-    wasm64 grows `Bucket` by 33% and `zend_string` by 60%. Neither is blocked by bytes, by a vendor,
-    or by the platform. Bringing the heap to ~90 MB unblocks both at once.
+10. **BOTH ITEMS THIS USED TO GATE HAVE MOVED, AND NEITHER MOVED FOR THE REASON WRITTEN HERE.** The
+    text was "`INITIAL_MEMORY` is the gate on two capability items", and its own two examples now
+    refute it.
+    **argon2 SHIPPED** (2026-08-23). The closed mechanism was a 64 MiB arena inside PHP's linear
+    memory, where `memory.grow` has no inverse; OWASP's floor is 19 MiB and a HOST-side arena is
+    garbage-collected. 19 MiB of transient JS allocation coexists with a 117 MiB wasm heap, measured
+    ten times consecutively on a deployed throwaway.
+    **wasm64 FITS, MEASURED END TO END** (2026-08-24). phasm run 32690008621; at the shipping
+    `--ultra -22` it is 2,720,787 against wasm32's 2,659,563, so **+61,224 zstd bytes into 220,027
+    of headroom**. `PHP_INT_SIZE` is **8** on a running interpreter, which is the capability the
+    item exists for. At the shipping growth step of 0.05 the authenticated render peaks at
+    **123.00 MiB against the 128 MiB cap** -- +17.12 MiB over wasm32's 105.88, a blended +16.2%
+    against a +20.9% break-even. At emscripten's default 0.20 it reads 138.44 MiB and does not fit,
+    so the step has to match what ships or the comparison is against a different policy.
+    Getting there took three separate silent Number/BigInt defects: vrzno's `ccall` types in both
+    directions, its `EM_ASM` argument bindings, and **emscripten's own `growMemory`**, which passes
+    a Number to `wasmMemory.grow` and swallows the throw in a bare `catch` -- so every grow failed,
+    PHP exited(1) with nothing on stderr, and a heap that COULD NOT grow read as a heap that did not
+    need to. Whether to ship it is now a product call: 5.00 MiB of margin is thin, and P28 buys the
+    same integer width on wasm32 far cheaper.
+    And `INITIAL_MEMORY` was never the lever anyway: it sets where the heap starts, not where it
+    peaks. `MEMORY_GROWTH_GEOMETRIC_STEP` does, it lives in the glue as a JavaScript literal, and it
+    ships at 0.05.
 11. **Eight items opened 2026-08-21 from an external review, tracked as P27-P34 in project memory.**
     The three worth naming here: an **authenticated workload matrix**, which is the input items 3 and
     8 are both already waiting on and which nothing has measured; **64-bit `zend_long` on 32-bit
@@ -483,6 +503,7 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [OUTBOUND TCP CANNOT HAVE A SESSION API](#outbound-tcp-cannot-have-a-session-api-and-the-objective-survives-anyway) | **read before adding any outbound capability**: `cfw_tcp_connect/read/write/close` is unbuildable because a `read()` has nowhere to block, and a DECLARED exchange is not. Four of five "blocked" module rows closed on capability rather than on a socket, and the endpoint is the operator's by construction |
 | [GUZZLE FETCHED THE BODY AND THREW IT AWAY](#guzzle-fetched-the-body-and-threw-it-away) | **read before touching outbound HTTP**: every `Drupal::httpClient()` call rejected on the shipping build with the body already in memory, because no userland stream wrapper can populate `$http_response_header` and PHP 8.4's replacement answers NULL for the same reason. Fixed by a handler over `cfwFetch`; a 202 default was rejected and the reason is recorded |
 | [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width) | **read before quoting RULE 0's "microtime returns 0"**: it does not. Every reading behind that was a DELTA; the absolute is a real epoch. The defect is `PHP_INT_SIZE` 4, the cast is modular, and both module consequences invert |
 | [THE EXTENSION LIST WAS INFERRED](#the-extension-list-was-inferred-and-three-inferences-were-wrong) | **read before claiming an extension**: 25 measured, no mbstring/iconv/gd/curl. Function-name evidence is misleading; `/__php` reports the real list and the gate asserts the platform map against it both ways |
@@ -527,6 +548,125 @@ fill moves the regeneration ceiling ~1.1% -- see
 | [FINISH LINE STATUS](#finish-line-status) / [VIABILITY VERDICT](#viability-verdict) | tier-by-tier state and the verdict |
 | [TIER 0: WHAT NOW EXISTS, MEASURED](#tier-0-what-now-exists-measured) | driver, codec, gate, memory, autoload, mbstring, pack trim, sliced updb |
 | [Memory: 110.6 MiB was misread](#memory-the-edge-ceiling-is-still-unmeasured-and-1106-mib-was-misread) | **canonical** for the memory ceiling |
+
+
+---
+
+# OUTBOUND TCP CANNOT HAVE A SESSION API, AND THE OBJECTIVE SURVIVES ANYWAY
+
+**2026-08-24.** Gregory's P47 asked for one network capability with adapters above it rather than four
+one-off bridges, and named the surface: `cfw_http()`, `cfw_tcp_connect()`, `cfw_tcp_read()`,
+`cfw_tcp_write()`, `cfw_tcp_close()`.
+
+## The session half cannot be built, and the reason is the interpreter
+
+`Host::call()` is `$reply = $invoke($json)` and this build carries no JSPI or Asyncify, so the wasm
+stack cannot suspend. A `read()` has to block for bytes that have not arrived, and there is nowhere
+for it to block: a host function that returned a Promise hands PHP an object it can only stringify.
+
+That closes the MECHANISM. It does not close the objective, which is RULE 0c's whole point. What
+`src/ops/tcp.ts` ships instead is a **declared exchange**: PHP names a whole operation, the host runs
+it in JavaScript between invocations over edgeport, and the answer is read on a later one. Same
+cached -> deferred -> sync layering `cfwFetch` lives under, with the sync tier absent for the same
+reason.
+
+## Four of the five rows never needed the TCP half at all
+
+The four blocked module rows were assumed to share a requirement. They did not.
+
+| row               | assumed         | measured                                                             |
+| ----------------- | --------------- | -------------------------------------------------------------------- |
+| `search_api_solr` | outbound HTTP   | the HTTP tier already existed; intercept ABOVE Solarium's adapter    |
+| `simple_sitemap`  | outbound        | **no network at all** -- it wanted `ext-xmlwriter`                   |
+| `smtp`            | outbound TCP    | the host already sends over edgeport; its CONFIG was what went unread |
+| `redis`           | outbound TCP    | the tier exists and still does not reach it, correctly               |
+| `openid_connect`  | outbound HTTPS  | the one that survives, and JSPI cannot fix it either                 |
+
+`simple_sitemap` is the one worth reading twice: it sat in a list of network-blocked modules for days
+and its blocker was a missing PHP class. A grouping made from the shape of a refusal rather than from
+its mechanism will do that.
+
+## The endpoint is the operator's, and that is a privilege boundary rather than a convenience
+
+`REDIS_URL` and `SYSLOG_URL` carry the host, port and credentials; PHP supplies only the operation.
+Letting module code name a `host:port` would put arbitrary outbound TCP behind anything that can call
+a host function -- a port scanner and a protocol-smuggling surface, strictly wider than the HTTP
+tier's SSRF because it is not confined to HTTP semantics. Both vars are secrets, neither may join
+`KV_OVERRIDABLE`, and `kv-levers.spec.ts` asserts they stay off it for the same reason `SMTP_HOST`
+does. Administrative Redis commands are refused before anything is dialled.
+
+The queue url is built without credentials and asserted so: the row is echoed by `/health` and by
+every drain report, and a password in the `url` column looks like nothing at all.
+
+## A Redis cache backend cannot be built on this
+
+A cache get has to answer inside the request that asked, and a deferred exchange always misses the
+first time. `drupal/redis` stays refused and that is the right answer rather than a gap -- the Durable
+Object's own SQLite is the backend. The tier reaches the deferrable half, and `syslog` with no
+compromise at all, because syslog over TCP never replies.
+
+## The alarm never sees the message, which is what the SMTP wiring turned on
+
+`drupal/smtp` installs here and its socket never runs, because `system.mail` is forced to `cfw_mail`.
+So a site that installed it, entered its relay and saved had a complete SMTP configuration that
+nothing read, while its operator typed the same host, port and password again as Worker vars.
+
+`CfwMail` now passes `smtp.settings` and `mailEnvFromSite()` maps it onto the transport vars, with the
+deployment's own vars winning every field they set -- a var is set by whoever can deploy the Worker,
+that form by anyone who can reach a Drupal admin page.
+
+**The trap was the drain.** It re-resolves the transport deliberately, so that an operator who fixes a
+credential drains the queue that was refused under the old one -- and it runs on the alarm, where
+there is no message. Merging only at `cfwMail` time would resolve one transport at commit and dial a
+different one, or refuse there, leaving a queue that never moves and a `/health` line blaming a var
+the operator did set. The settings are persisted to `cfw_meta` and both resolvers read the same slot.
+
+## Tier B: the exchange PHP could not do at any price
+
+The TCP half above is one of two tiers P47 produced. The other is `openid_connect`, and it did not
+need TCP at all.
+
+**`WITH_OPENSSL=0`.** The shipping interpreter cannot verify an RS256 `id_token`, so a JSPI build
+that let PHP fetch the token endpoint synchronously would hand PHP a token it still could not check
+-- and an unverified `id_token` is an unauthenticated login. That is what closed JSPI as a mechanism,
+not the module count: even at zero cost it does not reach the outcome.
+
+The host does the whole exchange at a route it owns -- discovery, PKCE S256, the token POST, the JWKS
+fetch and `crypto.subtle.verify` -- and hands PHP a decided result. The awaiting happens before PHP
+is entered, so nothing suspends. `src/ops/cf-oauth.ts` had been doing exactly this for Cloudflare's
+own dashboard OAuth since before the item was opened; the work was generalising it.
+
+**The claims never travel in a URL.** The browser carries a single-use ticket; the row is deleted
+before the claims are returned, so a replay finds nothing. A redirect lands in browser history, in a
+referrer and in every proxy log on the path, which is why single-use rather than a short TTL is the
+property that matters.
+
+Five refusals, each a silent failure if it is missing, each asserted against real generated keys: a
+signature from a key outside the JWKS, a foreign issuer, an audience belonging to another client of
+the same provider, an expired token, and a nonce from another login. `alg` is taken from the KEY --
+trusting the header is how `none` and the RS256-to-HS256 confusion attack work.
+
+The authmap key is scoped by ISSUER rather than by `sub`, because a subject is unique within one
+provider and means nothing across providers; keying on it alone would let a subject from a
+newly-configured issuer take over an existing account.
+
+**`drupal/openid_connect` stays refused, and the capability is covered instead.** The module wants a
+blocking call inside the login response; the site gets provider login without it, through
+`drupal/externalauth`, which is already `verified`.
+
+**It has never seen a real IdP.** 25 assertions on generated keys, 8 on the authmap scoping, and no
+round trip. There is no setup UI either -- `oidc_issuer` and `oidc_client_id` are set by hand.
+
+## What is asserted, and what is not
+
+19 TypeScript assertions drive edgeport's real RESP codec and real syslog framing over a scripted
+socket; 27 PHP assertions drive the contract over a scripted host. Three real bugs came out of
+writing them, and the first is the one worth recording: **`'redis:'.endsWith('s:')` is true**, so
+every plaintext Redis endpoint silently dialled implicit TLS. The TLS flag is a field on a scheme
+table now, not a suffix test.
+
+**No exchange has ever crossed a real network.** The tier has no `verified` row and should not be
+described as having one.
 
 **Historical record.** Below the [FOLD](#-fold-), in the order it was measured. Superseded
 wherever it disagrees with the above.

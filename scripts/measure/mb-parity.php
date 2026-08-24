@@ -183,6 +183,47 @@ namespace {
 		$add('mb_chr', 'cp' . $cp, [$cp]);
 	}
 
+	/**
+	 * The DECODE direction, which the corpus above cannot reach: every case there is UTF-8 in.
+	 *
+	 * Two defects live here and neither is visible from a UTF-8 input. The polyfill converts with
+	 * //IGNORE, so a source byte its charmap does not know is DROPPED where native substitutes "?";
+	 * and the wrapper used to sanitise its input as UTF-8 before looking at $from_encoding, which
+	 * turns a legal SJIS byte into "?" before the conversion starts.
+	 *
+	 * Single-byte and multi-byte source encodings are both here on purpose: the polyfill's
+	 * mapToUtf8 tries a two-byte key before a one-byte key, so a fix that walks bytes is right for
+	 * one family and wrong for the other.
+	 */
+	$legacy = [
+		'ascii' => "\x41\x42\x43",
+		'high_pair' => "\x80\x81",
+		'sjis_a' => "\x82\xa0",
+		'ff_fe' => "\xff\xfe",
+		'mixed' => "abc\x9f\xa0def",
+		'nbsp' => "\xa0",
+		'top' => "\xfd\xfe\xff",
+	];
+	foreach (
+		[
+			'ISO-8859-1',
+			'ISO-8859-5',
+			'Windows-1251',
+			'Windows-1252',
+			'KOI8-R',
+			'CP866',
+			'SJIS',
+			'EUC-JP',
+			'BIG5',
+			'GBK',
+		]
+		as $from
+	) {
+		foreach ($legacy as $name => $bytes) {
+			$add('mb_convert_encoding', "{$from}/{$name}", [$bytes, 'UTF-8', $from]);
+		}
+	}
+
 	// #endregion
 
 	// #region run

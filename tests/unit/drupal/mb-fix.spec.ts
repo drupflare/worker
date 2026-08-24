@@ -252,6 +252,17 @@ describe('mb-fix: the controls', () => {
 		}
 	});
 
+	// the P24 additions, each closing a divergence a table alone could not: mb_chr and mb_ord
+	// have no range validation in the polyfill at all, and the four case-insensitive searches
+	// return an index into the polyfill's own lowercased copy rather than into the haystack
+	it('wraps the functions P24 added, and routes the searches through the safe fold', () => {
+		for (const fn of ['mb_chr', 'mb_ord', 'mb_stripos', 'mb_strripos', 'mb_stristr']) {
+			expect(MB_FIX, fn).toContain(`function ${fn}(`);
+		}
+		expect(MB_FIX).toContain('cfw_mb_fold_safe');
+		expect(MB_FIX).toContain('cfw_mb_patch');
+	});
+
 	// the other direction, and the one that is easy to get wrong: sanitising is NOT a
 	// free win everywhere. Native mb_str_pad pads to a width it measures on the RAW
 	// bytes, and the two detectors must see the original, so wrapping these three
@@ -280,6 +291,9 @@ describe('mb-fix: the controls', () => {
 		// a NEW lead range added to the PHP without being mirrored here fails on this count
 		expect(src.match(/\$need = \d/g)?.length).toBe(table.length);
 		// and the resume rule itself: one "?" then advance by what was consumed
-		expect(src).toContain('else { $out .= "?"; $i += $consumed; }');
+		// $sub defaults to "?" and is only ever passed by the TITLE path, which needs the
+		// substituted run to be case-IGNORABLE while the word boundaries are found
+		expect(src).toContain('function cfw_mb_sanitize($s, $sub = "?")');
+		expect(src).toContain('else { $out .= $sub; $i += $consumed; }');
 	});
 });

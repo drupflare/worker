@@ -12,3 +12,4 @@ typedoc/
 .husky/
 TECHNICAL_REPORT.md
 experiments/
+tests/fixtures/unicode-corpus.json

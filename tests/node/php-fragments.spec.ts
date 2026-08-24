@@ -33,6 +33,7 @@ import {
 	writeWorkload
 } from '../../src/drupal/site-php';
 import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
+import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
 import { ZLIB_FIX } from '../../src/drupal/zlib-fix';
 
@@ -150,7 +151,10 @@ const FRAGMENTS: Array<[string, string]> = [
 	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
 	// read. Both bodies carry regexes with backslash escapes, which is exactly the
 	// shape that survives a botched unescaping as valid JS and broken PHP
-	['MB_ASCII', `<?php ${MB_ASCII}`]
+	['MB_ASCII', `<?php ${MB_ASCII}`],
+	// generated, and the reason it is plain PHP rather than an eval(): a table emitted by a
+	// script is exactly where a stray quote in a key lands, and php -l is what catches it
+	['UNICODE_TABLES', `<?php ${UNICODE_TABLES}`]
 ];
 
 // A MISSING PHP BINARY MUST NOT SILENTLY PASS THIS FILE. A local developer without php should not

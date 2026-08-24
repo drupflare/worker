@@ -130,8 +130,32 @@ if (growthGlue && !existsSync(growthGlue)) {
 	);
 }
 
-const activeGlue = growthGlue ?? SHIPPING_GLUE;
-const haveShipping = existsSync(SHIPPING_WASM) && existsSync(activeGlue);
+/**
+ * A pointer-ABI arm, selected by env so P26 is scored against the SAME specs as wasm32.
+ *
+ * `DRUPFLARE_ABI=wasm64` points the seam at `.interp/php8.5-wasm64.{wasm,-worker.mjs}`, which
+ * `phasm` builds from `src/rc/wasm64.rc.pending` -- the control rc with the ABI changed and nothing
+ * else, so pointer width is the only variable. Unset is the shipping wasm32.
+ *
+ * It overrides the growth arm rather than composing with it: the tuned glue is emitted from the
+ * wasm32 glue, so pairing it with a wasm64 module would run mismatched pointer widths.
+ */
+const abi = process.env.DRUPFLARE_ABI;
+if (abi !== undefined && abi !== 'wasm64') {
+	throw new Error(`DRUPFLARE_ABI must be wasm64 when set; got ${abi}`);
+}
+const abiWasm = abi ? `.interp/php8.5-${abi}.wasm` : null;
+const abiGlue = abi ? `.interp/php8.5-${abi}-worker.mjs` : null;
+if (abiWasm && abiGlue && !(existsSync(abiWasm) && existsSync(abiGlue))) {
+	throw new Error(
+		`DRUPFLARE_ABI=${abi} but ${abiWasm} or ${abiGlue} is absent; build the variant in phasm ` +
+			'and copy both files into .interp/'
+	);
+}
+
+const activeWasm = abiWasm ?? SHIPPING_WASM;
+const activeGlue = abiGlue ?? growthGlue ?? SHIPPING_GLUE;
+const haveShipping = existsSync(activeWasm) && existsSync(activeGlue);
 const haveBinary = haveShipping || existsSync(DEFAULT_SEAM);
 
 const havePack = existsSync(PACK_INDEX);
@@ -140,7 +164,9 @@ const haveArtifacts = haveBinary && havePack && haveStatic;
 
 // stderr, not stdout: `vitest list --json` is parsed by the metrics collector, and a banner on
 // stdout made every run answer `JSON Parse error: Unexpected identifier "vitest"`
-if (haveShipping && growthGlue) {
+if (haveShipping && abi) {
+	console.error(`[vitest] PHP 8.5 on the ${abi} pointer ABI from .interp/`);
+} else if (haveShipping && growthGlue) {
 	console.error(`[vitest] PHP 8.5 with the heap-growth step forced to ${growthStep}`);
 } else if (haveShipping) {
 	console.error('[vitest] running the SHIPPING PHP 8.5 interpreter from .interp/');
@@ -174,7 +200,7 @@ const seamAlias = (from: string, to: string) => ({
 });
 
 const binaryAlias = haveShipping
-	? [seamAlias(`${DEFAULT_SEAM}.wasm`, SHIPPING_WASM), seamAlias(DEFAULT_SEAM, activeGlue)]
+	? [seamAlias(`${DEFAULT_SEAM}.wasm`, activeWasm), seamAlias(DEFAULT_SEAM, activeGlue)]
 	: haveBinary
 		? []
 		: [
@@ -197,6 +223,10 @@ export default defineConfig({
 					})
 				],
 				resolve: { alias: binaryAlias },
+				// workerd has no `process.env`, so a spec cannot read the ABI arm the way this
+				// config did -- an env-gated `skipIf` inside the isolate is always true and the
+				// spec silently never runs. Injecting it is the only way the two sides agree.
+				define: { __DRUPFLARE_ABI__: JSON.stringify(abi ?? '') },
 				test: {
 					name: 'workers',
 					include: ['tests/unit/**/*.spec.ts', 'tests/integration/**/*.spec.ts'],

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
-import { TUNED_GLUE, emitTunedGlue } from './scripts/measure/growth-glue.js';
+import { TUNED_GLUE, emitTunedGlue, glueFor, tunedGlueFor } from './scripts/measure/growth-glue.js';
 
 const SHIPPING_CODE = [
 	'src/site.ts',
@@ -137,21 +137,28 @@ if (growthGlue && !existsSync(growthGlue)) {
  * `phasm` builds from `src/rc/wasm64.rc.pending` -- the control rc with the ABI changed and nothing
  * else, so pointer width is the only variable. Unset is the shipping wasm32.
  *
- * It overrides the growth arm rather than composing with it: the tuned glue is emitted from the
- * wasm32 glue, so pairing it with a wasm64 module would run mismatched pointer widths.
+ * It overrides the growth arm rather than composing with it: each ABI is tuned from its OWN glue,
+ * so pairing one with the other's module would run mismatched pointer widths.
+ *
+ * **The arm runs the TUNED wasm64 glue.** Emscripten emits 0.20 and the built artifact carries it,
+ * which reads 138.44 MiB on the install and auth arms and does not fit; the shipping 0.05 reads
+ * 123.00 MiB. Substituting that by hand is how the gate and production come to run different growth
+ * policies, which has happened at this exact seam before.
  */
 const abi = process.env.DRUPFLARE_ABI;
 if (abi !== undefined && abi !== 'wasm64') {
 	throw new Error(`DRUPFLARE_ABI must be wasm64 when set; got ${abi}`);
 }
 const abiWasm = abi ? `.interp/php8.5-${abi}.wasm` : null;
-const abiGlue = abi ? `.interp/php8.5-${abi}-worker.mjs` : null;
-if (abiWasm && abiGlue && !(existsSync(abiWasm) && existsSync(abiGlue))) {
+const abiPristine = abi ? glueFor('wasm64') : null;
+if (abiWasm && abiPristine && !(existsSync(abiWasm) && existsSync(abiPristine))) {
 	throw new Error(
-		`DRUPFLARE_ABI=${abi} but ${abiWasm} or ${abiGlue} is absent; build the variant in phasm ` +
+		`DRUPFLARE_ABI=${abi} but ${abiWasm} or ${abiPristine} is absent; build the variant in phasm ` +
 			'and copy both files into .interp/'
 	);
 }
+const abiGlue = abi ? tunedGlueFor('wasm64') : null;
+if (abiGlue && !existsSync(abiGlue)) emitTunedGlue(process.cwd(), 'wasm64');
 
 const activeWasm = abiWasm ?? SHIPPING_WASM;
 const activeGlue = abiGlue ?? growthGlue ?? SHIPPING_GLUE;

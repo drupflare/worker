@@ -32,7 +32,7 @@ import {
 	type ArchivedEntry,
 	type CdnManifest
 } from './backup-cdn';
-import { emitTunedGlue } from './measure/growth-glue.js';
+import { emitTunedGlue, glueFor } from './measure/growth-glue.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -122,6 +122,20 @@ if (import.meta.main) {
 	} catch (e) {
 		console.warn(`restore-artifacts: could not emit the tuned glue: ${(e as Error).message}`);
 		if (strict) process.exit(1);
+	}
+	// the wasm64 arm, when its build is present. Never fetched -- `phasm` publishes it separately
+	// and it is an experiment rather than a shipping artifact -- so its absence is silent. What is
+	// NOT silent is running the gate against emscripten's 0.20 while production runs 0.05, which is
+	// what the manual substitution left open
+	if (existsSync(resolve(ROOT, glueFor('wasm64')))) {
+		try {
+			console.log(`restore-artifacts: tuned wasm64 glue -> ${emitTunedGlue(ROOT, 'wasm64')}`);
+		} catch (e) {
+			console.warn(
+				`restore-artifacts: wasm64 glue present but not tunable: ${(e as Error).message}`
+			);
+			if (strict) process.exit(1);
+		}
 	}
 
 	console.log(

@@ -1,50 +1,17 @@
 /**
- * The free-tier PRODUCT envelope: two ceilings, not one.
+ * The free-tier product envelope: two ceilings, not one.
  *
  *   bun scripts/measure/free-envelope.ts [--visits=3000000] [--dynamic=0.01] [--warmth=realRender]
  *
- * Every work item in this project has been scored against the **10 ms invocation
- * cap** -- "140x the cap", "85x the cap", "3 of 4 firings over the cap". That is the wrong objective
- * function. The 10 ms cap constrains one execution unit, and the architecture gets to choose what an
- * execution unit is; the report already measured a chain where 20 Durable Object hops accumulated
- * 142 ms of CPU with no single invocation over 10 ms. So "does a render fit in 10 ms" was never the
- * question. The question is whether the AGGREGATE daily budgets support the product's target workload.
+ * SERVING is how many visits/month can be answered at all, bound by Worker requests because a cache
+ * hit still costs one. REGENERATION is how many distinct pages can be rendered per day, bound by DO
+ * requests and rows written, and it is far smaller. A proposal has to clear both.
  *
- * The cost model already said this and it governed nothing. `THE COST MODEL` section concluded
- * "Worker requests bind first, ~100,000 page views/day, ~3M/month" -- correct, present, and ignored by
- * every subsequent roadmap decision. This file is the fix: the envelope is arithmetic, so it is a
- * script with tests, and a proposal can be scored against it instead of against a CPU ceiling.
+ * `offWorkerFraction` is the only input that raises the serving ceiling: an asset request and an R2
+ * custom domain are both served without invoking the Worker. Enabling the Workers Caching feature
+ * removes that, since it bills every request including the normally-free ones.
  *
- * The thing both the report and the critique conflate: there are **two independent ceilings**.
- *
- *   1. SERVING -- how many visits/month can be answered at all. Bound by Worker requests, because a
- *      cache HIT still costs one. ~100,000/day.
- *   2. REGENERATION -- how many distinct pages can be RENDERED per day. Bound by DO requests and rows
- *      written. This is the one that decides whether free is a real Drupal host, and it is far, far
- *      smaller.
- *
- * A "99% of traffic is cache hits" architecture rescues CPU and does **nothing** for the serving
- * ceiling, **as long as every hit still invokes the Worker** -- and `caches.default` inside a Worker
- * does. The decomposition trick is not free either: DO request quota explicitly includes alarm
- * invocations, so slicing spends the meter it is trying to dodge.
- *
- * The one lever that does move the serving ceiling, documented in both cases:
- *
- *   - **"Requests to static assets are free and unlimited"** -- Cloudflare Workers pricing. An asset
- *     request is served by the asset layer WITHOUT invoking the Worker, so it costs nothing against the
- *     100k/day request quota.
- *   - An **R2 public bucket on a CUSTOM DOMAIN** is served through Cloudflare Cache and never invokes a
- *     Worker either. A CDN hit costs no R2 operation; a CDN miss costs one Class B read. (Custom domain,
- *     not `r2.dev`: caching, WAF and access controls only exist on the custom-domain path. And "by
- *     default only certain file types are cached", so HTML needs a Cache Everything rule.)
- *
- * So `offWorkerFraction` is the fraction of visits answered without a Worker invocation, and it is the
- * only input to this model that can raise the serving ceiling at all.
- *
- * **The trap, which would silently destroy the free tier:** enabling the **Workers Caching** feature
- * bills EVERY request at the standard rate "including requests that are normally free: static asset
- * requests". A cache HIT then still costs a request and merely skips CPU. So that feature must stay OFF
- * on free -- it converts the one free serving path into a billed one.
+ * The measurements behind each figure are in `TECHNICAL_REPORT.md`.
  */
 
 /** Documented free-plan daily quotas. Sources are in the report's PLATFORM LIMITS table. */
@@ -71,6 +38,15 @@ export const FREE_QUOTAS = {
 	 * doing nothing, and it scales with how often anything arms an alarm.
 	 */
 	rowsPerAlarmArm: 1,
+	/**
+	 * Queue operations per day on free, since 2026-02-04.
+	 *
+	 * ONE MESSAGE COSTS THREE: Cloudflare bills each 64 KB written, read or deleted, so a delivered
+	 * message is a write, a read and a delete. 10,000/3 is the real message ceiling and a retry adds
+	 * another read.
+	 */
+	queueOperationsPerDay: 10_000,
+	queueOperationsPerMessage: 3,
 	/**
 	 * R2 operations, per MONTH, and they are what actually bound an off-Worker serving path.
 	 *
@@ -142,7 +118,7 @@ export const IDLE_GB_S_PER_DAY = SECONDS_PER_DAY * DO_GB_ALLOCATED;
 /**
  * The three replica architectures, which are NOT one item and were scored as one.
  *
- * P17 was closed as "dead on free" on the strength of the always-warm arithmetic below. That closes
+ * Replicas were closed as "dead on free" on the strength of the always-warm arithmetic below. That closes
  * ONE of these and says nothing about the other two -- an object that is idle and eligible for
  * hibernation accrues no duration at all, so a replica that hibernates between requests costs its
  * wake and its work and nothing else.
@@ -263,18 +239,11 @@ export function paidDurationCost(
  * | `duration`   | 1.283359232 |
  *
  * `10.026244 s * 0.128 GB` is 1.283359232 GB-s exactly, so `activeTime` is MICROSECONDS of wall
- * clock, `duration` is GB-s, and {@link DO_GB_ALLOCATED} is confirmed from billing data rather than
- * from a docs example.
+ * clock and {@link DO_GB_ALLOCATED} is confirmed from billing rather than from a docs example.
  *
- * **AND THE INSTRUMENT THAT SAID THIS WAS UNMEASURABLE WAS THE WRONG DATASET.** The model carried
- * "GraphQL exposes requests, body size, stored bytes and cpuTime but not duration", which is true
- * of `durableObjectsInvocationsAdaptiveGroups` and false of the periodic one. Suspect the
- * instrument first.
- *
- * **THE RATIO IS THE POINT.** That object spent 3,838 us of CPU and was billed for 10,026,244 us of
- * wall clock -- **2,612x**. cpuTime does not see time spent awaiting and this meter charges for it,
- * so every duration figure derived from {@link SECONDS_PER} is a LOWER bound, and the gap is
- * unbounded rather than small.
+ * **THE RATIO IS THE POINT: 2,612x.** cpuTime does not see time spent awaiting and this meter
+ * charges for it, so every figure derived from {@link SECONDS_PER} is a LOWER bound. "GraphQL
+ * cannot see duration" was the wrong dataset, not a platform limit.
  */
 export const DURATION_CALIBRATION = {
 	/** microseconds of wall clock the probe was held for */
@@ -410,18 +379,11 @@ export const DEFAULT_FILL_BATCH = 5;
  *   - first fill of the front page on a freshly migrated site ... 19 rows
  *   - first fill of a path never rendered on this object ....... 62 rows
  *
- * That is a 20x spread, so a flat estimate does not describe any real case -- and picking from it
- * requires knowing WHICH case the ceiling is about. The regeneration ceiling prices a page being
- * re-rendered after its cache was invalidated, so `realRender` is the default: both the `page`
- * and `dynamic_page_cache` bins empty, which is what `fillOne()` does by default and what an
- * invalidation leaves behind. `firstEverForPath` is 5x that, but its bulk is `cache_render`,
- * `cache_routes` and `cache_discovery` -- one-time-per-path costs paid while a site warms up, not
- * per-regeneration costs, so charging them to every regeneration understates the ceiling by 5x.
+ * A 20x spread, so picking from it requires knowing WHICH case the ceiling is about. `realRender` is
+ * the default because the regeneration ceiling prices a re-render after invalidation;
+ * `firstEverForPath` is 5x that and its bulk is one-time-per-path warming.
  *
- * Every figure here is POST-`cache_page`. Drupal's internal page cache used to add 4-5 rows on top
- * of each one, duplicating bytes the host already stores in `cfw_page`; the `page` bin now
- * resolves to a null backend (see `SERVICES_YAML` in `src/site-do.ts`). On a warm reassemble that
- * alone was 8 rows -> 3.
+ * Every figure here is POST-`cache_page`, which now resolves to a null backend.
  */
 export const ROWS_PER_FILL = {
 	/** page bin only, dynamic_page_cache left warm: a reassemble rather than a render */
@@ -607,7 +569,7 @@ export function envelope(
 		 * How the replica fleet behaves when idle.
 		 *
 		 * `alwaysWarm` is what `alwaysWarmObjects` used to mean unconditionally, and scoring every
-		 * replica design that way is what closed P17 too widely. `hibernating` spends no idle
+		 * replica design that way is what closed replicas too widely. `hibernating` spends no idle
 		 * duration at all -- it pays a WAKE instead, which this model does not price and which has
 		 * never been measured on this runtime.
 		 */
@@ -744,6 +706,55 @@ export function envelope(
 	};
 }
 
+/**
+ * What a queue-backed fill would cost, against the alarm chain it would replace.
+ *
+ * Executable rather than written down: a queue removes the `setAlarm()` row and the alarm's own
+ * invocation, and adds a meter with a much lower ceiling, so all three have to be priced at once.
+ */
+export type QueueArm = {
+	/** deliverable messages/day, which is the operation quota divided by the three each one costs */
+	messagesPerDay: number;
+	/** the regeneration ceiling with the alarm chain, and with a queue in front of it */
+	alarmRegenerationsPerDay: number;
+	queueRegenerationsPerDay: number;
+	/** which meter binds each arm */
+	alarmBoundBy: Envelope['regenerationBoundBy'] | 'queueOps';
+	queueBoundBy: Envelope['regenerationBoundBy'] | 'queueOps';
+	/** Worker requests the consumer spends, which come off the SERVING ceiling */
+	workerRequestsPerDay: number;
+	/** > 1 means the queue helps */
+	ratio: number;
+};
+
+export function queueArm(
+	mix: TrafficMix = DEFAULT_MIX,
+	opts: Parameters<typeof envelope>[1] = {}
+): QueueArm {
+	const alarm = envelope(mix, opts);
+	// the two costs a queue actually removes: one alarm row and one alarm invocation per fill
+	const relieved = envelope(mix, {
+		...opts,
+		rowsPerFill: Math.max(1, (opts.rowsPerFill ?? ROWS_PER_FILL.realRender) - 1)
+	});
+	const messagesPerDay = Math.floor(
+		FREE_QUOTAS.queueOperationsPerDay / FREE_QUOTAS.queueOperationsPerMessage
+	);
+	const queued = Math.min(relieved.regenerationsPerDay, messagesPerDay);
+	return {
+		messagesPerDay,
+		alarmRegenerationsPerDay: alarm.regenerationsPerDay,
+		queueRegenerationsPerDay: queued,
+		alarmBoundBy: alarm.regenerationBoundBy,
+		queueBoundBy:
+			messagesPerDay < relieved.regenerationsPerDay
+				? 'queueOps'
+				: relieved.regenerationBoundBy,
+		workerRequestsPerDay: queued,
+		ratio: alarm.regenerationsPerDay > 0 ? queued / alarm.regenerationsPerDay : 0
+	};
+}
+
 /** what a mirror share is worth, and what maximising it would cost */
 export type MirrorOptimum = {
 	/** the `offWorker` share that maximises serving views */
@@ -813,7 +824,7 @@ export function optimalOffWorker(
 /**
  * What rejecting bad traffic saves, per meter.
  *
- * P37. The number every WAF reports is "requests blocked", and it is the one number that does not
+ * The number every WAF reports is "requests blocked", and it is the one number that does not
  * matter here: what matters is which of the four meters the blocked traffic was going to spend.
  *
  * **THE DISTINCTION THAT DECIDES IT: where the rejection happens.** An in-Worker refusal --

@@ -18,6 +18,7 @@ import {
 	optimalOffWorker,
 	PAID_DURATION,
 	paidDurationCost,
+	queueArm,
 	ROWS_PER_FILL,
 	ROWS_PER_FILL_NO_DBLOG,
 	rowsForWarmthMix,
@@ -244,23 +245,10 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 });
 
 /**
- * P17, PRICED -- AND THE FIRST VERSION OF THIS BLOCK CLOSED TOO MUCH.
+ * Prices ALWAYS-WARM replicas only, which is one of three architectures and not the interesting one.
  *
- * It priced ALWAYS-WARM replicas, found that two exceed the free duration allowance on their own,
- * and wrote that up as "replicas are dead on free". Those are different claims. Cloudflare bills
- * duration for an object that is idle and UNABLE to hibernate; an object that is idle and eligible
- * accrues nothing. So there are three architectures here and the arithmetic below settles one:
- *
- *   A. one permanently hot object      -- duration-heavy, lowest latency, maximum serialisation
- *   B. N replicas that HIBERNATE       -- pays a wake instead of a day; **unmeasured**
- *   C. N replicas kept explicitly warm -- best latency, and the case priced below
- *
- * **B is the interesting free-plan design and nothing here scores it**, because the wake cost on
- * this runtime is a 96 MiB interpreter restore and nobody has measured one.
- *
- * The independent objection stands and is unaffected by any of this: a replica buys NO QUOTA,
- * because rows written is account-wide and daily. It buys throughput against a single-threaded
- * object, which is a real thing to want and a different argument.
+ * An object idle and ELIGIBLE to hibernate accrues nothing, so a hibernating replica is unscored
+ * here and unmeasured anywhere. A replica buys throughput, never quota: rows are account-wide.
  */
 describe('always-warm objects, which is only ONE of the replica architectures', () => {
 	it('fits exactly ONE on free, at 83% of the allowance', () => {
@@ -883,5 +871,46 @@ describe('the duration meter, calibrated on a deployed object', () => {
 	it('bills nothing for negative or zero wall clock', () => {
 		expect(billedGbS(0)).toBe(0);
 		expect(billedGbS(-5)).toBe(0);
+	});
+});
+
+describe('a queue-backed fill, which is the lever Queues going free reopened', () => {
+	/**
+	 * Cloudflare bills a message THREE times -- one write, one read, one delete -- so the 10,000
+	 * daily operations are 3,333 deliverable messages and not 10,000.
+	 */
+	it('divides the operation quota by the three operations a message costs', () => {
+		expect(FREE_QUOTAS.queueOperationsPerMessage).toBe(3);
+		expect(queueArm().messagesPerDay).toBe(3_333);
+	});
+
+	// the arm that ships. A queue removes one alarm row per fill and adds a meter with a ceiling
+	// BELOW the rows one, so it becomes the binding meter and the ceiling falls
+	it('costs 2.27x on the windowed arm, which is the one that ships', () => {
+		const arm = queueArm(undefined, { windowed: true });
+		expect(arm.alarmRegenerationsPerDay).toBe(7_575);
+		expect(arm.queueRegenerationsPerDay).toBe(3_333);
+		expect(arm.alarmBoundBy).toBe('rows');
+		expect(arm.queueBoundBy, 'the queue did not become the binding meter').toBe('queueOps');
+		expect(arm.ratio).toBeLessThan(0.5);
+	});
+
+	// and on the cold arm it buys nothing rather than something: DO requests still bind
+	it('changes nothing on the cold arm, where DO requests bind first', () => {
+		const arm = queueArm();
+		expect(arm.queueRegenerationsPerDay).toBe(arm.alarmRegenerationsPerDay);
+		expect(arm.ratio).toBe(1);
+	});
+
+	/**
+	 * A queue ADDS a meter and replaces none, which is RULE 0b's decomposition trap.
+	 *
+	 * Every fill still needs its DO invocations; the consumer is Worker requests on top, taken off
+	 * the serving ceiling.
+	 */
+	it('spends Worker requests on top of the DO requests the fill still needs', () => {
+		const arm = queueArm(undefined, { windowed: true });
+		expect(arm.workerRequestsPerDay).toBe(arm.queueRegenerationsPerDay);
+		expect(arm.workerRequestsPerDay / FREE_QUOTAS.workerRequestsPerDay).toBeGreaterThan(0.03);
 	});
 });

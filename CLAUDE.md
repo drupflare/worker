@@ -322,6 +322,18 @@ specs without running them, which is what the collector now passes; `tests/node/
 evaluates the config from a directory with no artifacts, both ways, so the control is what makes the
 assertion mean anything.
 
+## A green gate is not evidence the project bundles
+
+**Every vitest lane resolves through vite; wrangler bundles with esbuild, and they disagree.**
+`src/ops/tcp.ts` imported two error classes from edgeport's root barrel, whose `dist/index.js`
+re-exports twenty namespaces it never imports. vite tolerates that; esbuild answers
+`"dns" is not declared in this file` and emits nothing, so `wrangler dev` and `wrangler deploy` were
+broken for a day with the whole suite green.
+
+`bunx wrangler deploy --dry-run --outdir=<tmp>` is the check and does not deploy. Run it after any
+dependency change, and prefer a subpath export (`edgeport/core`) over a package root.
+`tests/node/bundle-imports.spec.ts` is an allow-list of known-broken roots, not a general check.
+
 ## A passing test does not mean anything calls it
 
 `src/ops/supervisor.ts` -- 11 tripwires, the health ledger, the circuit breaker,
@@ -353,6 +365,34 @@ The five entries on the list today are all legitimately off the edge: `src/ops/d
 rather than through an import. The list may shrink without ceremony; **adding to it is the thing to
 think twice about**, because an entry is a promise the module is reached some other way rather than a
 way to silence the check.
+
+## A HAND-WRITTEN LIST OF WHAT THE CODE EMITS GOES STALE IN BOTH DIRECTIONS
+
+Measured 2026-08-24, running the e2e lane in full for the first time in a while: **15 failures, and
+three were real defects the other lanes could not see.** All three are the same shape -- an assertion
+or a header set written once and never re-derived from the source.
+
+- **`x-cfw-generation` was absent from two responses.** `pageResponse()` sets it and its docblock
+  says it is on every serve response; the `RENDER` and `ASSEMBLED` paths build their headers by hand
+  and omitted it. `Number(null)` is 0, so an invalidation test read "0 is not greater than 0" rather
+  than "the header is missing" -- a defect wearing a passing comparison's clothes.
+- **The cache-tier list was wrong SIX ENTRIES OUT OF TEN.** The e2e assertion named `FILL`, `DPC` and
+  `PARTIAL`, which `src/` does not emit anywhere, and omitted `RENDER`, `ASSEMBLED` and `KV`, which
+  it does. `src/ops/cache-tiers.ts` is now the single list, `pageResponse()` takes the type, and
+  `tests/node/cache-tiers.spec.ts` holds the const to what the source actually writes -- in BOTH
+  directions, so a tier that quietly appears fails as loudly as one that quietly goes.
+- **`/__assemble` rendered against a different origin from `/serve`.** It passed no origin, so the
+  fill fell back to `http://localhost` while the serve path used the request's. The page then
+  accumulated one `<link rel="alternate">` per origin it had ever been rendered at: 17,784 bytes
+  against the packed 17,686, and **the delta is exactly the length of the origin string**. It is a
+  local-dev artifact rather than a production defect -- `pinnable()` refuses to pin `127.0.0.1`, so
+  the two routes only disagree where nothing is pinned -- but it made a byte-exactness assertion
+  structurally unable to pass locally, which is an instrument that cannot be right.
+
+The other twelve were specs wrong about their environment, which is the lesson C119 already paid for:
+`tcp.spec.ts` gated on whether the RIG was up and never on whether the WORKER was wired to it, so
+four tests ran against a healthy Redis the worker had no `REDIS_URL` for. **A gate that probes one
+end of a path passes while the path is broken.**
 
 ## Commands
 
@@ -426,7 +466,7 @@ brace-position and casing sniffs with the reasoning inline, and keeps everything
 under tabs it asserts "parent indent + 2 spaces" against a file with no indent spaces, so it can
 never pass and carries no signal.
 
-Constants are lowercase `true`/`false`/`null`, following mantle2 (1,276 lowercase vs 1 uppercase),
+Constants are lowercase `true`/`false`/`null`, following the reference Drupal codebase (1,276 lowercase vs 1 uppercase),
 not Drupal core's legacy style.
 
 A malformed `phpcs.xml.dist` **fails silently and reports a fake pass**. Verify a ruleset change by
@@ -605,7 +645,8 @@ blocker is not memory" from a flat reading produced by broken memory. Two other 
 it: `memory_limit` 96M -> 256M changed nothing because the limit was never reached, and `?all=1`
 looked like the culprit because chunking only postponed the first grow.
 
-**IT FITS, at the shipping growth step of 0.05:**
+**IT FITS, at a growth step of 0.05 -- which is what shipped when this was taken, and the arms below
+have NOT been re-measured at the 0.08 that ships now:**
 
 | workload     | wasm32     | wasm64     | delta      | headroom to 128 MiB |
 | ------------ | ---------- | ---------- | ---------- | ------------------- |
@@ -618,8 +659,17 @@ looked like the culprit because chunking only postponed the first grow.
 fit** -- 138.44 MiB on both the install and auth arms. The step is a glue literal, so an unpatched
 wasm64 build measures a different growth policy from the one that ships.
 
-5.00 MiB of margin is thin, so whether to ship it is a product call rather than a measurement; P28
-buys the same `PHP_INT_SIZE` 8 on wasm32 for a fraction of the memory.
+**DECIDED 2026-08-24: IT DOES NOT SHIP, AND THE ARM STAYS.** 5.00 MiB is thin enough that a heavier
+module set puts a site over, `PHP_INT_SIZE` 8 is a semantic change to every existing site rather than
+only to the ones that want it, and **nobody has measured whether wasm64 is any FASTER** -- every
+number here is memory, and there is not one CPU or duration figure for it anywhere in the report. So
+the case rests on capability, and 64-bit `zend_long` on wasm32 offers the same capability for a
+fraction of the memory. What is closed is wasm64 as the default ABI; `PHP_INT_SIZE` 8 stays on the
+board.
+
+`restore-artifacts.ts` now emits the TUNED wasm64 glue whenever that build is present, and
+`vitest.config.ts` selects it, so `DRUPFLARE_ABI=wasm64` no longer measures emscripten's 0.20 while
+production runs its own step.
 
 **`INITIAL_MEMORY` IS NOT THAT GATE, and this sentence used to say it was.** The heap starts at
 100,663,296; where it PEAKS is set by `MEMORY_GROWTH_GEOMETRIC_STEP`.
@@ -629,29 +679,58 @@ buys the same `PHP_INT_SIZE` 8 on wasm32 for a fraction of the memory.
 all. `scripts/measure/growth-glue.ts` re-emits the glue at any step and `growth-ladder.ts` drives the
 arms -- one binary, N variants.
 
-**THE SHIPPING STEP IS 0.05, NOT EMSCRIPTEN'S 0.20**, since 2026-08-23. `restore-artifacts.ts`
+**THE SHIPPING STEP IS 0.08, NOT EMSCRIPTEN'S 0.20 AND NO LONGER 0.05**, since 2026-08-24. `restore-artifacts.ts`
 emits the tuned glue AFTER verifying the pristine download against `cdn-manifest.json` (a hash that
 covered a locally-rewritten file would guarantee nothing), `src/runtime/php-binary-85.ts` imports
 `.interp/php8.5-worker.tuned.mjs`, and `vitest.config.ts` emits the same file when it is missing so
 the GATE cannot run a different growth policy from production -- that divergence has happened at this
 exact seam before.
 
-**SCORE A STEP AGAINST THE AUTHENTICATED RENDER, WHICH IS THE BINDING WORKLOAD.** Measured with
-opcache off, which is what ships:
+**SCORE A STEP AGAINST THE AUTHENTICATED RENDER, WHICH IS THE BINDING WORKLOAD.** The full sweep --
+0 plus every hundredth to 0.20, plus thousandths across the breakpoint -- is in the `SHIPPING_STEP`
+docblock in `scripts/measure/growth-glue.ts`. Measured 2026-08-24, opcache off, n=2 per arm:
 
 | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB | grow events |
 | ---- | ---------- | ----------- | -------- | ------ | ------------------- | ----------- |
 | 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75               | 1           |
 | 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38               | 1           |
+| 0.08 | 96.00      | 103.69      | 103.69   | 103.69 | **24.31**           | 1           |
+| 0.07 | 96.00      | 102.75      | 102.75   | 102.75 | 25.25               | 1           |
 | 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13               | 2           |
-| 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | ~7          |
-| 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44               | many        |
+| 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | 7           |
+| 0    | 96.00      | 96.88       | 102.69   | 102.69 | 25.31               | many        |
 
 Read the render column alone and every arm is identical; read install-and-render and the answer is
-"worth about 1%". The AUTH column is where the peak lives, and it did not exist until 2026-08-23.
-0.05 rather than 0.01 or 0 because those buy 2.75 and 3.31 MiB more while a grow event COPIES the
-heap. Grow counts are derived from the series, not counted -- RULE 0 forbids reading the CPU off a
-local clock.
+"worth about 1%". The AUTH column is where the peak lives. Grow counts are derived from the series,
+not counted -- RULE 0 forbids reading the CPU off a local clock.
+
+**0.05 WAS WRONG AND SO WAS THE PROPOSED FIX OF 0.10.** The old table's own numbers said 0.10 beat
+0.05 on every column and nobody read them; the sweep says both are beaten by **0.08**, which no
+earlier table contained. 0.08 reaches the binding peak in ONE grow at 108,724,224 against 0.05's TWO
+grows to 111,017,984 -- 2,293,760 bytes more headroom and 105,709,568 fewer bytes copied.
+
+**THE PEAK IS A STEP FUNCTION OF THE STEP, WHICH IS WHY INTERPOLATING BETWEEN ARMS IS INVALID.**
+`newSize = align(max(demand, oldSize * (1 + step)), 64 KiB)`, so what decides the peak is which rung
+first exceeds demand: flat across a range, then a jump. A smaller step is NOT reliably a lower peak
+-- 0.05 undershoots on its first grow, grows again, and its second rung compounds to land above
+where 0.10's single rung landed. There are NO plateaus at hundredth resolution: 1,536 pages times
+0.01 is ~15 pages, so every hundredth resolves its own rung.
+
+**THE CLIFF IS BETWEEN 0.068 AND 0.069 AND A DEFAULT MUST NOT SIT ON IT.** 0.068 peaks at
+114,884,608 in two grows; 0.069 at 107,610,112 in one, a 7,274,496-byte drop. But the authenticated
+demand is BIMODAL -- 107,610,112 and 107,675,648, exactly one page apart, three samples each of six
+-- and 0.069's rung equals the LOWER value, so it fits only half the time. Measured four times it
+answered 107,610,112 thrice and 115,081,216 once. **An arm whose headroom does not survive a re-run
+is not a candidate**, which is why the ladder's own "lowest worst-case peak" line must never be read
+as a recommendation.
+
+**MARGIN IS A FOURTH METRIC AND IT OVERRULES THE PARETO FRONTIER HERE.** On headroom, grow events,
+bytes copied and spare events the frontier is 0.01, 0.02, 0.03, 0.04 and **0.07** -- 0.08 is
+dominated by 0.07 on all four. What none of them measures is how far the rung sits above a demand
+that MOVES: 1 page at 0.07, 16 at 0.08, 32 at 0.09, against a demand observed spanning 2 pages
+(107,544,576 on 2026-08-23, 107,610,112 and 107,675,648 today) and drifting up. 0.07 buys 983,040
+bytes of headroom and risks 7,602,176 if it is ever overshot, so **0.08 ships off the frontier on
+purpose**. Re-measure the demand before moving it.
 
 **A RENDER NO LONGER GROWS THE HEAP AT ALL**, on any arm. That is P30 rather than P16: opcache's
 compile-time working set was ~5 MiB of a render and **19 MiB of an install**, and none of it is spent
@@ -816,6 +895,26 @@ enabled the module against a real site and asserted an observable it owns.
 module". That is an inference about the runtime, and it read to everyone else as a promise about the
 module. Do not reintroduce it under another name: `tests/node/module-table.spec.ts` pins the state
 set and fails on a rendered table containing the word at all.
+
+**The table is 58 verified / 0 untested / 4 blocked -- count it, do not quote it.** `moduleTable()`
+is the census; every prose figure in this repo has been stale in both directions.
+
+**A note written from reading a module's source is not a classification.** `drupal/search_api_solr`
+sat untested behind a correct note about its Solarium transport being interceptable, and the
+transport was never the blocker: it pulls `maennchen/zipstream-php`, which declares `php-64bit`, so
+composer's `platform_check.php` asserts `PHP_INT_SIZE === 8` and aborts every request before Drupal
+boots. All 56 other contrib cases failed with it. The blast radius of a dependency constraint is the
+whole application and only an install measures it; `bun scripts/contrib-fixture.ts` is the harness.
+
+**THE BUILD KEEPS COMPOSER'S PLATFORM CHECK ON. Decided 2026-08-24.** With `platform-check: false`
+that one module installs clean and 57/57 pass, so the temptation is real and the measurement is not in
+dispute. It stays on for three reasons: the guard is CORRECT here (`PHP_INT_SIZE` is 4 and zipstream
+wants 64-bit offsets for ZIP64), turning it off ships an unexercised 64-bit path SITE-WIDE to unlock
+one module, and the setting is not per-dependency -- it would be off for every future package that
+declares the same thing, silently. `search_api_solr` stays `blocked` on `runtime.int64` until
+`PHP_INT_SIZE` is 8, which is what wasm64 and 64-bit `zend_long` are for. Do not set it in
+`drupal-src/composer.json`: that tree is gitignored and is the build input for the shipping pack, so
+a local change there is the silent-drift shape this file exists to prevent.
 
 ## Platform limits that are measured, not guessed
 

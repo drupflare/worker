@@ -19,14 +19,20 @@ Current Cloudflare documentation, checked 2026-08-23:
 | Plan availability          | Free and Paid Workers plans                                |
 | Free plan limit            | 100,000 database queries/day, reset 00:00 UTC              |
 | What counts as a query     | any statement, cached or uncached, `SELECT` through `DROP` |
+| Configurations per account | 10 on Free, 25 on Paid                                     |
+| Origin connections         | ~20 per configuration on Free, ~100 on Paid                |
 | Query cache defaults       | `max_age` 60 s, `stale_while_revalidate` 15 s              |
 | Query cache maximum        | `max_age` 1 hour                                           |
 | Maximum cached response    | 50 MB                                                      |
 | Maximum statement duration | 60 s                                                       |
+| Initial connection timeout | 15 s                                                       |
+| Idle connection timeout    | 10 minutes                                                 |
 | Egress charge              | none                                                       |
 | Pooling and caching charge | none beyond the plan limits                                |
 
 Exceeding the free query limit fails the operation with an error rather than billing for it.
+Hyperdrive does not support MySQL `COM_STMT_PREPARE`, so prepared statements have to be removed from
+MySQL queries; named prepared statements work only through `postgres.js` and `node-postgres`.
 
 Two things are worth being exact about. **A cached query still counts** against the daily limit, so
 query caching buys latency and origin load, never quota. And **the cache is keyed on statement text**
@@ -48,6 +54,16 @@ Cloudflare document found says so. Verifying it means a deployed Durable Object 
 
 ## Why the Site Database Is Not External
 
+### The Configuration Cap Bounds the Product Shape
+
+A Hyperdrive configuration is per origin database. Free allows 10 per account and Paid 25, so a
+product that gives each site its own database tops out at 25 sites per Cloudflare account regardless
+of traffic. Sharing one configuration across every site means sharing ~20 origin connections on Free
+or ~100 on Paid, against a design where each site is an independently woken object that answers with
+no coordination.
+
+Today a new site costs one Durable Object and no account-level resource at all.
+
 ### The Interpreter Cannot Await
 
 `SqlLike.exec()` in `src/db/migrate-sql.ts` is synchronous and returns a cursor, and every write path
@@ -57,6 +73,11 @@ synchronous interpreter, and the shipping build is not a JSPI build. `wrangler.j
 (`src/runtime/php-binary-jspi.ts`) targets an 8.3 experiment build and does not ship. Without JSPI,
 PHP cannot suspend across a JavaScript `await`, so a database reachable only through a Promise cannot
 be read from inside a Drupal render.
+
+Every documented Hyperdrive call is Promise-based. PostgreSQL usage is `env.HYPERDRIVE.connectionString`
+handed to `postgres.js` or `node-postgres` and awaited; MySQL usage is `mysql2/promise`. There is no
+synchronous form of either, and no synchronous escape hatch appears anywhere in Cloudflare's
+Hyperdrive documentation.
 
 The project already lives with this on the outbound HTTP path, and the shape of that workaround is
 the argument. PHP's HTTP goes through a stream wrapper and a queue drained on the alarm
@@ -77,6 +98,50 @@ Postgres behind Hyperdrive is a different concurrency model reached over a poole
 any isolate in any colo. Moving the data there does not swap a binding; it removes the property the
 migration, the invalidation and the restore are written against.
 
+The pooler runs in transaction mode, and Cloudflare documents three consequences that bear directly
+on Drupal. Session state does not persist, because connections are `RESET` when returned to the
+pool. A single Worker invocation may obtain several different connections. And wrapping multiple
+operations in one transaction to hold `SET` state is explicitly discouraged, since the connection
+cannot be reused while the transaction is open. Drupal opens transactions around entity saves, batch
+API runs and the installer.
+
+### The Query Cache Cannot Be Used for a CMS on the Same Database
+
+Query caching is the latency lever, it is on by default, and it has no write invalidation:
+Cloudflare states that it does not purge cached read results when the application writes. Its own
+guidance is to create a second binding to the same database with `--caching-disabled` and route
+"authentication, sessions, permissions, billing state, admin settings, and reads immediately after a
+write" through it.
+
+For Drupal that list is `sessions`, `users_field_data`, `key_value`, `config`, `semaphore` and every
+`cache_*` bin. A 60-second uninvalidated window over `cache_config` or `semaphore` is a correctness
+failure rather than a staleness tradeoff. What remains after disabling the cache is connection
+pooling, which buys back a TCP, TLS and authentication handshake the current architecture never
+pays.
+
+Cache eligibility is also decided by text matching: since 2026-02-23 both `VOLATILE` and `STABLE`
+PostgreSQL functions make a query uncacheable, and a function name such as `NOW()` appearing in a SQL
+comment is enough to trigger it.
+
+### Latency Moves From Zero to Regional
+
+Cloudflare quantifies an uncached query at 20-30 ms from a distant region and 1-3 ms when the Worker
+is placed near the database, and says that multiple queries compound. A first render here is 48 SQL
+statements and a repeat render 18, so a cold render would spend roughly 1 to 1.4 seconds in network
+alone at the distant figure, on top of the boot.
+
+The documented remedy is `placement.region`, which pins the Worker to the database's cloud region.
+That is the opposite of `SITE_LOCATION_HINT`, which is a per-call, KV-overridable lever precisely so
+a site can live near its visitors. Today those statements cost no network at all, because the storage
+is inside the object making the call.
+
+### An Open Socket Bills Duration
+
+Independently of Hyperdrive, an outbound TCP connection held open inside a Durable Object blocks
+hibernation, defers eviction and continues to accrue duration charges, for up to 15 minutes per
+connection. A driver connection held across a render is therefore a billed residency decision. This
+is the same eligibility list `src/ops/hibernation.ts` transcribes.
+
 ### The Arithmetic Does Not Help Either
 
 Hyperdrive on Free allows 100,000 database queries/day. A warm render costs **15 host statements**,
@@ -96,6 +161,12 @@ It is a real answer to a question this product does not ask. Someone who already
 or MySQL database and wants Drupal in front of it gets pooling, a shared query cache, and no egress
 charge. If that database is the system of record for something other than the Drupal site, keeping
 it where it is may be the only correct architecture.
+
+Where it fits this project, if anywhere, is the tier `src/ops/tcp.ts` already defines: a secondary,
+host-side, deferrable read against a database the operator owns, dispatched by scheme through
+`cfw_http_queue`, with the endpoint set by the operator and never by the caller. A search index, an
+analytics sink or an external content feed has that shape. The site's own database does not, for the
+same reason `drupal/redis` stays refused: the answer has to arrive inside the request that asked.
 
 It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
 rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer

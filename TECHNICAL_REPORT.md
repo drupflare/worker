@@ -166,7 +166,7 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
    And the price rose after RULE 0d: duration is wall clock, `cpuTime` understates it 2,612x, a
    suspended render trips two hibernation disqualifiers at once and stalls every other request to
    that site behind one object.
-   Two of mantle2's other four (`smtp`, `redis`) are SUBSTITUTED rather than blocked, by `CfwMail`
+   Two of that module's other four (`smtp`, `redis`) are SUBSTITUTED rather than blocked, by `CfwMail`
    and `CfwCacheBackendFactory`; those are dependencies this platform removes rather than
    compatibility it owes. `smtp`'s own `smtp.settings` now feeds the host transport, so a site that
    configured the module needs no Worker vars for mail.
@@ -283,13 +283,13 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
     isolate down rather than merely fail. Tracked as P40 in project memory; P8 is its other half.
 
 16. **Two real third-party modules were scored against this runtime for the first time, and the
-    frozen clock turned out to be an application defect rather than a measurement one.** `mantle2`
-    and `strata` (an R2-backed backup and rollback module) were read call-site by call-site. Five
+    frozen clock turned out to be an application defect rather than a measurement one.** A production API module
+    and a content-addressed storage module were read call-site by call-site. Five
     items opened, P41-P45 in project memory:
 
     - **P41 was WRONG, and what replaced it is a different defect in a different layer. RETRACTED
-      AND RE-MEASURED 2026-08-22.** The claim was that `microtime()` returns 0, leaving mantle2's
-      re-authentication window permanently open and making strata throw on the first node save. It
+      AND RE-MEASURED 2026-08-22.** The claim was that `microtime()` returns 0, leaving the API module's
+      re-authentication window permanently open and making the storage module throw on the first node save. It
       does not return 0. Measured through the shipping interpreter,
       `microtime(true)` is **1787454264.88** -- a real epoch -- because PHP's clock is the glue's
       `_emscripten_date_now = () => Date.now()` and Workers FREEZE that between I/O rather than
@@ -297,21 +297,21 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
       invert: a re-auth window comparing two stamps across two requests works, and the module's
       `if (!$atMs) return [false, null]` guard means the premise would have failed it CLOSED anyway.
       **What is really wrong is `PHP_INT_SIZE` 4**: `(int) (microtime(true) * 1000)` overflows, and
-      the cast is MODULAR -- `1787454172276.0` casts to `747777140`, exactly `mod 2^32`. So strata's
+      the cast is MODULAR -- `1787454172276.0` casts to `747777140`, exactly `mod 2^32`. So the storage module's
       `(int) round(microtime(true) * 1e6)` lands in the negative half for roughly half of every
       2^32-microsecond cycle (~35.8 minutes in 71.6) and throws THEN, unpredictably, rather than
       always. `cfwNow` would return the same float `microtime()` already gives; 64-bit `zend_long`
       (P28) is the fix, so P41 folds into P28 and closes. `Cron::processQueues()` is unreachable on
       the shipping cron path -- `runCronHook()`/`runCronQueue()` never call it. Pinned by
       `tests/integration/php-clock.spec.ts`.
-    - **P42**: four host bridges on the `zlib-fix.ts` pattern. `cfwBlake2b` (strata's content address
+    - **P42**: four host bridges on the `zlib-fix.ts` pattern. `cfwBlake2b` (a content address
       is `blake2b-256` and neither sodium nor ext-hash provides it; `blakejs` is ~5 KB and
       synchronous), `curl-fix.ts` (`CurlShim.php` is complete, tested and **declared by nothing** --
       another green-but-unreachable case), a dictionary-capable deflate (`fflate` already ships and
-      takes a `dictionary` option, which turns strata's delta coding back on), and `cfwSign` over
+      takes a `dictionary` option, which turns delta coding back on), and `cfwSign` over
       WebCrypto.
-    - **P43**: the 50-byte LIKE cap has no driver accommodation and six mantle2 controllers trip it;
-      `splitPointFor()` correctly refuses to split a non-SELECT, so strata's GC dies on a 101-frame
+    - **P43**: the 50-byte LIKE cap has no driver accommodation and six controllers in one real module trip it;
+      `splitPointFor()` correctly refuses to split a non-SELECT, so a storage module's GC dies on a 101-frame
       `DELETE ... IN`.
     - **P44: three capability claims in this project's own records were false. CLOSED 2026-08-22,
       and the instrument came with them.** `ext-mbstring` sat in `DEFAULT_PLATFORM`, focal_point's
@@ -331,7 +331,7 @@ multiplier, and the login matrix promoted one from a pinned curiosity to the top
       DECLARE. The rule that produces: a capability is shimmed, accommodated, or declared, never
       silently absent, where declared means a no-op that cannot fatal, logs once per boot, and raises
       a `hook_requirements()` row. Its first real use is `CfwFileStreamWrapper::realpath()`, which
-      returns FALSE by design and makes `strata_files` capture nothing, silently -- the host has to
+      returns FALSE by design and makes a file-capturing module capture nothing, silently -- the host has to
       materialise the bytes on demand or say out loud that it did not. Also scopes Cloudflare KV as a
       redis substitute: free KV is **100,000 reads/day but only 1,000 writes/day**, read-cheap and
       write-poor, so it replaces redis's read-mostly role and never the cache, lock, queue or flood
@@ -503,6 +503,9 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [A LIST OF WHAT THE CODE EMITS GOES STALE IN BOTH DIRECTIONS](#a-list-of-what-the-code-emits-goes-stale-in-both-directions) | **read before writing an assertion that enumerates anything**: the cache-tier list named three tiers `src/` does not emit and omitted three it does, six of ten wrong; two responses omitted a header their own docblock promised, and `Number(null)` made the failure read as a passing comparison; a probe route rendered against a different origin from the serving route. Also: wasm64 is DECIDED, and the shipping growth step is dominated by an arm nobody re-read |
+| [A SITE FOLLOWS A GIT REMOTE](#a-site-follows-a-git-remote-and-the-transport-is-gits-own) | **read before adding a delivery mechanism**: the provider archive path was deleted in favour of smart HTTP, so any host that serves a repository works and the packfile is parsed in the Worker. Also: an all-zero PITR bookmark defeats a feature-detect, a shipped `Degradation::record()` had its arguments transposed, and a queue-backed fill is refuted with executable arithmetic |
+| [THE SUITE WAS GREEN AND THE PROJECT DID NOT BUNDLE](#the-suite-was-green-and-the-project-did-not-bundle) | **read before trusting a green gate about anything that leaves the isolate**: every lane resolves through vite and wrangler bundles with esbuild, so `wrangler deploy` was broken for a day with the suite green. Also: a RESP error reached PHP as a generic string, one module's transitive `php-64bit` aborted every request on the site, and the authenticated share of a real Drupal application is measured at last |
 | [OUTBOUND TCP CANNOT HAVE A SESSION API](#outbound-tcp-cannot-have-a-session-api-and-the-objective-survives-anyway) | **read before adding any outbound capability**: `cfw_tcp_connect/read/write/close` is unbuildable because a `read()` has nowhere to block, and a DECLARED exchange is not. Four of five "blocked" module rows closed on capability rather than on a socket, and the endpoint is the operator's by construction |
 | [GUZZLE FETCHED THE BODY AND THREW IT AWAY](#guzzle-fetched-the-body-and-threw-it-away) | **read before touching outbound HTTP**: every `Drupal::httpClient()` call rejected on the shipping build with the body already in memory, because no userland stream wrapper can populate `$http_response_header` and PHP 8.4's replacement answers NULL for the same reason. Fixed by a handler over `cfwFetch`; a 202 default was rejected and the reason is recorded |
 | [THE FROZEN CLOCK STILL TELLS THE TIME](#the-frozen-clock-still-tells-the-time-and-the-real-defect-is-the-int-width) | **read before quoting RULE 0's "microtime returns 0"**: it does not. Every reading behind that was a DELTA; the absolute is a real epoch. The defect is `PHP_INT_SIZE` 4, the cast is modular, and both module consequences invert |
@@ -549,6 +552,379 @@ fill moves the regeneration ceiling ~1.1% -- see
 | [TIER 0: WHAT NOW EXISTS, MEASURED](#tier-0-what-now-exists-measured) | driver, codec, gate, memory, autoload, mbstring, pack trim, sliced updb |
 | [Memory: 110.6 MiB was misread](#memory-the-edge-ceiling-is-still-unmeasured-and-1106-mib-was-misread) | **canonical** for the memory ceiling |
 
+
+---
+
+# A LIST OF WHAT THE CODE EMITS GOES STALE IN BOTH DIRECTIONS
+
+Measured 2026-08-24, from running the e2e lane in full: **15 failures, three of them real defects the
+other 3,500 tests could not see.** All three share a shape worth naming, because it is not the one
+this project usually catches. Every enumeration in the codebase is a claim about what the code does,
+and a claim written once and never re-derived rots in both directions at once — it names things that
+no longer exist while missing things that do.
+
+## Six of ten cache tiers were wrong
+
+The e2e assertion listed `EDGE`, `DENY`, `HIT`, `MISS`, `DPC`, `FILL`, `PARTIAL`. Measured against
+the source: `FILL`, `DPC` and `PARTIAL` appear nowhere in `src/` outside prose, and `RENDER`,
+`ASSEMBLED` and `KV` are all emitted and were all absent from the list.
+
+A test that had been green for its whole life was checking membership in a set that was 60% wrong.
+It stayed green because the tier it happened to observe (`HIT`) was in both the real set and the
+stale one.
+
+`src/ops/cache-tiers.ts` is now the single list, `pageResponse()` takes `CacheTier` rather than a
+string union, and `tests/node/cache-tiers.spec.ts` asserts the const against the source **in both
+directions** — a tier the source emits that is not declared fails, and a tier declared that nothing
+emits fails too. The second direction is the one that would have caught this.
+
+## A header two responses promised and did not send
+
+`pageResponse()` sets `x-cfw-generation` and its docblock says it is on every serve response. Two
+paths — the `RENDER` branch after an inline fill, and the `ASSEMBLED` branch after a shell assembly —
+build their headers by hand and omitted it.
+
+The failure mode is what makes this worth a section. The e2e assertion read
+`Number(after.generation) > Number(before.generation)`, and `Number(null)` is `0`, so a missing
+header produced `expected 0 to be greater than 0`. That reads as a generation that failed to
+advance — a cache-invalidation bug — rather than as an absent header. **A null coerced through
+arithmetic does not look like a null; it looks like a wrong answer.**
+
+## A probe route rendered against a different origin from the serving route
+
+`/__assemble` called `fillOne()` with no inbound request, so the origin fell back to
+`http://localhost` while `/serve` passed the request's own. Both renders then contributed their own
+absolute URLs to the page's `html_head`, keyed by URL, so both survived:
+
+```html
+<link rel="alternate" type="application/rss+xml" href="http://127.0.0.1:8787/rss.xml" />
+<link rel="alternate" type="application/rss+xml" href="http://localhost/rss.xml" />
+```
+
+Measured: 17,784 bytes against the packed artifact's 17,686, and **the 98-byte delta is exactly the
+length of the origin string** — `http://127.0.0.1:8787` is 5 characters longer than
+`http://localhost`, and the duplicated link accounts for the rest. After passing the origin, a live
+render differs from the pack by those 5 bytes and nothing else.
+
+This is a local-dev artifact rather than a production defect: `pinnable()` refuses to pin a local
+origin, so the two routes only disagree where nothing is pinned. But it made a byte-exactness
+assertion structurally unable to pass on a developer's machine, which is an instrument that cannot be
+right — the category RULE 0 says to suspect first.
+
+## A gate that probes one end of a path passes while the path is broken
+
+`tcp.spec.ts` gated on whether the syslog collector was reachable. It was — another project's compose
+rig was holding the port — so the gate opened and four tests ran against a healthy Redis the worker
+under test had no `REDIS_URL` for. The failures read as transport faults and were not.
+
+The gate now probes the WORKER, by asking it for a `PING` and checking whether the refusal says "not
+configured". Same for mail, where `mailTransport` is now reported on `/serve-stats` so a caller can
+tell "the relay is broken" from "there is no relay".
+
+## The shipping growth step is dominated by an arm nobody re-read
+
+Not a defect, but the same shape: a table written once and used as authority. `SHIPPING_STEP` is
+0.05, and by the table in its own docblock 0.10 is better on every decision metric — worst-case peak
+105.63 against 105.88 MiB, headroom 22.38 against 22.13, and one grow event against two. The written
+justification argues only against the smaller steps.
+
+The measured arms are 0.20 / 0.10 / 0.05 / 0.01 / 0, a half-decade sweep rather than a search; 0.15,
+0.08, 0.03 and 0.02 have never been run.
+
+**The peak is a step function of the step**, which is what makes the search tractable and
+interpolation invalid. `newSize = align(max(demand, oldSize * (1 + step)), 64 KiB)`, so what decides
+the peak is which rung first exceeds demand: flat across a range, then a jump at a breakpoint. A
+smaller step is not reliably a lower peak — 0.05 undershoots on its first grow, grows again, and its
+second rung compounds from 100.81 MiB to land above where 0.10's single rung landed.
+
+## wasm64 is decided: it does not ship
+
+The measurement was already done and is unchanged — `PHP_INT_SIZE` 8, authenticated render peak
+123.00 MiB against the 128 MiB ceiling, +61,224 zstd bytes. What was missing was the call.
+
+It does not ship as the default ABI. 5.00 MiB of margin on the binding workload is thin enough that a
+heavier module set puts a site over; `PHP_INT_SIZE` 8 changes serialisation, `PHP_INT_MAX` and any
+module branching on the width, for every existing site rather than only the ones that want int64; and
+**no measurement anywhere in this report says wasm64 is faster.** Every wasm64 figure here is memory.
+The case therefore rests entirely on capability, and 64-bit `zend_long` on wasm32 offers the same
+capability for a fraction of the memory.
+
+The objective stays open. What closed is one mechanism.
+
+The arm itself is now correct rather than manual: `emitTunedGlue()` takes an ABI,
+`restore-artifacts.ts` emits the tuned wasm64 glue when that build is present, and `vitest.config.ts`
+selects it — so `DRUPFLARE_ABI=wasm64` no longer measures emscripten's 0.20 while production runs
+0.05.
+
+---
+
+# A SITE FOLLOWS A GIT REMOTE, AND THE TRANSPORT IS GIT'S OWN
+
+Measured and built 2026-08-24. The delivery half of the extensibility claim: a Drupal host that
+cannot accept a custom module is a demo, and the mechanism now exists end to end -- poll, fetch,
+diff, install, verify, roll back, write a status back.
+
+## The archive path was deleted rather than kept as a fast path
+
+The first version resolved a ref through each provider's API and downloaded a zipball. That works for
+three providers and for nothing else, and the product requirement was explicitly that **the core must
+work against any git remote**.
+
+Smart HTTP is strictly more general and needs no new dependency:
+
+| step | request                                     | what it costs                              |
+| ---- | ------------------------------------------- | ------------------------------------------ |
+| poll | `GET /info/refs?service=git-upload-pack`    | a few hundred bytes when nothing has moved |
+| pull | `POST /git-upload-pack`, one want, depth 1  | the changed objects, as a packfile         |
+
+So `archiveRequest()` is gone. Keeping both would have meant two fetch paths, two sets of bugs, and
+three provider-specific quirks to carry -- GitHub's 302 to a different host, GitLab's 5-requests-per
+-minute archive limit, and Bitbucket's archive living on a different domain from its API. The
+advertisement also removes an API call that a plain remote cannot answer at all: `symref=HEAD:` names
+the default branch, and `refSha()` resolves a branch, a tag or a bare sha out of the same response.
+
+`branchHeadRequest()` went with it. A ref advertisement answers the same question for every provider.
+
+## The inflater had to be written, and the reason is one number
+
+A packfile is concatenated zlib streams with no length prefix, so finding object N+1 requires knowing
+how many INPUT bytes object N consumed. `fflate` cannot answer that -- neither can
+`DecompressionStream` -- so `src/ops/inflate-raw.ts` is a DEFLATE reader that returns
+`{ data, consumed }`.
+
+It is verified against `fflate` as the oracle across every block type, every compression level, and a
+chain of 25 concatenated streams walked to land exactly on the end. `consumed` is the assertion; the
+data half is what fflate already proves.
+
+## `git upload-pack` is the test oracle, with no server involved
+
+`git upload-pack --stateless-rpc` reads the same request body an HTTP POST carries and writes the
+same response. So `tests/node/git-smart.spec.ts` drives the whole client against the real binary:
+advertisement, negotiation, packfile, both delta forms, tree walk.
+
+The strongest assertion there reproduces a working tree **byte for byte** against `git show` for
+every file in a commit, and the fixtures cover a non-ascii path, an empty file, a 600 KB file, a
+binary blob, a symlink that must be skipped, and a repository holding three extensions.
+
+The real siblings go through the same path: `../drupflare` and `../rom` are committed into throwaway
+repositories and fetched back. `rom` is the case that matters -- it is checked out as `rom` and
+provides `cfw_do_sqlite`, so a mount name derived from the directory names a module that does not
+exist. The name comes from `*.info.yml`.
+
+## A real server found what constructed headers cannot
+
+`tests/node/git-gitea.spec.ts` runs against Gitea in `docker/compose.yml`: a private repository, a
+real push, a real pull request, a real commit status, and a real webhook whose signature the SERVER
+produced. Nine assertions, and two things only a live server could show:
+
+- **Gitea takes `state` on the way in and answers `status` on the way out.** A round-trip test
+  written from the request shape alone reports a status that was written as missing.
+- **A branch push is indexed asynchronously**, so `POST /pulls` can 404 on a head the push already
+  reported. The spec retries rather than treating it as a defect.
+
+## The safety properties, and where each is enforced
+
+| property                     | mechanism                                                              |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| a half-written module        | one `transactionSync()` for every write and delete in a pull            |
+| a module that fatals on boot | the kernel is booted after the write; a failure restores the prior set  |
+| two remotes, one path        | `detectConflicts()` against `cfw_module_file.package`, refused not merged |
+| a branch switch              | deletes are scoped to the remote's own rows, so nothing else is touched |
+| a preview                    | held against both the poll and a push, so a review is not replaced      |
+| an unverifiable delivery     | refused; the signature is the whole of the authentication              |
+| a token in KV                | impossible; every git key lives in `cfw_meta` and a spec asserts it     |
+
+# POINT-IN-TIME RECOVERY ANSWERS A ZERO RATHER THAN REFUSING
+
+`docs/recovery.md` documented the 30-day window and the three methods, and nothing in `src/` called
+them, so an operator could not reach the primitive at all. `/pitr` is that route.
+
+**The detection is by VALUE, and that is measured rather than defensive.** Cloudflare's wording is
+that PITR "is not supported in local development because a durable log of data changes is not stored
+locally", which reads as an absent API. Measured 2026-08-24 in the workers lane:
+
+| call                             | local answer                                                        |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `getCurrentBookmark()`           | `00000000-00000000-00000000-00000000000000000000000000000000`       |
+| `getBookmarkForTime(t)`          | throws "does not implement point-in-time recovery"                  |
+| `onNextSessionRestoreBookmark()` | present                                                             |
+
+So a `typeof === 'function'` feature-detect passes, and the value it hands back would schedule a
+restore to the beginning of time. This is the same shape as RULE 0's 114 ms: zero is obviously
+broken, a plausible-looking bookmark is not.
+
+# A DECLARATION WITH ITS ARGUMENTS TRANSPOSED IS INVISIBLE
+
+`Degradation::record()` takes `(capability, reason, state)`, and two shipped call sites in
+`CfwPassword` passed `('argon2id hashing', 'blocked', '<the reason>')`. The reason field became the
+literal `blocked`; the real sentence landed in `state`, was unrecognised, and fell back to `blocked`
+-- so the status row looked correct and carried no reason.
+
+The regression test is a SOURCE SCAN rather than a call: each site needs a live Drupal to reach, and
+what is wrong is the shape of the call rather than its effect. It asserts the scan found at least
+eight sites, so a scan that silently matched nothing cannot pass. **Falsified before landing**:
+transposing one site turns it red, restoring it turns it green.
+
+Six more gaps now declare rather than degrade silently: the Solarium transport declining when
+`cfwFetch` is absent (which hands the request to an adapter that kills the invocation), unreadable
+image dimensions, image derivatives that are copies of the original, cross-request lock suppression,
+a dropped log sink, and `smtp.settings` failing to read -- which sends through the deployment
+transport rather than the relay the site configured, and reports success.
+
+# A QUEUE-BACKED FILL IS REFUTED, AND THE ARITHMETIC IS EXECUTABLE
+
+Cloudflare Queues reached the free plan on 2026-02-04, which was the gate C28's refusal sat behind.
+Redone, and it still fails -- for a reason the original arithmetic did not name.
+
+**One message costs three operations**: Cloudflare bills each 64 KB written, read or deleted, and
+delivering a message is a write, a read and a delete. 10,000 operations/day is **3,333 messages/day**.
+
+`queueArm()` in `scripts/measure/free-envelope.ts` prices both arms:
+
+| arm                | alarm chain      | queue-backed | binds       |
+| ------------------ | ---------------- | ------------ | ----------- |
+| cold               | 1,052/day        | 1,052/day    | DO requests |
+| windowed, ships    | **7,575/day**    | **3,333/day**| queue ops   |
+
+A queue removes one `setAlarm()` row per fill, which is 1.5% of the rows meter, and adds a meter
+whose ceiling sits BELOW the rows ceiling -- so on the arm that ships it becomes the binding meter and
+costs 2.27x. It also spends 3,333 Worker requests/day, 3.3% of the serving ceiling, on top of the DO
+requests the fill still needs. That is RULE 0b's decomposition trap in a new place.
+
+**Closed as a MECHANISM.** The surviving objective is rows written per fill, still 13 on a real
+regeneration, and untouched by this result.
+
+---
+
+# THE SUITE WAS GREEN AND THE PROJECT DID NOT BUNDLE
+
+**2026-08-24, later.** The TCP tier shipped that morning with 19 TypeScript assertions over
+edgeport's codec and 27 PHP assertions over a scripted host, and the section below says plainly that
+no exchange had crossed a real network. Pointing it at a real Redis and a real syslog collector took
+under an hour and found three defects.
+
+## esbuild refuses what vite tolerates
+
+`src/ops/tcp.ts` imported its two error classes from edgeport's root barrel. edgeport 1.0.6's
+`dist/index.js` re-exports twenty protocol namespaces (`dns`, `ftp`, `imap`, ...) that it never
+imports. esbuild answers `"dns" is not declared in this file` twenty times and emits no bundle, so
+**`wrangler dev` and `wrangler deploy` were both broken from the moment the tier landed.** Every lane
+resolves through vite, which does not complain, so the whole suite stayed green.
+
+`edgeport/core` declares the classes and is the subpath `tcp.ts` and `mail.ts` already used for
+`connect`, so the fix is one import. `wrangler deploy --dry-run` is the real check;
+`tests/node/bundle-imports.spec.ts` is the cheap guard that runs every commit.
+
+## The 502 carried the server's sentence in a field PHP does not read
+
+`runRedis()` answers a RESP error with status 502 and the server's message as the body, which is the
+shape the exchange cache stores. `CfwTcp::redis()` reads `error` and falls back to
+`'the redis exchange was refused'`. `WRONGTYPE`, a syntax error and a rejected argument all reached
+PHP as the same sentence.
+
+Every mock in the gate answers 200, so the branch had never run. `tcpCachedReply()` in
+`src/ops/tcp.ts` is the decision extracted so the gate can take it.
+
+## `search_api_solr` is refused by the integer width
+
+The module table had it untested behind a note about its Solarium transport being interceptable,
+which is true and is not the blocker.
+
+It pulls `maennchen/zipstream-php`, which declares `php-64bit`. Composer emits a `platform_check.php`
+asserting `PHP_INT_SIZE === 8`; this build has 4, so the check aborts every request before Drupal
+boots. **All 56 other contrib cases failed to install with it**, each reporting
+`RuntimeException: Composer detected issues in your platform`. With `platform-check: false` the
+module installs clean and 57/57 pass -- `plugin.manager.search_api_solr.connector`,
+`solarium.query_helper` and its four solr config entity types all resolve, none of them before.
+
+The lift is `PHP_INT_SIZE` 8, from wasm64 or from `ZEND_ENABLE_ZVAL_LONG64` on wasm32. Disabling the
+platform check is the cheap route and is a product decision: zipstream is there for ZIP64 offsets in
+the configset download, so the guard is right that a 64-bit path exists, and turning it off ships an
+unexercised path site-wide to unlock one module.
+
+## `simple_sitemap` moved to verified
+
+Its contrib case asserted `refusesToInstall: 'runtime.xmlwriter'`. After the pure-PHP `XMLWriter` and
+the host-side `hook_requirements_alter()` landed, the module installs, so the case failed reporting
+`simple_sitemap installed, and it was expected to refuse`. It now enables the module and asserts its
+generator, queue worker, sitemap writer, both entity types and its settings, none present before.
+
+The module table is **58 verified, 0 untested, 4 blocked**, and every blocked row names a mechanism.
+
+## The authenticated share is 44.9% of human traffic
+
+The access log cannot answer this. The module measured reads `Authorization: Bearer` inside its controllers
+rather than through a route requirement, so all 388 route entries declare `_access: 'TRUE'` and
+combined-log format carries no such header.
+
+`scripts/measure/auth-share.ts` classifies from the source instead, keyed on which auth
+funnel each controller method calls, with the body extracted by brace balance --
+`UsersController` has 20 auth call sites, so a file-level match would mark `/v2/users/login`
+protected. Three tiers:
+
+| tier | funnel | all traffic | excluding the monitor |
+| --- | --- | --- | --- |
+| token required | `findByRequest()` | 8.5% (2.0-19.1%/day) | 26.1% (9.2-54.3%/day) |
+| may vary by user | + `getOwnerOfRequest()` | 14.6% (2.7-32.2%/day) | **44.9%** (18.9-65.7%/day) |
+
+n=15 days. `getOwnerOfRequest()` calls `findByRequest()` and swallows the refusal, so the endpoint
+serves anonymous callers and personalises for authenticated ones; counting those as anonymous answers
+whether the route would 401, not whether the response varies by user. The monitor is
+`@earth-app/telescope`, 55% of the log, anonymous by construction and not a function of user count.
+
+**The earlier reading that it "fits at every traffic level up to the 100,000/day Worker ceiling"
+scored it at `dynamic=0.01`, and the measured rate is 14.6x that.** Re-scored:
+
+| workload | fills/day | regen ceiling | verdict |
+| --- | --- | --- | --- |
+| today, 80,138 visits/month | 390 | 1,052 cold / 7,575 windowed | fits, 2.70x cold |
+| 1,556,490 visits/month | 7,575 | 7,575 windowed | exactly 1.00x |
+| 3,000,000 visits/month | 14,600 | 7,575 windowed | regeneration-over, 0.52x |
+
+The ceiling for this workload is **51,883 visits/day**, 19.4x today's traffic, bound by rows written
+while the Worker request meter still has 37.44x of headroom. It fits comfortably; what was wrong
+was the size of the headroom, which is a function of the authenticated share.
+
+Every figure is a beta reading: the site is pre-launch and is one candidate integration rather than
+the definition of the target workload.
+
+## wasm64 is measured on a built artifact, and three build steps verified the wrong file
+
+Every heap figure for wasm64 had come from a locally patched glue. A real build exists now, and
+downloading it threw `Cannot convert 838 to a BigInt` on the first render while the build log
+reported both LP64 patch steps applied and verified.
+
+Three defects, one shape -- a `--verify` that passed against a file the artifact does not contain:
+
+- the glue fixes were applied to the build tree's `php8.5-worker.mjs` while the artifact is staged
+  from `vendor/static-<variant>/`, and the verify re-read the same wrong file
+- patching `ext/vrzno` cannot reach php-wasm's own library JS, where `jsToZval` calls
+  `vrzno_expose_create_null`; exactly one call site survived, and the local runs had always covered
+  it with an `--extra` pass over the emitted glue
+- nothing asserted the staged file, so both were invisible for as long as they existed
+
+All three are fixed, and the next build (run 32768799539) proved it: the staged glue carries both
+fixes and only three `["number"]` ccall sites remain, all genuine int arguments. That artifact
+reproduces every peak to the byte, with no local step but the growth substitution
+`restore-artifacts.ts` already performs for wasm32:
+
+| workload | bytes | MiB |
+| --- | --- | --- |
+| booted idle | 100,663,296 | 96.00 |
+| render | 111,149,056 | 106.00 |
+| install peak | 122,748,928 | 117.06 |
+| auth peak | 128,974,848 | **123.00** |
+
+4/4 green in `heap-growth.spec.ts` at the shipping growth step, and `runtime.int64` answers true, so
+`PHP_INT_SIZE` is 8 on a build rather than on a patched download. At emscripten's default 0.20 step
+the same artifact reads 138.44 MiB on both the install and auth arms and does not fit;
+`restore-artifacts.ts` emits the tuned glue for wasm32 and has no wasm64 equivalent yet.
+
+## What is still unexercised
+
+Both halves of the TCP tier are verified against real servers -- `tests/e2e/tcp.spec.ts`, four
+assertions, skip-locally/fail-in-CI. Tier B has never seen a real IdP, and the setup UI that writes
+`oidc_issuer` and `oidc_client_id` is unbuilt.
 
 ---
 
@@ -816,9 +1192,9 @@ the system.**
 ## What was claimed
 
 RULE 0 has said since the beginning that in-PHP `microtime()` **returns 0** on the edge. A review of
-two real third-party modules turned that into a scheduled security fix: `mantle2`'s
+two real third-party modules turned that into a scheduled security fix: the API module's
 re-authentication window would be permanently open, because `0 - 0 = 0` passes a `0 <= age <= 300`
-check; `strata` would throw on the first node save, because `JournalOp` refuses a non-positive
+check; the storage module would throw on the first node save, because its journal refuses a non-positive
 microtime. The proposed fix was a `cfwNow` host capability plus a `microtime-fix.ts` fragment on the
 `zlib-fix.ts` pattern.
 
@@ -7893,7 +8269,7 @@ touched and a second index would tax every insert the layer makes.
 | The DEFAULT config bundled an unshippable binary | **Fixed**, and it was the real defect behind that confusion. See "THE DEFAULT CONFIG WAS NOT THE SHIPPING CONFIG" |
 | `mount`/`lazy-fs` fetch `site.sqlite` that nothing reads | **Fixed.** `mountDrupalStreaming` already had the opt-out; `mountDrupalLazy` did not, and it is the `LAZY_MOUNT` path -- so the one boot cost that flag did not remove. 6.47 MB and one of 50 subrequests |
 | Delete `vendor/static-jspimbvmi/` | **Cannot -- it does not exist.** The nearest names are `static-jspimb` and `static-jspimbsjlj`. Not guessed at: an irreplaceable build is unrecoverable |
-| `tests/e2e/` was empty | **Filled**, modelled on `mantle2`'s `E2E` suite: its own vitest project so the gate stays hermetic, and skip-locally/fail-in-CI so a CI run cannot pass by skipping |
+| `tests/e2e/` was empty | **Filled**, modelled on Drupal's own `E2E` suite: its own vitest project so the gate stays hermetic, and skip-locally/fail-in-CI so a CI run cannot pass by skipping |
 | `scripts/` was a 37-file flat drawer | **Grouped** into `bench/`, `probe/`, `measure/`, `drupal/` with the live pipeline at top level, every citation updated, and the language policy written down in `scripts/README.md` |
 
 ## Do these next — revised 2026-08-10 after the edge round
@@ -17999,7 +18375,7 @@ already uses. An unrecognised state is recorded as `blocked`, because an unknown
 read as a weaker claim than it is.
 
 Its first real use is `CfwFileStreamWrapper::realpath()`, which used to return FALSE always. That was
-defensible and it was SILENT -- `strata_files` captured nothing precisely because
+defensible and it was SILENT -- a file-capturing module captured nothing precisely because
 `ManagedFileCapture` early-returns on a FALSE realpath, so a module that looked installed captured no
 files and nothing said so. It now materialises into MEMFS under `/tmp/cfw-realpath` and returns that
 path, so `is_file()` and `Hash::ofStream(fopen($path))` work against an unmodified module. Above
@@ -18084,14 +18460,14 @@ binary, both guards therefore pass, and `tests/integration/host-bridges.spec.ts`
 functions and constants are really declared -- plus a real 2048-bit RSA sign and verify from PHP,
 returning 1, 0 and -1 for valid, tampered and unreadable-key.
 
-**RULE 0c -- what P42.3 does NOT unblock.** It does not turn strata's delta coding on.
+**RULE 0c -- what P42.3 does NOT unblock.** It does not turn a storage module's delta coding on.
 `GzipCodec::supportsDictionary()` returns a hardcoded `false` and `compress()` ignores its
 `$dictionary`; `Engine::codecs()` builds `CodecRegistry::withShippedCodecs()` into a private field
 with no service and no injection point, so a host module cannot register a dictionary-capable codec
 either. Under P45 both mechanisms are closed. What survives is the CAPABILITY, which now exists
-host-side; strata needs a one-line change of its own.
+host-side; the module needs a one-line change of its own.
 
-**And P42.1 does not close sodium.** strata also calls
+**And P42.1 does not close sodium.** A content-addressed store also calls
 `sodium_crypto_aead_xchacha20poly1305_ietf_encrypt/decrypt` at three call sites. That is a cipher,
 not a digest, shares no mechanism with this, and remains missing.
 

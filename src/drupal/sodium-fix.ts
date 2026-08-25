@@ -13,10 +13,9 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
  * supported" for `blake2b512` and `crypto.subtle` answers "Unrecognized or unimplemented digest
  * algorithm". So there is nothing to fall back to and the digest has to be computed in JavaScript.
  *
- * WHY IT BLOCKS AN INSTALL RATHER THAN A FEATURE. `Drupal\strata\Cas\Hash::ALGORITHM` is
- * `blake2b-256` and it is written into every frame header, so the digest is strata's CONTENT
- * ADDRESS. A different algorithm is not a downgrade, it is a different store, so substituting
- * sha256 would be a silent format change rather than a workaround.
+ * WHY IT BLOCKS AN INSTALL RATHER THAN A FEATURE. A content-addressed store writes the digest into
+ * every frame header, so it IS the address: substituting sha256 is a different store rather than a
+ * downgrade, and a module of that shape does not install at all without this.
  *
  * `blakejs` is 12 KB of pure JavaScript with no dependencies, and synchronous -- the constraint
  * `zlib-fix` names applies unchanged: the shipping build sets `ASYNCIFY=0`, so a host function
@@ -25,7 +24,7 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
  * THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
  * CIPHER rather than a digest, so it shares no mechanism with the above: `crypto.subtle` offers
  * AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is the whole point of the
- * construction strata chose. `@noble/ciphers` is the same dependency `edgeport` assembles SSH's
+ * construction such a store chooses. `@noble/ciphers` is the library `edgeport` assembles SSH's
  * chacha20-poly1305 from, and it is synchronous.
  *
  * `extension_loaded('sodium')` stays FALSE either way, because the rest of the extension is not
@@ -64,8 +63,8 @@ export type AeadReply = { ok: true; b64: string } | { ok: false; error: string; 
  *
  * THE TWO FAILURE MODES ARE KEPT APART AND THAT IS THE WHOLE CONTRACT. ext-sodium's `_decrypt()`
  * returns FALSE when the tag does not verify and THROWS `SodiumException` when an argument is the
- * wrong size, and strata reads the difference: a FALSE becomes `AuthenticationFailure` and trips
- * the `frame.aead_fail` tripwire, while a throw is a programming error. Collapsing them would make
+ * wrong size, and a caller reads the difference: a FALSE means the frame failed authentication and
+ * should be swept, while a throw is a programming error. Collapsing them would make
  * a mis-sized key look like a tampered frame and sweep a healthy store.
  *
  * @internal
@@ -330,7 +329,7 @@ export function installBlake2b(
 /**
  * The PHP half: the four functions, the six constants and `SodiumException`.
  *
- * Which functions: every `sodium_*` call site in strata, found by grep over the module. Six calls
+ * Which functions: the `sodium_*` surface a content-addressed store reaches for. Six calls
  * to `sodium_crypto_generichash()` and one each to `_init`, `_update` and `_final` -- so the
  * one-shot and the streaming form are both reached, and `Hash::ofFile()` reaches the streaming one
  * on every captured file.
@@ -351,7 +350,7 @@ if (!extension_loaded('sodium') && !function_exists('cfw_sodium_installed')) {
 	if ($__cfw_blake2b !== null) {
 		$GLOBALS['__cfw_blake2b'] = $__cfw_blake2b;
 
-		// ext-sodium declares these; strata reads KEYBYTES_MAX, KEYBYTES and BYTES_MIN by name, and
+		// ext-sodium declares these, and a caller reads KEYBYTES_MAX, KEYBYTES and BYTES_MIN by name;
 		// an undefined constant is a fatal Error in PHP 8 rather than a warning
 		if (!defined('SODIUM_CRYPTO_GENERICHASH_BYTES')) { define('SODIUM_CRYPTO_GENERICHASH_BYTES', 32); }
 		if (!defined('SODIUM_CRYPTO_GENERICHASH_BYTES_MIN')) { define('SODIUM_CRYPTO_GENERICHASH_BYTES_MIN', ${GENERICHASH_BYTES_MIN}); }
@@ -509,7 +508,7 @@ if (!extension_loaded('sodium') && !function_exists('cfw_sodium_installed')) {
 
 			/**
 			 * Answers FALSE on a failed tag and THROWS on a bad argument, which is ext-sodium's
-			 * split and the one strata reads: a FALSE becomes AuthenticationFailure and trips
+			 * split a caller reads: a FALSE is a failed tag and the frame should be swept, a throw is
 			 * frame.aead_fail, a throw is a programming error. Collapsing them would sweep a
 			 * healthy store over a mis-sized key.
 			 */

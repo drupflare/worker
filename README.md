@@ -231,6 +231,7 @@ the largest style count that still fits.
 - [Getting Started](#-getting-started)
 - [Building From a Clean Clone](#-building-from-a-clean-clone)
 - [Configuration](#-configuration)
+- [Git Remotes](#-git-remotes)
 - [Project Structure](#-project-structure)
 - [Testing](#-testing)
 - [Contributing](#-contributing)
@@ -480,6 +481,52 @@ drangler update my-site     # and then deploy it to an existing worker
 `doctor`, `health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README
 covers the migration commands in both directions.
 
+### The Admin Surfaces
+
+Six pages under `/_cfw`, each one driving machinery that already exists rather than holding its own.
+
+| page         | path             | what it does                                                                            |
+| ------------ | ---------------- | --------------------------------------------------------------------------------------- |
+| **Limits**   | `/_cfw`          | every metered resource, what spends it, and whether exceeding it bills or stops working |
+| **Extend**   | `/_cfw/extend`   | whether a contrib module installs here, answered against the shipped lock               |
+| **Commands** | `/_cfw/commands` | a Drush-shaped field over the site's operations                                         |
+| **Deploy**   | `/_cfw/deploy`   | the provisioning steps, two of which cannot be automated                                |
+| **Git**      | `/_cfw/git`      | remotes, branches, pull requests and the working-tree diff                              |
+| **Access**   | `/_cfw/access`   | the OpenID Connect provider                                                             |
+
+The Commands field takes Drush spellings and resolves them to the operation the site registers, so
+`cache:rebuild`, `cache-rebuild`, `cc` and `cr` are the same command. `en <module>` routes to the
+module installer rather than to the operations registry, and an operation given arguments it cannot
+take is refused by name instead of being truncated to its first word.
+
+```text
+cr                  rebuild the caches
+en webform          install a module
+en webform --dry    check whether it would install, without installing
+status              generation, migration state, queue depth
+```
+
+An operation with no driver is listed and disabled rather than hidden, because a refusal with no
+named alternative is a refusal that gets retried.
+
+### Single Sign-On
+
+The Access page configures an OpenID Connect provider. The host performs the token exchange and
+verifies the `id_token` signature, because the interpreter is built without OpenSSL and cannot check
+an RS256 signature at all — and an unverified `id_token` is an unauthenticated login.
+
+Set the issuer and client id on the page, and the client secret as the `OIDC_CLIENT_SECRET` binding.
+The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
+discovery document immediately, so a typo surfaces there rather than at someone's first login.
+
+Writing the provider takes the owner token, not the page's own gate. Whoever sets the issuer decides
+which provider every login on the site authenticates against.
+
+A login is refused when the signature comes from a key outside the provider's JWKS, when the issuer
+does not match, when the audience belongs to another client of the same provider, when the token has
+expired, or when the nonce belongs to a different login. The signing algorithm is taken from the key
+rather than from the token header, and an account is keyed by issuer and subject together.
+
 ### URL Routing
 
 **Drupal owns the URL space.** Any path the Worker does not claim is served as a page, so `/`,
@@ -612,6 +659,78 @@ calls, and an existing DMARC record is reported rather than overwritten.
 six records written, and what `settled` does and does not mean.
 
 Both routes take the owner token — see [Log In](#log-in).
+
+---
+
+## 🌿 Git Remotes
+
+A site follows as many repositories as you connect to it. A push installs the module; the result is
+written back to the provider as a commit status. The page is `/_cfw/git`.
+
+### The Transport
+
+The transport is git's own smart HTTP, so anything that serves a repository over HTTPS works —
+GitHub, GitLab, Bitbucket, Gitea, Forgejo, a bare repository behind nginx, an internal mirror. Two
+requests do the whole job:
+
+| Step | Request                                      | Cost                                       |
+| ---- | -------------------------------------------- | ------------------------------------------ |
+| Poll | `GET /info/refs?service=git-upload-pack`     | a few hundred bytes when nothing has moved |
+| Pull | `POST /git-upload-pack`, one commit, depth 1 | the changed objects, as a packfile         |
+
+The packfile is read in the Worker: pkt-line framing, both delta forms, and the tree walk that turns
+a commit into files. Private repositories authenticate with the operator's access token over HTTPS.
+A public repository needs no credential at all.
+
+### What Gets Installed
+
+Module names come from `*.info.yml` rather than from the directory, so a repository checked out under
+one name that provides another installs correctly, and a repository holding several extensions
+installs all of them at their own paths. Modules land in `modules/custom/`, themes in
+`themes/custom/`, profiles in `profiles/custom/`.
+
+Only mountable files are kept — PHP, YAML, Twig, JavaScript, CSS — with `tests/`, `vendor/`,
+`node_modules/` and dotfiles dropped. Every file is stored as its own row, and the pull reports what
+it skipped and why.
+
+**PHP costs no bundle bytes.** Module source is fetched over the assets binding rather than compiled
+into the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
+module written in PHP.
+
+### Branches, Requests and Diffs
+
+| Action        | What it does                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------- |
+| Check         | reads the remote head without downloading anything                                       |
+| Diff          | fetches the commit and reports added, modified and removed files with line counts        |
+| Pull          | applies that diff and mounts the result                                                  |
+| Branch switch | moves the site to another branch, deleting what the old one had and the new one does not |
+| Requests      | lists open pull and merge requests                                                       |
+| Preview       | installs a request's head instead of the branch, and holds it there                      |
+
+A preview is held against polling and against pushes, so a branch that moves while somebody is
+reviewing does not replace what they are looking at. Leaving the preview returns the site to its
+branch.
+
+### Triggers
+
+**Polling** works against any remote and needs no cooperation from it. The interval is per repository
+and defaults to an hour; a poll costs one ref advertisement.
+
+**Webhooks** make a push arrive immediately. GitHub, GitLab, Bitbucket and Gitea can register one
+from the page; for anything else the page mints a secret and shows the delivery URL to register by
+hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider signs, and a
+shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.
+
+### Safety
+
+A pull is applied in one transaction and then verified by booting the Drupal kernel against the new
+tree. If the boot fails, the previous files are restored and the site keeps serving. A path already
+owned by another repository or by a `composer require` is reported as a conflict rather than taken.
+
+Access tokens live in the site's own database, never in the KV namespace that carries runtime
+overrides. [`docs/configuration.md`](docs/configuration.md#git-remotes) has the scopes each provider
+needs and the storage contract.
 
 ---
 
@@ -777,9 +896,9 @@ visit while the pages the install invalidated are re-rendered.
 
 <!-- module-table:begin -->
 
-**57 verified, 2 untested, 3 blocked.** Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.
+**58 verified, 0 untested, 4 blocked.** Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.
 
-Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 53 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.
+Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 54 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.
 
 | Module                     | State    | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -833,8 +952,8 @@ Contrib modules are development dependencies here, verified against the test bui
 | Redis                      | blocked  | drupal/redis needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** none needed for the cache: the Durable Object's own SQLite IS the backend, so this is a dependency the architecture removes. `Drupal\drupflare\Network\CfwTcp` covers the rest of what a site would reach Redis for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Scheduler                  | verified | enabled against a real site; it installed its own configuration and its routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Search Api                 | verified | enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Search Api Solr            | untested | MEASURED 2026-08-23 against solarium 6.4.2, and the transport IS interceptable, which is what moved this off blocking-outbound. The default connector picks `extension_loaded('curl') ? new Curl() : new Http()` and this build has no curl extension, so it lands on the stream adapter -- which then reads `$http_response_header` and gets [], the P39 defect in a second consumer. `SolariumTransport` subscribes to Solarium's own `PreExecuteRequest`, whose response short-circuits the adapter entirely, and search_api_solr hands Drupal's dispatcher to the client, so it needs NO module change. Indexing is fully deferrable; a query pays one round trip on first ask and is cached after                                                                                                                                                                                                                                                                                                                                         |
-| Simple Sitemap             | untested | generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. It used to be refused outright because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in and cannot be shimmed; the host supplies a pure-PHP `XMLWriter` verified byte for byte against libxml, and clears that one install block through `hook_requirements_alter()`. The module is unmodified and is not in the pack                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Search Api Solr            | blocked  | drupal/search_api_solr needs runtime.int64 (scheduled): a PHP integer wider than 32 bits **Lift:** `PHP_INT_SIZE` 8, from wasm64 (measured to fit at 123.00 MiB) or from `ZEND_ENABLE_ZVAL_LONG64` on wasm32. Disabling composer's platform check is the cheap route and is a product decision: the guard is right that a 64-bit path exists, since zipstream is there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path site-wide to unlock one module. `SolariumTransport` is already shipped with 17 assertions in the sibling module's `tests/solarium-transport.php`; a file-upload extract needs a streaming body and is declared rather than sent empty                                                                                                                                                                                                                                                                                                                                          |
+| Simple Sitemap             | verified | enabled against a real site; `simple_sitemap.generator`, `simple_sitemap.queue_worker` and `simple_sitemap.sitemap_writer` resolve, both `simple_sitemap` and `simple_sitemap_type` are registered entity types and `simple_sitemap.settings` is installed, none of it before. It was refused outright until the host supplied a pure-PHP `XMLWriter` and cleared its one install block through `hook_requirements_alter()` -- `extension_loaded('xmlwriter')` is a built-in and cannot be shimmed. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Smtp                       | blocked  | drupal/smtp needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. AND ITS CONFIGURATION IS NOW READ, 2026-08-24: the module installs here and its socket never runs, so a site that filled in its relay and saved had a complete SMTP configuration nothing looked at, and its operator had to type the same host, port and password again as Worker vars. `CfwMail` passes `smtp.settings` to `cfwMail`, `mailEnvFromSite()` maps it onto the transport vars and the deployment's own vars still win. The settings are persisted to `cfw_meta` because the ALARM re-resolves the transport and never sees the message. So the module stays blocked -- the socket is what refuses it -- while both the capability and now the configuration are covered |
 | Stage File Proxy           | verified | enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Svg Image                  | verified | enabled against a real site; the `image` field formatter is `Drupal\svg_image\...\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and the `image_image` widget moves the same way. It takes core's plugin ids over rather than adding its own. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |

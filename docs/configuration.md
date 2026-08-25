@@ -528,6 +528,23 @@ consent screen at a provider they control, and every login on the site would aut
 Register `https://<your-site>/__oidc?action=callback` as the redirect URI. `/__oidc` starts a login
 and accepts an optional `return` path, which must be site-relative.
 
+`/setup/oidc` reads and writes the two `cfw_meta` values, and `/_cfw/access` is the page over it.
+
+| action           | method | what it does                                                                   |
+| ---------------- | ------ | ------------------------------------------------------------------------------ |
+| `?action=status` | GET    | the issuer, the client id, whether the secret binding is set, the redirect URI |
+| `?action=save`   | POST   | validates and stores the pair, then fetches the discovery document             |
+| `?action=clear`  | GET    | forgets both, which turns login off                                            |
+
+It is an **owner** route, so it takes the token minted at first run rather than the admin page's
+weaker gate. Reading which provider is configured is not sensitive; choosing it is.
+
+The issuer must be `https` and must carry no query or fragment — the discovery URL is built by
+appending a fixed path, so an issuer carrying either produces a URL nobody intended. A trailing slash
+is normalised away so that discovery and the later `iss` comparison agree on one spelling. Saving
+fetches the discovery document immediately and reports what it advertises, so a wrong issuer surfaces
+at configuration time rather than at someone's first login. The secret is never read back.
+
 **The claims never travel in a URL.** The browser carries a single-use ticket; the claims stay in the
 object's storage and the row is deleted before they are returned, so a second presentation of the
 same ticket finds nothing. A redirect lands in browser history, in a referrer and in any proxy log
@@ -537,6 +554,113 @@ Five conditions refuse a login, each tested against real generated keys: a signa
 outside the provider's JWKS, an issuer that is not the configured one, an audience belonging to
 another client of the same provider, an expired token, and a nonce from a different login. `none`
 and the HMAC algorithms are refused by omission.
+
+## Git Remotes
+
+A site follows as many repositories as it is given. `src/ops/git-smart.ts` is the transport,
+`src/ops/git-provider.ts` the provider layer above it, `src/ops/git-sync.ts` the layout and diff, and
+`/_cfw/git` the page that drives all three.
+
+### The Transport
+
+Git's smart HTTP, so any host that serves a repository works. A poll is
+`GET /info/refs?service=git-upload-pack` and a pull is `POST /git-upload-pack` for one commit at
+depth 1; the packfile is parsed in the Worker, including both delta forms.
+
+The provider APIs are a layer above it and nothing in the transport depends on them. `generic` uses
+no API at all: branches and open requests both come out of the ref advertisement, since every
+provider publishes `refs/pull/N/head` or `refs/merge-requests/N/head`.
+
+| provider    | API                  | default host                |
+| ----------- | -------------------- | --------------------------- |
+| `github`    | REST v3              | `https://api.github.com`    |
+| `gitlab`    | REST v4              | `https://gitlab.com`        |
+| `bitbucket` | REST 2.0             | `https://api.bitbucket.org` |
+| `gitea`     | REST v1, Forgejo too | none; the host is required  |
+| `generic`   | none                 | none; the host is required  |
+
+### Storage
+
+| setting                 | where      | what it does                                      |
+| ----------------------- | ---------- | ------------------------------------------------- |
+| `git_remotes`           | `cfw_meta` | the configured remotes, as one JSON row           |
+| `git_token_<id>`        | `cfw_meta` | the access token for one remote                   |
+| `git_email_<id>`        | `cfw_meta` | the Atlassian account email, Bitbucket only       |
+| `git_hooksecret_<id>`   | `cfw_meta` | the shared secret a delivery is verified against  |
+| `git_head_<id>`         | `cfw_meta` | the sha the last poll saw                         |
+| `git_installedsha_<id>` | `cfw_meta` | the sha whose files are actually mounted          |
+| `git_interval_<id>`     | `cfw_meta` | poll cadence in minutes; `0` turns polling off    |
+| `git_backoff_<id>`      | `cfw_meta` | epoch ms before which nothing polls this remote   |
+| `git_previewof_<id>`    | `cfw_meta` | the request being previewed instead of the branch |
+
+Module source lands in `cfw_module_file`, one row per file, with the remote id as the owning package.
+That is the same table `composer require` writes to, which is what makes a conflict detectable.
+
+All of it lives in the object's own storage and none of it can be set from KV: a writer who could
+change a remote would point the site at a repository they control, and a writer who could read a
+token would have push access to the operator's repository.
+
+### Polling
+
+The interval is per repository and defaults to 60 minutes, floored at 5. The alarm polls at most
+three due remotes per firing, oldest first, so one slow remote cannot starve the others. A 429 sets a
+backoff that honours `Retry-After` and otherwise doubles to an hour.
+
+### Installing
+
+`selectFiles()` keeps PHP, YAML, Twig, JavaScript and CSS, and drops `tests/`, `vendor/`,
+`node_modules/`, `.github/` and dotfiles. Module names come from `*.info.yml`; a submodule inside
+another module's tree is left there rather than mounted twice.
+
+A pull is applied in one `transactionSync()` and then verified by booting the Drupal kernel. A boot
+failure restores the previous file set and records the reason on the remote.
+
+### What Gets Written Back
+
+A **commit status** on the pushed sha: a state, a context, a description and a link. All three
+providers support it and an access token can write it.
+
+GitHub's Checks API carries annotations and per-line output and only a GitHub App can write one. A
+repository-scoped fine-grained token is refused with `Resource not accessible by personal access
+token` on both check-run endpoints and accepted on the status endpoint, so the product offers commit
+statuses and does not use the word "checks".
+
+| provider       | read the tree          | write a status           | create a webhook           |
+| -------------- | ---------------------- | ------------------------ | -------------------------- |
+| GitHub         | `Contents: read`       | `Commit statuses: write` | `Webhooks: write`          |
+| GitLab         | `read_api`             | `api`                    | `api`, Maintainer or Owner |
+| Bitbucket      | `repository:read`      | `repository:read`        | `webhook`                  |
+| Gitea, Forgejo | `read:repository`      | `write:repository`       | `write:repository`         |
+| Any git remote | read access over HTTPS | no API                   | register by hand           |
+
+GitLab has no scope narrower than `api` for writing a status. Bitbucket has no personal access
+token: an Atlassian API token authenticates as HTTP Basic with the account email as the username, so
+its row on the page asks for one. A plain remote has nowhere to put a status, so `statusRequest()`
+returns null for it rather than guessing an endpoint.
+
+Gitea takes `state` on the way in and answers `status` on the way out, which is worth knowing when
+reading a status back through its API.
+
+### Deliveries
+
+`/githook?remote=<id>` receives them. It takes no credential this Worker controls, so the signature
+is the whole of the authentication and an unverifiable delivery is refused.
+
+| provider       | header                | what it proves                                           |
+| -------------- | --------------------- | -------------------------------------------------------- |
+| GitHub         | `X-Hub-Signature-256` | HMAC-SHA256 over the raw body                            |
+| Gitea, Forgejo | `X-Hub-Signature-256` | the same scheme, verified the same way                   |
+| Bitbucket      | `X-Hub-Signature`     | HMAC, method read from the header prefix                 |
+| GitLab         | `webhook-signature`   | HMAC-SHA256, GitLab 19.0 and a feature flag              |
+| GitLab         | `X-Gitlab-Token`      | the shared secret, in plaintext                          |
+| Any git remote | `X-Hub-Signature-256` | accepted if the sender can produce it; refused otherwise |
+
+GitLab installs before 19.0 send the secret in plaintext and cannot be HMAC-verified. Both forms are
+accepted and the page shows which one the last delivery used, because they are not equivalent.
+
+A push to the tracked branch installs the commit inline and writes the result back as a status. A
+push to any other branch, a branch delete, and a push arriving while a request is being previewed all
+record the head and stop there.
 
 ## Database Updates
 

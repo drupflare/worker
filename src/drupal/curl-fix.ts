@@ -1,7 +1,7 @@
 /**
  * Declares the `curl_*` globals over `CurlShim`, which was complete and reached by nothing.
  *
- * P42.2, and it is another [[tested-but-never-called]]. `Drupal\drupflare\Shim\CurlShim` implements
+ * Another [[tested-but-never-called]]. `Drupal\drupflare\Shim\CurlShim` implements
  * `init/setopt/setoptArray/exec/getinfo/errno/error/close` against `CfwDeferredHttp`, it is covered
  * by the sibling's health suite, and it was green on every commit -- while **nothing declared the
  * global `curl_init()`**, so no SDK could ever reach it. The class was correct and unreachable.
@@ -106,7 +106,7 @@ ${defines(CURL_INERT)}
 		/**
 		 * Declares the gap once, then answers the way curl answers a connection it cannot make.
 		 *
-		 * P45: never silently absent. Without the module there is no queue to defer into, so the
+		 * Never silently absent. Without the module there is no queue to defer into, so the
 		 * honest answer is the same FALSE a caller already handles -- but an operator gets a
 		 * status-report row saying why instead of an unexplained failure.
 		 */

@@ -6,7 +6,7 @@ import { gunzipSync, unzipSync } from 'fflate';
  *
  * ## One pipeline, three callers
  *
- * `composer require` (P18), a git-delivered custom module (P40) and `npm install` all want the same
+ * `composer require`, a git-delivered custom module and `npm install` all want the same
  * four steps: resolve a name to an archive URL, fetch it, filter what comes out, and write the files
  * where the boot mount reads them. Building three of those would produce three sets of bugs, so this
  * is the one, and the SOURCE is the only thing that differs.

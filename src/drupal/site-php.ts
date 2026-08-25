@@ -13,7 +13,7 @@
  * vrzno_env('cfwSqlExec') and the pw_encode/pw_decode codec -- so a fragment that
  * works is also evidence the driver's own transport works.
  */
-const HOST_HELPERS = String.raw`
+export const HOST_HELPERS = String.raw`
 if (!function_exists('cfw_host')) { eval('
 function cfw_host($name) {
   return function_exists("vrzno_env") ? vrzno_env($name) : null;
@@ -3316,7 +3316,7 @@ export type ShellRequest = {
 /**
  * Harvests a shareable shell and the recipes that fill its holes.
  *
- * P7's fragment SOURCE, and the reason it can exist at all: core NEVER decodes a placeholder id
+ * The fragment SOURCE, and the reason it can exist at all: core NEVER decodes a placeholder id
  * back into a render array -- `BigPipe::sendPlaceholders()` reads
  * `$response->getAttachments()['big_pipe_placeholders']`, a map of escaped id to render array that
  * the strategy attached on the way out. So the recipe has to be CAPTURED at harvest and replayed
@@ -3599,7 +3599,7 @@ echo json_encode($out);
 /**
  * Counts the files and bytes under one MEMFS directory.
  *
- * P30's A/B needs the WRITE VOLUME per opcache arm, and the write-only file cache is the thing
+ * The opcache A/B needs the WRITE VOLUME per arm, and the write-only file cache is the thing
  * being priced -- 1,301 `.bin` files across 425 directories after one render, measured on the edge.
  * A count is a count, so unlike a millisecond it is honest from any lane (RULE 0).
  */

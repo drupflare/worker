@@ -226,7 +226,7 @@ export type NormaliseResult =
  *
  * ## The safety property is byte equality, not this pattern list
  *
- * A list of markers is a guess about what varies, and a guess is what P7 refused to build against.
+ * A list of markers is a guess about what varies, and a guess is not something to build against.
  * The check that actually holds is differential: normalise the same page rendered for two different
  * members of a role set, and REQUIRE the results to be byte-identical. Anything that varies by
  * person and is not in the list above makes them differ, so the harvest refuses instead of storing

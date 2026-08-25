@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * P27's corpus: every Unicode scalar value, measured against the real mbstring extension, kept as
+ * The mbstring parity corpus: every Unicode scalar value, measured against the real extension, kept as
  * a checked-in artifact instead of a sweep somebody ran once.
  *
  * Three arms, and the third is the one that is easy to get wrong:

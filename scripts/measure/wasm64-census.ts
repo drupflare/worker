@@ -2,11 +2,11 @@ import { readFileSync } from 'node:fs';
 
 /**
  * Splits the measured heap peak into the part wasm64 would widen and the part it would not, and
- * decides P26 without a build where the arithmetic allows it.
+ * decides wasm64 without a build where the arithmetic allows it.
  *
  * `bun scripts/measure/wasm64-census.ts`
  *
- * The question P26 is stuck on is a MIX, not a direction. Break-even is `128 / peak` blended across
+ * The question wasm64 is stuck on is a MIX, not a direction. Break-even is `128 / peak` blended across
  * every allocation, and the measured struct growths straddle it: `zval` 0%, `zend_object` +16.7%,
  * `HashTable` +27.3%, `Bucket` +33.3%. So the verdict turns on how much of the peak is made of
  * things that widen at all.

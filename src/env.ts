@@ -13,11 +13,11 @@ export interface SiteEnv extends BaseSiteEnv {
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
 	PREFILL?: string;
-	/** P7 fragment assembly for authenticated GETs; OFF unless explicitly set to `1` */
+	/** fragment assembly for authenticated GETs; OFF unless explicitly set to `1` */
 	SHELL_ASSEMBLY?: string;
-	/** P30's opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
+	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
-	/** P25 argon2id password hashing; OFF unless explicitly `1`, because it rehashes every login */
+	/** argon2id password hashing; OFF unless explicitly `1`, because it rehashes every login */
 	ARGON2?: string;
 	DRUPAL_CRON?: string;
 	CRON_MAX_UNITS?: string | number;

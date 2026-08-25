@@ -155,14 +155,14 @@ export const KV_OVERRIDABLE = [
 	'GEN_BUCKET_MS',
 	'MAIL_TRANSPORT',
 	'MAIL_DRAIN_LIMIT',
-	// P7's assembly branch, default OFF. It qualifies for this list rather than for `vars` on the
+	// the shell assembly branch, default OFF. It qualifies for this list rather than for `vars` on the
 	// list's own test -- its worst case is a slow site, because a shell that does not match refuses
 	// and the request falls through to an ordinary render
 	'SHELL_ASSEMBLY',
-	// P30's opcache arm. On the list for the same test: every arm boots and renders, so the worst
+	// the opcache arm. On the list for the same test: every arm boots and renders, so the worst
 	// case of a wrong value is a slower or fatter object, never a changed reachability
 	'OPCACHE_MODE',
-	// P25's password algorithm. Its worst case is a slow login or a site that keeps bcrypt, never a
+	// the password algorithm. Its worst case is a slow login or a site that keeps bcrypt, never a
 	// changed reachability -- an operator who sets it cannot reach anything they could not before
 	'ARGON2',
 	// placement is the one entry here that is not a number, and it belongs on this list rather than

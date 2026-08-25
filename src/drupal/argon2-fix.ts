@@ -6,7 +6,7 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
  *
  * ## The blocker that was recorded, and the one that is real
  *
- * P25 closed argon2 on memory: `PHP_PASSWORD_ARGON2_MEMORY_COST` defaults to 64 MiB, the isolate is
+ * argon2 was closed on memory: `PHP_PASSWORD_ARGON2_MEMORY_COST` defaults to 64 MiB, the isolate is
  * 128 MB shared between JS and wasm, and an install already peaked at ~115 MiB. That reasoning is
  * correct about ONE mechanism -- an arena inside PHP's own heap, where `memory.grow` has no inverse,
  * so the first hash would raise that object's floor for the rest of its life.
@@ -31,7 +31,7 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
  * guard would never pass. Drupal's own seam is the `password` service, which
  * `DrupflareServiceProvider` already alters, so `CfwPassword` in the sibling module calls the
  * helpers below and core's `PhpPassword` never runs. That is an ordinary Drupal service swap rather
- * than a patch, which is what P45 requires.
+ * than a patch, which is what an unmodified module requires.
  *
  * ## Why @noble/hashes rather than an implementation here
  *

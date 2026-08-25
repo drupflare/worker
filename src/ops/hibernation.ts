@@ -7,10 +7,10 @@
  * billing boundary, and it is a property of what the code left open rather than of how long the
  * object sat there.
  *
- * WHY THIS IS A MODULE AND NOT A COMMENT. P17 was closed on "two always-warm objects exceed the free
- * duration allowance", which is true and which closed replicas entirely. A replica that HIBERNATES
- * accrues no idle duration at all, so the arithmetic never applied to it -- and nothing in the
- * codebase could say which of the two a given design was, because the conditions lived in a
+ * WHY THIS IS A MODULE AND NOT A COMMENT. Replicas were closed on "two always-warm objects exceed
+ * the free duration allowance", which is true and which closed them entirely. A replica that
+ * HIBERNATES accrues no idle duration at all, so the arithmetic never applied to it -- and nothing
+ * in the codebase could say which of the two a given design was, because the conditions lived in a
  * document. {@link hibernationEligible} makes it answerable.
  *
  * THE CONDITIONS ARE CLOUDFLARE'S, quoted from the lifecycle page rather than inferred:

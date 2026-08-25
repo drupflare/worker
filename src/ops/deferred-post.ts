@@ -155,7 +155,7 @@ export function canonicalHeaders(headers: Record<string, string>): Array<[string
  * The set that goes on the WIRE, which is strictly larger than the keyed set.
  *
  * `user-agent` is here and absent from the key on purpose; dropping it from the wire too would be
- * the P46 defect again, one header narrower.
+ * the dropped-`Authorization` defect again, one header narrower.
  */
 export function headersToSend(headers: Record<string, string>): Record<string, string> {
 	return Object.fromEntries(canonicalise(headers, (n) => TRANSPORT_OWNED.has(n)));

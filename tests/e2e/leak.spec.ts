@@ -9,6 +9,7 @@ import {
 	type Transport
 } from './helpers/lifecycle.js';
 import { saveNode, serveAs, sessionCookie, type IdentityShot } from './helpers/operate.js';
+import { firstDifference, maskNonces } from './helpers/twice.js';
 
 /**
  * The identity leak differential: does one identity's content ever reach another's response?
@@ -117,11 +118,15 @@ describe.skipIf(skip)('the identity leak differential', () => {
 			const b = controlMap[identity];
 			expect(a, identity).toBeDefined();
 			expect(b, identity).toBeDefined();
+			// the known per-render nonces are masked and everything else must match. Comparing raw
+			// digests read as a leak when the only difference was a form_build_id, which is minted
+			// per render and cannot be equal across two objects
+			const masked = maskNonces({ first: a?.body ?? '', second: b?.body ?? '' });
 			expect(
-				a?.sha1,
+				firstDifference(masked.first, masked.second),
 				`${identity} differs between the interleaved run and a fresh object: ` +
 					`${a?.byteLength} bytes vs ${b?.byteLength}`
-			).toBe(b?.sha1);
+			).toBeNull();
 		}
 	});
 
@@ -137,20 +142,29 @@ describe.skipIf(skip)('the identity leak differential', () => {
 		const after = map['anon-after'];
 		expect(before).toBeDefined();
 		expect(after).toBeDefined();
+		const masked = maskNonces({ first: before?.body ?? '', second: after?.body ?? '' });
 		expect(
-			after?.sha1,
+			firstDifference(masked.first, masked.second),
 			`anonymous output changed after privileged traffic: ${before?.byteLength} -> ${after?.byteLength} bytes`
-		).toBe(before?.sha1);
+		).toBeNull();
 	});
 
 	/**
-	 * The content-level differential, now that content can exist.
+	 * The content-level differential: every identity must see the SAME content.
 	 *
-	 * Each identity saves a node carrying a marker only it should ever produce, and every response is
-	 * then checked for every OTHER identity's marker. This is the check the uid-1 poisoning would
-	 * have failed: admin HTML in the anonymous copy would carry the admin marker.
+	 * **The first version of this asserted the opposite and contradicted the file it lives in.** It
+	 * required that no identity see another's marker, while the scope test below asserts the three
+	 * authenticated bodies are byte-identical -- and both cannot hold once a marker appears at all.
+	 * The premise was that a marker is identity-scoped content; it is not. These cookies are not
+	 * Drupal session records, so every save is made by the same anonymous user and every node is
+	 * public, which puts all three markers on the front page for everybody. It passed only while
+	 * `saveNode()` produced nothing the front page listed.
+	 *
+	 * What the host tier CAN be held to is agreement: a marker visible to one identity and not to
+	 * another means per-identity state reached a shared page, which is the shape the uid-1 poisoning
+	 * had. So the assertion is that the visible marker set is identical across the sequence.
 	 */
-	it('no identity marker appears in another identity response', async () => {
+	it('every identity sees the same markers, so no per-identity state reached a shared page', async () => {
 		const markers: Record<string, string> = {};
 		for (const step of SEQUENCE) {
 			if (step.cookie === null) continue;
@@ -161,25 +175,34 @@ describe.skipIf(skip)('the identity leak differential', () => {
 			// the acting-user restore is what keeps one identity's save out of the next render
 			expect(saved.restoredUid, step.identity).toBe(0);
 		}
-		expect(Object.keys(markers).length).toBeGreaterThan(1);
+		const all = Object.values(markers);
+		expect(all.length).toBeGreaterThan(1);
 
 		const after = await runSequence(mixed, '/');
-		for (const shot of after) {
-			for (const [owner, marker] of Object.entries(markers)) {
-				if (owner === shot.identity) continue;
-				expect(
-					shot.body.includes(marker),
-					`${shot.identity} received ${owner}'s marker ${marker}`
-				).toBe(false);
-			}
-		}
+		const visible = after.map((shot) => ({
+			identity: shot.identity,
+			seen: all.filter((m) => shot.body.includes(m)).join(',')
+		}));
+		// the guard against a vacuous pass: if no marker reaches the page at all, every identity
+		// agrees on the empty set and this test proves nothing
+		expect(
+			visible.some((v) => v.seen !== ''),
+			'no marker reached the front page, so agreement is vacuous'
+		).toBe(true);
+		const distinct = new Set(visible.map((v) => v.seen));
+		expect(
+			distinct.size,
+			`identities disagree about what is on the page: ${JSON.stringify(visible)}`
+		).toBe(1);
 	});
 
 	it('reports what the run could not cover, so a pass is not over-read', () => {
 		// a deliberate, asserted statement of scope rather than a comment nobody reads: these
 		// cookies are Worker-shaped, not Drupal session records
 		const map = byIdentity(shots);
-		const authed = ['user-a', 'user-b', 'admin'].map((i) => map[i]?.sha1);
+		const authed = ['user-a', 'user-b', 'admin'].map(
+			(i) => maskNonces({ first: map[i]?.body ?? '', second: '' }).first
+		);
 		expect(new Set(authed).size, 'the authenticated identities rendered identically').toBe(1);
 		// which is EXPECTED here, and is exactly why this file cannot speak about Drupal's own
 		// per-user rendering: Drupal saw no logged-in user for any of them

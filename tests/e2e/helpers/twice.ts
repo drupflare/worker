@@ -128,17 +128,46 @@ export const VIEW_DOM_ID = /js-view-dom-id-[0-9a-f]{64}/g;
 export const PERMISSIONS_HASH = /"permissionsHash":"[0-9a-f]{64}"/g;
 
 /**
+ * The per-render form nonces: `form_build_id` and the matching `data-drupal-selector`.
+ *
+ * Both are `form-` plus 43 base64url characters from `Crypt::randomBytesBase64(32)`, minted on every
+ * render of a form by design. A page carrying a form therefore cannot be byte-stable across two
+ * renders, and a comparison that does not mask these is asserting that Drupal's CSRF plumbing is
+ * deterministic.
+ */
+export const FORM_NONCE = /form-[A-Za-z0-9_-]{40,}/g;
+
+/**
  * Everything that legitimately varies between two renders of identical content.
  *
  * Kept as one list so a comparison masks the known set and nothing else. Adding to it is a
  * deliberate act that should come with a measurement, because every entry is a thing this suite can
  * no longer see.
  */
-export const RENDER_NONCES = [VIEW_DOM_ID, PERMISSIONS_HASH];
+export const RENDER_NONCES = [VIEW_DOM_ID, PERMISSIONS_HASH, FORM_NONCE];
 
 /** Masks every known render nonce, leaving all other differences visible. */
 export function maskNonces(pair: Pair<string>): Pair<string> {
 	let out = pair;
 	for (const pattern of RENDER_NONCES) out = maskedPair(out, pattern);
+	return out;
+}
+
+/**
+ * Collapses the named origins to one token, so two renders at different hosts can be compared.
+ *
+ * Taken as an argument rather than inferred: the packed artifact was rendered on the build machine
+ * at `http://localhost` and a live render uses the site's own origin, and a pattern loose enough to
+ * find both would also mask a URL that legitimately changed. Measured after `/__assemble` was given
+ * the request origin, the front page differs from the pack by exactly the origin string and nothing
+ * else.
+ */
+export function maskOrigins(pair: Pair<string>, origins: string[]): Pair<string> {
+	let out = pair;
+	for (const origin of origins) {
+		if (origin === '') continue;
+		const literal = origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		out = maskedPair(out, new RegExp(literal, 'g'), '<origin>');
+	}
 	return out;
 }

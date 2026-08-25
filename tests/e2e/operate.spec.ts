@@ -8,6 +8,7 @@ import {
 	provision,
 	serve,
 	transportFor,
+	warm,
 	type Transport
 } from './helpers/lifecycle.js';
 import {
@@ -102,8 +103,12 @@ describe.skipIf(skip)(`operating a site at ${ENDPOINT} (site ${site})`, () => {
 
 	it('3. routes a second unrelated path without inheriting the first', async () => {
 		const home = (await serve(t, '/')).body;
+		await warm(t, '/user/login');
 		const other = await twice(async () => (await serve(t, '/user/login')).body);
-		expect(firstDifference(other.first, other.second)).toBeNull();
+		// `/user/login` carries a form, and `form_build_id` plus its `data-drupal-selector` are
+		// minted per render by design -- so the comparison is of everything else
+		const masked = maskNonces(other);
+		expect(firstDifference(masked.first, masked.second)).toBeNull();
 		// the two paths must not be the same document; a memoised route would make them equal
 		expect(other.first).not.toBe(home);
 	});
@@ -152,12 +157,18 @@ describe.skipIf(skip)(`operating a site at ${ENDPOINT} (site ${site})`, () => {
 	 * edit.
 	 */
 	it('5. invalidating makes the stored page unreachable and the re-render byte-stable', async () => {
-		const before = await serve(t, '/');
+		const before = await warm(t, '/');
+		expect(
+			before.generation,
+			'no generation header, so the comparison below is 0 vs 0'
+		).not.toBeNull();
 		const bumped = await invalidate(t);
 		expect(bumped.generationAfter).toBeGreaterThan(bumped.generationBefore);
 
+		await warm(t, '/');
 		const after = await twice(async () => await serve(t, '/'));
-		expect(firstDifference(after.first.body, after.second.body)).toBeNull();
+		const stable = maskNonces({ first: after.first.body, second: after.second.body });
+		expect(firstDifference(stable.first, stable.second)).toBeNull();
 		expect(Number(after.first.generation)).toBeGreaterThan(Number(before.generation));
 
 		// FOUND BY THIS ASSERTION: the re-render is NOT byte-identical to the pre-invalidate copy.
@@ -262,9 +273,13 @@ describe.skipIf(skip)(`operating a site at ${ENDPOINT} (site ${site})`, () => {
 	});
 
 	it('9. still serves the site after a module enable and a refusal', async () => {
+		// the enable bumped the generation, so `/` is unfilled again and a 503 here would be the
+		// queue answering rather than the site being broken -- which is the claim under test
+		await warm(t, '/');
 		const pair = await twice(async () => await serve(t, '/'));
 		expect(pair.first.status).toBe(200);
-		expect(firstDifference(pair.first.body, pair.second.body)).toBeNull();
+		const masked = maskNonces({ first: pair.first.body, second: pair.second.body });
+		expect(firstDifference(masked.first, masked.second)).toBeNull();
 		expect(pair.first.body).toContain('</html>');
 	});
 

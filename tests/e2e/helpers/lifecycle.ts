@@ -225,6 +225,24 @@ export async function assemble(t: Transport, path = '/', bins = 'page'): Promise
 	return json<AssembleReply>(await t(`/assemble${q}`));
 }
 
+/**
+ * Serves a path until it stops answering 5xx, or the deadline passes.
+ *
+ * A cold MISS is 503 with Retry-After while the fill queue works, and that is the designed answer
+ * rather than a fault. So an assertion about a page's CONTENT made against a path nothing has filled
+ * is measuring the queue, and it fails for a reason unrelated to what it claims to test. Anything
+ * asserting a 200 body has to get the path warm first.
+ */
+export async function warm(t: Transport, path = '/', deadlineMs = 90_000): Promise<ServeProbe> {
+	const until = Date.now() + deadlineMs;
+	let last = await serve(t, path);
+	while (last.status >= 500 && Date.now() < until) {
+		await new Promise((r) => setTimeout(r, 1000));
+		last = await serve(t, path);
+	}
+	return last;
+}
+
 /** one `/serve` through the front end; `edge=0` keeps `caches.default` out of the answer */
 export async function serve(t: Transport, path = '/', query = '&edge=0'): Promise<ServeProbe> {
 	const res = await t(`/serve?path=${encodeURIComponent(path)}${query}`);
@@ -254,10 +272,15 @@ export async function invalidate(
 	return json(await t(`/invalidate?tags=${encodeURIComponent(tags)}`));
 }
 
-/** the whole database as replayable SQL; `body=0` reports the shape without moving megabytes */
+/**
+ * The whole database as replayable SQL; `body=0` reports the shape without moving megabytes.
+ *
+ * `chars`, not `bytes`: the route counts characters of SQL text, and the two differ by the number
+ * of multi-byte characters in the dump.
+ */
 export async function exportDb(
 	t: Transport
-): Promise<{ ok: boolean; statements: number; bytes: number; tables: Record<string, unknown> }> {
+): Promise<{ ok: boolean; statements: number; chars: number; tables: Record<string, unknown> }> {
 	return json(await t('/export'));
 }
 

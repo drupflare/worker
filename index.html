@@ -465,6 +465,7 @@ the opposite.</p>
 <li><a href="#-getting-started">Getting Started</a></li>
 <li><a href="#-building-from-a-clean-clone">Building From a Clean Clone</a></li>
 <li><a href="#-configuration">Configuration</a></li>
+<li><a href="#-git-remotes">Git Remotes</a></li>
 <li><a href="#-project-structure">Project Structure</a></li>
 <li><a href="#-testing">Testing</a></li>
 <li><a href="#-contributing">Contributing</a></li>
@@ -738,6 +739,74 @@ worker updates the checkout and then deploys it there.</p>
 <p><code>build</code>, <code>dev</code>, <code>deploy</code>, <code>update</code> and <code>migrate install</code> are the five commands that write; <code>status</code>,
 <code>doctor</code>, <code>health</code>, <code>config</code>, <code>cf</code>, <code>secrets</code>, <code>validate</code> and the rest of <code>migrate</code> read. Its README
 covers the migration commands in both directions.</p>
+<h3 id="the-admin-surfaces" class="tsd-anchor-link">The Admin Surfaces<a href="#the-admin-surfaces" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Six pages under <code>/_cfw</code>, each one driving machinery that already exists rather than holding its own.</p>
+<table>
+<thead>
+<tr>
+<th>page</th>
+<th>path</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Limits</strong></td>
+<td><code>/_cfw</code></td>
+<td>every metered resource, what spends it, and whether exceeding it bills or stops working</td>
+</tr>
+<tr>
+<td><strong>Extend</strong></td>
+<td><code>/_cfw/extend</code></td>
+<td>whether a contrib module installs here, answered against the shipped lock</td>
+</tr>
+<tr>
+<td><strong>Commands</strong></td>
+<td><code>/_cfw/commands</code></td>
+<td>a Drush-shaped field over the site's operations</td>
+</tr>
+<tr>
+<td><strong>Deploy</strong></td>
+<td><code>/_cfw/deploy</code></td>
+<td>the provisioning steps, two of which cannot be automated</td>
+</tr>
+<tr>
+<td><strong>Git</strong></td>
+<td><code>/_cfw/git</code></td>
+<td>remotes, branches, pull requests and the working-tree diff</td>
+</tr>
+<tr>
+<td><strong>Access</strong></td>
+<td><code>/_cfw/access</code></td>
+<td>the OpenID Connect provider</td>
+</tr>
+</tbody>
+</table>
+<p>The Commands field takes Drush spellings and resolves them to the operation the site registers, so
+<code>cache:rebuild</code>, <code>cache-rebuild</code>, <code>cc</code> and <code>cr</code> are the same command. <code>en &lt;module&gt;</code> routes to the
+module installer rather than to the operations registry, and an operation given arguments it cannot
+take is refused by name instead of being truncated to its first word.</p>
+<pre><code class="text">cr                  rebuild the caches
+en webform          install a module
+en webform --dry    check whether it would install, without installing
+status              generation, migration state, queue depth
+</code><button type="button">Copy</button></pre>
+
+<p>An operation with no driver is listed and disabled rather than hidden, because a refusal with no
+named alternative is a refusal that gets retried.</p>
+<h3 id="single-sign-on" class="tsd-anchor-link">Single Sign-On<a href="#single-sign-on" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The Access page configures an OpenID Connect provider. The host performs the token exchange and
+verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot check
+an RS256 signature at all — and an unverified <code>id_token</code> is an unauthenticated login.</p>
+<p>Set the issuer and client id on the page, and the client secret as the <code>OIDC_CLIENT_SECRET</code> binding.
+The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
+discovery document immediately, so a typo surfaces there rather than at someone's first login.</p>
+<p>Writing the provider takes the owner token, not the page's own gate. Whoever sets the issuer decides
+which provider every login on the site authenticates against.</p>
+<p>A login is refused when the signature comes from a key outside the provider's JWKS, when the issuer
+does not match, when the audience belongs to another client of the same provider, when the token has
+expired, or when the nonce belongs to a different login. The signing algorithm is taken from the key
+rather than from the token header, and an account is keyed by issuer and subject together.</p>
 <h3 id="url-routing" class="tsd-anchor-link">URL Routing<a href="#url-routing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><strong>Drupal owns the URL space.</strong> Any path the Worker does not claim is served as a page, so <code>/</code>,
 <code>/user/login</code>, <code>/admin</code> and <code>/node/1</code> all work. The Worker's own surfaces live under <code>/_cfw</code>, which
@@ -905,6 +974,101 @@ calls, and an existing DMARC record is reported rather than overwritten.</p>
 <p><a href="media/configuration.md#onboarding-a-sending-domain"><code>docs/configuration.md</code></a> has the five stages, the
 six records written, and what <code>settled</code> does and does not mean.</p>
 <p>Both routes take the owner token — see <a href="#log-in">Log In</a>.</p>
+<hr>
+<h2 id="🌿-git-remotes" class="tsd-anchor-link">🌿 Git Remotes<a href="#🌿-git-remotes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>A site follows as many repositories as you connect to it. A push installs the module; the result is
+written back to the provider as a commit status. The page is <code>/_cfw/git</code>.</p>
+<h3 id="the-transport" class="tsd-anchor-link">The Transport<a href="#the-transport" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The transport is git's own smart HTTP, so anything that serves a repository over HTTPS works —
+GitHub, GitLab, Bitbucket, Gitea, Forgejo, a bare repository behind nginx, an internal mirror. Two
+requests do the whole job:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Request</th>
+<th>Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Poll</td>
+<td><code>GET /info/refs?service=git-upload-pack</code></td>
+<td>a few hundred bytes when nothing has moved</td>
+</tr>
+<tr>
+<td>Pull</td>
+<td><code>POST /git-upload-pack</code>, one commit, depth 1</td>
+<td>the changed objects, as a packfile</td>
+</tr>
+</tbody>
+</table>
+<p>The packfile is read in the Worker: pkt-line framing, both delta forms, and the tree walk that turns
+a commit into files. Private repositories authenticate with the operator's access token over HTTPS.
+A public repository needs no credential at all.</p>
+<h3 id="what-gets-installed" class="tsd-anchor-link">What Gets Installed<a href="#what-gets-installed" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Module names come from <code>*.info.yml</code> rather than from the directory, so a repository checked out under
+one name that provides another installs correctly, and a repository holding several extensions
+installs all of them at their own paths. Modules land in <code>modules/custom/</code>, themes in
+<code>themes/custom/</code>, profiles in <code>profiles/custom/</code>.</p>
+<p>Only mountable files are kept — PHP, YAML, Twig, JavaScript, CSS — with <code>tests/</code>, <code>vendor/</code>,
+<code>node_modules/</code> and dotfiles dropped. Every file is stored as its own row, and the pull reports what
+it skipped and why.</p>
+<p><strong>PHP costs no bundle bytes.</strong> Module source is fetched over the assets binding rather than compiled
+into the Worker, so the size ceiling that governs the rest of the runtime does not apply to a custom
+module written in PHP.</p>
+<h3 id="branches-requests-and-diffs" class="tsd-anchor-link">Branches, Requests and Diffs<a href="#branches-requests-and-diffs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Check</td>
+<td>reads the remote head without downloading anything</td>
+</tr>
+<tr>
+<td>Diff</td>
+<td>fetches the commit and reports added, modified and removed files with line counts</td>
+</tr>
+<tr>
+<td>Pull</td>
+<td>applies that diff and mounts the result</td>
+</tr>
+<tr>
+<td>Branch switch</td>
+<td>moves the site to another branch, deleting what the old one had and the new one does not</td>
+</tr>
+<tr>
+<td>Requests</td>
+<td>lists open pull and merge requests</td>
+</tr>
+<tr>
+<td>Preview</td>
+<td>installs a request's head instead of the branch, and holds it there</td>
+</tr>
+</tbody>
+</table>
+<p>A preview is held against polling and against pushes, so a branch that moves while somebody is
+reviewing does not replace what they are looking at. Leaving the preview returns the site to its
+branch.</p>
+<h3 id="triggers" class="tsd-anchor-link">Triggers<a href="#triggers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><strong>Polling</strong> works against any remote and needs no cooperation from it. The interval is per repository
+and defaults to an hour; a poll costs one ref advertisement.</p>
+<p><strong>Webhooks</strong> make a push arrive immediately. GitHub, GitLab, Bitbucket and Gitea can register one
+from the page; for anything else the page mints a secret and shows the delivery URL to register by
+hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider signs, and a
+shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.</p>
+<h3 id="safety" class="tsd-anchor-link">Safety<a href="#safety" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>A pull is applied in one transaction and then verified by booting the Drupal kernel against the new
+tree. If the boot fails, the previous files are restored and the site keeps serving. A path already
+owned by another repository or by a <code>composer require</code> is reported as a conflict rather than taken.</p>
+<p>Access tokens live in the site's own database, never in the KV namespace that carries runtime
+overrides. <a href="media/configuration.md#git-remotes"><code>docs/configuration.md</code></a> has the scopes each provider
+needs and the storage contract.</p>
 <hr>
 <h2 id="📁-project-structure" class="tsd-anchor-link">📁 Project Structure<a href="#📁-project-structure" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <pre><code class="txt">src/
@@ -1144,8 +1308,8 @@ a stale pack fails the gate.</p>
 the module present in <code>core.extension</code> afterwards on 6 of 6 attempts. The cache is cold for one
 visit while the pages the install invalidated are re-rendered.</p>
 <!-- module-table:begin -->
-<p><strong>57 verified, 2 untested, 3 blocked.</strong> Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.</p>
-<p>Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 53 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.</p>
+<p><strong>58 verified, 0 untested, 4 blocked.</strong> Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.</p>
+<p>Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 54 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.</p>
 <table>
 <thead>
 <tr>
@@ -1407,13 +1571,13 @@ visit while the pages the install invalidated are re-rendered.</p>
 </tr>
 <tr>
 <td>Search Api Solr</td>
-<td>untested</td>
-<td>MEASURED 2026-08-23 against solarium 6.4.2, and the transport IS interceptable, which is what moved this off blocking-outbound. The default connector picks <code>extension_loaded('curl') ? new Curl() : new Http()</code> and this build has no curl extension, so it lands on the stream adapter -- which then reads <code>$http_response_header</code> and gets [], the P39 defect in a second consumer. <code>SolariumTransport</code> subscribes to Solarium's own <code>PreExecuteRequest</code>, whose response short-circuits the adapter entirely, and search_api_solr hands Drupal's dispatcher to the client, so it needs NO module change. Indexing is fully deferrable; a query pays one round trip on first ask and is cached after</td>
+<td>blocked</td>
+<td>drupal/search_api_solr needs runtime.int64 (scheduled): a PHP integer wider than 32 bits <strong>Lift:</strong> <code>PHP_INT_SIZE</code> 8, from wasm64 (measured to fit at 123.00 MiB) or from <code>ZEND_ENABLE_ZVAL_LONG64</code> on wasm32. Disabling composer's platform check is the cheap route and is a product decision: the guard is right that a 64-bit path exists, since zipstream is there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path site-wide to unlock one module. <code>SolariumTransport</code> is already shipped with 17 assertions in the sibling module's <code>tests/solarium-transport.php</code>; a file-upload extract needs a streaming body and is declared rather than sent empty</td>
 </tr>
 <tr>
 <td>Simple Sitemap</td>
-<td>untested</td>
-<td>generation is a queue drained by cron, and the cron wire is measured in <code>cron-wire.spec.ts</code>. It used to be refused outright because its <code>hook_requirements()</code> calls <code>extension_loaded('xmlwriter')</code>, which is a built-in and cannot be shimmed; the host supplies a pure-PHP <code>XMLWriter</code> verified byte for byte against libxml, and clears that one install block through <code>hook_requirements_alter()</code>. The module is unmodified and is not in the pack</td>
+<td>verified</td>
+<td>enabled against a real site; <code>simple_sitemap.generator</code>, <code>simple_sitemap.queue_worker</code> and <code>simple_sitemap.sitemap_writer</code> resolve, both <code>simple_sitemap</code> and <code>simple_sitemap_type</code> are registered entity types and <code>simple_sitemap.settings</code> is installed, none of it before. It was refused outright until the host supplied a pure-PHP <code>XMLWriter</code> and cleared its one install block through <code>hook_requirements_alter()</code> -- <code>extension_loaded('xmlwriter')</code> is a built-in and cannot be shimmed. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
 </tr>
 <tr>
 <td>Smtp</td>
@@ -1606,6 +1770,8 @@ and are the authority on their own module.</p>
 <li><a href="#claim-the-site"><span>Claim the <wbr/>Site</span></a></li>
 <li><a href="#log-in"><span>Log <wbr/>In</span></a></li>
 <li><a href="#manage-the-site"><span>Manage the <wbr/>Site</span></a></li>
+<li><a href="#the-admin-surfaces"><span>The <wbr/>Admin <wbr/>Surfaces</span></a></li>
+<li><a href="#single-sign-on"><span>Single <wbr/>Sign-<wbr/>On</span></a></li>
 <li><a href="#url-routing"><span>URL <wbr/>Routing</span></a></li>
 <li><a href="#scripts"><span>Scripts</span></a></li>
 <li><a href="#🧰-building-from-a-clean-clone"><span>🧰 <wbr/>Building <wbr/>From a <wbr/>Clean <wbr/>Clone</span></a></li></ul></li>
@@ -1617,6 +1783,14 @@ and are the authority on their own module.</p>
 <li><a href="#_-2"><span></span></a></li>
 <li><a href="#connecting-a-cloudflare-account"><span>Connecting a <wbr/>Cloudflare <wbr/>Account</span></a></li>
 <li><a href="#onboarding-a-sending-domain"><span>Onboarding a <wbr/>Sending <wbr/>Domain</span></a></li></ul></li>
+<li><a href="#🌿-git-remotes"><span>🌿 <wbr/>Git <wbr/>Remotes</span></a></li>
+<li>
+<ul>
+<li><a href="#the-transport"><span>The <wbr/>Transport</span></a></li>
+<li><a href="#what-gets-installed"><span>What <wbr/>Gets <wbr/>Installed</span></a></li>
+<li><a href="#branches-requests-and-diffs"><span>Branches, <wbr/>Requests and <wbr/>Diffs</span></a></li>
+<li><a href="#triggers"><span>Triggers</span></a></li>
+<li><a href="#safety"><span>Safety</span></a></li></ul></li>
 <li><a href="#📁-project-structure"><span>📁 <wbr/>Project <wbr/>Structure</span></a></li>
 <li><a href="#🧪-testing"><span>🧪 <wbr/>Testing</span></a></li>
 <li>

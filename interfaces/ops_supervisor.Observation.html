@@ -18,7 +18,7 @@ reference to the interpreter could keep a poisoned one alive.</p>
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">Observation</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#asyncifycalls">asyncifyCalls</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bytes">bytes</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dbgeneration">dbGeneration</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dorequests">doRequests</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dorequestslimit">doRequestsLimit</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dorequestssamples">doRequestsSamples</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#imagetransforms">imageTransforms</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#imagetransformslimit">imageTransformsLimit</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ledgerrows">ledgerRows</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maskdepth">maskDepth</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#medianbytes">medianBytes</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#memorysamples">memorySamples</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#migratechunk">migrateChunk</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#migratechunks">migrateChunks</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#packgeneration">packGeneration</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#path">path</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswritten">rowsWritten</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswrittenlimit">rowsWrittenLimit</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswrittensamples">rowsWrittenSamples</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#semaphorerows">semaphoreRows</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#status">status</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#updbphase">updbPhase</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L46">src/ops/supervisor.ts:46</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L46">src/ops/supervisor.ts:46</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -58,34 +58,34 @@ reference to the interpreter could keep a poisoned one alive.</p>
 <div class="tsd-comment tsd-typography"><p><code>globalThis.__cfwAsyncifyCalls</code>; anything above 0 means the stub was reached</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L56">src/ops/supervisor.ts:56</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L56">src/ops/supervisor.ts:56</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="bytes"><code class="tsd-tag">Optional</code><span>bytes</span><a href="#bytes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">bytes</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>byte length of the body it is about to return</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L50">src/ops/supervisor.ts:50</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L50">src/ops/supervisor.ts:50</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dbgeneration"><code class="tsd-tag">Optional</code><span>db<wbr/>Generation</span><a href="#dbgeneration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">dbGeneration</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L68">src/ops/supervisor.ts:68</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L68">src/ops/supervisor.ts:68</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dorequests"><code class="tsd-tag">Optional</code><span>do<wbr/>Requests</span><a href="#dorequests" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doRequests</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L74">src/ops/supervisor.ts:74</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L74">src/ops/supervisor.ts:74</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dorequestslimit"><code class="tsd-tag">Optional</code><span>do<wbr/>Requests<wbr/>Limit</span><a href="#dorequestslimit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doRequestsLimit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L75">src/ops/supervisor.ts:75</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L75">src/ops/supervisor.ts:75</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dorequestssamples"><code class="tsd-tag">Optional</code><span>do<wbr/>Requests<wbr/>Samples</span><a href="#dorequestssamples" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doRequestsSamples</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L78">src/ops/supervisor.ts:78</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L78">src/ops/supervisor.ts:78</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="imagetransforms"><code class="tsd-tag">Optional</code><span>image<wbr/>Transforms</span><a href="#imagetransforms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">imageTransforms</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
@@ -94,108 +94,108 @@ reference to the interpreter could keep a poisoned one alive.</p>
 and configuration, both known in advance, so the answer does not have to wait for the failure.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L87">src/ops/supervisor.ts:87</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L87">src/ops/supervisor.ts:87</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="imagetransformslimit"><code class="tsd-tag">Optional</code><span>image<wbr/>Transforms<wbr/>Limit</span><a href="#imagetransformslimit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">imageTransformsLimit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the monthly allowance, when the plan has one</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L89">src/ops/supervisor.ts:89</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L89">src/ops/supervisor.ts:89</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ledgerrows"><code class="tsd-tag">Optional</code><span>ledger<wbr/>Rows</span><a href="#ledgerrows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ledgerRows</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows in the health ledger itself, so it can police its own growth</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L80">src/ops/supervisor.ts:80</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L80">src/ops/supervisor.ts:80</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maskdepth"><code class="tsd-tag">Optional</code><span>mask<wbr/>Depth</span><a href="#maskdepth" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maskDepth</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>mask depth at request end; must be 0</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L58">src/ops/supervisor.ts:58</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L58">src/ops/supervisor.ts:58</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="medianbytes"><code class="tsd-tag">Optional</code><span>median<wbr/>Bytes</span><a href="#medianbytes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">medianBytes</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rolling median byte length for THIS path, if known</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L54">src/ops/supervisor.ts:54</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L54">src/ops/supervisor.ts:54</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="memorysamples"><code class="tsd-tag">Optional</code><span>memory<wbr/>Samples</span><a href="#memorysamples" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">memorySamples</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>wasm linear memory high-water samples, oldest first</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L70">src/ops/supervisor.ts:70</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L70">src/ops/supervisor.ts:70</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="migratechunk"><code class="tsd-tag">Optional</code><span>migrate<wbr/>Chunk</span><a href="#migratechunk" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">migrateChunk</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>migration cursor state, if a migration exists at all</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L62">src/ops/supervisor.ts:62</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L62">src/ops/supervisor.ts:62</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="migratechunks"><code class="tsd-tag">Optional</code><span>migrate<wbr/>Chunks</span><a href="#migratechunks" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">migrateChunks</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L63">src/ops/supervisor.ts:63</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L63">src/ops/supervisor.ts:63</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="packgeneration"><code class="tsd-tag">Optional</code><span>pack<wbr/>Generation</span><a href="#packgeneration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">packGeneration</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>generation the packed assets were built for, against the one the database holds</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L67">src/ops/supervisor.ts:67</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L67">src/ops/supervisor.ts:67</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="path"><code class="tsd-tag">Optional</code><span>path</span><a href="#path" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">path</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the path that produced it</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L52">src/ops/supervisor.ts:52</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L52">src/ops/supervisor.ts:52</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswritten"><code class="tsd-tag">Optional</code><span>rows<wbr/>Written</span><a href="#rowswritten" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWritten</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>free-plan daily meters</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L72">src/ops/supervisor.ts:72</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L72">src/ops/supervisor.ts:72</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswrittenlimit"><code class="tsd-tag">Optional</code><span>rows<wbr/>Written<wbr/>Limit</span><a href="#rowswrittenlimit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWrittenLimit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L73">src/ops/supervisor.ts:73</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L73">src/ops/supervisor.ts:73</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswrittensamples"><code class="tsd-tag">Optional</code><span>rows<wbr/>Written<wbr/>Samples</span><a href="#rowswrittensamples" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWrittenSamples</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>the same two meters as rings of readings, oldest first, for the trend checks</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L77">src/ops/supervisor.ts:77</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L77">src/ops/supervisor.ts:77</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="semaphorerows"><code class="tsd-tag">Optional</code><span>semaphore<wbr/>Rows</span><a href="#semaphorerows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">semaphoreRows</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows in <code>semaphore</code> after the request; must be 0</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L60">src/ops/supervisor.ts:60</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L60">src/ops/supervisor.ts:60</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="status"><code class="tsd-tag">Optional</code><span>status</span><a href="#status" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">status</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>HTTP status the object is about to return</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L48">src/ops/supervisor.ts:48</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L48">src/ops/supervisor.ts:48</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="updbphase"><code class="tsd-tag">Optional</code><span>updb<wbr/>Phase</span><a href="#updbphase" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">updbPhase</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>updb phase, if a run exists</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/ops/supervisor.ts#L65">src/ops/supervisor.ts:65</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/supervisor.ts#L65">src/ops/supervisor.ts:65</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

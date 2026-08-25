@@ -13,7 +13,7 @@
 <h1>Interface DumpOptions</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">DumpOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#includerows">includeRows</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">table</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#limitpertable">limitPerTable</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxcharsperchunk">maxCharsPerChunk</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxliteralchars">maxLiteralChars</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#secrets">secrets</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L119">src/db/export-sql.ts:119</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L119">src/db/export-sql.ts:119</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -37,21 +37,21 @@
 still restores the whole schema. Pass <code>() =&gt; true</code> for a byte-exact copy.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L126">src/db/export-sql.ts:126</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L126">src/db/export-sql.ts:126</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="limitpertable"><code class="tsd-tag">Optional</code><span>limit<wbr/>Per<wbr/>Table</span><a href="#limitpertable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">limitPerTable</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows per table, for a cheap sample; 0 or absent is every row</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L121">src/db/export-sql.ts:121</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L121">src/db/export-sql.ts:121</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxcharsperchunk"><code class="tsd-tag">Optional</code><span>max<wbr/>Chars<wbr/>Per<wbr/>Chunk</span><a href="#maxcharsperchunk" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxCharsPerChunk</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>characters per chunk for <a href="../functions/db_export-sql.dumpChunk.html" class="tsd-kind-function">dumpChunk</a>; see <a href="../variables/db_export-sql.DUMP_CHARS_PER_CHUNK.html" class="tsd-kind-variable">DUMP_CHARS_PER_CHUNK</a></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L135">src/db/export-sql.ts:135</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L135">src/db/export-sql.ts:135</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxliteralchars"><code class="tsd-tag">Optional</code><span>max<wbr/>Literal<wbr/>Chars</span><a href="#maxliteralchars" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxLiteralChars</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
@@ -60,14 +60,14 @@ still restores the whole schema. Pass <code>() =&gt; true</code> for a byte-exac
 not the whole statement -- the INSERT around it costs characters too.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L133">src/db/export-sql.ts:133</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L133">src/db/export-sql.ts:133</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="secrets"><code class="tsd-tag">Optional</code><span>secrets</span><a href="#secrets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">secrets</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>carry <a href="../variables/db_export-sql.SECRET_META_KEYS.html" class="tsd-kind-variable">SECRET_META_KEYS</a> in the dump; a faithful restore needs them, a backup does not</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/db/export-sql.ts#L137">src/db/export-sql.ts:137</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/db/export-sql.ts#L137">src/db/export-sql.ts:137</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

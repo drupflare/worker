@@ -13,7 +13,7 @@
 <h1>Variable SODIUM_FIX<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">SODIUM_FIX</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>The PHP half: the four functions, the six constants and <code>SodiumException</code>.</p>
-<p>Which functions: every <code>sodium_*</code> call site in strata, found by grep over the module. Six calls
+<p>Which functions: the <code>sodium_*</code> surface a content-addressed store reaches for. Six calls
 to <code>sodium_crypto_generichash()</code> and one each to <code>_init</code>, <code>_update</code> and <code>_final</code> -- so the
 one-shot and the streaming form are both reached, and <code>Hash::ofFile()</code> reaches the streaming one
 on every captured file.</p>
@@ -27,7 +27,7 @@ and the branch never runs. That is what lets <code>tests/node/php-fragments.spec
 the body rather than over a string literal.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/690075c41bae104407256a58dd254afacfe2e4de/src/drupal/sodium-fix.ts#L237">src/drupal/sodium-fix.ts:237</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/drupal/sodium-fix.ts#L347">src/drupal/sodium-fix.ts:347</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

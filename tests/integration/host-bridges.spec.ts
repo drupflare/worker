@@ -312,3 +312,81 @@ describe('the argon2id bridge is LIVE, and does not shadow a built-in', () => {
 		expect(out.hex).toBe(hostHex);
 	}, 900_000);
 });
+
+/**
+ * The XChaCha20-Poly1305 AEAD, from PHP, on the interpreter that ships.
+ *
+ * The wiring gate for the same reason the digest has one: the bridge is green against its own
+ * JavaScript whether or not `src/site-do.ts` installs it, because `vrzno_env()` answers NULL and the
+ * fragment then declares nothing at all.
+ *
+ * The last two assertions are the contract that matters. `XChaCha20Poly1305Cipher::open()` reads a
+ * FALSE as `AuthenticationFailure` and trips `frame.aead_fail`, and reads a throw as a programming
+ * error. A shim that collapsed them would sweep a healthy store over a mis-sized key.
+ */
+describe('the XChaCha20-Poly1305 AEAD is LIVE, from PHP', () => {
+	it('declares the family and round trips a frame with associated data', async () => {
+		const out = await run(String.raw`<?php
+			$key = str_repeat('k', SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES);
+			$nonce = str_repeat('n', SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
+			$sealed = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt('a frame', 'header', $nonce, $key);
+			$opened = sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($sealed, 'header', $nonce, $key);
+			echo json_encode([
+				'declaredEncrypt' => function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt'),
+				'declaredDecrypt' => function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_decrypt'),
+				'declaredKeygen' => function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_keygen'),
+				'keyBytes' => SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES,
+				'nonceBytes' => SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES,
+				'tagBytes' => SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_ABYTES,
+				'grew' => strlen($sealed) - strlen('a frame'),
+				'opened' => $opened,
+				'keygenLen' => strlen(sodium_crypto_aead_xchacha20poly1305_ietf_keygen()),
+				// the extension stays absent; only the functions arrive
+				'extension' => extension_loaded('sodium'),
+			]);
+		`);
+		expect(out.declaredEncrypt, JSON.stringify(out).slice(0, 300)).toBe(true);
+		expect(out.declaredDecrypt).toBe(true);
+		expect(out.declaredKeygen).toBe(true);
+		expect(out.keyBytes).toBe(32);
+		expect(out.nonceBytes).toBe(24);
+		expect(out.tagBytes).toBe(16);
+		expect(out.grew).toBe(16);
+		expect(out.opened).toBe('a frame');
+		expect(out.keygenLen).toBe(32);
+		expect(out.extension).toBe(false);
+	}, 900_000);
+
+	it('answers FALSE on a bad tag and THROWS on a bad argument, which is the split strata reads', async () => {
+		const out = await run(String.raw`<?php
+			$key = str_repeat('k', 32);
+			$nonce = str_repeat('n', 24);
+			$sealed = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt('secret', '', $nonce, $key);
+			$tampered = $sealed;
+			$tampered[0] = chr(ord($tampered[0]) ^ 0xff);
+			$attempt = function (callable $fn) {
+				try { return ['threw' => false, 'value' => $fn()]; }
+				catch (Throwable $e) { return ['threw' => true, 'class' => get_class($e)]; }
+			};
+			echo json_encode([
+				'tampered' => $attempt(fn() => sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($tampered, '', $nonce, $key)),
+				'wrongKey' => $attempt(fn() => sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($sealed, '', $nonce, str_repeat('j', 32))),
+				'wrongAad' => $attempt(fn() => sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($sealed, 'x', $nonce, $key)),
+				'shortKey' => $attempt(fn() => sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($sealed, '', $nonce, str_repeat('k', 16))),
+				'shortNonce' => $attempt(fn() => sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($sealed, '', str_repeat('n', 12), $key)),
+			]);
+		`);
+		// a failed tag is FALSE, never a throw
+		for (const name of ['tampered', 'wrongKey', 'wrongAad']) {
+			const arm = out[name] as { threw: boolean; value: unknown };
+			expect(arm?.threw, `${name} threw instead of answering FALSE`).toBe(false);
+			expect(arm?.value, `${name} did not answer FALSE`).toBe(false);
+		}
+		// a mis-sized argument is a throw, never FALSE
+		for (const name of ['shortKey', 'shortNonce']) {
+			const arm = out[name] as { threw: boolean; class?: string };
+			expect(arm?.threw, `${name} answered FALSE instead of throwing`).toBe(true);
+			expect(arm?.class).toBe('SodiumException');
+		}
+	}, 900_000);
+});

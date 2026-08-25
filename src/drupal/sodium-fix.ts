@@ -1,10 +1,11 @@
+import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { blake2bFinal, blake2bInit, blake2bUpdate, type Blake2bCTX } from 'blakejs';
 import { base64ToBytes, bytesToBase64 } from '../db/file-store';
 
 /**
  * Replaces the `sodium_crypto_generichash*` family, which no build here can provide.
  *
- * P42.1. BLAKE2b IS ABSENT FROM EVERY LAYER, MEASURED RATHER THAN ASSUMED. The shipping binary
+ * BLAKE2b IS ABSENT FROM EVERY LAYER, MEASURED RATHER THAN ASSUMED. The shipping binary
  * loads 25 extensions and `sodium` is not one of them, so `sodium_crypto_generichash()` is an
  * undefined function. `ext-hash` IS loaded and offers 62 algorithms with no `blake*` among them --
  * and that is a property of PHP rather than of this build, since native 8.5.7 with the full
@@ -21,14 +22,124 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
  * `zlib-fix` names applies unchanged: the shipping build sets `ASYNCIFY=0`, so a host function
  * that returned a Promise would hand PHP an object it can only stringify.
  *
- * WHAT THIS DOES NOT CLOSE. strata also calls
- * `sodium_crypto_aead_xchacha20poly1305_ietf_encrypt()`/`_decrypt()`, which is a cipher rather than
- * a digest and shares no mechanism with this. Shimming the hash does not make ext-sodium present;
- * `extension_loaded('sodium')` stays FALSE and must, because the rest of the extension is not here.
+ * THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
+ * CIPHER rather than a digest, so it shares no mechanism with the above: `crypto.subtle` offers
+ * AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is the whole point of the
+ * construction strata chose. `@noble/ciphers` is the same dependency `edgeport` assembles SSH's
+ * chacha20-poly1305 from, and it is synchronous.
+ *
+ * `extension_loaded('sodium')` stays FALSE either way, because the rest of the extension is not
+ * here and a stub extension entry is the shape that took the isolate down at exit 139.
  */
 
 /** the Module key the PHP half resolves through `vrzno_env()` */
 export const BLAKE2B_BRIDGE = 'cfwBlake2b';
+
+/** the AEAD's own bridge; separate because a cipher and a digest fail for different reasons */
+export const AEAD_BRIDGE = 'cfwAead';
+
+/** libsodium's sizes for the IETF XChaCha20-Poly1305 construction, in bytes */
+export const AEAD_KEYBYTES = 32;
+export const AEAD_NPUBBYTES = 24;
+export const AEAD_ABYTES = 16;
+
+/** what the PHP half sends the AEAD */
+export type AeadRequest = {
+	op?: string;
+	/** the message or the sealed frame, base64 */
+	b64?: string;
+	/** additional authenticated data, base64 */
+	aad64?: string;
+	/** the 24-byte nonce, base64 */
+	nonce64?: string;
+	/** the 32-byte key, base64 */
+	key64?: string;
+};
+
+/** what it gets back; `ok: false` with `auth: true` is a failed tag rather than a bad argument */
+export type AeadReply = { ok: true; b64: string } | { ok: false; error: string; auth?: boolean };
+
+/**
+ * One AEAD operation.
+ *
+ * THE TWO FAILURE MODES ARE KEPT APART AND THAT IS THE WHOLE CONTRACT. ext-sodium's `_decrypt()`
+ * returns FALSE when the tag does not verify and THROWS `SodiumException` when an argument is the
+ * wrong size, and strata reads the difference: a FALSE becomes `AuthenticationFailure` and trips
+ * the `frame.aead_fail` tripwire, while a throw is a programming error. Collapsing them would make
+ * a mis-sized key look like a tampered frame and sweep a healthy store.
+ *
+ * @internal
+ */
+export function aeadHostCall(req: AeadRequest): AeadReply {
+	try {
+		const op = String(req.op ?? '');
+		if (op !== 'encrypt' && op !== 'decrypt') {
+			return { ok: false, error: `unknown aead op '${op}'` };
+		}
+
+		const key = base64ToBytes(String(req.key64 ?? ''));
+		if (key.length !== AEAD_KEYBYTES) {
+			return {
+				ok: false,
+				error: 'key size should be crypto_aead_xchacha20poly1305_KEYBYTES'
+			};
+		}
+		const nonce = base64ToBytes(String(req.nonce64 ?? ''));
+		if (nonce.length !== AEAD_NPUBBYTES) {
+			return {
+				ok: false,
+				error: 'public nonce size should be crypto_aead_xchacha20poly1305_NPUBBYTES'
+			};
+		}
+
+		const aad = base64ToBytes(String(req.aad64 ?? ''));
+		const data = base64ToBytes(String(req.b64 ?? ''));
+		// noble takes an empty AAD as undefined; passing a zero-length array changes the tag
+		const cipher = xchacha20poly1305(key, nonce, aad.length === 0 ? undefined : aad);
+
+		if (op === 'encrypt') return { ok: true, b64: bytesToBase64(cipher.encrypt(data)) };
+
+		if (data.length < AEAD_ABYTES) {
+			// shorter than the tag alone, so there is nothing to verify. Reported as an auth
+			// failure rather than an argument error: a truncated frame IS a broken frame
+			return {
+				ok: false,
+				error: 'ciphertext is shorter than the authentication tag',
+				auth: true
+			};
+		}
+		return { ok: true, b64: bytesToBase64(cipher.decrypt(data)) };
+	} catch (e: any) {
+		// noble throws one error for a bad tag; every size check above already returned, so a throw
+		// reaching here on a decrypt is the tag
+		const why = String(e?.message ?? e);
+		return { ok: false, error: why, auth: String(req.op ?? '') === 'decrypt' };
+	}
+}
+
+/**
+ * Installs the AEAD bridge on the PHP Module.
+ *
+ * Masked for the same reason the digest is: sealing a frame is a long JavaScript frame under the
+ * PHP stack.
+ */
+export function installAead(
+	binary: Record<string, unknown>,
+	withMask: <R>(fn: () => R) => R
+): Record<string, unknown> {
+	binary[AEAD_BRIDGE] = (json: string) =>
+		withMask(() => {
+			let req: AeadRequest;
+			try {
+				req = JSON.parse(json) as AeadRequest;
+			} catch (e: any) {
+				const why = String(e?.message ?? e);
+				return JSON.stringify({ ok: false, error: `unparseable request: ${why}` });
+			}
+			return JSON.stringify(aeadHostCall(req));
+		});
+	return binary;
+}
 
 /** what the PHP half sends */
 export type Blake2bRequest = {
@@ -354,6 +465,70 @@ if (!extension_loaded('sodium') && !function_exists('cfw_sodium_installed')) {
 			$state = null;
 			if (!$r['ok']) { cfw_blake2b_fail($r['error']); }
 			return cfw_blake2b_bytes($r);
+		}
+
+		if (!defined('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES')) { define('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES', ${AEAD_KEYBYTES}); }
+		if (!defined('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES')) { define('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES', ${AEAD_NPUBBYTES}); }
+		if (!defined('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_ABYTES')) { define('SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_ABYTES', ${AEAD_ABYTES}); }
+
+		$__cfw_aead = function_exists('vrzno_env') ? vrzno_env('${AEAD_BRIDGE}') : null;
+		if ($__cfw_aead !== null) {
+			$GLOBALS['__cfw_aead'] = $__cfw_aead;
+
+			/**
+			 * Runs one AEAD op over its own bridge.
+			 *
+			 * @return array
+			 *   ['ok' => true, 'b64' => string] or ['ok' => false, 'error' => string, 'auth' => bool].
+			 */
+			function cfw_aead(array $payload) {
+				$fn = $GLOBALS['__cfw_aead'];
+				$reply = json_decode($fn(json_encode($payload)), true);
+				if (!is_array($reply)) { return ['ok' => false, 'error' => 'unreadable reply', 'auth' => false]; }
+				return $reply;
+			}
+
+			function sodium_crypto_aead_xchacha20poly1305_ietf_keygen() {
+				return random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES);
+			}
+
+			function sodium_crypto_aead_xchacha20poly1305_ietf_encrypt($message, $additional_data, $nonce, $key) {
+				$r = cfw_aead([
+					'op' => 'encrypt',
+					'b64' => base64_encode((string) $message),
+					'aad64' => base64_encode((string) $additional_data),
+					'nonce64' => base64_encode((string) $nonce),
+					'key64' => base64_encode((string) $key),
+				]);
+				// ext-sodium THROWS on a bad argument here; it has no FALSE return at all
+				if (($r['ok'] ?? false) !== true) { throw new SodiumException((string) ($r['error'] ?? 'aead encrypt failed')); }
+				$out = base64_decode((string) ($r['b64'] ?? ''), true);
+				if ($out === false) { throw new SodiumException('aead reply was not base64'); }
+				return $out;
+			}
+
+			/**
+			 * Answers FALSE on a failed tag and THROWS on a bad argument, which is ext-sodium's
+			 * split and the one strata reads: a FALSE becomes AuthenticationFailure and trips
+			 * frame.aead_fail, a throw is a programming error. Collapsing them would sweep a
+			 * healthy store over a mis-sized key.
+			 */
+			function sodium_crypto_aead_xchacha20poly1305_ietf_decrypt($ciphertext, $additional_data, $nonce, $key) {
+				$r = cfw_aead([
+					'op' => 'decrypt',
+					'b64' => base64_encode((string) $ciphertext),
+					'aad64' => base64_encode((string) $additional_data),
+					'nonce64' => base64_encode((string) $nonce),
+					'key64' => base64_encode((string) $key),
+				]);
+				if (($r['ok'] ?? false) !== true) {
+					if (($r['auth'] ?? false) === true) { return false; }
+					throw new SodiumException((string) ($r['error'] ?? 'aead decrypt failed'));
+				}
+				$out = base64_decode((string) ($r['b64'] ?? ''), true);
+				if ($out === false) { throw new SodiumException('aead reply was not base64'); }
+				return $out;
+			}
 		}
 	}
 }

@@ -1,5 +1,12 @@
-import { AuthError, ProtocolError } from 'edgeport';
-import { connect as coreConnect, type ConnectOptions, type CoreSocket } from 'edgeport/core';
+// not the root barrel: edgeport 1.0.6 re-exports 20 namespaces it never imports, which esbuild
+// refuses and vite tolerates (so the gate stayed green while wrangler could not bundle)
+import {
+	AuthError,
+	connect as coreConnect,
+	ProtocolError,
+	type ConnectOptions,
+	type CoreSocket
+} from 'edgeport/core';
 import { _connectOverSocket, type RedisArg } from 'edgeport/redis';
 import { _sessionFromSocket as syslogSessionFromSocket } from 'edgeport/syslog';
 
@@ -261,6 +268,25 @@ export interface TcpResult {
 	status: number;
 	headers: Record<string, string>;
 	body: string;
+}
+
+/** what `cfwTcp` hands PHP when the answer is already in the exchange cache */
+export interface TcpCachedReply {
+	ok: boolean;
+	status: number;
+	body: string;
+	error?: string;
+}
+
+/**
+ * Turns a cached exchange row into the reply PHP reads.
+ *
+ * A non-200 body is the server's own sentence and has to arrive as `error`, which is where
+ * `CfwTcp::redis()` looks; putting it only in `body` made every failure read the same.
+ */
+export function tcpCachedReply(status: number, body: string): TcpCachedReply {
+	const ok = status === 200;
+	return ok ? { ok, status, body } : { ok, status, body, error: body };
 }
 
 /** a redis reply, flattened to something PHP can `json_decode` */

@@ -7,6 +7,7 @@ import {
 	resolveTcpEndpoint,
 	runTcpExchange,
 	TCP_PROTOCOLS,
+	tcpCachedReply,
 	tcpMethod,
 	tcpProtocolOf,
 	tcpQueueUrl
@@ -242,5 +243,38 @@ describe('runTcpExchange: the real client over a scripted socket', () => {
 		expect(record).toContain('drupal');
 		// severity `info` (6) at the default facility `user` (1) is PRI 14
 		expect(record.startsWith('<14>1 ')).toBe(true);
+	});
+});
+
+/**
+ * The seam between the exchange cache and PHP. Every mock in the gate answers 200, so this branch
+ * had never run: a RESP error sits in the body of a 502 and `CfwTcp::redis()` reads `error`.
+ */
+describe('tcpCachedReply: the server sentence has to survive the cache', () => {
+	it('passes a 200 body through with no error field', () => {
+		expect(tcpCachedReply(200, '"OK"')).toEqual({ ok: true, status: 200, body: '"OK"' });
+	});
+
+	it('copies a refusal body into error, where CfwTcp reads it', () => {
+		const message = 'ERR value is not an integer or out of range';
+		expect(tcpCachedReply(502, message)).toEqual({
+			ok: false,
+			status: 502,
+			body: message,
+			error: message
+		});
+	});
+
+	it('keeps the body as well, so a caller that reads either one is served', () => {
+		const out = tcpCachedReply(503, 'no REDIS_URL is configured');
+		expect(out.body).toBe(out.error);
+	});
+
+	// the control: answering `ok` for everything would pass the first case and say nothing
+	it('treats every non-200 as a refusal, not just 502', () => {
+		expect(tcpCachedReply(403, 'FLUSHALL is not reachable').ok).toBe(false);
+		expect(tcpCachedReply(400, 'queued body is not JSON').error).toBe(
+			'queued body is not JSON'
+		);
 	});
 });

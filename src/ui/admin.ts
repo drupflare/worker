@@ -13,6 +13,7 @@ import {
  * | Extend     | **live**: drives `/installable`, which is `catalog.ts` + `packagist.ts` + `oracle.ts` |
  * | Commands   | **partly**: lists what `/__ops` registers, and says which have NO driver      |
  * | Deploy     | **NOT wired**: no provisioning exists; the surface says so instead of lying   |
+ * | Git        | **live**: drives `/git` -- smart HTTP to any remote, four provider APIs above it |
  *
  * A button that appears to deploy and does not is worse than no button, so the Deploy surface renders
  * the manifest a provisioner would need and refuses to pretend it has one.
@@ -34,8 +35,8 @@ export function escapeHtml(value: unknown): string {
 		.replace(/'/g, '&#39;');
 }
 
-/** the four surfaces */
-export type AdminPage = 'thresholds' | 'extend' | 'commands' | 'deploy';
+/** the six surfaces */
+export type AdminPage = 'thresholds' | 'extend' | 'commands' | 'deploy' | 'git' | 'access';
 
 /**
  * The prefix every product surface lives under.
@@ -53,7 +54,9 @@ export const ADMIN_PAGES: readonly { page: AdminPage; path: string; label: strin
 	{ page: 'thresholds', path: SURFACE_PREFIX, label: 'Limits' },
 	{ page: 'extend', path: `${SURFACE_PREFIX}/extend`, label: 'Extend' },
 	{ page: 'commands', path: `${SURFACE_PREFIX}/commands`, label: 'Commands' },
-	{ page: 'deploy', path: `${SURFACE_PREFIX}/deploy`, label: 'Deploy' }
+	{ page: 'deploy', path: `${SURFACE_PREFIX}/deploy`, label: 'Deploy' },
+	{ page: 'git', path: `${SURFACE_PREFIX}/git`, label: 'Git' },
+	{ page: 'access', path: `${SURFACE_PREFIX}/access`, label: 'Access' }
 ] as const;
 
 const STYLE = `:root{color-scheme:light dark;--fg:#111;--bg:#fff;--dim:#666;--line:#d8d8d8;--ok:#1a7f37;--warn:#9a6700;--over:#b42318;--card:#fafafa}

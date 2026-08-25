@@ -58,6 +58,37 @@ export function discoveryUrl(issuer: string): string {
 }
 
 /**
+ * Validates what an operator typed into the setup form.
+ *
+ * `https` is a refusal rather than an upgrade: an issuer reached over plain http can be rewritten in
+ * flight, and the discovery document is what names the jwks the whole login trusts. A query string
+ * or fragment is refused for the same reason `discoveryUrl()` appends a fixed path -- an issuer
+ * carrying one produces a discovery URL nobody intended.
+ */
+export function readOidcSetup(input: {
+	issuer?: string | null;
+	clientId?: string | null;
+}): { issuer: string; clientId: string } | { refusal: string } {
+	const clientId = String(input.clientId ?? '').trim();
+	if (clientId === '') return { refusal: 'the client id is required' };
+
+	const raw = String(input.issuer ?? '').trim();
+	if (raw === '') return { refusal: 'the issuer is required' };
+	let url: URL;
+	try {
+		url = new URL(raw);
+	} catch {
+		return { refusal: `the issuer is not a URL: ${raw.slice(0, 80)}` };
+	}
+	if (url.protocol !== 'https:') return { refusal: 'the OIDC issuer must be https' };
+	if (url.search !== '' || url.hash !== '') {
+		return { refusal: 'the issuer must be a bare URL, with no query or fragment' };
+	}
+	// stored without it, so `discoveryUrl()` and the `iss` comparison agree on one spelling
+	return { issuer: `${url.origin}${url.pathname}`.replace(/\/+$/, ''), clientId };
+}
+
+/**
  * Reads a discovery document, refusing one whose `issuer` does not match where it was fetched from.
  *
  * That check is not ceremony: the `iss` claim is verified against this value later, so a document

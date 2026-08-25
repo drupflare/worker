@@ -12,6 +12,7 @@ import {
 	type AuthSpend
 } from './ops/auth-budget';
 import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit';
+import { isCacheTier } from './ops/cache-tiers';
 import {
 	ensureFleetTable,
 	fleetSummary,
@@ -26,13 +27,18 @@ import { bearerToken } from './ops/site-secrets';
 import { SitePhpDurableObject } from './site-do';
 import {
 	ADMIN_PAGES,
+	parseDrush,
+	renderAccess,
 	renderCommands,
 	renderDeploy,
 	renderExtend,
+	renderGit,
 	renderShell,
 	renderThresholds,
 	SURFACE_PREFIX,
-	type OpsEntry
+	type OidcSetupRow,
+	type OpsEntry,
+	type RemoteRow
 } from './ui/admin';
 
 export { SitePhpDurableObject };
@@ -80,7 +86,7 @@ export { SitePhpDurableObject };
  * Cloudflare's consent screen carrying no header drupflare controls. The `state` parameter is what
  * authenticates it, matched constant-time against the pending record in the object.
  */
-const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback']);
+const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback', '/githook']);
 
 /**
  * Routes that must never be reachable without PW_DIAGNOSTICS.
@@ -114,8 +120,11 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/bump',
 	'/export',
 	'/restore',
+	'/pitr',
 	'/savenode',
 	'/capability',
+	'/tcp',
+	'/git',
 	'/httpdrain',
 	'/nativefetch',
 	'/invalidate',
@@ -129,6 +138,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/enable',
 	'/fleet',
 	'/health',
+	'/setup/oidc',
 	// the product surfaces, diagnostic-gated: `${SURFACE_PREFIX}/commands` proxies to /__ops, which
 	// runs cache rebuilds and module installs, and there is no administrator authentication in this
 	// Worker. Unauthenticated, that is a remote shell. They move to PUBLIC_ROUTES when an admin
@@ -148,7 +158,14 @@ const DIAGNOSTIC_ROUTES = new Set([
  * These stay in `DIAGNOSTIC_ROUTES` as well, so `PW_DIAGNOSTICS=1` still reaches them and nothing
  * that worked stops working. The token is an ADDITIONAL way in, not a replacement.
  */
-const OWNER_ROUTES = new Set(['/export', '/health', '/setup/cf', '/setup/mail']);
+const OWNER_ROUTES = new Set([
+	'/export',
+	'/health',
+	'/setup/cf',
+	'/setup/mail',
+	'/setup/oidc',
+	'/git'
+]);
 
 /**
  * Every path this Worker answers, and the reason `OWNER_ROUTES` is in the union.
@@ -220,6 +237,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/serve': '/__serve',
 	'/setup/cf': '/__cfoauth',
 	'/setup/mail': '/__mailonboard',
+	'/setup/oidc': '/__oidcsetup',
 	'/setup/cf/callback': '/__cfoauth',
 	'/fill': '/__fill',
 	'/assemble': '/__assemble',
@@ -227,9 +245,13 @@ const DO_ROUTE: Record<string, string> = {
 	'/bump': '/__bump',
 	'/export': '/__export',
 	'/restore': '/__restore',
+	'/pitr': '/__pitr',
 	'/firstrun': '/__firstrun',
 	'/savenode': '/__savenode',
 	'/capability': '/__capability',
+	'/tcp': '/__tcp',
+	'/git': '/__git',
+	'/githook': '/__githook',
 	'/httpdrain': '/__httpdrain',
 	'/nativefetch': '/__nativefetch',
 	'/invalidate': '/__invalidate',
@@ -883,7 +905,11 @@ export default {
 			}
 		}
 
-		const doCache = res.headers.get('x-cfw-cache') ?? 'n/a';
+		// an unrecognised tier means this worker and the object disagree about the header
+		// contract, which is the drift `CACHE_TIERS` exists to make visible rather than silent
+		const rawTier = res.headers.get('x-cfw-cache');
+		const doCache =
+			rawTier === null ? 'n/a' : isCacheTier(rawTier) ? rawTier : `unknown:${rawTier}`;
 		const doGeneration = asGeneration(res.headers.get('x-cfw-generation'));
 
 		// the counter rides along on a response already paid for, same as the generation
@@ -995,14 +1021,54 @@ async function renderAdmin(
 				'content-type': 'text/html; charset=utf-8',
 				// an admin page is per-operator and drives privileged machinery; nothing may store it
 				'cache-control': 'private, no-store',
-				// it renders no third-party anything, so the policy can be this tight
+				// `script-src` and `connect-src` are load-bearing: with only `default-src 'none'`
+				// every inline handler on these pages was blocked, so Deploy's Connect button and
+				// Git's whole form did nothing. Still no third-party origin anywhere
 				'content-security-policy':
-					"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"
+					"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+					"connect-src 'self'; form-action 'self'"
 			}
 		});
 
 	if (url.pathname === `${SURFACE_PREFIX}/deploy`) {
 		return html(renderShell('deploy', renderDeploy(), env));
+	}
+
+	if (url.pathname === `${SURFACE_PREFIX}/git`) {
+		// the remotes live in the object, so this is the second page that reaches it
+		const inner = new URL(url);
+		inner.pathname = '/__git';
+		inner.search = '?action=list';
+		let remotes: RemoteRow[] = [];
+		try {
+			const reply = (await (await stub.fetch(inner)).json()) as { remotes?: RemoteRow[] };
+			remotes = Array.isArray(reply.remotes) ? reply.remotes : [];
+		} catch {
+			remotes = [];
+		}
+		return html(renderShell('git', renderGit(remotes, Date.now()), env));
+	}
+
+	if (url.pathname === `${SURFACE_PREFIX}/access`) {
+		// read only from here; the write goes to `/setup/oidc`, which takes the owner token
+		const inner = new URL(url);
+		inner.pathname = '/__oidcsetup';
+		inner.search = '?action=status';
+		let row: OidcSetupRow = {
+			issuer: '',
+			clientId: '',
+			secretPresent: false,
+			redirectUri: `${url.origin}/__oidc?action=callback`
+		};
+		try {
+			row = {
+				...row,
+				...((await (await stub.fetch(inner)).json()) as Partial<OidcSetupRow>)
+			};
+		} catch (e: unknown) {
+			row.error = `the object did not answer: ${String((e as Error)?.message ?? e).slice(0, 160)}`;
+		}
+		return html(renderShell('access', renderAccess(row), env));
 	}
 
 	if (url.pathname === `${SURFACE_PREFIX}/extend`) {
@@ -1047,12 +1113,14 @@ async function renderAdmin(
 
 	if (url.pathname === `${SURFACE_PREFIX}/commands`) {
 		const op = url.searchParams.get('op');
+		const parsed = parseDrush(op);
 		let result: string | null = null;
 		const entries: OpsEntry[] = [];
 		try {
 			const inner = new URL(url);
 			inner.pathname = '/__ops';
-			if (op) inner.searchParams.set('op', op);
+			// the registry always answers, so the table renders even when the typed command goes
+			// somewhere else
 			const res = await stub.fetch(new Request(inner));
 			const body = (await res.json()) as {
 				operations?: {
@@ -1070,11 +1138,29 @@ async function renderAdmin(
 					cost: o.cost ?? null
 				});
 			}
-			if (op) result = JSON.stringify(body, null, 2).slice(0, 4000);
+			if (parsed?.kind === 'run') {
+				const run = new URL(url);
+				run.pathname = parsed.route;
+				run.searchParams.delete('op');
+				for (const [k, v] of Object.entries(parsed.params)) run.searchParams.set(k, v);
+				const ran = await stub.fetch(new Request(run));
+				result = (await ran.text()).slice(0, 4000);
+			}
 		} catch (e: unknown) {
 			result = `the operation registry could not be read: ${String((e as Error)?.message ?? e).slice(0, 200)}`;
 		}
-		return html(renderShell('commands', renderCommands(entries, result, op), env));
+		return html(
+			renderShell(
+				'commands',
+				renderCommands(
+					entries,
+					result,
+					op,
+					parsed?.kind === 'error' ? parsed.message : null
+				),
+				env
+			)
+		);
 	}
 
 	/**

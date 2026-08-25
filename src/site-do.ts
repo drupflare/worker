@@ -1,5 +1,6 @@
 import '@drupflare/cartridge/shim';
 import type { SiteEnv } from './env';
+import type { CacheTier } from './ops/cache-tiers.js';
 import {
 	attemptBudget,
 	deferredKey,
@@ -17,6 +18,7 @@ import {
 	// aliased: `cf-oauth.ts` exports the same two names for Cloudflare's own dashboard flow
 	authorizeUrl as oidcAuthorizeUrl,
 	pendingMatches as oidcPendingMatches,
+	readOidcSetup,
 	readProvider,
 	ticketRedeemable,
 	type ClaimsTicket,
@@ -31,6 +33,7 @@ import {
 	isTcpUrl,
 	resolveTcpEndpoint,
 	runTcpExchange,
+	tcpCachedReply,
 	tcpMethod,
 	tcpQueueUrl,
 	type TcpProtocol,
@@ -145,7 +148,8 @@ import {
 	type BootPhase,
 	type RenderRequest
 } from './drupal/site-php';
-import { SODIUM_FIX, installBlake2b } from './drupal/sodium-fix';
+import { SODIUM_FIX, installAead, installBlake2b } from './drupal/sodium-fix';
+import { tcpLive } from './drupal/tcp-php';
 import { XMLWRITER_FIX } from './drupal/xmlwriter-fix';
 import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
 import {
@@ -199,6 +203,47 @@ import {
 	type FleetDb,
 	type FleetRow
 } from './ops/fleet';
+import {
+	PROVIDERS,
+	authHeaders,
+	cloneUrl,
+	createHookRequest,
+	defaultBranchRequest,
+	hasApi,
+	parseRemote,
+	pullsRequest,
+	readHookEvent,
+	remoteId,
+	smartAuth,
+	statusRequest,
+	verifyHook,
+	type BuildState,
+	type Credential,
+	type ProviderId,
+	type PullRequest,
+	type Remote
+} from './ops/git-provider';
+import {
+	branchNames,
+	discoverRefs,
+	fetchCommit,
+	refSha,
+	requestRefs,
+	type Advertisement,
+	type SmartRemote
+} from './ops/git-smart';
+import {
+	DEFAULT_POLL_MINUTES,
+	backoffMs,
+	clampInterval,
+	detectConflicts,
+	duePolls,
+	planSync,
+	safeName,
+	selectFiles,
+	type PollState,
+	type SyncPlan
+} from './ops/git-sync';
 import { hibernationEligible } from './ops/hibernation';
 import { phpLogCeiling, phpLogPasses } from './ops/log-level';
 import {
@@ -254,6 +299,7 @@ import {
 	ensureHashSalt,
 	ensureOwnerToken,
 	hashSaltAssignment,
+	isBookmark,
 	randomKeyBase64,
 	tokenMatches,
 	type SecretStore
@@ -713,7 +759,7 @@ class PhpStatic extends PhpBase {
 			{
 				...args,
 				ini: [
-					// P30's seam. `src/runtime/opcache.ts` carries the three arms and why the
+					// the opcache seam. `src/runtime/opcache.ts` carries the three arms and why the
 					// write-only file cache is still the shipping one; `OPCACHE_MODE` selects
 					...opcacheIni(mode),
 					// a wasm-side OOM is otherwise completely silent: PHP turns the heap
@@ -962,55 +1008,28 @@ if (!is_dir($settings['config_sync_directory'])) {
 // messages say to set FALSE. It is the Drupal 12 default and the Drupal 13 behaviour, and it only
 // adds a novalidate attribute to forms -- server-side validation is untouched
 $settings['enable_html5_validation'] = false;
-// P25: whether the password service hashes with argon2id on the host. OFF unless the operator says
+// whether the password service hashes with argon2id on the host. OFF unless the operator says
 // so -- turning it on rehashes every password at its owner's next login, and on the free plan a
 // 19 MiB two-pass hash is CPU a login invocation does not have
 $settings['drupflare.argon2'] = CFW_ARGON2_PLACEHOLDER;
 `;
 
 /**
- * Points Drupal's `page` bin at a null backend, because the host already stores the served page.
+ * Points Drupal's `page` bin at a null backend, and carries the file stream wrappers.
  *
- * MEASURED. A fill that renders the front page writes 12 billable rows: 4 to `cache_page` and 8
- * to `cache_dynamic_page_cache`. The 4 is not a typo for 1 -- `cache_page` carries a primary-key
- * autoindex plus `cache_page_created` and `cache_page_expire`, and Cloudflare's rows-written
- * meter counts an index update as a row written. Emptying the bin before a re-render pays the
- * same 4 again on the way out, so the steady-state fill lane pays up to 8 for this bin alone.
+ * `cache_page` is a second copy of bytes the object already stores in its own SQL, on a path that
+ * refuses to boot PHP at all -- measured at 12 rows per front-page fill, 4 of them this bin, and
+ * rows written is the meter that binds regeneration. `dynamic_page_cache` and `render` stay: warm,
+ * they let a fill reassemble rather than render, so nulling them trades 8 rows for a full render.
  *
- * This bin is pure duplication and the other two are not. The served cache lives in the
- * Durable Object's own SQL and NOT in `cache_page` (see the comment on the serve
- * tables), because the hit path must not boot PHP at all to fit a 10 ms budget. So `cache_page`
- * is a second copy of bytes that are already stored, in a form only an interpreter can read, on
- * a path that refuses to start one. Rows written is the meter that binds the regeneration
- * ceiling, which makes a duplicate store not merely redundant but the scarce resource itself.
+ * A services file rather than `$settings['cache']['bins']`, because core registers
+ * `cache.backend.null` from a compiler pass and no yaml, so the settings route names a service that
+ * does not exist. Overriding `stream_wrapper.public` by tag is the same story: `public://` belongs
+ * to `StreamWrapperManager`, and a bare `stream_wrapper_register()` loses the race.
  *
- * Only this bin, against the roadmap's own 4.47x claim. That figure assumed `page`,
- * `dynamic_page_cache` and `render` could all go, because core's `DevelopmentSettingsPass` nulls
- * exactly those three as a bundle. Two of them are load-bearing here: leaving
- * `dynamic_page_cache` warm is what lets a fill REASSEMBLE instead of render, which is the cheap
- * path, so nulling it would trade 8 rows for a full render's CPU on every fill. Killing `page`
- * alone is 12 -> 8 rows, not 12 -> 2.7.
- *
- * A services file rather than `$settings['cache']['bins']`. Core registers `cache.backend.null`
- * in no yaml file at all -- only from a compiler pass and the installer -- so the settings route
- * names a service that does not exist and fails every request. Defining the factory here makes
- * the reference resolvable.
- *
- * It also carries the file wrappers, for the same reason it can carry the cache override. Drupal
- * owns `public://` -- `StreamWrapperManager` registers `PublicStream` for it during container boot,
- * so a bare `stream_wrapper_register()` from the host either loses the race or is undone the next
- * time the manager runs. Overriding `stream_wrapper.public` by tag is the supported way, and it only
- * works from inside the container. `CfwFileStreamWrapper` stores in the Durable Object's own SQL, so
- * an upload survives the eviction that used to destroy it while leaving the `file_managed` row
- * behind.
- *
- * The path itself is load-bearing. The shipped settings.php
- * already does `$settings['container_yamls'][] = $app_root . '/' . $site_path . '/services.yml'`
- * unconditionally, and that file has never existed. `getContainerCacheKey()` folds in
- * `serialize(Settings::get('container_yamls'))` -- the RAW setting -- while `addServiceFiles()`
- * loads `array_filter($yamls, 'is_file')`. So creating this file changes what the container
- * contains WITHOUT changing the container cache key by a byte. Any other filename would add a
- * path, move the key, and invalidate every figure measured against the baked container.
+ * The FILENAME is load-bearing. The shipped `settings.php` already appends this exact path
+ * unconditionally, and `getContainerCacheKey()` folds in the raw setting while `addServiceFiles()`
+ * filters to files that exist -- so creating it changes the container without moving the cache key.
  */
 const SERVICES_YAML = `services:
   drupflare.cache_backend.null:
@@ -1147,6 +1166,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastGcAt?: number;
 	lastHttpDrain?: Payload;
 	lastHttpDrainAt?: number;
+	lastGitPoll?: Record<string, unknown>[];
+	lastGitPollAt?: number;
 	lastMailDrain?: Payload;
 	lastMailDrainAt?: number;
 	lastMirrorDrain?: Payload;
@@ -1276,8 +1297,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		installSign(binary as unknown as Record<string, unknown>, withMask);
 		installArgon2(binary as unknown as Record<string, unknown>, withMask);
 		// BLAKE2b over blakejs; no build here has ext-sodium and no layer under it has the digest
-		// either, so this is the only place strata's content address can come from
+		// either, so this is the only place a content address can come from
 		installBlake2b(binary as unknown as Record<string, unknown>, withMask);
+		installAead(binary as unknown as Record<string, unknown>, withMask);
 		// LAST, after every installer. A wrapper applied before one is silently overwritten by it,
 		// and the tally then reads 0 for a capability being called constantly -- which is the
 		// failure this instrument exists to avoid in the first place
@@ -1315,7 +1337,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					});
 		this.mountInfo.driver = await mountDriver(binary, this.env);
 		// AFTER the packed driver, so a site-installed module can override a packed file rather than
-		// being shadowed by one. P18 (`composer require`) and P40 (a git-delivered module) both write
+		// being shadowed by one. `composer require` and a git-delivered module both write
 		// into `cfw_module_file`; this is the only place either becomes reachable to PHP
 		this.installedModuleFiles = this.mountInstalledModules(binary);
 
@@ -1405,7 +1427,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// unmodified; inert on a build that has the real extension
 		await this.run(`<?php ${OPENSSL_FIX}`);
 		await this.run(`<?php ${ARGON2_FIX}`);
-		// sodium_crypto_generichash*, which strata needs before its first frame is written
+		// sodium_crypto_generichash*, which a content-addressed store needs before its first write
 		await this.run(`<?php ${SODIUM_FIX}`);
 		// XMLWriter must exist before any module class EXTENDS it, which is a compile-time
 		// requirement rather than a call-time one and is why this is a class and not a shim set
@@ -1590,7 +1612,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const method = tcpMethod('redis', command);
 			const row = this.httpCacheGet(url, method, body, {});
 			if (row !== null) {
-				return reply({ ok: row.status === 200, status: row.status, body: row.body });
+				// A NON-200 BODY IS THE SERVER'S OWN SENTENCE, and it has to arrive as `error`.
+				// `runRedis()` answers a RESP error with 502 and the message as the body, while
+				// `CfwTcp::redis()` reads `error` and falls back to a generic string -- so the
+				// sentence was dropped between the two halves that exist to carry it. Found by
+				// the first exchange against a real server; every mock had answered 200
+				return reply(tcpCachedReply(row.status, row.body));
 			}
 			this.queueHttp(url, method, body, {});
 			return reply({
@@ -2030,29 +2057,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * The vrzno handle table, `Module.targets`.
+	 * The vrzno handle table, `Module.targets`, shape-checked rather than cast.
 	 *
-	 * Shape-checked rather than cast: the heap stores handle IDs as integers, so a restore that
-	 * wrote them into the wrong object would produce a PHP side calling something else entirely --
-	 * a failure with no error attached. Returns null when the build has no table, which a restore
-	 * then refuses on rather than silently skipping.
+	 * Null when the build has no table, which a restore refuses on rather than skipping silently.
 	 */
 	/**
 	 * Keeps every vrzno handle alive for the interpreter's whole life.
 	 *
-	 * MEASURED, and it is why capture alone was not enough. `Module.targets.byInteger` is php-wasm's
-	 * `WeakerMap` -- a `Map` of `WeakRef`s with a `FinalizationRegistry` -- and its iterator DELETES
-	 * any entry whose referent has been collected. So a handle PHP acquired during the kernel boot
-	 * and did not call again was gone from the table by snapshot time, while the integer was still
-	 * sitting in the heap. On the edge that read as `misses: [2]` from `/heap?op=trace`: the restored
-	 * heap asked for handle 2 and the table held only handle 1.
-	 *
-	 * A snapshot cannot fix that after the fact, so the pin goes in before any PHP runs. The strong
-	 * set is per-interpreter and per-object, and a booted kernel mints a handful of handles, so this
-	 * trades a few retained JS objects for a handle table that still describes the heap.
-	 *
-	 * `add` is defined non-writable on the index, which is why the whole object is swapped rather
-	 * than the method patched; the glue re-reads `Module.targets` at every call site.
+	 * `Module.targets.byInteger` is a `WeakerMap` whose iterator DELETES collected entries, so a
+	 * handle the heap still names can be gone by snapshot time; the pin runs before any PHP does.
 	 */
 	pinHandles(binary: SiteBinary): number {
 		const table = this.handleIndex(binary);
@@ -2384,6 +2397,795 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return { heapRestore: this.heapRestore };
 	}
 
+	// #region git remotes
+
+	/** every configured remote; the list is one meta row so an add is one write */
+	gitRemotes(): Remote[] {
+		try {
+			const raw = JSON.parse(this.metaGet('git_remotes') || '[]') as unknown;
+			return Array.isArray(raw) ? (raw as Remote[]) : [];
+		} catch {
+			return [];
+		}
+	}
+
+	private gitSaveRemotes(remotes: readonly Remote[]): void {
+		this.metaSet('git_remotes', JSON.stringify(remotes));
+	}
+
+	private gitCredential(id: string): Credential {
+		return {
+			token: this.metaGet(`git_token_${id}`) ?? '',
+			email: this.metaGet(`git_email_${id}`) ?? ''
+		};
+	}
+
+	/** the git transport's view of a remote, which authenticates as Basic rather than as the API does */
+	private gitSmart(remote: Remote): SmartRemote {
+		const auth = smartAuth(remote, this.gitCredential(remote.id));
+		return { url: cloneUrl(remote), username: auth.username, token: auth.token };
+	}
+
+	/** one authenticated API GET, returning parsed JSON or a refusal */
+	private async gitGet(
+		remote: Remote,
+		url: string
+	): Promise<{ ok: boolean; body: unknown; status: number }> {
+		const res = await fetch(url, {
+			headers: authHeaders(remote, this.gitCredential(remote.id))
+		});
+		let body: unknown = null;
+		try {
+			body = await res.json();
+		} catch {
+			body = null;
+		}
+		if (res.status === 429) this.gitBackoff(remote.id, res.headers.get('retry-after'));
+		return { ok: res.ok, body, status: res.status };
+	}
+
+	/** records a refusal so nothing polls this remote again until the window passes */
+	private gitBackoff(id: string, retryAfter?: string | null): number {
+		const attempts = Number(this.metaGet(`git_attempts_${id}`, '0') ?? 0) + 1;
+		const seconds = retryAfter === null || retryAfter === undefined ? null : Number(retryAfter);
+		const wait = backoffMs(attempts, Number.isFinite(seconds) ? seconds : null);
+		this.metaSet(`git_attempts_${id}`, String(attempts));
+		this.metaSet(`git_backoff_${id}`, String(this.nowMs() + wait));
+		return wait;
+	}
+
+	private gitClearBackoff(id: string): void {
+		this.metaSet(`git_attempts_${id}`, '0');
+		this.metaSet(`git_backoff_${id}`, '0');
+	}
+
+	/** every file this remote has installed, so a plan can tell a change from an addition */
+	private gitStoredFiles(id: string): Map<string, string> {
+		this.ensureServeTables();
+		const rows = this.sql
+			.exec<{
+				path: string;
+				source: string;
+			}>('SELECT path, source FROM cfw_module_file WHERE package = ?', id)
+			.toArray();
+		return new Map(rows.map((r) => [String(r.path), String(r.source)]));
+	}
+
+	/** who owns each installed path, which is what turns an overwrite into a refusal */
+	private gitOwners(): Map<string, string> {
+		this.ensureServeTables();
+		const rows = this.sql
+			.exec<{
+				path: string;
+				package: string;
+			}>('SELECT path, package FROM cfw_module_file')
+			.toArray();
+		return new Map(rows.map((r) => [String(r.path), String(r.package)]));
+	}
+
+	/** the ref advertisement, which is the poll and works against any remote that speaks git */
+	private async gitRefs(remote: Remote): Promise<Advertisement> {
+		try {
+			const ad = await discoverRefs(this.gitSmart(remote));
+			this.gitClearBackoff(remote.id);
+			return ad;
+		} catch (e: any) {
+			const message = String(e?.message ?? e);
+			if (/ answered 4(29|03)/.test(message)) this.gitBackoff(remote.id);
+			throw e;
+		}
+	}
+
+	/**
+	 * Writes one commit status.
+	 *
+	 * A status, never a check run: a pasted token is refused by both check-run endpoints and accepted
+	 * by this one, measured on all three providers.
+	 */
+	async gitWriteStatus(
+		remote: Remote,
+		sha: string,
+		state: BuildState,
+		description: string,
+		targetUrl: string
+	): Promise<boolean> {
+		const post = statusRequest(remote, sha, state, description, targetUrl);
+		if (post === null) return false;
+		const res = await fetch(post.url, {
+			method: 'POST',
+			headers: {
+				...authHeaders(remote, this.gitCredential(remote.id)),
+				'content-type': 'application/json'
+			},
+			body: JSON.stringify(post.body)
+		});
+		return res.ok;
+	}
+
+	/**
+	 * Fetches one commit, plans it against what is installed, and optionally applies it.
+	 *
+	 * Applying is transactional and then VERIFIED by booting the kernel: a module that installs
+	 * cleanly and fatals on boot takes the whole site down, so the previous file set is restored
+	 * rather than left in place.
+	 */
+	async gitSync(
+		remote: Remote,
+		sha: string,
+		opts: { apply: boolean; previewOf?: string | null } = { apply: true }
+	): Promise<Record<string, unknown>> {
+		this.ensureServeTables();
+		const tree = await fetchCommit(this.gitSmart(remote), sha);
+		const selection = selectFiles(tree, safeName(remote.repo));
+		if (selection.files.length === 0) {
+			return {
+				ok: false,
+				error: 'that commit carries no mountable module',
+				skipped: selection.skipped.length,
+				files: 0
+			};
+		}
+
+		const stored = this.gitStoredFiles(remote.id);
+		const plan = planSync(stored, selection.files);
+		const conflicts = detectConflicts(selection.files, this.gitOwners(), remote.id);
+		const summary = {
+			ok: true,
+			sha,
+			modules: selection.roots.map((r) => ({ name: r.name, type: r.type, root: r.root })),
+			counts: plan.counts,
+			rowsWritten: plan.rowsWritten,
+			bytes: selection.totalBytes,
+			skipped: selection.skipped.length,
+			changes: plan.changes.slice(0, 200),
+			conflicts
+		};
+		if (!opts.apply) return { ...summary, applied: false };
+		if (conflicts.length > 0) {
+			return {
+				...summary,
+				ok: false,
+				applied: false,
+				error: `${conflicts.length} path(s) belong to another remote`
+			};
+		}
+
+		const before = [...stored.entries()];
+		this.gitApply(remote.id, plan, sha);
+		const verdict = await this.gitVerifyBoot();
+		if (!verdict.ok) {
+			this.gitRestore(remote.id, before, sha);
+			this.metaSet(
+				`git_lasterror_${remote.id}`,
+				verdict.error ?? 'the kernel refused to boot'
+			);
+			return {
+				...summary,
+				applied: false,
+				rolledBack: true,
+				error: `rolled back: ${verdict.error ?? 'the kernel refused to boot'}`
+			};
+		}
+
+		this.metaSet(`git_installedsha_${remote.id}`, sha);
+		this.metaSet(`git_pulled_${remote.id}`, String(this.nowMs()));
+		this.metaSet(`git_lasterror_${remote.id}`, '');
+		this.metaSet(`git_previewof_${remote.id}`, opts.previewOf ?? '');
+		this.metaSet(`git_lastplan_${remote.id}`, JSON.stringify(plan.counts));
+		return { ...summary, applied: true, rolledBack: false };
+	}
+
+	/** one transaction, so a half-written module can never be what the next boot mounts */
+	private gitApply(id: string, plan: SyncPlan, sha: string): void {
+		const now = this.nowMs();
+		this.ctx.storage.transactionSync(() => {
+			for (const path of plan.deletes) {
+				this.sql.exec(
+					'DELETE FROM cfw_module_file WHERE path = ? AND package = ?',
+					path,
+					id
+				);
+			}
+			for (const file of plan.writes) {
+				this.sql.exec(
+					`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+             package = excluded.package,
+             version = excluded.version,
+             source = excluded.source,
+             installed_at = excluded.installed_at`,
+					file.path,
+					id,
+					sha,
+					file.source,
+					now
+				);
+			}
+		});
+		this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + plan.rowsWritten;
+		this.php = null;
+	}
+
+	/** puts back exactly what was there, which is the only safe answer to a boot that failed */
+	private gitRestore(
+		id: string,
+		before: readonly (readonly [string, string])[],
+		sha: string
+	): void {
+		const now = this.nowMs();
+		this.ctx.storage.transactionSync(() => {
+			this.sql.exec('DELETE FROM cfw_module_file WHERE package = ?', id);
+			for (const [path, source] of before) {
+				this.sql.exec(
+					`INSERT INTO cfw_module_file (path, package, version, source, installed_at)
+           VALUES (?, ?, ?, ?, ?)`,
+					path,
+					id,
+					sha,
+					source,
+					now
+				);
+			}
+		});
+		this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + before.length + 1;
+		this.php = null;
+	}
+
+	/**
+	 * Boots the Drupal kernel against what was just written.
+	 *
+	 * `ensurePhp()` only starts the interpreter, and a module with a syntax error or a missing service
+	 * fails when the container is built rather than when the file is mounted.
+	 */
+	private async gitVerifyBoot(): Promise<{ ok: boolean; error?: string }> {
+		try {
+			const booted = (await this.runJson(BOOT_KERNEL)) as Record<string, unknown> | null;
+			if (booted !== null && booted['error'] !== undefined && booted['error'] !== null) {
+				return { ok: false, error: String(booted['error']).slice(0, 300) };
+			}
+			return { ok: true };
+		} catch (e: any) {
+			return { ok: false, error: String(e?.message ?? e).slice(0, 300) };
+		} finally {
+			this.php = null;
+		}
+	}
+
+	/** the poll cadence for every remote, which is what the alarm reads */
+	private gitPollStates(remotes: readonly Remote[]): PollState[] {
+		return remotes.map((r) => ({
+			id: r.id,
+			intervalMinutes: clampInterval(
+				Number(this.metaGet(`git_interval_${r.id}`, String(DEFAULT_POLL_MINUTES)) ?? 0)
+			),
+			lastCheckedMs: Number(this.metaGet(`git_checked_${r.id}`, '0') ?? 0),
+			backoffUntilMs: Number(this.metaGet(`git_backoff_${r.id}`, '0') ?? 0)
+		}));
+	}
+
+	/**
+	 * Polls whatever is due, and pulls when a head moved.
+	 *
+	 * Driven from the alarm, capped at three remotes per firing: a poll is a DO request and a fleet
+	 * polling every remote every firing spends the regeneration meter on remotes that never change.
+	 */
+	async gitPoll(limit = 3): Promise<Record<string, unknown>[]> {
+		const remotes = this.gitRemotes();
+		if (remotes.length === 0) return [];
+		const due = duePolls(this.gitPollStates(remotes), this.nowMs(), limit);
+		const out: Record<string, unknown>[] = [];
+		for (const id of due) {
+			const remote = remotes.find((r) => r.id === id);
+			if (remote === undefined) continue;
+			try {
+				const ad = await this.gitRefs(remote);
+				const sha = refSha(ad, remote.branch);
+				this.metaSet(`git_checked_${id}`, String(this.nowMs()));
+				const before = this.metaGet(`git_head_${id}`) || null;
+				this.metaSet(`git_head_${id}`, sha ?? '');
+				if (sha === null || sha === before || this.metaGet(`git_previewof_${id}`)) {
+					out.push({ id, changed: false, head: sha });
+					continue;
+				}
+				const result = await this.gitSync(remote, sha, { apply: true });
+				out.push({ id, changed: true, head: sha, ...result });
+			} catch (e: any) {
+				this.metaSet(`git_lasterror_${id}`, String(e?.message ?? e).slice(0, 300));
+				out.push({ id, error: String(e?.message ?? e) });
+			}
+		}
+		return out;
+	}
+
+	/** every open request, from the provider API where there is one and from the refs where there is not */
+	private async gitPulls(remote: Remote): Promise<PullRequest[]> {
+		if (!hasApi(remote.provider)) {
+			const ad = await this.gitRefs(remote);
+			return requestRefs(ad).map((r) => ({
+				id: r.id,
+				title: `request ${r.id}`,
+				branch: r.ref,
+				target: remote.branch,
+				sha: r.sha,
+				author: '',
+				url: '',
+				draft: false
+			}));
+		}
+		const request = pullsRequest(remote);
+		const got = await this.gitGet(remote, request.url);
+		if (!got.ok) throw new Error(`the provider answered ${got.status}`);
+		return request.pick(got.body);
+	}
+
+	private gitRow(remote: Remote): Record<string, unknown> {
+		const id = remote.id;
+		let counts: unknown = null;
+		try {
+			counts = JSON.parse(this.metaGet(`git_lastplan_${id}`) || 'null');
+		} catch {
+			counts = null;
+		}
+		return {
+			...remote,
+			head: this.metaGet(`git_head_${id}`) || null,
+			installed: this.metaGet(`git_installedsha_${id}`) || null,
+			checkedAt: Number(this.metaGet(`git_checked_${id}`) || '0') || null,
+			pulledAt: Number(this.metaGet(`git_pulled_${id}`) || '0') || null,
+			intervalMinutes: clampInterval(
+				Number(this.metaGet(`git_interval_${id}`, String(DEFAULT_POLL_MINUTES)) ?? 0)
+			),
+			backoffUntil: Number(this.metaGet(`git_backoff_${id}`) || '0') || null,
+			previewOf: this.metaGet(`git_previewof_${id}`) || null,
+			lastError: this.metaGet(`git_lasterror_${id}`) || null,
+			lastPlan: counts,
+			proof: this.metaGet(`git_proof_${id}`) || null,
+			hookInstalled: this.metaGet(`git_hooksecret_${id}`) !== '',
+			files: this.gitStoredFiles(id).size
+		};
+	}
+
+	async handleGit(url: URL, deliverBase = ''): Promise<Response> {
+		const action = url.searchParams.get('action') ?? 'list';
+		const remotes = this.gitRemotes();
+		const now = this.nowMs();
+
+		if (action === 'list') {
+			return Response.json({ ok: true, remotes: remotes.map((r) => this.gitRow(r)) });
+		}
+
+		if (action === 'add') {
+			const provider = String(url.searchParams.get('provider') ?? '') as ProviderId;
+			if (!(PROVIDERS as readonly string[]).includes(provider)) {
+				return Response.json({ ok: false, error: 'unknown provider' }, { status: 400 });
+			}
+			const parsed = parseRemote(url.searchParams.get('repo') ?? '', provider);
+			if (parsed === null) {
+				return Response.json(
+					{
+						ok: false,
+						error: hasApi(provider)
+							? 'that is not a repository'
+							: 'a plain remote needs a full clone URL'
+					},
+					{ status: 400 }
+				);
+			}
+			const token = url.searchParams.get('token') ?? '';
+			// a public remote over smart HTTP needs no credential at all
+			if (token === '' && hasApi(provider)) {
+				return Response.json(
+					{ ok: false, error: 'an access token is required' },
+					{ status: 400 }
+				);
+			}
+			const email = url.searchParams.get('email') ?? '';
+			if (provider === 'bitbucket' && email === '') {
+				return Response.json(
+					{
+						ok: false,
+						error: 'Bitbucket authenticates with your Atlassian account email'
+					},
+					{ status: 400 }
+				);
+			}
+
+			// the token has to be stored before the first call, because every call authenticates
+			const draft: Remote = {
+				id: 'pending',
+				provider,
+				repo: parsed.repo,
+				branch: url.searchParams.get('branch') || '',
+				...(parsed.host ? { host: parsed.host } : {}),
+				...(email ? { email } : {})
+			};
+			this.metaSet('git_token_pending', token);
+			this.metaSet('git_email_pending', email);
+
+			// the advertisement carries the default branch AND proves the remote is reachable, so one
+			// request settles what used to take a provider call that a plain remote cannot answer
+			let ad: Advertisement;
+			try {
+				ad = await discoverRefs(this.gitSmart(draft));
+			} catch (e: any) {
+				return Response.json(
+					{ ok: false, error: String(e?.message ?? e) },
+					{ status: 400 }
+				);
+			}
+			let branch = draft.branch || ad.defaultBranch || '';
+			if (branch === '' && hasApi(provider)) {
+				const ref = defaultBranchRequest(draft);
+				const got = await this.gitGet(draft, ref.url);
+				branch = (got.ok ? ref.pick(got.body) : null) ?? 'main';
+			}
+			if (branch === '') branch = 'main';
+
+			const remote: Remote = {
+				...draft,
+				branch,
+				id: remoteId(provider, parsed.repo, branch)
+			};
+			const sha = refSha(ad, branch);
+			if (sha === null) {
+				return Response.json(
+					{ ok: false, error: `the remote has no branch ${branch}` },
+					{ status: 400 }
+				);
+			}
+			this.metaSet(`git_token_${remote.id}`, token);
+			this.metaSet(`git_email_${remote.id}`, email);
+			this.metaSet(`git_head_${remote.id}`, sha);
+			this.metaSet(`git_checked_${remote.id}`, String(now));
+			this.metaSet(
+				`git_interval_${remote.id}`,
+				String(
+					clampInterval(Number(url.searchParams.get('interval') ?? DEFAULT_POLL_MINUTES))
+				)
+			);
+			this.gitSaveRemotes([...remotes.filter((r) => r.id !== remote.id), remote]);
+			return Response.json({
+				ok: true,
+				repo: remote.repo,
+				branch,
+				head: sha,
+				id: remote.id,
+				branches: branchNames(ad)
+			});
+		}
+
+		const id = url.searchParams.get('id') ?? '';
+		const remote = remotes.find((r) => r.id === id);
+		if (remote === undefined) {
+			return Response.json({ ok: false, error: 'unknown remote' }, { status: 404 });
+		}
+		const others = remotes.filter((r) => r.id !== id);
+
+		try {
+			switch (action) {
+				case 'remove': {
+					this.gitSaveRemotes(others);
+					this.ensureServeTables();
+					const removed = this.gitStoredFiles(id).size;
+					this.sql.exec('DELETE FROM cfw_module_file WHERE package = ?', id);
+					for (const key of [
+						'token',
+						'email',
+						'head',
+						'checked',
+						'proof',
+						'hooksecret',
+						'interval',
+						'backoff',
+						'attempts',
+						'installedsha',
+						'previewof',
+						'lasterror',
+						'lastplan',
+						'pulled'
+					]) {
+						this.metaSet(`git_${key}_${id}`, '');
+					}
+					this.php = null;
+					return Response.json({
+						ok: true,
+						message: `removed ${remote.repo} and ${removed} file(s)`
+					});
+				}
+
+				case 'check': {
+					const ad = await this.gitRefs(remote);
+					const sha = refSha(ad, remote.branch);
+					const before = this.metaGet(`git_head_${id}`) || null;
+					this.metaSet(`git_head_${id}`, sha ?? '');
+					this.metaSet(`git_checked_${id}`, String(now));
+					return Response.json({
+						ok: true,
+						head: sha,
+						changed: sha !== before,
+						installed: this.metaGet(`git_installedsha_${id}`) || null,
+						message:
+							sha === before
+								? `unchanged at ${String(sha).slice(0, 12)}`
+								: `now ${String(sha).slice(0, 12)}`
+					});
+				}
+
+				case 'branches': {
+					const ad = await this.gitRefs(remote);
+					return Response.json({
+						ok: true,
+						branches: branchNames(ad),
+						current: remote.branch,
+						default: ad.defaultBranch
+					});
+				}
+
+				case 'switch': {
+					const branch = url.searchParams.get('branch') ?? '';
+					if (branch === '') {
+						return Response.json(
+							{ ok: false, error: 'no branch named' },
+							{ status: 400 }
+						);
+					}
+					const ad = await this.gitRefs(remote);
+					const sha = refSha(ad, branch);
+					if (sha === null) {
+						return Response.json(
+							{ ok: false, error: `the remote has no branch ${branch}` },
+							{ status: 400 }
+						);
+					}
+					// the id encodes the branch, so a switch carries every key across rather than
+					// stranding the token and the installed files under the old one
+					const next: Remote = {
+						...remote,
+						branch,
+						id: remoteId(remote.provider, remote.repo, branch)
+					};
+					if (next.id !== id) {
+						for (const key of [
+							'token',
+							'email',
+							'proof',
+							'hooksecret',
+							'interval',
+							'installedsha',
+							'lasterror'
+						]) {
+							this.metaSet(
+								`git_${key}_${next.id}`,
+								this.metaGet(`git_${key}_${id}`) ?? ''
+							);
+							this.metaSet(`git_${key}_${id}`, '');
+						}
+						this.sql.exec(
+							'UPDATE cfw_module_file SET package = ? WHERE package = ?',
+							next.id,
+							id
+						);
+					}
+					this.metaSet(`git_head_${next.id}`, sha);
+					this.metaSet(`git_checked_${next.id}`, String(now));
+					this.metaSet(`git_previewof_${next.id}`, '');
+					this.gitSaveRemotes([...others, next]);
+					const result = await this.gitSync(next, sha, { apply: true });
+					return Response.json({ ...result, branch, id: next.id });
+				}
+
+				case 'prs': {
+					const pulls = await this.gitPulls(remote);
+					return Response.json({
+						ok: true,
+						pulls,
+						previewOf: this.metaGet(`git_previewof_${id}`) || null
+					});
+				}
+
+				case 'preview': {
+					const pr = url.searchParams.get('pr') ?? '';
+					const pulls = await this.gitPulls(remote);
+					const found = pulls.find((p) => p.id === pr);
+					if (found === undefined || found.sha === null) {
+						return Response.json(
+							{ ok: false, error: `no open request ${pr}` },
+							{ status: 404 }
+						);
+					}
+					const result = await this.gitSync(remote, found.sha, {
+						apply: true,
+						previewOf: pr
+					});
+					return Response.json({ ...result, previewOf: pr, title: found.title });
+				}
+
+				case 'unpreview': {
+					const ad = await this.gitRefs(remote);
+					const sha = refSha(ad, remote.branch);
+					if (sha === null) {
+						return Response.json(
+							{ ok: false, error: `the remote has no branch ${remote.branch}` },
+							{ status: 400 }
+						);
+					}
+					const result = await this.gitSync(remote, sha, {
+						apply: true,
+						previewOf: null
+					});
+					return Response.json({ ...result, previewOf: null, branch: remote.branch });
+				}
+
+				case 'diff': {
+					const sha =
+						url.searchParams.get('sha') ||
+						refSha(await this.gitRefs(remote), remote.branch) ||
+						'';
+					if (sha === '') {
+						return Response.json(
+							{ ok: false, error: 'nothing to compare' },
+							{ status: 400 }
+						);
+					}
+					return Response.json(await this.gitSync(remote, sha, { apply: false }));
+				}
+
+				case 'pull': {
+					const sha =
+						url.searchParams.get('sha') ||
+						refSha(await this.gitRefs(remote), remote.branch) ||
+						'';
+					if (sha === '') {
+						return Response.json(
+							{ ok: false, error: 'nothing to pull' },
+							{ status: 400 }
+						);
+					}
+					this.metaSet(`git_head_${id}`, sha);
+					const result = await this.gitSync(remote, sha, { apply: true });
+					// the write-back is best-effort: a site that pulled must not report a failure
+					// because the provider refused a status it was never required to accept
+					if (hasApi(remote.provider) && this.gitCredential(id).token !== '') {
+						await this.gitWriteStatus(
+							remote,
+							sha,
+							result['applied'] === true ? 'success' : 'failed',
+							String(result['error'] ?? 'installed on drupflare'),
+							deliverBase
+						).catch(() => false);
+					}
+					return Response.json(result);
+				}
+
+				case 'interval': {
+					const minutes = clampInterval(Number(url.searchParams.get('minutes') ?? '0'));
+					this.metaSet(`git_interval_${id}`, String(minutes));
+					return Response.json({
+						ok: true,
+						intervalMinutes: minutes,
+						message: minutes === 0 ? 'polling off' : `every ${minutes} minutes`
+					});
+				}
+
+				case 'hook': {
+					if (!hasApi(remote.provider)) {
+						return Response.json(
+							{
+								ok: false,
+								error: 'a plain remote has no API to register a hook through'
+							},
+							{ status: 400 }
+						);
+					}
+					const secret = [...crypto.getRandomValues(new Uint8Array(24))]
+						.map((b) => b.toString(16).padStart(2, '0'))
+						.join('');
+					const deliverTo = `${deliverBase}/githook?remote=${encodeURIComponent(id)}`;
+					const post = createHookRequest(remote, deliverTo, secret);
+					if (post === null) {
+						return Response.json(
+							{ ok: false, error: 'not supported here' },
+							{ status: 400 }
+						);
+					}
+					const res = await fetch(post.url, {
+						method: 'POST',
+						headers: {
+							...authHeaders(remote, this.gitCredential(id)),
+							'content-type': 'application/json'
+						},
+						body: JSON.stringify(post.body)
+					});
+					if (!res.ok) {
+						return Response.json(
+							{
+								ok: false,
+								error: `the provider answered ${res.status} creating the hook`,
+								deliverTo
+							},
+							{ status: 400 }
+						);
+					}
+					this.metaSet(`git_hooksecret_${id}`, secret);
+					return Response.json({ ok: true, deliverTo, message: 'webhook registered' });
+				}
+
+				case 'hooksecret': {
+					// the manual path: an operator pasting the URL and secret into the provider by hand
+					const secret =
+						url.searchParams.get('secret') ||
+						[...crypto.getRandomValues(new Uint8Array(24))]
+							.map((b) => b.toString(16).padStart(2, '0'))
+							.join('');
+					this.metaSet(`git_hooksecret_${id}`, secret);
+					return Response.json({
+						ok: true,
+						secret,
+						deliverTo: `${deliverBase}/githook?remote=${encodeURIComponent(id)}`
+					});
+				}
+
+				case 'status': {
+					const sha = url.searchParams.get('sha') || this.metaGet(`git_head_${id}`) || '';
+					if (sha === '') {
+						return Response.json(
+							{ ok: false, error: 'no sha to write against' },
+							{ status: 400 }
+						);
+					}
+					const state = (url.searchParams.get('state') ?? 'success') as BuildState;
+					const wrote = await this.gitWriteStatus(
+						remote,
+						sha,
+						state,
+						url.searchParams.get('description') ?? 'drupflare',
+						url.searchParams.get('target') ?? deliverBase
+					);
+					return Response.json({
+						ok: wrote,
+						message: wrote
+							? 'status written'
+							: hasApi(remote.provider)
+								? 'the provider refused'
+								: 'a plain remote has nowhere to put a status'
+					});
+				}
+
+				default:
+					return Response.json(
+						{ ok: false, error: `unknown action ${action}` },
+						{ status: 404 }
+					);
+			}
+		} catch (e: any) {
+			this.metaSet(`git_lasterror_${id}`, String(e?.message ?? e).slice(0, 300));
+			return Response.json({ ok: false, error: String(e?.message ?? e) }, { status: 400 });
+		}
+	}
+
+	// #endregion
+
 	ensureServeTables(): void {
 		if (this.serveTablesReady) return;
 		this.sql.exec(
@@ -2413,7 +3215,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
         v TEXT NOT NULL
       )`
 		);
-		// Site-installed module source, from `composer require` (P18) or a git remote (P40). PER FILE
+		// Site-installed module source, from `composer require` or a git remote. PER FILE
 		// rather than one archive blob: a Durable Object record caps at 2,199,995 bytes and a tarball
 		// clears that easily while a PHP file never does
 		this.sql.exec(
@@ -2425,7 +3227,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
         installed_at INTEGER NOT NULL
       )`
 		);
-		// P7's shared shells. KEYED BY (path, permissions_hash) rather than by path alone: two role
+		// the shared shells. KEYED BY (path, permissions_hash) rather than by path alone: two role
 		// sets render different markup outside the holes, and the hash is what tells them apart
 		this.sql.exec(
 			`CREATE TABLE IF NOT EXISTS cfw_shell (
@@ -2529,7 +3331,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/**
 	 * Resolves one package and writes its files into `cfw_module_file`.
 	 *
-	 * The host half of `composer require` (P18) and of a git-delivered module (P40): PHP cannot block
+	 * The host half of `composer require` and of a git-delivered module: PHP cannot block
 	 * on a socket, so the terminal parses the intent and this performs it. Three fetches at most --
 	 * metadata, then the archive -- and every file lands as its own row, because a Durable Object
 	 * record caps at 2,199,995 bytes and an archive clears that easily while a PHP file does not.
@@ -2618,8 +3420,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * Writes every site-installed module file into the interpreter's filesystem.
 	 *
 	 * The counterpart to `mountDriver()`, which serves the PACKED modules out of the ASSETS binding.
-	 * These come from `cfw_module_file`, which is where `composer require` (P18) and a git-delivered
-	 * module (P40) put what they fetched, so the two share one mount rather than one each.
+	 * These come from `cfw_module_file`, which is where `composer require` and a git-delivered
+	 * module put what they fetched, so the two share one mount rather than one each.
 	 *
 	 * Synchronous and unconditional: a module the operator installed is not optional, and a boot that
 	 * skipped it would produce a site whose `core.extension` names a module PHP cannot find, which is
@@ -3316,7 +4118,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 		}
 		const result = super.execSql(sql, params);
-		// P33: an INTEGER above 2^53 reaches here as an already-wrong double. Detected rather than
+		// an INTEGER above 2^53 reaches here as an already-wrong double. Detected rather than
 		// predicted from the schema, and repaired by re-reading the SAME statement wrapped in a
 		// casting projection -- see `src/db/wide-integers.ts` for why that needs no SQL parser.
 		// Costs nothing on a site that stores no wide integers, which is every Drupal core site
@@ -3344,32 +4146,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/**
 	 * Fills one path: from the alarm chain, or inline for the visitor who missed.
 	 *
-	 * One page per firing, then re-arm if anything is left. Each firing is its own
-	 * invocation with its own CPU budget -- measured on deployed infrastructure: 20
-	 * Durable Object invocations did 142 ms of CPU for one client request with no
-	 * single invocation above 10 ms. That splits a large TOTAL across invocations;
-	 * it does not enlarge any one of them, so a single 20 ms render still does not
-	 * fit a 10 ms free-plan cap in either an alarm or a fetch. What the chain buys
-	 * is that nobody is waiting.
-	 *
-	 * `targetPath` renders that path instead of the queue head, which is what the
-	 * inline MISS path needs: the queue is FIFO, so without it a request would
-	 * render somebody else's page and still have nothing to return.
-	 *
-	 * `bins` is passed through to renderPage(). The default empties both, which is a
-	 * real render; `['page']` leaves dynamic_page_cache warm and reassembles instead,
-	 * which is what /__assemble measures.
-	 *
+	 * @param targetPath renders this instead of the FIFO queue head, which the inline MISS needs
+	 * @param bins passed to renderPage(); the default empties both, `['page']` reassembles
 	 * @param destruct false reproduces the pre-fix lifecycle; see renderPage()
 	 */
 	/**
 	 * Counts a failure against the queue head when the fill THREW rather than reported.
 	 *
-	 * The three-strikes rule lives inside `fillOne()`, which means it only runs when the render
-	 * comes back with an error to record. A JS-level throw -- an uncatchable one out of the wasm
-	 * import, say -- skips it entirely, and the row it should have struck is the row the alarm
-	 * re-arm reads to decide whether to fire again in 1 ms. That combination is a spin, and it was
-	 * measured as one.
+	 * `fillOne()`'s three-strikes rule only runs on a reported error; a JS-level throw skips it and
+	 * the unstruck row makes the alarm re-arm in 1 ms, which was measured as a spin.
 	 *
 	 * @returns the attempts now recorded, or null when the queue was empty
 	 */
@@ -3510,34 +4295,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			};
 		}
 
-		// A SUBMISSION IS NEVER CACHED. `cfw_page` is keyed by PATH alone, so storing the response to
-		// a POST would hand the next visitor the previous submitter's result -- their validation
-		// errors, their form values, and on an authenticated form their data. The whole serving
-		// story is not-rendering, which makes an unguarded write here the expensive kind of bug.
+		// `cfw_page` is keyed by PATH alone, so nothing person-varying may be stored: a POST, a
+		// request carrying a cookie, a response setting one, a 5xx, or a 3xx (there is no `location`
+		// column, so a stored redirect replays forever pointing nowhere).
 		//
-		// A SESSION IS THE SAME HAZARD ON A GET. A logged-in visitor's page carries their name, their
-		// contextual links and their CSRF token, and the key still has no user in it -- so a request
-		// that ARRIVED with a cookie, or a response that SETS one, is refused storage for the same
-		// structural reason the edge refuses it in `putPage()`. Both directions, because the login
-		// POST and the authenticated GET that follows it fail differently.
-		//
-		// A 5xx IS NOT A PAGE EITHER, and it became reachable when `cfw_serve()` started letting
-		// Drupal render its own error pages: before that an exception surfaced as `result.error` and
-		// took the retry path, where now it arrives as a perfectly well-formed 500 that would be
-		// stored and served to everyone until the next invalidation.
-		//
-		// a 3xx is not a page at all, and this one shipped: `cfw_page` has no `location` column and
-		// `pageResponse()` cannot set a header it has no value for, so a stored redirect replays
-		// forever as a bodyless 3xx pointing nowhere -- a dead end the visitor cannot follow and the
-		// next fill cannot clear. Found on Drupal's own asset controller, which 301s an aggregate
-		// whose hash does not match. The `page` branch below carries `location` through to
-		// `/__serve`, so refusing storage is also what makes the redirect WORK.
-		// AND THE RENDER'S OWN ANSWER TO "WHO WAS THIS FOR". Every clause above reasons about the
-		// REQUEST; `uid` is what Drupal concluded, and the fragment that computes it already says why
-		// -- a render that comes back as the wrong user is not distinguishable from a correct one by
-		// its bytes. It was transported and read by nobody, so the one failure this project actually
-		// shipped, uid 1 surviving inside the persistent interpreter with no cookie in sight, was
-		// invisible to a check made on the cookie.
+		// `uid` is the render's own answer to who it was for. A render that comes back as the wrong
+		// user is indistinguishable by its bytes, and uid 1 surviving with no cookie in sight is the
+		// failure that shipped -- invisible to a check made on the cookie.
 		const setCookie = Array.isArray(result.setCookie) ? (result.setCookie as string[]) : [];
 		const status = Number(result.status ?? 200);
 		const renderedFor =
@@ -3677,7 +4441,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 */
 	pageResponse(
 		row: PageRow,
-		tier: 'HIT' | 'RENDER',
+		tier: CacheTier,
 		serveMs: number,
 		extra: Record<string, string> = {}
 	): Response {
@@ -3716,58 +4480,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * Alarm handler: fill one page, then re-arm if more are waiting.
-	 *
-	 * Overrides the keep-warm alarm in SiteDurableObject and subsumes it -- a fill
-	 * touches the database anyway. Re-arming at +1 ms rather than a delay is what
-	 * makes the chain a chain: each link is a fresh invocation with a fresh budget.
-	 *
-	 * The fill runs INSIDE the gate. An alarm is delivered as its own event, so
-	 * ctx.blockConcurrencyWhile() held by a fetch cannot protect against this
-	 * direction: the alarm starts, parks in the interpreter, and a fetch arriving
-	 * afterwards would enter PHP alongside it. That was latent while a MISS never
-	 * rendered; now that /__serve renders inline it would happen on the first MISS,
-	 * because a MISS arms the alarm at +1 ms and then renders.
-	 */
-	/**
-	 * Opens a warm window: one boot, then one fill per incoming WebSocket message.
-	 *
-	 * This is what makes a fill affordable on the free plan, and it rests on a
-	 * documented behaviour. From the Durable Objects limits page:
-	 * "Each incoming HTTP request or WebSocket _message_ resets the remaining available
-	 * CPU time." So N messages buy N budgets inside ONE object lifetime.
-	 *
-	 * The alarm chain cannot do this. An alarm fires, the object hibernates after ~10 s
-	 * idle and DISCARDS the interpreter, so the next alarm pays boot again -- and boot is
-	 * 3,754 ms of edge cpuTime against a 40 ms render. Sliced at 8 ms that is roughly 475
-	 * invocations of boot to buy one fill, so 100k DO requests/day would fund about 210
-	 * fills. Amortising boot across a whole window is a ~25x difference in what the free
-	 * plan can actually fill, and it moves the binding meter back to rows written.
-	 *
-	 * `server.accept()`, NOT `ctx.acceptWebSocket()`. The Hibernation API exists to let an
-	 * object evict WHILE holding connections, which is precisely the opposite of the
-	 * requirement here: hibernating would discard the interpreter the window exists to
-	 * keep. The cost is explicit -- a non-hibernatable object is billed for duration --
-	 * which is why the window is scoped to a drain and then closed rather than held open.
-	 *
-	 * Cloudflare documents a 15-minute maximum for a connection keeping an object alive,
-	 * so the window is bounded well inside that.
-	 */
-	/**
-	 * Row count for a table that may not exist yet.
-	 *
-	 * null rather than 0, because several Drupal tables are created lazily on first write
-	 * (`sessions`, `flood`, `key_value_expire`, `batch`, `queue`, `semaphore`) and
-	 * reporting 0 for a missing table reads as a verified invariant when it is an absence.
-	 */
-	/**
 	 * Whether this alarm firing should spend rows on garbage collection.
 	 *
-	 * Two gates, and both are about the shared meter rather than caution. Page fills and GC
-	 * both spend rows written (100k/day), so GC never runs while pages are waiting -- a
-	 * visitor's MISS outranks reclaiming disk. And it is interval-gated because the measured
-	 * steady state is 0 rows written: running it on every firing would spend statements to
-	 * discover there is nothing to do.
+	 * Fills and GC share the rows-written meter, so a waiting page outranks reclaiming disk; the
+	 * interval gate exists because the measured steady state is 0 rows written.
 	 */
 	shouldRunGc(): boolean {
 		const everyMs = Number(this.env?.GC_INTERVAL_MS ?? 3_600_000);
@@ -3779,6 +4495,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return !this.lastGcAt || Date.now() - this.lastGcAt >= everyMs;
 	}
 
+	/**
+	 * Row count for a table that may not exist yet. null rather than 0: several Drupal tables are
+	 * created lazily on first write, and 0 for a missing one reads as a verified invariant.
+	 */
 	countOrNull(table: string, where?: string): number | null {
 		try {
 			// `where` is a literal from this file only, never a caller's string: these run against
@@ -3790,6 +4510,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 	}
 
+	/**
+	 * Opens a warm window: one boot, then one fill per incoming WebSocket message, because each
+	 * message resets the available CPU time. The alarm chain cannot do this -- it re-pays boot every
+	 * firing, ~25x fewer fills on free.
+	 *
+	 * `server.accept()`, never `ctx.acceptWebSocket()`: hibernation would discard the interpreter
+	 * the window exists to keep. A non-hibernatable object is billed for duration, so the window is
+	 * scoped to a drain and closed.
+	 */
 	async openFillWindow(): Promise<Response> {
 		const pair = new WebSocketPair();
 		// a pair is exactly two sockets, which is what `Object.values` cannot say on its own
@@ -4191,8 +4920,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 	}
 
-	// `any` on the return: the base resolves to undefined, the platform discards
-	// whatever an alarm handler returns, and this one hands its outcome back for /__serve-stats
+	/**
+	 * Fill one page, then re-arm. Re-arming at +1 ms rather than a delay is what makes the chain a
+	 * chain: each link is a fresh invocation with a fresh budget.
+	 *
+	 * The fill runs inside the gate: an alarm is its own event, so a fetch holding
+	 * `blockConcurrencyWhile()` cannot keep one out of the interpreter. `any` on the return because
+	 * the platform discards it and this one hands its outcome to `/__serve-stats`.
+	 */
 	override async alarm(): Promise<any> {
 		this.lastAlarmAt = this.nowMs();
 		// an alarm is a billed Durable Object invocation too, and the quota docs say so explicitly --
@@ -4559,6 +5294,23 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 		}
 
+		// Git polling, last of the background work and capped at three remotes.
+		//
+		// A poll is a DO request and a fetch is a subrequest, so this runs after the fills for the
+		// same reason the HTTP drain does; a remote that never moves costs one ref advertisement.
+		if (this.gitRemotes().length > 0) {
+			try {
+				const polled = await this.gitPoll();
+				if (polled.length > 0) {
+					this.lastGitPoll = polled;
+					this.lastGitPollAt = Date.now();
+				}
+			} catch (e: any) {
+				this.lastGitPoll = [{ error: String(e?.message ?? e) }];
+				this.lastGitPollAt = Date.now();
+			}
+		}
+
 		// The R2 offload, drained here for the same reason GC and the HTTP queue are: a waiting
 		// visitor outranks a background upload, and by here the fill queue is drained.
 		//
@@ -4700,30 +5452,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * TWO LANES, and which one answers is the throughput story.
+	 * Two lanes: a `cfw_page` HIT answers off pure `ctx.storage.sql` without entering the gate, so
+	 * it is not queued behind an in-flight render. `lane=gate` forces the gated path.
 	 *
-	 * The storage lane serves a cached page out of `cfw_page` with pure
-	 * `ctx.storage.sql` and never enters the gate, so a HIT is answered WHILE a
-	 * render is in flight instead of queueing behind it. That matters most for the
-	 * thing it was built for: a sliced render holds the PHP lane for its whole sliced
-	 * lifetime, and without this split every HIT in that window would wait, putting
-	 * the single-object ceiling back through the side door.
-	 *
-	 * Three conditions make it safe, and each one is a real constraint rather than a
-	 * formality:
-	 *
-	 *   1. It runs NO DDL. `ensureServeTables()` issues `CREATE TABLE IF NOT EXISTS`,
-	 *      and DDL while the PHP lane holds an open transaction replay dirties
-	 *      `sqlite_master` and turns every later read in that transaction into a
-	 *      speculative replay -- the O(W x R) cost that once wedged the local runtime
-	 *      hard enough to take unrelated sites down with it. So the fast lane
-	 *      declines until some gated request has created the tables.
-	 *   2. It never awaits. One SELECT, one response. Nothing can interleave inside
-	 *      it, so it cannot observe a half-applied write.
-	 *   3. It never touches PHP.
-	 *
-	 * `lane=gate` forces the gated path, which is what makes the split testable: the
-	 * same race with the fast lane disabled must show the HIT waiting.
+	 * The fast lane runs no DDL (that dirties `sqlite_master` under an open replay), never awaits
+	 * and never touches PHP; it declines until a gated request has created the tables.
 	 */
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
@@ -5113,42 +5846,28 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				// the other half of MIGRATE_DB: a site that cannot be extracted is not a
 				// product. Streams as SQL text so a fleet backup can push it to R2.
 				/**
-				 * Dumps the database as replayable SQL, host-side.
+				 * Dumps the database as replayable SQL, host-side rather than through PHP.
 				 *
-				 * NOT the PHP `exportDatabase()` any more, and the reason is fidelity rather than
-				 * the ~1.4 s interpreter boot it also avoids. That fragment cannot represent three
-				 * of the five storage classes: it has no BLOB branch at all, so a blob ships as a
-				 * quoted TEXT literal and comes back a different type; it emits NUL bytes raw into
-				 * statement text, which SQLite answers with `unrecognized token`; and its integer
-				 * pattern quotes anything past 18 digits. `dumpDatabase()` reads `typeof()` and
-				 * `hex()` and never the column, so no value crosses a double -- which is what DO
-				 * SQLite's lossy-above-2^53 read requires.
+				 * `dumpDatabase()` reads `typeof()` and `hex()` and never the column, so no value
+				 * crosses a double; the PHP fragment could not represent BLOB, NUL or wide integers.
 				 */
 				/**
 				 * Stores a dump as a restore point and arms the alarm to replay it.
 				 *
-				 * The missing half of rollback: `shouldRollback()` looks for a stored import and
-				 * nothing in production ever wrote one, so the quarantine rung could only ever
-				 * decide against restoring. A dump arrives as the request body -- never a query
-				 * string, which `wrangler tail` prints.
-				 *
-				 * The replay runs on the alarm rather than here: it rewrites the database a chunk
-				 * at a time, and the invocation that accepts the upload must not also be the one
-				 * holding a half-overwritten site open.
+				 * The replay runs on the alarm because the invocation that accepts the upload must
+				 * not also be the one holding a half-overwritten site open.
 				 */
 				/**
 				 * Answers whether the presented bearer token owns this site.
 				 *
-				 * A separate route rather than a check inside `/__export`, because the Worker in
-				 * front has to decide BEFORE it proxies: a 401 must not cost a database dump. It
-				 * returns nothing but a status, so a wrong guess learns only that it was wrong.
+				 * Separate from `/__export` because the Worker in front decides BEFORE it proxies: a
+				 * 401 must not cost a database dump.
 				 */
 				/**
 				 * The health ledger, the repair state and what the last alarm found.
 				 *
-				 * `?clear=1` releases quarantine, which is deliberately an explicit operator act and
-				 * never automatic: one clean render says nothing about the condition that caused it,
-				 * so `release()` is reachable only from here.
+				 * `?clear=1` releases quarantine, which is an explicit operator act: one clean render
+				 * says nothing about the condition that caused it.
 				 */
 				case '/__health': {
 					this.ensureServeTables();
@@ -5348,6 +6067,81 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					return Response.redirect(back.toString(), 302);
 				}
 
+				/**
+				 * Reads and writes the OIDC provider, which an operator had to set by hand.
+				 *
+				 * An OWNER route, and that is a privilege decision rather than tidiness: whoever can
+				 * set the issuer chooses which provider every login on this site authenticates
+				 * against, so it is held to the same bar as the client id and kept off
+				 * `KV_OVERRIDABLE`. The secret stays a binding and is never read back here.
+				 */
+				case '/__oidcsetup': {
+					const redirectUri = `${this.canonicalOrigin(url.origin)}/__oidc?action=callback`;
+					const state = () => ({
+						ok: true,
+						issuer: this.metaGet(OIDC_ISSUER_KEY) ?? '',
+						clientId: this.metaGet(OIDC_CLIENT_ID_KEY) ?? '',
+						// presence only. Reading a secret back out of a setup page is how it ends up
+						// in a screenshot
+						secretPresent: String(this.env?.OIDC_CLIENT_SECRET ?? '') !== '',
+						redirectUri
+					});
+
+					const action = url.searchParams.get('action') ?? 'status';
+					if (action === 'status') return Response.json(state());
+
+					if (action === 'clear') {
+						this.metaSet(OIDC_ISSUER_KEY, '');
+						this.metaSet(OIDC_CLIENT_ID_KEY, '');
+						return Response.json({ ...state(), cleared: true });
+					}
+
+					if (action !== 'save') {
+						return Response.json(
+							{
+								ok: false,
+								error: `unknown action ${action}`,
+								known: ['status', 'save', 'clear']
+							},
+							{ status: 400 }
+						);
+					}
+
+					const form =
+						request.method === 'POST'
+							? new URLSearchParams(await request.text())
+							: url.searchParams;
+					const verdict = readOidcSetup({
+						issuer: form.get('issuer'),
+						clientId: form.get('clientId')
+					});
+					if ('refusal' in verdict) {
+						return Response.json(
+							{ ok: false, error: verdict.refusal },
+							{ status: 400 }
+						);
+					}
+					this.metaSet(OIDC_ISSUER_KEY, verdict.issuer);
+					this.metaSet(OIDC_CLIENT_ID_KEY, verdict.clientId);
+
+					// proves the issuer is real before the operator finds out at a login, and says
+					// which endpoints it advertises
+					const discovered = await this.oidcProvider(verdict.issuer);
+					return Response.json({
+						...state(),
+						saved: true,
+						discovery:
+							'refusal' in discovered
+								? { ok: false, error: discovered.refusal }
+								: {
+										ok: true,
+										authorization: discovered.provider.authorizationEndpoint,
+										token: discovered.provider.tokenEndpoint,
+										jwks: discovered.provider.jwksUri
+									}
+					});
+				}
+
 				case '/__cfoauth': {
 					const action = url.searchParams.get('action') ?? 'status';
 					const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY);
@@ -5462,12 +6256,203 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					});
 				}
 
+				// #region the git tier
+				//
+				// remotes and their tokens live in cfw_meta, never in KV: KV is operator-writable and
+				// nothing there may change what a site can reach
+				case '/__git': {
+					const presented = bearerToken(request.headers.get('authorization'));
+					const ownerOk = tokenMatches(presented, this.metaGet(OWNER_TOKEN_KEY));
+					const diagnostics =
+						(this.env as unknown as Record<string, string | undefined>)
+							.PW_DIAGNOSTICS === '1';
+					if (!ownerOk && !diagnostics) {
+						return Response.json(
+							{ ok: false, error: 'owner token required' },
+							{ status: 401 }
+						);
+					}
+					return this.handleGit(url, this.canonicalOrigin(url.origin));
+				}
+
+				/**
+				 * A delivery from a provider.
+				 *
+				 * PUBLIC by necessity -- it arrives from GitHub with no header this Worker controls --
+				 * and authenticated by its signature, the same shape as the OAuth callback being
+				 * authenticated by `state`. An unverifiable delivery is REFUSED rather than acted on.
+				 */
+				case '/__githook': {
+					const id = url.searchParams.get('remote') ?? '';
+					const remotes = this.gitRemotes();
+					const remote = remotes.find((r) => r.id === id);
+					if (remote === undefined) {
+						return Response.json(
+							{ ok: false, error: 'unknown remote' },
+							{ status: 404 }
+						);
+					}
+					const body = await request.text();
+					const secret = this.metaGet(`git_hooksecret_${remote.id}`) ?? '';
+					const verdict = await verifyHook(
+						remote.provider,
+						request.headers,
+						body,
+						secret
+					);
+					if (!verdict.ok) {
+						return Response.json(
+							{ ok: false, error: verdict.reason ?? 'refused', proof: verdict.proof },
+							{ status: 401 }
+						);
+					}
+					let payload: unknown = null;
+					try {
+						payload = JSON.parse(body);
+					} catch {
+						return Response.json(
+							{ ok: false, error: 'body is not JSON' },
+							{ status: 400 }
+						);
+					}
+					const event = readHookEvent(remote.provider, request.headers, payload);
+					this.metaSet(`git_proof_${remote.id}`, verdict.proof);
+					if (event.kind !== 'push' || event.branch !== remote.branch || event.deleted) {
+						return Response.json({
+							ok: true,
+							proof: verdict.proof,
+							event,
+							synced: false
+						});
+					}
+					this.metaSet(`git_head_${remote.id}`, event.after ?? '');
+					this.metaSet(`git_checked_${remote.id}`, String(this.nowMs()));
+					// a preview holds the site at a request head; a push to the branch must not
+					// silently replace what somebody is reviewing
+					if (event.after === null || this.metaGet(`git_previewof_${remote.id}`)) {
+						return Response.json({
+							ok: true,
+							proof: verdict.proof,
+							event,
+							synced: false
+						});
+					}
+					let synced: Record<string, unknown>;
+					try {
+						synced = await this.gitSync(remote, event.after, { apply: true });
+					} catch (e: any) {
+						this.metaSet(
+							`git_lasterror_${remote.id}`,
+							String(e?.message ?? e).slice(0, 300)
+						);
+						synced = { ok: false, error: String(e?.message ?? e) };
+					}
+					if (hasApi(remote.provider) && this.gitCredential(remote.id).token !== '') {
+						await this.gitWriteStatus(
+							remote,
+							event.after,
+							synced['applied'] === true ? 'success' : 'failed',
+							String(synced['error'] ?? 'installed on drupflare'),
+							this.canonicalOrigin(url.origin)
+						).catch(() => false);
+					}
+					return Response.json({ ok: true, proof: verdict.proof, event, synced });
+				}
+				// #endregion
+
 				case '/__ownercheck': {
 					const presented = bearerToken(request.headers.get('authorization'));
 					const stored = this.metaGet(OWNER_TOKEN_KEY);
 					return new Response(null, {
 						status: tokenMatches(presented, stored) ? 200 : 401
 					});
+				}
+
+				/**
+				 * Point-in-time recovery, which the platform offers only as a runtime API.
+				 *
+				 * There is no wrangler command and no dashboard button, so without a route an
+				 * operator cannot reach the 30-day window at all.
+				 */
+				case '/__pitr': {
+					const storage = this.ctx.storage as unknown as {
+						getCurrentBookmark?: () => Promise<string>;
+						getBookmarkForTime?: (at: Date) => Promise<string>;
+						onNextSessionRestoreBookmark?: (b: string) => Promise<string>;
+					};
+					const refuse = (e: unknown) =>
+						Response.json({
+							ok: false,
+							supported: false,
+							error: String((e as { message?: string })?.message ?? e)
+						});
+
+					if (request.method === 'POST') {
+						const bookmark = url.searchParams.get('bookmark') ?? '';
+						if (!isBookmark(bookmark)) {
+							return Response.json(
+								{ ok: false, error: 'a bookmark is required' },
+								{ status: 400 }
+							);
+						}
+						try {
+							// the undo is obtainable only from the call that schedules the restore
+							const undo = await storage.onNextSessionRestoreBookmark?.(bookmark);
+							return Response.json({
+								ok: true,
+								scheduled: bookmark,
+								undo,
+								note: 'applied on the next start of this object; keep `undo` to reverse it'
+							});
+						} catch (e) {
+							return refuse(e);
+						}
+					}
+
+					const at = url.searchParams.get('at');
+					if (at !== null) {
+						const when = new Date(/^\d+$/.test(at) ? Number(at) : at);
+						if (Number.isNaN(when.getTime())) {
+							return Response.json(
+								{ ok: false, error: 'not a time this can read' },
+								{ status: 400 }
+							);
+						}
+						const days = (this.nowMs() - when.getTime()) / 86_400_000;
+						if (days > 30 || days < 0) {
+							return Response.json(
+								{ ok: false, error: 'outside the 30-day recovery window' },
+								{ status: 400 }
+							);
+						}
+						try {
+							return Response.json({
+								ok: true,
+								at: when.toISOString(),
+								bookmark: await storage.getBookmarkForTime?.(when)
+							});
+						} catch (e) {
+							return refuse(e);
+						}
+					}
+
+					let current: string;
+					try {
+						current = (await storage.getCurrentBookmark?.()) ?? '';
+					} catch (e) {
+						return refuse(e);
+					}
+					// a back end with no change log answers an ALL-ZERO bookmark rather than
+					// throwing, so a feature-detect on the method passes and the value is useless
+					if (!isBookmark(current)) {
+						return Response.json({
+							ok: false,
+							supported: false,
+							current,
+							error: 'this storage back-end keeps no change log; the bookmark is zero'
+						});
+					}
+					return Response.json({ ok: true, supported: true, current, windowDays: 30 });
 				}
 
 				case '/__restore': {
@@ -5547,6 +6532,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// said nothing about it
 					const status = meta.replayable ? 200 : 409;
 					const envelope = {
+						// the cursor path above answers `ok` and this one did not, so a caller
+						// could not branch on the same field across the two shapes
+						ok: meta.replayable,
 						...meta,
 						...(meta.replayable
 							? {}
@@ -5562,32 +6550,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 				// the product gap nothing was tracking: every migrated site boots identical
 				/**
-				 * The `cfw_ops` HTTP surface.
+				 * The `cfw_ops` HTTP surface, which REFUSES seven of its eight operations.
 				 *
-				 * The registry declared eight operations and nothing was wired to it, so the
-				 * measurements it encodes were unreachable. This surface REFUSES most of what it
-				 * lists: seven of the eight
-				 * are `sliced: true`, meaning they cannot complete inside one invocation, and the
-				 * measured cost is the reason. `cr` alone is 282.9 ms in wasm -- 28x a free
-				 * invocation -- so an endpoint that ran it inline would time out or blow the budget
-				 * while looking like it worked.
-				 *
-				 * A refusal therefore carries the cost figure and the driver that CAN run the
-				 * operation, because "no" without an alternative just gets retried.
+				 * Those seven are `sliced: true` and cannot finish in one invocation -- `cr` alone is
+				 * 282.9 ms -- so a refusal carries the cost figure and the driver that can run it.
 				 */
 				/**
 				 * Can this module be installed? One cacheable subrequest, and a refusal that NAMES
-				 * the conflict.
+				 * the conflict. The check, not the install -- the Workflow path does that.
 				 *
-				 * The check, not the install -- the Workflow path does the installing. They are
-				 * separate because `composer require` on the edge needs a solver, unbounded
-				 * subrequests and
-				 * minutes of CPU, but the COMMON answer is decidable from one metadata fetch against a
-				 * lock this bundle already carries. A module needing `drupal/core: ^10` is refused
-				 * before any download, any Workflow and any write.
-				 *
-				 * Through `caches.default`, because a p2 payload is immutable per version -- so the
-				 * second operator to ask about the same module pays nothing.
+				 * Decidable from one metadata fetch against the shipped lock, through
+				 * `caches.default` because a p2 payload is immutable per version.
 				 */
 				case '/__installable': {
 					const name = url.searchParams.get('module') ?? '';
@@ -6254,6 +7227,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 				// drains what PHP deferred; the fetch happens HERE, in JS, where awaiting
 				// is legal, and lands in the cache the next PHP run reads synchronously
+				// the TCP tier end to end: ask, drain, ask again. one ask can only ever
+				// show the refusal, since the tier is cached-or-deferred by construction
+				case '/__tcp': {
+					const protocol =
+						url.searchParams.get('protocol') === 'syslog' ? 'syslog' : 'redis';
+					const args = (url.searchParams.get('args') ?? '')
+						.split(',')
+						.filter((a) => a !== '');
+					const message = url.searchParams.get('message') ?? '';
+					const fragment = tcpLive({ protocol, args, message });
+					const first = await this.runJson(fragment);
+					const drained = await this.drainHttpQueue(3);
+					const second = protocol === 'redis' ? await this.runJson(fragment) : null;
+					return Response.json({ first, drained, second });
+				}
+
 				case '/__httpdrain':
 					return Response.json(
 						await this.drainHttpQueue(Number(url.searchParams.get('limit') ?? 5))
@@ -6479,7 +7468,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							await this.ctx.storage.put('authSpend', today);
 							this.authSpend = today;
 						}
-						// P7: try the stored shell before paying for a render. Never for a submission,
+						// try the stored shell before paying for a render. Never for a submission,
 						// whose response is for one submitter, and never when the lever is off
 						if (
 							authenticated &&
@@ -6501,6 +7490,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 										// a shell is shared; the ASSEMBLED page is one visitor's
 										'cache-control': 'private, no-store',
 										'x-cfw-cache': 'ASSEMBLED',
+										'x-cfw-generation': String(this.generation()),
 										'x-cfw-shell-holes': String(assembled.holes),
 										'x-cfw-serve-ms': String(Date.now() - t0),
 										'x-cfw-v': CFW_HEADER_VERSION
@@ -6549,6 +7539,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 								'content-type': outcome.page.contentType,
 								'cache-control': 'private, no-store',
 								'x-cfw-cache': 'RENDER',
+								'x-cfw-generation': String(this.generation()),
 								'x-cfw-method': String(request.method),
 								'x-cfw-serve-ms': String(Date.now() - t0),
 								'x-cfw-v': CFW_HEADER_VERSION
@@ -6740,9 +7731,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const before = this.queryCount;
 					const beforeWritten = this.rowsWritten ?? 0;
 					const t0 = Date.now();
-					const outcome = await this.fillOne(path, bins, destruct);
+					// the origin rides along, as it does on `/serve`. Without it the fill fell back
+					// to `http://localhost` while the serve path used the request's, so the two
+					// routes rendered different absolute URLs and the page accumulated one feed
+					// link per origin it had ever been rendered at
+					const outcome = await this.fillOne(path, bins, destruct, {
+						origin: this.canonicalOrigin(url.origin)
+					});
 					return Response.json({
 						...outcome,
+						origin: this.canonicalOrigin(url.origin),
 						bins,
 						destruct,
 						wallMs: Date.now() - t0,
@@ -6753,8 +7751,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				}
 
 				case '/__shell': {
-					// P7's operator surface. Harvests one path under TWO sessions of one role set and
-					// stores the shell only if they normalise to identical bytes; a single cookie is
+					// the shell operator surface. Harvests one path under TWO sessions of one role set
+					// and stores it only if they normalise to identical bytes; a single cookie is
 					// refused because one sample proves nothing about what varies between people
 					this.ensureServeTables();
 					const shellPath = url.searchParams.get('path') ?? '/';
@@ -6871,6 +7869,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// relay is only visible here: `cfwMail` had already returned by then, so
 						// this is the surface that keeps a queued-but-undelivered message auditable
 						mailQueue: this.countOrNull('cfw_mail_queue'),
+						// which relay a send would resolve to, or null when nothing is configured.
+						// Without it a caller cannot tell "the transport is broken" from "there is
+						// no transport", and the e2e lane spent a run on exactly that
+						mailTransport: (() => {
+							const plan = resolveMailTransport(this.mailEnv());
+							return 'refusal' in plan ? null : plan.transport.kind;
+						})(),
 						lastMailDrain: this.lastMailDrain ?? null,
 						lastMailDrainAt: this.lastMailDrainAt ?? null,
 						// null on a site that never ran an update; a live run holds the alarm chain
@@ -6881,6 +7886,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						migrate: this.migrateCursorOrNull(),
 						lastAlarmOutcome: this.lastAlarmOutcome ?? null,
 						phpBooted: !!this.php,
+						// whether `/sql` and `/php` are open. Reported so a test can assert the gate
+						// BOTH ways: `bun run dev` turns diagnostics on, so a spec that only ever
+						// demands a refusal is red for every developer and proves nothing
+						diagnostics:
+							(this.env as unknown as Record<string, string | undefined>)
+								.PW_DIAGNOSTICS === '1',
 						// which lane answered, so the split is observable rather than claimed
 						storageLaneServes: this.storageLaneServes ?? 0,
 						phpLaneEntries: this.phpLaneEntries ?? 0,
@@ -6953,29 +7964,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				}
 
 				/**
-				 * Raw SQL against ctx.storage.sql, no PHP involved.
+				 * Raw SQL against ctx.storage.sql, no PHP involved, so a limit found here is the
+				 * platform's rather than the driver's.
 				 *
-				 * The route table has mapped `/sql` here since the beginning and the handler was
-				 * never written, so every call returned an empty body and a JSON parse error at the
-				 * front end. It exists now because platform limits have to be measurable directly:
-				 * the bound-parameter ceiling below was found by bisecting through this route, and
-				 * asking PHP would have measured the driver instead of the platform.
-				 *
-				 * `params` is a JSON array; `repeat` binds the same value N times, which is how you
-				 * probe a parameter ceiling without composing a giant URL.
+				 * `params` is a JSON array; `repeat` binds one value N times, which is how a
+				 * parameter ceiling is probed without composing a giant URL.
 				 */
 				/**
-				 * How much ONE Durable Object event may write, which nothing had measured.
+				 * How much ONE Durable Object event may write -- the third limit beside the
+				 * 2,199,995-byte record cap and the 100,000-char statement cap.
 				 *
-				 * The per-record cap (2,199,995 bytes) and the statement-text cap (100,000 chars)
-				 * are both known; the aggregate write set of a single event is the third limit in
-				 * that family, and a module install runs into it -- the install completes and the
-				 * object is then reset with "Internal error in Durable Object storage caused
-				 * object to be reset", rolling every row back.
-				 *
-				 * No Drupal, no PHP: a loop of plain inserts, so a reset here is the platform
-				 * refusing bytes rather than anything this project built. Each point wants its own
-				 * fresh object, because the failing call takes the object down with it.
+				 * A loop of plain inserts, no Drupal, so a reset here is the platform refusing
+				 * bytes. Each point wants a fresh object; the failing call takes the object with it.
 				 */
 				/**
 				 * Wakes the fill chain from an event of its own.

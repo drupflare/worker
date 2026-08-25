@@ -262,6 +262,18 @@ export const VECTORS: readonly Vector[] = [
 		evidence: 'shimmed over `node:crypto`; a real 2048-bit RSA round trip is asserted from PHP'
 	},
 	{
+		id: 'runtime.zlib.dictionary',
+		group: 'RUNTIME',
+		claim: 'delta coding, which needs deflate against a preset dictionary',
+		// `gzdeflate()` takes no dictionary and `gzcompress()` takes none either, which is what made
+		// this look impossible without a host bridge. The INCREMENTAL api has taken one since PHP 7.0
+		probe: "function_exists('deflate_init') && function_exists('inflate_init')",
+		expected: true,
+		blocker: null,
+		evidence:
+			'ext-zlib is one of the 25 loaded extensions; `deflate_init` takes a `dictionary` option'
+	},
+	{
 		id: 'runtime.xmlwriter',
 		group: 'RUNTIME',
 		claim: 'streaming XML output, which several sitemap and feed modules require to install',

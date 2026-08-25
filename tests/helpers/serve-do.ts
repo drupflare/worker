@@ -126,6 +126,15 @@ export type ServeDo = {
 		cookie: string,
 		origin: string
 	) => Promise<{ html: string; holes: number } | null>;
+	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
+	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
+	gitRemotes: () => { id: string; provider: string; repo: string; branch: string }[];
+	gitSync: (
+		remote: { id: string; provider: string; repo: string; branch: string; host?: string },
+		sha: string,
+		opts?: { apply: boolean; previewOf?: string | null }
+	) => Promise<Record<string, unknown>>;
+	gitPoll: (limit?: number) => Promise<Record<string, unknown>[]>;
 	/** first-run provisioning: the state check, the durable marker, and what acts on it */
 	neverMigrated: () => boolean;
 	provisionRequested: () => boolean;

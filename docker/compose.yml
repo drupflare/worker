@@ -14,3 +14,53 @@ services:
       interval: 3s
       timeout: 5s
       retries: 40
+
+  redis:
+    image: redis:8.8.2-alpine@sha256:96cb544fa0af5aa898d160cffb7dae70c3df117190fc123831c64712cda425ff
+    command: ['redis-server', '--requirepass', 'testpass']
+    ports:
+      - '127.0.0.1:6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', 'testpass', 'ping']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  gitea:
+    image: gitea/gitea:1.24.6@sha256:2edc102cbb636ae1ddac5fa0c715aa5b03079dee13ac6800b2cef6d4e912e718
+    environment:
+      USER_UID: '1000'
+      USER_GID: '1000'
+      GITEA__security__INSTALL_LOCK: 'true'
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__ROOT_URL: 'http://127.0.0.1:3300/'
+      GITEA__server__HTTP_PORT: '3000'
+      GITEA__server__OFFLINE_MODE: 'true'
+      GITEA__server__DISABLE_SSH: 'true'
+      GITEA__service__DISABLE_REGISTRATION: 'true'
+      GITEA__webhook__ALLOWED_HOST_LIST: '*'
+      GITEA__log__LEVEL: 'Warn'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:3300:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/healthz || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  syslog:
+    image: alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command:
+      - sh
+      - -c
+      - 'apk add --no-cache socat >/dev/null && : > /tmp/syslog.log && (socat -u TCP-LISTEN:5514,fork,reuseaddr OPEN:/tmp/syslog.log,append &) && exec socat TCP-LISTEN:5515,fork,reuseaddr SYSTEM:"cat /tmp/syslog.log"'
+    ports:
+      - '127.0.0.1:5514:5514'
+      - '127.0.0.1:5515:5515'
+    healthcheck:
+      test: ['CMD', 'nc', '-z', '127.0.0.1', '5515']
+      interval: 2s
+      timeout: 2s
+      retries: 30

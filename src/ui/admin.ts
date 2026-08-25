@@ -236,10 +236,110 @@ export type OpsEntry = { op: string; label: string; driver: string | null; cost?
  * The operations are the ones the object registers. Anything with a null driver is rendered
  * DISABLED and says why, rather than being offered and failing.
  */
+/** what a typed command resolved to, or why it did not resolve */
+export type DrushCommand =
+	| { kind: 'run'; route: string; params: Record<string, string> }
+	| { kind: 'error'; message: string };
+
+/**
+ * Every Drush spelling, mapped to the operation this site registers.
+ *
+ * Mirrors `CommandLine::DRUSH_ALIASES` in the sibling module, and
+ * `tests/node/drush-aliases.spec.ts` reads that file and fails on any divergence. `/__ops` looks its
+ * operations up by exact name and does not canonicalise, so `cache:rebuild` typed here reached it
+ * verbatim and came back `unknown operation`.
+ */
+export const DRUSH_ALIASES: Readonly<Record<string, string>> = {
+	cr: 'cr',
+	'cache:rebuild': 'cr',
+	'cache-rebuild': 'cr',
+	rebuild: 'cr',
+	cc: 'cr',
+	'cache:clear': 'cr',
+	updb: 'updb',
+	updatedb: 'updb',
+	'updatedb:status': 'updb',
+	cex: 'cex',
+	'config:export': 'cex',
+	'config-export': 'cex',
+	cim: 'cim',
+	'config:import': 'cim',
+	'config-import': 'cim',
+	en: 'en',
+	'pm:install': 'en',
+	'pm-enable': 'en',
+	'pm:enable': 'en',
+	'theme:enable': 'en',
+	pmu: 'pmu',
+	'pm:uninstall': 'pmu',
+	'pm-uninstall': 'pmu',
+	'theme:uninstall': 'pmu',
+	status: 'status',
+	'core:status': 'status',
+	'core-status': 'status',
+	st: 'status',
+	'sql-dump': 'sql-dump',
+	'sql:dump': 'sql-dump'
+};
+
+/**
+ * Turns what an operator typed into the route that already serves it.
+ *
+ * `/__ops` takes an operation NAME and nothing else, so `en webform` reached it as an operation
+ * called "en webform" and came back `unknown operation`. Module installs have their own route, and
+ * routing to it is the difference between a field that looks like Drush and one that behaves like
+ * it. An operation given arguments it cannot take is refused by name rather than silently truncated
+ * to its first word.
+ */
+export function parseDrush(input: string | null | undefined): DrushCommand | null {
+	const words = String(input ?? '')
+		.trim()
+		.split(/\s+/)
+		.filter(Boolean);
+	const typed = words[0];
+	if (typed === undefined) return null;
+	const head = DRUSH_ALIASES[typed] ?? typed;
+
+	const flags = words.filter((w) => w.startsWith('-'));
+	const rest = words.slice(1).filter((w) => !w.startsWith('-'));
+
+	// `en` is the one operation with an argument, and it has a route of its own that installs;
+	// the registry entry is sliced and refuses
+	if (head === 'en') {
+		const module = rest[0];
+		if (module === undefined) {
+			return {
+				kind: 'error',
+				message: `${typed} needs a module name, as in \`${typed} webform\``
+			};
+		}
+		if (rest.length > 1) {
+			return {
+				kind: 'error',
+				message: `${typed} takes one module at a time; got ${rest.length}`
+			};
+		}
+		return {
+			kind: 'run',
+			route: '/__enable',
+			params: { module, ...(flags.includes('--dry') ? { dry: '1' } : {}) }
+		};
+	}
+
+	if (rest.length > 0) {
+		return {
+			kind: 'error',
+			message: `${typed} takes no arguments; \`${rest.join(' ')}\` was not understood`
+		};
+	}
+	return { kind: 'run', route: '/__ops', params: { op: head } };
+}
+
 export function renderCommands(
 	entries: readonly OpsEntry[],
 	result: string | null,
-	submitted: string | null
+	submitted: string | null,
+	error: string | null = null
 ): string {
 	const rows = entries
 		.map(
@@ -254,8 +354,9 @@ export function renderCommands(
 	return `<h1>Commands</h1>
 <p class="sub">A Drush-shaped field over the operations this site registers. ${escapeHtml(String(runnable))} of ${escapeHtml(String(entries.length))} have a driver that can actually run here.</p>
 <form method="GET" action="${SURFACE_PREFIX}/commands">
-<input type="text" name="op" placeholder="cr" value="${escapeHtml(submitted ?? '')}" spellcheck="false">
+<input type="text" name="op" placeholder="cr, or en webform" value="${escapeHtml(submitted ?? '')}" spellcheck="false">
 <button type="submit">Run</button></form>
+${error ? `<div class="card bad"><strong class="over">Not Understood</strong><p class="sub" style="margin:.3rem 0 0">${escapeHtml(error)}</p></div>` : ''}
 ${result ? `<div class="card"><pre style="margin:0;overflow-x:auto"><code>${escapeHtml(result)}</code></pre></div>` : ''}
 <table><thead><tr><th>Command</th><th>What it does</th><th>Driver</th><th>Measured cost</th></tr></thead><tbody>${rows}</tbody></table>
 <p class="sub">An operation with no driver is listed rather than hidden, and disabled rather than offered. A 501 with no named alternative is a 501 that gets retried.</p>`;
@@ -370,4 +471,352 @@ document.getElementById('cfoauth').addEventListener('submit', async (e) => {
 <div class="card"><pre style="margin:0;overflow-x:auto"><code>bun run deploy</code></pre></div>
 <p class="sub">That is the tax this page exists to remove: it needs a terminal, a checkout, and an account already configured. Until the two <em>needs a human</em> steps above have a flow, the button stays absent.</p>`;
 }
+// #endregion
+
+// #region Git -- live, drives /git over the three providers
+
+/** one configured remote, as the page needs to show it */
+export interface RemoteRow {
+	id: string;
+	provider: string;
+	repo: string;
+	branch: string;
+	host?: string;
+	/** the sha the last successful check saw */
+	head?: string | null;
+	/** the sha whose files are actually mounted, which is not always the head */
+	installed?: string | null;
+	/** epoch ms of that check */
+	checkedAt?: number | null;
+	pulledAt?: number | null;
+	/** 0 means polling is off and only a webhook moves this remote */
+	intervalMinutes?: number;
+	backoffUntil?: number | null;
+	/** the pull or merge request being previewed instead of the branch */
+	previewOf?: string | null;
+	lastError?: string | null;
+	lastPlan?: { added?: number; modified?: number; removed?: number; unchanged?: number } | null;
+	/** how the last delivery was authenticated, or null if none has arrived */
+	proof?: string | null;
+	hookInstalled?: boolean;
+	files?: number;
+}
+
+const ago = (at: number | null | undefined, now: number): string => {
+	if (!at) return 'never';
+	const s = Math.max(0, Math.round((now - at) / 1000));
+	if (s < 90) return `${s}s ago`;
+	if (s < 5400) return `${Math.round(s / 60)}m ago`;
+	return `${Math.round(s / 3600)}h ago`;
+};
+
+/**
+ * Remotes, and what each one last told us.
+ *
+ * The write-back is a COMMIT STATUS on all three providers. GitHub's Checks API is richer and a
+ * pasted token cannot write it -- measured, 403 `Resource not accessible by personal access token`
+ * against both check-run endpoints and 201 against the status one -- so the page does not offer it.
+ */
+const PROVIDER_LABEL: Record<string, string> = {
+	github: 'GitHub',
+	gitlab: 'GitLab',
+	bitbucket: 'Bitbucket',
+	gitea: 'Gitea / Forgejo',
+	generic: 'Any Git Remote'
+};
+
+/** head against installed, which is the difference between "a push arrived" and "it is live" */
+function syncPill(r: RemoteRow): string {
+	if (r.lastError) return `${pill('warn')} <span class="dim">${escapeHtml(r.lastError)}</span>`;
+	if (r.previewOf)
+		return `${pill('warn')} <span class="dim">previewing #${escapeHtml(r.previewOf)}</span>`;
+	if (!r.installed) return `${pill('none')} <span class="dim">nothing pulled yet</span>`;
+	if (r.head && r.installed !== r.head) return `${pill('warn')} <span class="dim">behind</span>`;
+	return `${pill('ok')} <span class="dim">${r.files ?? 0} files</span>`;
+}
+
+export function renderGit(remotes: readonly RemoteRow[], now: number): string {
+	const rows =
+		remotes.length === 0
+			? `<tr><td colspan="6"><span class="dim">No remotes yet.</span></td></tr>`
+			: remotes
+					.map((r) => {
+						const id = escapeHtml(r.id);
+						const plan = r.lastPlan
+							? `<span class="dim">+${r.lastPlan.added ?? 0} ~${r.lastPlan.modified ?? 0} -${r.lastPlan.removed ?? 0}</span>`
+							: '';
+						return `<tr>
+<td><strong>${escapeHtml(r.repo)}</strong><br><span class="dim">${escapeHtml(PROVIDER_LABEL[r.provider] ?? r.provider)}${r.host ? ` &middot; ${escapeHtml(r.host)}` : ''}</span></td>
+<td><code>${escapeHtml(r.branch)}</code>
+<br><select data-branch="${id}" class="dim"><option value="">switch branch...</option></select></td>
+<td>${r.head ? `<code>${escapeHtml(String(r.head).slice(0, 12))}</code>` : `<span class="dim">unknown</span>`}
+<br><span class="dim">${escapeHtml(ago(r.checkedAt, now))}</span></td>
+<td>${syncPill(r)}<br>${plan}</td>
+<td>${
+							r.hookInstalled
+								? `${pill('ok')} <span class="dim">${escapeHtml(r.proof ?? 'no delivery yet')}</span>`
+								: `${pill('none')} <span class="dim">polling only</span>`
+						}
+<br><input type="number" min="0" step="5" value="${r.intervalMinutes ?? 60}" data-interval="${id}" style="width:5rem"> <span class="dim">min</span></td>
+<td><button data-act="check" data-id="${id}">Check</button>
+<button data-act="diff" data-id="${id}">Diff</button>
+<button data-act="pull" data-id="${id}">Pull</button>
+<button data-act="prs" data-id="${id}">Requests</button>
+${r.previewOf ? `<button data-act="unpreview" data-id="${id}">Exit Preview</button>` : ''}
+<button data-act="hook" data-id="${id}">Webhook</button>
+<button data-act="remove" data-id="${id}">Remove</button></td></tr>`;
+					})
+					.join('');
+
+	return `<h1>Git</h1>
+<p class="sub">Connect a repository and this site follows it. A push installs the module; the result is written back as a commit status.</p>
+<table><thead><tr><th>Repository</th><th>Branch</th><th>Head</th><th>Installed</th><th>Webhook / Poll</th><th></th></tr></thead>
+<tbody>${rows}</tbody></table>
+<p id="git-out" class="sub"></p>
+<div id="git-detail"></div>
+
+<h2>Add a Remote</h2>
+<div class="card">
+<p class="sub">Paste a repository URL or <code>owner/repo</code>. Leave the branch empty to follow the repository's default. A public repository over <strong>Any Git Remote</strong> needs no token at all.</p>
+<form id="git-add">
+<label>Provider <select name="provider">
+<option value="github">GitHub</option><option value="gitlab">GitLab</option><option value="bitbucket">Bitbucket</option><option value="gitea">Gitea / Forgejo</option><option value="generic">Any Git Remote</option>
+</select></label>
+<input type="text" name="repo" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false">
+<input type="text" name="branch" placeholder="branch (optional)" autocomplete="off" spellcheck="false" style="min-width:9rem;flex:0">
+<input type="number" name="interval" min="0" step="5" value="60" title="Poll interval in minutes; 0 turns polling off" style="width:5rem;flex:0">
+<input type="text" name="token" placeholder="access token" autocomplete="off" spellcheck="false">
+<input type="text" name="email" placeholder="Atlassian account email (Bitbucket only)" autocomplete="off" spellcheck="false">
+<button type="submit">Connect</button>
+</form>
+<p class="sub">The token is stored in this site's own database, never in KV: KV is operator-writable and nothing there may change what a site can reach.</p>
+</div>
+
+<h2>How a Pull Works</h2>
+<div class="card">
+<p>The transport is git's own smart HTTP, so any host that serves a repository works. A poll is a ref advertisement and costs a few hundred bytes when nothing has moved. A pull asks for one commit at depth 1, reads the packfile, and writes each file as its own row.</p>
+<p class="sub">Only mountable files are kept: PHP, YAML, Twig, JS and CSS, with tests, <code>vendor/</code> and <code>node_modules/</code> dropped. Module names come from <code>*.info.yml</code>, so a repository holding several modules installs all of them at their own paths.</p>
+<p class="sub">After a pull the Drupal kernel is booted against the new tree. If it fails, the previous files are restored and the site keeps serving.</p>
+</div>
+
+<h2>What Gets Written Back</h2>
+<div class="card">
+<p>A <strong>commit status</strong> on the pushed sha, with a state, a context and a link back to this site. Every provider with an API supports it and an access token can write it.</p>
+<p class="sub">GitHub's Checks API carries annotations and per-line output, and only a GitHub App can write one. A pasted token is refused with <code>Resource not accessible by personal access token</code>, so this page does not offer check runs.</p>
+</div>
+
+<h2>Scopes</h2>
+<table><thead><tr><th>Provider</th><th>Read the tree</th><th>Write a status</th><th>Create a webhook</th></tr></thead><tbody>
+<tr><td>GitHub</td><td><code>Contents: read</code></td><td><code>Commit statuses: write</code></td><td><code>Webhooks: write</code></td></tr>
+<tr><td>GitLab</td><td><code>read_api</code></td><td><code>api</code></td><td><code>api</code> + Maintainer</td></tr>
+<tr><td>Bitbucket</td><td><code>repository:read</code></td><td><code>repository:read</code></td><td><code>webhook</code></td></tr>
+<tr><td>Gitea / Forgejo</td><td><code>read:repository</code></td><td><code>write:repository</code></td><td><code>write:repository</code></td></tr>
+<tr><td>Any Git Remote</td><td>read access over HTTPS</td><td><span class="dim">no API</span></td><td><span class="dim">register by hand</span></td></tr>
+</tbody></table>
+<p class="sub">GitLab has no narrower scope than <code>api</code> for writing a status. Bitbucket authenticates with your Atlassian account email as the username and the API token as the password. A plain remote polls only; use <strong>Webhook</strong> to mint a secret and register the delivery URL yourself.</p>
+
+<script>
+const out = document.getElementById('git-out');
+const detail = document.getElementById('git-detail');
+function owner() { return window.prompt('Owner token for this site'); }
+function esc(s) { const d = document.createElement('span'); d.textContent = String(s == null ? '' : s); return d.innerHTML; }
+async function call(params, token) {
+  const res = await fetch('/git?' + new URLSearchParams(params), {
+    headers: { authorization: 'Bearer ' + token }
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'refused');
+  return data;
+}
+function showChanges(data) {
+  const c = data.counts || {};
+  const head = '<h2>' + esc(String(data.sha || '').slice(0, 12)) + '</h2>' +
+    '<p class="sub">+' + (c.added || 0) + ' added, ~' + (c.modified || 0) + ' modified, -' +
+    (c.removed || 0) + ' removed, ' + (c.unchanged || 0) + ' unchanged. ' +
+    (data.rowsWritten || 0) + ' rows would be written.</p>';
+  const conflicts = (data.conflicts || []).length
+    ? '<p class="sub"><strong>' + data.conflicts.length + ' conflicting path(s):</strong> ' +
+      data.conflicts.map(function (x) { return esc(x.path) + ' (owned by ' + esc(x.owner) + ')'; }).join(', ') + '</p>'
+    : '';
+  const mods = (data.modules || []).length
+    ? '<p class="sub">Modules: ' + data.modules.map(function (m) { return '<code>' + esc(m.name) + '</code> (' + esc(m.type) + ')'; }).join(', ') + '</p>'
+    : '';
+  const rows = (data.changes || []).filter(function (ch) { return ch.kind !== 'unchanged'; }).map(function (ch) {
+    return '<tr><td><code>' + esc(ch.path) + '</code></td><td>' + esc(ch.kind) + '</td>' +
+      '<td class="dim">+' + (ch.added || 0) + ' / -' + (ch.removed || 0) + '</td></tr>';
+  }).join('');
+  detail.innerHTML = '<div class="card">' + head + mods + conflicts +
+    (rows ? '<table><thead><tr><th>File</th><th>Change</th><th>Lines</th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<p class="sub">No file differs.</p>') + '</div>';
+}
+function showPulls(data, id) {
+  const rows = (data.pulls || []).map(function (p) {
+    return '<tr><td>#' + esc(p.id) + '</td><td>' + esc(p.title) + '</td><td><code>' + esc(p.branch) +
+      '</code> &rarr; <code>' + esc(p.target) + '</code></td><td>' + esc(p.author) + (p.draft ? ' <em>draft</em>' : '') +
+      '</td><td><button data-preview="' + esc(p.id) + '" data-id="' + esc(id) + '">Preview</button></td></tr>';
+  }).join('');
+  detail.innerHTML = '<div class="card"><h2>Open Requests</h2>' +
+    (rows ? '<table><thead><tr><th>#</th><th>Title</th><th>Branch</th><th>Author</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<p class="sub">Nothing open.</p>') +
+    '<p class="sub">A preview installs that request\\'s head instead of the branch. Polling and pushes are held until you leave it.</p></div>';
+  detail.querySelectorAll('button[data-preview]').forEach(function (b) {
+    b.addEventListener('click', async function () {
+      const t = owner(); if (!t) return;
+      out.textContent = 'Previewing #' + b.dataset.preview + '...';
+      try {
+        const res = await call({ action: 'preview', id: b.dataset.id, pr: b.dataset.preview }, t);
+        out.textContent = 'Previewing #' + b.dataset.preview + '.';
+        showChanges(res);
+      } catch (err) { out.textContent = 'Failed: ' + err.message; }
+    });
+  });
+}
+document.getElementById('git-add').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  if (!f.get('repo')) { out.textContent = 'A repository is needed.'; return; }
+  if (!f.get('token') && f.get('provider') !== 'generic') { out.textContent = 'That provider needs an access token.'; return; }
+  const t = owner(); if (!t) return;
+  out.textContent = 'Connecting...';
+  try {
+    const data = await call({
+      action: 'add', provider: f.get('provider'), repo: f.get('repo'),
+      branch: f.get('branch') || '', token: f.get('token') || '', email: f.get('email') || '',
+      interval: f.get('interval') || '60'
+    }, t);
+    out.textContent = 'Connected ' + data.repo + ' at ' + (data.head || 'unknown') + '.';
+    window.location.reload();
+  } catch (err) { out.textContent = 'Could not connect: ' + err.message; }
+});
+document.querySelectorAll('select[data-branch]').forEach((s) => {
+  s.addEventListener('focus', async () => {
+    if (s.dataset.loaded) return;
+    const t = owner(); if (!t) return;
+    try {
+      const data = await call({ action: 'branches', id: s.dataset.branch }, t);
+      s.dataset.loaded = '1';
+      data.branches.forEach(function (b) {
+        const o = document.createElement('option');
+        o.value = b; o.textContent = b + (b === data.current ? ' (current)' : '');
+        s.appendChild(o);
+      });
+    } catch (err) { out.textContent = 'Could not list branches: ' + err.message; }
+  });
+  s.addEventListener('change', async () => {
+    if (!s.value) return;
+    const t = owner(); if (!t) return;
+    out.textContent = 'Switching to ' + s.value + '...';
+    try {
+      const data = await call({ action: 'switch', id: s.dataset.branch, branch: s.value }, t);
+      showChanges(data);
+      window.location.reload();
+    } catch (err) { out.textContent = 'Could not switch: ' + err.message; }
+  });
+});
+document.querySelectorAll('input[data-interval]').forEach((i) => {
+  i.addEventListener('change', async () => {
+    const t = owner(); if (!t) return;
+    try {
+      const data = await call({ action: 'interval', id: i.dataset.interval, minutes: i.value }, t);
+      out.textContent = data.message;
+    } catch (err) { out.textContent = 'Failed: ' + err.message; }
+  });
+});
+document.querySelectorAll('button[data-act]').forEach((b) => {
+  b.addEventListener('click', async () => {
+    const t = owner(); if (!t) return;
+    out.textContent = b.dataset.act + '...';
+    try {
+      const data = await call({ action: b.dataset.act, id: b.dataset.id }, t);
+      if (b.dataset.act === 'diff' || b.dataset.act === 'pull' || b.dataset.act === 'unpreview') {
+        showChanges(data);
+        out.textContent = data.applied === false && data.rolledBack ? data.error : 'done';
+        return;
+      }
+      if (b.dataset.act === 'prs') { showPulls(data, b.dataset.id); out.textContent = 'done'; return; }
+      if (b.dataset.act === 'hook') {
+        out.textContent = data.message + ' Delivery URL: ' + data.deliverTo;
+        return;
+      }
+      out.textContent = data.message || 'done';
+      if (b.dataset.act === 'remove') window.location.reload();
+    } catch (err) { out.textContent = 'Failed: ' + err.message; }
+  });
+});
+</script>`;
+}
+
+// #endregion
+
+// #region Access -- the OIDC provider an operator had to set by hand
+
+export interface OidcSetupRow {
+	issuer: string;
+	clientId: string;
+	secretPresent: boolean;
+	redirectUri: string;
+	saved?: boolean;
+	discovery?: {
+		ok: boolean;
+		error?: string;
+		authorization?: string;
+		token?: string;
+		jwks?: string;
+	};
+	error?: string | null;
+}
+
+/**
+ * The single sign-on surface.
+ *
+ * Writing goes to `/setup/oidc`, which takes the OWNER token rather than this page's weaker gate:
+ * whoever sets the issuer decides which provider every login on the site authenticates against, so
+ * it is held to the same bar as the client id. The secret stays a binding and is reported present or
+ * absent rather than shown.
+ */
+export function renderAccess(row: OidcSetupRow): string {
+	const configured = row.issuer !== '' && row.clientId !== '';
+	const d = row.discovery;
+	return `<h1>Access</h1>
+<p class="sub">Single sign-on through an OpenID Connect provider. The host verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot.</p>
+
+<div class="card${configured ? '' : ' warn'}">
+<strong>${configured ? `${pill('ok')} Configured` : `${pill('none')} Not Configured`}</strong>
+<p class="sub" style="margin:.4rem 0 0">Issuer <code>${escapeHtml(row.issuer || 'not set')}</code><br>
+Client ID <code>${escapeHtml(row.clientId || 'not set')}</code><br>
+Client secret ${row.secretPresent ? `<span class="ok">present</span>` : `<span class="over">absent</span>`} <span class="dim">(the <code>OIDC_CLIENT_SECRET</code> binding, never read back here)</span></p>
+</div>
+
+<h2>Redirect URI</h2>
+<p class="sub">Add this to the provider's allowed redirect list before the first login.</p>
+<div class="card"><code>${escapeHtml(row.redirectUri)}</code></div>
+
+<h2>Configure</h2>
+<p class="sub">Submitting needs the owner token minted at first run; send it as <code>Authorization: Bearer</code>.</p>
+<form method="POST" action="/setup/oidc?action=save">
+<input type="text" name="issuer" placeholder="https://accounts.example.com" value="${escapeHtml(row.issuer)}" spellcheck="false">
+<input type="text" name="clientId" placeholder="client id" value="${escapeHtml(row.clientId)}" spellcheck="false">
+<button type="submit">Save</button></form>
+${row.error ? `<div class="card bad"><span class="over">${escapeHtml(row.error)}</span></div>` : ''}
+${
+	d
+		? `<div class="card${d.ok ? '' : ' bad'}"><strong>Discovery</strong><p class="sub" style="margin:.3rem 0 0">${
+				d.ok
+					? `authorization <code>${escapeHtml(d.authorization ?? '')}</code><br>token <code>${escapeHtml(d.token ?? '')}</code><br>jwks <code>${escapeHtml(d.jwks ?? '')}</code>`
+					: `<span class="over">${escapeHtml(d.error ?? 'discovery failed')}</span>`
+			}</p></div>`
+		: ''
+}
+
+<h2>What a Login Refuses</h2>
+<ul>
+<li>a signature from a key outside the provider's JWKS</li>
+<li>a token whose <code>iss</code> is not the issuer above</li>
+<li>a token whose <code>aud</code> belongs to another client of the same provider</li>
+<li>an expired token</li>
+<li>a nonce from a different login</li>
+</ul>
+<p class="sub">The signing algorithm is taken from the key rather than from the token header, and the account is keyed by issuer and subject together, so a subject from a newly configured issuer cannot take over an existing account.</p>`;
+}
+
 // #endregion

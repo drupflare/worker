@@ -32,7 +32,7 @@ const ABC_256 = 'bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d5231
 const EMPTY_256 = '0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8';
 
 describe('the BLAKE2b bridge, from PHP', () => {
-	it("is installed on the binary, computes strata's content address, and streams", async () => {
+	it('is installed on the binary, computes a content address, and streams', async () => {
 		const out = await run(`<?php
 			$state = sodium_crypto_generichash_init('', 32);
 			sodium_crypto_generichash_update($state, 'a');
@@ -357,7 +357,7 @@ describe('the XChaCha20-Poly1305 AEAD is LIVE, from PHP', () => {
 		expect(out.extension).toBe(false);
 	}, 900_000);
 
-	it('answers FALSE on a bad tag and THROWS on a bad argument, which is the split strata reads', async () => {
+	it('answers FALSE on a bad tag and THROWS on a bad argument, which is the split a caller reads', async () => {
 		const out = await run(String.raw`<?php
 			$key = str_repeat('k', 32);
 			$nonce = str_repeat('n', 24);

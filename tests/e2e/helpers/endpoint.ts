@@ -1,5 +1,5 @@
 /**
- * The reachability gate for the e2e lane, modelled on `mantle2`'s `E2ETestBase`.
+ * The reachability gate for the e2e lane, modelled on a Drupal project's `E2ETestBase`.
  *
  * The rule worth copying from there is the asymmetry: **skip locally, fail in CI.** A developer
  * without a worker running should not see red, but a CI run that quietly skipped the whole lane

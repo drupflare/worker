@@ -21,7 +21,7 @@ const asJson = process.argv.slice(2).includes('--json');
 /**
  * Published BLAKE2b vectors, used when no ext-sodium is reachable.
  *
- * RFC 7693 Appendix A gives the 512-bit digest of "abc"; the 256-bit digests are the ones strata's
+ * RFC 7693 Appendix A gives the 512-bit digest of "abc"; the 256-bit digests are the ones a
  * own docblock quotes for its shard example, so a disagreement here is visible in that module's
  * documentation too.
  */
@@ -125,7 +125,7 @@ function throughBridge(c: Case): string {
  * The oracle: one php process reading the whole case list off stdin.
  *
  * One spawn rather than one per case, because a spawn is milliseconds and there are hundreds of
- * cases; the PHP side does exactly what strata does, including chunking through the incremental
+ * cases; the PHP side does what a content-addressed store does, including chunking through the
  * API rather than re-deriving it.
  */
 const ORACLE = String.raw`<?php

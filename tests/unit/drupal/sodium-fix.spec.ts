@@ -271,7 +271,7 @@ describe('the PHP fragment', () => {
 	});
 
 	it('takes the state by reference on both functions that mutate it', () => {
-		// strata does `$state = ..._init(); ..._update($state, $block);` -- a by-value parameter
+		// a caller does `$state = ..._init(); ..._update($state, $block);` -- a by-value parameter
 		// would make every chunk after the first digest nothing, silently
 		expect(SODIUM_FIX).toContain('function sodium_crypto_generichash_update(&$state,');
 		expect(SODIUM_FIX).toContain('function sodium_crypto_generichash_final(&$state,');

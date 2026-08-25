@@ -10,7 +10,7 @@ import {
 } from '../../../src/drupal/sodium-fix.js';
 
 /**
- * XChaCha20-Poly1305, and the one property strata actually depends on.
+ * XChaCha20-Poly1305, and the one property a caller actually depends on.
  *
  * ext-sodium's `_decrypt()` returns FALSE when the tag does not verify and THROWS when an argument
  * is the wrong size. `XChaCha20Poly1305Cipher::open()` turns the FALSE into `AuthenticationFailure`,
@@ -69,7 +69,7 @@ describe('the XChaCha20-Poly1305 bridge', () => {
 		expect(okB64(seal('same', 'a'))).not.toBe(okB64(seal('same', 'b')));
 	});
 
-	// #region the split strata reads
+	// #region the split a caller reads
 	it('reports a FLIPPED BYTE as an auth failure, not an argument error', () => {
 		const sealed = base64ToBytes(okB64(seal('tamper me')));
 		sealed[0] = (sealed[0] as number) ^ 0xff;

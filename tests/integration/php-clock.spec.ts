@@ -12,7 +12,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *
  * WHAT IS REALLY BROKEN IS THE INT WIDTH, AND IT IS NOT THE CLOCK. `PHP_INT_SIZE` is 4 here, so
  * `(int) (microtime(true) * 1000)` and `(int) round(microtime(true) * 1e6)` -- the two idioms P41
- * names in `mantle2` and `strata` -- both overflow and wrap. Measured, the cast is modular rather
+ * names a real module uses -- both overflow and wrap. Measured, the cast is modular rather
  * than saturating: 1787454172276.0 casts to 747777140, exactly `mod 2^32` into a signed range.
  * That reorders the fix: a `cfwNow` host bridge returning `Date.now()` would hand PHP the same
  * float `microtime()` already gives it and change nothing. A 64-bit `zend_long` (P28) is what

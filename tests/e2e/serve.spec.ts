@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CACHE_TIERS } from '../../src/ops/cache-tiers.js';
 import { ENDPOINT, SITE, e2eGate, serve } from './helpers/endpoint';
 
 /**
@@ -51,13 +52,10 @@ describe.skipIf(skip)(`the serving chain at ${ENDPOINT}`, () => {
 		if (res.status !== 200) return;
 		const tier = res.headers.get('x-cfw-cache');
 		expect(tier).not.toBeNull();
-		// read off the source, because the first version of this assertion
-		// WAS guessed and missed EDGE: the Durable Object sets HIT/MISS/DPC/FILL/PARTIAL
-		// (src/site-do.js), and the edge front end OVERWRITES it with EDGE on a caches.default
-		// hit (src/site.js:313) or DENY on a filtered path (src/site.js:294)
-		expect(['EDGE', 'DENY', 'HIT', 'MISS', 'DPC', 'FILL', 'PARTIAL']).toContain(
-			String(tier).toUpperCase()
-		);
+		// imported rather than written out: the hand-written list named three tiers the source
+		// does not emit and omitted three it does, and `tests/node/cache-tiers.spec.ts` holds
+		// the const to what `src/` actually sets
+		expect(CACHE_TIERS as readonly string[]).toContain(String(tier).toUpperCase());
 	});
 
 	it('reports the generation, so an invalidation is observable from outside', async () => {

@@ -87,6 +87,23 @@ describe('cron, fired for real', () => {
 	});
 });
 
+/**
+ * Renders a path once before the burst.
+ *
+ * A cold MISS answers 503 while the fill queue works, which says nothing about whether two visitors
+ * crossed -- so a concurrency assertion made against an unfilled path is measuring the wrong thing.
+ */
+async function warm(path: string, deadlineMs = 90_000): Promise<number> {
+	const until = Date.now() + deadlineMs;
+	let status = 0;
+	while (Date.now() < until) {
+		status = (await serve(path)).status;
+		if (status < 500) return status;
+		await new Promise((r) => setTimeout(r, 1000));
+	}
+	return status;
+}
+
 describe('several visitors at once', () => {
 	/**
 	 * The case a shared interpreter fails at and a per-request one cannot.
@@ -99,6 +116,9 @@ describe('several visitors at once', () => {
 		if (skip) return;
 
 		const paths = ['/', '/user/login', '/filter/tips'];
+		for (const path of paths) {
+			expect(await warm(path), `${path} never filled`).toBeLessThan(500);
+		}
 		const wanted = Array.from({ length: 10 }, (_, i) => paths[i % paths.length] as string);
 		const responses = await Promise.all(wanted.map((p) => serve(p)));
 		const bodies = await Promise.all(responses.map((r) => r.text()));
@@ -136,6 +156,7 @@ describe('several visitors at once', () => {
 	it('answers eight simultaneous requests for ONE path consistently', async () => {
 		if (skip) return;
 
+		expect(await warm('/'), '/ never filled').toBeLessThan(500);
 		const responses = await Promise.all(Array.from({ length: 8 }, () => serve('/')));
 		const bodies = await Promise.all(responses.map((r) => r.text()));
 		const lengths = bodies.map((b) => b.length);
@@ -168,19 +189,28 @@ describe('the requests an attacker sends', () => {
 	});
 
 	/**
-	 * A diagnostic route must be unreachable when diagnostics are off.
+	 * The diagnostic gate decides `/sql` and `/php`, which are arbitrary execution.
 	 *
-	 * `/sql` and `/php` are arbitrary execution behind `PW_DIAGNOSTICS`, and the gate is the only
-	 * thing between them and the internet. `KV_OVERRIDABLE` deliberately excludes the flag for this
-	 * reason, and this is the assertion that the exclusion means something.
+	 * ASSERTED BOTH WAYS. `bun run dev` sets `PW_DIAGNOSTICS:1`, so a test that only demands a
+	 * refusal can never pass against the lane's own worker -- it would be red for every developer
+	 * and would say nothing about the gate. Reading the flag first makes the same test meaningful
+	 * on a dev worker and on a deployed one, and it fails if the gate is ever inverted.
 	 */
-	it('does not expose the diagnostic surface on a production worker', async () => {
+	it('opens the diagnostic surface exactly when the flag says so', async () => {
 		if (skip) return;
 
+		const diagnostics = (await json(await op('/serve-stats')))['diagnostics'] === true;
 		for (const route of ['/sql', '/php', '/restore', '/heap']) {
 			const res = await op(route, { q: 'SELECT 1' });
-			// 404 or 403 are both correct; 200 with a result is not
-			expect([401, 403, 404, 405], `${route} answered ${res.status}`).toContain(res.status);
+			if (diagnostics) {
+				expect([401, 403, 404], `${route} was refused with diagnostics ON`).not.toContain(
+					res.status
+				);
+			} else {
+				expect([401, 403, 404, 405], `${route} answered ${res.status}`).toContain(
+					res.status
+				);
+			}
 		}
 	});
 

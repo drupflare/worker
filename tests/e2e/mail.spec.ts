@@ -72,6 +72,51 @@ async function waitForSubject(match: RegExp, timeoutMs = 45_000): Promise<GreenM
 	return null;
 }
 
+/** the site's resolved relay, or null when the worker under test has none configured */
+async function mailTransport(): Promise<string | null> {
+	try {
+		const res = await fetch(`${ENDPOINT}/serve-stats?site=${encodeURIComponent(SITE)}`, {
+			signal: AbortSignal.timeout(15_000)
+		});
+		if (!res.ok) return null;
+		const body = (await res.json()) as { mailTransport?: string | null };
+		return body.mailTransport ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * GETs a form and returns its hidden fields, the way a browser submits one.
+ *
+ * A bare POST of `name`/`form_id`/`op` answers **500**: without a `form_build_id` Drupal cannot
+ * restore the form state it is being asked to submit. The lane read that as a mail failure for a
+ * whole session, so the fields are collected rather than assumed.
+ */
+async function formFields(path: string, deadlineMs = 90_000): Promise<Record<string, string>> {
+	const until = Date.now() + deadlineMs;
+	let html = '';
+	while (Date.now() < until) {
+		const res = await fetch(
+			`${ENDPOINT}/serve?site=${encodeURIComponent(SITE)}&path=${encodeURIComponent(path)}&edge=0`,
+			{ signal: AbortSignal.timeout(60_000) }
+		);
+		if (res.status < 500) {
+			html = await res.text();
+			break;
+		}
+		await new Promise((r) => setTimeout(r, 1000));
+	}
+	const fields: Record<string, string> = {};
+	for (const m of html.matchAll(/<input[^>]*type="hidden"[^>]*>/g)) {
+		const tag = m[0];
+		const name = /name="([^"]+)"/.exec(tag)?.[1];
+		const value = /value="([^"]*)"/.exec(tag)?.[1] ?? '';
+		if (name) fields[name] = value;
+	}
+	return fields;
+}
+
 describe('Drupal mail reaches a real SMTP server', () => {
 	let skip = true;
 
@@ -83,7 +128,16 @@ describe('Drupal mail reaches a real SMTP server', () => {
 				`no SMTP rig at ${MAIL_API}. Start it with: docker compose -f docker/compose.yml up -d`
 			);
 		}
-		skip = worker || !rig;
+		// the rig being up says nothing about the worker being pointed at it, and `bun run dev`
+		// sets no SMTP vars -- so the lane failed against a rig that was working perfectly
+		const transport = rig ? await mailTransport() : null;
+		if (rig && transport === null && process.env.CI) {
+			throw new Error(
+				'the SMTP rig is up but the worker under test resolves no mail transport. ' +
+					'Set the SMTP vars on the worker.'
+			);
+		}
+		skip = worker || !rig || transport === null;
 		if (skip) return;
 		await purge();
 
@@ -129,9 +183,16 @@ describe('Drupal mail reaches a real SMTP server', () => {
 	it('delivers a password reset submitted through Drupal own form', async () => {
 		if (skip) return;
 
+		// the hidden fields come off the rendered form; a bare POST is a 500, not a submission
+		const hidden = await formFields('/user/password');
+		expect(
+			hidden.form_build_id,
+			'the form did not render, so nothing was submitted'
+		).toBeTruthy();
 		const body = new URLSearchParams({
+			...hidden,
 			name: 'admin',
-			form_id: 'user_pass',
+			form_id: hidden.form_id ?? 'user_pass',
 			op: 'Submit'
 		});
 		const res = await fetch(

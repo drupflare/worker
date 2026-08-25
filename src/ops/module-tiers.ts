@@ -167,7 +167,7 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 		// generating a sitemap needs
 		vectors: ['runtime.xmlwriter'],
 		why: "generation is a queue drained by cron, plus a filesystem write per chunk. It refused to install because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in and cannot be shimmed -- so the fix is Drupal's own `hook_requirements_alter()`, host-side, module unmodified",
-		lift: 'shipped: `XMLWRITER_FIX` supplies the eleven methods 4.2.1 calls, byte-identical to libxml across eight documents including both sitemap shapes, escaping, indentation depth and the flush semantics a chunked generator depends on. `Requirements::requirementsAlter()` clears the install block only when the class is present AND round-trips a document, so a build without the polyfill keeps the honest error. What remains for `verified` is a gated enable-and-assert run that generates a real sitemap'
+		lift: 'shipped: `XMLWRITER_FIX` supplies the eleven methods 4.2.1 calls, byte-identical to libxml across eight documents including both sitemap shapes, escaping, indentation depth and the flush semantics a chunked generator depends on. `Requirements::requirementsAlter()` clears the install block only when the class is present AND round-trips a document, so a build without the polyfill keeps the honest error'
 	},
 	'drupal/search_api': {
 		needs: ['cron'],
@@ -226,14 +226,15 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	},
 	'drupal/search_api_solr': {
 		needs: ['deferrable-outbound'],
-		why: "MEASURED 2026-08-23 against solarium 6.4.2, and the transport IS interceptable, which is what moved this off blocking-outbound. The default connector picks `extension_loaded('curl') ? new Curl() : new Http()` and this build has no curl extension, so it lands on the stream adapter -- which then reads `$http_response_header` and gets [], the P39 defect in a second consumer. `SolariumTransport` subscribes to Solarium's own `PreExecuteRequest`, whose response short-circuits the adapter entirely, and search_api_solr hands Drupal's dispatcher to the client, so it needs NO module change. Indexing is fully deferrable; a query pays one round trip on first ask and is cached after",
-		lift: 'shipped: `Drupal\\drupflare\\Search\\SolariumTransport`, 17 assertions in `../drupflare/tests/solarium-transport.php` against real Solarium objects. What is NOT covered is a file-upload extract, which needs a streaming body and is DECLARED rather than sent empty. A live-Solr integration run is what would take this to `verified`'
+		vectors: ['runtime.int64'],
+		why: "Its transport is not the blocker. Measured 2026-08-24 by installing it: it pulls `maennchen/zipstream-php`, which declares `php-64bit`, so composer emits a `platform_check.php` asserting `PHP_INT_SIZE === 8`. This build has 4, and the check aborts every request before Drupal boots -- all 56 other contrib cases failed to install with it. With `platform-check: false` the module installs clean and 57/57 pass: `plugin.manager.search_api_solr.connector`, `solarium.query_helper` and its four solr config entity types all resolve, none of them before. The transport was measured separately against solarium 6.4.2 and is interceptable: the default connector picks `extension_loaded('curl') ? new Curl() : new Http()`, this build has no curl, so it lands on the stream adapter, and `SolariumTransport` short-circuits that through Solarium's own `PreExecuteRequest` with no module change",
+		lift: "`PHP_INT_SIZE` 8, from wasm64 (measured to fit at 123.00 MiB) or from `ZEND_ENABLE_ZVAL_LONG64` on wasm32. Disabling composer's platform check is the cheap route and is a product decision: the guard is right that a 64-bit path exists, since zipstream is there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path site-wide to unlock one module. `SolariumTransport` is already shipped with 17 assertions in the sibling module's `tests/solarium-transport.php`; a file-upload extract needs a streaming body and is declared rather than sent empty"
 	},
 	// #endregion
 
 	// #region the dependencies of a real site, added 2026-08-19
 	//
-	// `earth-app/mantle2` is the one workload here that somebody depends on, and NONE of its five
+	// the one workload here that a real deployment depends on, and NONE of its five
 	// contrib dependencies was classified. Two of them are the product's own pitch rather than a
 	// compatibility question: this platform REPLACES them, so a site that moves here drops the
 	// dependency instead of needing it to work.

@@ -367,11 +367,18 @@ const CASES: readonly Case[] = [
 	},
 	{
 		module: 'simple_sitemap',
-		observable: 'that it REFUSES to install, on a requirement of its own',
-		// the case that forced the capability contract into `tierFor()`. Classified `cron`, scored
-		// installable, and then refused by `simple_sitemap_requirements()` over a missing
-		// `xmlwriter` extension before any of its cron or filesystem behaviour is reached
-		refusesToInstall: 'runtime.xmlwriter'
+		observable: 'its generator, queue worker and sitemap writer, plus both of its entity types',
+		// this asserted `refusesToInstall: 'runtime.xmlwriter'` until the pure-PHP XMLWriter and
+		// `hook_requirements_alter()` landed; the case then FAILED saying the module installed
+		ask: {
+			services: [
+				'simple_sitemap.generator',
+				'simple_sitemap.queue_worker',
+				'simple_sitemap.sitemap_writer'
+			]
+		},
+		types: ['simple_sitemap.entity_type', 'simple_sitemap_type.entity_type'],
+		config: ['simple_sitemap.settings']
 	},
 	{
 		module: 'twig_tweak',

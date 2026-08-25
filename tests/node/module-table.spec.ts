@@ -135,6 +135,7 @@ describe('moduleTable', () => {
 			'drupal/redirect',
 			'drupal/scheduler',
 			'drupal/search_api',
+			'drupal/simple_sitemap',
 			'drupal/stage_file_proxy',
 			'drupal/svg_image',
 			'drupal/token',
@@ -320,17 +321,30 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		const verified = new Set(Object.keys(VERIFIED_BEHAVIOURS).map((n) => n.split('/')[1]));
 		const unclaimed = [...exercised()].filter((n) => !verified.has(n)).sort();
 		expect(unclaimed, 'a case runs for this module but the table makes no claim').toEqual([
-			'simple_sitemap',
 			'smtp'
 		]);
-		// and both are absent for a REASON rather than by oversight, though no longer the same two
-		// reasons. `smtp` still needs a socket the runtime cannot open. `simple_sitemap` is now
-		// SHIMMED -- a pure-PHP XMLWriter plus a host-side `hook_requirements_alter()` -- so it
-		// reaches the cron tier and what it is missing is a gated run, not a capability
+		// it is absent for a REASON rather than by oversight: `smtp` needs a socket inside the
+		// request that sends the mail, and an install cannot see that. `simple_sitemap` used to sit
+		// beside it and moved to `verified` on 2026-08-24 -- its case now enables the module and
+		// asserts its services and entity types instead of asserting that it refuses to install
 		expect(tierFor('drupal/smtp').tier).toBe('refused');
 		expect(tierFor('drupal/simple_sitemap').tier).not.toBe('refused');
 		// the vector is still what decides it; only the vector's answer moved
 		expect(tierFor('drupal/simple_sitemap').reason).not.toContain('runtime.xmlwriter');
+	});
+
+	/**
+	 * The first module here refused by the INTEGER WIDTH rather than by a capability.
+	 *
+	 * `search_api_solr` pulls `maennchen/zipstream-php`, which declares `php-64bit`, so composer
+	 * emits a `platform_check.php` asserting `PHP_INT_SIZE === 8`. On this build that is 4 and the
+	 * check aborts every request before Drupal boots -- measured by installing it: all 56 other
+	 * contrib cases failed too. With the check disabled the module installs clean and 57/57 pass.
+	 */
+	it('refuses search_api_solr on the integer width, not on its transport', () => {
+		const verdict = tierFor('drupal/search_api_solr');
+		expect(verdict.tier).toBe('refused');
+		expect(verdict.reason).toContain('runtime.int64');
 	});
 });
 

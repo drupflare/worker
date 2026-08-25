@@ -161,13 +161,14 @@ describe('tiers under the shipped capabilities', () => {
 	 * tier reaches it after all. This assertion exists so the move is deliberate: if it ever reads
 	 * `refused` again, something regressed rather than a spec being tidied.
 	 */
-	it('reaches search_api_solr through the deferred tier now that its transport is interceptable', () => {
+	// its transport is interceptable and is not what refuses it: a transitive `php-64bit` makes
+	// composer's platform check abort every request on this build
+	it('refuses search_api_solr on the integer width, above its transport', () => {
 		const solr = tierFor('drupal/search_api_solr', SHIPPED_CAPABILITIES);
-		expect(solr.tier).toBe('needs-deferred-tier');
-		expect(solr.tier).not.toBe('refused');
+		expect(solr.tier).toBe('refused');
+		expect(solr.reason).toContain('runtime.int64');
 
-		// and it goes back to refused on a runtime with no deferred tier, which is what says the
-		// classification is driven by the capability rather than hardcoded
+		// still refused with no deferred tier, so the vector decides rather than the capability
 		const none = { ...SHIPPED_CAPABILITIES, deferredOutbound: false };
 		expect(tierFor('drupal/search_api_solr', none).tier).toBe('refused');
 	});

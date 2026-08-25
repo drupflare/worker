@@ -456,9 +456,16 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 		expect(out.reason).toContain('INSIDE one render');
 	});
 
-	it('classifies Solr as DEFERRABLE, which is where the measurement put it', () => {
+	// **ITS TRANSPORT WAS NEVER THE BLOCKER.** This asserted `needs-deferred-tier` until 2026-08-24,
+	// on the strength of a note written from reading the module rather than from installing it.
+	// Installed, it pulls `maennchen/zipstream-php`, which declares `php-64bit`, so composer's
+	// `platform_check.php` asserts `PHP_INT_SIZE === 8` and aborts every request before Drupal boots
+	// -- all 56 other contrib cases failed with it. The vector comes first in `tierFor()`, which is
+	// exactly why a capability-contract id is the right place to express this
+	it('refuses Solr on the integer width, above its deferrable transport', () => {
 		const out = tierFor('drupal/search_api_solr');
-		expect(out.tier).toBe('needs-deferred-tier');
+		expect(out.tier).toBe('refused');
+		expect(out.reason).toContain('runtime.int64');
 	});
 
 	it('names the failure mode a cron module has when cron is turned OFF', () => {

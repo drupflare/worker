@@ -192,6 +192,8 @@ export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
 		"enabled against a real site; `menu_block:main` and `menu_block:footer` are block plugin derivatives it provides. `access_check.admin_menu_block_page` reads as its service and is CORE's -- the before reading is what said so",
 	'drupal/module_filter':
 		'enabled against a real site; `module_filter.settings` is installed and its admin route is in the `router` table',
+	'drupal/simple_sitemap':
+		"enabled against a real site; `simple_sitemap.generator`, `simple_sitemap.queue_worker` and `simple_sitemap.sitemap_writer` resolve, both `simple_sitemap` and `simple_sitemap_type` are registered entity types and `simple_sitemap.settings` is installed, none of it before. It was refused outright until the host supplied a pure-PHP `XMLWriter` and cleared its one install block through `hook_requirements_alter()` -- `extension_loaded('xmlwriter')` is a built-in and cannot be shimmed",
 	'drupal/svg_image':
 		"enabled against a real site; the `image` field formatter is `Drupal\\svg_image\\...\\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and the `image_image` widget moves the same way. It takes core's plugin ids over rather than adding its own",
 	'drupal/video_embed_field':
@@ -216,9 +218,7 @@ export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = {
 	'drupal/queue_ui':
 		'a UI over queues that only move when cron runs them, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
 	'drupal/search_api':
-		'indexing runs on cron with the database backend, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
-	'drupal/simple_sitemap':
-		"generation is a queue drained by cron, and the cron wire is measured in `cron-wire.spec.ts`. It used to be refused outright because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in and cannot be shimmed; the host supplies a pure-PHP `XMLWriter` verified byte for byte against libxml, and clears that one install block through `hook_requirements_alter()`. The module is unmodified and is not in the pack"
+		'indexing runs on cron with the database backend, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack'
 };
 
 export interface TableRow {

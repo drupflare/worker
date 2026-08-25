@@ -92,6 +92,13 @@ const findings: Finding[] = [];
 for (const file of files) {
 	const text = await Bun.file(file).text();
 	const lines = text.split('\n');
+	// a same-file declaration shadows the exported one of that name; the map is keyed by name alone,
+	// so without this an unrelated export elsewhere resolves the call and reports a correct line
+	const localFns = new Set(
+		[...text.matchAll(/^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map(
+			(d) => d[1] as string
+		)
+	);
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i] as string;
 		for (const m of line.matchAll(/\bawait\s+([A-Za-z0-9_$]+)\s*\(/g)) {
@@ -103,6 +110,7 @@ for (const file of files) {
 			if (chained(line, (m.index ?? 0) + m[0].length - 1)) continue;
 			const decl = declarations.get(callee);
 			if (!decl || decl.async) continue;
+			if (decl.file !== file && localFns.has(callee)) continue;
 			// no annotation means the return type is inferred; unknown is not a finding
 			if (decl.returns === null) continue;
 			if (THENABLE.test(decl.returns)) continue;

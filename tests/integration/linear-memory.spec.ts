@@ -22,7 +22,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * rounded up to a 64 KiB page, so the peak is `INITIAL_MEMORY` advanced N rungs. At emscripten's
  * 0.20 that was exactly one rung -- `ceil(100,663,296 * 1.2 / 65,536) * 65,536 = 120,848,384`, the
  * measured peak to the byte -- which is what made 61,440 bytes of shortfall cost 13,434,880. At the
- * shipping 0.05 the same shortfall costs one rung of 5 MiB, and a render takes one.
+ * shipping 0.08 the same shortfall costs one rung of 8,060,928 bytes, and a render takes none.
  *
  * **THE INTERVAL IS NOW COLLAPSED, and it took a glue rewrite rather than a rebuild.** The growth
  * policy is NOT a link-only setting: emscripten emits `MEMORY_GROWTH_GEOMETRIC_STEP` into
@@ -31,25 +31,29 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  *
  * **AND THE STEP IS NO LONGER 0.20, BECAUSE A THIRD WORKLOAD CHANGED THE ANSWER.** The ladder scored
  * an anonymous render and an install and concluded over-reservation was worth about 1%. Adding an
- * AUTHENTICATED render -- the workload P7 exists to serve, and the one nobody had run -- is where
- * the peak actually lives. Measured after P30 turned opcache off:
+ * AUTHENTICATED render -- the workload the shell work exists to serve, and the one nobody had run --
+ * is where the peak actually lives. The full sweep lives in the `SHIPPING_STEP` docblock in
+ * `scripts/measure/growth-glue.ts`; the arms that bracket the choice, measured 2026-08-24:
  *
  * | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB | grow events |
  * | ---- | ---------- | ----------- | -------- | ------ | ------------------- | ----------- |
  * | 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75               | 1           |
  * | 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38               | 1           |
+ * | 0.08 | 96.00      | 103.69      | 103.69   | 103.69 | 24.31               | 1           |
  * | 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13               | 2           |
- * | 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | ~7          |
- * | 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44               | many        |
+ * | 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | 7           |
+ * | 0    | 96.00      | 96.88       | 102.69   | 102.69 | 25.31               | many        |
  *
  * **A RENDER NO LONGER GROWS THE HEAP AT ALL**, on any arm, which is why this file's second case
- * asserts the opposite of what it used to. That is P30: opcache's compile-time working set was
+ * asserts the opposite of what it used to. That is opcache: its compile-time working set was
  * roughly 5 MiB of the render peak and 19 MiB of an install, and none of it is spent now.
  *
- * `SHIPPING_STEP` is 0.05, emitted by `restore-artifacts.ts` after the pristine glue is
- * sha256-verified and imported by `src/runtime/php-binary-85.ts`. 0.05 rather than 0.01 or 0 because
- * those buy 2.75 and 3.31 MiB more while a grow event COPIES the heap -- 2 events against ~7 and
- * unbounded-many.
+ * `SHIPPING_STEP` is 0.08, emitted by `restore-artifacts.ts` after the pristine glue is
+ * sha256-verified and imported by `src/runtime/php-binary-85.ts`. It is the lowest step whose FIRST
+ * rung clears the authenticated demand with real margin, so it reaches the binding peak in one grow
+ * rather than two and still leaves 24.31 MiB. 0.05 shipped until 2026-08-24 and was dominated on
+ * every metric; the arms below 0.07 that look better sit on a 7 MiB cliff and one of them was
+ * measured falling off it.
  *
  * **THE FIRST VERSION OF THIS TABLE DID NOT SURVIVE ITS OWN RE-MEASUREMENT**, and that is worth more
  * than the table. Taken with opcache still on, it read 138.31 MiB for the authenticated arm at 0.20
@@ -60,7 +64,7 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * **THE BUILD IS ALSO NOT ONE GROWTH EVENT FROM OOM**, which is what this file used to say.
  * `getHeapMax()` returns 4,294,901,760, so the module declares no maximum and the 128 MiB ceiling is
  * workerd's, enforced by `grow()` THROWING. Emscripten catches that and retries at a smaller step --
- * `for (cutDown = 1; cutDown <= 4; cutDown *= 2)`. At 0.05 the first candidate already fits, so the
+ * `for (cutDown = 1; cutDown <= 4; cutDown *= 2)`. At 0.08 the first candidate already fits, so the
  * retry ladder is no longer on the path of an ordinary render at all.
  *
  * ASSERTED AS BOUNDS AND A RELATIONSHIP, never as equalities: the absolutes move with the pack and
@@ -136,7 +140,7 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		);
 
 		// at 0.20 the FIRST candidate was 145,031,168 -- over the limit -- and only the third fit.
-		// At 0.05 the first one fits, so a growth from the peak costs one `grow()` rather than
+		// At 0.08 the first one fits, so a growth from the peak costs one `grow()` rather than
 		// three, two of which threw. The ladder still exists and still degrades; it is simply no
 		// longer on the path of an ordinary render
 		expect(tries[0]).toBeLessThan(ISOLATE_LIMIT);

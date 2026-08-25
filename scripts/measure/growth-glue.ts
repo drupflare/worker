@@ -13,13 +13,26 @@ import { resolve } from 'node:path';
  * WHY A STEP OF 0 IS THE MEASUREMENT AND NOT JUST THE FLOOR. With the step at 0 the over-grown
  * candidate collapses to `oldSize`, so `newSize` is `align(requestedSize, 64 KiB)` -- the heap stops
  * being a geometric series and becomes live demand rounded up to a page. That converts "demand is
- * somewhere in a 19.25 MiB interval" into a reading, which is the open half of P16.
+ * somewhere in a 19.25 MiB interval" into a reading.
  */
 
 const PAGE = 65_536;
 
 /** the shipping glue, and the only input; the `.wasm` is untouched because it holds no policy */
 export const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
+
+/** every pointer ABI a glue is emitted for; `null` is wasm32, which needs no suffix */
+export type Abi = null | 'wasm64';
+
+/** the pristine glue for an ABI, as `phasm` publishes it */
+export function glueFor(abi: Abi): string {
+	return abi === null ? SHIPPING_GLUE : `.interp/php8.5-${abi}-worker.mjs`;
+}
+
+/** where the tuned copy for an ABI is written */
+export function tunedGlueFor(abi: Abi): string {
+	return abi === null ? TUNED_GLUE : `.interp/php8.5-${abi}-worker.tuned.mjs`;
+}
 
 /**
  * The geometric step as emscripten emits it.
@@ -35,49 +48,74 @@ export function variantPath(step: number): string {
 }
 
 /**
- * The step the SHIPPING glue is tuned to, and why it is not emscripten's 0.20.
+ * The step the SHIPPING glue is tuned to, and why it is neither emscripten's 0.20 nor the 0.05 that
+ * shipped until 2026-08-24.
  *
- * Measured 2026-08-23 across three workloads, and re-measured after P30 turned opcache off. Both
- * tables are here because the difference between them is the finding.
+ * MEASURED 2026-08-24 with `bun scripts/measure/growth-ladder.ts <steps>`: 0 plus every hundredth to
+ * 0.20, plus thousandths across the one breakpoint. n=2 on every arm, n=3 on 0.05, n=4 on 0.069 and
+ * 0.07, n=6 on the step-0 demand. Bytes only -- a grow COPIES the heap, so its cost is reported as
+ * bytes copied rather than as a duration, which RULE 0 forbids reading off a local clock.
  *
- * WITH OPCACHE ON, which is what shipped until 2026-08-23:
+ * THE PEAK IS A STEP FUNCTION OF THE STEP: `newSize = align(max(demand, oldSize*(1+step)), 64 KiB)`,
+ * so what sets it is which RUNG first covers demand. Install demand is 101,580,800 on all 6 samples;
+ * AUTH DEMAND IS BIMODAL, 107,610,112 and 107,675,648 three times each -- exactly one page apart,
+ * and that page is what the choice below turns on.
  *
- * | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB |
- * | ---- | ---------- | ----------- | -------- | ------ | ------------------- |
- * | 0.20 | 115.25     | 115.25      | 138.31   | 138.31 | **-10.31**          |
- * | 0.05 | 100.81     | 111.19      | 116.75   | 116.75 | 11.25               |
+ * A render never grows the heap on any arm (96.00 MiB / 100,663,296). The AUTHENTICATED render is
+ * the binding workload on every arm, so `worst` below is its peak.
  *
- * WITH OPCACHE OFF, which is what ships now:
+ * | step  | worst-case peak | MiB    | headroom   | MiB   | events | bytes copied |
+ * | ----- | --------------- | ------ | ---------- | ----- | ------ | ------------ |
+ * | 0     | 107,675,648     | 102.69 | 26,542,080 | 25.31 | many   | n/a          |
+ * | 0.01  | 108,134,400     | 103.13 | 26,083,328 | 24.88 | 7      | 726,728,704  |
+ * | 0.02  | 109,051,904     | 104.00 | 25,165,824 | 24.00 | 4      | 415,039,488  |
+ * | 0.03  | 110,100,480     | 105.00 | 24,117,248 | 23.00 | 3      | 311,296,000  |
+ * | 0.04  | 108,920,832     | 103.88 | 25,296,896 | 24.13 | 2      | 205,389,824  |
+ * | 0.05  | 111,017,984     | 105.88 | 23,199,744 | 22.13 | 2      | 206,372,864  |
+ * | 0.06  | 113,180,672     | 107.94 | 21,037,056 | 20.06 | 2      | 207,421,440  |
+ * | 0.07  | 107,741,184     | 102.75 | 26,476,544 | 25.25 | 1      | 100,663,296  |
+ * | 0.08  | 108,724,224     | 103.69 | 25,493,504 | 24.31 | 1      | 100,663,296  |
+ * | 0.09  | 109,772,800     | 104.69 | 24,444,928 | 23.31 | 1      | 100,663,296  |
+ * | 0.10  | 110,755,840     | 105.63 | 23,461,888 | 22.38 | 1      | 100,663,296  |
+ * | 0.11  | 111,738,880     | 106.56 | 22,478,848 | 21.44 | 1      | 100,663,296  |
+ * | 0.12  | 112,787,456     | 107.56 | 21,430,272 | 20.44 | 1      | 100,663,296  |
+ * | 0.13  | 113,770,496     | 108.50 | 20,447,232 | 19.50 | 1      | 100,663,296  |
+ * | 0.14  | 114,819,072     | 109.50 | 19,398,656 | 18.50 | 1      | 100,663,296  |
+ * | 0.15  | 115,802,112     | 110.44 | 18,415,616 | 17.56 | 1      | 100,663,296  |
+ * | 0.16  | 116,785,152     | 111.38 | 17,432,576 | 16.63 | 1      | 100,663,296  |
+ * | 0.17  | 117,833,728     | 112.38 | 16,384,000 | 15.63 | 1      | 100,663,296  |
+ * | 0.18  | 118,816,768     | 113.31 | 15,400,960 | 14.69 | 1      | 100,663,296  |
+ * | 0.19  | 119,799,808     | 114.25 | 14,417,920 | 13.75 | 1      | 100,663,296  |
+ * | 0.20  | 120,848,384     | 115.25 | 13,369,344 | 12.75 | 1      | 100,663,296  |
  *
- * | step | render MiB | install MiB | auth MiB | worst  | headroom to 128 MiB | grow events |
- * | ---- | ---------- | ----------- | -------- | ------ | ------------------- | ----------- |
- * | 0.20 | 96.00      | 115.25      | 115.25   | 115.25 | 12.75               | 1           |
- * | 0.10 | 96.00      | 105.63      | 105.63   | 105.63 | 22.38               | 1           |
- * | 0.05 | 96.00      | 100.81      | 105.88   | 105.88 | 22.13               | 2           |
- * | 0.01 | 96.00      | 97.00       | 103.13   | 103.13 | 24.88               | ~7          |
- * | 0    | 96.00      | 96.69       | 102.56   | 102.56 | 25.44               | many        |
+ * THE BREAKPOINT IS BETWEEN 0.068 AND 0.069, and it is a 7,274,496-byte cliff: 0.068 peaks at
+ * 114,884,608 in two events, 0.069 at 107,610,112 in one. Every thousandth from 0.061 to 0.068 sits
+ * on the wrong side of it and is dominated. There are no plateaus at hundredth resolution -- 1,536
+ * pages times 0.01 is ~15 pages, so every hundredth resolves its own rung and the thousandth
+ * refinement moved the verdict rather than tying.
  *
- * **THE AUTHENTICATED RENDER IS THE BINDING WORKLOAD**, and adding it is what made the step worth
- * changing at all. Scored on an anonymous render and an install the answer was "worth about 1%"; a
- * logged-in render -- the workload P7 exists to serve -- is where the peak actually lives.
+ * THE PARETO FRONTIER on headroom + events + bytes copied + spare events is 0.01, 0.02, 0.03, 0.04
+ * and 0.07. No two frontier arms tie on all four, so the frontier is nowhere flat. 0.05 is DOMINATED
+ * by 0.04 and 0.08-0.20 are all dominated by 0.07.
  *
- * **AND THE FIRST TABLE'S HEADLINE DID NOT SURVIVE ITS OWN RE-MEASUREMENT.** It read "emscripten's
- * default does not fit a logged-in render inside the isolate AT ALL", which was true of the build it
- * was taken on and false of the one that ships: with opcache off, 0.20 peaks at 115.25 MiB with
- * 12.75 MiB to spare. P30 removed 23 MiB of that peak on its own. Neither change is worth its full
- * headline alone, and quoting either in isolation overstates it.
+ * MARGIN IS THE FOURTH MEASUREMENT AND IT IS WHY THE FRONTIER ARM DOES NOT SHIP. A rung is only
+ * worth its headroom if demand stays under it, and auth demand MOVES: 107,610,112 and 107,675,648
+ * three times each today, and 107,544,576 recorded on 2026-08-23 -- a 2-page observed span, drifting
+ * up. Margin over the highest observed demand is 1 page at 0.07, 16 at 0.08, 32 at 0.09.
  *
- * 0.05 RATHER THAN 0.01 OR 0, on the current table. Those two buy 2.75 and 3.31 MiB more, and a grow
- * event COPIES the heap: 0.05 reaches the binding peak in 2 events against roughly 7 and
- * unbounded-many. The grow counts are derived from the series rather than counted, and labelled that
- * way because RULE 0 forbids reading the CPU cost off a local clock.
+ * 0.069 IS THE DEMONSTRATION. Its rung EQUALS the lower demand, so it fits only on that reading:
+ * over 4 samples it answered 107,610,112 three times and 115,081,216 once, a 7,471,104-byte swing on
+ * one arm. 0.07 held 107,741,184 on all 4 -- but its 1 page of margin is INSIDE the span demand has
+ * already been observed to move, so it is the same trap one page further out.
  *
- * A RENDER NO LONGER GROWS THE HEAP ON ANY ARM. 96.00 MiB across the whole column is not a broken
- * instrument -- it is what removing opcache's compile-time working set did, and the install and auth
- * columns still separate the arms, which is what makes the table a measurement rather than a control
- * repeated five times.
+ * 0.08 SHIPS, off the frontier and deliberately. Against 0.07 it gives up 983,040 bytes of headroom
+ * to buy 16x the margin, and the trade is asymmetric: overshooting 0.07's rung costs 7,602,176 bytes,
+ * so 983,040 is bought against a 7.7x loss. Against the previous default 0.05 it gives up nothing --
+ * 2,293,760 bytes MORE headroom, one grow event rather than two, 105,709,568 fewer bytes copied.
+ * 0.05 was dominated by both 0.04 and 0.08, which no earlier table scored because neither 0.04 nor
+ * anything between 0.05 and 0.10 had ever been run.
  */
-export const SHIPPING_STEP = 0.05;
+export const SHIPPING_STEP = 0.08;
 
 /** the tuned glue the shipping seam imports; emitted after the pristine one is sha256-verified */
 export const TUNED_GLUE = '.interp/php8.5-worker.tuned.mjs';
@@ -90,14 +128,15 @@ export const TUNED_GLUE = '.interp/php8.5-worker.tuned.mjs';
  * force the hash to cover a file this repo edits -- and a hash that covers a locally-mutated file
  * guarantees nothing.
  */
-export function emitTunedGlue(root = process.cwd()): string {
-	const source = resolve(root, SHIPPING_GLUE);
-	if (!existsSync(source)) throw new Error(`no shipping glue at ${SHIPPING_GLUE}`);
+export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
+	const from = glueFor(abi);
+	const source = resolve(root, from);
+	if (!existsSync(source)) throw new Error(`no shipping glue at ${from}`);
 	const glue = readFileSync(source, 'utf8');
 	if (!STEP_SITE.test(glue)) {
-		throw new Error('growth site not found in the glue; emscripten changed its emitted form');
+		throw new Error(`growth site not found in ${from}; emscripten changed its emitted form`);
 	}
-	const out = resolve(root, TUNED_GLUE);
+	const out = resolve(root, tunedGlueFor(abi));
 	writeFileSync(out, glue.replace(STEP_SITE, `oldSize*(1+${SHIPPING_STEP}/cutDown)`));
 	return out;
 }

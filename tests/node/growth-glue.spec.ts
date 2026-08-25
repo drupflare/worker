@@ -99,7 +99,7 @@ describe('the tuned glue the shipping seam imports', () => {
 			return;
 		}
 		const glue = readFileSync(tuned, 'utf8');
-		expect(SHIPPING_STEP).toBe(0.05);
+		expect(SHIPPING_STEP).toBe(0.08);
 		expect(glue).toContain(`oldSize*(1+${SHIPPING_STEP}/cutDown)`);
 		expect(glue).not.toContain('oldSize*(1+.2/cutDown)');
 	});

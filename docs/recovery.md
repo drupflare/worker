@@ -34,16 +34,32 @@ comparable, so ordering them as strings orders them in time. Three methods:
 The restore is applied on the object's **next** start, not immediately. The bookmark returned by
 `onNextSessionRestoreBookmark()` is the undo, so capture it before restarting.
 
-**There is no wrangler command and no dashboard button.** PITR is a runtime API only, which means an
-operator can reach it only through code running inside the Durable Object.
+**There is no wrangler command and no dashboard button.** PITR is a runtime API only, so an operator
+can reach it only through code running inside the Durable Object.
 
-**Drupflare does not call it.** `getCurrentBookmark`, `getBookmarkForTime` and
-`onNextSessionRestoreBookmark` have zero references under `src/` and `scripts/`, so no route exposes
-it today. Using it requires adding one.
+`GET /pitr` is that code. It is diagnostic-gated, like `/restore`, because scheduling a restore
+overwrites a database.
 
-**It is not supported in local development.** Cloudflare's wording: "The PITR API is not supported in
-local development because a durable log of data changes is not stored locally." The gate cannot cover
-it and any claim about its behaviour here needs a deployed test.
+| Request                    | Answers                                                 |
+| -------------------------- | ------------------------------------------------------- |
+| `GET /pitr`                | the current bookmark and the window                     |
+| `GET /pitr?at=<ms or ISO>` | the bookmark for that time, refused outside 30 days     |
+| `POST /pitr?bookmark=<b>`  | schedules the restore and returns the **undo** bookmark |
+
+The restore applies on the object's next start. The undo bookmark is obtainable only from the call
+that schedules the restore, so it is returned rather than logged.
+
+**It is not supported in local development, and it does not say so the way you would expect.**
+Cloudflare's wording is that "a durable log of data changes is not stored locally". Measured
+2026-08-24: all three methods EXIST in the local runtime. `getBookmarkForTime()` throws "This
+Durable Object's storage back-end does not implement point-in-time recovery", but
+`getCurrentBookmark()` answers
+`00000000-00000000-00000000-00000000000000000000000000000000` instead of throwing.
+
+So a feature-detect on the method passes and hands back a bookmark that would schedule a restore to
+the beginning of time. `/pitr` refuses an all-zero bookmark by VALUE for that reason, and reports
+`supported: false` with the platform's own sentence when the API throws. Any claim about what a
+restore actually does still needs a deployed test.
 
 ## The Export Dump
 
@@ -105,7 +121,7 @@ complete stored import exists.
 
 | Failure                     | Primitive                                    | Does not cover                                                                                                                                     | Command                                                                      |
 | --------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Accidental content deletion | PITR to just before the delete               | anything written after the bookmark; the object must still exist; needs code that calls the API                                                    | in-object: `getBookmarkForTime(t)` then `onNextSessionRestoreBookmark(b)`    |
+| Accidental content deletion | PITR to just before the delete               | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                            |
 | Bad module update           | PITR, then `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
 | Corrupted config            | `/restore` of the last good dump             | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
 | Failed migration            | re-run the migration                         | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump deliberately excludes it                                                    | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |

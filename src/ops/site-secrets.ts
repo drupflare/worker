@@ -155,6 +155,17 @@ export function tokenMatches(presented: string | null | undefined, stored: strin
 }
 
 /** the `Authorization` value an owner request carries */
+/**
+ * A usable point-in-time recovery bookmark.
+ *
+ * An all-zero one is what a back end with no change log answers instead of throwing, so it has to
+ * be refused by VALUE; a feature-detect on the method passes there.
+ */
+export function isBookmark(value: string | null | undefined): boolean {
+	if (typeof value !== 'string') return false;
+	return /^[0-9a-f-]{16,}$/i.test(value) && /[1-9a-f]/i.test(value);
+}
+
 export function bearerToken(header: string | null): string | null {
 	if (!header) return null;
 	const match = /^Bearer\s+(.+)$/i.exec(header.trim());

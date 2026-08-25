@@ -178,42 +178,10 @@ describe('identity interleaving: what one visitor leaves for the next', () => {
 	/**
 	 * What the four bytes above ARE, pinned so they cannot quietly become something else.
 	 *
-	 * Split on runs of whitespace, the two pages have the SAME 2,093 tokens. Exactly two of them
-	 * differ and both are whitespace-only, two bytes each, and both sit at the start of a region's
-	 * `{{ content }}`:
-	 *
-	 *   region--header       cold "\n\n              \n\n\n"  warm "\n\n              \n"
-	 *   region--highlighted  cold "\n    \n\n"                warm "\n    "
-	 *
-	 * Two more tokens differ and neither is an ordering effect: `js-view-dom-id-<64 hex>` and the
-	 * `permissionsHash` in `drupal-settings-json` are functions of the site's private key, and the
-	 * two arms are two different sites. They are masked rather than tolerated, so a real content
-	 * difference in the same token cannot hide behind them.
-	 *
-	 * WHAT DECIDES IT is the ordering, and it is sharp. Final render is an anonymous `/` in all five:
-	 *
-	 *   nothing before it                       17,670
-	 *   anonymous /admin/content (a 403)        17,670
-	 *   a login POST and nothing else           17,670
-	 *   login, then an authenticated `/`        17,670
-	 *   login, then an authenticated /admin/*   17,666
-	 *
-	 * so it needs an authenticated request to an ADMIN route, and it needs the front page not to
-	 * have been rendered in this interpreter yet: put one anonymous `/` in front of the same
-	 * sequence and it is 17,670 again. Once decided it is a latch -- the second and third anonymous
-	 * `/` of an object are the same as its first, 17,666 or 17,670, measured n=2 on both arms.
-	 *
-	 * WHAT IT IS NOT: not cache warmth (unchanged with `dynamic_page_cache`, `render`, `page`,
-	 * `menu`, `data`, `default`, `discovery`, `bootstrap`, `config`, `entity` and `toolbar` all
-	 * emptied), not the theme (both arms report olivero), not template resolution (the `region`,
-	 * `region__header`, `region__highlighted` and `block` registry entries agree on template, path,
-	 * theme path and preprocess list, across 195 hooks in both), and not autoload state
-	 * (preloading the six classes the warm arm has extra, `Masterminds\HTML5\*` and
-	 * `Symfony\Component\Finder\Finder`, leaves a cold object at 17,670). The blind static
-	 * fingerprint reports nothing outside the BENIGN list.
-	 *
-	 * SO THE CARRIER IS STILL UNNAMED: a once-per-interpreter memo established by whichever theme
-	 * builds its regions first, whose only effect is two newlines. Bounded, not solved.
+	 * Two whitespace-only tokens of 2,093, both at the start of a region's `{{ content }}`. It takes
+	 * an authenticated request to an ADMIN route with no prior anonymous `/`, and then latches. Not
+	 * cache warmth, not the theme, not template resolution, not autoload state -- all measured.
+	 * See TECHNICAL_REPORT.md; the carrier is bounded rather than named.
 	 */
 	it(
 		'is whitespace at two measured places, and nothing else',
@@ -372,21 +340,12 @@ describe('the caches whose key is the request they were first asked in', () => {
 	 *   `CacheCollector::reset()` empties `$storage` and leaves the cid, so the next request loads
 	 *   the previous route's trail straight back out of `cache.menu`.
 	 *
-	 * Measured, all after the `theme.manager` reset was already in place:
-	 *
-	 *   admin route then anonymous /  -> 17,869 against 17,670, two Claro stylesheets on Olivero
-	 *   /user/login then anonymous /  -> 17,596, 74 characters short: Home lost its active trail
-	 *   / then /user/login            -> the login page's menu highlighted Home as the active trail
-	 *
-	 * Emptying `dynamic_page_cache`, `render`, `page`, `menu`, `data`, `default` and `discovery`
-	 * moved none of them, which is what ruled out a cached render array.
-	 *
-	 * One trap worth keeping: `menu.active_trail` is `lazy: true`, so the container hands back a
-	 * generated ProxyClass. The forwarded `reset()` worked and reflection on the proxy threw, which
-	 * read exactly like a reset that had been applied and had no effect.
+	 * Measured: an admin route then an anonymous `/` gave 17,869 against 17,670, two Claro
+	 * stylesheets on Olivero; emptying seven cache bins moved none of it. `menu.active_trail` is
+	 * `lazy: true`, so reflection on the proxy throws and reads like a reset that had no effect.
 	 *
 	 * BLAST RADIUS while it was live: the wrong theme's stylesheets and the wrong page's navigation
-	 * highlight on every page after the first, for every visitor, baked into `cfw_page`.
+	 * highlight on every page after the first, baked into `cfw_page`.
 	 */
 	it(
 		'renders the same front page whatever route the object served first',
@@ -464,27 +423,14 @@ describe('the caches whose key is the request they were first asked in', () => {
 	 * This is the shape the two collectors above have, pointed at the USER rather than the route,
 	 * which is why it is the more dangerous one and why it is here rather than with them.
 	 *
-	 * Measured, `locale` enabled and `translate_english` on, admin `/admin/content` then anonymous
-	 * `/` then alice `/user/2`, with the entry removed from `REQUEST_SCOPED_COLLECTORS`:
+	 * Measured with `locale` on, admin then anonymous then alice: all three rows carried the FIRST
+	 * visitor's key, in both directions. With the entry in `REQUEST_SCOPED_COLLECTORS` each row is
+	 * the roles of the visitor who asked.
 	 *
-	 *   after admin   en|  locale:en::anonymous     en|HTML tag  locale:en:HTML tag:administrator:authenticated
-	 *   after anon    en|  locale:en::anonymous     en|HTML tag  locale:en:HTML tag:administrator:authenticated
-	 *   after alice   en|  locale:en::anonymous     en|HTML tag  locale:en:HTML tag:administrator:authenticated
-	 *
-	 * -- both directions in one run: the admin's roles keyed the anonymous and the authenticated
-	 * request after it, and the anonymous key from before the login keyed the admin's own request.
-	 * With the entry in place each row is the roles of the visitor who asked.
-	 *
-	 * BLAST RADIUS while it was live: a translation cache entry resolved under one visitor's roles
-	 * is read and written by every visitor after them, so admin-only interface strings land in the
-	 * anonymous entry and the anonymous entry answers the admin. The VALUE a lookup returns does not
-	 * vary by role, which is why this is cache-key mixing rather than disclosure -- but the key is
-	 * what core added the role ids to avoid, and it is per-user state crossing a request boundary.
-	 *
-	 * `locale` is not enabled on the packed site, so `initialized()` skips the id and the entry
-	 * costs nothing until a site turns it on. `translate_english` is what makes an English site
-	 * build a `LocaleLookup` at all -- see `TRANSLATE_ENGLISH`; a multilingual site gets there by
-	 * negotiating a non-English language instead.
+	 * BLAST RADIUS while it was live: cache-key mixing rather than disclosure -- the VALUE does not
+	 * vary by role -- but the key is what core added the role ids to avoid, and it is per-user state
+	 * crossing a request boundary. `locale` is off on the packed site, so it costs nothing until a
+	 * site turns it on.
 	 */
 	it(
 		'gives each visitor a translation cache key keyed on their own roles',
@@ -753,41 +699,13 @@ describe('the message queue', () => {
 	/**
 	 * ONE VISITOR IS SHOWN ANOTHER'S STATUS MESSAGE, once the session is left open. Fixed 2026-08-20.
 	 *
-	 * **THE MECHANISM, in two halves, and the second is the one the old claim was missing.**
+	 * `loadSession()` binds each bag BY REFERENCE, and a session left open never reaches it again,
+	 * so the flash bag stays on the previous visitor's array. Measured with both resets disabled:
+	 * an anonymous `/` came back 19,198 bytes carrying the author's message. No ordinary request
+	 * reaches the precondition, so `LEAK_OPEN_SESSION` manufactures it.
 	 *
-	 * `NativeSessionStorage::loadSession()` binds each bag BY REFERENCE -- `$bag->initialize(
-	 * $session[$key])` -- so the flash bag holds a reference to the array inside `$_SESSION` and
-	 * `$_SESSION = []` rebinds the global while leaving the bag on the previous visitor's array.
-	 * `loadSession()` is the only thing in core that re-binds it. Core normally reaches it on every
-	 * request, which is why the plain sequence above does not leak.
-	 *
-	 * It stops reaching it when the session is left OPEN: `SessionManager::start()` returns at its
-	 * first line while `($started || $startedLazy) && !$closed`, so nothing rebinds. A request ends
-	 * that way when `StackMiddleware\Session` skips its `save()` -- which it does for a
-	 * `ResponseKeepSessionOpenInterface`, i.e. a `BigPipeResponse`, on the understanding that
-	 * `BigPipe::sendContent()` will call `performPostSendTasks()` itself. A `sendContent()` that
-	 * throws does not.
-	 *
-	 * Measured with the hazard set and BOTH resets disabled -- `rebindBags()` and the
-	 * started/closed/startedLazy loop:
-	 *
-	 *   anonymous /   19,198 bytes against 17,670, carrying "has been created" AND the node title
-	 *   the author    no message at all: the anonymous visitor drained the bag they were owed
-	 *
-	 * BLAST RADIUS: cross-user disclosure. A status message names what was created, a validation
-	 * error quotes what was submitted, and "Your password has been changed" is one of them. Worse on
-	 * this runtime than on a SAPI, because the anonymous front page is what the fill alarm stores in
-	 * `cfw_page` -- the message could be baked into the page every visitor is served.
-	 *
-	 * **NO ORDINARY REQUEST REACHES THE PRECONDITION HERE, and that is measured rather than
-	 * assumed**: an anonymous GET, a login POST, an authenticated GET, a node-save POST and a
-	 * `drupalRequest()` render all end with `started` FALSE. So `LEAK_OPEN_SESSION` manufactures it,
-	 * the way `leakOutputBuffer()` manufactures its own -- and, exactly like that one, the first
-	 * assertion is that the hazard really crossed the boundary.
-	 *
-	 * **TWO INDEPENDENT RESETS COVER IT, so removing either one alone leaves this GREEN.** Clearing
-	 * the flags lets core's own `start()` rebind; `rebindBags()` rebinds without depending on core
-	 * doing so. Falsifying this test means disabling both.
+	 * TWO INDEPENDENT RESETS COVER IT, so falsifying this means disabling both. See
+	 * TECHNICAL_REPORT.md for the mechanism and the blast radius.
 	 */
 	it(
 		'does not hand the next visitor a message from a session the previous request left open',

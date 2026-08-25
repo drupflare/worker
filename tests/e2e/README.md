@@ -1,7 +1,7 @@
 # e2e specs
 
 **e2e means "needs a worker that is actually running".** That is the only thing that
-distinguishes this lane, and it is borrowed from `mantle2`, where the `E2E` PHPUnit suite is
+distinguishes this lane, and it is borrowed from Drupal practice, where the `E2E` PHPUnit suite is
 exactly the one that talks to a real external service while `Integration` uses real internals
 with the outside mocked.
 
@@ -51,7 +51,7 @@ does not include it.
 `helpers/endpoint.ts` probes `/stats` first. Unreachable and no `CI` in the environment, it
 skips; unreachable **with** `CI` set, it throws and names the endpoint.
 
-That asymmetry is the entire point, and it is `mantle2`'s `E2ETestBase` rule. A developer with
+That asymmetry is the entire point, and it is the `E2ETestBase` rule. A developer with
 no worker running should not see red. But a CI run that quietly skipped this whole lane is
 indistinguishable from one that passed it, which is how a lane stops running for months without
 anybody noticing. Both directions are verified: no server gives `7 skipped`, and `CI=1` with no
@@ -108,3 +108,22 @@ CFW_E2E_SITE=e2e bun run test:e2e
 
 `CFW_E2E_MAIL_API` and `CFW_E2E_MAILBOX` point it at a different rig. Without the rig the specs
 skip locally and fail in CI, the same asymmetry as the rest of the lane.
+
+## The TCP lane
+
+`tcp.spec.ts` needs a real Redis and a real syslog collector, both in `docker/compose.yml` beside
+GreenMail and pinned by digest the same way.
+
+```bash
+docker compose -f docker/compose.yml up -d redis syslog
+REDIS_URL=redis://:testpass@127.0.0.1:6379/0 SYSLOG_URL=syslog://127.0.0.1:5514 bun run dev
+CFW_E2E_SITE=e2e bun run test:e2e
+```
+
+The redis assertion is the ROUND TRIP rather than the reply. `/tcp` asks from PHP, drains, and asks
+again, because the tier is cached-or-deferred by construction: the first ask must refuse and queue,
+the second must carry the value. Checking only the second would pass on a synchronous implementation
+that cannot exist here.
+
+`CFW_E2E_SYSLOG_HOST` and `CFW_E2E_SYSLOG_READBACK` point it at a different collector; the readback
+port is a second listener that cats the ingest log, which is how the record is read back.

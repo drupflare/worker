@@ -4,13 +4,13 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store';
 /**
  * `openssl_sign()` and `openssl_verify()` over `node:crypto`, synchronously.
  *
- * P42.4, and the entry's premise was wrong. It read "crypto.subtle covers RS256/ES256 but is
+ * The premise this was scoped under was wrong. It read "crypto.subtle covers RS256/ES256 but is
  * **async**, so it takes the queue/read-later pair", which would have made every signature a
  * two-invocation round trip through a deferred queue. Measured 2026-08-23 in workerd: `node:crypto`
  * exposes `createSign`/`createVerify` and they are SYNCHRONOUS -- a 2048-bit RS256 signature comes
  * back in-line, 256 bytes. So this is an ordinary bridge like `cfwZlib`, not a deferred one.
  *
- * WHY `openssl_*` RATHER THAN A NEW `cfwSign()` FUNCTION. P45: an unmodified module is the whole
+ * WHY `openssl_*` RATHER THAN A NEW `cfwSign()` FUNCTION. An unmodified module is the whole
  * claim. `firebase/php-jwt`, Google's auth client and Stripe's webhook verifier all call
  * `openssl_sign()`/`openssl_verify()` directly, so shimming the names PHP already uses makes them
  * work untouched. A new function would have required every one of them to be patched.
@@ -165,6 +165,18 @@ ${algoDefines}
 			return $reply;
 		}
 
+		/**
+		 * Declares a failure to the operator, the way curl-fix.ts does.
+		 *
+		 * A per-call trigger_error reaches the log and never the status report, and a failed verify
+		 * had neither -- so a caller misreading -1 as "forged" was invisible from outside.
+		 */
+		function cfw_openssl_degraded($capability, $why) {
+			if (class_exists('Drupal\drupflare\Degradation')) {
+				Drupal\drupflare\Degradation::record($capability, $why);
+			}
+		}
+
 		function openssl_sign($data, &$signature, $private_key, $algorithm = 6) {
 			$r = cfw_sign_call([
 				'op' => 'sign',
@@ -174,6 +186,7 @@ ${algoDefines}
 			]);
 			if (($r['ok'] ?? false) !== true) {
 				trigger_error('openssl_sign(): ' . (string) ($r['error'] ?? 'failed'), E_USER_WARNING);
+				cfw_openssl_degraded('openssl signing', 'a signature could not be produced: ' . (string) ($r['error'] ?? 'no reason given'));
 				return false;
 			}
 			$signature = base64_decode((string) ($r['sigB64'] ?? ''), true);
@@ -195,7 +208,10 @@ ${algoDefines}
 				'key' => is_string($public_key) ? $public_key : (string) $public_key,
 				'algo' => (int) $algorithm,
 			]);
-			if (($r['ok'] ?? false) !== true) { return -1; }
+			if (($r['ok'] ?? false) !== true) {
+				cfw_openssl_degraded('openssl verification', 'a signature could not be checked, so callers see -1 rather than a verdict: ' . (string) ($r['error'] ?? 'no reason given'));
+				return -1;
+			}
 			return ($r['valid'] ?? false) === true ? 1 : 0;
 		}
 	}

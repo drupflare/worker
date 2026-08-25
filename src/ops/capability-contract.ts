@@ -23,8 +23,8 @@
  * does not.
  *
  * A vector whose `expected` is `false` is not a TODO. Several are permanent (`runtime.exec`), some
- * are platform limits (`database.regexp`), and one is a scheduled item (`http.request_headers`,
- * P46). `blocker` says which.
+ * are platform limits (`database.regexp`), and one is a scheduled item (`http.request_headers`).
+ * `blocker` says which.
  */
 
 /** the seven areas a contrib module draws on, which is the grouping the item asked for */
@@ -89,7 +89,7 @@ export const VECTORS: readonly Vector[] = [
 		probe: "function_exists('vrzno_env') && vrzno_env('cfwSuspend') !== null",
 		expected: false,
 		blocker: 'platform',
-		evidence: 'PHP cannot await; needs a suspending build (JSPI or ASYNCIFY), which is P13'
+		evidence: 'PHP cannot await; needs a suspending build (JSPI or ASYNCIFY)'
 	},
 	{
 		id: 'http.curl',
@@ -108,7 +108,7 @@ export const VECTORS: readonly Vector[] = [
 		probe: "function_exists('cfw_http_headers_supported')",
 		expected: false,
 		blocker: 'scheduled',
-		evidence: 'P46: `cfwFetch` keys on method + URL + body only, so `Authorization` is dropped'
+		evidence: '`cfwFetch` keys on method + URL + body only, so `Authorization` is dropped'
 	},
 	{
 		id: 'http.stream_wrapper.https',
@@ -176,7 +176,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'P33: the statement is re-read wrapped as a subquery casting by output name; 9 shapes asserted in `wide-integers.spec.ts`'
+			'the statement is re-read wrapped as a subquery casting by output name; 9 shapes asserted in `wide-integers.spec.ts`'
 	},
 	{
 		id: 'database.regexp',
@@ -217,7 +217,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: false,
 		blocker: 'scheduled',
 		evidence:
-			'`PHP_INT_SIZE` is 4; a cast of epoch milliseconds wraps modulo 2^32. P26 (wasm64) is the fix and is gated on the heap'
+			'`PHP_INT_SIZE` is 4; a cast of epoch milliseconds wraps modulo 2^32. wasm64 is the fix and is gated on the heap'
 	},
 	{
 		id: 'runtime.mbstring',
@@ -240,7 +240,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			"P24: core's exposure is 0 of 1,232 measured cases, and casing and width are 0 over all 1,112,064 scalars"
+			"core's exposure is 0 of 1,232 measured cases, and casing and width are 0 over all 1,112,064 scalars"
 	},
 	{
 		id: 'runtime.argon2',
@@ -250,7 +250,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'P25: argon2id on the host at OWASP m=19456/t=2/p=1, behind `ARGON2`. The RFC 9106 vector passes'
+			'argon2id on the host at OWASP m=19456/t=2/p=1, behind `ARGON2`. The RFC 9106 vector passes'
 	},
 	{
 		id: 'runtime.openssl.sign',
@@ -326,6 +326,18 @@ export const VECTORS: readonly Vector[] = [
 		evidence:
 			'`CfwImageToolkit`; a module that READS derivative dimensions still gets an answer'
 	},
+	{
+		id: 'media.getimagesize',
+		group: 'MEDIA',
+		claim: 'image dimensions read from the file header',
+		probe: "function_exists('getimagesize')",
+		expected: true,
+		blocker: null,
+		// `ShimRegistry` classified it REFUSE on "gd/libjpeg are not linked", and it is
+		// `ext/standard` -- it parses headers itself and never went through either. It is
+		// `CfwImageToolkit`'s only dimension source, so the wrong claim was load-bearing
+		evidence: 'ext/standard, not gd; the toolkit reads dimensions through it'
+	},
 	// #endregion
 
 	// #region ASYNC
@@ -337,7 +349,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: false,
 		blocker: 'platform',
 		evidence:
-			'the shipping build is ASYNCIFY=0 and non-JSPI; `FIBER_SHIM` supplies a SYNCHRONOUS Fiber. This is P13'
+			'the shipping build is ASYNCIFY=0 and non-JSPI; `FIBER_SHIM` supplies a SYNCHRONOUS Fiber'
 	},
 	{
 		id: 'async.cron',

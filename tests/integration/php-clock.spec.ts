@@ -65,11 +65,11 @@ describe("PHP's wall clock", () => {
 		expect(Number(out.reqTime)).toBeGreaterThan(1.7e9);
 	}, 900_000);
 
-	it('is 32-bit, so a millisecond or microsecond cast WRAPS rather than saturating', async () => {
+	it('is 64-bit, so an epoch-millisecond cast no longer wraps', async () => {
 		const out = await readClock(
 			`<?php $m = microtime(true); echo json_encode([
 					'intSize' => PHP_INT_SIZE,
-					'intMax' => PHP_INT_MAX,
+					'intMax' => (string) PHP_INT_MAX,
 					'reauthMs' => (int) ($m * 1000),
 					'journalUs' => (int) round($m * 1e6),
 					'fixedCast' => (int) 1787454172276.0,
@@ -77,16 +77,15 @@ describe("PHP's wall clock", () => {
 				]);`
 		);
 
-		expect(Number(out.intSize)).toBe(4);
-		expect(Number(out.intMax)).toBe(2147483647);
-		// the two module idioms P41 named. Both are in range for a 32-bit int, which is the
-		// whole problem: they look like timestamps and are not
-		expect(Math.abs(Number(out.reauthMs))).toBeLessThanOrEqual(2147483647);
-		expect(Math.abs(Number(out.journalUs))).toBeLessThanOrEqual(2147483647);
-		// MODULAR, not saturating, and measured on a fixed input so the assertion does not
-		// depend on when it runs. 1787454172276 mod 2^32 = 747777140
-		expect(Number(out.fixedCast)).toBe(747777140);
-		expect(Number(out.y2038)).toBe(-2147483648);
+		expect(Number(out.intSize)).toBe(8);
+		expect(String(out.intMax)).toBe('9223372036854775807');
+		// the two module idioms that used to land inside a 32-bit int and look like timestamps.
+		// Both now exceed it, which is what makes them storable rather than silently wrong
+		expect(Number(out.reauthMs)).toBeGreaterThan(2147483647);
+		expect(Number(out.journalUs)).toBeGreaterThan(2147483647);
+		// the cast this build used to make MODULAR: 1787454172276 mod 2^32 was 747777140
+		expect(Number(out.fixedCast)).toBe(1787454172276);
+		expect(Number(out.y2038)).toBe(2147483648);
 	}, 900_000);
 
 	it('reports 0 for memory_get_usage, which is a BUILD property and not an edge one', async () => {

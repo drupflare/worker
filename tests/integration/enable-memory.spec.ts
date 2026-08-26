@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { renderPage } from '../../src/drupal/site-php';
 import { freshSite, inObject, seedPage, type ServeDo } from '../helpers/serve-do';
 
@@ -124,7 +125,7 @@ describe('the memory an enable costs', () => {
 	);
 
 	it(
-		'costs NO heap growth on a fresh interpreter, since opcache stopped being on',
+		'costs at most ONE grow event on a fresh interpreter, since opcache stopped being on',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
 				await call(site, '/__migrate?all=1&prefill=0');
@@ -135,11 +136,14 @@ describe('the memory an enable costs', () => {
 			const grew = heap.after - heap.before;
 			expect(out['ok']).toBe(true);
 
-			// THIS ASSERTED 15-35 MB OF GROWTH AND NOW ASSERTS NONE, because P30 changed the
-			// answer rather than the instrument. With `OPCACHE_MODE=off` an enable on a fresh
-			// interpreter completes inside `INITIAL_MEMORY`: 96 MB in, 96 MB out. The 19 MB this
-			// used to cost was opcache's compile-time working set, and it is not spent any more
-			expect(grew).toBeLessThan(4 * 1_048_576);
+			// this asserted 15-35 MB, then none, and now one rung. Dropping opcache took the
+			// enable inside `INITIAL_MEMORY` on wasm32; 64-bit `zend_long` puts its working set
+			// back over 96 MB, so it grows ONCE. The peak is the invariant, not the growth: a
+			// bound on `grew` alone reads a step change as a regression
+			const oneRung = Math.ceil(heap.before * SHIPPING_STEP) + 65_536;
+			expect(grew, `grew ${grew} bytes, more than one grow event`).toBeLessThanOrEqual(
+				oneRung
+			);
 			// the instrument check the growth bound used to provide. A reading of zero from a
 			// BROKEN probe and a reading of zero from a heap that did not grow look identical, so
 			// the heap has to be a real, page-aligned, plausible figure either way

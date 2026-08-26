@@ -64,6 +64,8 @@
 		"backup:cdn": "bun scripts/backup-cdn.ts --upload",
 		"backup:verify": "bun scripts/backup-cdn.ts --verify",
 		"qa:core-freshness": "bun scripts/qa/core-freshness.ts",
+		"measure:abi-speed": "node scripts/measure/abi-speed.ts --n=25",
+		"measure:abi-control": "node scripts/measure/abi-speed.ts --abis=wasm32,wasm32 --n=25",
 		"measure:index-audit": "bun scripts/measure/index-audit.ts",
 		"measure:blake2b-parity": "bun scripts/measure/blake2b-parity.ts",
 		"measure:mb-parity": "bun scripts/measure/mb-parity.ts",

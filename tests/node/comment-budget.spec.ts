@@ -16,11 +16,11 @@ const SKIP_DIRS = new Set(['node_modules', 'coverage', '.wrangler']);
 /** the house rule is one line, two at most; everything past that is the overage */
 const ALLOWED = 2;
 
-/** measured 2026-08-24; ceilings that may only come down */
+/** measured 2026-08-25; ceilings that may only come down */
 const BUDGET: Readonly<Record<string, number>> = {
-	src: 9139,
-	tests: 5092,
-	scripts: 2774
+	src: 9132,
+	tests: 5082,
+	scripts: 2773
 };
 
 function sourceFiles(dir: string, out: string[] = []): string[] {

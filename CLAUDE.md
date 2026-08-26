@@ -21,10 +21,16 @@ it. The host depends on the same fact - `nowMs()` is `Date.now()` and arms every
 fine, which is the opposite of what P41 had scheduled a security fix for. `tests/integration/php-clock.spec.ts`
 pins it and `/clock` reports `absoluteS`/`jsAbsoluteMs` for the deployed reading.
 
-**What IS broken about a timestamp here is `PHP_INT_SIZE` 4.** `(int) (microtime(true) * 1000)`
-overflows and the cast is MODULAR rather than saturating - measured, `1787454172276.0` casts to
-`747777140`, exactly `mod 2^32`. So any module storing epoch milliseconds or microseconds as an int
-stores a wrapped value. A `cfwNow` bridge would not help; 64-bit `zend_long` (P28) is the fix.
+**`PHP_INT_SIZE` IS 8 NOW, AND THE MODULAR-CAST DEFECT IS GONE.** This paragraph used to say the
+opposite and was correct when written: `(int) (microtime(true) * 1000)` overflowed and the cast was
+MODULAR rather than saturating, so `1787454172276.0` became `747777140`, exactly `mod 2^32`, and any
+module storing epoch milliseconds as an int stored a wrapped value. The shipping build now forces
+`ZEND_ENABLE_ZVAL_LONG64` on wasm32, so the same cast answers `1787454172276`.
+
+**What it does NOT fix is the JSON bridge.** `PHP_INT_MAX` is 9,223,372,036,854,775,807 and crosses
+back as `9223372036854776000`, because a JSON number is a double. PHP can now HOLD values the bridge
+mangles, which is a combination that did not exist before -- see `src/db/wide-integers.ts` for the
+SQL half of the same problem. Anything crossing a wide integer must cast it to a string first.
 
 **`memory_get_usage()` reading 0 is a BUILD property, not an edge one** - it reads 0 in the gate
 lane too, where the clock demonstrably works. The report grouped the two as one platform symptom
@@ -182,6 +188,27 @@ result before then is not evidence.
 **So every duration ceiling derived from `cpuTime` is a LOWER bound, and the gap is unbounded.**
 cpuTime does not count time spent awaiting; this meter charges for it.
 
+**BUT 2,612x IS A PROPERTY OF THAT WORKLOAD, NOT OF THE METER.** Measured 2026-08-25 across seven
+semantic operations, n=5, allocation check 1.000 on all seven: `activeTime / cpuTime` is **~1x on a
+render, a node save and an invalidate-plus-refill**, and 14-20x on a migration, a stored-page serve
+and a cron run. The 2,612x came from a throwaway holding an idle promise, which is the extreme of the
+second group. **Anything multiplying a render's cpuTime by 2,612 is out by three orders of
+magnitude.** Use the class's own ratio or measure it.
+
+| class                    | GB-s/op  | wall clock | rows/op | active/cpu |
+| ------------------------ | -------- | ---------- | ------- | ---------- |
+| first migration          | 0.322641 | 2,520.6 ms | 3,952.0 | 14x        |
+| render, 3 bins emptied   | 0.309374 | 2,417.0 ms | 82.8    | **1x**     |
+| render, page bin emptied | 0.158422 | 1,237.7 ms | 31.2    | **1x**     |
+| stored page              | 0.002868 | 22.4 ms    | 1.0     | 20x        |
+| node save                | 0.340949 | 2,663.7 ms | 306.0   | **1x**     |
+| cron run                 | 0.002017 | 15.8 ms    | 0.0     | 16x        |
+| invalidate + refill      | 0.190584 | 1,488.9 ms | 89.8    | **1x**     |
+
+`durableObjectsPeriodicGroups` carries a **`name`** dimension; matching a site name against `objectId`
+(a 64-hex id sharing no substring with it) is why the harness would have printed `(no row)` for all
+seven. And the harness must not provision inside the window it measures.
+
 **Hibernation eligibility is the billing boundary, not hibernation itself.** Cloudflare bills an
 object that is idle and UNABLE to hibernate, and does not bill one that is idle and eligible "even
 before the runtime has hibernated them". The five disqualifying conditions are transcribed in
@@ -254,6 +281,33 @@ Adding a dependency means all three steps; the manifest line alone is a fatal on
 It is read from the sibling rather than copied under `drupal/`, because a fourth copy is what
 created the drift the subclass removed.
 
+## The rig is `docker/compose.yml`, and a rig finds what a green suite cannot
+
+Seven services, every one pinned by digest: GreenMail, Redis, syslog, Gitea, **Forgejo**, **Keycloak**,
+and **GitLab CE** behind `--profile heavy` because it wants ~4 GB and several minutes. `tests/e2e/README.md`
+has the commands.
+
+**Building these found three defects in one pass, and no lane could have seen any of them:**
+
+- **The OIDC callback was a 404.** Tier B handed every provider `redirect_uri=/__oidc?action=callback`,
+  and a `__` path is a Durable Object route the front worker refuses from outside BY CONSTRUCTION.
+  25 assertions covered the exchange and none covered whether a browser could reach it, because every
+  one drove the object directly. `/oidc` is now a `DO_ROUTE` + `PUBLIC_ROUTES` entry.
+- **GitLab hook registration had never worked.** `createHookRequest()` sent `token` and `signing_token`
+  together on the reasoning that an older install ignores the second. It does not -- it validates it and
+  rejects the whole request, so no hook was created at all.
+- **Bitbucket's git username is not its API username.** Atlassian's own documentation: the REST API takes
+  the account email, git over HTTPS takes the Bitbucket username, case sensitive. One field drove both.
+
+Two rig traps worth keeping. GitLab's `allow_local_requests_from_web_hooks_and_services` is an
+APPLICATION setting, so the omnibus key for it is **decorative** and silently does nothing; set it
+through `gitlab-rails runner`. And GitLab indexes a pushed branch asynchronously, so a merge-request
+POST answers `source_branch does not exist` on a branch git has already accepted -- retry it.
+
+**Bitbucket Cloud is `supported, not exercised`.** Not `verified`, which is reserved for a run that
+asserted an observable, and not `untested`, which is false. A Data Center container cannot stand in:
+Atlassian documents that API tokens are not supported there at all.
+
 ## Do not "regenerate the pack" to change the database
 
 `assets/drupal/site.sqlite` (6.6 MB) is **hand-trimmed and nothing in this repo produces it.**
@@ -269,6 +323,26 @@ When copying a cache row between databases, verify `expire = -1` and that **both
 identical `cachetags` - a `checksum` that disagrees with the destination's tags means the row is
 present but rejected, so the cost it was meant to remove is still paid and nothing looks wrong. See
 the provenance section in `TECHNICAL_REPORT.md`.
+
+**A DRUPAL DEFAULT THAT IS CORRECT ELSEWHERE CAN BE FATAL HERE, and one was.**
+`system.performance:cache.page.max_age` shipped at **0**, which is Drupal's installer default and
+right for a generic host that configures a reverse proxy separately. Here the reverse proxy IS the
+product: at 0 every render returns `Cache-Control: private, no-store`, `fillOne()`'s `refused` check
+declines the `cfw_page` upsert, and **the page table stayed empty on every site ever created**. Every
+request rendered. Measured on a fresh site: 0 rows before, 4 rows after, and paths that answered
+`RENDER` now answer `HIT`.
+
+Two things not to get wrong when reading that:
+
+- **Honouring `no-store` is not the bug.** Storing a response Drupal marked `private` and replaying it
+  is the uid-1 leak this project already shipped once. The value has to be right at the SOURCE.
+- **The fix is a surgical sqlite edit, not a repack**, exactly as this section says: unserialize the
+  `system.performance` blob, change the one key, reserialize, then `bun run assets:sql`.
+  `tests/node/page-cacheable.spec.ts` reads the shipped row and fails at 0.
+
+The general form is worth carrying: **the pack inherits Drupal's opinions about a deployment that is
+not this one.** When something the architecture depends on is silently inert, check what the shipped
+config believes before checking the code.
 
 ## The gate and production reach the SAME interpreter by two different routes
 
@@ -321,6 +395,24 @@ two files to it was reported as deleting 21 tests. `DRUPFLARE_LIST_ALL=1` collec
 specs without running them, which is what the collector now passes; `tests/node/metrics.spec.ts`
 evaluates the config from a directory with no artifacts, both ways, so the control is what makes the
 assertion mean anything.
+
+## `bunx tsc --noEmit` CHECKS ONE OF THREE PROGRAMS
+
+The root `tsconfig.json` includes `src/**` and `scripts/**/*.mjs`. **`scripts/**/*.ts` and `tests/**`
+are covered only by `bun run typecheck`**, which runs all three projects and filters `node_modules`.
+
+So "typecheck clean" reported from the bare `tsc` is a claim about a third of the repository. It was
+reported that way, CI went red on a commit nobody re-checked, and it stayed red across sessions with
+103 errors -- **none of which was a real defect.** Every strictness error sat behind a guard TS could
+not see. Two thirds of them were one wrong annotation repeated (`ServeDo` where a `DurableObjectStub`
+was held) and ten were **`@cloudflare/workers-types` shadowing `@types/node` globals**, which is why
+`socket.setTimeout(ms, cb)` read as "Expected 0 arguments" and looked like a broken install.
+
+That shadowing is worth recognising on sight: inside a program carrying both, `process` degrades to
+`any` so callback parameters lose inference, `URL` resolves to the workers one so `PathLike` rejects
+it, and `Buffer` methods lose their overloads. **Fix it at the call site rather than by splitting the
+tsconfig** -- `socket.setEncoding('utf8')` removes the `Buffer.toString(encoding)` call entirely, and
+a `tests/e2e/tsconfig.json` on node types breaks any e2e spec that imports from `src/`.
 
 ## A green gate is not evidence the project bundles
 
@@ -409,6 +501,9 @@ bun run release:payload # build that payload; needs vendor/ and the packs
 bun run release:check   # dry-run the canonical config and price it against the 3 MiB ceiling
 bun run build:wasm      # the zstd decoder (docker) and the interpreter (gh auth) into .interp/
 bun run backup:verify   # 40 CDN keys, no credentials
+
+bun run measure:abi-speed   # wasm32 vs long64 vs wasm64, interleaved, on node/V8
+bun run measure:abi-control # the same harness with one binary as two arms; read this first
 ```
 
 **`backup:verify` fails on Gregory's home network and that is not a defect.** The bucket is fronted
@@ -660,12 +755,16 @@ fit** -- 138.44 MiB on both the install and auth arms. The step is a glue litera
 wasm64 build measures a different growth policy from the one that ships.
 
 **DECIDED 2026-08-24: IT DOES NOT SHIP, AND THE ARM STAYS.** 5.00 MiB is thin enough that a heavier
-module set puts a site over, `PHP_INT_SIZE` 8 is a semantic change to every existing site rather than
-only to the ones that want it, and **nobody has measured whether wasm64 is any FASTER** -- every
-number here is memory, and there is not one CPU or duration figure for it anywhere in the report. So
-the case rests on capability, and 64-bit `zend_long` on wasm32 offers the same capability for a
-fraction of the memory. What is closed is wasm64 as the default ABI; `PHP_INT_SIZE` 8 stays on the
-board.
+module set puts a site over, so the case rested on capability, and 64-bit `zend_long` on wasm32 offers
+the same capability for a fraction of the memory. **The CPU figure that was missing when this was
+decided now exists and it went AGAINST wasm64**: 1.030x against wasm32 where long64 is 1.001x, on a
+self-control that reads 1.005x. See `bun run measure:abi-speed`.
+
+**AND THAT IS WHAT SHIPPED, 2026-08-25.** See the long64 section below. The third reason this
+paragraph used to give -- that `PHP_INT_SIZE` 8 is a semantic change to every existing site rather
+than only the ones that want it -- **stopped applying when the project confirmed it is pre-release
+with no sites to break.** That objection was load-bearing and it was retired by a fact about the
+product, not by a measurement.
 
 `restore-artifacts.ts` now emits the TUNED wasm64 glue whenever that build is present, and
 `vitest.config.ts` selects it, so `DRUPFLARE_ABI=wasm64` no longer measures emscripten's 0.20 while
@@ -758,6 +857,67 @@ there is no arrangement that keeps `Bucket` at 24.
 because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000 did not move it. So
 "render inline on MISS" on a cold object is **boot-dominated at ~1.4 s**, not 34 ms. Still the largest
 latency win available; price it honestly.
+
+## THE SHIPPING BUILD IS `long64`: 64-bit `zend_long` ON 32-bit POINTERS
+
+**`PHP_INT_SIZE` is 8 as of 2026-08-25.** `phasm`'s `long64` variant is `control85` plus one compile
+flag, and it is the whole mechanism -- `Zend/zend_long.h` sets `ZEND_ENABLE_ZVAL_LONG64` from
+compiler predefines and DERIVES `SIZEOF_ZEND_LONG` from it, and neither `configure.ac` nor `Zend.m4`
+mentions either macro. There is no generated header to patch. On wasm32 none of those predefines is
+set, so a `-D` on the command line stands.
+
+`src/rc/long64.rc` carries the marker, `src/build-variant.sh` greps it and passes
+`-DZEND_ENABLE_ZVAL_LONG64=1` as a make variable -- `Makefile:209` clears `EXTRA_CFLAGS` after the rc
+is included, so an rc cannot carry a compile flag. **The ABI stamp treats it as its own ABI** even
+though the pointers are wasm32's, because every object differs.
+
+|                | wasm32      | **long64**               | wasm64                |
+| -------------- | ----------- | ------------------------ | --------------------- |
+| `PHP_INT_SIZE` | 4           | **8**                    | 8                     |
+| raw wasm       | 12,218,393  | **12,234,574** (+16,181) | 12,563,711 (+345,318) |
+| zstd -22       | 2,659,133   | **2,671,380** (+12,247)  | 2,720,787 (+61,224)   |
+| auth peak      | 108,724,224 | **113,770,496**          | ~129 MB               |
+| headroom       | 24.31 MiB   | **19.50 MiB**            | 5.00 MiB              |
+
+It buys the same capability as wasm64 for **21x fewer raw bytes, 5x fewer shipping bytes, and 3.9x
+the heap margin.**
+
+**THE GROWTH STEP IS PER-ABI NOW, AND 0.13 IS THE SHIPPING NUMBER.** 0.08 was tuned to wasm32's
+~107.6 MB demand; applying it to long64 made the arm grow TWICE and peak at 117,440,512, which reads
+as the ABI's cost and is the mistuning's. long64's demand brackets to (111,738,880, 112,787,456], and
+0.12 reaches it in one grow with ZERO pages of margin -- the trap 0.069 demonstrated. `stepFor()`
+keeps `wasm32` on 0.08 as the OFF arm; wasm64 falls back deliberately because its sweep ran at 0.05
+and was never re-measured.
+
+**What it did NOT fix, and this is new surface:** `PHP_INT_MAX` crosses the JSON bridge as
+`9223372036854776000`, because a JSON number is a double. PHP can now HOLD values the bridge mangles.
+`src/db/wide-integers.ts` solves the SQL half; anything else crossing a wide integer must cast to a
+string first.
+
+**`search_api_solr` moved `blocked` -> `untested` on its own**, which is the module table working:
+`runtime.int64` was its only refusal, composer's `platform_check.php` now passes, and nobody has
+installed it yet. It does not become `verified` without a run.
+
+**IT COSTS NO MEASURABLE CPU, and the CONTROL is what licenses that sentence.** Blended over eleven
+interpreter cases it is **1.001x** against wasm32 on node/V8 and **0.990x** on bun/JavaScriptCore --
+two engines disagreeing on the sign. The same harness run with ONE binary loaded as two arms reads
+**1.005x**, so the resolution is about 0.5% blended and 1-3% per case. wasm64 on the same run is
+1.030x.
+
+Three things to carry before running an A/B of any kind here:
+
+- **Interleave the arms.** Measured one after another, the same three binaries said long64 was 1.5%
+  FASTER on eight of eleven cases. That was machine contention landing on whichever arm ran first --
+  two rig containers were up -- and it inverted the result.
+- **Run the self-control first.** `bun run measure:abi-control` loads one binary as two arms, so its
+  ratio is 1.000x by construction and anything else is the instrument. Several per-case differences
+  between real ABIs are smaller than what it prints.
+- **Do not attribute a single case.** `Bucket` grows 24 -> 32 bytes on long64, so `hashwrite` and
+  `sort` were the predicted movers; they read 0.996x and 1.000x, while `floatmath` -- which neither
+  ABI can touch -- read 0.962x. That is code layout after a rebuild.
+
+`scripts/measure/abi-speed.ts` is the harness. It runs under node BECAUSE workerd is V8; bun is the
+cross-engine control and cannot measure wasm64 at all, since JSC refuses `Memory64`.
 
 ## Two capability seams landed on 2026-08-23 and both have a trap worth reading
 
@@ -908,11 +1068,12 @@ whole application and only an install measures it; `bun scripts/contrib-fixture.
 
 **THE BUILD KEEPS COMPOSER'S PLATFORM CHECK ON. Decided 2026-08-24.** With `platform-check: false`
 that one module installs clean and 57/57 pass, so the temptation is real and the measurement is not in
-dispute. It stays on for three reasons: the guard is CORRECT here (`PHP_INT_SIZE` is 4 and zipstream
+dispute. It stayed on for three reasons: the guard was CORRECT there (`PHP_INT_SIZE` was 4 and zipstream
 wants 64-bit offsets for ZIP64), turning it off ships an unexercised 64-bit path SITE-WIDE to unlock
 one module, and the setting is not per-dependency -- it would be off for every future package that
-declares the same thing, silently. `search_api_solr` stays `blocked` on `runtime.int64` until
-`PHP_INT_SIZE` is 8, which is what wasm64 and 64-bit `zend_long` are for. Do not set it in
+declares the same thing, silently. **`PHP_INT_SIZE` IS 8 as of 2026-08-25, so the guard now PASSES** and `search_api_solr` moved to
+`untested` on its own. The platform check stays on and is now costing nothing: it asserts a condition
+this build satisfies. Leave it on. Do not set it in
 `drupal-src/composer.json`: that tree is gitignored and is the build input for the shipping pack, so
 a local change there is the silent-drift shape this file exists to prevent.
 

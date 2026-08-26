@@ -515,6 +515,9 @@ The Access page configures an OpenID Connect provider. The host performs the tok
 verifies the `id_token` signature, because the interpreter is built without OpenSSL and cannot check
 an RS256 signature at all — and an unverified `id_token` is an unauthenticated login.
 
+Single sign-on needs `drupal/externalauth`, which maps the verified identity onto an account. No
+contrib module ships in the packed tree, so install it from the Extend page before the first login.
+
 Set the issuer and client id on the page, and the client secret as the `OIDC_CLIENT_SECRET` binding.
 The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
 discovery document immediately, so a typo surfaces there rather than at someone's first login.
@@ -717,10 +720,25 @@ branch.
 **Polling** works against any remote and needs no cooperation from it. The interval is per repository
 and defaults to an hour; a poll costs one ref advertisement.
 
-**Webhooks** make a push arrive immediately. GitHub, GitLab, Bitbucket and Gitea can register one
-from the page; for anything else the page mints a secret and shows the delivery URL to register by
-hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider signs, and a
-shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.
+**Webhooks** make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can
+register one from the page; for anything else the page mints a secret and shows the delivery URL to
+register by hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider
+signs, and a shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.
+
+### Provider Coverage
+
+| Provider         | State                    | Exercised Against          |
+| ---------------- | ------------------------ | -------------------------- |
+| GitHub           | verified                 | github.com                 |
+| GitLab           | verified                 | GitLab CE                  |
+| Gitea            | verified                 | Gitea 1.24.6               |
+| Forgejo          | verified                 | Forgejo 13                 |
+| Any HTTPS remote | verified                 | `git upload-pack` directly |
+| Bitbucket        | supported, not exercised | —                          |
+
+Bitbucket authenticates with one API token and two names: the REST API takes the Atlassian account
+email, and git over HTTPS takes the Bitbucket username, which is case sensitive. Both fields are on
+the page.
 
 ### Safety
 
@@ -767,26 +785,33 @@ The PHP lives in the sibling repositories, not here: `cfw_do_sqlite` in
 
 ## 🧪 Testing
 
-Two vitest projects. **2,474 tests across 110 files, 0 failures**, plus **585 PHP assertions**.
+Three vitest projects. **3,701 tests across 182 files** in the commit gate, plus **1,106 PHP
+assertions** and a 72-test end-to-end lane that needs a running server.
 
-| lane                  | command                | count                        | runs in                                        |
-| --------------------- | ---------------------- | ---------------------------- | ---------------------------------------------- |
-| vitest `workers`      | `bun run test:workers` | **1,788** in 73 files        | workerd, via `@cloudflare/vitest-pool-workers` |
-| vitest `node`         | `bun run test:node`    | **686** in 37 files          | Node, for oracles workerd cannot host          |
-| both, merged coverage | `bun run test`         | **2,474** in 110 files       | one invocation                                 |
-| PHP suites            | see below              | **585** across 5 suites      | real PHP, in the sibling repos                 |
-| e2e                   | `bun run test:e2e`     | excluded from `bun run test` | needs a running server                         |
+| lane                  | command                | count                     | runs in                                        |
+| --------------------- | ---------------------- | ------------------------- | ---------------------------------------------- |
+| vitest `workers`      | `bun run test:workers` | **2,757** in 127 files    | workerd, via `@cloudflare/vitest-pool-workers` |
+| vitest `node`         | `bun run test:node`    | **944** in 55 files       | Node, for oracles workerd cannot host          |
+| both, merged coverage | `bun run test`         | **3,701** in 182 files    | one invocation                                 |
+| PHP suites            | see below              | **1,106** across 7 suites | real PHP, in the sibling repos                 |
+| e2e                   | `bun run test:e2e`     | **72** in 9 files         | needs a running server                         |
+
+The e2e lane talks to real servers rather than mocks: Keycloak for single sign-on, Gitea and Forgejo
+for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier. `docker/compose.yml`
+carries all of them pinned by digest, and `tests/e2e/README.md` has the commands.
 
 The PHP suites live in the sibling repositories, which are the authority on their own module. Two
-have a script here; all five take this repository's `drupal-src/` as `DRUPAL_ROOT`:
+have a script here; all take this repository's `drupal-src/` as `DRUPAL_ROOT`:
 
-| suite                        | repo        | assertions | run from here         |
-| ---------------------------- | ----------- | ---------- | --------------------- |
-| `tests/health-suite.php`     | `drupflare` | 195        | `bun run test:health` |
-| `tests/load-classes.php`     | `drupflare` | 94         | `php`, with the var   |
-| `tests/run-driver-suite.php` | `rom`       | 219        | `bun run test:php`    |
-| `tests/pdo-shim.php`         | `rom`       | 61         | `php`, with the var   |
-| `tests/run-installer.php`    | `rom`       | 16         | `php`, with the var   |
+| suite                          | repo        | assertions | run from here           |
+| ------------------------------ | ----------- | ---------- | ----------------------- |
+| `tests/health-suite.php`       | `drupflare` | 644        | `bun run test:health`   |
+| `tests/run-driver-suite.php`   | `rom`       | 238        | `bun run test:php`      |
+| `tests/load-classes.php`       | `drupflare` | 95         | `php`, with the var     |
+| `tests/pdo-shim.php`           | `rom`       | 61         | `php`, with the var     |
+| `tests/cfw-tcp.php`            | `drupflare` | 35         | `php`                   |
+| `tests/solarium-transport.php` | `drupflare` | 17         | `bun run test:solarium` |
+| `tests/run-installer.php`      | `rom`       | 16         | `php`, with the var     |
 
 ```sh
 DRUPAL_ROOT=$PWD/drupal-src php ../rom/tests/run-installer.php
@@ -798,7 +823,7 @@ child-process control. It needs a real filesystem, so it has no counterpart here
 **Re-measure these counts before quoting them.** Every number in this table has been stale at least
 once, in both directions.
 
-### Two Vitest Projects
+### Three Vitest Projects
 
 `workers` is the default lane and where most of the subject lives. `node` exists because
 workerd cannot host two things the suite needs, both verified rather than assumed:
@@ -814,8 +839,13 @@ copy, or stay outside vitest forever. `tests/node/mb-fix-iconv.spec.ts` is the f
 it recovers two platform controls that had to be dropped when `mb-fix` moved into workerd, and
 it **skips rather than fails** when no `php` is on PATH.
 
-Coverage from both projects is merged into one lcov by `bun run test:coverage`; Codecov gets a
-`coverage` flag for the merged report and `workers` / `node` flags for per-lane test results,
+`e2e` is the third and is excluded from `bun run test` on purpose: it needs a running worker and, for
+most of its specs, a running server to talk to. A commit gate that can be unavailable is not a gate.
+It skips when nothing is reachable and fails when `CI` is set, so a lane that quietly stopped running
+is distinguishable from one that passed.
+
+Coverage from the two gate projects is merged into one lcov by `bun run test:coverage`; Codecov gets
+a `coverage` flag for the merged report and `workers` / `node` flags for per-lane test results,
 all with `carryforward: true`.
 
 ### The Integration Lane
@@ -896,7 +926,7 @@ visit while the pages the install invalidated are re-rendered.
 
 <!-- module-table:begin -->
 
-**58 verified, 0 untested, 4 blocked.** Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.
+**58 verified, 1 untested, 3 blocked.** Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.
 
 Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 54 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.
 
@@ -942,7 +972,7 @@ Contrib modules are development dependencies here, verified against the test bui
 | Metatag                    | verified | enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Migrate Plus               | verified | enabled against a real site; both config entity types it exists to provide are installed -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a `migrate_plus.%` config probe finds nothing and would read as inert. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Module Filter              | verified | enabled against a real site; `module_filter.settings` is installed and its admin route is in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Openid Connect             | blocked  | drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\drupflare\Network\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. What is missing is a run against a real IdP and the setup UI                                                                                                                                                                                                                                                |
+| Openid Connect             | blocked  | drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\drupflare\Network\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider genuinely signed for another of its clients; the setup page is live and states the `externalauth` dependency                                                                                             |
 | Paragraphs                 | verified | enabled against a real site; it created its entity type as four tables -- `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`, `paragraphs_item_revision_field_data`. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Pathauto                   | verified | enabled against a real site, given the pattern the shipped database does not carry; a node saved as "Pathauto Probe Title" produced the `path_alias` row `/node/1 -> /probe/pathauto-probe-title`. Pointed at `canonical_entities:user` the same run writes no row, so the assertion tracks this pattern rather than an ambient alias                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Purge                      | verified | enabled against a real site; `purge.queue`, `purge.processors`, `purge.purgers` and the invalidation factory all resolve. What it would PURGE is this host, which already invalidates from cache tags. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -952,7 +982,7 @@ Contrib modules are development dependencies here, verified against the test bui
 | Redis                      | blocked  | drupal/redis needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** none needed for the cache: the Durable Object's own SQLite IS the backend, so this is a dependency the architecture removes. `Drupal\drupflare\Network\CfwTcp` covers the rest of what a site would reach Redis for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Scheduler                  | verified | enabled against a real site; it installed its own configuration and its routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Search Api                 | verified | enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Search Api Solr            | blocked  | drupal/search_api_solr needs runtime.int64 (scheduled): a PHP integer wider than 32 bits **Lift:** `PHP_INT_SIZE` 8, from wasm64 (measured to fit at 123.00 MiB) or from `ZEND_ENABLE_ZVAL_LONG64` on wasm32. Disabling composer's platform check is the cheap route and is a product decision: the guard is right that a 64-bit path exists, since zipstream is there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path site-wide to unlock one module. `SolariumTransport` is already shipped with 17 assertions in the sibling module's `tests/solarium-transport.php`; a file-upload extract needs a streaming body and is declared rather than sent empty                                                                                                                                                                                                                                                                                                                                          |
+| Search Api Solr            | untested | Its transport is not the blocker. Measured 2026-08-24 by installing it: it pulls `maennchen/zipstream-php`, which declares `php-64bit`, so composer emits a `platform_check.php` asserting `PHP_INT_SIZE === 8`. That check used to abort every request before Drupal booted, taking all 56 other contrib cases with it; the shipping build is 64-bit as of 2026-08-25 and it now passes. With `platform-check: false` the module installs clean and 57/57 pass: `plugin.manager.search_api_solr.connector`, `solarium.query_helper` and its four solr config entity types all resolve, none of them before. The transport was measured separately against solarium 6.4.2 and is interceptable: the default connector picks `extension_loaded('curl') ? new Curl() : new Http()`, this build has no curl, so it lands on the stream adapter, and `SolariumTransport` short-circuits that through Solarium's own `PreExecuteRequest` with no module change                                                                                      |
 | Simple Sitemap             | verified | enabled against a real site; `simple_sitemap.generator`, `simple_sitemap.queue_worker` and `simple_sitemap.sitemap_writer` resolve, both `simple_sitemap` and `simple_sitemap_type` are registered entity types and `simple_sitemap.settings` is installed, none of it before. It was refused outright until the host supplied a pure-PHP `XMLWriter` and cleared its one install block through `hook_requirements_alter()` -- `extension_loaded('xmlwriter')` is a built-in and cannot be shimmed. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Smtp                       | blocked  | drupal/smtp needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket **Lift:** the replacement ships and IS now selected: `system.mail` is forced to `cfw_mail` in the settings override, so a site that drops smtp gets a working mailer rather than `php_mail`, which this runtime cannot run. AND ITS CONFIGURATION IS NOW READ, 2026-08-24: the module installs here and its socket never runs, so a site that filled in its relay and saved had a complete SMTP configuration nothing looked at, and its operator had to type the same host, port and password again as Worker vars. `CfwMail` passes `smtp.settings` to `cfwMail`, `mailEnvFromSite()` maps it onto the transport vars and the deployment's own vars still win. The settings are persisted to `cfw_meta` because the ALARM re-resolves the transport and never sees the message. So the module stays blocked -- the socket is what refuses it -- while both the capability and now the configuration are covered |
 | Stage File Proxy           | verified | enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -980,10 +1010,9 @@ notes, not in support tickets.
 - **A statement caps at 100 bound parameters.**
 - **`REGEXP` does not exist**, so Views regex filters do not work.
 - **Integers above 2^53** are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.
-- **PHP integers are 32-bit.** `PHP_INT_SIZE` is 4 and `PHP_INT_MAX` is 2,147,483,647, so a cast of
-  epoch milliseconds or microseconds to `int` wraps modulo 2^32 rather than saturating. Code that
-  stores `(int) (microtime(true) * 1000)` stores a wrapped value. `microtime()` itself returns a
-  correct float.
+- **A 64-bit integer does not survive a JSON round trip.** `PHP_INT_SIZE` is 8 and `PHP_INT_MAX` is
+  9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
+  host boundary comes back rounded. Cast it to a string first. The database path already does this.
 - **The interpreter loads 25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
   ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
   tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see

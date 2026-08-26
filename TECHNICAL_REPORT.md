@@ -503,6 +503,11 @@ fill moves the regeneration ceiling ~1.1% -- see
 
 | | |
 | --- | --- |
+| [long64 COSTS NOTHING MEASURABLE](#long64-costs-nothing-measurable-and-the-control-is-what-says-so) | **read before quoting any ABI speed figure, and before writing any A/B harness**: long64 blends to 1.001x against wasm32 on V8 and 0.990x on JavaScriptCore, both inside a self-control that reads 1.005x; wasm64 is 1.030x. The first run of the same three binaries said long64 was 1.5% FASTER, and that was the arms running one after another rather than interleaved |
+| [`PHP_INT_SIZE` IS 8, AND IT COST 16,181 BYTES](#php_int_size-is-8-and-it-cost-16181-bytes) | **read before scoring any ABI or integer-width proposal**: 64-bit `zend_long` on 32-bit pointers ships, for +12,247 zstd bytes and 19.50 MiB of heap headroom -- 21x fewer raw bytes than wasm64 for the same capability. The assumed blocker (a post-configure header patch) did not exist. Also: the growth step is per-ABI, and `PHP_INT_MAX` cannot cross a JSON bridge |
+| [THE FILL WAS PAYING SIX OF ITS SEVEN ROWS TO EMPTY A CACHE ON ITSELF](#the-fill-was-paying-six-of-its-seven-rows-to-empty-a-cache-on-itself) | **read before scoring any regeneration lever**: `fillOne()` emptied `dynamic_page_cache` on itself, measured at 4 charged rows against 0 with the output byte-identical. Staleness was never the failure mode -- tag invalidation reaches a warm entry through its checksum. The two things that DID depend on the purge, a manual bump and the bin's only garbage collector, moved first |
+| [THE 2,612x IS A PROPERTY OF THE WORKLOAD](#the-2612x-is-a-property-of-the-workload-not-of-the-meter) | **read before quoting RULE 0d, or before writing a measurement harness**: `activeTime/cpuTime` is ~1x on a render, a node save and an invalidate, and 14-20x on migrate/serve/cron, so the 2,612x is that workload's number and not the meter's. Also: no wake cost exists on the serving path, AUTOINCREMENT returns 1.16x rather than 4x and zero CPU, and five instrument defects had to fall first -- one of them a provisioning step pointed at a route that has never existed |
+| [THE PAGE CACHE WAS EMPTY ON EVERY SITE](#the-page-cache-was-empty-on-every-site-and-two-more-rigs-found-two-more) | **read before trusting any tier the architecture rests on**: `cache.page.max_age` shipped at 0, so every render said `no-store`, `cfw_page` never stored a row and nothing was ever served from cache. Also the OIDC callback was a 404 for its whole life, GitLab hook registration had never worked, and Bitbucket's git username is not its API username. Every one found by standing up a real server |
 | [A LIST OF WHAT THE CODE EMITS GOES STALE IN BOTH DIRECTIONS](#a-list-of-what-the-code-emits-goes-stale-in-both-directions) | **read before writing an assertion that enumerates anything**: the cache-tier list named three tiers `src/` does not emit and omitted three it does, six of ten wrong; two responses omitted a header their own docblock promised, and `Number(null)` made the failure read as a passing comparison; a probe route rendered against a different origin from the serving route. Also: wasm64 is DECIDED, and the shipping growth step is dominated by an arm nobody re-read |
 | [A SITE FOLLOWS A GIT REMOTE](#a-site-follows-a-git-remote-and-the-transport-is-gits-own) | **read before adding a delivery mechanism**: the provider archive path was deleted in favour of smart HTTP, so any host that serves a repository works and the packfile is parsed in the Worker. Also: an all-zero PITR bookmark defeats a feature-detect, a shipped `Degradation::record()` had its arguments transposed, and a queue-backed fill is refuted with executable arithmetic |
 | [THE SUITE WAS GREEN AND THE PROJECT DID NOT BUNDLE](#the-suite-was-green-and-the-project-did-not-bundle) | **read before trusting a green gate about anything that leaves the isolate**: every lane resolves through vite and wrangler bundles with esbuild, so `wrangler deploy` was broken for a day with the suite green. Also: a RESP error reached PHP as a generic string, one module's transitive `php-64bit` aborted every request on the site, and the authenticated share of a real Drupal application is measured at last |
@@ -552,6 +557,461 @@ fill moves the regeneration ceiling ~1.1% -- see
 | [TIER 0: WHAT NOW EXISTS, MEASURED](#tier-0-what-now-exists-measured) | driver, codec, gate, memory, autoload, mbstring, pack trim, sliced updb |
 | [Memory: 110.6 MiB was misread](#memory-the-edge-ceiling-is-still-unmeasured-and-1106-mib-was-misread) | **canonical** for the memory ceiling |
 
+
+---
+
+# long64 COSTS NOTHING MEASURABLE, AND THE CONTROL IS WHAT SAYS SO
+
+Measured 2026-08-25. Three ABIs had shipped or been rejected on bytes and peak linear memory with no
+CPU figure for any of them, on either side. `scripts/measure/abi-speed.ts` is the harness;
+`bun run measure:abi-speed` runs it and `bun run measure:abi-control` runs the control.
+
+## The instrument, and why it is not a deployed one
+
+RULE 0 reserves an absolute CPU figure for `cpuTime` on a deployed worker, because the isolate
+freezes its clock between I/O. That is a rule about the PLATFORM's clock; an ABI cost is a property of
+the BINARY, and the edge is the worse place to read one. The platform is bimodal by 400-600 ms on
+identical work while the effect here is a few percent, so an edge run spends deploys to resolve
+something its own variance swamps.
+
+`node` is the default lane because **workerd is V8 and no other local lane shares that**. `bun` runs
+the same script on JavaScriptCore, which is a different wasm compiler, so agreement across the two is
+what makes a ratio a property of the binary rather than of one engine's codegen. Bun cannot measure
+wasm64 at all: JSC answers `Memory64 is not enabled`.
+
+Nothing below is an edge cost. It excludes the host bridge, SQLite, the fill chain and everything the
+Durable Object does around PHP.
+
+## The control reads 1.005x, and that is the resolution
+
+`--abis=wasm32,wasm32` loads ONE binary as two arms, so its ratio is 1.000x by construction. It is
+not:
+
+| | blended | per-case range |
+| --- | --- | --- |
+| wasm32 against itself | **1.005x** | 0.984x - 1.033x |
+
+So a per-case ratio inside about 3% is this harness talking, and the blended geometric mean is the
+only figure with a floor under it. Several of the per-case differences between real ABIs are smaller
+than the control's own spread.
+
+## The three arms, n=25 interleaved, node 24.19.0 / V8 13.6
+
+| case | probes | wasm32 | long64 | wasm64 | long64 | wasm64 |
+| --- | --- | --- | --- | --- | --- | --- |
+| compile | `WebAssembly.compile` | 12.6 | 13.1 | 14.0 | 1.042x | 1.117x |
+| intmath | `zend_long` arithmetic | 397.5 | 381.6 | 385.2 | 0.960x | 0.969x |
+| floatmath | `zend_double`, untouched by both | 310.8 | 299.0 | 306.0 | 0.962x | 0.985x |
+| hashwrite | `Bucket` insert, 24 -> 32 bytes | 127.3 | 126.8 | 133.5 | 0.996x | 1.048x |
+| hashread | `Bucket` lookup | 208.1 | 210.3 | 213.5 | 1.011x | 1.026x |
+| packed | packed array, zval only | 143.6 | 148.3 | 137.7 | 1.032x | 0.959x |
+| strings | `zend_string`, carries a `zend_ulong h` | 137.1 | 138.5 | 145.8 | 1.010x | 1.064x |
+| usercall | VM dispatch and stack frames | 422.8 | 420.2 | 423.8 | 0.994x | 1.002x |
+| objects | property table lookup | 372.3 | 378.2 | 394.4 | 1.016x | 1.059x |
+| sort | `Bucket` movement under `zend_sort` | 49.9 | 49.9 | 55.0 | 1.000x | 1.102x |
+| json | a mixed real-world shape | 89.8 | 90.7 | 93.7 | 1.010x | 1.043x |
+| preg | pcre, which the render path leans on | 130.4 | 133.0 | 141.5 | 1.020x | 1.085x |
+| | **blended** | | | | **1.001x** | **1.030x** |
+
+Milliseconds are medians. The cross-engine control, bun 1.4.0 on JavaScriptCore, same n: long64
+blends to **0.990x**. Two engines disagree on the SIGN and agree that the magnitude is under the
+control's own deviation.
+
+**long64 is free.** It buys `PHP_INT_SIZE` 8 for +12,247 zstd bytes and 4.81 MiB of heap headroom and
+no CPU. **wasm64 costs about 3%**, which is six times the control's deviation and shows up wherever
+pointers are dense -- `strings`, `objects`, `preg`, `sort`. Its `compile` is 1.117x, tracking its
+345,318 extra raw bytes.
+
+## The mechanism does not explain the per-case numbers, and that is the point
+
+`Bucket` grows 24 -> 32 bytes on both 8-byte arms, so `hashwrite` and `sort` were the cases predicted
+to move. On long64 they read 0.996x and 1.000x, while `intmath` and `floatmath` both read about
+0.96x -- and `floatmath` is a case neither ABI can touch. Two cases below the control band on a
+mechanism that cannot reach them is code layout after a rebuild, not a `zend_long` effect.
+
+Read the blended figure. Do not attribute a single case.
+
+## The first run said the opposite, and it was the arms running in series
+
+Measuring wasm32 fully, then long64, then wasm64 reported **long64 1.5% FASTER** on eight of eleven
+cases, with wasm32's spreads two to ten times wider than long64's -- the signature of contention
+during whichever arm ran first. Two rig containers, GitLab CE and Keycloak, were up at the time.
+
+Interleaved on a quiet machine, rotating which arm leads each round, the same three binaries report
+1.001x. The harness now interleaves by construction and times the boot arm in a separate pass, since
+a boot allocates a fresh ~100 MB linear memory and lands its GC on whichever arm came next.
+
+Two case defects fell on the way, both of which produce a plausible number rather than an error:
+
+- **An unmasked accumulator overflows `PHP_INT_MAX` on the 4-byte arm** and silently promotes to
+  double, so the arms run different arithmetic. Every integer case masks to 30 bits.
+- **A declaration inside the timed body fatals on redeclare from the second pass on**, because one
+  interpreter is shared across passes. That reads as a 0.3 ms case, not as an error. Declarations
+  live in `setup`, and every case echoes its result once before timing so a fatal fails loudly.
+
+---
+
+# `PHP_INT_SIZE` IS 8, AND IT COST 16,181 BYTES
+
+Measured and shipped 2026-08-25. The integer width was bought without the pointer width, which is the
+thing wasm64 could never do.
+
+## The mechanism was one compile flag, and the assumed blocker did not exist
+
+The scoped work for this was a post-configure patch to php-src's generated header, on the reasoning
+that `SIZEOF_ZEND_LONG` comes from `AC_CHECK_SIZEOF(long)`. **It does not.** `Zend/zend_long.h` sets
+`ZEND_ENABLE_ZVAL_LONG64` from compiler predefines and derives `SIZEOF_ZEND_LONG` from it; neither
+`configure.ac` nor `Zend/Zend.m4` mentions either macro. On wasm32 none of the predefines
+(`__x86_64__`, `__LP64__`, `_LP64`, `_WIN64`) is set, so the guard does not fire and a `-D` stands.
+
+`phasm`'s `long64` variant is `control85` byte-for-byte plus that marker. It linked first try, 11m00s.
+
+## What it costs, against the alternative that was rejected
+
+| | wasm32 | **long64** | wasm64 |
+| --- | --- | --- | --- |
+| `PHP_INT_SIZE` | 4 | **8** | 8 |
+| raw wasm | 12,218,393 | **12,234,574** | 12,563,711 |
+| raw delta | -- | **+16,181** | +345,318 |
+| zstd -22 | 2,659,133 | **2,671,380** | 2,720,787 |
+| shipping delta | -- | **+12,247** | +61,224 |
+| auth heap peak | 108,724,224 | **113,770,496** | ~129 MB |
+| headroom to 128 MiB | 24.31 MiB | **19.50 MiB** | 5.00 MiB |
+
+**21x fewer raw bytes, 5x fewer shipping bytes and 3.9x the heap margin, for the same capability.**
+The bundle is 3,014,062 gzipped against the 3,145,728 ceiling, 131,666 under.
+
+## The growth step is a property of the ABI, and 0.08 was measuring the wrong thing
+
+The first long64 heap reading was 117,440,512, and it is an artifact. 0.08 is tuned to wasm32's
+~107.6 MB demand; on long64 its first rung falls short, so the arm grew TWICE and the second rung
+landed at 117,440,512. That reads as the ABI's cost and is the mistuning's.
+
+Sweeping long64 brackets its demand to **(111,738,880, 112,787,456]**:
+
+| step | peak | grows | headroom |
+| --- | --- | --- | --- |
+| 0.08 | 117,440,512 | 2 | 16.00 MiB |
+| 0.10 | 121,896,960 | 2 | 11.75 MiB |
+| 0.11 | 124,059,648 | 2 | 9.69 MiB |
+| 0.12 | 112,787,456 | 1 | 20.44 MiB |
+| **0.13** | **113,770,496** | **1** | **19.50 MiB** |
+| 0.14 | 114,819,072 | 1 | 19.44 MiB |
+| 0.20 | 120,848,384 | 1 | 12.75 MiB |
+
+**0.12 measures best and does not ship**, for the reason 0.069 established on wasm32: its rung EQUALS
+the upper bound of the observed demand, so it has zero pages of margin against a demand that moves.
+0.13 takes the rung above and gives up 0.94 MiB to buy 15 pages. `stepFor()` keeps `wasm32` on 0.08
+as the off arm, since reading 0.13 onto it would cost 4.81 MiB for nothing.
+
+This is n=1 per step. long64's demand has NOT been checked for the bimodality wasm32's demonstrably
+has, and that check is what a shipping step normally gets.
+
+## What it fixed, what it unblocked, and what it did not
+
+**Fixed:** the modular cast. `(int) 1787454172276.0` was `747777140`, exactly `mod 2^32`, so any
+module storing epoch milliseconds as an int stored a wrapped value. It now answers `1787454172276`.
+
+**Unblocked:** `search_api_solr` moved `blocked` -> `untested` with no edit, because `runtime.int64`
+was its only refusal and composer's `platform_check.php` now passes. It does not become `verified`
+without a run, which is the module table working as designed.
+
+**NOT fixed, and it is new surface:** `PHP_INT_MAX` crosses the JSON bridge as `9223372036854776000`,
+because a JSON number is a double. PHP can now hold values the bridge mangles -- a combination that
+could not exist when the integer was 4 bytes. `src/db/wide-integers.ts` already solves the SQL half
+by re-running a statement with its columns cast to TEXT; everything else must cast before crossing.
+
+**Measured since, and it is free:** 1.001x against wasm32 on V8 and 0.990x on JavaScriptCore, both
+inside a self-control that reads 1.005x. See
+[long64 costs nothing measurable](#long64-costs-nothing-measurable-and-the-control-is-what-says-so).
+
+## Why it shipped when wasm64 did not
+
+Three objections killed wasm64 as a default: thin margin, no CPU measurement, and that
+`PHP_INT_SIZE` 8 is a semantic change to every existing site rather than only the ones that want it.
+long64 answers the first outright. **The second has since been measured and it went against wasm64
+rather than for it** -- 1.030x where long64 is 1.001x, so the decision holds on a figure that did not
+exist when it was taken. **The third was retired by a fact about the product rather than a
+measurement** -- the project is pre-release with no sites to break, which was confirmed rather than
+assumed before the flag was flipped.
+
+The full gate runs against it: 3,600+ tests, including every spec that exercises vrzno and the SQL
+bridge. The five that failed were all assertions pinning the old width, and each was inverted rather
+than relaxed.
+
+---
+
+# THE FILL WAS PAYING SIX OF ITS SEVEN ROWS TO EMPTY A CACHE ON ITSELF
+
+Measured 2026-08-25. `fillOne()` emptied `page` **and** `dynamic_page_cache`, so every regeneration
+threw away a warm cache and then repopulated it, on the meter that binds regeneration.
+
+The lever was known and had been left alone for a good reason: the objection was stale dynamic
+fragments, which is a correctness question rather than an engineering one. It is now answered, and
+the answer is that **staleness was never the failure mode**.
+
+## The A/B, paired on one object
+
+Tally armed per arm, `/__assemble` on the same warm object:
+
+| arm                             | statements | charged rows | where they went              |
+| ------------------------------- | ---------- | ------------ | ---------------------------- |
+| `bins=page` (the lever)         | 4          | **0**        | nothing                      |
+| `bins=page,dynamic_page_cache`  | 4          | **4**        | all `cache_dynamic_page_cache` |
+
+Three consecutive steady fills with the lever: 4/2/2 statements, **0 rows every time**. Output is
+byte-identical at 17,691 bytes both ways.
+
+**Arm ordering matters and nearly produced a wrong reading.** An arm that runs immediately after the
+old behaviour pays 3-4 rows repopulating the bin the previous arm emptied, so a naive A-B-A sequence
+reads the saving as noise. The arms have to run consecutively.
+
+## Staleness is not a failure mode, because tags never depended on the purge
+
+Verified live rather than reasoned about: warm the bin to `HIT`, run
+`Cache::invalidateTags(['rendered'])`, and the next render comes back **MISS**. No purge is involved.
+`DatabaseBackend::get()` validates each row's checksum against `cachetags`, so the tag path reaches a
+warm entry on its own.
+
+## The two things that DID depend on it, and where they moved
+
+**A manual bump would have become a silent no-op.** `/__bump?reason=manual` writes no `cachetags`, so
+with the bin warm a requeued fill answers from `dynamic_page_cache` and re-stores byte-identical HTML
+under the new generation, indefinitely. `bumpGeneration()` now purges the bin itself whenever the
+reason is not `cachetags`, reports `purgedDynamic`, and returns -1 where the bin was never created.
+Verified: the bump reports `purgedDynamic: 2` and the next fill is a `MISS` that genuinely re-renders.
+
+**The bin had no garbage collector at all.** Entries are written `expire = -1`, `EXPIRED_ROW_RULES`
+carries no cache bin, `gcCacheData()` covered `cache_data` only, and core's GC runs from
+`SystemHooks::cron()`, which this runtime never calls. The `deleteAll()` was the only thing bounding
+it. `gcCacheBin()` is now the shared implementation and `dynamicpagecache` is a `GC_PASSES` entry the
+alarm chain walks.
+
+Both mitigations landed **before** the lever, which is the order that matters: shipping a 2.37x
+throughput win by making manual invalidation quietly stop working would be trading correctness for
+capacity.
+
+---
+
+# THE 2,612x IS A PROPERTY OF THE WORKLOAD, NOT OF THE METER
+
+Measured 2026-08-25 on a deployed throwaway, `cfw-p36-probe`, torn down with the worker list
+byte-identical afterwards. Three instrument items that had been deferred across four sessions, and
+**five instrument defects had to fall before a single number was worth taking.**
+
+## The five defects, because they are the transferable part
+
+1. **`/prefill` is not a route and never was.** Both harnesses used it as their provisioning step, so
+   it rewrote to `/serve` and rendered a 404 page. The prefill is a parameter on `/migrate`.
+2. **The GB-s harness matched site names against `objectId`**, a 64-hex id sharing no substring with
+   the name, so all seven classes would have printed `(no row)`. The dataset carries a **`name`**
+   dimension.
+3. **It provisioned inside the window it measured**, charging a 3,853-row migration to the class
+   under test.
+4. The migrate class needed a fresh object per repeat, or four of five repeats short-circuit.
+5. **The replica harness could not see the wake it was written for.** Its cold counter reads
+   `x-cfw-php-booted`, and the serving path is a storage-lane hit that never boots PHP, so a warm hit
+   and a woken one both report 0.
+
+## GB-s per semantic operation, and what it corrects
+
+Seven classes, n=5, **allocation check 1.000 on all seven** -- so `DO_GB_ALLOCATED = 0.128` is now
+confirmed against real PHP workloads rather than against an idle hold.
+
+| class                    | GB-s/op  | wall clock | rows/op | active/cpu |
+| ------------------------ | -------- | ---------- | ------- | ---------- |
+| first migration          | 0.322641 | 2,520.6 ms | 3,952.0 | 14x        |
+| render, 3 bins emptied   | 0.309374 | 2,417.0 ms | 82.8    | **1x**     |
+| render, page bin emptied | 0.158422 | 1,237.7 ms | 31.2    | **1x**     |
+| stored page              | 0.002868 | 22.4 ms    | 1.0     | 20x        |
+| node save                | 0.340949 | 2,663.7 ms | 306.0   | **1x**     |
+| cron run                 | 0.002017 | 15.8 ms    | 0.0     | 16x        |
+| invalidate + refill      | 0.190584 | 1,488.9 ms | 89.8    | **1x**     |
+
+**RULE 0d said `cpuTime` understates duration by 2,612x. That figure is real and it is not general.**
+It came from a throwaway holding an idle promise, which is the extreme of the 14-20x group. On the
+workloads that actually run -- a render, a node save, an invalidate-plus-refill -- the ratio is ~1x,
+because those spend their time computing rather than awaiting. Anything multiplying a render's
+cpuTime by 2,612 is out by three orders of magnitude.
+
+The spread across classes is the other result: a stored-page serve is 0.002868 GB-s against a node
+save's 0.340949, two orders of magnitude apart, which is the arithmetic behind serving from
+`cfw_page` rather than rendering.
+
+Not closed: alarm work after the measurement window is invisible everywhere, and one object per class
+means the 2.8x per-object marginal spread is not visible in any of these.
+
+## There is no wake cost on the serving path
+
+Client wall clock throughout, explicitly not CPU.
+
+| arm                      | n  | warm p50 | woken p50 | delta       |
+| ------------------------ | -- | -------- | --------- | ----------- |
+| serving path, 1 replica  | 20 | 201 ms   | **180 ms** | none        |
+| render path (`/assemble`) | 12 | 809 ms   | **3,981 ms** | +3,172 ms |
+
+**No wake cost survives the platform's own bimodality on the serving path** -- warm p95 is 603 ms,
+which exceeds every woken p50 in the table. The render path looks catastrophic and is not measuring
+what it appears to: p50, p95 and p99 land within 1 ms of each other, which is the signature of twelve
+requests queued behind one boot rather than twelve wakes.
+
+What this closes is wake as a serving-path latency problem, and the `cold hits` column as an
+instrument -- it reported 20/20 and 12/12 everywhere, carrying no signal at all. What it does not
+close is architecture B's day-long duration integral, or the throughput columns, which measured the
+laptop: four replicas returned 40.6 req/s against two replicas' 49.6.
+
+## AUTOINCREMENT costs 1.16x on a real save, not 4x
+
+The earlier 4x is a correct measurement of the mechanism and a **3.4x overstatement of the return.**
+
+| meter                         | with  | without | ratio     |
+| ----------------------------- | ----- | ------- | --------- |
+| charged rows, node save, n=5  | 184   | **159** | 1.16x     |
+| platform rows, n=10           | 186.7 | 161.7   | 1.155x    |
+| cpuTime, n=10                 | 737.6 ms | **768.6 ms** | none |
+| stored bytes                  | 4,726,784 | 4,726,784 | none  |
+
+Two independent instruments agree on the rows. **Dropping the keyword bought zero CPU** -- 4% worse,
+inside the per-object spread -- and moved no bytes, so the 13.6% row saving is the entire return.
+Four of six speculative replays survive the strip, which pins the keyword to one of `speculate()`'s
+three call sites rather than to all of them.
+
+No rebuilt interpreter was needed, which is worth recording because that was the assumed blocker: the
+keyword lives in DDL text, and `/sql` already rewrites DDL. 18 tables declare it on the control, 13 on
+the stripped arm.
+
+**Six of the seven named operations still have no route to drive them.** `writeWorkload()` is reachable
+only from `site.runJson()` in the gate lane. And `/files?op=write` is not the file-create operation:
+it writes `cfw_files`, never touches `file_managed`, and reports 6 identical rows on both arms.
+
+---
+
+# THE PAGE CACHE WAS EMPTY ON EVERY SITE, AND TWO MORE RIGS FOUND TWO MORE
+
+Measured 2026-08-25, from standing up three servers the project had never talked to: Keycloak, Forgejo
+and GitLab CE. **Four defects, none visible to 3,600 passing tests, and the largest of them had been
+shipping since the serving architecture existed.**
+
+The shape they share is not "the tests were bad". It is that **every one of them lives at a boundary
+the suite mocks by construction**, and a mock cannot disagree with the code that wrote it.
+
+## `cache.page.max_age` was 0, so nothing was ever cached
+
+`system.performance:cache.page.max_age` shipped at **0** in `assets/drupal/site.sqlite`. That is
+Drupal's installer default and it is correct for a generic host, where a reverse proxy is configured
+separately and the CMS declines to guess. Here **the reverse proxy is the product**.
+
+The chain is short and every link is ordinary:
+
+1. at `max_age` 0 Drupal emits `Cache-Control: private, no-store` on an anonymous page;
+2. `fillOne()` tests the render's `cacheControl` against `/(^|,)\s*(no-store|private)\s*(,|$)/i`;
+3. the `cfw_page` upsert is declined;
+4. **the page table is empty on every site that has ever existed here**, and every request renders.
+
+Measured on a fresh site, `PACK_CONTRIB` off, both cache bins emptied by the fill:
+
+| | `cfw_page` rows | `/node` | `/user/login` |
+| --- | --- | --- | --- |
+| `max_age = 0` (as shipped) | **0** | `RENDER` | `RENDER` |
+| `max_age = 300` | **4** | **`HIT`** | **`HIT`** |
+
+**Honouring `no-store` is not the defect and must not be "fixed" at the store.** Keeping a response
+Drupal marked `private` and replaying it to another visitor is the uid-1 leak this project already
+shipped once, and the comment above that check exists because of it. The value had to be right at the
+source. 300 matches `EDGE_PAGE_TTL_S`, and the edit is surgical per the provenance section: unserialize
+the blob, change one key, reserialize, `bun run assets:sql`.
+
+`tests/node/page-cacheable.spec.ts` reads the shipped row and fails at 0 -- verified by reverting the
+value and watching it go red, not by assuming it would.
+
+**The general form is the part worth carrying: the pack inherits Drupal's opinions about a deployment
+that is not this one.** When something the architecture depends on is silently inert, check what the
+shipped configuration believes before reading the code that consumes it.
+
+## Image styles have no toolkit at all
+
+Found the same day and it is the same family: something the architecture assumes is present, is not,
+and nothing reports it. `getAvailableToolkits()` is **empty**, `getDefaultToolkit()` is **false**, and
+`image.factory->get()` **throws**. gd is not compiled into this build, `cfw_images` is not discovered,
+so there is no fallback either. Every image derivative on every site fails silently.
+
+**Both benign explanations were ruled out rather than argued away**, which is what makes it a finding
+rather than a probe artifact: the probe pushes a real request onto the stack and calls `loadAll()`,
+so it is not missing request state; and it deletes the discovery cache, so it is not a stale packed
+row. `tests/integration/image-toolkit.spec.ts` asserts the broken behaviour deliberately, so it fails
+and gets inverted the day a toolkit is wired up.
+
+## The OIDC callback was a 404 for the whole life of the feature
+
+Tier B handed every provider a `redirect_uri` of `/__oidc?action=callback`. A `__`-prefixed path is a
+Durable Object route, and `src/site.ts` refuses those from outside **by construction** -- deliberately,
+so a probe for `/__export` gets a refusal rather than a render. So both the login start and the
+provider's redirect answered 404, and **no configured identity provider could ever have completed a
+login.**
+
+Twenty-five assertions covered the exchange. Every one of them drove the object's route directly, so
+none could observe that the route was unreachable from a browser. The fix is a `DO_ROUTE` entry plus
+`PUBLIC_ROUTES` membership, on exactly the reasoning that already put `/setup/cf/callback` there: the
+redirect carries no header this Worker controls, and `state` is what authenticates it.
+
+The same pass collapsed three hand-copied spellings of the callback string into one `callbackUri()`.
+Removing the fix fails 4 of the 15 assertions in `tests/unit/ops/oidc-callback-route.spec.ts`.
+
+**A local provider needs one exemption and it is inert in production.** `endpointUsable()` keeps https
+a refusal everywhere except loopback, which a deployed Worker has no way to reach at all.
+
+## GitLab webhook registration had never worked
+
+`createHookRequest()` sent `token` and `signing_token` carrying the same value, under a comment
+reasoning that `signing_token` needs GitLab 19.0 and an older install would ignore it. It does not
+ignore it: it **validates** it and rejects the entire request with `{"error":"Signing token is
+invalid"}`, so no hook was created at all. A well-formed `whsec_`-prefixed value is refused too.
+Dropping the field gives 201.
+
+The test that should have caught it fired the registration POST fire-and-forget, so a rejected
+registration surfaced 45 seconds later as a delivery timeout -- a failure wearing a different failure's
+clothes. It now asserts the 201.
+
+## Bitbucket's git username is not its API username
+
+From Atlassian's own API-token documentation rather than from a container: the REST API authenticates
+as Basic with the **Atlassian account email**, and git over HTTPS authenticates with the **Bitbucket
+username**, which is case sensitive. `smartAuth()` sent the email to both, so the git half could never
+have authenticated. This is the exact risk the backlog had named for Bitbucket, and it was settled
+from primary documentation.
+
+**A Data Center container cannot stand in for Bitbucket Cloud**, which is why one was not added:
+Atlassian documents that API tokens and app passwords are not supported in Data Center, which uses
+HTTP access tokens only. A DC rig would exercise an auth model this code does not implement. The
+mechanism is closed; the objective -- a real Cloud exchange -- stays open, and the provider is
+described as **supported, not exercised**.
+
+## What the forges do agree on
+
+Nine assertions pass **unchanged** against both Gitea 1.24.6 and Forgejo 13 with the server as a
+parameter, which is what shows the code is not fitted to one of them. GitLab needed its own file:
+`/api/v4`, a URL-encoded project path, merge requests, its own state vocabulary, and a webhook proved
+by a plaintext token share nothing with the Gitea family. GitHub was verified once against real
+github.com, and confirmed the check-run claim exactly -- `POST /check-runs` answers 403
+`You must authenticate via a GitHub App` while `POST /statuses/{sha}` answers 201.
+
+One thing that measurement corrected: **GitHub does not advertise `symref=HEAD:` to this client.**
+`discoverRefs()` returns `defaultBranch: null` there while both Gitea and Forgejo answer it. So
+`defaultBranchRequest()` is load-bearing on GitHub rather than the rarity its docblock implied.
+Nothing is broken, because the API fallback already runs; the comment named the wrong host as the
+exception.
+
+## Two rig traps, recorded so the next person does not pay for them
+
+**GitLab's `allow_local_requests_from_web_hooks_and_services` is an APPLICATION setting.** The
+`gitlab_rails[...]` omnibus key of the same name is accepted, applied to nothing, and silently leaves
+the setting `false` -- a decorative configuration of exactly the kind this project keeps finding. Set
+it through `gitlab-rails runner`.
+
+**GitLab indexes a pushed branch asynchronously.** A merge-request POST answers
+`source_branch does not exist` for a branch `git push` has already accepted, and the merge-request
+listing can come back empty right after a successful create. Both need retries; Gitea has the same
+property for a pushed head and the existing spec already said so.
 
 ---
 

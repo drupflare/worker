@@ -462,10 +462,8 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 	// `platform_check.php` asserts `PHP_INT_SIZE === 8` and aborts every request before Drupal boots
 	// -- all 56 other contrib cases failed with it. The vector comes first in `tierFor()`, which is
 	// exactly why a capability-contract id is the right place to express this
-	it('refuses Solr on the integer width, above its deferrable transport', () => {
-		const out = tierFor('drupal/search_api_solr');
-		expect(out.tier).toBe('refused');
-		expect(out.reason).toContain('runtime.int64');
+	it('no longer refuses Solr, since the integer width it waited on is satisfied', () => {
+		expect(tierFor('drupal/search_api_solr').tier).not.toBe('refused');
 	});
 
 	it('names the failure mode a cron module has when cron is turned OFF', () => {

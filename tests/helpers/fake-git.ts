@@ -126,7 +126,9 @@ export async function fakeCommit(
 	header.set(encoder.encode('PACK'));
 	new DataView(header.buffer).setUint32(4, 2);
 	new DataView(header.buffer).setUint32(8, objects.size);
-	const parts = [header];
+	// annotated to `concat()`'s own parameter type: `new Uint8Array()` infers the narrower
+	// `Uint8Array<ArrayBuffer>`, which fflate's `Uint8Array<ArrayBufferLike>` does not satisfy
+	const parts: Uint8Array[] = [header];
 	for (const object of objects.values()) {
 		parts.push(objectHeader(object.kind, object.data.length), zlibSync(object.data));
 	}

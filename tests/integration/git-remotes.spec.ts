@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { KV_OVERRIDABLE } from '../../src/ops/plan';
 import { fakeCommit, gitFetch, type FakeRepo } from '../helpers/fake-git';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { freshSite, inObject } from '../helpers/serve-do';
 
 /**
  * The git tier's wiring: where a token is stored, who may reach it, and what a delivery must carry.
@@ -10,7 +10,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * signature verification live. This is the half that touches the object.
  */
 
-const call = (site: ServeDo, path: string, init?: RequestInit) =>
+const call = (site: DurableObjectStub, path: string, init?: RequestInit) =>
 	site.fetch(new Request(`https://do.local${path}`, init));
 
 describe('the owner gate', () => {
@@ -135,14 +135,19 @@ describe('remote storage', () => {
 });
 
 describe('a delivery', () => {
-	const deliver = (site: ServeDo, id: string, body: string, headers: Record<string, string>) =>
+	const deliver = (
+		site: DurableObjectStub,
+		id: string,
+		body: string,
+		headers: Record<string, string>
+	) =>
 		call(site, `/__githook?remote=${encodeURIComponent(id)}`, {
 			method: 'POST',
 			body,
 			headers
 		});
 
-	async function withRemote(site: ServeDo, secret: string): Promise<string> {
+	async function withRemote(site: DurableObjectStub, secret: string): Promise<string> {
 		const id = 'github:o/r@main';
 		await inObject(site, async (obj) => {
 			obj.ensureServeTables();
@@ -269,7 +274,7 @@ describe('a pull against a git server', () => {
 
 	/** a remote already in the meta table, so the add path is not what is under test */
 	async function connected(
-		site: ServeDo,
+		site: DurableObjectStub,
 		id = 'generic:o/r@main',
 		over: Record<string, unknown> = {}
 	): Promise<void> {
@@ -295,7 +300,7 @@ describe('a pull against a git server', () => {
 		globalThis.fetch = gitFetch(repo, onCall ?? {});
 	}
 
-	async function api(site: ServeDo, params: Record<string, string>): Promise<any> {
+	async function api(site: DurableObjectStub, params: Record<string, string>): Promise<any> {
 		return inObject(site, async (obj) => {
 			const url = new URL('https://do.local/__git');
 			for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -304,12 +309,15 @@ describe('a pull against a git server', () => {
 		});
 	}
 
-	function storedFiles(site: ServeDo): Promise<Record<string, string>[]> {
+	/** the four columns the SELECT names, so a reader is a string rather than `string | undefined` */
+	type StoredFile = { path: string; package: string; version: string; source: string };
+
+	function storedFiles(site: DurableObjectStub): Promise<StoredFile[]> {
 		return inObject(site, async (obj) =>
 			obj.sql
 				.exec('SELECT path, package, version, source FROM cfw_module_file ORDER BY path')
 				.toArray()
-		) as Promise<Record<string, string>[]>;
+		) as Promise<StoredFile[]>;
 	}
 
 	it('installs a module, keeping only what a mounted tree can use', async () => {
@@ -542,7 +550,11 @@ describe('a pull against a git server', () => {
 	it('backs off after a refusal and stops polling until the window passes', async () => {
 		const site = freshSite();
 		await connected(site);
-		globalThis.fetch = (async () => new Response('nope', { status: 429 })) as typeof fetch;
+		// `preconnect` carried over rather than cast away: workers-types puts it on `typeof fetch`,
+		// so a bare function is genuinely not one
+		globalThis.fetch = Object.assign(async () => new Response('nope', { status: 429 }), {
+			preconnect: realFetch.preconnect
+		});
 		await inObject(site, async (obj) => {
 			obj.metaSet('git_interval_generic:o/r@main', '5');
 			obj.metaSet('git_checked_generic:o/r@main', '0');

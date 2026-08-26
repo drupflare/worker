@@ -31,10 +31,13 @@ import { planSync, selectFiles } from '../../src/ops/git-sync';
  * The unit lane proves the URLs are what was measured and the node lane proves the packfile reader
  * agrees with git. Neither touches a socket, so neither can see an auth scheme a server rejects or a
  * signature header a provider actually sends. Skip locally when the rig is down; fail in CI.
+ *
+ * `CFW_E2E_FORGE` names the compose service and its admin CLI, so one file drives Gitea or Forgejo.
  */
 
-const GITEA = process.env.CFW_E2E_GITEA ?? 'http://127.0.0.1:3300';
-const CONTAINER = process.env.CFW_E2E_GITEA_CONTAINER ?? 'drupflare-worker-gitea-1';
+const FORGE = process.env.CFW_E2E_FORGE ?? 'gitea';
+const BASE = process.env.CFW_E2E_FORGE_URL ?? 'http://127.0.0.1:3300';
+const CONTAINER = process.env.CFW_E2E_FORGE_CONTAINER ?? `drupflare-worker-${FORGE}-1`;
 const USER = 'drupflare';
 const PASSWORD = 'drupflare-test-pw-1';
 
@@ -63,13 +66,13 @@ const git = (cwd: string, ...args: string[]): string =>
 		}
 	}).trim();
 
-const gitea = (...args: string[]): string =>
-	execFileSync('docker', ['exec', '-u', 'git', CONTAINER, 'gitea', ...args], {
+const cli = (...args: string[]): string =>
+	execFileSync('docker', ['exec', '-u', 'git', CONTAINER, FORGE, ...args], {
 		encoding: 'utf8'
 	}).trim();
 
 async function api(path: string, init: RequestInit = {}): Promise<Response> {
-	return fetch(`${GITEA}/api/v1${path}`, {
+	return fetch(`${BASE}/api/v1${path}`, {
 		...init,
 		headers: {
 			authorization: `token ${token}`,
@@ -88,10 +91,10 @@ function write(repo: string, path: string, body: string): void {
 /** the remote as the object would store it, pointed at the local server */
 function remote(repo: string, branch = 'main', over: Partial<Remote> = {}): Remote {
 	return {
-		id: `gitea:${USER}/${repo}@${branch}`,
+		id: `${FORGE}:${USER}/${repo}@${branch}`,
 		provider: 'gitea',
 		repo: `${USER}/${repo}`,
-		host: GITEA,
+		host: BASE,
 		branch,
 		...over
 	};
@@ -104,7 +107,7 @@ function smart(r: Remote) {
 
 /** an authenticated push URL, which is how the fixtures get into the server at all */
 const pushUrl = (repo: string) =>
-	`${GITEA.replace('://', `://${USER}:${encodeURIComponent(PASSWORD)}@`)}/${USER}/${repo}.git`;
+	`${BASE.replace('://', `://${USER}:${encodeURIComponent(PASSWORD)}@`)}/${USER}/${repo}.git`;
 
 async function makeRepo(name: string, isPrivate: boolean): Promise<void> {
 	const res = await api('/user/repos', {
@@ -118,7 +121,7 @@ async function makeRepo(name: string, isPrivate: boolean): Promise<void> {
 
 beforeAll(async () => {
 	try {
-		const health = await fetch(`${GITEA}/api/healthz`, { signal: AbortSignal.timeout(3000) });
+		const health = await fetch(`${BASE}/api/healthz`, { signal: AbortSignal.timeout(3000) });
 		skip = !health.ok;
 	} catch {
 		skip = true;
@@ -126,15 +129,15 @@ beforeAll(async () => {
 	if (skip) {
 		if (process.env.CI) {
 			throw new Error(
-				`e2e: no Gitea at ${GITEA} (required in CI). ` +
-					'Start it with `docker compose -f docker/compose.yml up -d gitea`.'
+				`e2e: no ${FORGE} at ${BASE} (required in CI). ` +
+					`Start it with \`docker compose -f docker/compose.yml up -d ${FORGE}\`.`
 			);
 		}
 		return;
 	}
 
 	try {
-		gitea(
+		cli(
 			'admin',
 			'user',
 			'create',
@@ -150,7 +153,7 @@ beforeAll(async () => {
 	} catch {
 		// already there from a previous run, which is the normal case
 	}
-	token = gitea(
+	token = cli(
 		'admin',
 		'user',
 		'generate-access-token',
@@ -163,7 +166,7 @@ beforeAll(async () => {
 		'--raw'
 	);
 
-	root = mkdtempSync(join(tmpdir(), 'cfw-gitea-'));
+	root = mkdtempSync(join(tmpdir(), `cfw-${FORGE}-`));
 
 	// a private module repository, which is the case a token has to carry
 	await makeRepo(PRIVATE, true);

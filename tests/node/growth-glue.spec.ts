@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
 	emitVariant,
@@ -85,6 +86,33 @@ describe.skipIf(!have)('rewriting the shipping glue', () => {
 	});
 });
 
+describe('a glue that already carries a step', () => {
+	// phasm's LP64 patch emits 0.05 on the wasm64 build, so an anchor on emscripten's `.2` refused it
+	it('is re-emitted at the new step', () => {
+		const root = mkdtempSync(join(tmpdir(), 'growth-glue-'));
+		try {
+			mkdirSync(dirname(resolve(root, SHIPPING_GLUE)), { recursive: true });
+			writeFileSync(resolve(root, SHIPPING_GLUE), 'a();oldSize*(1+0.05/cutDown);b()');
+			emitVariant(0.11, root);
+			const out = readFileSync(resolve(root, variantPath(0.11)), 'utf8');
+			expect(out).toBe('a();oldSize*(1+0.11/cutDown);b()');
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it('still throws when no growth site is present at all', () => {
+		const root = mkdtempSync(join(tmpdir(), 'growth-glue-'));
+		try {
+			mkdirSync(dirname(resolve(root, SHIPPING_GLUE)), { recursive: true });
+			writeFileSync(resolve(root, SHIPPING_GLUE), 'a();growMemory(n);b()');
+			expect(() => emitVariant(0.11, root)).toThrow(/growth site not found/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('the tuned glue the shipping seam imports', () => {
 	it('carries SHIPPING_STEP and not emscripten default', () => {
 		// ASSERTED AGAINST THE FILE, not against a render. With `OPCACHE_MODE=off` an anonymous
@@ -99,7 +127,7 @@ describe('the tuned glue the shipping seam imports', () => {
 			return;
 		}
 		const glue = readFileSync(tuned, 'utf8');
-		expect(SHIPPING_STEP).toBe(0.08);
+		expect(SHIPPING_STEP).toBe(0.13);
 		expect(glue).toContain(`oldSize*(1+${SHIPPING_STEP}/cutDown)`);
 		expect(glue).not.toContain('oldSize*(1+.2/cutDown)');
 	});

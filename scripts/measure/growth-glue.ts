@@ -22,7 +22,7 @@ const PAGE = 65_536;
 export const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
 
 /** every pointer ABI a glue is emitted for; `null` is wasm32, which needs no suffix */
-export type Abi = null | 'wasm64';
+export type Abi = null | 'wasm64' | 'long64' | 'wasm32';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {
@@ -39,8 +39,12 @@ export function tunedGlueFor(abi: Abi): string {
  *
  * Anchored on `cutDown` rather than on the bare number: `.2` occurs all over a 12 MB glue file and
  * this expression occurs once, which a spec asserts before any rewrite happens.
+ *
+ * The step itself is matched loosely because not every published glue is emscripten-fresh: phasm's
+ * LP64 patch rewrites `growMemory` on the wasm64 build and emits `0.05` there, so an anchor on `.2`
+ * refuses the one arm that most needs re-emitting.
  */
-const STEP_SITE = /oldSize\*\(1\+\.2\/cutDown\)/;
+const STEP_SITE = /oldSize\*\(1\+[0-9.]+\/cutDown\)/;
 
 /** where a variant is written, keyed by step so a ladder run leaves every arm on disk */
 export function variantPath(step: number): string {
@@ -48,80 +52,40 @@ export function variantPath(step: number): string {
 }
 
 /**
- * The step the SHIPPING glue is tuned to, and why it is neither emscripten's 0.20 nor the 0.05 that
- * shipped until 2026-08-24.
+ * The geometric growth step the shipping glue is emitted at.
  *
- * MEASURED 2026-08-24 with `bun scripts/measure/growth-ladder.ts <steps>`: 0 plus every hundredth to
- * 0.20, plus thousandths across the one breakpoint. n=2 on every arm, n=3 on 0.05, n=4 on 0.069 and
- * 0.07, n=6 on the step-0 demand. Bytes only -- a grow COPIES the heap, so its cost is reported as
- * bytes copied rather than as a duration, which RULE 0 forbids reading off a local clock.
+ * A peak is a STEP FUNCTION of the step -- `newSize = align(max(demand, oldSize * (1 + step)))` --
+ * so it is flat across a range and then jumps, and interpolating between two arms is invalid. What
+ * decides an arm is which rung first exceeds the AUTHENTICATED demand, which is the binding
+ * workload; a plain render reads 96.00 MiB on every arm and answers nothing.
  *
- * THE PEAK IS A STEP FUNCTION OF THE STEP: `newSize = align(max(demand, oldSize*(1+step)), 64 KiB)`,
- * so what sets it is which RUNG first covers demand. Install demand is 101,580,800 on all 6 samples;
- * AUTH DEMAND IS BIMODAL, 107,610,112 and 107,675,648 three times each -- exactly one page apart,
- * and that page is what the choice below turns on.
+ * 0.13 ships because long64 does. Its demand brackets to (111,738,880, 112,787,456], and 0.12
+ * reaches that in one grow with ZERO pages of margin -- the trap 0.069 demonstrated on wasm32, where
+ * a rung equal to the demand fit on three readings of four. 0.13 takes the rung above: one grow to
+ * 113,770,496, 19.50 MiB clear of the 128 MiB isolate.
  *
- * A render never grows the heap on any arm (96.00 MiB / 100,663,296). The AUTHENTICATED render is
- * the binding workload on every arm, so `worst` below is its peak.
+ * **Margin is a fourth metric and it overrules the Pareto frontier**, because demand MOVES. The full
+ * wasm32 sweep behind that rule -- every hundredth to 0.20 plus thousandths across the breakpoint --
+ * is in `TECHNICAL_REPORT.md` rather than here.
+ */ export const SHIPPING_STEP = 0.13;
+
+/**
+ * The step per ABI, because the optimum is a property of that ABI's demand.
  *
- * | step  | worst-case peak | MiB    | headroom   | MiB   | events | bytes copied |
- * | ----- | --------------- | ------ | ---------- | ----- | ------ | ------------ |
- * | 0     | 107,675,648     | 102.69 | 26,542,080 | 25.31 | many   | n/a          |
- * | 0.01  | 108,134,400     | 103.13 | 26,083,328 | 24.88 | 7      | 726,728,704  |
- * | 0.02  | 109,051,904     | 104.00 | 25,165,824 | 24.00 | 4      | 415,039,488  |
- * | 0.03  | 110,100,480     | 105.00 | 24,117,248 | 23.00 | 3      | 311,296,000  |
- * | 0.04  | 108,920,832     | 103.88 | 25,296,896 | 24.13 | 2      | 205,389,824  |
- * | 0.05  | 111,017,984     | 105.88 | 23,199,744 | 22.13 | 2      | 206,372,864  |
- * | 0.06  | 113,180,672     | 107.94 | 21,037,056 | 20.06 | 2      | 207,421,440  |
- * | 0.07  | 107,741,184     | 102.75 | 26,476,544 | 25.25 | 1      | 100,663,296  |
- * | 0.08  | 108,724,224     | 103.69 | 25,493,504 | 24.31 | 1      | 100,663,296  |
- * | 0.09  | 109,772,800     | 104.69 | 24,444,928 | 23.31 | 1      | 100,663,296  |
- * | 0.10  | 110,755,840     | 105.63 | 23,461,888 | 22.38 | 1      | 100,663,296  |
- * | 0.11  | 111,738,880     | 106.56 | 22,478,848 | 21.44 | 1      | 100,663,296  |
- * | 0.12  | 112,787,456     | 107.56 | 21,430,272 | 20.44 | 1      | 100,663,296  |
- * | 0.13  | 113,770,496     | 108.50 | 20,447,232 | 19.50 | 1      | 100,663,296  |
- * | 0.14  | 114,819,072     | 109.50 | 19,398,656 | 18.50 | 1      | 100,663,296  |
- * | 0.15  | 115,802,112     | 110.44 | 18,415,616 | 17.56 | 1      | 100,663,296  |
- * | 0.16  | 116,785,152     | 111.38 | 17,432,576 | 16.63 | 1      | 100,663,296  |
- * | 0.17  | 117,833,728     | 112.38 | 16,384,000 | 15.63 | 1      | 100,663,296  |
- * | 0.18  | 118,816,768     | 113.31 | 15,400,960 | 14.69 | 1      | 100,663,296  |
- * | 0.19  | 119,799,808     | 114.25 | 14,417,920 | 13.75 | 1      | 100,663,296  |
- * | 0.20  | 120,848,384     | 115.25 | 13,369,344 | 12.75 | 1      | 100,663,296  |
- *
- * THE BREAKPOINT IS BETWEEN 0.068 AND 0.069, and it is a 7,274,496-byte cliff: 0.068 peaks at
- * 114,884,608 in two events, 0.069 at 107,610,112 in one. Every thousandth from 0.061 to 0.068 sits
- * on the wrong side of it and is dominated. There are no plateaus at hundredth resolution -- 1,536
- * pages times 0.01 is ~15 pages, so every hundredth resolves its own rung and the thousandth
- * refinement moved the verdict rather than tying.
- *
- * THE PARETO FRONTIER on headroom + events + bytes copied + spare events is 0.01, 0.02, 0.03, 0.04
- * and 0.07. No two frontier arms tie on all four, so the frontier is nowhere flat. 0.05 is DOMINATED
- * by 0.04 and 0.08-0.20 are all dominated by 0.07.
- *
- * MARGIN IS THE FOURTH MEASUREMENT AND IT IS WHY THE FRONTIER ARM DOES NOT SHIP. A rung is only
- * worth its headroom if demand stays under it, and auth demand MOVES: 107,610,112 and 107,675,648
- * three times each today, and 107,544,576 recorded on 2026-08-23 -- a 2-page observed span, drifting
- * up. Margin over the highest observed demand is 1 page at 0.07, 16 at 0.08, 32 at 0.09.
- *
- * 0.069 IS THE DEMONSTRATION. Its rung EQUALS the lower demand, so it fits only on that reading:
- * over 4 samples it answered 107,610,112 three times and 115,081,216 once, a 7,471,104-byte swing on
- * one arm. 0.07 held 107,741,184 on all 4 -- but its 1 page of margin is INSIDE the span demand has
- * already been observed to move, so it is the same trap one page further out.
- *
- * 0.08 SHIPS, off the frontier and deliberately. Against 0.07 it gives up 983,040 bytes of headroom
- * to buy 16x the margin, and the trade is asymmetric: overshooting 0.07's rung costs 7,602,176 bytes,
- * so 983,040 is bought against a 7.7x loss. Against the previous default 0.05 it gives up nothing --
- * 2,293,760 bytes MORE headroom, one grow event rather than two, 105,709,568 fewer bytes copied.
- * 0.05 was dominated by both 0.04 and 0.08, which no earlier table scored because neither 0.04 nor
- * anything between 0.05 and 0.10 had ever been run.
+ * `wasm32` is the OFF arm and keeps its own 0.08; reading 0.13 onto it costs 4.81 MiB for nothing.
+ * wasm64 falls back deliberately -- its sweep ran at 0.05 and a number here would be invented.
  */
-export const SHIPPING_STEP = 0.08;
+const STEP_BY_ABI: Record<string, number> = { wasm32: 0.08 };
+
+export function stepFor(abi: Abi): number {
+	return (abi !== null && STEP_BY_ABI[abi]) || SHIPPING_STEP;
+}
 
 /** the tuned glue the shipping seam imports; emitted after the pristine one is sha256-verified */
 export const TUNED_GLUE = '.interp/php8.5-worker.tuned.mjs';
 
 /**
- * Emits the shipping glue at {@link SHIPPING_STEP}.
+ * Emits the glue for an ABI at {@link stepFor}.
  *
  * Written BESIDE the pristine file rather than over it. `restore-artifacts.ts` verifies the
  * download against `cdn-manifest.json`, so rewriting in place would either break that check or
@@ -137,7 +101,7 @@ export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 		throw new Error(`growth site not found in ${from}; emscripten changed its emitted form`);
 	}
 	const out = resolve(root, tunedGlueFor(abi));
-	writeFileSync(out, glue.replace(STEP_SITE, `oldSize*(1+${SHIPPING_STEP}/cutDown)`));
+	writeFileSync(out, glue.replace(STEP_SITE, `oldSize*(1+${stepFor(abi)}/cutDown)`));
 	return out;
 }
 
@@ -173,7 +137,7 @@ export function emitVariant(step: number, root = process.cwd()): string {
 
 if (import.meta.main) {
 	const steps = process.argv.slice(2).map(Number);
-	if (!steps.length || steps.some((s) => !Number.isFinite(s) || s < 0)) {
+	if (!steps.length || steps.some((s: number) => !Number.isFinite(s) || s < 0)) {
 		console.error('usage: bun scripts/measure/growth-glue.ts <step> [step ...]');
 		process.exit(1);
 	}

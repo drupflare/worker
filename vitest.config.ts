@@ -3,7 +3,13 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
-import { TUNED_GLUE, emitTunedGlue, glueFor, tunedGlueFor } from './scripts/measure/growth-glue.js';
+import {
+	TUNED_GLUE,
+	emitTunedGlue,
+	glueFor,
+	tunedGlueFor,
+	type Abi
+} from './scripts/measure/growth-glue.js';
 
 const SHIPPING_CODE = [
 	'src/site.ts',
@@ -145,20 +151,20 @@ if (growthGlue && !existsSync(growthGlue)) {
  * 123.00 MiB. Substituting that by hand is how the gate and production come to run different growth
  * policies, which has happened at this exact seam before.
  */
-const abi = process.env.DRUPFLARE_ABI;
-if (abi !== undefined && abi !== 'wasm64') {
-	throw new Error(`DRUPFLARE_ABI must be wasm64 when set; got ${abi}`);
+const abi = process.env.DRUPFLARE_ABI as Abi | undefined;
+if (abi !== undefined && abi !== 'wasm64' && abi !== 'long64') {
+	throw new Error(`DRUPFLARE_ABI must be wasm64 or long64 when set; got ${abi}`);
 }
 const abiWasm = abi ? `.interp/php8.5-${abi}.wasm` : null;
-const abiPristine = abi ? glueFor('wasm64') : null;
+const abiPristine = abi ? glueFor(abi) : null;
 if (abiWasm && abiPristine && !(existsSync(abiWasm) && existsSync(abiPristine))) {
 	throw new Error(
 		`DRUPFLARE_ABI=${abi} but ${abiWasm} or ${abiPristine} is absent; build the variant in phasm ` +
 			'and copy both files into .interp/'
 	);
 }
-const abiGlue = abi ? tunedGlueFor('wasm64') : null;
-if (abiGlue && !existsSync(abiGlue)) emitTunedGlue(process.cwd(), 'wasm64');
+const abiGlue = abi ? tunedGlueFor(abi) : null;
+if (abiGlue && !existsSync(abiGlue)) emitTunedGlue(process.cwd(), abi as Abi);
 
 const activeWasm = abiWasm ?? SHIPPING_WASM;
 const activeGlue = abiGlue ?? growthGlue ?? SHIPPING_GLUE;

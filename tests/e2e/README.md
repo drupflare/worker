@@ -127,3 +127,67 @@ that cannot exist here.
 
 `CFW_E2E_SYSLOG_HOST` and `CFW_E2E_SYSLOG_READBACK` point it at a different collector; the readback
 port is a second listener that cats the ingest log, which is how the record is read back.
+
+## The identity lane
+
+`oidc.spec.ts` needs a real identity provider. Keycloak is in `docker/compose.yml` beside the rest,
+pinned by digest, and imports `docker/keycloak-realm.json` at start.
+
+```bash
+docker compose -f docker/compose.yml up -d keycloak
+bunx wrangler dev -c wrangler.jsonc --var PW_DIAGNOSTICS:1 --var OIDC_CLIENT_SECRET:drupflare-rig-secret
+curl -X POST "localhost:8787/setup/oidc?site=e2e&action=save" \
+  -d "issuer=http://127.0.0.1:8081/realms/drupflare&clientId=drupflare-worker"
+CFW_E2E_SITE=e2e bun run test:e2e
+```
+
+It drives the authorization-code flow the way a browser does: the redirect out, Keycloak's own login
+form, the credential POST, the redirect back, and an RS256 signature checked against the JWKS
+Keycloak published. Every other test of this tier verifies a token this repo minted, which proves
+the checks fire and says nothing about whether the routes are reachable.
+
+The realm carries a **second** client. Two clients of one provider is what makes the audience refusal
+a real test: a token Keycloak genuinely signed for `drupflare-other` must not log anyone in here, and
+the same token verifying for its own client is the control that proves the refusal is the audience
+check rather than the signature failing.
+
+`CFW_E2E_OIDC_ISSUER`, `CFW_E2E_OIDC_CLIENT`, `CFW_E2E_OIDC_OTHER_CLIENT`,
+`CFW_E2E_OIDC_OTHER_SECRET`, `CFW_E2E_OIDC_USER` and `CFW_E2E_OIDC_PASSWORD` point it at a different
+provider.
+
+**Loopback is why a local provider works at all.** `endpointUsable()` refuses plain http everywhere
+except loopback, which a deployed Worker has no way to reach, so the exemption cannot widen anything
+in production.
+
+## The git lane
+
+Two files, and the split is which end they drive.
+
+`git.spec.ts` is here because it goes through a **running worker**: it adds a remote at `/git`, pulls
+it, and asserts the module was mounted and a commit status written back. That is the route an operator
+uses, and nothing covered it against a real server.
+
+```bash
+docker compose -f docker/compose.yml up -d gitea forgejo
+CFW_E2E_SITE=e2e bun run test:e2e
+CFW_E2E_FORGE=forgejo CFW_E2E_FORGE_URL=http://127.0.0.1:3400 CFW_E2E_SITE=e2e bun run test:e2e
+```
+
+`tests/node/git-forge.spec.ts` and `tests/node/git-gitlab.spec.ts` drive `src/ops/git-*.ts` straight
+at the server with no worker involved, which is what proves the transport and each provider's API.
+They live in the `node` project because they need `node:child_process` and a real `git` binary.
+
+## The forge lane
+
+`tests/node/git-forge.spec.ts` takes its server as a parameter, so one file covers both forges.
+
+```bash
+docker compose -f docker/compose.yml up -d gitea forgejo
+bunx vitest run --project=node tests/node/git-forge.spec.ts
+CFW_E2E_FORGE=forgejo CFW_E2E_FORGE_URL=http://127.0.0.1:3400 \
+  bunx vitest run --project=node tests/node/git-forge.spec.ts
+```
+
+`CFW_E2E_FORGE` names both the compose service and the admin CLI inside it;
+`CFW_E2E_FORGE_CONTAINER` overrides the container name when it is not `drupflare-worker-<forge>-1`.
+Running it against both is what shows the code is not fitted to one of them.

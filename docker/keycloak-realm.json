@@ -1,0 +1,57 @@
+{
+	"realm": "drupflare",
+	"enabled": true,
+	"sslRequired": "none",
+	"registrationAllowed": false,
+	"loginTheme": "keycloak",
+	"accessTokenLifespan": 300,
+	"clients": [
+		{
+			"clientId": "drupflare-worker",
+			"name": "drupflare worker",
+			"enabled": true,
+			"protocol": "openid-connect",
+			"publicClient": false,
+			"secret": "drupflare-rig-secret",
+			"standardFlowEnabled": true,
+			"implicitFlowEnabled": false,
+			"directAccessGrantsEnabled": false,
+			"serviceAccountsEnabled": false,
+			"redirectUris": ["http://127.0.0.1:8787/*", "http://localhost:8787/*"],
+			"webOrigins": ["+"],
+			"attributes": {
+				"pkce.code.challenge.method": "S256",
+				"post.logout.redirect.uris": "+"
+			}
+		},
+		{
+			"clientId": "drupflare-other",
+			"name": "another client of the same provider",
+			"enabled": true,
+			"protocol": "openid-connect",
+			"publicClient": false,
+			"secret": "drupflare-other-secret",
+			"standardFlowEnabled": true,
+			"directAccessGrantsEnabled": true,
+			"redirectUris": ["http://127.0.0.1:8787/*"],
+			"webOrigins": ["+"]
+		}
+	],
+	"users": [
+		{
+			"username": "drupflare",
+			"enabled": true,
+			"emailVerified": true,
+			"email": "drupflare@example.test",
+			"firstName": "Drup",
+			"lastName": "Flare",
+			"credentials": [
+				{
+					"type": "password",
+					"value": "drupflarepass",
+					"temporary": false
+				}
+			]
+		}
+	]
+}

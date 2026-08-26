@@ -50,6 +50,87 @@ services:
       timeout: 5s
       retries: 40
 
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:13@sha256:d05b9e587f02a746784d42c815c486b1d4f138646128f990a841833f513fe088
+    environment:
+      USER_UID: '1000'
+      USER_GID: '1000'
+      FORGEJO__security__INSTALL_LOCK: 'true'
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__server__ROOT_URL: 'http://127.0.0.1:3400/'
+      FORGEJO__server__HTTP_PORT: '3000'
+      FORGEJO__server__OFFLINE_MODE: 'true'
+      FORGEJO__server__DISABLE_SSH: 'true'
+      FORGEJO__service__DISABLE_REGISTRATION: 'true'
+      FORGEJO__webhook__ALLOWED_HOST_LIST: '*'
+      FORGEJO__log__LEVEL: 'Warn'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:3400:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/healthz || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  gitlab:
+    profiles: ['heavy']
+    image: gitlab/gitlab-ce@sha256:f7e453ff51d1910235365085fe836e4589716d26b44d99a8aa3e2c41377f034f
+    shm_size: '256m'
+    environment:
+      GITLAB_ROOT_PASSWORD: 'drupflare-rig-password'
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://127.0.0.1:3500'
+        nginx['listen_port'] = 3500
+        nginx['listen_https'] = false
+        puma['worker_processes'] = 0
+        sidekiq['max_concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        registry['enable'] = false
+        gitlab_pages['enable'] = false
+        gitlab_kas['enable'] = false
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        gitlab_rails['initial_root_password'] = 'drupflare-rig-password'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:3500:3500'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:3500/users/sign_in || exit 1']
+      interval: 10s
+      timeout: 10s
+      retries: 90
+      start_period: 240s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4.5@sha256:653852bfdea2be6e958b9e90a976eff1c6de34edd55f2f679bdc48ef16bc528e
+    command: ['start-dev', '--import-realm', '--http-port=8081']
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: 'http://127.0.0.1:8081'
+      KC_HOSTNAME_STRICT: 'false'
+      KC_HTTP_ENABLED: 'true'
+      KC_HEALTH_ENABLED: 'true'
+      KC_LOG_LEVEL: 'warn'
+    volumes:
+      - ./keycloak-realm.json:/opt/keycloak/data/import/drupflare-realm.json:ro
+    tmpfs:
+      - /tmp
+    ports:
+      - '127.0.0.1:8081:8081'
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'exec 3<>/dev/tcp/127.0.0.1/9000 && printf "GET /health/ready HTTP/1.1\r\nHost: l\r\nConnection: close\r\n\r\n" >&3 && grep -q UP <&3'
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
   syslog:
     image: alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
     command:

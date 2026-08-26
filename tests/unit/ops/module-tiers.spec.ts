@@ -163,14 +163,11 @@ describe('tiers under the shipped capabilities', () => {
 	 */
 	// its transport is interceptable and is not what refuses it: a transitive `php-64bit` makes
 	// composer's platform check abort every request on this build
-	it('refuses search_api_solr on the integer width, above its transport', () => {
+	it('no longer refuses search_api_solr, because the integer width was its only blocker', () => {
 		const solr = tierFor('drupal/search_api_solr', SHIPPED_CAPABILITIES);
-		expect(solr.tier).toBe('refused');
-		expect(solr.reason).toContain('runtime.int64');
-
-		// still refused with no deferred tier, so the vector decides rather than the capability
-		const none = { ...SHIPPED_CAPABILITIES, deferredOutbound: false };
-		expect(tierFor('drupal/search_api_solr', none).tier).toBe('refused');
+		expect(solr.tier).not.toBe('refused');
+		// its remaining tier is about the transport, which was never the blocker
+		expect(solr.tier).toBe('needs-deferred-tier');
 	});
 
 	it('would refuse the deferrable ones on a runtime with no deferred tier', () => {

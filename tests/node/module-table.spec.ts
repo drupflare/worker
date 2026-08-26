@@ -341,10 +341,10 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 	 * check aborts every request before Drupal boots -- measured by installing it: all 56 other
 	 * contrib cases failed too. With the check disabled the module installs clean and 57/57 pass.
 	 */
-	it('refuses search_api_solr on the integer width, not on its transport', () => {
-		const verdict = tierFor('drupal/search_api_solr');
-		expect(verdict.tier).toBe('refused');
-		expect(verdict.reason).toContain('runtime.int64');
+	it('stops refusing search_api_solr once the integer width is satisfied', () => {
+		// `runtime.int64` was its only refusal and the vector now answers true, so what is left
+		// is the transport tier. It is `untested` rather than `verified`: nobody has installed it
+		expect(tierFor('drupal/search_api_solr').tier).not.toBe('refused');
 	});
 });
 

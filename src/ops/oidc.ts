@@ -50,11 +50,33 @@ export interface OidcProvider {
 
 export const DISCOVERY_PATH = '/.well-known/openid-configuration';
 
+/** `/oidc` rather than the object's `/__oidc`, which the front worker refuses from outside */
+export const CALLBACK_PATH = '/oidc?action=callback';
+
+export function callbackUri(origin: string): string {
+	return `${origin.replace(/\/+$/, '')}${CALLBACK_PATH}`;
+}
+
 /** the scopes a login needs and nothing more; `offline_access` is deliberately absent */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email'];
 
 export function discoveryUrl(issuer: string): string {
 	return `${issuer.replace(/\/+$/, '')}${DISCOVERY_PATH}`;
+}
+
+/** loopback only; `site-origin.ts` keeps a wider set for a different question and `do.local` is in it */
+const LOOPBACK = /^(localhost|127(\.\d{1,3}){3}|\[?::1\]?)$/;
+
+/** http is refused; loopback is exempt and a deployed Worker has no loopback to reach */
+export function endpointUsable(url: string): boolean {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return false;
+	}
+	if (parsed.protocol === 'https:') return true;
+	return parsed.protocol === 'http:' && LOOPBACK.test(parsed.hostname);
 }
 
 /**
@@ -80,7 +102,7 @@ export function readOidcSetup(input: {
 	} catch {
 		return { refusal: `the issuer is not a URL: ${raw.slice(0, 80)}` };
 	}
-	if (url.protocol !== 'https:') return { refusal: 'the OIDC issuer must be https' };
+	if (!endpointUsable(raw)) return { refusal: 'the OIDC issuer must be https' };
 	if (url.search !== '' || url.hash !== '') {
 		return { refusal: 'the issuer must be a bare URL, with no query or fragment' };
 	}
@@ -114,7 +136,7 @@ export function readProvider(
 		return { refusal: `discovery issuer ${issuer} does not match ${expectedIssuer}` };
 	}
 	for (const url of [authorizationEndpoint, tokenEndpoint, jwksUri]) {
-		if (!url.startsWith('https://')) return { refusal: `${url} is not https` };
+		if (!endpointUsable(url)) return { refusal: `${url} is not https` };
 	}
 	return { issuer, authorizationEndpoint, tokenEndpoint, jwksUri };
 }

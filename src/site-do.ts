@@ -12,8 +12,10 @@ import {
 import {
 	DEFAULT_SCOPES,
 	beginLogin,
+	callbackUri,
 	completeLogin,
 	discoveryUrl,
+	endpointUsable,
 	mintTicket,
 	// aliased: `cf-oauth.ts` exports the same two names for Cloudflare's own dashboard flow
 	authorizeUrl as oidcAuthorizeUrl,
@@ -137,6 +139,7 @@ import {
 	MIGRATE_DB,
 	OPS_REGISTRY,
 	PROBE_RUNTIME,
+	WRITE_WORKLOADS,
 	bootPhaseFragment,
 	drupalRequest,
 	firstRunConfig,
@@ -145,8 +148,10 @@ import {
 	renderFragments,
 	renderPage,
 	saveNode,
+	writeWorkload,
 	type BootPhase,
-	type RenderRequest
+	type RenderRequest,
+	type WriteWorkload
 } from './drupal/site-php';
 import { SODIUM_FIX, installAead, installBlake2b } from './drupal/sodium-fix';
 import { tcpLive } from './drupal/tcp-php';
@@ -2416,7 +2421,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	private gitCredential(id: string): Credential {
 		return {
 			token: this.metaGet(`git_token_${id}`) ?? '',
-			email: this.metaGet(`git_email_${id}`) ?? ''
+			email: this.metaGet(`git_email_${id}`) ?? '',
+			username: this.metaGet(`git_username_${id}`) ?? ''
 		};
 	}
 
@@ -2801,11 +2807,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				);
 			}
 			const email = url.searchParams.get('email') ?? '';
-			if (provider === 'bitbucket' && email === '') {
+			const username = url.searchParams.get('username') ?? '';
+			// Bitbucket's API takes the email and its git endpoint the username, so one cannot serve both
+			if (provider === 'bitbucket' && (email === '' || username === '')) {
 				return Response.json(
 					{
 						ok: false,
-						error: 'Bitbucket authenticates with your Atlassian account email'
+						error: 'Bitbucket needs your Atlassian account email for the API and your Bitbucket username for git'
 					},
 					{ status: 400 }
 				);
@@ -2818,10 +2826,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				repo: parsed.repo,
 				branch: url.searchParams.get('branch') || '',
 				...(parsed.host ? { host: parsed.host } : {}),
-				...(email ? { email } : {})
+				...(email ? { email } : {}),
+				...(username ? { username } : {})
 			};
 			this.metaSet('git_token_pending', token);
 			this.metaSet('git_email_pending', email);
+			this.metaSet('git_username_pending', username);
 
 			// the advertisement carries the default branch AND proves the remote is reachable, so one
 			// request settles what used to take a provider call that a plain remote cannot answer
@@ -2856,6 +2866,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 			this.metaSet(`git_token_${remote.id}`, token);
 			this.metaSet(`git_email_${remote.id}`, email);
+			this.metaSet(`git_username_${remote.id}`, username);
 			this.metaSet(`git_head_${remote.id}`, sha);
 			this.metaSet(`git_checked_${remote.id}`, String(now));
 			this.metaSet(
@@ -3895,7 +3906,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (issuer === '' || clientId === '') {
 			return { refusal: 'no OIDC provider is configured for this site' };
 		}
-		if (!issuer.startsWith('https://')) return { refusal: 'the OIDC issuer must be https' };
+		if (!endpointUsable(issuer)) return { refusal: 'the OIDC issuer must be https' };
 		const secret = String(this.env?.OIDC_CLIENT_SECRET ?? '');
 		return {
 			config: {
@@ -3903,7 +3914,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				clientId,
 				...(secret ? { clientSecret: secret } : {}),
 				scopes: DEFAULT_SCOPES,
-				redirectUri: `${this.canonicalOrigin(origin)}/__oidc?action=callback`
+				redirectUri: callbackUri(this.canonicalOrigin(origin))
 			}
 		};
 	}
@@ -4050,6 +4061,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				?.c ?? 0
 		);
 		this.sql.exec('DELETE FROM cfw_page');
+		// a bump with no `cachetags` behind it has nothing telling Drupal the page changed, so a
+		// refill would answer from `dynamic_page_cache` and re-store byte-identical HTML
+		const purgedDynamic = reason === 'cachetags' ? 0 : this.purgeDynamicPageCache();
 		this.metaSet('generation', next);
 		this.metaSet('last_bump', `${next}:${reason}:${this.nowMs()}`);
 		this.bumps = (this.bumps ?? 0) + 1;
@@ -4068,7 +4082,33 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (requeued > 0 && arm) this.armFillAlarm();
 		}
 
-		return { generation: next, reason, purgedPages, requeued, droppedFromRequeue };
+		return {
+			generation: next,
+			reason,
+			purgedPages,
+			purgedDynamic,
+			requeued,
+			droppedFromRequeue
+		};
+	}
+
+	/**
+	 * Empties Drupal's dynamic page cache, tolerating a site that has never created the table.
+	 *
+	 * @returns rows removed, or -1 when the bin does not exist yet.
+	 */
+	purgeDynamicPageCache(): number {
+		try {
+			const before = Number(
+				this.sql
+					.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cache_dynamic_page_cache')
+					.toArray()[0]?.c ?? 0
+			);
+			this.sql.exec('DELETE FROM cache_dynamic_page_cache');
+			return before;
+		} catch {
+			return -1;
+		}
 	}
 
 	/**
@@ -4180,9 +4220,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return attempts;
 	}
 
+	/**
+	 * The bins a fill empties on itself.
+	 *
+	 * `dynamic_page_cache` used to be here and was **6 of the 7 charged rows a fill writes**, on the
+	 * meter that binds regeneration. Leaving it warm is measured at 2.37x, byte-identical output, and
+	 * tag invalidation still reaches the warm entry through its checksum. The two things that DID
+	 * depend on the purge are handled where they belong: a non-tag bump purges the bin itself, and
+	 * `gcDynamicPageCache()` bounds it.
+	 */
+	static readonly FILL_BINS = ['page'];
+
 	async fillOne(
 		targetPath: string | null = null,
-		bins: string[] = ['page', 'dynamic_page_cache'],
+		bins: string[] = SitePhpDurableObject.FILL_BINS,
 		destruct: boolean | string = false,
 		// the inbound method and body, so a form submission reaches Drupal AS one. Absent means GET,
 		// which is what every caller did implicitly before this parameter existed
@@ -6076,7 +6127,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * `KV_OVERRIDABLE`. The secret stays a binding and is never read back here.
 				 */
 				case '/__oidcsetup': {
-					const redirectUri = `${this.canonicalOrigin(url.origin)}/__oidc?action=callback`;
+					const redirectUri = callbackUri(this.canonicalOrigin(url.origin));
 					const state = () => ({
 						ok: true,
 						issuer: this.metaGet(OIDC_ISSUER_KEY) ?? '',
@@ -7662,6 +7713,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 								.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_page')
 								.toArray()[0]?.c ?? 0
 						)
+					});
+				}
+
+				// one entity write priced on its own; the gate lane was its only caller
+				case '/__writeworkload': {
+					const op = String(url.searchParams.get('op') ?? 'node-create');
+					if (!(WRITE_WORKLOADS as readonly string[]).includes(op)) {
+						return Response.json(
+							{ ok: false, error: `unknown op ${op}`, known: WRITE_WORKLOADS },
+							{ status: 400 }
+						);
+					}
+					const before = this.queryCount;
+					const txnBefore = this.txnCount ?? 0;
+					const specBefore = this.txnSpeculative ?? 0;
+					const t0 = Date.now();
+					const php = await this.runJson(
+						writeWorkload(op as WriteWorkload, {
+							seq: Number(url.searchParams.get('seq') ?? 0),
+							nid: Number(url.searchParams.get('nid') ?? 0)
+						})
+					);
+					return Response.json({
+						...php,
+						op,
+						wallMs: Date.now() - t0,
+						hostStatementsTotal: this.queryCount - before,
+						transactions: (this.txnCount ?? 0) - txnBefore,
+						speculativeReplays: (this.txnSpeculative ?? 0) - specBefore
 					});
 				}
 

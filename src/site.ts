@@ -20,6 +20,7 @@ import {
 	rolloutProgress,
 	type FleetDb
 } from './ops/fleet';
+import { callbackUri } from './ops/oidc';
 import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store';
 import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan';
 import { resolveSite, siteStubOptions } from './ops/site-id';
@@ -84,9 +85,10 @@ export { SitePhpDurableObject };
 /**
  * `/setup/cf/callback` is PUBLIC because it cannot be anything else: it arrives as a redirect from
  * Cloudflare's consent screen carrying no header drupflare controls. The `state` parameter is what
- * authenticates it, matched constant-time against the pending record in the object.
+ * authenticates it, matched constant-time against the pending record in the object. `/oidc` is
+ * public for the same reason, and a `__`-prefixed path could not have served it.
  */
-const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback', '/githook']);
+const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback', '/githook', '/oidc']);
 
 /**
  * Routes that must never be reachable without PW_DIAGNOSTICS.
@@ -122,6 +124,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/restore',
 	'/pitr',
 	'/savenode',
+	'/writeworkload',
 	'/capability',
 	'/tcp',
 	'/git',
@@ -176,6 +179,23 @@ const OWNER_ROUTES = new Set([
  * cache and the edge key as part of the path.
  */
 const ROUTES = new Set([...PUBLIC_ROUTES, ...DIAGNOSTIC_ROUTES, ...OWNER_ROUTES]);
+
+/** a function, because workerd refuses a main-module export that is not a function or a class */
+export function routeTable(): {
+	doRoute: Readonly<Record<string, string>>;
+	public: ReadonlySet<string>;
+	diagnostic: ReadonlySet<string>;
+	owner: ReadonlySet<string>;
+	all: ReadonlySet<string>;
+} {
+	return {
+		doRoute: DO_ROUTE,
+		public: PUBLIC_ROUTES,
+		diagnostic: DIAGNOSTIC_ROUTES,
+		owner: OWNER_ROUTES,
+		all: ROUTES
+	};
+}
 
 /**
  * Which object answers, with `?site=` refused on the routes that take no credential.
@@ -238,6 +258,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/setup/cf': '/__cfoauth',
 	'/setup/mail': '/__mailonboard',
 	'/setup/oidc': '/__oidcsetup',
+	'/oidc': '/__oidc',
 	'/setup/cf/callback': '/__cfoauth',
 	'/fill': '/__fill',
 	'/assemble': '/__assemble',
@@ -248,6 +269,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/pitr': '/__pitr',
 	'/firstrun': '/__firstrun',
 	'/savenode': '/__savenode',
+	'/writeworkload': '/__writeworkload',
 	'/capability': '/__capability',
 	'/tcp': '/__tcp',
 	'/git': '/__git',
@@ -1058,7 +1080,7 @@ async function renderAdmin(
 			issuer: '',
 			clientId: '',
 			secretPresent: false,
-			redirectUri: `${url.origin}/__oidc?action=callback`
+			redirectUri: callbackUri(url.origin)
 		};
 		try {
 			row = {

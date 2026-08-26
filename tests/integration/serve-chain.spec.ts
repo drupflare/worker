@@ -192,9 +192,10 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 		// the render's own cost, carried through storage to the response
 		expect(out.hit.renderMs).toBe(42);
 		expect(out.hit.contentType).toBe('text/html; charset=utf-8');
-		// the fill asked PHP for the path the visitor missed on, with both bins emptied
+		// the fill asked PHP for the path the visitor missed on, emptying `page` and NOT
+		// `dynamic_page_cache`, which was 6 of the 7 rows a fill charged
 		expect(calls.map((c) => c.path)).toEqual(['/']);
-		expect(calls[0]?.bins).toEqual(['page', 'dynamic_page_cache']);
+		expect(calls[0]?.bins).toEqual(['page']);
 	});
 
 	it('fills a BATCH per firing, which is what amortises the re-arm row', async () => {

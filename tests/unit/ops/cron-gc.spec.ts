@@ -7,6 +7,7 @@ import {
 	cacheDataMaxRows,
 	cronOptions,
 	gcCacheData,
+	gcDynamicPageCache,
 	gcExpired,
 	gcPass,
 	gcWatchdog,
@@ -17,6 +18,7 @@ import {
 } from '../../../src/ops/cron';
 import {
 	CACHE_DATA_ROWS,
+	DYNAMIC_PAGE_CACHE_ROWS,
 	NOW_S,
 	SCHEMA,
 	WATCHDOG_ROWS,
@@ -181,6 +183,45 @@ describe('gcCacheData against the real engine', () => {
 
 	it('uses the documented default cap when none is given', () => {
 		expect(cacheDataMaxRows({})).toBe(CACHE_DATA_DEFAULT_MAX_ROWS);
+	});
+});
+
+describe('gcDynamicPageCache, the bin that had no collector', () => {
+	it('trims to the cap, oldest first', async () => {
+		const out = await withSql((sql) => {
+			seed(sql);
+			return gcDynamicPageCache(sql, { maxRows: 10 });
+		});
+		expect(out.rowsBefore).toBe(DYNAMIC_PAGE_CACHE_ROWS);
+		expect(out.rowsDeleted).toBe(DYNAMIC_PAGE_CACHE_ROWS - 10);
+	});
+
+	it('leaves cache_data alone, so the two bins cannot be confused', async () => {
+		const left = await withSql((sql) => {
+			seed(sql);
+			gcDynamicPageCache(sql, { maxRows: 1 });
+			return Number(
+				(sql.exec('SELECT COUNT(*) AS c FROM cache_data').toArray()[0] as { c: number }).c
+			);
+		});
+		expect(left).toBe(CACHE_DATA_ROWS);
+	});
+
+	it('writes nothing when the bin is under the cap', async () => {
+		const out = await withSql((sql) => {
+			seed(sql);
+			return gcDynamicPageCache(sql, { maxRows: 10_000 });
+		});
+		expect(out.rowsDeleted).toBe(0);
+	});
+
+	it('is a pass gcPass dispatches, or the alarm chain never runs it', async () => {
+		expect(GC_PASSES).toContain('dynamicpagecache');
+		const out = await withSql((sql) => {
+			seed(sql);
+			return gcPass(sql, { pass: 'dynamicpagecache', maxRows: 5 });
+		});
+		expect(out.rowsDeleted).toBe(DYNAMIC_PAGE_CACHE_ROWS - 5);
 	});
 });
 

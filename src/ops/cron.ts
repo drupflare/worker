@@ -510,13 +510,29 @@ export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
  * several rows, so ties are ordinary and core's condition over-deletes them.
  */
 export function gcCacheData(sql: CronSql, options: CronOptions = {}): Ledger {
-	const led = ledger('cachedata');
+	return gcCacheBin('cache_data', 'cachedata', sql, options);
+}
+
+/**
+ * Collects `cache_dynamic_page_cache`, which had no collector at all.
+ *
+ * Its entries are written `expire = -1` and core's own GC runs from `SystemHooks::cron()`, which
+ * this runtime never calls. Emptying it on every fill was the only thing bounding it, so a fill that
+ * stops doing that leaves the bin growing forever.
+ */
+export function gcDynamicPageCache(sql: CronSql, options: CronOptions = {}): Ledger {
+	return gcCacheBin('cache_dynamic_page_cache', 'dynamicpagecache', sql, options);
+}
+
+/** oldest-first eviction down to a row cap, then whatever set a real expiry */
+function gcCacheBin(table: string, name: string, sql: CronSql, options: CronOptions): Ledger {
+	const led = ledger(name);
 	const cap = options.maxRows ?? CACHE_DATA_DEFAULT_MAX_ROWS;
 	const nowS = Math.floor((options.nowMs ?? Date.now()) / 1000);
 	led.maxRows = cap;
 
 	const count = Number(
-		exec(sql, led, 'cache_data', 'SELECT COUNT(*) AS c FROM cache_data').rows[0]?.c ?? 0
+		exec(sql, led, table, `SELECT COUNT(*) AS c FROM ${table}`).rows[0]?.c ?? 0
 	);
 	led.rowsBefore = count;
 	const over = cap > 0 ? count - cap : 0;
@@ -527,20 +543,18 @@ export function gcCacheData(sql: CronSql, options: CronOptions = {}): Ledger {
 		exec(
 			sql,
 			led,
-			'cache_data',
-			`DELETE FROM cache_data WHERE rowid IN (
-         SELECT rowid FROM cache_data ORDER BY created ASC, cid ASC LIMIT ?
+			table,
+			`DELETE FROM ${table} WHERE rowid IN (
+         SELECT rowid FROM ${table} ORDER BY created ASC, cid ASC LIMIT ?
        )`,
 			[over]
 		);
-		changes(sql, led, 'cache_data');
+		changes(sql, led, table);
 	}
 
 	// still worth issuing: other writers into this bin do set an expiry
-	exec(sql, led, 'cache_data', 'DELETE FROM cache_data WHERE expire <> -1 AND expire < ?', [
-		nowS
-	]);
-	changes(sql, led, 'cache_data');
+	exec(sql, led, table, `DELETE FROM ${table} WHERE expire <> -1 AND expire < ?`, [nowS]);
+	changes(sql, led, table);
 
 	return finish(led);
 }
@@ -652,7 +666,7 @@ function merge(into: Ledger, from: Ledger): Ledger {
 }
 
 /** every pass name gcPass() accepts, in the order `all` runs them */
-export const GC_PASSES = ['watchdog', 'cachedata', 'expired'];
+export const GC_PASSES = ['watchdog', 'cachedata', 'dynamicpagecache', 'expired'];
 
 /**
  * Runs one garbage-collection pass, or all of them, and reports what it cost.
@@ -666,6 +680,7 @@ export function gcPass(sql: CronSql, options: CronOptions = {}): Ledger {
 	const pass = options.pass ?? 'all';
 	if (pass === 'watchdog') return gcWatchdog(sql, options);
 	if (pass === 'cachedata') return gcCacheData(sql, options);
+	if (pass === 'dynamicpagecache') return gcDynamicPageCache(sql, options);
 	if (pass === 'expired') return gcExpired(sql, options);
 	if (pass === 'cron_last') return setCronLast(sql, options);
 	if (pass !== 'all') {

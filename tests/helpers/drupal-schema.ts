@@ -30,6 +30,11 @@ export const SCHEMA = [
 		created NUMERIC NOT NULL DEFAULT 0, serialized INTEGER NOT NULL DEFAULT 0,
 		tags TEXT, checksum VARCHAR(255) NOT NULL)`,
 	'CREATE INDEX IF NOT EXISTS cache_data_expire ON cache_data (expire)',
+	`CREATE TABLE IF NOT EXISTS cache_dynamic_page_cache (
+		cid VARCHAR(255) NOT NULL PRIMARY KEY, data BLOB, expire INTEGER NOT NULL DEFAULT 0,
+		created NUMERIC NOT NULL DEFAULT 0, serialized INTEGER NOT NULL DEFAULT 0,
+		tags TEXT, checksum VARCHAR(255) NOT NULL)`,
+	'CREATE INDEX IF NOT EXISTS cache_dpc_expire ON cache_dynamic_page_cache (expire)',
 	`CREATE TABLE IF NOT EXISTS config (
 		collection VARCHAR(255) NOT NULL DEFAULT '', name VARCHAR(255) NOT NULL,
 		data BLOB, PRIMARY KEY (collection, name))`,
@@ -62,6 +67,7 @@ export const SCHEMA = [
 /** the measured reference site: 1,662 watchdog rows against a 1,000 limit, 144 cache_data */
 export const WATCHDOG_ROWS = 1662;
 export const CACHE_DATA_ROWS = 144;
+export const DYNAMIC_PAGE_CACHE_ROWS = 40;
 export const NOW_S = 1786258127;
 
 /**
@@ -80,12 +86,18 @@ export type Sql = {
 
 export function seed(
 	sql: Sql,
-	opts: { watchdog?: number; cacheData?: number; dblogLimit?: number } = {}
+	opts: {
+		watchdog?: number;
+		cacheData?: number;
+		dynamicPageCache?: number;
+		dblogLimit?: number;
+	} = {}
 ) {
 	for (const ddl of SCHEMA) sql.exec(ddl);
 	for (const t of [
 		'watchdog',
 		'cache_data',
+		'cache_dynamic_page_cache',
 		'config',
 		'key_value',
 		'sessions',
@@ -105,6 +117,17 @@ export function seed(
 			'php',
 			'm',
 			NOW_S
+		);
+	}
+	const dpc = opts.dynamicPageCache ?? DYNAMIC_PAGE_CACHE_ROWS;
+	for (let i = 0; i < dpc; i++) {
+		sql.exec(
+			'INSERT INTO cache_dynamic_page_cache (cid, data, expire, created, serialized, tags, checksum) VALUES (?, ?, -1, ?, 0, ?, ?)',
+			`[route]=[x${String(i).padStart(4, '0')}]`,
+			'x',
+			2000 + i,
+			'rendered',
+			'0'
 		);
 	}
 	const cd = opts.cacheData ?? CACHE_DATA_ROWS;

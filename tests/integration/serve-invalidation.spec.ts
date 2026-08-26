@@ -113,6 +113,79 @@ describe('one integer write invalidates every edge-cached URL for a site', () =>
 		expect(String(stats.lastBump)).toContain('2:manual:');
 	});
 
+	it('purges the dynamic page cache on a manual bump, or the bump does nothing', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			site.ensureServeTables();
+			site.sql.exec(
+				`CREATE TABLE IF NOT EXISTS cache_dynamic_page_cache (
+					cid VARCHAR(255) NOT NULL PRIMARY KEY, data BLOB,
+					expire INTEGER NOT NULL DEFAULT 0, created NUMERIC NOT NULL DEFAULT 0,
+					serialized INTEGER NOT NULL DEFAULT 0, tags TEXT,
+					checksum VARCHAR(255) NOT NULL)`
+			);
+			for (const cid of ['a', 'b', 'c']) {
+				site.sql.exec(
+					'INSERT INTO cache_dynamic_page_cache (cid, data, expire, created, serialized, tags, checksum) VALUES (?, ?, -1, 0, 0, ?, ?)',
+					cid,
+					'x',
+					'rendered',
+					'0'
+				);
+			}
+			const bumped = site.bumpGeneration('manual');
+			const left = Number(
+				(
+					site.sql
+						.exec('SELECT COUNT(*) AS c FROM cache_dynamic_page_cache')
+						.toArray()[0] as { c: number }
+				).c
+			);
+			return { purgedDynamic: bumped.purgedDynamic, left };
+		});
+		expect(out.purgedDynamic).toBe(3);
+		expect(out.left).toBe(0);
+	});
+
+	it('leaves it alone on a cachetags bump, because tags already reach the warm entry', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			site.ensureServeTables();
+			site.sql.exec(
+				`CREATE TABLE IF NOT EXISTS cache_dynamic_page_cache (
+					cid VARCHAR(255) NOT NULL PRIMARY KEY, data BLOB,
+					expire INTEGER NOT NULL DEFAULT 0, created NUMERIC NOT NULL DEFAULT 0,
+					serialized INTEGER NOT NULL DEFAULT 0, tags TEXT,
+					checksum VARCHAR(255) NOT NULL)`
+			);
+			site.sql.exec(
+				'INSERT INTO cache_dynamic_page_cache (cid, data, expire, created, serialized, tags, checksum) VALUES (?, ?, -1, 0, 0, ?, ?)',
+				'a',
+				'x',
+				'rendered',
+				'0'
+			);
+			const bumped = site.bumpGeneration('cachetags');
+			const left = Number(
+				(
+					site.sql
+						.exec('SELECT COUNT(*) AS c FROM cache_dynamic_page_cache')
+						.toArray()[0] as { c: number }
+				).c
+			);
+			return { purgedDynamic: bumped.purgedDynamic, left };
+		});
+		expect(out.purgedDynamic).toBe(0);
+		expect(out.left).toBe(1);
+	});
+
+	it('tolerates a site whose dynamic bin has never been created', async () => {
+		const stub = freshSite();
+		const bumped = await inObject(stub, async (site) => site.bumpGeneration('manual'));
+		expect(bumped.purgedDynamic).toBe(-1);
+		expect(bumped.generation).toBe(2);
+	});
+
 	it('starts at 1 and writes the row on first read, so a key is never built from null', async () => {
 		const stub = freshSite();
 		const out = await inObject(stub, (site) => ({

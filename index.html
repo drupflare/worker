@@ -798,6 +798,8 @@ named alternative is a refusal that gets retried.</p>
 <p>The Access page configures an OpenID Connect provider. The host performs the token exchange and
 verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot check
 an RS256 signature at all — and an unverified <code>id_token</code> is an unauthenticated login.</p>
+<p>Single sign-on needs <code>drupal/externalauth</code>, which maps the verified identity onto an account. No
+contrib module ships in the packed tree, so install it from the Extend page before the first login.</p>
 <p>Set the issuer and client id on the page, and the client secret as the <code>OIDC_CLIENT_SECRET</code> binding.
 The redirect URI to register with the provider is shown on the page. Saving verifies the issuer's
 discovery document immediately, so a typo surfaces there rather than at someone's first login.</p>
@@ -1058,10 +1060,55 @@ branch.</p>
 <h3 id="triggers" class="tsd-anchor-link">Triggers<a href="#triggers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><strong>Polling</strong> works against any remote and needs no cooperation from it. The interval is per repository
 and defaults to an hour; a poll costs one ref advertisement.</p>
-<p><strong>Webhooks</strong> make a push arrive immediately. GitHub, GitLab, Bitbucket and Gitea can register one
-from the page; for anything else the page mints a secret and shows the delivery URL to register by
-hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider signs, and a
-shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.</p>
+<p><strong>Webhooks</strong> make a push arrive immediately. GitHub, GitLab, Bitbucket, Gitea and Forgejo can
+register one from the page; for anything else the page mints a secret and shows the delivery URL to
+register by hand. Every delivery is verified before it is acted on — HMAC-SHA256 where the provider
+signs, and a shared secret on GitLab installs older than 19.0. An unverifiable delivery is refused.</p>
+<h3 id="provider-coverage" class="tsd-anchor-link">Provider Coverage<a href="#provider-coverage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>State</th>
+<th>Exercised Against</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GitHub</td>
+<td>verified</td>
+<td><a href="http://github.com">github.com</a></td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td>verified</td>
+<td>GitLab CE</td>
+</tr>
+<tr>
+<td>Gitea</td>
+<td>verified</td>
+<td>Gitea 1.24.6</td>
+</tr>
+<tr>
+<td>Forgejo</td>
+<td>verified</td>
+<td>Forgejo 13</td>
+</tr>
+<tr>
+<td>Any HTTPS remote</td>
+<td>verified</td>
+<td><code>git upload-pack</code> directly</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td>supported, not exercised</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>Bitbucket authenticates with one API token and two names: the REST API takes the Atlassian account
+email, and git over HTTPS takes the Bitbucket username, which is case sensitive. Both fields are on
+the page.</p>
 <h3 id="safety" class="tsd-anchor-link">Safety<a href="#safety" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>A pull is applied in one transaction and then verified by booting the Drupal kernel against the new
 tree. If the boot fails, the previous files are restored and the site keeps serving. A path already
@@ -1098,7 +1145,8 @@ docs/                configuration, the source build, repository layout, measure
 <a href="https://github.com/drupflare/phasm"><code>phasm</code></a>. See <a href="#-repositories">Repositories</a>.</p>
 <hr>
 <h2 id="🧪-testing" class="tsd-anchor-link">🧪 Testing<a href="#🧪-testing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>Two vitest projects. <strong>2,474 tests across 110 files, 0 failures</strong>, plus <strong>585 PHP assertions</strong>.</p>
+<p>Three vitest projects. <strong>3,701 tests across 182 files</strong> in the commit gate, plus <strong>1,106 PHP
+assertions</strong> and a 72-test end-to-end lane that needs a running server.</p>
 <table>
 <thead>
 <tr>
@@ -1112,37 +1160,40 @@ docs/                configuration, the source build, repository layout, measure
 <tr>
 <td>vitest <code>workers</code></td>
 <td><code>bun run test:workers</code></td>
-<td><strong>1,788</strong> in 73 files</td>
+<td><strong>2,757</strong> in 127 files</td>
 <td>workerd, via <code>@cloudflare/vitest-pool-workers</code></td>
 </tr>
 <tr>
 <td>vitest <code>node</code></td>
 <td><code>bun run test:node</code></td>
-<td><strong>686</strong> in 37 files</td>
+<td><strong>944</strong> in 55 files</td>
 <td>Node, for oracles workerd cannot host</td>
 </tr>
 <tr>
 <td>both, merged coverage</td>
 <td><code>bun run test</code></td>
-<td><strong>2,474</strong> in 110 files</td>
+<td><strong>3,701</strong> in 182 files</td>
 <td>one invocation</td>
 </tr>
 <tr>
 <td>PHP suites</td>
 <td>see below</td>
-<td><strong>585</strong> across 5 suites</td>
+<td><strong>1,106</strong> across 7 suites</td>
 <td>real PHP, in the sibling repos</td>
 </tr>
 <tr>
 <td>e2e</td>
 <td><code>bun run test:e2e</code></td>
-<td>excluded from <code>bun run test</code></td>
+<td><strong>72</strong> in 9 files</td>
 <td>needs a running server</td>
 </tr>
 </tbody>
 </table>
+<p>The e2e lane talks to real servers rather than mocks: Keycloak for single sign-on, Gitea and Forgejo
+for git, GreenMail for SMTP, Redis and a syslog collector for the TCP tier. <code>docker/compose.yml</code>
+carries all of them pinned by digest, and <code>tests/e2e/README.md</code> has the commands.</p>
 <p>The PHP suites live in the sibling repositories, which are the authority on their own module. Two
-have a script here; all five take this repository's <code>drupal-src/</code> as <code>DRUPAL_ROOT</code>:</p>
+have a script here; all take this repository's <code>drupal-src/</code> as <code>DRUPAL_ROOT</code>:</p>
 <table>
 <thead>
 <tr>
@@ -1156,26 +1207,38 @@ have a script here; all five take this repository's <code>drupal-src/</code> as 
 <tr>
 <td><code>tests/health-suite.php</code></td>
 <td><code>drupflare</code></td>
-<td>195</td>
+<td>644</td>
 <td><code>bun run test:health</code></td>
-</tr>
-<tr>
-<td><code>tests/load-classes.php</code></td>
-<td><code>drupflare</code></td>
-<td>94</td>
-<td><code>php</code>, with the var</td>
 </tr>
 <tr>
 <td><code>tests/run-driver-suite.php</code></td>
 <td><code>rom</code></td>
-<td>219</td>
+<td>238</td>
 <td><code>bun run test:php</code></td>
+</tr>
+<tr>
+<td><code>tests/load-classes.php</code></td>
+<td><code>drupflare</code></td>
+<td>95</td>
+<td><code>php</code>, with the var</td>
 </tr>
 <tr>
 <td><code>tests/pdo-shim.php</code></td>
 <td><code>rom</code></td>
 <td>61</td>
 <td><code>php</code>, with the var</td>
+</tr>
+<tr>
+<td><code>tests/cfw-tcp.php</code></td>
+<td><code>drupflare</code></td>
+<td>35</td>
+<td><code>php</code></td>
+</tr>
+<tr>
+<td><code>tests/solarium-transport.php</code></td>
+<td><code>drupflare</code></td>
+<td>17</td>
+<td><code>bun run test:solarium</code></td>
 </tr>
 <tr>
 <td><code>tests/run-installer.php</code></td>
@@ -1192,7 +1255,7 @@ have a script here; all five take this repository's <code>drupal-src/</code> as 
 child-process control. It needs a real filesystem, so it has no counterpart here.</p>
 <p><strong>Re-measure these counts before quoting them.</strong> Every number in this table has been stale at least
 once, in both directions.</p>
-<h3 id="two-vitest-projects" class="tsd-anchor-link">Two Vitest Projects<a href="#two-vitest-projects" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<h3 id="three-vitest-projects" class="tsd-anchor-link">Three Vitest Projects<a href="#three-vitest-projects" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><code>workers</code> is the default lane and where most of the subject lives. <code>node</code> exists because
 workerd cannot host two things the suite needs, both verified rather than assumed:</p>
 <ul>
@@ -1206,8 +1269,12 @@ database against its source.</li>
 copy, or stay outside vitest forever. <code>tests/node/mb-fix-iconv.spec.ts</code> is the first occupant:
 it recovers two platform controls that had to be dropped when <code>mb-fix</code> moved into workerd, and
 it <strong>skips rather than fails</strong> when no <code>php</code> is on PATH.</p>
-<p>Coverage from both projects is merged into one lcov by <code>bun run test:coverage</code>; Codecov gets a
-<code>coverage</code> flag for the merged report and <code>workers</code> / <code>node</code> flags for per-lane test results,
+<p><code>e2e</code> is the third and is excluded from <code>bun run test</code> on purpose: it needs a running worker and, for
+most of its specs, a running server to talk to. A commit gate that can be unavailable is not a gate.
+It skips when nothing is reachable and fails when <code>CI</code> is set, so a lane that quietly stopped running
+is distinguishable from one that passed.</p>
+<p>Coverage from the two gate projects is merged into one lcov by <code>bun run test:coverage</code>; Codecov gets
+a <code>coverage</code> flag for the merged report and <code>workers</code> / <code>node</code> flags for per-lane test results,
 all with <code>carryforward: true</code>.</p>
 <h3 id="the-integration-lane" class="tsd-anchor-link">The Integration Lane<a href="#the-integration-lane" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Specs under <code>tests/integration/</code> use <code>ctx.storage.sql</code>, <code>transactionSync()</code>, <code>setAlarm()</code> and
@@ -1308,7 +1375,7 @@ a stale pack fails the gate.</p>
 the module present in <code>core.extension</code> afterwards on 6 of 6 attempts. The cache is cold for one
 visit while the pages the install invalidated are re-rendered.</p>
 <!-- module-table:begin -->
-<p><strong>58 verified, 0 untested, 4 blocked.</strong> Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.</p>
+<p><strong>58 verified, 1 untested, 3 blocked.</strong> Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.</p>
 <p>Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 54 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.</p>
 <table>
 <thead>
@@ -1522,7 +1589,7 @@ visit while the pages the install invalidated are re-rendered.</p>
 <tr>
 <td>Openid Connect</td>
 <td>blocked</td>
-<td>drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket <strong>Lift:</strong> the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: <code>WITH_OPENSSL=0</code>, so PHP cannot verify an RS256 <code>id_token</code> even if handed one synchronously, and an unverified <code>id_token</code> is an unauthenticated login. <code>src/ops/oidc.ts</code> completes the exchange at a route the host owns, verifies the signature with <code>crypto.subtle</code>, and hands PHP a single-use claims ticket; <code>Drupal\drupflare\Network\CfwOidc</code> maps it onto <code>drupal/externalauth</code>, which is itself <code>verified</code>. So a site gets provider login without this module. What is missing is a run against a real IdP and the setup UI</td>
+<td>drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket <strong>Lift:</strong> the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: <code>WITH_OPENSSL=0</code>, so PHP cannot verify an RS256 <code>id_token</code> even if handed one synchronously, and an unverified <code>id_token</code> is an unauthenticated login. <code>src/ops/oidc.ts</code> completes the exchange at a route the host owns, verifies the signature with <code>crypto.subtle</code>, and hands PHP a single-use claims ticket; <code>Drupal\drupflare\Network\CfwOidc</code> maps it onto <code>drupal/externalauth</code>, which is itself <code>verified</code>. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider genuinely signed for another of its clients; the setup page is live and states the <code>externalauth</code> dependency</td>
 </tr>
 <tr>
 <td>Paragraphs</td>
@@ -1571,8 +1638,8 @@ visit while the pages the install invalidated are re-rendered.</p>
 </tr>
 <tr>
 <td>Search Api Solr</td>
-<td>blocked</td>
-<td>drupal/search_api_solr needs runtime.int64 (scheduled): a PHP integer wider than 32 bits <strong>Lift:</strong> <code>PHP_INT_SIZE</code> 8, from wasm64 (measured to fit at 123.00 MiB) or from <code>ZEND_ENABLE_ZVAL_LONG64</code> on wasm32. Disabling composer's platform check is the cheap route and is a product decision: the guard is right that a 64-bit path exists, since zipstream is there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path site-wide to unlock one module. <code>SolariumTransport</code> is already shipped with 17 assertions in the sibling module's <code>tests/solarium-transport.php</code>; a file-upload extract needs a streaming body and is declared rather than sent empty</td>
+<td>untested</td>
+<td>Its transport is not the blocker. Measured 2026-08-24 by installing it: it pulls <code>maennchen/zipstream-php</code>, which declares <code>php-64bit</code>, so composer emits a <code>platform_check.php</code> asserting <code>PHP_INT_SIZE === 8</code>. That check used to abort every request before Drupal booted, taking all 56 other contrib cases with it; the shipping build is 64-bit as of 2026-08-25 and it now passes. With <code>platform-check: false</code> the module installs clean and 57/57 pass: <code>plugin.manager.search_api_solr.connector</code>, <code>solarium.query_helper</code> and its four solr config entity types all resolve, none of them before. The transport was measured separately against solarium 6.4.2 and is interceptable: the default connector picks <code>extension_loaded('curl') ? new Curl() : new Http()</code>, this build has no curl, so it lands on the stream adapter, and <code>SolariumTransport</code> short-circuits that through Solarium's own <code>PreExecuteRequest</code> with no module change</td>
 </tr>
 <tr>
 <td>Simple Sitemap</td>
@@ -1644,10 +1711,9 @@ string fails in the engine.</li>
 <li><strong>A statement caps at 100 bound parameters.</strong></li>
 <li><strong><code>REGEXP</code> does not exist</strong>, so Views regex filters do not work.</li>
 <li><strong>Integers above 2^53</strong> are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.</li>
-<li><strong>PHP integers are 32-bit.</strong> <code>PHP_INT_SIZE</code> is 4 and <code>PHP_INT_MAX</code> is 2,147,483,647, so a cast of
-epoch milliseconds or microseconds to <code>int</code> wraps modulo 2^32 rather than saturating. Code that
-stores <code>(int) (microtime(true) * 1000)</code> stores a wrapped value. <code>microtime()</code> itself returns a
-correct float.</li>
+<li><strong>A 64-bit integer does not survive a JSON round trip.</strong> <code>PHP_INT_SIZE</code> is 8 and <code>PHP_INT_MAX</code> is
+9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
+host boundary comes back rounded. Cast it to a string first. The database path already does this.</li>
 <li><strong>The interpreter loads 25 extensions</strong>: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
 ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
 tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see
@@ -1790,12 +1856,13 @@ and are the authority on their own module.</p>
 <li><a href="#what-gets-installed"><span>What <wbr/>Gets <wbr/>Installed</span></a></li>
 <li><a href="#branches-requests-and-diffs"><span>Branches, <wbr/>Requests and <wbr/>Diffs</span></a></li>
 <li><a href="#triggers"><span>Triggers</span></a></li>
+<li><a href="#provider-coverage"><span>Provider <wbr/>Coverage</span></a></li>
 <li><a href="#safety"><span>Safety</span></a></li></ul></li>
 <li><a href="#📁-project-structure"><span>📁 <wbr/>Project <wbr/>Structure</span></a></li>
 <li><a href="#🧪-testing"><span>🧪 <wbr/>Testing</span></a></li>
 <li>
 <ul>
-<li><a href="#two-vitest-projects"><span>Two <wbr/>Vitest <wbr/>Projects</span></a></li>
+<li><a href="#three-vitest-projects"><span>Three <wbr/>Vitest <wbr/>Projects</span></a></li>
 <li><a href="#the-integration-lane"><span>The <wbr/>Integration <wbr/>Lane</span></a></li>
 <li><a href="#testing-inside-workerd"><span>Testing <wbr/>Inside workerd</span></a></li>
 <li><a href="#coverage"><span>Coverage</span></a></li>

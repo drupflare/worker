@@ -13,16 +13,11 @@
 <h1>Type Alias CensusCategory</h1></div>
 <div class="tsd-signature"><span class="tsd-kind-type-alias">CensusCategory</span><span class="tsd-signature-symbol">:</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;bridge&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;duplicate&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;cache-miss&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;repeated-table&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;necessary&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>The five buckets, in the order a statement is tested against them.</p>
-<ul>
-<li><code>bridge</code> -- a crossing carrying no SQL at all: setup, teardown, a capability call.</li>
-<li><code>duplicate</code> -- this exact fingerprint already ran in this render.</li>
-<li><code>cache-miss</code> -- a read of a <code>cache_*</code> bin that came back with no rows.</li>
-<li><code>repeated-table</code> -- a read whose table is also read by a DIFFERENT fingerprint in this render.</li>
-<li><code>necessary</code> -- everything left: one distinct operation against a table nothing else reads.</li>
-</ul>
+<p><code>bridge</code> no SQL; <code>duplicate</code> same fingerprint again; <code>cache-miss</code> empty <code>cache_*</code> read;
+<code>repeated-table</code> same table via a different fingerprint; <code>necessary</code> everything left</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/statement-census.ts#L172">src/ops/statement-census.ts:172</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/statement-census.ts#L267">src/ops/statement-census.ts:267</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

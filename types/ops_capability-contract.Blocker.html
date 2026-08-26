@@ -13,12 +13,11 @@
 <h1>Type Alias Blocker</h1></div>
 <div class="tsd-signature"><span class="tsd-kind-type-alias">Blocker</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;permanent&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;platform&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;scheduled&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;by-design&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div>
 <div class="tsd-comment tsd-typography"><p>Why a vector is unsatisfied, when it is.</p>
-<p><code>permanent</code> and <code>platform</code> are not the same thing and collapsing them is how a roadmap grows an
-item nobody can ever finish. <code>exec()</code> is gone because a Worker has no process table; <code>REGEXP</code> is
-gone because Durable Object SQLite does not register the function, which someone could change.</p>
+<p><code>permanent</code> and <code>platform</code> differ: no Worker has a process table, but Durable Object SQLite
+could register <code>REGEXP</code> tomorrow</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/capability-contract.ts#L50">src/ops/capability-contract.ts:50</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/capability-contract.ts#L26">src/ops/capability-contract.ts:26</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

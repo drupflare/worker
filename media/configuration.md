@@ -515,18 +515,25 @@ handed a decided result. `src/ops/oidc.ts` is the implementation.
 This is not an optimisation. The interpreter carries no OpenSSL, so it cannot verify an RS256
 `id_token` at all, and an unverified `id_token` is an unauthenticated login.
 
-| setting              | where      | what it does                                        |
-| -------------------- | ---------- | --------------------------------------------------- |
-| `oidc_issuer`        | `cfw_meta` | the provider's issuer URL; must be https            |
-| `oidc_client_id`     | `cfw_meta` | the client registered with that provider            |
-| `OIDC_CLIENT_SECRET` | binding    | for a provider that issued one; a secret, not a var |
+| setting              | where      | what it does                                         |
+| -------------------- | ---------- | ---------------------------------------------------- |
+| `oidc_issuer`        | `cfw_meta` | the provider's issuer URL; https, or a loopback host |
+| `oidc_client_id`     | `cfw_meta` | the client registered with that provider             |
+| `OIDC_CLIENT_SECRET` | binding    | for a provider that issued one; a secret, not a var  |
 
 The issuer and the client id sit in the object's own storage rather than in KV, and the secret is a
 binding. None of the three can be set from KV: a writer who could change the issuer would point the
 consent screen at a provider they control, and every login on the site would authenticate against it.
 
-Register `https://<your-site>/__oidc?action=callback` as the redirect URI. `/__oidc` starts a login
-and accepts an optional `return` path, which must be site-relative.
+Plain http is refused except on a loopback host, which is what lets a provider run on the same machine
+during development. A deployed Worker has no loopback to reach, so the exemption grants nothing there.
+
+Register `https://<your-site>/oidc?action=callback` as the redirect URI. `/oidc` starts a login and
+accepts an optional `return` path, which must be site-relative. It is a public route because a
+provider's redirect carries no header this Worker controls; `state` is what authenticates it.
+
+Completing a login also needs `drupal/externalauth` installed on the site, which is what maps the
+verified identity onto an account.
 
 `/setup/oidc` reads and writes the two `cfw_meta` values, and `/_cfw/access` is the page over it.
 

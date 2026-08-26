@@ -17,11 +17,8 @@
 <div class="tsd-signature tsd-anchor-link" id="fingerprint"><span class="tsd-kind-call-signature">fingerprint</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><a href="#fingerprint" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The statement's shape: every literal, bound value and placeholder list normalised to <code>?</code>.</p>
-<p>Placeholder GROUPS collapse too (<code>IN ( :a, :b )</code> -&gt; <code>IN (?)</code>, <code>VALUES (?), (?)</code> -&gt; <code>VALUES (?)</code>),
-because a cache <code>getMultiple()</code> for one cid and one for seven are the same query asked twice. The
-arity has to go for that to work: Drupal spells a one-element <code>IN</code> as <code>( :a )</code> and a two-element
-one as <code>( :a, :b )</code>, and a fingerprint that keeps the difference splits six reads of one bin into
-two &quot;distinct operations&quot;, which is what the first run of this instrument did.</p>
+<p>Placeholder GROUPS collapse too, arity included, or six reads of one bin split into two
+&quot;distinct operations&quot; on nothing but a one-element <code>IN</code> spelled differently.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +26,7 @@ two &quot;distinct operations&quot;, which is what the first run of this instrum
 <li><span><span class="tsd-kind-parameter">sql</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/261b638bf3640dd73ceab8b0b866c726fc6ed5bc/src/ops/statement-census.ts#L49">src/ops/statement-census.ts:49</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/statement-census.ts#L63">src/ops/statement-census.ts:63</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

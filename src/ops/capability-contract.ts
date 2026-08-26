@@ -1,32 +1,9 @@
 /**
- * The capability contract: what this runtime can do, as vectors a module can be scored against.
+ * The capability contract: what this runtime can do, as vectors a module is scored against.
  *
- * ## Why a matrix and not a boolean
- *
- * `catalog.ts` carries three capability values -- `deferrable-outbound`, `blocking-outbound`,
- * `cron` -- and they answer one question well: can a module's outbound calls be split across
- * invocations. Everything else about a contrib module was a binary works/doesn't, decided by
- * reading its source and writing a sentence. That is why the module table has 17 `untested` rows:
- * there was nothing between "someone drove it" and "someone read it".
- *
- * A vector is the unit in between. It names ONE thing a module might need, it is answered by a
- * PROBE rather than by a reading, and a module is then a SET of vectors rather than a verdict. "Does
- * `search_api_solr` work" becomes "it needs `async.suspend`, which this runtime refuses" -- which is
- * a different and more useful sentence, because it also says what would have to change.
- *
- * ## Every vector is executed, and `expected` is what makes that worth doing
- *
- * `tests/integration/capability-contract.spec.ts` runs every probe below against the interpreter
- * that ships and asserts the answer equals `expected`. So this file cannot drift from the runtime in
- * either direction: a capability that quietly appears fails the gate as loudly as one that quietly
- * disappears. That is the property the module table's `verified` state has and its `untested` state
- * does not.
- *
- * A vector whose `expected` is `false` is not a TODO. Several are permanent (`runtime.exec`), some
- * are platform limits (`database.regexp`), and one is a scheduled item (`http.request_headers`).
- * `blocker` says which.
+ * Every probe runs against the shipping interpreter and must equal `expected`, in BOTH directions.
+ * An `expected: false` is not a TODO; `blocker` says which kind it is.
  */
-
 /** the seven areas a contrib module draws on, which is the grouping the item asked for */
 export const CAPABILITY_GROUPS = [
 	'HTTP',
@@ -43,16 +20,23 @@ export type CapabilityGroup = (typeof CAPABILITY_GROUPS)[number];
 /**
  * Why a vector is unsatisfied, when it is.
  *
- * `permanent` and `platform` are not the same thing and collapsing them is how a roadmap grows an
- * item nobody can ever finish. `exec()` is gone because a Worker has no process table; `REGEXP` is
- * gone because Durable Object SQLite does not register the function, which someone could change.
+ * `permanent` and `platform` differ: no Worker has a process table, but Durable Object SQLite
+ * could register `REGEXP` tomorrow
  */
 export type Blocker = 'permanent' | 'platform' | 'scheduled' | 'by-design' | null;
+
+/**
+ * Whether the probe DOES the thing or only asks whether the symbol is there.
+ *
+ * `declared` is legal where the claim IS about a declaration; such a row must say so in `evidence`
+ */
+export type VectorKind = 'executed' | 'declared';
 
 export type Vector = {
 	/** stable dotted id; a module declares these, so renaming one is a breaking change */
 	id: string;
 	group: CapabilityGroup;
+	kind: VectorKind;
 	/** what a module GETS when this holds, phrased from the module's side */
 	claim: string;
 	/** a PHP expression evaluating to a boolean, run on the shipping interpreter */
@@ -64,18 +48,13 @@ export type Vector = {
 	evidence: string;
 };
 
-/**
- * The vectors.
- *
- * Kept as expressions rather than scripts so the whole set runs in ONE interpreter boot --
- * `capabilityVectors()` in `site-php.ts` assembles them, and each is wrapped so a throwing probe
- * answers `false` rather than taking the run down with it.
- */
+/** expressions rather than scripts, so the whole set runs in one boot and a throw answers false */
 export const VECTORS: readonly Vector[] = [
 	// #region HTTP
 	{
 		id: 'http.outbound.deferred',
 		group: 'HTTP',
+		kind: 'declared',
 		claim: 'an outbound call whose answer may arrive on a later request',
 		probe: "function_exists('vrzno_env') && vrzno_env('cfwQueueFetch') !== null",
 		expected: true,
@@ -85,6 +64,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'http.outbound.blocking',
 		group: 'HTTP',
+		kind: 'declared',
 		claim: 'an outbound call that must answer inside one render',
 		probe: "function_exists('vrzno_env') && vrzno_env('cfwSuspend') !== null",
 		expected: false,
@@ -94,8 +74,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'http.curl',
 		group: 'HTTP',
+		kind: 'executed',
 		claim: 'an SDK that bundles its own curl transport runs unmodified',
-		probe: "function_exists('curl_init') && function_exists('curl_exec')",
+		probe: "(function () { if (!function_exists('curl_init') || !function_exists('curl_exec')) { return false; } $h = curl_init('https://example.invalid/'); if ($h === false) { return false; } $set = curl_setopt($h, CURLOPT_RETURNTRANSFER, true); curl_close($h); return $set === true; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -104,6 +85,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'http.request_headers',
 		group: 'HTTP',
+		kind: 'declared',
 		claim: "a request's own headers reach the eventual fetch",
 		probe: "function_exists('cfw_http_headers_supported')",
 		expected: false,
@@ -113,6 +95,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'http.stream_wrapper.https',
 		group: 'HTTP',
+		kind: 'executed',
 		claim: "`fopen('https://...')` and `file_get_contents` on a URL",
 		probe: "in_array('https', stream_get_wrappers(), true)",
 		expected: true,
@@ -125,6 +108,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'files.write',
 		group: 'FILES',
+		kind: 'declared',
 		claim: 'writing a managed file under the public scheme',
 		// the CLASS, not `stream_get_wrappers()`. Drupal registers its wrappers in
 		// `DrupalKernel::preHandle()`, which a kernel boot alone does not run, so the wrapper list is
@@ -132,11 +116,13 @@ export const VECTORS: readonly Vector[] = [
 		probe: "class_exists('Drupal\\\\drupflare\\\\StreamWrapper\\\\CfwFileStreamWrapper')",
 		expected: true,
 		blocker: null,
-		evidence: 'files live in Durable Object SQLite behind the public stream wrapper'
+		evidence:
+			'DECLARED, and the reason is measured: `public` is absent from `stream_get_wrappers()` after a bare kernel boot, because Drupal registers its wrappers during the request lifecycle -- so an executed probe here reports a capability every render has as missing. The round trip runs in the file specs instead'
 	},
 	{
 		id: 'files.realpath',
 		group: 'FILES',
+		kind: 'declared',
 		claim: 'a library that takes a filesystem PATH rather than a stream',
 		// probed on the METHOD. The first version of this row asked for a marker function
 		// `cfw_realpath_materialises()` that nothing declares -- a probe for a capability's
@@ -150,8 +136,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'files.record_cap',
 		group: 'FILES',
+		kind: 'executed',
 		claim: 'a single file larger than one Durable Object record',
-		probe: 'false',
+		probe: "(function () { $uri = 'public://cfw_probe_big.bin'; $big = str_repeat('x', 2400000); $wrote = @file_put_contents($uri, $big) !== false; $back = $wrote ? (int) @filesize($uri) : 0; @unlink($uri); return $wrote && $back === strlen($big); })()",
 		expected: false,
 		blocker: 'platform',
 		evidence: 'a record caps at 2,199,995 bytes; a larger file has to be chunked by the caller'
@@ -162,8 +149,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'database.transactions',
 		group: 'DATABASE',
+		kind: 'executed',
 		claim: 'a buffered transaction replayed atomically',
-		probe: "class_exists('Drupal\\\\Core\\\\Database\\\\Transaction')",
+		probe: "(function () { $db = \\Drupal::database(); $txn = $db->startTransaction(); $n = $db->query('SELECT 1 AS n')->fetchField(); unset($txn); return (int) $n === 1; })()",
 		expected: true,
 		blocker: null,
 		evidence: '`TransactionBuffer` in the rom driver; the whole driver suite covers it'
@@ -171,8 +159,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'database.wide_integers',
 		group: 'DATABASE',
+		kind: 'executed',
 		claim: 'a 64-bit id read back exactly',
-		probe: 'true',
+		probe: "(function () { $n = \\Drupal::database()->query('SELECT 9007199254740993 AS n')->fetchField(); return (string) $n === '9007199254740993'; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -181,8 +170,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'database.regexp',
 		group: 'DATABASE',
+		kind: 'executed',
 		claim: 'a Views regular-expression filter',
-		probe: 'false',
+		probe: "(function () { try { \\Drupal::database()->query(\"SELECT 'a' REGEXP 'a' AS n\")->fetchField(); return true; } catch (\\Throwable $e) { return false; } })()",
 		expected: false,
 		blocker: 'platform',
 		evidence: 'Durable Object SQLite registers no `REGEXP` function'
@@ -190,8 +180,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'database.like_long',
 		group: 'DATABASE',
+		kind: 'executed',
 		claim: 'a LIKE pattern longer than 50 bytes',
-		probe: 'false',
+		probe: "(function () { $pattern = str_repeat('a', 60) . '%'; try { \\Drupal::database()->query('SELECT 1 AS n WHERE :s LIKE :p', [':s' => 'x', ':p' => $pattern])->fetchField(); return true; } catch (\\Throwable $e) { return false; } })()",
 		expected: false,
 		blocker: 'platform',
 		evidence:
@@ -200,11 +191,13 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'database.many_params',
 		group: 'DATABASE',
-		claim: 'a statement with more than 100 bound parameters',
-		probe: 'false',
-		expected: false,
-		blocker: 'platform',
-		evidence: 'the driver splits `IN` lists; anything else has to bind fewer'
+		kind: 'executed',
+		claim: 'a query binding more than 100 parameters, which the driver splits before the platform sees it',
+		probe: "(function () { $ph = []; $args = []; for ($i = 0; $i < 101; $i++) { $ph[] = ':p' . $i; $args[':p' . $i] = $i; } try { \\Drupal::database()->query('SELECT 1 AS n WHERE 1 IN (' . implode(', ', $ph) . ')', $args)->fetchField(); return true; } catch (\\Throwable $e) { return false; } })()",
+		expected: true,
+		blocker: null,
+		evidence:
+			"THE CLAIM MOVED WHEN IT WAS EXECUTED. The platform cap is still 100 bound parameters per statement, measured; what changed is the answer to the question this row asks. A 101-parameter `IN` issued through Drupal SUCCEEDS, because the driver splits the list before the platform sees it, so from a module's side the capability is present. The row used to read `expected: false` with the literal `false` as its probe, which asserted the platform limit rather than the module-side claim its `claim` names"
 	},
 	// #endregion
 
@@ -212,16 +205,18 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.int64',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'a PHP integer wider than 32 bits',
 		probe: 'PHP_INT_SIZE >= 8',
-		expected: false,
-		blocker: 'scheduled',
+		expected: true,
+		blocker: null,
 		evidence:
-			'`PHP_INT_SIZE` is 4; a cast of epoch milliseconds wraps modulo 2^32. wasm64 is the fix and is gated on the heap'
+			'`PHP_INT_SIZE` is 8. `ZEND_ENABLE_ZVAL_LONG64` is forced on a wasm32 build, so the integer width is bought without the pointer width: +12,247 zstd bytes and 19.50 MiB of heap headroom, against wasm64 which costs 5x the bytes for the same capability'
 	},
 	{
 		id: 'runtime.mbstring',
 		group: 'RUNTIME',
+		kind: 'declared',
 		claim: 'the real mbstring extension, including `mb_ereg*`',
 		probe: "extension_loaded('mbstring')",
 		expected: false,
@@ -232,6 +227,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.mbstring.core_parity',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'the mbstring calls Drupal core actually makes behave natively',
 		// literal characters, not '\\xC3\\x89': PHP single quotes do not interpret \\x, so the first
 		// version compared two 8-character ASCII strings and reported a parity failure that was
@@ -245,8 +241,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.argon2',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'memory-hard password hashing, which Drupal 12 defaults to',
-		probe: "function_exists('cfw_argon2_available')",
+		probe: "(function () { return function_exists('cfw_argon2_available') && cfw_argon2_available() === true; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -255,6 +252,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.openssl.sign',
 		group: 'RUNTIME',
+		kind: 'declared',
 		claim: 'JWS and service-account JWTs, which sign and verify',
 		probe: "function_exists('openssl_sign') && function_exists('openssl_verify')",
 		expected: true,
@@ -264,10 +262,11 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.zlib.dictionary',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'delta coding, which needs deflate against a preset dictionary',
 		// `gzdeflate()` takes no dictionary and `gzcompress()` takes none either, which is what made
 		// this look impossible without a host bridge. The INCREMENTAL api has taken one since PHP 7.0
-		probe: "function_exists('deflate_init') && function_exists('inflate_init')",
+		probe: "(function () { $dict = 'drupal-node-field-data'; $data = str_repeat('drupal-node-field-data', 8); $d = deflate_init(ZLIB_ENCODING_DEFLATE, ['dictionary' => $dict]); $z = deflate_add($d, $data, ZLIB_FINISH); $i = inflate_init(ZLIB_ENCODING_DEFLATE, ['dictionary' => $dict]); return inflate_add($i, $z, ZLIB_FINISH) === $data; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -276,11 +275,12 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.xmlwriter',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'streaming XML output, which several sitemap and feed modules require to install',
 		// the CLASS, not the extension: `extension_loaded()` reports what was compiled in and is a
 		// built-in, so no shim can move it. What decides whether a module can WRITE XML is whether
 		// the class resolves, and that is what this now asks
-		probe: "class_exists('XMLWriter')",
+		probe: "(function () { $w = new \\XMLWriter(); $w->openMemory(); $w->startDocument('1.0', 'UTF-8'); $w->startElement('urlset'); $w->writeElement('loc', 'https://example.test/'); $w->endElement(); $w->endDocument(); return strpos($w->outputMemory(), '<loc>https://example.test/</loc>') !== false; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -289,6 +289,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.exec.declared',
 		group: 'RUNTIME',
+		kind: 'declared',
 		claim: "`function_exists('exec')` answers true, so a module branching on it takes the branch",
 		probe: "function_exists('exec')",
 		expected: true,
@@ -299,6 +300,7 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.exec.works',
 		group: 'RUNTIME',
+		kind: 'executed',
 		claim: 'shelling out to a binary and reading its output',
 		probe: "(function () { $o = []; $r = @exec('echo hi', $o); return $r !== false && count($o) > 0; })()",
 		expected: false,
@@ -308,12 +310,13 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'runtime.monotonic_clock',
 		group: 'RUNTIME',
-		claim: 'measuring elapsed time inside one request',
-		probe: 'false',
-		expected: false,
-		blocker: 'platform',
+		kind: 'declared',
+		claim: 'a monotonic clock function is declared; whether it ADVANCES is the edge question',
+		probe: "function_exists('hrtime')",
+		expected: true,
+		blocker: null,
 		evidence:
-			'RULE 0: the clock is frozen between I/O, so a DELTA reads 0 or a plausible wrong number. An absolute timestamp is fine'
+			'DECLARED on purpose. An executed delta ANSWERS TRUE in the gate lane and false on the edge -- measured, a 300,000-iteration loop moves `microtime()` here and does not out there -- so executing it would put a confident wrong answer about production into the contract. RULE 0: an absolute CPU or elapsed figure comes only from `cpuTime` on a deployed worker'
 	},
 	// #endregion
 
@@ -321,8 +324,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'media.gd',
 		group: 'MEDIA',
+		kind: 'executed',
 		claim: 'an image toolkit that writes derivative files',
-		probe: "extension_loaded('gd')",
+		probe: "(function () { if (!function_exists('imagecreatetruecolor')) { return false; } return @imagecreatetruecolor(1, 1) !== false; })()",
 		expected: false,
 		blocker: 'by-design',
 		evidence:
@@ -331,18 +335,20 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'media.delivery_styles',
 		group: 'MEDIA',
+		kind: 'declared',
 		claim: 'image styles that resolve to a resized URL',
-		probe: "class_exists('Drupal\\\\drupflare\\\\ImageToolkit\\\\CfwImageToolkit')",
+		probe: "class_exists('Drupal\\\\drupflare\\\\Plugin\\\\ImageToolkit\\\\CfwImageToolkit')",
 		expected: true,
 		blocker: null,
 		evidence:
-			'`CfwImageToolkit`; a module that READS derivative dimensions still gets an answer'
+			'The toolkit lived at `src/ImageToolkit/` while the manager registers the subdir `Plugin/ImageToolkit`, so discovery never saw it and a site had NO toolkit at all -- gd is absent too. Moved; `tests/integration/image-toolkit.spec.ts` asserts discovery, availability and a derivative end to end'
 	},
 	{
 		id: 'media.getimagesize',
 		group: 'MEDIA',
+		kind: 'executed',
 		claim: 'image dimensions read from the file header',
-		probe: "function_exists('getimagesize')",
+		probe: "(function () { $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='); $f = '/tmp/cfw_probe.png'; file_put_contents($f, $png); $i = @getimagesize($f); @unlink($f); return is_array($i) && $i[0] === 1 && $i[1] === 1; })()",
 		expected: true,
 		blocker: null,
 		// `ShimRegistry` classified it REFUSE on "gd/libjpeg are not linked", and it is
@@ -356,16 +362,18 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'async.suspend',
 		group: 'ASYNC',
+		kind: 'declared',
 		claim: 'pausing a render to wait on I/O',
 		probe: "class_exists('Fiber') && !class_exists('PhpWasmSyncFiber')",
 		expected: false,
 		blocker: 'platform',
 		evidence:
-			'the shipping build is ASYNCIFY=0 and non-JSPI; `FIBER_SHIM` supplies a SYNCHRONOUS Fiber'
+			'DECLARED, and the reason is measured: driving a real `Fiber::suspend()` does not throw, it ABORTS the interpreter with `missing function: getcontext`, which takes every other vector in the shared probe run down with it. `PhpWasmSyncFiber` is the shim that runs the body inline instead'
 	},
 	{
 		id: 'async.cron',
 		group: 'ASYNC',
+		kind: 'declared',
 		claim: 'work driven by `hook_cron`',
 		probe: "function_exists('_cfw_cron_supported') || defined('CFW_CRON')",
 		expected: false,
@@ -376,8 +384,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'async.queue',
 		group: 'ASYNC',
+		kind: 'executed',
 		claim: "Drupal's queue API, drained across invocations",
-		probe: "interface_exists('Drupal\\\\Core\\\\Queue\\\\QueueInterface')",
+		probe: "(function () { $q = \\Drupal::queue('cfw_probe_queue'); $q->createQueue(); $q->createItem(['n' => 7]); $item = $q->claimItem(); if ($item === false) { return false; } $ok = ($item->data['n'] ?? null) === 7; $q->deleteItem($item); $q->deleteQueue(); return $ok; })()",
 		expected: true,
 		blocker: null,
 		evidence: 'the database queue works; it moves when cron runs it'
@@ -388,8 +397,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'cache.tag_invalidation',
 		group: 'CACHE',
+		kind: 'executed',
 		claim: 'invalidating a cache tag purges the edge as well as the bin',
-		probe: "interface_exists('Drupal\\\\Core\\\\Cache\\\\CacheTagsInvalidatorInterface')",
+		probe: "(function () { $b = \\Drupal::cache(); $cid = 'cfw_probe_tag'; $b->set($cid, 'v', -1, ['cfw_probe_tag']); if ($b->get($cid) === false) { return false; } \\Drupal\\Core\\Cache\\Cache::invalidateTags(['cfw_probe_tag']); $after = $b->get($cid); $b->delete($cid); return $after === false; })()",
 		expected: true,
 		blocker: null,
 		evidence:
@@ -398,8 +408,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'cache.custom_bin',
 		group: 'CACHE',
+		kind: 'executed',
 		claim: 'a module declaring its own cache bin',
-		probe: "class_exists('Drupal\\\\drupflare\\\\Cache\\\\CfwCacheBackendFactory')",
+		probe: "(function () { $b = \\Drupal::service('cache_factory')->get('cfw_probe_bin'); if (!$b instanceof \\Drupal\\Core\\Cache\\CacheBackendInterface) { return false; } $d = \\Drupal::cache('data'); $cid = 'cfw_probe_bin_rt'; $d->set($cid, 'v'); $hit = $d->get($cid); $d->delete($cid); return $hit !== false && $hit->data === 'v'; })()",
 		expected: true,
 		blocker: null,
 		evidence: 'the backend factory serves any bin name'
@@ -407,8 +418,9 @@ export const VECTORS: readonly Vector[] = [
 	{
 		id: 'cache.kill_switch',
 		group: 'CACHE',
+		kind: 'executed',
 		claim: 'refusing to cache one response',
-		probe: "class_exists('Drupal\\\\Core\\\\PageCache\\\\ResponsePolicy\\\\KillSwitch')",
+		probe: "(function () { $k = \\Drupal::service('page_cache_kill_switch'); $req = \\Symfony\\Component\\HttpFoundation\\Request::create('/'); $res = new \\Symfony\\Component\\HttpFoundation\\Response(); if ($k->check($res, $req) !== null) { return false; } $k->trigger(); return $k->check($res, $req) === \\Drupal\\Core\\PageCache\\ResponsePolicyInterface::DENY; })()",
 		expected: true,
 		blocker: null,
 		evidence: "the host reads Drupal's own `Cache-Control`, so `no-store` is honoured"

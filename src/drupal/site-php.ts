@@ -2332,7 +2332,7 @@ try {
   // #region the image toolkit
   $assert(
     'CfwImageToolkit class loads against real Drupal',
-    class_exists('\Drupal\drupflare\ImageToolkit\CfwImageToolkit')
+    class_exists('\Drupal\drupflare\Plugin\ImageToolkit\CfwImageToolkit')
   );
   $imageUrl = \Drupal\drupflare\Host::call('cfwImageUrl', ['url' => '/sites/default/files/a.png', 'width' => 300]);
   $assert(
@@ -3661,8 +3661,10 @@ export function capabilityVectors(probes: Record<string, string> = {}): string {
 		.filter(([id]) => /^[a-z][a-z0-9_.]*$/.test(id))
 		.map(
 			([id, expr]) =>
-				`  $out[${JSON.stringify(id)}] = (function () { try { return (bool) (${expr}); } ` +
-				`catch (\\Throwable $e) { return false; } catch (\\Error $e) { return false; } })();`
+				// the REASON a probe answered false, recorded rather than discarded: a false that
+				// could mean "the capability is absent" or "the probe threw" is not a measurement
+				`  $out[${JSON.stringify(id)}] = (function () use (&$why) { try { return (bool) (${expr}); } ` +
+				`catch (\\Throwable $e) { $why[${JSON.stringify(id)}] = get_class($e) . ': ' . $e->getMessage(); return false; } })();`
 		)
 		.join('\n');
 
@@ -3673,6 +3675,7 @@ chdir('/drupal');
 
 $out = [];
 $meta = [];
+$why = [];
 
 try {
   if (!isset($GLOBALS['__pw_autoloader'])) {
@@ -3700,6 +3703,6 @@ ${cases}
 $meta['php'] = PHP_VERSION;
 $meta['intSize'] = PHP_INT_SIZE;
 $meta['extensions'] = get_loaded_extensions();
-echo json_encode(['vectors' => $out, 'meta' => $meta]);
+echo json_encode(['vectors' => $out, 'why' => $why, 'meta' => $meta]);
 `;
 }

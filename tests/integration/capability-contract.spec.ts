@@ -29,7 +29,12 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 const REQUEST_TIMEOUT = 900_000;
 
-type Answers = { vectors: Record<string, boolean>; meta: Record<string, unknown> };
+type Answers = {
+	vectors: Record<string, boolean>;
+	/** why a probe answered false, when it threw; a `false` with no entry is a real absence */
+	why: Record<string, string>;
+	meta: Record<string, unknown>;
+};
 
 let cached: Answers | null = null;
 
@@ -75,6 +80,46 @@ describe('P8: the contract is well-formed before it is measured', () => {
 			expect(vectorsIn(group).length, `${group} has no vectors`).toBeGreaterThan(0);
 		}
 	});
+
+	it('EXECUTES rather than declares, in every group', () => {
+		// The gap this closes: 21 of 32 probes were `function_exists` / `class_exists`, and SIX were
+		// the literal `true` or `false` -- a probe that cannot fail, asserting what the row it sits
+		// in already claims. MEDIA, ASYNC and CACHE had no executed vector at all, so three of the
+		// seven columns were a reading of the source dressed as a measurement.
+		for (const group of CAPABILITY_GROUPS) {
+			const executed = vectorsIn(group).filter((v) => v.kind === 'executed');
+			expect(executed.length, `${group} has no EXECUTED vector`).toBeGreaterThan(0);
+		}
+		// a literal is banned outright, in either kind: it makes the drift check vacuous for its row
+		for (const v of VECTORS) {
+			expect(v.probe.trim(), `${v.id} probes a constant`).not.toMatch(/^(true|false)$/);
+		}
+		// the label cannot lie in the cheap direction. Strip the existence calls and require
+		// something to be LEFT -- not "contains a call", because `runtime.int64` reads
+		// `PHP_INT_SIZE` straight off the interpreter and is as executed as anything here, and not
+		// an anchored match, because `runtime.mbstring.core_parity` guards a real comparison with one
+		const EXISTENCE =
+			/\b(function_exists|class_exists|interface_exists|method_exists|extension_loaded|defined)\s*\([^)]*\)/g;
+		for (const v of VECTORS.filter((v) => v.kind === 'executed')) {
+			const residue = v.probe.replace(EXISTENCE, '').replace(/[\s&|!]+/g, '');
+			expect(
+				residue.length,
+				`${v.id} says executed but only asks whether symbols exist`
+			).toBeGreaterThan(0);
+		}
+	});
+
+	it('holds the declaration-only count as a ratchet rather than a target', () => {
+		// 12 remain, each for a stated reason: the claim IS about a declaration
+		// (`runtime.exec.declared`), the negative is structural rather than runnable (`async.cron`
+		// cannot be executed without running cron), or the round trip is asserted by a named spec.
+		// A new one has to displace an old one rather than be added, which is what this number is for
+		const declared = VECTORS.filter((v) => v.kind === 'declared');
+		expect(declared.length, declared.map((v) => v.id).join(', ')).toBeLessThanOrEqual(12);
+		for (const v of declared) {
+			expect(v.evidence.length, `${v.id} is declared and must say why`).toBeGreaterThan(40);
+		}
+	});
 });
 
 describe('P8: every vector, on the interpreter that ships', () => {
@@ -90,14 +135,17 @@ describe('P8: every vector, on the interpreter that ships', () => {
 			const drift = rows.filter((r) => r.actual !== r.expected);
 			console.log(
 				`[p8] ${VECTORS.length} vectors, ${rows.filter((r) => r.actual).length} satisfied` +
-					(drift.length ? `, DRIFT: ${JSON.stringify(drift)}` : '')
+					(drift.length
+						? `, DRIFT: ${JSON.stringify(drift)} WHY: ${JSON.stringify(out.why)}`
+						: '')
 			);
 
 			// named individually rather than as a count, so a failure says WHICH capability moved
 			for (const v of VECTORS) {
 				expect(
 					out.vectors[v.id],
-					`${v.id} answered ${String(out.vectors[v.id])}, contract says ${String(v.expected)}. ${v.evidence}`
+					`${v.id} answered ${String(out.vectors[v.id])}, contract says ${String(v.expected)}. ` +
+						`${out.why[v.id] ?? 'no throw, so the capability is genuinely absent'}. ${v.evidence}`
 				).toBe(v.expected);
 			}
 		},
@@ -111,7 +159,7 @@ describe('P8: every vector, on the interpreter that ships', () => {
 			// the control: a probe set answered by a stub, or by 8.3 when 8.5 ships, would be a
 			// table of confident wrong answers. CLAUDE.md records that exact divergence
 			expect(String(out.meta.php)).toMatch(/^8\.5\./);
-			expect(out.meta.intSize).toBe(4);
+			expect(out.meta.intSize).toBe(8);
 			expect(out.meta.booted, JSON.stringify(out.meta.bootError ?? '')).toBe(true);
 		},
 		REQUEST_TIMEOUT

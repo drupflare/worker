@@ -10,7 +10,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * and a caller would schedule a restore to bookmark zero.
  */
 
-const call = (site: ServeDo, path: string, init?: RequestInit) =>
+const call = (site: DurableObjectStub, path: string, init?: RequestInit) =>
 	site.fetch(new Request(`https://do.local${path}`, init));
 
 const ZERO = '00000000-00000000-00000000-00000000000000000000000000000000';

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers.js';
 
@@ -10,6 +11,7 @@ import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers.js';
  * seven values and none of them.
  */
 
+const ROOT = resolve(import.meta.dirname, '../..');
 const SOURCES = ['src/site.ts', 'src/site-do.ts'];
 const LITERAL = /'x-cfw-cache':\s*'([A-Z]+)'/g;
 const SET_CALL = /set\('x-cfw-cache',\s*'([A-Z]+)'\)/g;
@@ -19,7 +21,7 @@ const PAGE_RESPONSE = /pageResponse\(\s*\w+,\s*'([A-Z]+)'/g;
 function tiersInSource(): Map<string, string[]> {
 	const found = new Map<string, string[]>();
 	for (const file of SOURCES) {
-		const text = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+		const text = readFileSync(resolve(ROOT, file), 'utf8');
 		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE]) {
 			re.lastIndex = 0;
 			for (const m of text.matchAll(re)) {
@@ -68,7 +70,7 @@ describe('the generation header', () => {
 	 * "0 is not greater than 0" rather than "the header is missing".
 	 */
 	it('is set on every response that names a cache tier', () => {
-		const text = readFileSync(new URL('../../src/site-do.ts', import.meta.url), 'utf8');
+		const text = readFileSync(resolve(ROOT, 'src/site-do.ts'), 'utf8');
 		const blocks = text.split(/'x-cfw-cache':/).slice(1);
 		expect(blocks.length).toBeGreaterThan(2);
 		for (const block of blocks) {

@@ -68,7 +68,7 @@ describe('route table', () => {
 		const routes = readRoutes(ROUTES);
 		expect(routes).toHaveLength(3);
 		expect(routes[0]).toMatchObject({ path: '/v2/info', methods: ['GET'] });
-		expect(routes[2].controller).toContain('StagingController::stage');
+		expect(routes[2]?.controller).toContain('StagingController::stage');
 	});
 
 	it('matches a placeholder against exactly one segment', () => {

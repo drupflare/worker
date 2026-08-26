@@ -25,8 +25,10 @@ function readSyslog(timeoutMs = 5000): Promise<string> {
 		socket.setTimeout(timeoutMs, () =>
 			done(() => reject(new Error('syslog readback timed out')))
 		);
+		// set on the socket so every chunk arrives decoded; `Buffer` is shadowed in this program
+		socket.setEncoding('utf8');
 		socket.on('data', (chunk) => {
-			buffer += chunk.toString('utf8');
+			buffer += String(chunk);
 		});
 		socket.on('end', () => done(() => resolve(buffer)));
 		socket.on('error', (e) => done(() => reject(e)));

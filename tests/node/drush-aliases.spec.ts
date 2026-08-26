@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DRUSH_ALIASES } from '../../src/ui/admin.js';
 
@@ -11,7 +12,7 @@ import { DRUSH_ALIASES } from '../../src/ui/admin.js';
  */
 
 const SIBLING = process.env.DRUPFLARE_SRC ?? '../drupflare';
-const SOURCE = new URL(`../../${SIBLING}/src/Ops/CommandLine.php`, import.meta.url);
+const SOURCE = resolve(import.meta.dirname, '../..', SIBLING, 'src/Ops/CommandLine.php');
 
 function phpAliases(): Record<string, string> | null {
 	if (!existsSync(SOURCE)) return null;

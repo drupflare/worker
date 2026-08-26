@@ -76,6 +76,8 @@ export type BumpResult = {
 	generation: number;
 	reason: string;
 	purgedPages: number;
+	/** rows removed from `cache_dynamic_page_cache`, or -1 when the bin does not exist yet */
+	purgedDynamic: number;
 	requeued: number;
 	droppedFromRequeue: number;
 };

@@ -241,9 +241,9 @@ export function paidDurationCost(
  * `10.026244 s * 0.128 GB` is 1.283359232 GB-s exactly, so `activeTime` is MICROSECONDS of wall
  * clock and {@link DO_GB_ALLOCATED} is confirmed from billing rather than from a docs example.
  *
- * **THE RATIO IS THE POINT: 2,612x.** cpuTime does not see time spent awaiting and this meter
- * charges for it, so every figure derived from {@link SECONDS_PER} is a LOWER bound. "GraphQL
- * cannot see duration" was the wrong dataset, not a platform limit.
+ * this row's ratio is 2,612x, but the ratio is a WORKLOAD property, not a constant: an awaiting
+ * hold reads 2,612x and a render reads ~1x. cpuTime never sees awaiting, so a cpuTime-derived
+ * figure is a lower bound whose gap depends on the workload
  */
 export const DURATION_CALIBRATION = {
 	/** microseconds of wall clock the probe was held for */

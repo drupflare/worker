@@ -84,8 +84,11 @@ function phpFiles(dir: string, out: string[] = []): string[] {
 export function splitController(ref: string): { class: string; method: string } | null {
 	const m = /^\\?([\w\\]+)::(\w+)$/.exec(ref.trim());
 	if (m === null) return null;
-	const parts = m[1].split('\\');
-	return { class: parts[parts.length - 1], method: m[2] };
+	const [, qualified, method] = m;
+	if (qualified === undefined || method === undefined) return null;
+	const parts = qualified.split('\\');
+	const name = parts[parts.length - 1];
+	return name === undefined ? null : { class: name, method };
 }
 
 /**
@@ -171,15 +174,18 @@ export function readAggregate(text: string): LogRow[] {
 		if (trimmed === '') continue;
 		const space = trimmed.indexOf(' ');
 		const count = Number(trimmed.slice(0, space));
-		const parts = trimmed.slice(space + 1).split('|');
-		if (parts.length < 5 || !Number.isFinite(count)) continue;
+		const [file, method, path, status, ...rest] = trimmed.slice(space + 1).split('|');
+		// destructured rather than length-checked, and it is the same condition: `parts.length < 5`
+		// holds exactly when one of the first four is missing or `rest` is empty
+		if (file === undefined || method === undefined || path === undefined) continue;
+		if (status === undefined || rest.length === 0 || !Number.isFinite(count)) continue;
 		rows.push({
 			count,
-			file: parts[0],
-			method: parts[1],
-			path: parts[2],
-			status: Number(parts[3]),
-			ua: parts.slice(4).join('|')
+			file,
+			method,
+			path,
+			status: Number(status),
+			ua: rest.join('|')
 		});
 	}
 	return rows;
@@ -251,7 +257,7 @@ export function tally(rows: LogRow[], routes: RouteRow[], auth: AuthIndex): Tall
 }
 
 function arg(name: string, fallback: string): string {
-	const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
+	const hit = process.argv.find((a: string) => a.startsWith(`--${name}=`));
 	return hit === undefined ? fallback : hit.slice(name.length + 3);
 }
 
@@ -321,9 +327,11 @@ async function main(): Promise<void> {
 
 	const all = tally(rows, routes, auth);
 	const span = (xs: number[]): string => {
-		const sorted = [...xs].sort((a, b) => a - b);
-		if (sorted.length === 0) return 'n/a';
-		return `${(sorted[0] * 100).toFixed(1)}%-${(sorted[sorted.length - 1] * 100).toFixed(1)}%`;
+		const sorted = [...xs].sort((a: number, b: number) => a - b);
+		const lo = sorted[0];
+		const hi = sorted[sorted.length - 1];
+		if (lo === undefined || hi === undefined) return 'n/a';
+		return `${(lo * 100).toFixed(1)}%-${(hi * 100).toFixed(1)}%`;
 	};
 
 	console.log(`\nn=${shares.length} days`);

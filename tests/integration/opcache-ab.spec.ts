@@ -104,7 +104,7 @@ describe('P30: the opcache arms', () => {
 	});
 
 	it('boots and renders on every arm, and prices each one', async () => {
-		const arms = [];
+		const arms: Awaited<ReturnType<typeof armProfile>>[] = [];
 		for (const mode of OPCACHE_MODES) arms.push(await armProfile(mode));
 		console.log(`[p30] ${JSON.stringify(arms)}`);
 		const by = (mode: string) => arms.find((a) => a.mode === mode)!;

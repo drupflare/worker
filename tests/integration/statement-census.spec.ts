@@ -9,65 +9,45 @@ import {
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
 /**
- * WHICH statements a warm render sends, not how many of them there are.
- *
- * P36's surviving half. `crossings.spec.ts` counted a warm render at 48 crossings, all `cfwSqlExec`,
- * and closed the BATCHING mechanism -- correctly, because Drupal's read path is read-decide-read.
- * RULE 0c: that closes a mechanism and not the resource, and the resource is the 48 statements. This
- * file decomposes them, so the next person arguing about render SQL argues from a list.
- *
- * TWO ARMS, and the second is the one that reframes the question. The 48 is the FIRST render of a
- * path on an object whose interpreter is already warm -- so it pays every per-path cache bin as a
- * miss. A REPEAT render of the same path is what the regeneration ceiling is actually about
- * (RULE 0b: a fill is a re-render of a page that already existed), and it is a different measurement.
- * Reporting only the first would price regeneration at the warm-up.
- *
- * MEASURED 2026-08-23, one object, `/` filled first to boot, then `/user/login` twice. n=2 whole
- * runs: every COUNT below reproduced exactly, and the byte totals moved by 2 (the payload carries
- * `created` timestamps), so the counts are stated flat and the bytes as approximate.
- *
- * | reading                      | first render | repeat render |
- * | ---------------------------- | -----------: | ------------: |
- * | crossings = statements       |       **48** |        **18** |
- * | distinct fingerprints        |           23 |            10 |
- * | duplicate                    |           25 |             8 |
- * | cache-miss                   |            4 |             2 |
- * | repeated-table               |            4 |             0 |
- * | necessary                    |           15 |             8 |
- * | rows read                    |           53 |            33 |
- * | rows written (charged)       |           46 |             8 |
- * | bytes returned to PHP        |      240,036 |       128,773 |
- *
- * The largest single item in a repeat render is not a statement count: **one** `cache_discovery`
- * read returns 97,749 bytes, 75.9% of everything the bridge carries.
- *
- * WHAT IS DELIBERATELY NOT HERE: milliseconds, and the same reason `workload-matrix.spec.ts` gives.
- * RULE 0 -- an absolute CPU figure comes only from `cpuTime` on a deployed worker, and every
- * in-isolate clock is frozen out there. Every column above is a COUNT or a BYTE COUNT, and both are
- * the same number locally and on the edge.
- *
- * Each case asserts a SHAPE -- a partition that sums, a ratio with a bound -- rather than the values
- * above, which move with the pack. The table is the record a later run compares against.
+ * WHICH statements a warm render sends, not how many. Three arms, two paths; the table each run
+ * reproduces is in the report, and each case asserts a shape rather than a value that moves.
  */
 
-type Reading = { crossings: number; log: CensusCall[]; census: Census };
+/** both halves: the census sees only Drupal's statements, the host writes through `this.sql` */
+type FillWrites = { statements: number; rowsWritten: number; byTable: Record<string, number> };
+
+type Reading = {
+	crossings: number;
+	log: CensusCall[];
+	census: Census;
+	writes: FillWrites;
+	/**
+	 * whether the fill STORED the page, which decides whether the arm is a regeneration at all.
+	 *
+	 * `fillOne()` refuses to store a render that set a cookie, answered for a uid, or asked not to
+	 * be cached, so a form path writes no `cfw_page` row. Scoring the regeneration ceiling off an
+	 * arm that stored nothing would price the meter on a workload that never reaches it.
+	 */
+	stored: boolean;
+	/** Drupal's own `X-Drupal-Dynamic-Cache`, which says whether the bin answered for this render */
+	dynamicCache: string | null;
+};
 
 const REQUEST_TIMEOUT = 900_000;
 
 /**
- * One object, boot-filled once, then the same path rendered twice.
+ * One object, boot-filled once, then the same path rendered three times.
  *
- * `freshSite()` and `/__migrate`, NOT `provisionedSite()`: the latter stamps the migration cursor
- * `done` without replaying anything, so the render aborts with "the site is not installed yet" and
- * the census is of a render that never happened.
- *
- * `/__fill` rather than `/__serve`, and the difference is the measurement: an anonymous GET on a cold
- * object refuses to boot inline, so `/__serve` would return a MISS having never entered PHP.
+ * `/__migrate` not `provisionedSite()`, which stamps the cursor without replaying; `/__fill` not
+ * `/__serve`, which refuses to boot inline. The third arm is the control on the second.
  */
-async function warmRender(path = '/user/login'): Promise<{ first: Reading; repeat: Reading }> {
+async function warmRender(
+	path = '/user/login',
+	bootPath = '/'
+): Promise<{ first: Reading; repeat: Reading; steady: Reading }> {
 	const raw = await inObject(freshSite(), async (site: ServeDo) => {
 		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
-		queuePath(site, '/', { arm: false });
+		queuePath(site, bootPath, { arm: false });
 		await site.fetch(new Request('https://do.local/__fill'));
 		const tally = site.crossings;
 		if (!tally) throw new Error('no crossing tally: the interpreter never booted');
@@ -76,18 +56,45 @@ async function warmRender(path = '/user/login'): Promise<{ first: Reading; repea
 			const before = tally.total;
 			tally.calls = [];
 			queuePath(site, path, { arm: false });
-			await site.fetch(new Request('https://do.local/__fill'));
+			// armed AFTER the queue insert, so the tally covers the fill and not the invalidation
+			// that queued it; `?op=on` resets, so each arm reads its own fill rather than a running sum
+			await site.fetch(new Request('https://do.local/__writes?op=on'));
+			// `page` rather than `filled`, and `filled` is a probe that cannot fail: `fillOne()`
+			// returns the path whether or not it stored anything, and attaches `page` exactly when
+			// it REFUSED to store. A `stored` read off `filled` is true for every arm
+			const outcome = (await (
+				await site.fetch(new Request('https://do.local/__fill'))
+			).json()) as { page?: unknown; dynamicCache?: string | null };
+			const writes = (await (
+				await site.fetch(new Request('https://do.local/__writes'))
+			).json()) as {
+				statements: number;
+				rowsWritten: number;
+				ranked?: Array<{ table: string; rows: number }>;
+			};
 			const log = tally.calls ?? [];
 			// disarmed between arms, so nothing between the two renders lands in either log
 			tally.calls = undefined;
-			return { crossings: tally.total - before, log };
+			return {
+				crossings: tally.total - before,
+				log,
+				stored: outcome.page === undefined,
+				dynamicCache: outcome.dynamicCache ?? null,
+				writes: {
+					statements: writes.statements,
+					rowsWritten: writes.rowsWritten,
+					byTable: Object.fromEntries(
+						(writes.ranked ?? []).map((r) => [r.table, r.rows] as const)
+					)
+				}
+			};
 		};
-		return { first: await one(), repeat: await one() };
+		const first = await one();
+		const repeat = await one();
+		return { first, repeat, steady: await one() };
 	});
-	return {
-		first: { ...raw.first, census: census(raw.first.log) },
-		repeat: { ...raw.repeat, census: census(raw.repeat.log) }
-	};
+	const read = (r: (typeof raw)['first']): Reading => ({ ...r, census: census(r.log) });
+	return { first: read(raw.first), repeat: read(raw.repeat), steady: read(raw.steady) };
 }
 
 const sumCategories = (c: Census) =>
@@ -100,8 +107,32 @@ describe('the statement census of one warm render', () => {
 	it(
 		'decomposes every crossing, with nothing unparsed and nothing double-counted',
 		async () => {
-			const { first, repeat } = await warmRender();
-			for (const arm of [first, repeat]) {
+			const { first, repeat, steady } = await warmRender();
+			// TWO WORKLOADS, because `/user/login` is a form and `fillOne()` stores no `cfw_page` row
+			// for it -- so it is a render and never a REGENERATION, and the ceiling is about the
+			// second thing. RULE 0c's "under which workload?" asked of this instrument
+			const front = await warmRender('/', '/user/login');
+			// the record `scripts/measure/render-census.ts` reads; emitted from THIS case alone so a
+			// full-file run does not print the same table five times
+			for (const [path, arms] of [
+				['/user/login', { first, repeat, steady }],
+				['/', front]
+			] as const) {
+				for (const [arm, reading] of Object.entries(arms)) {
+					console.log(
+						`[render-census] ${JSON.stringify({
+							path,
+							arm,
+							crossings: reading.crossings,
+							stored: reading.stored,
+							dynamicCache: reading.dynamicCache,
+							fill: reading.writes,
+							...reading.census
+						})}`
+					);
+				}
+			}
+			for (const arm of [first, repeat, steady, front.first, front.repeat, front.steady]) {
 				// a GET render opens no transaction, so one crossing is one statement. If this ever
 				// diverges the render buffered a write, and the two counts stop being the same
 				// question rather than the census being wrong
@@ -115,8 +146,12 @@ describe('the statement census of one warm render', () => {
 				// the five categories are a partition, so they sum to the total exactly
 				expect(sumCategories(arm.census)).toBe(arm.census.statements);
 				// a render that sent nothing is a broken fixture reported as a cheap workload
-				expect(arm.census.statements).toBeGreaterThan(10);
+				expect(arm.census.statements).toBeGreaterThan(0);
 			}
+			// the FIRST render of a path pays every per-path bin as a miss, so it is the one arm
+			// with a meaningful floor; a steady render answers from the bins and is single digits
+			expect(first.census.statements).toBeGreaterThan(10);
+			expect(front.first.census.statements).toBeGreaterThan(10);
 		},
 		REQUEST_TIMEOUT
 	);
@@ -174,21 +209,77 @@ describe('the statement census of one warm render', () => {
 	);
 
 	it(
-		"prices the fill's OWN dynamic_page_cache empty, which is a host decision rather than Drupal",
+		'writes NO rows to dynamic_page_cache on a steady fill, which is the lever',
 		async () => {
 			const { repeat } = await warmRender();
 			const dpc = repeat.census.byTable['cache_dynamic_page_cache'];
-			// `fillOne()` empties `page` and `dynamic_page_cache`, so the DELETE, the MISS it
-			// guarantees and the re-population are all the fill's own doing. Measured 4 of 18
-			// statements and 6 of 8 charged rows -- which makes it the largest single lever on the
-			// meter that binds regeneration, and it is owned HERE rather than by Drupal.
-			//
-			// NOT scored as a free win: `/__assemble` already fills with `bins=['page']`, and what
-			// that trades away is whether a regenerated page may carry a stale dynamic fragment.
-			// The census supplies the count; the trade is a product decision
-			expect(dpc).toBeDefined();
-			expect(dpc!.statements).toBeGreaterThan(0);
-			expect(dpc!.rowsWritten / repeat.census.totals.rowsWritten).toBeGreaterThan(0.5);
+			// this bin used to carry 6 of the 7 rows a fill charged, entirely because the fill
+			// emptied it on itself; `FILL_BINS` no longer does, and the A/B below prices it
+			expect(dpc?.rowsWritten ?? 0).toBe(0);
+			expect(repeat.dynamicCache).toBe('HIT');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'measures what a fill that does NOT empty the bin costs, and what still invalidates it',
+		async () => {
+			// an A/B rather than a subtraction, whose subtrahend would be an assumption; then the
+			// correctness half, since a HIT after `invalidateTags()` would mean tags miss the bin
+			const reading = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				queuePath(site, '/', { arm: false });
+				await site.fetch(new Request('https://do.local/__fill'));
+				// narrowed on the way out, because `/__assemble` echoes the whole refused page and a
+				// 17 KB marker line is a log entry rather than a measurement
+				const assemble = async (bins: string) => {
+					const out = (await (
+						await site.fetch(
+							new Request(`https://do.local/__assemble?path=/&bins=${bins}`)
+						)
+					).json()) as {
+						dynamicCache: string | null;
+						hostStatements: number;
+						rowsWritten: number;
+						bytes?: number;
+					};
+					return {
+						dynamicCache: out.dynamicCache,
+						hostStatements: out.hostStatements,
+						rowsWritten: out.rowsWritten,
+						bytes: out.bytes ?? 0
+					};
+				};
+				// both bins first, so the warm entry the next arm reads was written by a render
+				// rather than by the pack
+				const rendered = await assemble('page,dynamic_page_cache');
+				const reassembled = await assemble('page');
+				// what bounds the bin's LIFETIME once nothing empties it. An `expire` of -1 is
+				// CACHE_PERMANENT, and nothing in `EXPIRED_ROW_RULES` or `gcCacheData()` touches
+				// this bin, so a permanent row's only bound today is the deleteAll() being removed
+				const rows = site.sql
+					.exec(
+						'SELECT expire, COUNT(*) AS c FROM cache_dynamic_page_cache GROUP BY expire'
+					)
+					.toArray()
+					.map((r) => ({ expire: Number(r.expire), count: Number(r.c) }));
+				await site.fetch(new Request('https://do.local/__invalidate?tags=rendered'));
+				const afterInvalidation = await assemble('page');
+				return { rendered, reassembled, afterInvalidation, expiries: rows };
+			});
+			console.log(`[render-census-dpc] ${JSON.stringify(reading)}`);
+
+			// leaving the bin warm is a HIT, which is the whole saving
+			expect(reading.reassembled.dynamicCache).toBe('HIT');
+			expect(reading.rendered.dynamicCache).toBe('MISS');
+			// and it costs strictly less on both columns; rows written is the one that binds
+			expect(reading.reassembled.rowsWritten).toBeLessThan(reading.rendered.rowsWritten);
+			expect(reading.reassembled.hostStatements).toBeLessThan(
+				reading.rendered.hostStatements
+			);
+			// THE CORRECTNESS HALF. A tag invalidation must reach an entry the fill no longer
+			// deletes, or "do not empty the bin" trades rows for a page that cannot be refreshed
+			expect(reading.afterInvalidation.dynamicCache).toBe('MISS');
 		},
 		REQUEST_TIMEOUT
 	);

@@ -1,22 +1,9 @@
 /**
  * Decomposes the PHP-to-host crossings of ONE render into statements, and classifies each.
  *
- * WHY IT EXISTS: `crossings.ts` answers "how many" and stops there. It measured a warm render at 48
- * crossings, every one of them `cfwSqlExec`, and closed the BATCHING mechanism -- correctly, because
- * Drupal's read path is read-decide-read. RULE 0c says a dead mechanism does not close the resource,
- * and the resource here is the 48 statements themselves. Nothing could act on that number without
- * knowing which statements they are, so this is the instrument that names them.
- *
- * WHAT A CATEGORY IS. The five are a PARTITION over statements, first match wins, so the counts sum
- * to the total and a statement cannot be reported twice. The order encodes which finding is more
- * actionable when a statement qualifies for two: a repeat of an identical query is a duplicate even
- * when it is also a cache miss, because deduplicating it removes the miss as well.
- *
- * WHAT IT DELIBERATELY DOES NOT MEASURE: time. A record carries counts and bytes only. RULE 0 --
- * an absolute CPU figure comes only from `cpuTime` on a deployed worker, and a count is the same
- * number locally and on the edge.
+ * the five categories are a partition, first match wins, so counts sum to the total; counts and
+ * bytes only, never time, because a count is the same number locally and on the edge
  */
-
 import { writeTargetTable } from '../db/write-tally.js';
 
 /** one statement, decomposed far enough to classify it */
@@ -35,16 +22,43 @@ export type CensusCall = {
 	resultBytes: number;
 	/** true when the statement arrived inside a `cfwSqlTxn` batch rather than on its own */
 	viaTxn: boolean;
+	// the first bound parameter when short, which on a cache bin is a cid; only the first, because
+	// an upsert's later parameters are the payload and one row measured 97,749 bytes
+	key: string | null;
 };
+
+/**
+ * The longest cid kept.
+ *
+ * 512 rather than a tighter bound: a `cache_render` cid carries every cache context it varied on
+ * (`[languages:language_interface]=en:[theme]=olivero:[user.permissions]=...`) and routinely passes
+ * 200 characters, so a 160-char cap read null for the single largest group in the census.
+ */
+const MAX_KEY_CHARS = 512;
+
+/**
+ * An OBJECT as well as an array, and the array-only version read null for every statement.
+ *
+ * Drupal binds NAMED placeholders, so `params` arrives from PHP as an associative array and
+ * `json_encode` writes it as `{":db_condition_placeholder_0": "..."}`. Insertion order is the bind
+ * order for these keys, so the first value is still the first parameter.
+ */
+function firstKey(params: unknown): string | null {
+	const list = Array.isArray(params)
+		? params
+		: params !== null && typeof params === 'object'
+			? Object.values(params as Record<string, unknown>)
+			: [];
+	const head = list[0];
+	if (typeof head !== 'string' || head.length === 0 || head.length > MAX_KEY_CHARS) return null;
+	return head;
+}
 
 /**
  * The statement's shape: every literal, bound value and placeholder list normalised to `?`.
  *
- * Placeholder GROUPS collapse too (`IN ( :a, :b )` -> `IN (?)`, `VALUES (?), (?)` -> `VALUES (?)`),
- * because a cache `getMultiple()` for one cid and one for seven are the same query asked twice. The
- * arity has to go for that to work: Drupal spells a one-element `IN` as `( :a )` and a two-element
- * one as `( :a, :b )`, and a fingerprint that keeps the difference splits six reads of one bin into
- * two "distinct operations", which is what the first run of this instrument did.
+ * Placeholder GROUPS collapse too, arity included, or six reads of one bin split into two
+ * "distinct operations" on nothing but a one-element `IN` spelled differently.
  */
 export function fingerprint(sql: string): string {
 	return String(sql ?? '')
@@ -80,6 +94,87 @@ export const isWriteStatement = (sql: string | null): boolean =>
 /** the shared cache bins, whose read returning nothing is a MISS rather than an absence */
 const isCacheBin = (table: string | null) => table !== null && /^cache_/.test(table);
 
+/**
+ * Which part of Drupal asked for a statement, which `targetTable()` cannot answer.
+ *
+ * Three of the bins a render touches are SHARED, so a table names a location and not a caller.
+ */
+export type Subsystem =
+	| 'render'
+	| 'page-assembly'
+	| 'routing'
+	| 'menu'
+	| 'assets'
+	| 'config'
+	| 'theme'
+	| 'entity'
+	| 'cache-tags'
+	| 'host'
+	| 'other';
+
+export const SUBSYSTEMS: Subsystem[] = [
+	'render',
+	'page-assembly',
+	'routing',
+	'menu',
+	'assets',
+	'config',
+	'theme',
+	'entity',
+	'cache-tags',
+	'host',
+	'other'
+];
+
+/**
+ * cid prefixes, tried before the table.
+ *
+ * Every entry is a cid this project has actually observed in a census run rather than one read out
+ * of core, which is the difference between a classification and a note. First match wins.
+ */
+const KEY_RULES: Array<[RegExp, Subsystem]> = [
+	[/^entity_view:/, 'render'],
+	[/^response:/, 'page-assembly'],
+	[/^route:/, 'routing'],
+	[/^(css|js):/, 'assets'],
+	[/^library_info/, 'assets'],
+	[/^active-trail:/, 'menu'],
+	[/^local_task_plugins/, 'menu'],
+	[/^twig:/, 'theme'],
+	[/^theme\./, 'theme'],
+	[/^config[:.]/, 'config'],
+	[/field_storage_definitions/, 'entity']
+];
+
+/** the bin or table's owner, used when a statement carries no cid to be more specific with */
+const TABLE_RULES: Array<[RegExp, Subsystem]> = [
+	[/^cfw_/, 'host'],
+	[/^cache_(dynamic_page_cache|page)$/, 'page-assembly'],
+	[/^cache_render$/, 'render'],
+	[/^(router|path_alias|cache_routes)$/, 'routing'],
+	[/^(menu_tree|cache_menu)$/, 'menu'],
+	[/^(cache_config|key_value|key_value_expire|config)$/, 'config'],
+	[/^cache_bootstrap$/, 'theme'],
+	[/^cachetags$/, 'cache-tags'],
+	[/_field_data$|_field_revision$|^node$|^users$/, 'entity']
+];
+
+/**
+ * The subsystem a statement belongs to.
+ *
+ * the cid decides when there is one; the shared bins are absent from the table rules so a
+ * statement with no cid stays `other` rather than getting an invented owner
+ */
+export function subsystemOf(table: string | null, key: string | null = null): Subsystem {
+	if (key !== null) {
+		for (const [pattern, subsystem] of KEY_RULES) if (pattern.test(key)) return subsystem;
+	}
+	if (table !== null) {
+		for (const [pattern, subsystem] of TABLE_RULES) if (pattern.test(table)) return subsystem;
+	}
+	return 'other';
+}
+
 function parseJson(value: unknown): Record<string, unknown> | null {
 	if (typeof value !== 'string') return null;
 	try {
@@ -96,6 +191,7 @@ const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(va
 function statementRecord(
 	name: string,
 	sql: unknown,
+	params: unknown,
 	result: Record<string, unknown> | null,
 	resultBytes: number,
 	viaTxn: boolean
@@ -109,21 +205,16 @@ function statementRecord(
 		rowsWritten: num(result?.rowsWritten),
 		rows: Array.isArray(result?.rows) ? result.rows.length : 0,
 		resultBytes,
-		viaTxn
+		viaTxn,
+		key: firstKey(params)
 	};
 }
 
 /**
  * Records one crossing as one or more statements.
  *
- * A `cfwSqlTxn` crossing carries a whole buffered transaction, so it yields N records and the
- * statement count runs ahead of the crossing count. Both numbers are reported rather than one
- * standing in for the other -- a crossing is the bridge cost and a statement is the database cost,
- * and the replay path is exactly where they diverge.
- *
- * A crossing whose payload does not parse is recorded with a null fingerprint rather than dropped. A
- * dropped record would make the census tidier than the measurement, which is the failure mode this
- * project keeps finding in its own instruments.
+ * a `cfwSqlTxn` carries a whole transaction, so statements run ahead of crossings; an unparseable
+ * payload keeps a null fingerprint rather than being dropped
  */
 export function recordCrossing(
 	log: CensusCall[],
@@ -136,38 +227,42 @@ export function recordCrossing(
 	const reply = parseJson(result);
 
 	if (name === 'cfwSqlExec') {
-		log.push(statementRecord(name, request?.sql, reply, resultBytes, false));
+		log.push(statementRecord(name, request?.sql, request?.params, reply, resultBytes, false));
 		return;
 	}
 	if (name === 'cfwSqlTxn') {
 		const statements = Array.isArray(request?.statements) ? request.statements : [];
 		const results = Array.isArray(reply?.results) ? reply.results : [];
 		if (statements.length === 0) {
-			log.push(statementRecord(name, null, reply, resultBytes, true));
+			log.push(statementRecord(name, null, null, reply, resultBytes, true));
 			return;
 		}
 		statements.forEach((statement, i) => {
 			const one = (results[i] ?? null) as Record<string, unknown> | null;
-			const sql = (statement as Record<string, unknown> | null)?.sql;
+			const entry = statement as Record<string, unknown> | null;
 			// a batch's framing cannot be split N ways honestly, so each statement carries the size
 			// of ITS reply and nothing carries the envelope
 			log.push(
-				statementRecord(name, sql, one, one === null ? 0 : JSON.stringify(one).length, true)
+				statementRecord(
+					name,
+					entry?.sql,
+					entry?.params,
+					one,
+					one === null ? 0 : JSON.stringify(one).length,
+					true
+				)
 			);
 		});
 		return;
 	}
-	log.push(statementRecord(name, null, reply, resultBytes, false));
+	log.push(statementRecord(name, null, null, reply, resultBytes, false));
 }
 
 /**
  * The five buckets, in the order a statement is tested against them.
  *
- * - `bridge` -- a crossing carrying no SQL at all: setup, teardown, a capability call.
- * - `duplicate` -- this exact fingerprint already ran in this render.
- * - `cache-miss` -- a read of a `cache_*` bin that came back with no rows.
- * - `repeated-table` -- a read whose table is also read by a DIFFERENT fingerprint in this render.
- * - `necessary` -- everything left: one distinct operation against a table nothing else reads.
+ * `bridge` no SQL; `duplicate` same fingerprint again; `cache-miss` empty `cache_*` read;
+ * `repeated-table` same table via a different fingerprint; `necessary` everything left
  */
 export type CensusCategory = 'bridge' | 'duplicate' | 'cache-miss' | 'repeated-table' | 'necessary';
 
@@ -191,7 +286,31 @@ export type CensusRow = {
 	resultBytes: number;
 	/** the category of the FIRST occurrence; every later one is `duplicate` by construction */
 	category: CensusCategory;
+	/** distinct first-parameter cids seen under this fingerprint, capped; see {@link CensusCall.key} */
+	keys: string[];
+	// distinct cids for this fingerprint, uncapped; `keys.length` is a capped sample, and
+	// `count - distinctKeys` is the reducible half against a batchable remainder
+	distinctKeys: number;
+	/**
+	 * the subsystem of the FIRST occurrence.
+	 *
+	 * One fingerprint against a SHARED bin can span subsystems -- the `cache_data` read is a route
+	 * lookup once and a CSS aggregate twice -- so read {@link Census.bySubsystem} for the split and
+	 * this field only as the row's label.
+	 */
+	subsystem: Subsystem;
 };
+
+/** what one subsystem spent, summed per STATEMENT rather than per fingerprint */
+export type SubsystemSpend = {
+	statements: number;
+	rowsRead: number;
+	rowsWritten: number;
+	resultBytes: number;
+};
+
+/** cids kept per fingerprint; enough to name the callers, not enough to reprint the render */
+const MAX_KEYS_PER_ROW = 8;
 
 export type Census = {
 	statements: number;
@@ -200,8 +319,16 @@ export type Census = {
 	rows: CensusRow[];
 	byCategory: Record<CensusCategory, number>;
 	byTable: Record<string, { statements: number; rowsRead: number; rowsWritten: number }>;
+	/** per statement, so a shared bin's traffic lands on the callers rather than on the bin */
+	bySubsystem: Record<Subsystem, SubsystemSpend>;
 	totals: { rowsRead: number; rowsWritten: number; resultBytes: number };
 };
+
+/** appends a cid once, up to the cap; silent past it, since a row is a summary rather than a log */
+function addKey(keys: string[], key: string | null): void {
+	if (key === null || keys.length >= MAX_KEYS_PER_ROW || keys.includes(key)) return;
+	keys.push(key);
+}
 
 function classify(call: CensusCall, readsByTable: Map<string, Set<string>>): CensusCategory {
 	if (call.fingerprint === null) return 'bridge';
@@ -234,7 +361,11 @@ export function census(log: CensusCall[]): Census {
 		number
 	>;
 	const byTable: Census['byTable'] = {};
+	const bySubsystem = Object.fromEntries(
+		SUBSYSTEMS.map((s) => [s, { statements: 0, rowsRead: 0, rowsWritten: 0, resultBytes: 0 }])
+	) as Record<Subsystem, SubsystemSpend>;
 	const rows = new Map<string, CensusRow>();
+	const seenKeys = new Map<string, Set<string>>();
 	const totals = { rowsRead: 0, rowsWritten: 0, resultBytes: 0 };
 
 	for (const call of log) {
@@ -242,7 +373,16 @@ export function census(log: CensusCall[]): Census {
 		totals.rowsWritten += call.rowsWritten;
 		totals.resultBytes += call.resultBytes;
 
+		const spend = bySubsystem[subsystemOf(call.table, call.key)];
+		spend.statements += 1;
+		spend.rowsRead += call.rowsRead;
+		spend.rowsWritten += call.rowsWritten;
+		spend.resultBytes += call.resultBytes;
+
 		const key = call.fingerprint ?? `<${call.name}>`;
+		const distinct = seenKeys.get(key) ?? new Set<string>();
+		if (call.key !== null) distinct.add(call.key);
+		seenKeys.set(key, distinct);
 		const existing = rows.get(key);
 		if (existing) {
 			existing.count += 1;
@@ -250,9 +390,13 @@ export function census(log: CensusCall[]): Census {
 			existing.rowsWritten += call.rowsWritten;
 			existing.rows += call.rows;
 			existing.resultBytes += call.resultBytes;
+			addKey(existing.keys, call.key);
+			existing.distinctKeys = distinct.size;
 			byCategory.duplicate += 1;
 		} else {
 			const category = classify(call, readsByTable);
+			const keys: string[] = [];
+			addKey(keys, call.key);
 			rows.set(key, {
 				fingerprint: key,
 				name: call.name,
@@ -262,7 +406,10 @@ export function census(log: CensusCall[]): Census {
 				rowsWritten: call.rowsWritten,
 				rows: call.rows,
 				resultBytes: call.resultBytes,
-				category
+				category,
+				keys,
+				distinctKeys: distinct.size,
+				subsystem: subsystemOf(call.table, call.key)
 			});
 			byCategory[category] += 1;
 		}
@@ -282,6 +429,7 @@ export function census(log: CensusCall[]): Census {
 		rows: [...rows.values()].sort((a, b) => b.count - a.count || b.rowsRead - a.rowsRead),
 		byCategory,
 		byTable,
+		bySubsystem,
 		totals
 	};
 }

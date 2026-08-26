@@ -5,6 +5,8 @@ import {
 	fingerprint,
 	isWriteStatement,
 	recordCrossing,
+	subsystemOf,
+	SUBSYSTEMS,
 	targetTable,
 	type CensusCall
 } from '../../../src/ops/statement-census';
@@ -31,11 +33,38 @@ const call = (over: Partial<CensusCall> = {}): CensusCall => ({
 	rows: 0,
 	resultBytes: 0,
 	viaTxn: false,
+	key: null,
 	...over
 });
 
 const sql = (text: string, over: Partial<CensusCall> = {}): CensusCall =>
 	call({ fingerprint: fingerprint(text), table: targetTable(text), ...over });
+
+/**
+ * cids taken verbatim from a census run against the shipped pack, one per attribution rule.
+ *
+ * Verbatim rather than invented, because the rules exist to name what THIS site's renders ask for.
+ * A fixture written from Drupal's source would test the rules against a different site.
+ */
+const MEASURED_CIDS: Array<[string, string, string]> = [
+	['cache_render', 'entity_view:block:olivero_site_branding:[theme]=olivero', 'render'],
+	[
+		'cache_dynamic_page_cache',
+		'response:[request_format]=html:[route]=view.frontpage',
+		'page-assembly'
+	],
+	['cache_data', 'route:[language]=en:[query_parameters]=:/user/login', 'routing'],
+	['cache_data', 'css:olivero:olivero:enX9BF0eudLpqW4W9l94pPclSOxB5A9b', 'assets'],
+	['cache_data', 'js:olivero:en:yITln3qjyTh8JQCgqudyThlefzIg66zUcxV8D9It4fM:0', 'assets'],
+	['cache_discovery', 'library_info:olivero', 'assets'],
+	['cache_discovery', 'local_task_plugins:en:user.login', 'menu'],
+	['cache_discovery', 'user.field_storage_definitions.installed', 'entity'],
+	['cache_menu', 'active-trail:route:user.login:route_parameters:a:0:{}', 'menu'],
+	['cache_bootstrap', 'theme.active_theme.olivero', 'theme'],
+	['cache_default', 'twig:6a788299bc238_breadcrumb.html.twig_SJyn2Qe6a73zSgC2HnhU4sfSf', 'theme'],
+	['cache_config', 'user.settings', 'config'],
+	['key_value', 'config.entity.key_store.block', 'config']
+];
 
 describe('the statement fingerprint', () => {
 	it('collapses a placeholder list to one shape whatever its arity', () => {
@@ -227,11 +256,71 @@ describe('the census classification', () => {
 		expect(c.totals).toEqual({ rowsRead: 1, rowsWritten: 2, resultBytes: 97_749 });
 	});
 
+	it('counts distinct cids uncapped, which is what separates a repeat from a batch', () => {
+		const one = 'SELECT "cid" FROM "cache_render" WHERE "cid" IN (:a)';
+		const c = census([
+			sql(one, { rows: 1, key: 'entity_view:block:a' }),
+			sql(one, { rows: 1, key: 'entity_view:block:b' }),
+			// the same cid a second time: this one is genuinely redundant
+			sql(one, { rows: 1, key: 'entity_view:block:b' })
+		]);
+		expect(c.rows[0]!.count).toBe(3);
+		expect(c.rows[0]!.distinctKeys).toBe(2);
+		// the capped sample and the uncapped count agree while under the cap; the point of the
+		// second field is that they stop agreeing above it
+		expect(c.rows[0]!.keys).toHaveLength(2);
+	});
+
 	it('answers an empty census for an empty log rather than throwing', () => {
 		const c = census([]);
 		expect(c.statements).toBe(0);
 		expect(c.distinct).toBe(0);
 		expect(c.rows).toEqual([]);
 		expect(CENSUS_CATEGORIES.every((k) => c.byCategory[k] === 0)).toBe(true);
+		expect(SUBSYSTEMS.every((s) => c.bySubsystem[s].statements === 0)).toBe(true);
+	});
+});
+
+describe('the subsystem a statement belongs to', () => {
+	it('names every cid a real census run produced', () => {
+		for (const [table, cid, expected] of MEASURED_CIDS) {
+			expect(`${cid} -> ${subsystemOf(table, cid)}`).toBe(`${cid} -> ${expected}`);
+		}
+	});
+
+	it('lets the cid override the table, which is the whole reason it takes one', () => {
+		// three of these live in the SAME bin; attributing by table alone would put a route
+		// lookup, a CSS aggregate and a JS aggregate all on `cache_data` and hide the callers
+		expect(subsystemOf('cache_data', 'route:[language]=en:/')).toBe('routing');
+		expect(subsystemOf('cache_data', 'css:olivero:olivero:abc')).toBe('assets');
+		// and the widest single reply in a steady render is an ASSET library rather than
+		// "discovery", which is a bin name and not a subsystem
+		expect(subsystemOf('cache_discovery', 'library_info:olivero')).toBe('assets');
+	});
+
+	it('falls back to the table when there is no cid to be more specific with', () => {
+		expect(subsystemOf('cache_dynamic_page_cache', null)).toBe('page-assembly');
+		expect(subsystemOf('router', null)).toBe('routing');
+		expect(subsystemOf('menu_tree', null)).toBe('menu');
+		expect(subsystemOf('cachetags', null)).toBe('cache-tags');
+		expect(subsystemOf('cfw_page', null)).toBe('host');
+	});
+
+	it('answers `other` rather than guessing an owner for a shared bin', () => {
+		// `cache_discovery`, `cache_data` and `cache_default` are deliberately absent from the
+		// table rules: without a cid there is nothing to attribute them by, and a plausible
+		// owner is worse than a visible gap
+		expect(subsystemOf('cache_discovery', null)).toBe('other');
+		expect(subsystemOf('cache_data', null)).toBe('other');
+		expect(subsystemOf('cache_default', null)).toBe('other');
+		expect(subsystemOf(null, null)).toBe('other');
+	});
+
+	it('is total: every answer is a member of the declared set', () => {
+		const answers = [
+			...MEASURED_CIDS.map(([t, k]) => subsystemOf(t, k)),
+			subsystemOf('some_table_nobody_mapped', 'a-cid-nobody-mapped')
+		];
+		expect(answers.every((a) => SUBSYSTEMS.includes(a))).toBe(true);
 	});
 });

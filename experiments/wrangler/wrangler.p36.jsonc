@@ -1,0 +1,43 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// Throwaway, for the P17 / P35 / P29 deployed measurements. Torn down immediately;
+	// the account carries real production workers and `cfw-*` collides with none of them.
+	"name": "cfw-p36-probe",
+	"main": "../../src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free"
+	},
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		},
+		{
+			"type": "Data",
+			"globs": ["**/*.zst"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	},
+	"observability": { "enabled": true },
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-85.ts"
+	}
+}

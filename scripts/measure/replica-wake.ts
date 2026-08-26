@@ -7,30 +7,15 @@
  * bun scripts/measure/replica-wake.ts --dry
  * ```
  *
- * WHAT WAS ALREADY SETTLED, so this measures the open half. A pending alarm is absent from
- * Cloudflare's hibernation-eligibility list and the probe confirms it: an armed-alarm object accrued
- * 0.177 s over a 60 s pending window. So the keep-warm chain costs a row and a request per arm and
- * buys NO residency, which makes "N replicas that hibernate" the DEFAULT behaviour rather than a
- * design to invent. What nobody has measured is the WAKE, which on this runtime means restoring or
- * re-booting a 96 MiB interpreter.
- *
- * WHY LATENCY AND NOT DURATION HERE. The duration half is already answered -- an idle, eligible
- * object accrues nothing. The question a replica has to answer is what a VISITOR experiences on the
- * request that lands on a cold one, and how that changes as replicas are added.
- *
- * A REPLICA BUYS NO QUOTA. Rows written is account-wide, so this cannot move the regeneration
- * ceiling and is not a capacity lever. It is a latency and concurrency measurement.
+ * an idle hibernation-eligible object accrues no duration, so the open half is the wake: what a
+ * visitor pays on the request that lands on a cold object, and how that moves as replicas are added.
+ * rows written is account-wide, so a replica buys no quota and this is not a capacity lever
  */
 
 /** one latency sample */
 export type Sample = { ms: number; status: number; site: string; booted: boolean };
 
-/**
- * A percentile by nearest-rank, which is the honest one for small n.
- *
- * Interpolating between two samples invents a value that was never observed, and at n=20 the
- * invented number sits further from the truth than simply naming the rank does.
- */
+/** nearest-rank, so every reported value is one that was actually observed */
 export function percentile(values: readonly number[], p: number): number {
 	if (values.length === 0) return NaN;
 	const sorted = [...values].sort((a, b) => a - b);
@@ -45,7 +30,7 @@ export type Summary = {
 	p99: number;
 	min: number;
 	max: number;
-	/** how many samples reported the interpreter was NOT up when the request arrived */
+	// only meaningful where the response carries `x-cfw-php-booted`; `/assemble` does not
 	cold: number;
 };
 
@@ -62,13 +47,7 @@ export function summarise(samples: readonly Sample[]): Summary {
 	};
 }
 
-/**
- * How far short of linear the throughput scaled.
- *
- * 1.0 is perfect scaling and 0 is none at all. Reported rather than a bare ratio because the
- * interesting answer is the SHORTFALL: a replica that buys 1.6x on 2 objects is a different product
- * decision from one that buys 1.95x, and both look like "it scaled" without this.
- */
+/** how far short of linear throughput scaled; 1.0 is perfect, 0 is none */
 export function scalingEfficiency(
 	baseThroughput: number,
 	scaled: number,
@@ -78,27 +57,45 @@ export function scalingEfficiency(
 	return scaled / (baseThroughput * replicas);
 }
 
-/** the replica an index lands on; round robin, because that is what a hash of a visitor approximates */
+/** the replica an index lands on; round robin approximates a hash of a visitor */
 export function replicaFor(prefix: string, index: number, replicas: number): string {
 	return `${prefix}-r${index % replicas}`;
 }
 
 const arg = (name: string, fallback = '') =>
 	process.argv
-		.find((a) => a.startsWith(`--${name}=`))
+		.find((a: string) => a.startsWith(`--${name}=`))
 		?.split('=')
 		.slice(1)
 		.join('=') ?? fallback;
 
-async function sample(endpoint: string, site: string, path: string): Promise<Sample> {
+/**
+ * which path a sample drives; one mode cannot answer both questions.
+ *
+ * `serve` is a prefilled cache hit on the storage lane and never boots the interpreter, so it reads
+ * the object's own wake; `render` drives `/assemble`, which has to run PHP and pays the boot
+ */
+export type Mode = 'serve' | 'render';
+
+export function sampleUrl(endpoint: string, site: string, path: string, mode: Mode): string {
+	const s = encodeURIComponent(site);
+	const p = encodeURIComponent(path);
+	return mode === 'render'
+		? `${endpoint}/assemble?site=${s}&path=${p}&bins=page`
+		: `${endpoint}/serve?site=${s}&path=${p}&edge=0`;
+}
+
+async function sample(
+	endpoint: string,
+	site: string,
+	path: string,
+	mode: Mode = 'serve'
+): Promise<Sample> {
 	const t0 = Date.now();
-	const res = await fetch(
-		`${endpoint}/serve?site=${encodeURIComponent(site)}&path=${encodeURIComponent(path)}&edge=0`
-	);
+	const res = await fetch(sampleUrl(endpoint, site, path, mode));
 	await res.arrayBuffer();
 	return {
-		// the CLIENT's wall clock, which is what a visitor experiences and the only clock that is
-		// meaningful for this question. It is NOT a CPU figure and must never be quoted as one
+		// the client's wall clock; NOT a CPU figure and must never be quoted as one
 		ms: Date.now() - t0,
 		status: res.status,
 		site,
@@ -112,14 +109,17 @@ if (import.meta.main) {
 	const prefix = arg('prefix', 'wake');
 	const replicaArms = arg('replicas', '1,2,4')
 		.split(',')
-		.map((n) => Number(n.trim()))
-		.filter((n) => n > 0);
+		.map((n: string) => Number(n.trim()))
+		.filter((n: number) => n > 0);
 	const burst = Number(arg('burst', '20'));
 	const idle = Number(arg('idle', '120'));
 	const path = arg('path', '/');
+	const mode = (arg('mode', 'serve') === 'render' ? 'render' : 'serve') as Mode;
 
 	if (dry) {
-		console.log(`plan: arms ${replicaArms.join(', ')}; burst ${burst}; idle ${idle}s\n`);
+		console.log(
+			`plan: arms ${replicaArms.join(', ')}; burst ${burst}; idle ${idle}s; mode ${mode}\n`
+		);
 		for (const replicas of replicaArms) {
 			const names = [
 				...new Set(Array.from({ length: burst }, (_, i) => replicaFor(prefix, i, replicas)))
@@ -139,11 +139,14 @@ if (import.meta.main) {
 		];
 
 		for (const site of names) {
-			await fetch(`${endpoint}/migrate?site=${site}&all=1`).then((r) => r.arrayBuffer());
-			await fetch(`${endpoint}/prefill?site=${site}&force=1`).then((r) => r.arrayBuffer());
+			// `/prefill` is not a route and never was; the prefill is a parameter on `/migrate`,
+			// so the old pair rendered a 404 Drupal page and provisioned nothing
+			await fetch(`${endpoint}/migrate?site=${site}&all=1&prefill=1`).then((r) =>
+				r.arrayBuffer()
+			);
 			// warm the path, or the first burst measures the fill queue rather than the wake
 			for (let i = 0; i < 30; i++) {
-				const res = await sample(endpoint, site, path);
+				const res = await sample(endpoint, site, path, mode);
 				if (res.status < 500) break;
 				await new Promise((r) => setTimeout(r, 1000));
 			}
@@ -153,7 +156,7 @@ if (import.meta.main) {
 		const t0 = Date.now();
 		await Promise.all(
 			Array.from({ length: burst }, async (_, i) => {
-				warm.push(await sample(endpoint, replicaFor(prefix, i, replicas), path));
+				warm.push(await sample(endpoint, replicaFor(prefix, i, replicas), path, mode));
 			})
 		);
 		const throughput = burst / ((Date.now() - t0) / 1000);
@@ -164,7 +167,7 @@ if (import.meta.main) {
 		const cold: Sample[] = [];
 		await Promise.all(
 			Array.from({ length: burst }, async (_, i) => {
-				cold.push(await sample(endpoint, replicaFor(prefix, i, replicas), path));
+				cold.push(await sample(endpoint, replicaFor(prefix, i, replicas), path, mode));
 			})
 		);
 
@@ -191,6 +194,6 @@ if (import.meta.main) {
 		);
 	}
 	console.log(
-		`\nn=${burst} per arm, client wall clock. Not a CPU figure and must not be quoted as one.`
+		`\nn=${burst} per arm, mode ${mode}, client wall clock. NOT a CPU figure and must not be quoted as one.`
 	);
 }

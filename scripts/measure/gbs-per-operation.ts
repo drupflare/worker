@@ -7,16 +7,12 @@
  * bun scripts/measure/gbs-per-operation.ts --dry   # print the plan, touch nothing
  * ```
  *
- * WHY ONE OBJECT PER CLASS. `durableObjectsPeriodicGroups` is dimensioned by `objectId` and nothing
- * finer, so two workloads driven into one object produce one row and no way to attribute it. Naming
- * the site after the class is the whole trick, and it is why this is a script rather than a query.
+ * one object per class, because the dataset attributes no finer than an object. attribution is by
+ * the `name` dimension: `objectId` is a hex id sharing no substring with the site name.
  *
- * WHY DURATION AND NOT cpuTime. Measured on a deployed throwaway: ten 1,000 ms holds reported
- * `activeTime` 10,026,244 us against `cpuTime` 3,838 us -- duration bills WALL CLOCK and cpuTime
- * understates it by 2,612x. Anything derived from cpuTime is a lower bound with an unbounded gap.
- *
- * INGESTION LAGS ABOUT EIGHT MINUTES. An empty result before then is not evidence, which is why
- * `--settle` exists and defaults to 600 s rather than to zero.
+ * duration bills wall clock, so a cpuTime-derived figure is a lower bound. provisioning runs before
+ * the window and the window opens on a minute boundary, or a migration is charged to a render.
+ * ingestion lags ~8 minutes, which is why `--settle` defaults to 600 s rather than zero
  */
 
 /** GB allocated per Durable Object, confirmed from billing rather than from a docs example */
@@ -26,40 +22,36 @@ export const DO_GB_ALLOCATED = 0.128;
 export type WorkloadClass = {
 	id: string;
 	label: string;
-	/** paths to request, in order, on a site named after this class */
-	drive: (site: string) => string[];
+	/** paths to request, in order, for repeat `i` of this class */
+	drive: (site: string, i: number) => string[];
 	/** what one completed unit of this operation is, for the per-operation figure */
 	unit: string;
+	// this class IS the provisioning: never provisioned first, one fresh object per repeat
+	// (a migration happens once per object), and its sites are summed on the way out
+	provisions?: boolean;
 };
 
-/**
- * The classes, and why these.
- *
- * Each spends a different mix of meters. A render is read-dominated, a node save writes, cron runs
- * with no request to answer, and a migration is the one that replays the pack. Scoring an
- * optimisation against a render alone says nothing about the other four.
- */
+/** one class per meter mix; a render reads, a save writes, cron answers no request */
 export const WORKLOADS: readonly WorkloadClass[] = [
 	{
 		id: 'migrate',
 		label: 'first migration',
 		unit: 'one site provisioned',
-		drive: (s) => [`/migrate?site=${s}&all=1`, `/prefill?site=${s}&force=1`]
+		provisions: true,
+		// `/prefill` is not a route; the prefill is a parameter on `/migrate`
+		drive: (s, i) => [`/migrate?site=${s}-${i}&all=1&prefill=1`]
 	},
 	{
-		id: 'render-cold',
-		label: 'cold render',
-		unit: 'one page rendered on a cold object',
+		id: 'render-binsempty',
+		label: 'render, page+dpc+render emptied',
+		unit: 'one page rendered with three bins emptied',
 		drive: (s) => [`/assemble?site=${s}&path=/&bins=page,dynamic_page_cache,render`]
 	},
 	{
 		id: 'render-warm',
-		label: 'warm render',
-		unit: 'one page rendered with the interpreter up',
-		drive: (s) => [
-			`/assemble?site=${s}&path=/&bins=page`,
-			`/assemble?site=${s}&path=/&bins=page`
-		]
+		label: 'render, page bin emptied',
+		unit: 'one page rendered with only the page bin emptied',
+		drive: (s) => [`/assemble?site=${s}&path=/&bins=page`]
 	},
 	{
 		id: 'serve-hit',
@@ -71,7 +63,7 @@ export const WORKLOADS: readonly WorkloadClass[] = [
 		id: 'node-save',
 		label: 'node save',
 		unit: 'one node written',
-		drive: (s) => [`/savenode?site=${s}&title=gbs&body=gbs`]
+		drive: (s, i) => [`/savenode?site=${s}&title=gbs-${i}&body=gbs`]
 	},
 	{
 		id: 'cron',
@@ -87,9 +79,17 @@ export const WORKLOADS: readonly WorkloadClass[] = [
 	}
 ];
 
+/** every site name a class occupies; a provisioning class needs one per repeat */
+export function sitesFor(prefix: string, w: WorkloadClass, repeat: number): string[] {
+	const base = siteFor(prefix, w.id);
+	return w.provisions ? Array.from({ length: repeat }, (_, i) => `${base}-${i}`) : [base];
+}
+
 /** what GraphQL answers, per object */
 export type PeriodicRow = {
 	objectId: string;
+	/** the string passed to `idFromName()`; the only dimension a site name can be matched against */
+	name: string;
 	/** GB-s */
 	duration: number;
 	/** microseconds of wall clock */
@@ -100,24 +100,47 @@ export type PeriodicRow = {
 	rowsWritten: number;
 };
 
-/**
- * GB-s divided by however many units were completed.
- *
- * The point of the whole script: a per-DAY figure moves with traffic and cannot be compared across
- * workloads, while a per-OPERATION one is a property of the code.
- */
+/** GB-s per completed unit; a per-day figure moves with traffic, a per-operation one does not */
 export function perOperation(row: PeriodicRow, completed: number): number {
 	if (completed <= 0) return 0;
 	return row.duration / completed;
 }
 
-/**
- * The duration a wall-clock reading implies, so the two can be checked against each other.
- *
- * `duration` (GB-s) should equal `activeTime` (us) / 1e6 * 0.128. Measured on a deployed throwaway:
- * `10.026244 * 0.128` reproduced the reported 1.283359232 exactly. A disagreement here means the
- * allocation is not what this file assumes, and every derived figure is wrong.
- */
+/** the zero row, so a class with several objects can be summed without a special case */
+export function emptyRow(name = ''): PeriodicRow {
+	return {
+		objectId: '',
+		name,
+		duration: 0,
+		activeTime: 0,
+		cpuTime: 0,
+		rowsRead: 0,
+		rowsWritten: 0
+	};
+}
+
+/** sums a class across every object it occupies; null means not ingested, never cost zero */
+export function sumRows(
+	rows: readonly PeriodicRow[],
+	names: readonly string[]
+): PeriodicRow | null {
+	const wanted = new Set(names);
+	const mine = rows.filter((r) => wanted.has(r.name));
+	if (mine.length === 0) return null;
+	return mine.reduce(
+		(acc, r) => {
+			acc.duration += r.duration;
+			acc.activeTime += r.activeTime;
+			acc.cpuTime += r.cpuTime;
+			acc.rowsRead += r.rowsRead;
+			acc.rowsWritten += r.rowsWritten;
+			return acc;
+		},
+		emptyRow(names.join(','))
+	);
+}
+
+/** the GB-s an activeTime implies; a disagreement means the allocation is wrong and so is the row */
 export function durationFromActive(
 	activeTimeMicros: number,
 	gbAllocated = DO_GB_ALLOCATED
@@ -132,12 +155,7 @@ export function allocationAgreement(row: PeriodicRow): number {
 	return row.duration / implied;
 }
 
-/**
- * How badly cpuTime understates the billed meter, for this row.
- *
- * Reported rather than assumed: the 2,612x figure came from one shape of workload (a hold with no
- * PHP in it) and a render's ratio is its own measurement.
- */
+/** how far cpuTime understates the billed meter here; the ratio is per workload, not a constant */
 export function cpuUnderstatement(row: PeriodicRow): number {
 	if (row.cpuTime === 0) return Infinity;
 	return row.activeTime / row.cpuTime;
@@ -150,7 +168,7 @@ const GQL = `query($account: String!, $start: Time!, $end: Time!) {
         limit: 200
         filter: { datetime_geq: $start, datetime_leq: $end }
       ) {
-        dimensions { objectId }
+        dimensions { objectId name }
         sum { activeTime cpuTime duration rowsRead rowsWritten }
       }
     }
@@ -162,6 +180,7 @@ export function flattenPeriodic(body: any): PeriodicRow[] {
 	const groups = body?.data?.viewer?.accounts?.[0]?.durableObjectsPeriodicGroups ?? [];
 	return groups.map((g: any) => ({
 		objectId: String(g?.dimensions?.objectId ?? ''),
+		name: String(g?.dimensions?.name ?? ''),
 		duration: Number(g?.sum?.duration ?? 0),
 		activeTime: Number(g?.sum?.activeTime ?? 0),
 		cpuTime: Number(g?.sum?.cpuTime ?? 0),
@@ -170,14 +189,14 @@ export function flattenPeriodic(body: any): PeriodicRow[] {
 	}));
 }
 
-/** the site name a class is driven into; the class id has to survive into `objectId` to attribute */
+/** the site name a class is driven into; the class id has to survive into `name` to attribute */
 export function siteFor(prefix: string, id: string): string {
 	return `${prefix}-${id}`;
 }
 
 const arg = (name: string, fallback = '') =>
 	process.argv
-		.find((a) => a.startsWith(`--${name}=`))
+		.find((a: string) => a.startsWith(`--${name}=`))
 		?.split('=')
 		.slice(1)
 		.join('=') ?? fallback;
@@ -190,10 +209,12 @@ if (import.meta.main) {
 	const settle = Number(arg('settle', '600'));
 
 	if (dry) {
-		console.log(`plan: ${WORKLOADS.length} classes x ${repeat} repeats, one object each\n`);
+		console.log(`plan: ${WORKLOADS.length} classes x ${repeat} repeats\n`);
 		for (const w of WORKLOADS) {
-			console.log(`  ${siteFor(prefix, w.id).padEnd(24)} ${w.label}`);
-			for (const path of w.drive(siteFor(prefix, w.id))) console.log(`      ${path}`);
+			const sites = sitesFor(prefix, w, repeat);
+			console.log(`  ${sites.join(', ').padEnd(40)} ${w.label}`);
+			const base = w.provisions ? siteFor(prefix, w.id) : (sites[0] as string);
+			for (const path of w.drive(base, 0)) console.log(`      ${path}`);
 		}
 		console.log(`\nthen wait ${settle}s for ingestion and read durableObjectsPeriodicGroups`);
 		process.exit(0);
@@ -205,26 +226,54 @@ if (import.meta.main) {
 	if (!token) throw new Error('CLOUDFLARE_API_TOKEN is required');
 	if (account === '') throw new Error('--account or CLOUDFLARE_ACCOUNT_ID is required');
 
+	const get = async (path: string) => {
+		const res = await fetch(`${endpoint}${path}`);
+		const text = await res.text();
+		return { status: res.status, text };
+	};
+
+	// phase 1: provision outside the window, or a migration is charged to a render class
+	for (const w of WORKLOADS) {
+		if (w.provisions) continue;
+		const site = siteFor(prefix, w.id);
+		const m = await get(`/migrate?site=${site}&all=1&prefill=1`);
+		let ready = false;
+		for (let i = 0; i < 60 && !ready; i++) {
+			const r = await get(`/serve?site=${site}&path=/&edge=0`);
+			ready = r.status === 200;
+			if (!ready) await new Promise((r) => setTimeout(r, 2000));
+		}
+		console.log(`provisioned ${site}: migrate ${m.status}, serving ${ready ? 'yes' : 'NO'}`);
+		if (!ready)
+			throw new Error(`${site} never served a 200; measuring it would measure warming`);
+	}
+
+	// phase 2: the dataset buckets by minute, so a mid-minute open pulls in phase 1
+	const boundary = (Math.floor(Date.now() / 60_000) + 1) * 60_000 + 3_000;
+	console.log(`\nwaiting ${Math.round((boundary - Date.now()) / 1000)}s for the minute boundary`);
+	await new Promise((r) => setTimeout(r, Math.max(0, boundary - Date.now())));
+
 	const startedAt = new Date().toISOString();
 	const completed = new Map<string, number>();
 
 	for (const w of WORKLOADS) {
-		const site = siteFor(prefix, w.id);
+		const sites = sitesFor(prefix, w, repeat);
 		let done = 0;
 		for (let i = 0; i < repeat; i++) {
-			for (const path of w.drive(site)) {
-				const res = await fetch(`${endpoint}${path}`);
+			const site = (w.provisions ? sites[i] : sites[0]) as string;
+			for (const path of w.drive(w.provisions ? siteFor(prefix, w.id) : site, i)) {
+				const res = await get(path);
 				// a 503 is the fill queue answering, not a failure; it still spent duration
 				if (res.status >= 500 && res.status !== 503) {
 					console.warn(`  ${site} ${path} -> ${res.status}`);
 				}
-				await res.arrayBuffer();
 			}
 			done++;
 		}
-		completed.set(site, done);
-		console.log(`drove ${site}: ${done} x ${w.unit}`);
+		completed.set(w.id, done);
+		console.log(`drove ${sites.join(', ')}: ${done} x ${w.unit}`);
 	}
+	const endedAt = new Date().toISOString();
 
 	console.log(`\nwaiting ${settle}s for ingestion; an empty result before then is not evidence`);
 	await new Promise((r) => setTimeout(r, settle * 1000));
@@ -234,7 +283,7 @@ if (import.meta.main) {
 		headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
 		body: JSON.stringify({
 			query: GQL,
-			variables: { account, start: startedAt, end: new Date().toISOString() }
+			variables: { account, start: startedAt, end: endedAt }
 		})
 	});
 	const body = await res.json();
@@ -244,21 +293,24 @@ if (import.meta.main) {
 		console.log(JSON.stringify(body).slice(0, 400));
 		process.exit(1);
 	}
+	console.log(
+		`\n${rows.length} objects in the window; names: ${rows.map((r) => r.name || '(unnamed)').join(', ')}`
+	);
 
 	console.log(
-		'\n| class | GB-s total | GB-s per op | rows written/op | activeTime/cpuTime | alloc check |'
+		'\n| class | objects | GB-s total | GB-s per op | rows written/op | activeTime/cpuTime | alloc check |'
 	);
-	console.log('| --- | --- | --- | --- | --- | --- |');
+	console.log('| --- | --- | --- | --- | --- | --- | --- |');
 	for (const w of WORKLOADS) {
-		const site = siteFor(prefix, w.id);
-		const row = rows.find((r) => r.objectId.includes(site));
+		const names = sitesFor(prefix, w, repeat);
+		const row = sumRows(rows, names);
 		if (!row) {
-			console.log(`| ${w.label} | (no row) | | | | |`);
+			console.log(`| ${w.label} | ${names.length} | (no row) | | | | |`);
 			continue;
 		}
-		const n = completed.get(site) ?? 0;
+		const n = completed.get(w.id) ?? 0;
 		console.log(
-			`| ${w.label} | ${row.duration.toFixed(6)} | ${perOperation(row, n).toFixed(6)} | ` +
+			`| ${w.label} | ${names.length} | ${row.duration.toFixed(6)} | ${perOperation(row, n).toFixed(6)} | ` +
 				`${(row.rowsWritten / Math.max(1, n)).toFixed(1)} | ` +
 				`${cpuUnderstatement(row).toFixed(0)}x | ${allocationAgreement(row).toFixed(3)} |`
 		);
@@ -266,4 +318,5 @@ if (import.meta.main) {
 	console.log(
 		`\nn=${repeat} per class. An allocation check away from 1.000 invalidates the row.`
 	);
+	console.log(`window ${startedAt} .. ${endedAt}`);
 }

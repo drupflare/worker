@@ -37,8 +37,10 @@ export interface Remote {
 	branch: string;
 	/** the API host, so a self-hosted GitLab or Gitea works */
 	host?: string;
-	/** Bitbucket authenticates as Basic with the Atlassian account email as the username */
+	/** Bitbucket's REST API authenticates as Basic with the Atlassian account email as the username */
 	email?: string;
+	/** Bitbucket's GIT endpoint wants the Bitbucket username instead, and it is case sensitive */
+	username?: string;
 	/** an explicit clone URL, for a host whose git origin is not derivable from its API base */
 	clone?: string;
 	/** a pull/merge request head this remote is previewing instead of its branch */
@@ -49,6 +51,7 @@ export interface Remote {
 export interface Credential {
 	token: string;
 	email?: string;
+	username?: string;
 }
 
 const DEFAULT_HOST: Record<ProviderId, string> = {
@@ -76,12 +79,12 @@ export function cloneUrl(remote: Remote): string {
 	return `${base}/${repo}.git`;
 }
 
-/** the Basic pair the git transport uses; not the same shape as the API headers */
+/** Bitbucket differs from {@link authHeaders}: the API takes the email, git the username */
 export function smartAuth(remote: Remote, cred: Credential): { username: string; token: string } {
 	const token = cred.token;
 	if (remote.provider === 'gitlab') return { username: cred.email || 'oauth2', token };
 	if (remote.provider === 'bitbucket') {
-		return { username: cred.email ?? remote.email ?? '', token };
+		return { username: cred.username || remote.username || '', token };
 	}
 	return { username: cred.email || 'x-access-token', token };
 }
@@ -399,11 +402,10 @@ export function createHookRequest(
 	if (remote.provider === 'gitlab') {
 		return {
 			url: `${base}/api/v4/projects/${projectPath(remote.repo)}/hooks`,
-			// `signing_token` is 19.0 + a feature flag; `token` is what every older install sends
+			// no `signing_token`: GitLab validates it and rejects the whole request
 			body: {
 				url: deliverTo,
 				token: secret,
-				signing_token: secret,
 				push_events: true,
 				merge_requests_events: true,
 				enable_ssl_verification: true

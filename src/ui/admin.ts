@@ -590,6 +590,7 @@ ${r.previewOf ? `<button data-act="unpreview" data-id="${id}">Exit Preview</butt
 <input type="number" name="interval" min="0" step="5" value="60" title="Poll interval in minutes; 0 turns polling off" style="width:5rem;flex:0">
 <input type="text" name="token" placeholder="access token" autocomplete="off" spellcheck="false">
 <input type="text" name="email" placeholder="Atlassian account email (Bitbucket only)" autocomplete="off" spellcheck="false">
+<input type="text" name="username" placeholder="Bitbucket username (Bitbucket only)" autocomplete="off" spellcheck="false">
 <button type="submit">Connect</button>
 </form>
 <p class="sub">The token is stored in this site's own database, never in KV: KV is operator-writable and nothing there may change what a site can reach.</p>
@@ -616,7 +617,7 @@ ${r.previewOf ? `<button data-act="unpreview" data-id="${id}">Exit Preview</butt
 <tr><td>Gitea / Forgejo</td><td><code>read:repository</code></td><td><code>write:repository</code></td><td><code>write:repository</code></td></tr>
 <tr><td>Any Git Remote</td><td>read access over HTTPS</td><td><span class="dim">no API</span></td><td><span class="dim">register by hand</span></td></tr>
 </tbody></table>
-<p class="sub">GitLab has no narrower scope than <code>api</code> for writing a status. Bitbucket authenticates with your Atlassian account email as the username and the API token as the password. A plain remote polls only; use <strong>Webhook</strong> to mint a secret and register the delivery URL yourself.</p>
+<p class="sub">GitLab has no narrower scope than <code>api</code> for writing a status. Bitbucket takes two names with one API token: the REST API authenticates with your Atlassian account email, and git over HTTPS authenticates with your Bitbucket username, which is case sensitive. A plain remote polls only; use <strong>Webhook</strong> to mint a secret and register the delivery URL yourself.</p>
 
 <script>
 const out = document.getElementById('git-out');
@@ -685,7 +686,7 @@ document.getElementById('git-add').addEventListener('submit', async (e) => {
     const data = await call({
       action: 'add', provider: f.get('provider'), repo: f.get('repo'),
       branch: f.get('branch') || '', token: f.get('token') || '', email: f.get('email') || '',
-      interval: f.get('interval') || '60'
+      username: f.get('username') || '', interval: f.get('interval') || '60'
     }, t);
     out.textContent = 'Connected ' + data.repo + ' at ' + (data.head || 'unknown') + '.';
     window.location.reload();
@@ -788,6 +789,11 @@ export function renderAccess(row: OidcSetupRow): string {
 <p class="sub" style="margin:.4rem 0 0">Issuer <code>${escapeHtml(row.issuer || 'not set')}</code><br>
 Client ID <code>${escapeHtml(row.clientId || 'not set')}</code><br>
 Client secret ${row.secretPresent ? `<span class="ok">present</span>` : `<span class="over">absent</span>`} <span class="dim">(the <code>OIDC_CLIENT_SECRET</code> binding, never read back here)</span></p>
+</div>
+
+<div class="card warn">
+<strong>Requires the External Authentication Module</strong>
+<p class="sub" style="margin:.4rem 0 0">The host verifies the provider's token and hands Drupal a single-use ticket; <code>drupal/externalauth</code> is what maps that identity onto an account, and no contrib module ships in the packed tree. Install it from <strong>Extend</strong> before the first login, or a verified login has nowhere to land.</p>
 </div>
 
 <h2>Redirect URI</h2>

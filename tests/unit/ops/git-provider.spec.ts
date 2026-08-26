@@ -118,9 +118,21 @@ describe('the git transport, which is where the content actually comes from', ()
 			token: 't'
 		});
 		expect(smartAuth(remote('gitlab'), { token: 't' }).username).toBe('oauth2');
-		expect(smartAuth(remote('bitbucket'), { token: 't', email: 'a@b.test' }).username).toBe(
-			'a@b.test'
+	});
+
+	it('sends Bitbucket its git username, which is NOT the email its API takes', () => {
+		const cred = { token: 't', email: 'a@b.test', username: 'bbuser' };
+		// Atlassian documents the split: the account email for the REST API, the Bitbucket username
+		// for git over HTTPS. One field cannot drive both, and the email fails at the git endpoint
+		expect(smartAuth(remote('bitbucket'), cred).username).toBe('bbuser');
+		expect(authHeaders(remote('bitbucket'), cred).authorization).toBe(
+			`Basic ${btoa('a@b.test:t')}`
 		);
+	});
+
+	it('falls back to the username stored on the remote when the credential carries none', () => {
+		const r = { ...remote('bitbucket'), username: 'from-remote' };
+		expect(smartAuth(r, { token: 't', email: 'a@b.test' }).username).toBe('from-remote');
 	});
 });
 
@@ -279,11 +291,12 @@ describe('creating a webhook', () => {
 		expect((body.config as Record<string, unknown>).secret).toBe('sec');
 	});
 
-	// token is what every install before 19.0 sends back; signing_token is the 19.0 HMAC one
-	it('sends GitLab both the shared token and the signing token', () => {
+	it('sends GitLab the shared token and NOT a signing token', () => {
 		const { body } = hook(remote('gitlab'), 'https://s.test/h', 'sec');
 		expect(body.token).toBe('sec');
-		expect(body.signing_token).toBe('sec');
+		// measured against a real server: GitLab validates `signing_token` and rejects the whole
+		// request with `Signing token is invalid`, so sending both registered no hook at all
+		expect(body).not.toHaveProperty('signing_token');
 	});
 
 	it('subscribes Bitbucket to push and pull-request events by key', () => {

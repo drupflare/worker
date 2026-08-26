@@ -178,8 +178,8 @@ describe('what the backup is allowed to contain', () => {
 	it('mirrors the shipping interpreter, whose upstream source expires', () => {
 		const mirrored = ARCHIVED.filter((e) => e.mirrors?.startsWith('.interp/'));
 		expect(mirrored.map((e) => e.key)).toEqual([
-			'vendor/static-control85/php8.5-worker.mjs.wasm',
-			'vendor/static-control85/php8.5-worker.mjs'
+			'vendor/static-long64/php8.5-worker.mjs.wasm',
+			'vendor/static-long64/php8.5-worker.mjs'
 		]);
 	});
 

@@ -239,18 +239,18 @@
 			"note": "the canonical lineage at change counter 19, pinned by digest so a later edit cannot move it"
 		},
 		{
-			"key": "vendor/static-control85/php8.5-worker.mjs.wasm",
-			"bytes": 12218393,
-			"sha256": "02244ae68d49a5b97116646447151c310b9d29d449ed33993d5ad99578539148",
-			"md5": "988a338279a50604fac00c565a42b6b4",
+			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
+			"bytes": 12234574,
+			"sha256": "1a06a07554c136befdce8681777199a67328a906f65cb4f047fd53bbc75b05c9",
+			"md5": "68b3c2f5e1f996bfddfd4e1ce44586e5",
 			"mirrors": ".interp/php8.5.wasm",
-			"note": "the shipping PHP 8.5 binary; phasm publishes it as an artifact and artifacts expire"
+			"note": "the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8"
 		},
 		{
-			"key": "vendor/static-control85/php8.5-worker.mjs",
-			"bytes": 863402,
-			"sha256": "016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb",
-			"md5": "36aa14c39812465961b522d4065daba8",
+			"key": "vendor/static-long64/php8.5-worker.mjs",
+			"bytes": 865849,
+			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72",
+			"md5": "44123585c3daabf58e30978404d6bf2f",
 			"mirrors": ".interp/php8.5-worker.mjs",
 			"note": "its glue, which the seam imports as PHPFactory"
 		}

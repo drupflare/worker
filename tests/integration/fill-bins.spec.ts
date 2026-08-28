@@ -89,14 +89,21 @@ describe('the bins a fill empties on itself', () => {
 		REQUEST_TIMEOUT
 	);
 
-	// the two queue rows are the harness's own; without them the narrow arm is exactly
-	// `warmReassemble`. The wide arm is NOT `realRender`, which also empties the `render` bin
+	// the two queue rows are the harness's own -- one DELETE of the row it just queued, one INSERT.
+	// The wide arm is NOT `realRender`, which also empties the `render` bin
 	it(
-		'lands on ROWS_PER_FILL.warmReassemble once the harness rows are removed',
+		'charges ONE row for the fill itself, at or under the warmReassemble class',
 		async () => {
 			const { narrow } = await measured();
 			const HARNESS_QUEUE_ROWS = 2;
-			expect(narrow.rows - HARNESS_QUEUE_ROWS).toBe(ROWS_PER_FILL.warmReassemble);
+			const fill = narrow.rows - HARNESS_QUEUE_ROWS;
+			// this asserted equality with `warmReassemble` and held until the cache bins became
+			// WITHOUT ROWID. The two are measured on DIFFERENT PATHS -- that constant is
+			// `/user/login`, this is `/` -- and the conversion took a bin row off the front page and
+			// not off the login form, so the paths now differ by one and the equality was never the
+			// property being tested
+			expect(fill).toBe(1);
+			expect(fill).toBeLessThanOrEqual(ROWS_PER_FILL.warmReassemble);
 		},
 		REQUEST_TIMEOUT
 	);

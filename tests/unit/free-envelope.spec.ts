@@ -77,7 +77,7 @@ describe('the REGENERATION ceiling, which is the one that decides the product', 
 
 	it('is ~7.2x better with the fill window, and ROWS still bind rather than DO', () => {
 		const env = envelope(DEFAULT_MIX, { windowed: true });
-		expect(env.regenerationsPerDay).toBe(8_196);
+		expect(env.regenerationsPerDay).toBe(10_869);
 		expect(env.regenerationBoundBy).toBe('rows');
 	});
 
@@ -92,9 +92,12 @@ describe('the REGENERATION ceiling, which is the one that decides the product', 
 			envelope(DEFAULT_MIX, { windowed: true, warmth }).regenerationsPerDay;
 		expect(perDay('warmReassemble')).toBeGreaterThan(perDay('realRender'));
 		expect(perDay('realRender')).toBeGreaterThan(perDay('firstEverForPath'));
-		// and the old overstated figure sits INSIDE the range while describing none of its cases
+		// the retired flat 17 used to sit INSIDE the range while describing none of its cases. Since
+		// the cache bins became WITHOUT ROWID it sits ABOVE every per-path class and only the
+		// once-per-object fill exceeds it, so it now overstates rather than merely mis-describes
 		expect(ROWS_PER_FILL.realRender).toBeLessThan(17);
-		expect(ROWS_PER_FILL.firstEverForPath).toBeGreaterThan(17);
+		expect(ROWS_PER_FILL.firstEverForPath).toBeLessThan(17);
+		expect(ROWS_PER_FILL.firstFillOnFreshObject).toBeGreaterThan(17);
 	});
 });
 
@@ -222,11 +225,15 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
 	});
 
-	it('does not bind regeneration either, by 6x', () => {
+	it('does not bind regeneration either, but the margin NARROWED to 4.4x', () => {
+		// 5.8x while a fill cost 12 rows, 4.4x at 9. Cheaper rows raise the rows ceiling toward the
+		// duration one, so each further row saved buys less than the last and duration is what takes
+		// over. Asserted as a band rather than a floor, because the direction is the finding
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		const byDuration = Math.floor(e.duration.availableGbS / e.duration.perFillGbS);
 		expect(e.regenerationBoundBy).toBe('rows');
-		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 5);
+		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 4);
+		expect(byDuration).toBeLessThan(e.regenerationsPerDay * 5);
 	});
 
 	it('charges a cold fill ~2.9x a warm one, because boot is wall clock too', () => {
@@ -385,11 +392,11 @@ describe('rejecting bad traffic, scored against the meters rather than counted',
 
 	it('shows the ROWS meter is where a scanner actually hurts', () => {
 		// a scanner asks for paths that are never cached, so every request is a MISS and a fill.
-		// 1,000 of them is 12,000 rows -- 12% of the day -- against 1% of the Worker meter. It was
+		// 1,000 of them is 9,000 rows -- 9% of the day -- against 1% of the Worker meter. It was
 		// 13% until the serve tables became WITHOUT ROWID and a fill stopped paying an index row
 		const saving = scoreRejection(1_000, 'edge');
 		expect(saving.savedShare.rows).toBeGreaterThan(saving.savedShare.worker * 5);
-		expect(saving.savedShare.rows).toBeCloseTo(0.12, 5);
+		expect(saving.savedShare.rows).toBeCloseTo(0.09, 5);
 	});
 
 	it('is zero on every meter for zero traffic, so the model cannot flatter a rule', () => {
@@ -423,7 +430,7 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 		expect(base.servingBoundBy).toBe('worker');
 		expect(off.servingBoundBy).toBe('r2ClassB');
 		expect(off.perMeterViewCeiling.worker).toBe(666_666);
-		expect(off.perMeterViewCeiling.rows).toBe(819_672);
+		expect(off.perMeterViewCeiling.rows).toBe(1_086_956);
 		expect(off.perMeterViewCeiling.do).toBe(588_235);
 	});
 
@@ -550,16 +557,18 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		const shipped = envelope(DEFAULT_MIX, { windowed: true });
 		expect(unbatched.regenerationBoundBy).toBe('rows');
 		expect(shipped.regenerationBoundBy).toBe('rows');
-		expect(shipped.regenerationsPerDay).toBe(8_196);
+		expect(shipped.regenerationsPerDay).toBe(10_869);
 	});
 
-	it('shows boot work is SATURATED: 20x more amortisation buys ~1%', () => {
-		// batch 5 -> 100 is a 20x reduction in boot cost per fill and moves the ceiling 5,813 -> 5,878.
-		// Every boot-directed item -- JSPI, the heap restore, always-warm objects -- is bounded by
-		// this until rows-per-fill falls.
+	it('shows boot work is still nearly saturated, but LESS so since rows-per-fill fell', () => {
+		// batch 5 -> 100 is a 20x reduction in boot cost per fill. It bought 1.1% while a fill cost
+		// 12 rows and buys **2.1%** at 9, which is the reopening this assertion's previous comment
+		// predicted in so many words: boot-directed work is bounded by rows-per-fill, so making rows
+		// cheaper is what makes boot matter more. Still small; no longer shrinking.
 		const at5 = envelope(DEFAULT_MIX, { windowed: true, fillBatch: 5 }).regenerationsPerDay;
 		const at100 = envelope(DEFAULT_MIX, { windowed: true, fillBatch: 100 }).regenerationsPerDay;
-		expect(at100 / at5).toBeLessThan(1.02);
+		expect(at100 / at5).toBeGreaterThan(1.02);
+		expect(at100 / at5).toBeLessThan(1.03);
 	});
 
 	it('shows rows work pays until ~2 rows/fill, where DO takes over', () => {
@@ -715,7 +724,7 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 			windowed: true,
 			warmthMix: STEADY_STATE_WARMTH
 		}).regenerationsPerDay;
-		expect(base).toBe(8_196);
+		expect(base).toBe(10_869);
 		// 9,708 against 8,196: the real steady state regenerates MORE than the quoted figure, so
 		// the number in the docs is a floor. A ceiling that is too high is the dangerous direction
 		expect(mixed).toBeGreaterThan(base);
@@ -914,7 +923,7 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 	// the refutation survives on a new mechanism: close to free, and close to worthless
 	it('moves the windowed ceiling by about 1.5%, not by 2.27x in either direction', () => {
 		const arm = queueArm(undefined, { windowed: true });
-		expect(arm.alarmRegenerationsPerDay).toBe(8_196);
+		expect(arm.alarmRegenerationsPerDay).toBe(10_869);
 		expect(arm.ratio).toBeGreaterThan(1);
 		expect(arm.ratio).toBeLessThan(1.05);
 	});

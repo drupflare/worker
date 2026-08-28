@@ -12,6 +12,10 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *
  * Every arm is driven on ONE object and consecutively, because objects differ in marginal render
  * cost by 2.8x and an unpaired comparison here has already read 2.7x high once.
+ *
+ * All four fell when the pack's cache bins became `WITHOUT ROWID`: 156 -> 103, 24 -> 14, 12 -> 9,
+ * and `warmReassemble` alone unchanged at 2, because it writes only `cfw_page` and that table was
+ * already stored as its own key.
  */
 
 const TIMEOUT = 900_000;

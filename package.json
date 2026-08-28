@@ -19,6 +19,7 @@
 		"test:workers": "vitest run --project=workers",
 		"test:node": "vitest run --project=node",
 		"test:e2e": "vitest run --project=e2e",
+		"test:browser": "playwright test",
 		"test:contrib": "bun scripts/contrib-fixture.ts",
 		"test:e2e:lifecycle": "bun scripts/e2e-lifecycle.ts --only=lifecycle",
 		"test:php": "php -d opcache.enable_cli=0 ../rom/tests/run-driver-suite.php ./drupal-src",
@@ -78,6 +79,7 @@
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@cloudflare/workers-types": "^5.20260822.1",
+		"@playwright/test": "^1.62.1",
 		"@prettier/plugin-php": "^0.25.0",
 		"@types/bun": "latest",
 		"@vitest/coverage-istanbul": "^4.1.11",

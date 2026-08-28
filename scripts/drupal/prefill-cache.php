@@ -6,9 +6,9 @@
  *   php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/drupal/prefill-cache.php \
  *       <drupal-root> [--paths=/,/user/login] [--out=assets/prefill.json]
  *
- * WHY. A render costs 6.53-9.47 ms natively and 46 ms of edge cpuTime, and the free
- * plan gives an invocation 10 ms. So the cheapest render is the one that already
- * happened somewhere else. This produces two artifacts from one pass:
+ * WHY. A render costs 6.53-9.47 ms natively and 2,127 ms of edge cpuTime (n=10), and
+ * the free plan gives an invocation 10 ms. So the cheapest render is the one that
+ * already happened somewhere else. This produces two artifacts from one pass:
  *
  *   1. A warm `cache_render` in the site database, which turns an edge MISS from a
  *      full render into cache assembly. Render 2 is 15.8x cheaper than render 1 on

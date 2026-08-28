@@ -25,7 +25,7 @@ measures bytes it cannot compress further.
 | Cold boot | **1,398 ms** (n=3) | edge `cpuTime` |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **8,196 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
+| Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
@@ -39,7 +39,7 @@ accumulate 142 ms with no single invocation over 10 ms.
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **8,196/day** |
+| **Regeneration** | distinct pages re-rendered per day | **rows written** | **10,869/day** |
 
 Score any proposal with `bun scripts/measure/free-envelope.ts`; it fails a workload that misses
 either ceiling, and `tests/unit/free-envelope.spec.ts` covers the arithmetic. Two properties decide

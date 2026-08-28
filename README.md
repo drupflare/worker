@@ -92,14 +92,15 @@ Performance, with the full provenance in
 |                             | Drupflare                                                 | native PHP on a VPS     | prov.   |
 | --------------------------- | --------------------------------------------------------- | ----------------------- | ------- |
 | Cached page (the ~99% case) | **1 ms** DO CPU, 1 statement                              | full LEMP round trip    | M edge  |
-| Uncached render             | **34 ms**                                                 | **9.47 ms**             | M both  |
-| Wasm penalty                | **3.57x** warm / 3.94x cold                               | 1x by definition        | M local |
+| Uncached render             | **2,127 ms** DO CPU (n=10)                                | **9.47 ms**             | M edge  |
+| Wasm penalty, warm kernel   | **3.57x** warm / 3.94x cold, same-machine ratio           | 1x by definition        | M local |
 | Isolate startup             | **112 ms** of a 1,000 ms limit, not billed to the request | n/a; the box is running | M edge  |
 | Cold boot                   | **1,398 ms**, amortised off the request path              | ~0                      | M edge  |
 
-An uncached render is ~3.6x slower, and the architecture wins by not rendering rather than by rendering
-faster. If your traffic is mostly authenticated or write-heavy, that trade goes the wrong way and a VPS
-is the better tool — see below.
+The architecture wins by not rendering rather than by rendering faster. The 3.57x is a warm-kernel
+ratio taken on one machine; an uncached render as the edge bills it is ~2.1 s, which is the figure
+that matters and is why ~99% of traffic must never reach one. If your traffic is mostly
+authenticated or write-heavy, that trade goes the wrong way and a VPS is the better tool — see below.
 
 ### Where a VPS Still Wins
 
@@ -159,7 +160,7 @@ with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
 | ceiling          | what it limits                     | bound by                  | free today                         |
 | ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
 | **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
-| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **8,196/day**                      |
+| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **10,869/day**                     |
 
 Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
 through the CDN without invoking the Worker. But "requests to static assets are free and unlimited"
@@ -216,14 +217,19 @@ the largest style count that still fits.
 > [!CAUTION]
 > Do not enable the Workers Caching feature. Its cache key does not include the host, and this
 > product is multi-tenant by host — every site serves `/`, so one site's pages would be served to
-> another site's visitors. Cloudflare's cache-key documentation names this case directly:
-> _"white-labeled tenants where `tenant-a.example.com/index` and `tenant-b.example.com/index` must
-> produce different content — the cache key does not do this for you automatically."_ Partitioning it
-> needs a custom `cf.cacheKey` carrying the site id.
+> another site's visitors. Cloudflare states it plainly: _"The cache key does not include the host,
+> so a request to `/api/users/42` hits the same cached entry whether it came in through
+> `api.example.com`, `api.example.net`, a service binding, or a `workers.dev` URL."_
 >
-> It also bills every request at the standard rate _"including requests that are normally free:
-> static asset requests"_, which converts the one free serving path into a billed one. That is the
-> smaller problem, and on a paid plan it stops applying while the leak does not.
+> **Zone settings cannot add the host back.** _"No zone configuration for caching applies to Workers
+> Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
+> Worker's cache."_ The zone-level cache-key documentation does put the host in the key, and it
+> describes a different product; reading it as evidence about this one is the trap.
+>
+> It is also not the serving lever it appears to be. A hit skips Worker execution but is still
+> _"billed at the standard Workers request rate"_, so the 100,000/day meter does not move — and it
+> _"bills requests that are normally free: static asset requests and worker-to-worker invocations"_,
+> making it a net increase. What it saves is CPU, which is not a meter this project is bound by.
 >
 > The `caches.default` tier this project does use is a different mechanism and is safe: its key
 > carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.

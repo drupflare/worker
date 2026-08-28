@@ -26,12 +26,14 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *      `chargeFactorsFromSchema()` reads it off THIS object's schema with `PRAGMA index_list`.
  *   2. **the `sqlite_sequence` rewrite** -- one more charged row on every AUTOINCREMENT insert,
  *      measured in `autoincrement.spec.ts` and folded into the factor above.
- *   3. **speculative replay** -- the one nobody had counted. `Connection::predictBufferedInsertId()`
- *      refuses an AUTOINCREMENT table, because its next id comes from `sqlite_sequence` rather than
- *      from `max(rowid) + 1`, so an entity save inside a transaction replays the buffer through the
- *      host to learn the id it just assigned, and every buffered write is charged AGAIN. The replay
- *      covers the buffer as it stood, so an early statement is re-executed more often than a late
- *      one -- `node` is charged 9 executions in a node create and `node_field_revision` 2.
+ *   3. **speculative replay** -- the one nobody had counted. An entity save inside a transaction
+ *      replays the buffer through the host to learn an id it cannot predict, and every buffered
+ *      write is charged AGAIN. The replay covers the buffer as it stood, so an early statement is
+ *      re-executed more often than a late one -- `node` was charged 9 executions in a node create.
+ *
+ * **THE `spec` AND `replayed` COLUMNS BELOW PREDATE 2026-08-27.** `predictBufferedInsertId()` now
+ * reads an AUTOINCREMENT base from `sqlite_sequence` instead of refusing, so four content writes
+ * went from 24 replays / 128 statements to 18 / 119. `charged` and `stored` are unaffected.
  *
  * THE READINGS, 2026-08-23, packed site, warm interpreter, n=2 identical:
  *
@@ -45,35 +47,21 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * | A/B AUTOINCREMENT   |       4 |     2 |      1 |        2 | 2.00x |   2 |    1 |        1 |
  * | A/B plain rowid     |       1 |     1 |      1 |        1 | 1.00x |   1 |    0 |        0 |
  *
- * So a node create stores 5 rows and is charged 118: **23.6x**, which factors as 5.4x schema times
- * 4.37x re-execution. A node edit costs 229 because it rewrites the default-language data as well as
- * writing the revision, and its `node_revision` insert alone is executed 10 times.
+ * A node create stores 5 rows and is charged 118 -- **23.6x**, factoring as 5.4x schema times 4.37x
+ * re-execution. An edit costs 229 because it rewrites the default-language data as well.
  *
- * THE DIVISOR IS MEASURED, NOT ASSUMED. `executionFactor` divides charged rows by
- * `COUNT(*) delta x charge factor`, and both halves are read off the database either side of the
- * operation. "A subtraction is only as good as its subtrahend" -- assuming a node create stores one
- * `node` row would have been right, and assuming it for `node_field_data` on a REVISION would not.
- * A table the operation only UPDATEs stores nothing, so it reports `null` rather than a ratio, which
- * is why the revision row above has no whole-operation factor.
+ * THE DIVISOR IS MEASURED. `executionFactor` divides charged rows by `COUNT(*) delta x charge
+ * factor`, both read off the database either side of the operation -- a subtraction is only as good
+ * as its subtrahend. A table only UPDATEd stores nothing and reports `null` rather than a ratio.
  *
- * EVERY OPERATION RUNS TWICE AND THE SECOND IS PRICED. The first save of each kind pays for entity
- * field definitions, the schema repair, and the one coalesced `bumpGeneration('cachetags')` the
- * whole fixture gets; charging those to the operation would price a cold cache as a node save.
- *
- * THE ENTITY API RATHER THAN A FORM. A form submission also writes the session, the form cache and
- * flood control, so its total is the operation PLUS the wrapper, and neither number stands in for
- * the other. What is isolated here is the entity write, which is what the per-table split and the
- * AUTOINCREMENT audit are about.
+ * EVERY OPERATION RUNS TWICE AND THE SECOND IS PRICED, so field definitions, the schema repair and
+ * the coalesced `bumpGeneration()` are not charged to it. THE ENTITY API RATHER THAN A FORM, which
+ * would add the session, the form cache and flood control on top.
  *
  * WHAT THIS DOES NOT MEASURE, stated rather than implied: how much of a real save's re-execution the
- * KEYWORD owns. `speculate()` has three call sites -- an insert id that cannot be predicted, a row
- * count that is not a single-row insert, and a read that has to see buffered writes -- and only the
- * first is the keyword's. A dirty read replays the whole buffer and memoises every pending id with
- * it, so an entity save that reads back what it wrote would pay some of this anyway. The A/B pair is
- * the controlled experiment that names the mechanism and bounds it from below at one replay per
- * unresolved buffered insert; sizing the win on a real save needs a build with the keyword removed,
- * and that build does not exist. So 4.37x is what the replay machinery COSTS TODAY, not a prediction
- * of what dropping AUTOINCREMENT would return.
+ * KEYWORD owns. `speculate()` has three call sites and only the id one was ever the keyword's.
+ * **Now measured**: predicting the AUTOINCREMENT id removed 6 of 24 replays and 9 of 128 statements,
+ * so the keyword's share was 25% and 7%; the rest was never its to give back.
  */
 
 type Payload = Record<string, unknown>;
@@ -374,35 +362,46 @@ describe('the A/B: what AUTOINCREMENT costs a buffered insert whose id is read b
 	);
 
 	it(
-		'is the reason the driver cannot predict the id, so it replays the buffer',
+		'no longer replays the buffer to learn the id, on either table',
 		async () => {
 			const ops = await measured();
 			const auto = by(ops, 'txn-autoinc');
 			const rowid = by(ops, 'txn-rowid');
-			// THE MECHANISM, measured rather than read off the docblock. `predictBufferedInsertId()`
-			// answers `max(rowid) + offset` for an ordinary rowid table and refuses an AUTOINCREMENT
-			// one, whose next id lives in `sqlite_sequence`. The refusal is a speculative replay,
-			// which is a second host transaction and a second execution of every buffered write
+			// THIS ASSERTED THE OPPOSITE UNTIL 2026-08-27, and it was correct then.
+			// `predictBufferedInsertId()` answered `max(rowid) + offset` for an ordinary rowid table
+			// and REFUSED an AUTOINCREMENT one, whose next id lives in `sqlite_sequence` -- and the
+			// refusal was a speculative replay, a second host transaction re-running every buffered
+			// write. `sqlite_sequence` is an ordinary readable table, so the base is
+			// `max(seq, max(rowid))` and the arithmetic is the same one. Both arms predict now.
 			expect(rowid.driver.speculative).toBe(0);
 			expect(rowid.driver.replayed).toBe(0);
-			expect(auto.driver.speculative).toBeGreaterThan(0);
-			expect(auto.driver.replayed).toBeGreaterThan(0);
-			expect(auto.driver.transactions).toBeGreaterThan(rowid.driver.transactions);
+			expect(auto.driver.speculative).toBe(0);
+			expect(auto.driver.replayed).toBe(0);
+			expect(auto.driver.transactions).toBe(rowid.driver.transactions);
 		},
 		REQUEST_TIMEOUT
 	);
 
 	it(
-		'runs a replay on every real entity save, which is where the 4x comes from',
+		'still replays on a real entity save, but no longer for the AUTOINCREMENT id',
 		async () => {
 			const ops = await measured();
 			for (const name of ENTITY_OPS) {
 				const op = by(ops, name);
-				// every one of these saves into an AUTOINCREMENT table and reads the id back, so
-				// every one pays the refusal; a save that did not would report 0 here
-				expect(op.driver.speculative, `${name} speculative replays`).toBeGreaterThan(0);
-				expect(op.driver.replayed, `${name} replayed statements`).toBeGreaterThan(0);
+				// the isolated A/B above now predicts on both arms, and a real save does not -- so
+				// what remains here is a DIFFERENT refusal, chiefly an insert that supplies its own
+				// id column (`RowidPlan::suppliesRowid`). Measured across four content writes: 24
+				// replays / 128 statements before the prediction, 18 / 119 after. Left as a floor
+				// rather than a pin, because the residue is what the next mechanism removes
+				expect(op.driver.speculative, `${name} speculative replays`).toBeGreaterThanOrEqual(
+					0
+				);
+				expect(op.driver.replayed, `${name} replayed statements`).toBeGreaterThanOrEqual(0);
 			}
+			// the aggregate is what carries the finding; a per-op floor of 0 asserts nothing
+			const total = ENTITY_OPS.reduce((n, name) => n + by(ops, name).driver.speculative, 0);
+			expect(total).toBeGreaterThan(0);
+			expect(total).toBeLessThan(24);
 		},
 		REQUEST_TIMEOUT
 	);

@@ -13,13 +13,8 @@ export type Rung = (typeof RUNGS)[number];
 /** consecutive same-code failures before quarantine; below this the lower rungs own the problem */
 export const QUARANTINE_STRIKES = 3;
 
-/**
- * Consecutive failures before a rollback is even considered, ON TOP of being quarantined.
- *
- * Deliberately much higher than the quarantine threshold: a quarantined site is still serving, so there
- * is no urgency, and the cost of being wrong is a user's content.
- */
-export const ROLLBACK_STRIKES = 10;
+/** dwell in TIME; strikes freeze at quarantine, so any strike threshold above it is unreachable */
+export const ROLLBACK_DWELL_MS = 30 * 60_000;
 
 export type RepairState = {
 	rung: Rung;
@@ -41,9 +36,8 @@ export const CLEAN_STATE: RepairState = {
 /**
  * Folds one outcome into the state.
  *
- * A DIFFERENT failure code resets the strike count rather than adding to it. Two unrelated faults are not
- * evidence of one durable condition, and summing them is how a site gets quarantined for having two
- * different bad days.
+ * A DIFFERENT failure code resets the strike count: two unrelated faults are not evidence of one
+ * durable condition, and summing them quarantines a site for having two bad days.
  */
 export function recordOutcome(
 	state: RepairState,
@@ -76,23 +70,30 @@ export type RollbackDecision = {
 };
 
 /**
- * Whether to roll back, and it says no for a named reason far more often than it says yes.
+ * Whether to roll back; it says no for a named reason far more often than it says yes.
  *
- * Requires all three: quarantined already, `ROLLBACK_STRIKES` consecutive failures of the SAME code, and
- * a restore point that actually exists. The last one is not a formality -- rolling back to nothing would
- * leave a site with no database at all, which is strictly worse than the fault being repaired.
+ * Requires quarantine, {@link ROLLBACK_DWELL_MS} of dwell, and a restore point that exists --
+ * reverting to nothing is strictly worse than the fault being repaired.
  */
 export function shouldRollback(
 	state: RepairState,
-	restorePoint: { id: number; statements: number } | null
+	restorePoint: { id: number; statements: number } | null,
+	nowMs: number
 ): RollbackDecision {
 	if (!isQuarantined(state)) {
 		return { rollback: false, reason: 'not quarantined; the lower rungs own this' };
 	}
-	if (state.strikes < ROLLBACK_STRIKES) {
+	// a quarantined state with no timestamp predates this field; treat it as just-quarantined rather
+	// than as infinitely old, so an upgrade cannot roll a site back on its first alarm
+	const since = state.quarantinedAt;
+	if (since === null) {
+		return { rollback: false, reason: 'quarantined with no timestamp; waiting for the dwell' };
+	}
+	const held = nowMs - since;
+	if (held < ROLLBACK_DWELL_MS) {
 		return {
 			rollback: false,
-			reason: `${state.strikes}/${ROLLBACK_STRIKES} consecutive failures of ${state.code}`
+			reason: `quarantined ${Math.max(0, Math.round(held / 1000))}s of ${ROLLBACK_DWELL_MS / 1000}s for ${state.code}`
 		};
 	}
 	if (!restorePoint) {
@@ -107,7 +108,7 @@ export function shouldRollback(
 	}
 	return {
 		rollback: true,
-		reason: `${state.strikes} consecutive failures of ${state.code}; replaying restore point ${restorePoint.id} (${restorePoint.statements} statements)`
+		reason: `quarantined ${Math.round(held / 60_000)}m for ${state.code}; replaying restore point ${restorePoint.id} (${restorePoint.statements} statements)`
 	};
 }
 
@@ -117,11 +118,8 @@ export function serialiseState(state: RepairState): string {
 }
 
 /**
- * Reads the state back, defaulting to clean on anything unexpected.
- *
- * A corrupt state row must not quarantine a healthy site, and it must not un-quarantine a sick one either
- * -- so the default is clean and the caller re-derives from live outcomes rather than trusting a partial
- * parse.
+ * Reads the state back, defaulting to clean on anything unexpected, so a corrupt row neither
+ * quarantines a healthy site nor un-quarantines a sick one; the caller re-derives from outcomes.
  */
 export function parseState(raw: string | null | undefined): RepairState {
 	if (!raw) return { ...CLEAN_STATE };

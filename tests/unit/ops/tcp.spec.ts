@@ -118,7 +118,7 @@ describe('the queue url', () => {
 	});
 });
 
-describe('tcpMethod: the deferred tier’s budget, borrowed rather than reinvented', () => {
+describe("tcpMethod: the deferred tier's budget, borrowed rather than reinvented", () => {
 	it('gives a read the GET budget and everything else the POST one', () => {
 		expect(tcpMethod('redis', 'get')).toBe('GET');
 		expect(tcpMethod('redis', 'HGETALL')).toBe('GET');
@@ -200,7 +200,7 @@ describe('runTcpExchange: the real client over a scripted socket', () => {
 		expect(out.body).toContain('REDIS_URL');
 	});
 
-	it('refuses a url that is not this tier’s, and a body that is not JSON', async () => {
+	it("refuses a url that is not this tier's, and a body that is not JSON", async () => {
 		const deps = {
 			connect: async (): Promise<CoreSocket> => {
 				throw new Error('should not dial');

@@ -7,6 +7,7 @@ import {
 	DAILY_DO_QUOTA,
 	DAILY_ROWS_QUOTA,
 	DEFAULT_AUTH_ROWS_FRACTION,
+	DO_REQUESTS_PER_AUTH_RENDER,
 	MAX_AUTH_ROWS_FRACTION,
 	MIN_AUTH_ROWS_FRACTION,
 	ROWS_PER_AUTH_RENDER,
@@ -133,6 +134,27 @@ describe('authAllowance: the reservation splits the meter', () => {
 		const a = authAllowance({ PLAN: 'free' });
 		expect(a.boundBy).toBe('rows');
 		expect(a.doRequestsReserved).toBe(25_000);
+	});
+
+	/**
+	 * The OTHER branch, which no shipped configuration reaches.
+	 *
+	 * The quotas are equal and a render is one hop, so `byRows <= byDo` for every integer
+	 * rowsPerRender and `'rows'` always wins. Driving it needs a render that costs less than one row,
+	 * which is the shape a boot-on-the-alarm retry would produce -- so it is covered rather than
+	 * deleted, and this is the test that would fail if someone deleted it as dead.
+	 */
+	it('reports do when a render costs fewer rows than DO hops', () => {
+		const a = authAllowance({ PLAN: 'free', AUTH_ROWS_PER_RENDER: '0.5' });
+		expect(a.boundBy).toBe('do');
+		expect(a.rendersPerDay).toBe(a.doRequestsReserved);
+	});
+
+	// the constants that make the branch above unreachable today, asserted so a change is visible
+	it('has equal quotas and one hop per render, which is WHY rows always bind', () => {
+		expect(DAILY_DO_QUOTA).toBe(DAILY_ROWS_QUOTA);
+		expect(DO_REQUESTS_PER_AUTH_RENDER).toBe(1);
+		expect(ROWS_PER_AUTH_RENDER).toBeGreaterThan(DO_REQUESTS_PER_AUTH_RENDER);
 	});
 
 	it('leaves the anonymous side above what a 3M-visit month needs', () => {

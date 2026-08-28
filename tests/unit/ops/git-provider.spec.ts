@@ -219,6 +219,27 @@ describe('open requests', () => {
 		expect(one?.id).toBe('7');
 		expect(one?.sha).toBe('ccc');
 		expect(one?.author).toBe('Dev Eloper');
+		expect(one?.draft).toBe(false);
+	});
+
+	it('reads a Bitbucket draft, which was hardcoded false for every pull request', () => {
+		const one = pullsRequest(remote('bitbucket')).pick({
+			values: [{ id: 8, source: { branch: { name: 't' } }, draft: true }]
+		})[0];
+		expect(one?.draft).toBe(true);
+	});
+
+	it('reads a draft flag for EVERY provider that has one', () => {
+		const drafts: Record<string, unknown> = {
+			github: { number: 1, draft: true },
+			gitea: { number: 1, draft: true },
+			gitlab: { iid: 1, draft: true },
+			bitbucket: { id: 1, draft: true }
+		};
+		for (const p of API_PROVIDERS) {
+			const body = p === 'bitbucket' ? { values: [drafts[p]] } : [drafts[p]];
+			expect(pullsRequest(remote(p)).pick(body)[0]?.draft, p).toBe(true);
+		}
 	});
 
 	it('answers an empty list rather than throwing on a body it did not expect', () => {

@@ -6,16 +6,9 @@ import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/mi
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
  * interpreter -- and only the interpreter -- replaced.
  *
- * Shared rather than copied into each of the seven spec files, for the reason
- * `drupal-schema.ts` gives: a harness duplicated seven times drifts until the suites are
- * testing different things.
- *
- * What is real here: `ctx.storage.sql`, `ctx.storage.setAlarm`/`getAlarm`, the alarm handler,
- * `caches.default`, the FIFO gate, the Worker in front of the object, and the packed migration
- * chunks out of the ASSETS binding. WHAT IS NOT: `php._run()`. There is no wasm interpreter in
- * this lane, so `runJson()` is stubbed -- see `stubRender()` for what that costs.
- *
- * Not a `.spec.ts`, so vitest does not collect it, and `tests/**` is excluded from coverage.
+ * Shared rather than copied into seven spec files, which is how harnesses drift. Real: storage,
+ * alarms, `caches.default`, the FIFO gate, the front Worker, the packed migration chunks. Not
+ * real: `php._run()`, stubbed by `stubRender()`.
  */
 
 /** the `ctx.storage.sql` surface, same shape `drupal-schema.ts` declares */
@@ -24,6 +17,8 @@ export type Sql = {
 		text: string,
 		...params: unknown[]
 	) => { toArray(): Record<string, unknown>[]; rowsWritten: number; rowsRead: number };
+	/** the platform's own byte count; a spec measuring stored bytes reads it rather than a sum */
+	databaseSize?: number;
 };
 
 /** what `renderPage()`'s PHP prints, which is what `fillOne()` consumes */
@@ -101,6 +96,13 @@ export type ServeDo = {
 			setAlarm: (at: number) => Promise<void>;
 		};
 	};
+	/** the counted handle; `ctx.storage` above is the raw one the proxy wraps */
+	storage: {
+		getAlarm: () => Promise<number | null>;
+		setAlarm: (at: number) => Promise<void>;
+		put: (key: string | Record<string, unknown>, value?: unknown) => Promise<void>;
+		delete: (key: string | string[]) => Promise<boolean | number>;
+	};
 	sql: Sql;
 	env: Record<string, unknown>;
 	php: unknown;
@@ -109,6 +111,16 @@ export type ServeDo = {
 	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };
 	/** how many result sets needed a wide-integer re-read this lifetime; see `src/db/wide-integers.ts` */
 	wideRepairs?: number;
+	txnSpeculative?: number;
+	txnStatements?: number;
+	/** speculative replays a table filter could have skipped; see `execTxn()` */
+	txnSkippable?: number;
+	txnSkippableStatements?: number;
+	txnSkipUnparseable?: number;
+	txnSkipUnattributed?: number;
+	txnSkipOverlap?: number;
+	txnSpeculativeWithRead?: number;
+	txnSpeculativeNoRead?: number;
 	alarm: () => Promise<unknown>;
 	armFillAlarm: () => void;
 	ensureServeTables: () => void;
@@ -336,15 +348,9 @@ export function inObject<T>(
 /**
  * Replaces the interpreter with a function of the path.
  *
- * `php` is set to a non-null marker because that is precisely what the module tests: a MISS
- * refuses to render inline when `this.php` is null (`x-cfw-inline: cold`) and estimates 4,000 ms
- * for a boot it cannot wait out. Nothing here calls into the marker.
- *
- * What this cannot cover, stated where it is done rather than in a report: anything whose
- * failure mode is inside Drupal. The original asserted a real `<title>` in the body and that two
- * paths return different bytes, which caught `PageCache` memoizing its cid across paths. A stub
- * keyed on the path agrees with the JS half by construction, so that particular defect is out of
- * reach here and stays with the deployed e2e lane.
+ * `php` is a non-null marker because that is what the module tests: a MISS refuses to render
+ * inline when `this.php` is null. It CANNOT cover anything whose failure is inside Drupal -- a
+ * stub keyed on the path agrees with the JS half by construction.
  *
  * @returns the calls made, decoded out of the PHP fragment the module emitted
  */
@@ -532,13 +538,9 @@ export const tick = (ms = 2) => new Promise((resolve) => setTimeout(resolve, ms)
 /**
  * Runs the alarm handler until the object reports the chain settled.
  *
- * Replaces the original suite's `waitForHit()`, which polled `/serve` for up to 20 s. Here the
- * handler is invoked directly, so a chain that took seconds of wall clock takes milliseconds.
- *
- * The loop asks the OBJECT whether it is settled rather than trusting the return value, because
- * `runDurableObjectAlarm()` answers false in two different situations: nothing was scheduled, and
- * the runtime already fired what was scheduled. An alarm armed at +1 ms routinely lands before
- * the next line of a spec does, so "false" cannot be read as "nothing happened".
+ * It asks the OBJECT whether it settled rather than trusting the return value:
+ * `runDurableObjectAlarm()` answers false both when nothing was scheduled and when the runtime
+ * already fired it, and an alarm armed at +1 ms routinely lands before the next line of a spec.
  *
  * @returns how many firings this driver performed itself
  */

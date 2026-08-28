@@ -181,13 +181,20 @@ export const MAX_SUBJECT_CHARS = 998;
 export const MAX_HEADER_BYTES = 16_384;
 
 /**
- * How many queued messages one drain may send.
+ * How many queued messages one drain may send: {@link MAIL_DRAIN_BUDGET_MS} over one send.
  *
- * Each send is one of the 50 subrequests an invocation gets -- a `fetch` on the Cloudflare lanes, a
- * socket on the SMTP one -- and the fill batch in the same firing has already spent several.
+ * The meter is DURATION, not the 50 subrequests this used to cite -- `connect()` blocks
+ * hibernation and the socket is held for the whole sequential batch, so the object is billed wall
+ * clock for every conversation in it.
  */
 export const DEFAULT_MAIL_DRAIN_LIMIT = 5;
 export const MAX_MAIL_DRAIN_LIMIT = 25;
+
+/** the per-firing wall-clock budget the two bounds are derived from; stated, not yet measured */
+export const MAIL_DRAIN_BUDGET_MS = 3_000;
+
+/** what one send may take for {@link DEFAULT_MAIL_DRAIN_LIMIT} to fit that budget */
+export const MAIL_SEND_BUDGET_MS = MAIL_DRAIN_BUDGET_MS / DEFAULT_MAIL_DRAIN_LIMIT;
 
 /**
  * How many times one message may be attempted, in total.

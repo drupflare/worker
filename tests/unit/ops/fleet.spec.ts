@@ -7,6 +7,7 @@ import {
 	reportSite,
 	rolloutProgress,
 	shouldReport,
+	warmTargets,
 	type FleetDb,
 	type FleetRow
 } from '../../../src/ops/fleet';
@@ -162,5 +163,77 @@ describe('rolloutProgress', () => {
 
 	it('reports a finished rollout as exactly 1', () => {
 		expect(rolloutProgress([row({ packGeneration: 'new' })], 'new')?.fraction).toBe(1);
+	});
+});
+
+/**
+ * Which objects the cron may create. `idFromName()` creates whatever it is handed, so the old
+ * `'default'` warmed a phantom and reported success. The property that matters is the REFUSAL.
+ */
+describe('warmTargets', () => {
+	const NOW = 1_700_000_000_000;
+	const row = (site: string, ageMs = 0): FleetRow => ({
+		site,
+		packGeneration: 'p1',
+		coreVersion: '11.0.0',
+		workerVersion: 'w1',
+		plan: 'free',
+		lastSeenMs: NOW - ageMs
+	});
+
+	it('drives every fresh reported site when nothing is configured', () => {
+		const t = warmTargets([row('b.example'), row('a.example')], [], NOW);
+		expect(t.sites).toEqual(['a.example', 'b.example']);
+		expect(t.source).toBe('fleet');
+	});
+
+	it('invents nothing on a bare deploy: no binding, no configured list, no sites', () => {
+		expect(warmTargets(null, [], NOW)).toEqual({
+			sites: [],
+			source: 'none',
+			unknown: [],
+			stale: []
+		});
+	});
+
+	it('drives no site when the inventory is bound but empty', () => {
+		const t = warmTargets([], [], NOW);
+		expect(t.sites).toEqual([]);
+		expect(t.source).toBe('none');
+	});
+
+	it('refuses a configured name the fleet has never reported', () => {
+		const t = warmTargets([row('real.example')], ['default', 'real.example'], NOW);
+		expect(t.sites).toEqual(['real.example']);
+		expect(t.unknown).toEqual(['default']);
+	});
+
+	it('skips a site past the heartbeat rather than spending the meter on a guess', () => {
+		const t = warmTargets(
+			[row('fresh.example'), row('gone.example', FLEET_HEARTBEAT_MS + 1)],
+			[],
+			NOW
+		);
+		expect(t.sites).toEqual(['fresh.example']);
+		expect(t.stale).toEqual(['gone.example']);
+	});
+
+	it('separates a stale configured name from an unknown one', () => {
+		const t = warmTargets(
+			[row('stale.example', FLEET_HEARTBEAT_MS + 1)],
+			['stale.example', 'never.example'],
+			NOW
+		);
+		expect(t.sites).toEqual([]);
+		expect(t.stale).toEqual(['stale.example']);
+		expect(t.unknown).toEqual(['never.example']);
+		expect(t.source).toBe('none');
+	});
+
+	it('trusts the configured list when there is no inventory to check it against', () => {
+		const t = warmTargets(null, ['a.example'], NOW);
+		expect(t.sites).toEqual(['a.example']);
+		expect(t.source).toBe('configured');
+		expect(t.unknown).toEqual([]);
 	});
 });

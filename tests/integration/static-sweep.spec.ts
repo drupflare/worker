@@ -23,32 +23,17 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * What survives a request boundary in an interpreter that does not die.
  *
- * PHP on a real SAPI resets class statics by ending the process, so Drupal never had to. Here the
- * interpreter is a warm Durable Object serving many requests for many people, and six members of
- * this family had been found -- `Html::$seenIds`, `PathMatcher::$isCurrentFrontPage`,
- * `PageCache::$cid`, `drupal_static()`, uid-1 cache poisoning and `FormState::$anyErrors` -- every
- * one of them by accident. This file is the sweep that stops that being the discovery mechanism.
+ * Six members of this family had been found -- `Html::$seenIds`, `PathMatcher::$isCurrentFrontPage`,
+ * `PageCache::$cid`, `drupal_static()`, uid-1 cache poisoning, `FormState::$anyErrors` -- every one
+ * by accident, and this is the sweep that stops accident being the discovery mechanism.
  *
- * **The design rule, and it is why the last one hid for the life of the project.** A harness that
- * repeats a step and byte-diffs would NOT have caught `FormState::$anyErrors`: two identical failed
- * logins agree exactly, because both fail and neither needs the submit handler the flag gates. So
- * every step that can succeed or fail is run in BOTH orders. Varying the outcome is what makes a
- * gate visible; repeating the step is what hides it.
+ * Every step that can succeed or fail runs in BOTH orders: repeating a step and byte-diffing would
+ * miss `FormState::$anyErrors`, since two identical failed logins agree exactly.
  *
- * Three instruments, because no one of them sees the whole family:
- *
- * - **byte diff, warm against cold.** The same request as step N of a warm sequence and as step 1
- *   of a fresh object. Sees anything that reaches the response.
- * - **named carriers**, via `BOUNDARY_STATE`. Instance state on container services --
- *   `ThemeManager::$activeTheme` is a property, not a static -- which the blind half cannot see.
- * - **the blind static fingerprint**, every static property of every declared class. Sees a carrier
- *   nobody has thought of, and is the half that caught `Renderer::$contextCollection`.
- *
- * **The confound this file had to rule out first.** An authenticated admin page renders 118,936
- * bytes on its first pass and 95,215 on every one after it, in the same object, for the same user,
- * with no identity change -- BigPipe scaffolding that a warm `dynamic_page_cache` makes unnecessary.
- * That is Drupal working, and a byte-diff harness that did not name its bins would report it as a
- * leak. `is measuring carried state and not cache warmth` at the bottom is the control that pins it.
+ * Three instruments, because none sees the whole family: a byte diff of warm against cold, the named
+ * carriers in `BOUNDARY_STATE` (instance state the blind half cannot see), and a blind fingerprint
+ * of every static property of every declared class. The control at the bottom separates a leak from
+ * BigPipe scaffolding a warm `dynamic_page_cache` makes unnecessary.
  */
 
 const REQUEST_TIMEOUT = 900_000;
@@ -822,26 +807,13 @@ describe('process globals that outlive the script', () => {
 	/**
 	 * A TRANSACTION LEFT OPEN USED TO SILENCE EVERY LATER WRITE. Fixed 2026-08-20; regression test.
 	 *
-	 * **THE MECHANISM: `cfw_do_sqlite\Connection::$buffer`, on a connection `Database::$connections`
-	 * holds forever.** The driver withholds writes while a Drupal transaction is open and replays
-	 * them at commit, because `ctx.storage.sql` refuses BEGIN. A script that ends between
-	 * `startTransaction()` and the commit leaves the buffer open: on a real SAPI the Transaction
-	 * object is destructed and `TransactionManagerBase` rolls back, and here the symbol table
-	 * survives the script so the destructor never runs.
+	 * The driver withholds writes while a Drupal transaction is open and replays them at commit. A
+	 * script that ends between `startTransaction()` and the commit leaves the buffer open, because
+	 * the symbol table survives the script and the Transaction destructor never runs -- so every
+	 * later write in that object was discarded while every request looked fine from outside.
 	 *
-	 * Measured before the fix: after the halt, `isBuffering()` was TRUE, the NEXT render answered
-	 * 200 with the same 17,670 bytes as a clean one, `isBuffering()` was still TRUE afterwards, host
-	 * transactions had not moved and the row the halted script wrote was not in the database.
-	 * Nothing about that request looks wrong from outside and every write it made was discarded.
-	 *
-	 * `Connection::discardOrphanedTransaction()` in the `rom` sibling drops the buffer AND Drupal's
-	 * own stack -- dropping only the buffer leaves the next `startTransaction()` recording a
-	 * savepoint into something that no longer exists, which throws `UncommittedStateException`.
-	 * `RequestResetter` calls it at the boundary, on connections that are already open.
-	 *
-	 * BLAST RADIUS while it was live: silent write loss for the life of the object. Sessions never
-	 * persisted, so logins stopped sticking; cache writes never landed, so every render recomputed;
-	 * a node save reported success and saved nothing. No cross-user disclosure.
+	 * `Connection::discardOrphanedTransaction()` drops the buffer AND Drupal's own stack; dropping
+	 * only the buffer makes the next `startTransaction()` throw `UncommittedStateException`.
 	 */
 	it(
 		'discards a transaction a halted request left open, and lets the next write land',

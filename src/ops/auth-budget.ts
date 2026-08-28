@@ -1,4 +1,4 @@
-import { isPaid, type PlanEnv } from './plan';
+import { isPaid, type PlanEnv } from './plan.js';
 
 /**
  * A bounded daily allowance for AUTHENTICATED traffic, and a degrade ladder for past it.
@@ -139,7 +139,12 @@ export type AuthAllowance = {
 	rendersPerDay: number;
 	/** DO requests/day the reservation buys, at one hop per render */
 	doRequestsReserved: number;
-	/** which meter runs out first inside the reservation */
+	/**
+	 * Which meter runs out first inside the reservation.
+	 *
+	 * `'do'` is reachable but no shipped configuration reaches it: the quotas are equal and a
+	 * render is one hop, so rows always win. It turns over if a render stops being one hop.
+	 */
 	boundBy: 'rows' | 'do';
 	/** false on paid, where none of these meters bind */
 	enforced: boolean;

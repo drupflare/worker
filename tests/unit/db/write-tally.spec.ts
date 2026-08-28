@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	amplification,
 	countingSql,
+	countingStorage,
 	emptyTally,
 	overheadShare,
 	rankTally,
@@ -510,5 +511,95 @@ describe('splitChargedRows', () => {
 		expect(split.dataRows).toBe(7);
 		expect(split.indexRows).toBe(0);
 		expect(split.indexShare).toBe(0);
+	});
+});
+
+/**
+ * The KV half of the rows meter: an idle site arming 360 alarms a day reported 0 rows against a
+ * model pricing it at 360, and that counter is what gates read-only mode.
+ */
+describe('countingStorage', () => {
+	function harness() {
+		const calls: string[] = [];
+		let deleted: boolean | number = true;
+		const raw = {
+			marker: 'real',
+			put: async (..._a: unknown[]) => void calls.push('put'),
+			delete: async (..._a: unknown[]) => {
+				calls.push('delete');
+				return deleted;
+			},
+			deleteAll: async () => void calls.push('deleteAll'),
+			setAlarm: async (..._a: unknown[]) => void calls.push('setAlarm'),
+			deleteAlarm: async () => void calls.push('deleteAlarm'),
+			getAlarm: async () => 7
+		};
+		const tally = emptyTally();
+		let charged = 0;
+		const storage = countingStorage(
+			raw,
+			() => tally,
+			(rows) => {
+				charged += rows;
+			}
+		);
+		return {
+			storage,
+			tally,
+			calls,
+			charged: () => charged,
+			setDeleted: (v: boolean | number) => {
+				deleted = v;
+			}
+		};
+	}
+
+	it('charges one row per setAlarm, which is the idle site the model prices', async () => {
+		const h = harness();
+		for (let i = 0; i < 360; i++) await h.storage.setAlarm(i);
+		expect(h.charged()).toBe(360);
+		expect(h.tally.byTable['?storage.setAlarm']).toBe(360);
+		expect(h.tally.statementsByTable['?storage.setAlarm']).toBe(360);
+	});
+
+	it('charges a multi-key put per key, not per call', async () => {
+		const h = harness();
+		await h.storage.put('one', 1);
+		await h.storage.put({ a: 1, b: 2, c: 3 });
+		expect(h.charged()).toBe(4);
+	});
+
+	it('charges delete from the resolved count, so an absent key costs nothing', async () => {
+		const h = harness();
+		h.setDeleted(false);
+		await h.storage.delete('missing');
+		expect(h.charged()).toBe(0);
+		h.setDeleted(4);
+		await h.storage.delete(['a', 'b', 'c', 'd']);
+		expect(h.charged()).toBe(4);
+	});
+
+	it('counts deleteAll as a statement and charges no rows, because the count is unknown', async () => {
+		const h = harness();
+		await h.storage.deleteAll();
+		expect(h.charged()).toBe(0);
+		expect(h.tally.statementsByTable['?storage.deleteAll']).toBe(1);
+		expect(h.tally.byTable['?storage.deleteAll']).toBeUndefined();
+	});
+
+	it('forwards reads and unknown members untouched', async () => {
+		const h = harness();
+		expect(await h.storage.getAlarm()).toBe(7);
+		expect((h.storage as { marker: string }).marker).toBe('real');
+		expect(h.charged()).toBe(0);
+		expect(h.tally.statements).toBe(0);
+	});
+
+	it('still calls through to the real handle', async () => {
+		const h = harness();
+		await h.storage.setAlarm(1);
+		await h.storage.put('k', 'v');
+		await h.storage.delete('k');
+		expect(h.calls).toEqual(['setAlarm', 'put', 'delete']);
 	});
 });

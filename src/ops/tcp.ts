@@ -1,5 +1,3 @@
-// not the root barrel: edgeport 1.0.6 re-exports 20 namespaces it never imports, which esbuild
-// refuses and vite tolerates (so the gate stayed green while wrangler could not bundle)
 import {
 	AuthError,
 	connect as coreConnect,
@@ -12,6 +10,10 @@ import { _sessionFromSocket as syslogSessionFromSocket } from 'edgeport/syslog';
 
 /**
  * The TCP tier of the CFW network capability: deferred, scripted, operator-scoped.
+ *
+ * **Imported from `edgeport/core`, not the package root**, which re-exports 20 namespaces it never
+ * imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
+ * not bundle.
  *
  * **`cfw_tcp_connect()` / `read()` / `write()` / `close()` CANNOT EXIST, and that is a property of
  * the interpreter rather than a gap in this file.** `Host::call()` is `$reply = $invoke($json)`: the

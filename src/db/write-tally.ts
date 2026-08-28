@@ -26,6 +26,23 @@ export function writeTargetTable(sql: string): string | null {
 	return null;
 }
 
+/**
+ * The tables a read statement draws from, or `null` when that cannot be answered confidently.
+ *
+ * A table this misses would be a read answered against a stale database, so `null` means "replay
+ * anyway" and is the answer for a CTE, a subquery, or any shape not recognised.
+ */
+export function readSourceTables(sql: string): string[] | null {
+	const text = String(sql ?? '').trim();
+	if (!/^SELECT\b/i.test(text)) return null;
+	// a CTE, a subquery or a table-valued function all put a source where this scan does not look
+	if (/\bWITH\b/i.test(text) || /\(\s*SELECT\b/i.test(text)) return null;
+	const tables = [...text.matchAll(/\b(?:FROM|JOIN)\s+["'`[]?([A-Za-z0-9_.]+)/gi)].map(
+		(m) => m[1] as string
+	);
+	return tables.length > 0 ? tables : null;
+}
+
 export type WriteTally = {
 	/** rows written per table, and `?unattributed` for a write whose target could not be parsed */
 	byTable: Record<string, number>;
@@ -136,10 +153,7 @@ export function countingSql<T extends SqlLike>(
 			const isWrite = writeTargetTable(text) !== null;
 			if (!isWrite) return cursor;
 			const rows = cursor.rowsWritten;
-			// always on, and separate from the tally above. The tally is a
-			// diagnostic -- it allocates a per-table map and is armed by a route. This is the
-			// product meter: one addition per write statement, no allocation, so the daily
-			// rows-written figure the Limits page shows is a real reading rather than a blank.
+			// always on, unlike the route-armed tally: one addition per write, no allocation
 			onWrite?.(rows);
 			const tally = getTally();
 			if (tally) tallyWrite(tally, text, rows);
@@ -156,6 +170,94 @@ export function countingSql<T extends SqlLike>(
 	return new Proxy(sql, {
 		get(target, prop) {
 			if (prop === 'exec') return wrapped.exec;
+			const value = Reflect.get(target, prop);
+			return typeof value === 'function' ? value.bind(target) : value;
+		}
+	});
+}
+
+/** folds a KV-API write in; it has no statement text, so it carries a pseudo-table instead */
+export function tallyStorage(tally: WriteTally, op: string, rowsWritten: number): WriteTally {
+	const table = `${STORAGE_TABLE_PREFIX}${op}`;
+	tally.statements += 1;
+	tally.statementsByTable[table] = (tally.statementsByTable[table] ?? 0) + 1;
+	const rows = Number.isFinite(rowsWritten) ? Math.max(0, rowsWritten) : 0;
+	if (rows === 0) return tally;
+	tally.rowsWritten += rows;
+	tally.byTable[table] = (tally.byTable[table] ?? 0) + rows;
+	return tally;
+}
+
+/** `?` so it sorts beside `?unattributed` and cannot collide with a real table name */
+export const STORAGE_TABLE_PREFIX = '?storage.';
+
+export type StorageLike = {
+	put(keyOrEntries: unknown, value?: unknown, options?: unknown): Promise<void>;
+	delete(keyOrKeys: unknown, options?: unknown): Promise<boolean | number>;
+	deleteAll(options?: unknown): Promise<void>;
+	setAlarm(when: unknown, options?: unknown): Promise<void>;
+	deleteAlarm(options?: unknown): Promise<void>;
+};
+
+/**
+ * Wraps `ctx.storage` so the KV API's writes reach the rows meter too.
+ *
+ * {@link countingSql} sees only SQL, so an idle site arming 360 alarms a day reported 0 against a
+ * model that prices it at 360 -- and `degradation()` divides that counter to gate read-only mode.
+ * A proxy rather than a tally per call site, because the second drifts.
+ *
+ * `delete` is charged from its RESOLVED result; `deleteAll` is charged NO rows, because its count
+ * is unknown here and a guess in this meter is worse than a visible zero.
+ */
+export function countingStorage<T extends object>(
+	storage: T,
+	getTally: () => WriteTally | undefined,
+	onWrite?: (rows: number) => void
+): T {
+	// widened here, not per caller: the real handle's overloads do not match StorageLike
+	const s = storage as unknown as StorageLike;
+	const charge = (op: string, rows: number): void => {
+		onWrite?.(rows);
+		const tally = getTally();
+		if (tally) tallyStorage(tally, op, rows);
+	};
+	const wrapped: Record<string, (...args: never[]) => unknown> = {
+		put(keyOrEntries: unknown, ...rest: unknown[]) {
+			const rows =
+				typeof keyOrEntries === 'object' && keyOrEntries !== null
+					? Object.keys(keyOrEntries).length
+					: 1;
+			charge('put', rows);
+			return (s.put as (...a: unknown[]) => Promise<void>)(keyOrEntries, ...rest);
+		},
+		delete(keyOrKeys: unknown, ...rest: unknown[]) {
+			const done = (s.delete as (...a: unknown[]) => Promise<boolean | number>)(
+				keyOrKeys,
+				...rest
+			);
+			return done.then((result) => {
+				charge('delete', typeof result === 'number' ? result : result ? 1 : 0);
+				return result;
+			});
+		},
+		deleteAll(...rest: unknown[]) {
+			charge('deleteAll', 0);
+			return (s.deleteAll as (...a: unknown[]) => Promise<void>)(...rest);
+		},
+		setAlarm(when: unknown, ...rest: unknown[]) {
+			charge('setAlarm', 1);
+			return (s.setAlarm as (...a: unknown[]) => Promise<void>)(when, ...rest);
+		},
+		deleteAlarm(...rest: unknown[]) {
+			charge('deleteAlarm', 1);
+			return (s.deleteAlarm as (...a: unknown[]) => Promise<void>)(...rest);
+		}
+	};
+	// same receiver rule as countingSql(): workerd host accessors reject a proxy as `this`
+	return new Proxy(storage, {
+		get(target, prop) {
+			const override = typeof prop === 'string' ? wrapped[prop] : undefined;
+			if (override) return override;
 			const value = Reflect.get(target, prop);
 			return typeof value === 'function' ? value.bind(target) : value;
 		}

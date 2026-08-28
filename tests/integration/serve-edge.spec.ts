@@ -673,6 +673,21 @@ describe('the cron entry point opens a window per configured site', () => {
 		noRetry: () => {}
 	});
 
+	/**
+	 * Whether the warm window ever reached this object. NOT `queueDepth()`, which reads 0 both for
+	 * a warmed site and for one never created -- so every assertion here used to pass either way.
+	 */
+	const wasWarmed = (name: string) =>
+		inObject(namedSite(name), (obj) =>
+			obj.sql
+				.exec(
+					"SELECT count(*) AS n FROM sqlite_master WHERE type='table' AND name='cfw_fill_queue'"
+				)
+				.toArray()
+				.map((r) => Number(r.n))
+				.some((n) => n > 0)
+		);
+
 	it('drains the queue of every site in WINDOW_SITES', async () => {
 		const sites = ['cron-a', 'cron-b'];
 		for (const site of sites) {
@@ -683,7 +698,15 @@ describe('the cron entry point opens a window per configured site', () => {
 		}
 
 		const ctx = createExecutionContext();
-		await worker.scheduled(cronController(), { ...env, WINDOW_SITES: sites.join(',') }, ctx);
+		await worker.scheduled(
+			cronController(),
+			{
+				...env,
+				WINDOW_SITES: sites.join(','),
+				FLEET_DB: fleetDbOf(sites.map((s) => reported(s)))
+			},
+			ctx
+		);
 		await waitOnExecutionContext(ctx);
 
 		for (const site of sites) {
@@ -692,14 +715,71 @@ describe('the cron entry point opens a window per configured site', () => {
 		}
 	});
 
-	it('defaults to a single site rather than every object in the namespace', async () => {
+	/** a stand-in for D1; the inventory branch had no coverage because `FLEET_DB` is empty here */
+	const fleetDbOf = (rows: Record<string, unknown>[]): FleetDb => ({
+		prepare: () => ({
+			bind: () => ({
+				run: async () => ({}),
+				all: async <T = unknown>() => ({ results: rows as T[] })
+			})
+		})
+	});
+
+	const reported = (site: string, ageMs = 0) => ({
+		site,
+		pack_generation: 'p1',
+		core_version: '11.0.0',
+		worker_version: 'w1',
+		plan: 'free',
+		last_seen_ms: Date.now() - ageMs
+	});
+
+	it('creates no object when nothing has reported and nothing is configured', async () => {
+		// the defect: `WINDOW_SITES` defaulted to `default`, and `idFromName()` creates what it
+		// names -- so this warmed a phantom every five minutes and reported success. Asserted on
+		// the object's own existence, because a queue depth of 0 is what a phantom reports too.
 		const ctx = createExecutionContext();
-		// no WINDOW_SITES: one Worker serves many sites and each has its own object, so the
-		// default has to be a name rather than a wildcard
 		await worker.scheduled(cronController(), { ...env, WINDOW_SITES: undefined }, ctx);
 		await waitOnExecutionContext(ctx);
-		const depth = await inObject(namedSite('default'), (obj) => obj.queueDepth());
-		expect(depth).toBe(0);
+		expect(await wasWarmed('default')).toBe(false);
+	});
+
+	it('drives the sites the fleet reported when WINDOW_SITES is unset', async () => {
+		const site = 'cron-fleet';
+		await inObject(namedSite(site), (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			queuePath(obj, '/');
+		});
+		const ctx = createExecutionContext();
+		await worker.scheduled(
+			cronController(),
+			{ ...env, WINDOW_SITES: undefined, FLEET_DB: fleetDbOf([reported(site)]) },
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+		expect(await wasWarmed(site)).toBe(true);
+	});
+
+	it('refuses a configured name the inventory has never seen', async () => {
+		const real = 'cron-known';
+		await inObject(namedSite(real), (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			queuePath(obj, '/');
+		});
+		const ctx = createExecutionContext();
+		await worker.scheduled(
+			cronController(),
+			{
+				...env,
+				WINDOW_SITES: `${real},cron-phantom`,
+				FLEET_DB: fleetDbOf([reported(real)])
+			},
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+		// the A/B is what makes the refusal mean something: same call, one name warmed and one not
+		expect(await wasWarmed(real)).toBe(true);
+		expect(await wasWarmed('cron-phantom')).toBe(false);
 	});
 });
 

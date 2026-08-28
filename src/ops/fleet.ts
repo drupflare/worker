@@ -113,6 +113,62 @@ export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 	}));
 }
 
+export type WarmTargets = {
+	/** the sites the cron should open a window on */
+	sites: string[];
+	source: 'fleet' | 'configured' | 'none';
+	/** configured names no site has ever reported; driving one CREATES an empty object */
+	unknown: string[];
+	/** reported once but not within the heartbeat, so warming them spends the meter on a guess */
+	stale: string[];
+};
+
+/**
+ * Which sites the cron warm window should drive.
+ *
+ * `idFromName()` CREATES the object it names, so a cron pointed at an unused name provisions a
+ * phantom and reports success -- which is what `WINDOW_SITES` defaulting to `'default'` did. A
+ * configured list is a FILTER only; a name the fleet has never seen comes back under `unknown`.
+ *
+ * @param fleet every reported row, or `null` when there is no D1 binding to read
+ */
+export function warmTargets(
+	fleet: readonly FleetRow[] | null,
+	configured: readonly string[],
+	nowMs: number,
+	staleMs: number = FLEET_HEARTBEAT_MS
+): WarmTargets {
+	// no inventory to check against, so the configured list is all there is and is taken on trust.
+	// An empty one drives NOTHING, which is the point -- there is no safe name to guess.
+	if (fleet === null) {
+		return {
+			sites: [...configured],
+			source: configured.length ? 'configured' : 'none',
+			unknown: [],
+			stale: []
+		};
+	}
+	const fresh = new Set<string>();
+	const stale: string[] = [];
+	for (const row of fleet) {
+		if (nowMs - row.lastSeenMs < staleMs) fresh.add(row.site);
+		else stale.push(row.site);
+	}
+	stale.sort();
+	if (configured.length === 0) {
+		const sites = [...fresh].sort();
+		return { sites, source: sites.length ? 'fleet' : 'none', unknown: [], stale };
+	}
+	const seen = new Set(fleet.map((r) => r.site));
+	const sites = configured.filter((s) => fresh.has(s));
+	return {
+		sites,
+		source: sites.length ? 'configured' : 'none',
+		unknown: configured.filter((s) => !seen.has(s)).sort(),
+		stale: configured.filter((s) => seen.has(s) && !fresh.has(s)).sort()
+	};
+}
+
 /** one version and how much of the fleet is on it */
 export type VersionShare = { version: string; sites: number; fraction: number };
 

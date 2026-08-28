@@ -1,5 +1,5 @@
 import { createSign, createVerify } from 'node:crypto';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
+import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
 
 /**
  * `openssl_sign()` and `openssl_verify()` over `node:crypto`, synchronously.

@@ -1,5 +1,5 @@
 import { argon2id } from '@noble/hashes/argon2.js';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
+import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
 
 /**
  * argon2id password hashing, computed on the HOST side.

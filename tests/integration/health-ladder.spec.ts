@@ -208,9 +208,10 @@ describe('the health layer is reachable from the object, not only from its own s
 				JSON.stringify({
 					rung: 'quarantine',
 					code: 'render.empty',
-					// past ROLLBACK_STRIKES, so only the missing restore point can refuse it
-					strikes: 12,
-					quarantinedAt: Date.now(),
+					// quarantined long enough that only the missing restore point can refuse it; the
+					// dwell is TIME now, because strikes freeze the moment quarantine begins
+					strikes: 3,
+					quarantinedAt: Date.now() - 24 * 60 * 60 * 1000,
 					lastRollbackAt: null
 				})
 			);

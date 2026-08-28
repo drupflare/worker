@@ -284,12 +284,17 @@ export function packGenerationMismatch(obs: Observation): Finding | null {
 }
 
 /**
- * Linear memory rising monotonically across warm requests.
+ * Mounted-filesystem bytes rising monotonically across warm requests.
  *
- * Trend, not threshold, and the distinction matters: wasm memory never shrinks, so an absolute
- * reading says nothing, while a monotonic rise across N warm requests is a leak. The lazy FS made
- * this reachable -- it converges on the union of every route ever served (up to ~52 MB against the
- * streaming mount's 39 MB) unless its LRU is holding.
+ * Trend, not threshold, and the distinction matters: neither quantity ever shrinks, so an absolute
+ * reading says nothing, while a monotonic rise across N warm requests is a leak. The lazy FS is
+ * what this watches -- it converges on the union of every route ever served (up to ~52 MB against
+ * the streaming mount's 39 MB) unless its LRU is holding.
+ *
+ * THE SAMPLE IS MEMFS RESIDENT BYTES. It used to be `HEAPU8.length`, which moves only on a
+ * `memory.grow`: from 96 MiB at the shipping step two rungs reach workerd's cap, so four
+ * strictly-increasing readings of it were unreachable and this never fired. `site-do.ts` falls back
+ * to the heap only on the streaming mount, which has no LRU to leak through.
  *
  * Acts at the next quiet moment rather than the next request, because recycling the interpreter
  * mid-traffic trades a leak for a 4,019 ms boot.

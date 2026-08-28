@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	BLOCKED_SMTP_PORT,
 	DEFAULT_MAIL_DEPS,
+	DEFAULT_MAIL_DRAIN_LIMIT,
 	MAIL_ATTEMPT_BUDGET,
+	MAIL_DRAIN_BUDGET_MS,
+	MAIL_SEND_BUDGET_MS,
 	MAIL_TABLE,
 	MAX_HEADER_BYTES,
 	MAX_MAIL_BYTES,
@@ -646,11 +649,18 @@ describe('the drain knobs', () => {
 		expect(mailDrainEnabled({ MAIL_DRAIN_ON_ALARM: '0' })).toBe(false);
 	});
 
-	it('clamps the limit, because each send is one of 50 subrequests', () => {
-		expect(mailDrainLimit({})).toBe(5);
+	it('clamps the limit, which is bounded by billed duration and not by subrequests', () => {
+		expect(mailDrainLimit({})).toBe(DEFAULT_MAIL_DRAIN_LIMIT);
 		expect(mailDrainLimit({ MAIL_DRAIN_LIMIT: '2' })).toBe(2);
 		expect(mailDrainLimit({ MAIL_DRAIN_LIMIT: '1000' })).toBe(MAX_MAIL_DRAIN_LIMIT);
-		expect(mailDrainLimit({ MAIL_DRAIN_LIMIT: 'nonsense' })).toBe(5);
+		expect(mailDrainLimit({ MAIL_DRAIN_LIMIT: 'nonsense' })).toBe(DEFAULT_MAIL_DRAIN_LIMIT);
+	});
+
+	// the default has to BE the quotient, or the budget above it is decoration rather than the
+	// derivation it claims to be -- which is what "one of 50 subrequests" was
+	it('derives the default from the stated per-firing duration budget', () => {
+		expect(DEFAULT_MAIL_DRAIN_LIMIT).toBe(MAIL_DRAIN_BUDGET_MS / MAIL_SEND_BUDGET_MS);
+		expect(MAX_MAIL_DRAIN_LIMIT).toBeGreaterThan(DEFAULT_MAIL_DRAIN_LIMIT);
 	});
 
 	it('defaults to the real platform, so nothing ships pointing at a test double', () => {
@@ -670,7 +680,7 @@ describe('drupal/smtp: the module installs, its socket never runs, and its setti
 		smtp_from: 'site@example.com'
 	};
 
-	it('maps the module’s own settings onto the transport vars', () => {
+	it("maps the module's own settings onto the transport vars", () => {
 		expect(mailEnvFromSite(SETTINGS)).toEqual({
 			SMTP_HOST: 'relay.example',
 			SMTP_PORT: '2525',
@@ -691,7 +701,7 @@ describe('drupal/smtp: the module installs, its socket never runs, and its setti
 		expect(tls('standard')).toBe('off');
 	});
 
-	it('honours the module’s own off switch and an unconfigured host', () => {
+	it("honours the module's own off switch and an unconfigured host", () => {
 		expect(mailEnvFromSite({ ...SETTINGS, smtp_on: false })).toEqual({});
 		expect(mailEnvFromSite({ ...SETTINGS, smtp_host: '' })).toEqual({});
 		expect(mailEnvFromSite(null)).toEqual({});

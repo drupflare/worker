@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	CLEAN_STATE,
 	QUARANTINE_STRIKES,
-	ROLLBACK_STRIKES,
+	ROLLBACK_DWELL_MS,
 	RUNGS,
 	isQuarantined,
 	parseState,
@@ -96,53 +96,66 @@ describe('quarantine needs repeated failures of the SAME code', () => {
 
 describe('rollback refuses far more often than it fires', () => {
 	const point = { id: 7, statements: 300 };
+	// quarantined long enough, built the way production builds it rather than by looping a counter
+	const held = (ms: number) => {
+		const state = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES, 1_000);
+		// from the state's OWN stamp: quarantinedAt lands on the strike that quarantines, not the first
+		return { state, now: (state.quarantinedAt ?? 0) + ms };
+	};
 
 	it('refuses when not quarantined at all', () => {
-		const d = shouldRollback(CLEAN_STATE, point);
+		const d = shouldRollback(CLEAN_STATE, point, 0);
 		expect(d.rollback).toBe(false);
 		expect(d.reason).toContain('not quarantined');
 	});
 
-	it('refuses a quarantined site short of the rollback threshold', () => {
-		const s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
-		const d = shouldRollback(s, point);
+	it('refuses a site quarantined less than the dwell', () => {
+		const { state, now } = held(ROLLBACK_DWELL_MS - 1);
+		const d = shouldRollback(state, point, now);
 		expect(d.rollback).toBe(false);
-		// the reason names the count, so an operator can see how close it is
-		expect(d.reason).toContain(`/${ROLLBACK_STRIKES}`);
+		// the reason names how far along it is, so an operator can see how close it is
+		expect(d.reason).toContain('quarantined');
 	});
 
 	it('REFUSES when no restore point exists, and says why that is better', () => {
-		// the important one: a quarantined site is still serving, and reverting to nothing is worse than
-		// the fault being repaired
-		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
-		const d = shouldRollback(s, null);
+		const { state, now } = held(ROLLBACK_DWELL_MS);
+		const d = shouldRollback(state, null, now);
 		expect(d.rollback).toBe(false);
 		expect(d.reason).toContain('no restore point');
 		expect(d.reason).toContain('strictly better');
 	});
 
 	it('refuses an EMPTY restore point, which would replay nothing', () => {
-		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
-		expect(shouldRollback(s, { id: 3, statements: 0 }).rollback).toBe(false);
+		const { state, now } = held(ROLLBACK_DWELL_MS);
+		expect(shouldRollback(state, { id: 3, statements: 0 }, now).rollback).toBe(false);
 	});
 
-	it('fires only with quarantine, the full strike count and a real restore point', () => {
-		const s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES);
-		const d = shouldRollback(s, point);
+	it('fires with quarantine, the full dwell and a real restore point', () => {
+		const { state, now } = held(ROLLBACK_DWELL_MS);
+		const d = shouldRollback(state, point, now);
 		expect(d.rollback).toBe(true);
 		expect(d.reason).toContain('restore point 7');
 		expect(d.reason).toContain('300 statements');
 	});
 
-	it('needs the strikes to be CONSECUTIVE and same-code', () => {
-		// a code change mid-run resets, so an intermittent fault can never accumulate to a rollback
-		let s = strike(CLEAN_STATE, 'boom', ROLLBACK_STRIKES - 1);
-		s = recordOutcome(s, fail('other'), 1);
-		expect(shouldRollback(s, point).rollback).toBe(false);
+	it('IS REACHABLE from a sequence production can actually produce', () => {
+		// the assertion this file was missing: it drove `recordOutcome` to 10 in a loop, which
+		// `alarm()` cannot do -- strikes freeze at QUARANTINE_STRIKES once quarantined
+		let s = CLEAN_STATE;
+		for (let i = 0; i < QUARANTINE_STRIKES; i++) s = recordOutcome(s, fail('boom'), 1_000);
+		expect(s.rung).toBe('quarantine');
+		expect(s.strikes).toBe(QUARANTINE_STRIKES);
+		// nothing increments strikes from here, and the decision must still become true on time alone
+		expect(shouldRollback(s, point, 1_000).rollback).toBe(false);
+		expect(shouldRollback(s, point, 1_000 + ROLLBACK_DWELL_MS).rollback).toBe(true);
 	});
 
-	it('requires more evidence than quarantine does', () => {
-		expect(ROLLBACK_STRIKES).toBeGreaterThan(QUARANTINE_STRIKES);
+	it('treats a quarantined state with no timestamp as just-quarantined', () => {
+		// rolling back an upgraded state on its first alarm is the worst reading of a missing field
+		const legacy = { ...CLEAN_STATE, rung: 'quarantine' as const, strikes: QUARANTINE_STRIKES };
+		const d = shouldRollback(legacy, point, 10 ** 12);
+		expect(d.rollback).toBe(false);
+		expect(d.reason).toContain('no timestamp');
 	});
 });
 

@@ -610,3 +610,51 @@ describe('the default chunk size is set by the CPU cap, not the record cap', () 
 		expect(rows).toBe(41);
 	});
 });
+
+describe('the digest is wide enough to key a shared page store', () => {
+	it('is 128 bits, because 32 collides across a fleet', () => {
+		// 32 bits collides at 77,163 pages = 213 sites; a dedup collision serves one site another's page
+		expect(digestBytes(new Uint8Array(64)).length).toBe(32);
+	});
+
+	it('separates pages that differ in ONE byte anywhere', () => {
+		const base = new Uint8Array(65_536);
+		for (let i = 0; i < base.length; i++) base[i] = (i * 31) & 0xff;
+		const seen = new Set([digestBytes(base)]);
+		for (const at of [0, 1, 255, 4_096, 32_768, 65_534, 65_535]) {
+			const other = base.slice();
+			other[at] = ((other[at] as number) ^ 0x01) & 0xff;
+			seen.add(digestBytes(other));
+		}
+		expect(seen.size).toBe(8);
+	});
+
+	it('keys the same bytes identically however the view is aligned', () => {
+		// the digest reads 32 bits at a time, so an unaligned view would break the words differently
+		// and hand the same content two keys -- a dedup collision that no equality test would show
+		const backing = new Uint8Array(1_027);
+		for (let i = 0; i < backing.length; i++) backing[i] = (i * 17) & 0xff;
+		const aligned = backing.slice(0, 1_024);
+		for (let off = 1; off < 4; off++) {
+			const shifted = new Uint8Array(1_024 + off);
+			shifted.set(aligned, off);
+			expect(digestBytes(shifted.subarray(off))).toBe(digestBytes(aligned));
+		}
+	});
+
+	it('separates 2,000 pages that differ in FOUR BYTES, which is the real case', () => {
+		// real snapshot pages differ in a handful of bytes, so near-identical is the population to
+		// separate. Two earlier generators were degenerate (period 256 in p) and read as collisions
+		const seen = new Set<string>();
+		for (let p = 0; p < 2_000; p++) {
+			const page = new Uint8Array(1_024);
+			for (let i = 4; i < page.length; i++) page[i] = (i * 13) & 0xff;
+			page[0] = p & 0xff;
+			page[1] = (p >>> 8) & 0xff;
+			page[2] = (p >>> 16) & 0xff;
+			page[3] = (p >>> 24) & 0xff;
+			seen.add(digestBytes(page));
+		}
+		expect(seen.size).toBe(2_000);
+	});
+});

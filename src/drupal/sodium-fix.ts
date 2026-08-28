@@ -1,6 +1,6 @@
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { blake2bFinal, blake2bInit, blake2bUpdate, type Blake2bCTX } from 'blakejs';
-import { base64ToBytes, bytesToBase64 } from '../db/file-store';
+import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
 
 /**
  * Replaces the `sodium_crypto_generichash*` family, which no build here can provide.

@@ -298,23 +298,22 @@ describe('a site as a delta against another site image', () => {
 			// hold the storage lever at the site-image level where the dedup was measured.
 			const diverged = curve.filter((c) => !String(c.arm).startsWith('untouched'));
 			expect(diverged.length).toBeGreaterThan(0);
-			// THE ONE-NODE ARM INVERTED, AND THE REFUTATION SURVIVES ANYWAY. It read 1.652 / 1.647 /
-			// 1.647 -- reliably WORSE than plain gzip -- until the pack's cache bins became WITHOUT
-			// ROWID and the container gained a class, both of which change what is in the heap. It
-			// now reads 0.974 / 0.976, so XOR is ~2.5% BETTER. That is parity, not a lever: a 2.5%
-			// encoding win does not pay for a delta format, a base-image dependency and a restore
-			// path, and the site-image dedup this holds the storage lever at is worth 34.7-38.0%.
+			// NO MAGNITUDE IS ASSERTED ON THE ONE-NODE ARM, and three failed attempts to assert one
+			// are the reason. It read 1.652 / 1.647 / 1.647 and was pinned above 1.2 as "reliably
+			// worse"; the pack's cache bins became WITHOUT ROWID and the container gained a class,
+			// it read 0.974 / 0.976, and the pin became a 0.8-1.8 band around parity. Adding one
+			// serve table moved the heap again, and six samples on ONE tree with no code change
+			// between them read 0.425 / 0.588 / 0.682 / 1.025 / 1.034 / 1.069 -- a 2.5x spread, so
+			// the band failed about half the time. Across every heap this arm has spanned 0.425 to
+			// 1.652, and other arms have read as low as 0.122.
 			//
-			// Asserted as a BAND around parity rather than re-pinned to a direction. The previous
-			// assertion encoded "reliably worse" as a floor of 1.2, which was true of a heap that no
-			// longer exists; a direction that flips on an unrelated pack change was never the
-			// property worth guarding.
+			// So the magnitude tracks whatever is in the heap, which any unrelated schema change
+			// moves, and a band on it reports that change as a regression in an encoding. What
+			// survives is the refutation stated above, held by the per-arm `xorVsPlain > 0` and
+			// `dedupPlusGzipXor > 0` already asserted for every arm. The arm itself is still
+			// required to exist, so the curve cannot silently stop producing it.
 			const nodeArm = curve.find((c) => c.arm === 'one node');
-			expect(
-				Number(nodeArm?.xorVsPlain),
-				'the one-node arm left parity, so page-granularity XOR needs re-scoring'
-			).toBeGreaterThan(0.8);
-			expect(Number(nodeArm?.xorVsPlain)).toBeLessThan(1.8);
+			expect(nodeArm, 'the one-node arm is what the refutation is about').toBeDefined();
 			// every arm must be the same SHAPE of heap, or the number measures the boot; a
 			// tolerance rather than equality, since the failure it catches is 3.7x (148 vs 553)
 			for (const c of curve) {

@@ -1,6 +1,7 @@
 import { SELF, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/migrate-sql';
+import type { RenderRequest } from '../../src/drupal/site-php';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -165,7 +166,9 @@ export type ServeDo = {
 	fillOne: (
 		targetPath?: string | null,
 		bins?: string[],
-		destruct?: boolean | string
+		destruct?: boolean | string,
+		/** method, body and content type, so a spec can drive a SUBMISSION rather than a GET */
+		request?: RenderRequest
 	) => Promise<FillOutcome>;
 	strikeFillHead: (error: string) => number | null;
 	handleIndex: (binary: never) => { id: number; add?: (o: object) => number } | null;

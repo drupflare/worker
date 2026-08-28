@@ -64,7 +64,9 @@ function packedContrib(): Promise<Set<string>> {
 		const res = await env.ASSETS.fetch(new URL('https://a.local/drupal-pf/core.pf.json'));
 		if (!res.ok) throw new Error(`pack index not reachable: core.pf.json ${res.status}`);
 		const found = new Set<string>();
-		for (const m of (await res.text()).matchAll(/"modules\/contrib\/([^/"]+)\//g)) {
+		// BOTH prefixes: composer/installers puts a theme under `themes/contrib`, so scanning
+		// modules alone reported every contrib theme as absent from a pack that carries it
+		for (const m of (await res.text()).matchAll(/"(?:modules|themes)\/contrib\/([^/"]+)\//g)) {
 			found.add(m[1] as string);
 		}
 		return found;
@@ -746,6 +748,59 @@ const CASES: readonly Case[] = [
 				['plugin.manager.views.style', 'data_export']
 			]
 		}
+	},
+	{
+		module: 'search_api_solr',
+		observable:
+			'its connector manager, solarium.query_helper and its four solr config entity types',
+		ask: { services: ['plugin.manager.search_api_solr.connector', 'solarium.query_helper'] },
+		types: [
+			'solr_cache.entity_type',
+			'solr_field_type.entity_type',
+			'solr_request_handler.entity_type',
+			'solr_request_dispatcher.entity_type'
+		]
+	},
+	{
+		module: 'usfedgov_google_analytics',
+		observable: 'its three hook services, its DAP settings and the seven analytics libraries',
+		ask: {
+			services: [
+				'Drupal\\usfedgov_google_analytics\\Hook\\PageAttachments',
+				'Drupal\\usfedgov_google_analytics\\Hook\\JsUrlQueryBuilder',
+				'Drupal\\usfedgov_google_analytics\\Hook\\RuntimeRequirements'
+			],
+			libraries: 'usfedgov_google_analytics'
+		},
+		config: ['usfedgov_google_analytics.settings'],
+		routes: 1
+	},
+	{
+		module: 'metatag_search_gov',
+		observable: 'the search_gov metatag group and its three searchgov_custom tag plugins',
+		// no config, no table, no route of its own, so the plugin definitions ARE the module. The
+		// managers belong to metatag, which the install pulls in; the definitions name this module
+		ask: {
+			plugins: [
+				['plugin.manager.metatag.group', 'search_gov'],
+				['plugin.manager.metatag.tag', 'searchgov_custom1'],
+				['plugin.manager.metatag.tag', 'searchgov_custom3']
+			]
+		}
+	},
+	{
+		module: 'search_gov_results_api',
+		observable: 'its two routes install; the GET to api.gsa.gov that fills them cannot run',
+		routes: 1,
+		blocked: 'its results page needs an outbound GET to answer inside the render that asked'
+	},
+	{
+		module: 'uswds_base',
+		// THE ONLY THEME IN THIS FILE. It installs through `theme_installer`, so its observable is
+		// `core.extension`'s THEME key rather than its module key, and the asset libraries are what
+		// a theme owns in place of services -- there are no PHP classes to resolve
+		observable: 'the theme installs and its own USWDS asset libraries resolve',
+		ask: { libraries: 'uswds_base' }
 	}
 ];
 
@@ -954,6 +1009,162 @@ describe('contrib modules, enabled against a real site', () => {
 			REQUEST_TIMEOUT
 		);
 	}
+
+	/**
+	 * `search_gov_results_api` rendering real results, over two renders.
+	 *
+	 * Its own case above asserts only that the routes install, because its results page GETs
+	 * `api.gsa.gov` while BUILDING the form. That reads as a refusal and is not one: the deferred
+	 * tier carries the call, so the first render rejects and queues and a later render answers.
+	 *
+	 * The network is the dependency, so the network is what gets stubbed -- the module's own request
+	 * building, JSON decode, node resolution and render array all run for real. The queued URL is
+	 * READ BACK rather than reconstructed here, so nothing in this test has to know how the module
+	 * spells its query string; getting that wrong would seed a row the module never looks for and
+	 * the test would pass by asserting a miss.
+	 */
+	it(
+		'renders Search.gov results on the render after the one that asked',
+		async () => {
+			const packed = await packedContrib();
+			if (!packed.has('search_gov_results_api')) return;
+
+			const searchPath = '/search?search=benefits';
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				await enable(site, 'search_gov_results_api');
+				// the enable drops the interpreter, and its `.module` carries a procedural
+				// `hook_preprocess_node` that Drupal 11 resolves as a CLASS when the file is not loaded
+				await site.runJson(BOOT_KERNEL);
+				const setup = (await site.runJson(`<?php
+				// SAVED_NEW, MARK_NEW and CSS_COMPONENT live in the legacy includes, which
+				// DrupalKernel loads from preHandle() rather than boot() -- so a bare kernel cannot
+				// save an entity or render a node teaser
+				$kernel = $GLOBALS['__pw_kernel'] ?? null;
+				if ($kernel !== null && method_exists($kernel, 'loadLegacyIncludes')) {
+					$kernel->loadLegacyIncludes();
+				}
+				\\Drupal::moduleHandler()->loadAll();
+				\\Drupal::configFactory()->getEditable('search_gov_results_api.settings')
+					->set('site_handle', 'cfw-test')
+					->set('api_key', 'cfw-test-key')
+					->set('site_base', 'https://example.gov')
+					->set('display_mode', 'node.teaser')
+					->set('results_per_page', 20)
+					->set('facets', ['enable' => false])
+					->save();
+				// the module maps a Search.gov url back to a LOCAL node and renders its teaser, so
+				// the assertion needs a node for the stubbed result to resolve to
+				$node = \\Drupal\\node\\Entity\\Node::create([
+					'type' => 'page',
+					'title' => 'Veterans Benefits',
+					'status' => 1,
+				]);
+				$node->save();
+				echo json_encode(['nid' => (int) $node->id()]);`)) as Payload;
+				const nid = Number(setup['nid'] ?? 0);
+				if (!nid)
+					throw new Error(`node not created: ${JSON.stringify(setup).slice(0, 400)}`);
+
+				// THE PRODUCTION RENDER PATH, not a hand-built request. Reconstructing one by hand needs
+				// a session, a render context and a base url before Drupal will render a node teaser,
+				// and getting any of them wrong measures the harness instead of the module
+				site.ensureHttpTables();
+				const serve = (p: string) =>
+					site.fetch(
+						new Request(`https://do.local/__serve?path=${encodeURIComponent(p)}&edge=0`)
+					);
+				const first = await serve(searchPath);
+				const queued = site.sql
+					.exec('SELECT key, url FROM cfw_http_queue')
+					.toArray() as unknown as { key: string; url: string }[];
+
+				const reply = JSON.stringify({
+					web: {
+						total: 1,
+						results: [
+							{
+								title: 'Veterans Benefits',
+								url: `https://example.gov/node/${nid}`,
+								snippet: 'A stubbed Search.gov result body'
+							}
+						]
+					}
+				});
+				for (const row of queued) {
+					site.sql.exec('DELETE FROM cfw_http_queue WHERE key = ?', row.key);
+					site.sql.exec(
+						`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
+					 VALUES (?, ?, 200, ?, ?, ?, ?)`,
+						row.key,
+						row.url,
+						JSON.stringify({ 'content-type': 'application/json' }),
+						reply,
+						site.nowMs(),
+						site.nowMs() + 3_600_000
+					);
+				}
+				// the stored page would answer the second request without rendering
+				site.sql.exec('DELETE FROM cfw_page');
+				const second = await serve(searchPath);
+				const requeued = site.sql
+					.exec('SELECT url FROM cfw_http_queue')
+					.toArray() as unknown as { url: string }[];
+				const cached = site.sql
+					.exec('SELECT key, status, length(body) AS n FROM cfw_http_cache')
+					.toArray() as unknown as { key: string; status: number; n: number }[];
+
+				return {
+					requeued,
+					cached,
+					queued,
+					nid,
+					firstHtml: await first.text(),
+					secondHtml: await second.text()
+				};
+			});
+
+			const queued = out.queued as { url: string }[];
+			const firstHtml = String(out.firstHtml ?? '');
+			const secondHtml = String(out.secondHtml ?? '');
+			console.log(
+				`[search-gov] ${JSON.stringify({
+					queued: queued.map((q) => q.url),
+					secondBytes: secondHtml.length,
+					requeued: (out.requeued as unknown[]).length,
+					cached: (out.cached as { status: number }[]).map((c) => c.status)
+				})}`
+			);
+
+			// the module built its own request, against its own configured handle and key
+			expect(queued.length, 'the form build queued no outbound call').toBe(1);
+			const url = queued[0]?.url as string;
+			expect(url).toContain('api.gsa.gov/technology/searchgov/v2/results/i14y');
+			expect(url).toContain('affiliate=cfw-test');
+			expect(url).toContain('access_key=cfw-test-key');
+			expect(url).toContain('query=benefits');
+
+			// THE CLAIM UNDER TEST: the second render consumed the reply instead of asking again. An
+			// empty requeue with the cache row still present is the deferred tier having delivered it,
+			// which is what "a deferred exchange always misses" said could not happen
+			expect(out.requeued, 'the second render asked again, so nothing was delivered').toEqual(
+				[]
+			);
+			expect((out.cached as { status: number }[]).map((c) => c.status)).toEqual([200]);
+
+			// the module's form reaches a real page on both renders
+			expect(secondHtml).toContain('search-gov-results-api-search-page');
+			expect(secondHtml.length).toBeGreaterThan(10_000);
+
+			// AND IT STILL RENDERS NOTHING, for a reason that is not this runtime's. `processResults()`
+			// pulls each entity's child array out of a `viewMultiple()` result and renders it on its own;
+			// `buildMultiple` is a `#pre_render` on the PARENT, so a detached child renders as an empty
+			// shell. That is why the row is `untested` rather than `verified`: the platform carries the
+			// module and the module does not produce the observable it owns
+			expect(secondHtml).not.toContain('Veterans Benefits');
+		},
+		REQUEST_TIMEOUT
+	);
 
 	/**
 	 * The other direction, and it is the one that waves the next skipped row through.

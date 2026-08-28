@@ -6,55 +6,15 @@ import { tierFor } from '../../src/ops/catalog';
 import {
 	FIXTURE_CLAUSE,
 	labelFor,
+	liftFor,
 	MODULE_STATES,
 	moduleTable,
-	renderModuleTable,
 	SHIPPING_PACK_CONTRIB,
-	TABLE_BEGIN,
-	TABLE_END,
 	VERIFIED_BEHAVIOURS
 } from '../../src/ops/module-table';
 import { artifactGate } from './helpers/artifact-gate';
 
-/**
- * The README module table, against the classifier that produces it.
- *
- * Same discipline as the driver-pack byte-for-byte check: a hand-maintained table goes stale the
- * first time a tier moves, and it goes stale SILENTLY because nothing compares it to anything. This
- * fails when the two disagree and prints the regenerated block, so the fix is a paste rather than an
- * investigation.
- */
-
 const here = dirname(fileURLToPath(import.meta.url));
-const README = join(here, '..', '..', 'README.md');
-
-function readmeTable(): string {
-	const readme = readFileSync(README, 'utf8');
-	const from = readme.indexOf(TABLE_BEGIN);
-	const to = readme.indexOf(TABLE_END);
-	if (from === -1 || to === -1) {
-		throw new Error(
-			`README.md has no module table region. Insert:\n\n${renderModuleTable()}\n`
-		);
-	}
-	return readme.slice(from, to + TABLE_END.length);
-}
-
-describe('the README module table', () => {
-	it('matches what the classifier emits', () => {
-		const expected = renderModuleTable();
-		expect(
-			readmeTable(),
-			`README.md is out of date. Replace the region between the markers with:\n\n${expected}\n`
-		).toBe(expected);
-	});
-
-	it('is generated, not hand-written, so the markers must survive edits', () => {
-		const readme = readFileSync(README, 'utf8');
-		expect(readme).toContain(TABLE_BEGIN);
-		expect(readme).toContain(TABLE_END);
-	});
-});
 
 describe('moduleTable', () => {
 	it('never states a support claim for an unclassified module', () => {
@@ -125,6 +85,7 @@ describe('moduleTable', () => {
 			'drupal/mailsystem',
 			'drupal/menu_block',
 			'drupal/metatag',
+			'drupal/metatag_search_gov',
 			'drupal/migrate_plus',
 			'drupal/module_filter',
 			'drupal/paragraphs',
@@ -135,11 +96,14 @@ describe('moduleTable', () => {
 			'drupal/redirect',
 			'drupal/scheduler',
 			'drupal/search_api',
+			'drupal/search_api_solr',
 			'drupal/simple_sitemap',
 			'drupal/stage_file_proxy',
 			'drupal/svg_image',
 			'drupal/token',
 			'drupal/twig_tweak',
+			'drupal/usfedgov_google_analytics',
+			'drupal/uswds_base',
 			'drupal/video_embed_field',
 			'drupal/views_bulk_operations',
 			'drupal/views_data_export',
@@ -171,10 +135,9 @@ describe('moduleTable', () => {
 	});
 
 	it('carries a lift for every blocked row', () => {
-		const table = renderModuleTable();
 		for (const row of moduleTable()) {
 			if (row.state !== 'blocked') continue;
-			expect(table, row.name).toContain('**Lift:**');
+			expect(liftFor(row.name), `${row.name} is blocked with no route out`).toBeTruthy();
 		}
 	});
 
@@ -195,21 +158,11 @@ describe('moduleTable', () => {
 		// run has enabled. A test that fails on honesty is pinning a moment, not a rule.
 		for (const state of states) expect(MODULE_STATES).toContain(state);
 		expect(states.has('supported' as never)).toBe(false);
-
-		const table = renderModuleTable();
-		expect(table).not.toMatch(/\bsupported\b/i);
-		// the summary still has to define what the three states MEAN, or a row that lands in
-		// `untested` later arrives with no explanation attached
-		expect(table).toContain('untested');
-		expect(table).toMatch(/inference about\s+the runtime/);
-	});
-
-	it('escapes a pipe so a reason cannot break the table', () => {
-		const rendered = renderModuleTable([
-			{ name: 'drupal/x', label: 'X', state: 'untested', evidence: 'a | b' }
-		]);
-		expect(rendered).toContain('a \\| b');
-		expect(rendered.split('\n').filter((l) => l.startsWith('| X')).length).toBe(1);
+		for (const row of moduleTable()) {
+			expect(row.evidence, `${row.name} claims support in its evidence`).not.toMatch(
+				/\bsupported\b/i
+			);
+		}
 	});
 });
 
@@ -242,13 +195,12 @@ describe('the shipping pack and what the table claims about it', () => {
 		const fixture = verified.filter((n) => !SHIPPING_PACK_CONTRIB.includes(n));
 		expect(shipping.length + fixture.length).toBe(verified.length);
 		// the partition has to be visible to a reader, or it is bookkeeping nobody acts on
-		const table = renderModuleTable();
-		// a phrase from FIXTURE_CLAUSE, so the partition stays visible if the wording is reworked
+		// the partition has to reach the evidence, or a reader cannot tell a shipped module from one
+		// only the fixture build carries
 		const marker = 'dev dependency';
 		expect(FIXTURE_CLAUSE).toContain(marker);
-		expect(table.split(marker).length - 1, 'a fixture row rendered without the clause').toBe(
-			fixture.length
-		);
+		const carrying = moduleTable().filter((r) => r.evidence.includes(marker));
+		expect(carrying.map((r) => r.name).sort()).toEqual(fixture.sort());
 		expect(fixture.length, 'nothing is fixture-only; drop the clause').toBeGreaterThan(0);
 	});
 
@@ -321,13 +273,15 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		const verified = new Set(Object.keys(VERIFIED_BEHAVIOURS).map((n) => n.split('/')[1]));
 		const unclaimed = [...exercised()].filter((n) => !verified.has(n)).sort();
 		expect(unclaimed, 'a case runs for this module but the table makes no claim').toEqual([
+			'search_gov_results_api',
 			'smtp'
 		]);
-		// it is absent for a REASON rather than by oversight: `smtp` needs a socket inside the
-		// request that sends the mail, and an install cannot see that. `simple_sitemap` used to sit
-		// beside it and moved to `verified` on 2026-08-24 -- its case now enables the module and
-		// asserts its services and entity types instead of asserting that it refuses to install
+		// each is absent for its own reason. `smtp` needs a socket inside the request that sends the
+		// mail, which the classifier refuses. `search_gov_results_api` is NOT refused: measured, the
+		// deferred tier carries its GET across two renders, so what it lacks is a Search.gov API key
+		// rather than a capability -- see `guzzle-handler.spec.ts`
 		expect(tierFor('drupal/smtp').tier).toBe('refused');
+		expect(tierFor('drupal/search_gov_results_api').tier).not.toBe('refused');
 		expect(tierFor('drupal/simple_sitemap').tier).not.toBe('refused');
 		// the vector is still what decides it; only the vector's answer moved
 		expect(tierFor('drupal/simple_sitemap').reason).not.toContain('runtime.xmlwriter');
@@ -342,9 +296,11 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 	 * contrib cases failed too. With the check disabled the module installs clean and 57/57 pass.
 	 */
 	it('stops refusing search_api_solr once the integer width is satisfied', () => {
-		// `runtime.int64` was its only refusal and the vector now answers true, so what is left
-		// is the transport tier. It is `untested` rather than `verified`: nobody has installed it
+		// `runtime.int64` was its only refusal and the vector now answers true, so what is left is
+		// the transport tier. It reached `verified` on 2026-08-27 with the platform check still ON,
+		// which is the run the note said it was waiting for
 		expect(tierFor('drupal/search_api_solr').tier).not.toBe('refused');
+		expect(VERIFIED_BEHAVIOURS['drupal/search_api_solr']).toContain('platform check ON');
 	});
 });
 

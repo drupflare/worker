@@ -257,6 +257,31 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 		needs: ['blocking-outbound'],
 		why: 'the authorization-code exchange POSTs to the identity provider token endpoint and must have the answer before it can finish the login response. Unlike a search query there is no partial answer to render',
 		lift: 'the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\\drupflare\\Network\\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider genuinely signed for another of its clients; the setup page is live and states the `externalauth` dependency'
+	},
+	// #endregion
+
+	// #region the US federal track, classified 2026-08-27
+	//
+	// The three things a `.gov` Drupal site is asked for that a generic one is not: the design
+	// system, the Digital Analytics Program tag, and participation in Search.gov. They separate
+	// cleanly by WHERE the work happens, which is the whole finding -- two are markup the browser
+	// or a crawler consumes, and the third wants an answer from api.gsa.gov inside a render.
+	'drupal/usfedgov_google_analytics': {
+		needs: [],
+		why: 'the DAP tag is a `<script src>` the BROWSER fetches from dap.digitalgov.gov, so nothing outbound happens in PHP. The module builds a query string from config and attaches one asset library; the local library variants ship the same file out of the module directory, which the static asset layer already serves'
+	},
+	'drupal/metatag_search_gov': {
+		needs: [],
+		why: 'three metatag plugins over local entity data. This is the half of Search.gov that fits by construction: Search.gov CRAWLS the site, so participation is markup in a response rather than a call out of one'
+	},
+	'drupal/search_gov_results_api': {
+		needs: [],
+		why: '`SearchPageForm` GETs `https://api.gsa.gov/technology/searchgov/v2/results/i14y` through `http_client` while building the form for `/search`, and the results ARE the page. That reads as a refusal and is not one. Driven through the real serve path with the upstream stubbed: the module builds its own request (`affiliate`, `access_key`, `query`, `limit`, `offset`), the first render rejects with `ConnectException` and arms a queue row, and the second render consumes the reply WITHOUT asking again -- empty requeue, cache row intact, its form inside a full 17 KB page. So the platform carries it and the first visitor pays a retry, which is what every cold URL here already costs. **It is `untested` because the module does not render what it fetched**: `processResults()` pulls each entity out of a `viewMultiple()` result and renders the child on its own, and `buildMultiple` is a `#pre_render` on the PARENT, so a detached child renders as an empty shell. That is an upstream defect on any Drupal 11 site, not a property of this runtime -- the project has no tagged release and its results path carries several TODOs'
+	},
+	// A THEME, not a module, and the whole gate had to learn what that is.
+	'drupal/uswds_base': {
+		needs: [],
+		why: 'Twig templates, theme settings and an asset library; no PHP classes and no I/O. It was unverifiable for three gate-side reasons and none of them was the runtime: composer installs it to `themes/contrib`, `pack-drupal.ts` swept no theme tree, and `/__enable` drove `module_installer` against `extension.list.module`, which does not list themes. All three are wired now and the theme installs through `theme_installer`. Its default library mode loads USWDS from a CDN, which OMB M-23-22 forbids for static third-party assets, so a federal deployment picks the local mode'
 	}
 	// #endregion
 };

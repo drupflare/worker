@@ -201,7 +201,18 @@ export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
 	'drupal/views_bulk_operations':
 		'enabled against a real site; `views_bulk_operations.processor`, `views_bulk_operations.data` and its action plugin manager resolve, the `views_bulk_operations_delete_entity` action is registered, and four of its routes are in the `router` table',
 	'drupal/views_data_export':
-		'enabled against a real site; the `data_export` views display and style plugins are registered, which is the whole module'
+		'enabled against a real site; the `data_export` views display and style plugins are registered, which is the whole module',
+	// #endregion
+
+	// #region driven 2026-08-27, the US federal track
+	'drupal/search_api_solr':
+		"enabled against a real site with composer's platform check ON; `plugin.manager.search_api_solr.connector` and `solarium.query_helper` resolve and all four solr config entity types -- `solr_cache`, `solr_field_type`, `solr_request_handler`, `solr_request_dispatcher` -- are registered, none of them before. The `php-64bit` constraint that used to abort every request before Drupal booted is satisfied by the long64 build. A Solr SERVER is still an outbound dependency reached through the deferred tier, so what was asserted is the module installing rather than a query answering",
+	'drupal/usfedgov_google_analytics':
+		'enabled against a real site; its three hook services resolve, `usfedgov_google_analytics.settings` is installed, its admin route is in the `router` table and seven asset libraries resolve for it afterwards and none before. The DAP tag is fetched by the BROWSER from dap.digitalgov.gov, so nothing outbound happens in PHP',
+	'drupal/metatag_search_gov':
+		'enabled against a real site; the `search_gov` metatag group and the `searchgov_custom1` and `searchgov_custom3` tag plugins name this module afterwards and are absent before. It installs no config, creates no table and registers no route of its own, so the plugin definitions are the whole observable',
+	'drupal/uswds_base':
+		'installed against a real site through `theme_installer`, which is a different installer from every other row here: its asset libraries resolve afterwards and none before, and it lands in the `theme` key of `core.extension` rather than the `module` key. Its default library mode loads USWDS from a CDN, and a federal deployment picks the local mode instead'
 	// #endregion
 };
 
@@ -231,12 +242,49 @@ export interface TableRow {
 	evidence: string;
 }
 
+/**
+ * Words a machine name spells lowercase and a reader does not.
+ *
+ * Word-by-word rather than whole-name, so `jquery_ui_datepicker` and `jquery_ui` both read right
+ * from one entry each. A machine name is snake_case by Drupal convention, and capitalising each
+ * part gave `Uswds Base`, `Xmlsitemap` and `Jquery Ui` -- correct by the rule and wrong on the page.
+ */
+const WORD_CASING: Readonly<Record<string, string>> = {
+	api: 'API',
+	captcha: 'CAPTCHA',
+	cdn: 'CDN',
+	ckeditor: 'CKEditor',
+	csv: 'CSV',
+	dap: 'DAP',
+	gov: 'Gov',
+	imce: 'IMCE',
+	jquery: 'jQuery',
+	js: 'JS',
+	json: 'JSON',
+	oidc: 'OIDC',
+	php: 'PHP',
+	pdf: 'PDF',
+	rss: 'RSS',
+	seo: 'SEO',
+	smtp: 'SMTP',
+	solr: 'Solr',
+	sql: 'SQL',
+	svg: 'SVG',
+	ui: 'UI',
+	url: 'URL',
+	usfedgov: 'USFedGov',
+	uswds: 'USWDS',
+	vbo: 'VBO',
+	xml: 'XML',
+	xmlsitemap: 'XMLSitemap'
+};
+
 /** the label a reader recognises, derived rather than stored twice */
 export function labelFor(name: string): string {
 	const machine = name.split('/')[1] ?? name;
 	return machine
 		.split('_')
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.map((part) => WORD_CASING[part] ?? part.charAt(0).toUpperCase() + part.slice(1))
 		.join(' ');
 }
 
@@ -292,69 +340,4 @@ export function moduleTable(
 /** `blocked` rows carry the lift, because a refusal without a route out is a shrug */
 export function liftFor(name: string): string | null {
 	return MODULE_TIER_NOTES[name]?.lift ?? null;
-}
-
-/** one markdown cell, with the pipe escaped so a reason cannot break the table */
-const cell = (text: string): string => text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-
-/**
- * The README table, rendered.
- *
- * Emitted with a marker pair around it so the drift test can find exactly the region it owns and a
- * human can see where the generated part starts and stops.
- */
-export const TABLE_BEGIN = '<!-- module-table:begin -->';
-export const TABLE_END = '<!-- module-table:end -->';
-
-export function renderModuleTable(rows: TableRow[] = moduleTable()): string {
-	const counts = {
-		verified: rows.filter((r) => r.state === 'verified').length,
-		untested: rows.filter((r) => r.state === 'untested').length,
-		blocked: rows.filter((r) => r.state === 'blocked').length,
-		fixtureVerified: rows.filter(
-			(r) => r.state === 'verified' && !SHIPPING_PACK_CONTRIB.includes(r.name)
-		).length
-	};
-
-	const body = rows.map((row) => {
-		const lift = row.state === 'blocked' ? liftFor(row.name) : null;
-		return [
-			cell(row.label),
-			row.state,
-			`${cell(row.evidence)}${lift ? ` **Lift:** ${cell(lift)}` : ''}`
-		];
-	});
-
-	// Padded to the widest cell per column, which is exactly what prettier does to a markdown
-	// table. Emitting the unpadded form instead makes prettier rewrite the block on every run and
-	// the drift test then fails against its own generator rather than against a real change.
-	const header = ['Module', 'State', 'Evidence'];
-	const widths = header.map((h, i) =>
-		Math.max(h.length, ...body.map((r) => (r[i] ?? '').length))
-	);
-	const line = (cells: readonly string[]) =>
-		`| ${cells.map((c, i) => (c ?? '').padEnd(widths[i] ?? 0)).join(' | ')} |`;
-	const rule = `| ${widths.map((w) => '-'.repeat(w)).join(' | ')} |`;
-
-	return [
-		TABLE_BEGIN,
-		'',
-		`**${counts.verified} verified, ${counts.untested} untested, ${counts.blocked} blocked.** ` +
-			'Verified means the gate enabled the module and asserted an observable it owns, and it is ' +
-			'the only state that is a support claim. Untested means nobody has enabled it here: the ' +
-			'evidence column says what the capability analysis concluded, which is an inference about ' +
-			'the runtime rather than an observation about the module.',
-		'',
-		`Contrib modules are development dependencies here, verified against the test build and not ` +
-			`shipped. The pack carries ${SHIPPING_PACK_CONTRIB.length} ` +
-			`(${SHIPPING_PACK_CONTRIB.map((n) => labelFor(n)).join(', ')}); the other ` +
-			`${counts.fixtureVerified} verified rows are tested that way and marked, so a site stays ` +
-			'small and adds only what it asks for.',
-		'',
-		line(header),
-		rule,
-		...body.map(line),
-		'',
-		TABLE_END
-	].join('\n');
 }

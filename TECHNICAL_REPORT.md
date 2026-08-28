@@ -25,7 +25,7 @@ measures bytes it cannot compress further.
 | Cold boot | **1,398 ms** (n=3) | edge `cpuTime` |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **7,575 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
+| Regeneration ceiling, free | **8,196 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
@@ -39,7 +39,7 @@ accumulate 142 ms with no single invocation over 10 ms.
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **7,575/day** |
+| **Regeneration** | distinct pages re-rendered per day | **rows written** | **8,196/day** |
 
 Score any proposal with `bun scripts/measure/free-envelope.ts`; it fails a workload that misses
 either ceiling, and `tests/unit/free-envelope.spec.ts` covers the arithmetic. Two properties decide
@@ -130,7 +130,7 @@ fronted by a custom domain.
 
 A render happens off the request path. A MISS queues the path in `cfw_fill_queue`, the alarm renders
 it in batches, and `fillOne()` upserts the result into `cfw_page`. The queue is capped at 500, since
-an anonymous visitor asking for distinct paths otherwise grows it forever at ~13 rows each.
+an anonymous visitor asking for distinct paths otherwise grows it forever at ~12 rows each.
 
 `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `RENDER_BUDGET_MS`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
 `LAZY_FS_BUDGET_BYTES` and `PREFILL` are read on this chain, which never passes through `handle()`.
@@ -508,6 +508,35 @@ without deploying.
 
 ---
 
+### Worker Startup
+
+| limit | value |
+| --- | --- |
+| global-scope CPU | **1 second** (raised from 400 ms on 2025-10-10) |
+| global-scope memory | **128 MB** |
+| what exceeding it does | rejects the DEPLOY with error 10021, not a runtime failure |
+
+`wrangler check startup` on the shipping config: **104.0 ms active** of that budget, bundle 2,904 KiB
+gzip. The zstd inflate and the `WebAssembly.Module` compile are what spends it.
+
+This closes the "pre-warm at startup" idea. PHP's boot is 1,398 ms of `cpuTime` against a 1,000 ms
+ceiling, and its heap peaks near 115 MB against 128 MB, so the interpreter cannot be booted at module
+scope at any price. The headroom that does exist is for cheap work, and nothing cheap has been named.
+
+### Requests That Never Reach the Worker
+
+Two paths, and only two, cost nothing against the 100,000/day serving ceiling:
+
+- **Static assets.** `run_worker_first` defaults to `false`, so a request matching a file in the
+  assets directory is served without invoking the Worker, and Cloudflare bills those at zero. The
+  serving ceiling is therefore ~100,000 page views rather than 100,000 divided by the asset count.
+- **A hostname not routed to the Worker at all**, which is what an R2 custom domain is.
+
+A zone Cache Rule is NOT one of them: a Worker route runs the Worker before the cache is consulted.
+The Workers Caching feature does skip the Worker on a hit, but bills the request anyway -- and its
+cache key omits the host, which for a host serving many sites at `/` is a cross-tenant leak rather
+than a saving. `tests/node/cache-partition.spec.ts` refuses it in a shipping config.
+
 ## Measured Costs
 
 ### Boot
@@ -559,10 +588,24 @@ boot; reporting a mean would fold a 1.4 s boot into a 23 ms write.
 
 ### Rows Per Fill
 
-There is no single figure. A fill is **3 / 13 / 19 / 62 rows** depending on what is already warm, and
-`ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` names all four classes; the model defaults to
-`realRender: 13`. Every figure is counted at the storage handle, so it includes the host's own writes
--- notably the `cfw_page` insert that stores the whole rendered page.
+There is no single figure. A fill is **2 / 12 / 19 / 24 / 156 rows** depending on what is already
+warm, and `ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` names all five classes; the model
+defaults to `realRender: 12`. Every figure is counted at the storage handle, so it includes the
+host's own writes -- notably the `cfw_page` insert that stores the whole rendered page.
+`tests/integration/rows-per-fill-audit.spec.ts` re-measures each class and pins it; three consecutive
+runs read identical counts, so these are exact charges rather than noisy readings.
+
+Two of those classes were wrong until 2026-08-28. `firstEverForPath` stood at 62 and measures 24, and
+the most expensive case had no class at all: the FIRST fill on a fresh object costs **156**, because
+`cache_discovery`, `cache_default` and `cache_routes` are populated once per OBJECT rather than once
+per path. Charging every new path the fresh-object figure overstates a fleet six-fold; leaving it out
+understates each new site by one 156-row event.
+
+**The serve tables are `WITHOUT ROWID`, which is worth a row per fill.** SQLite gives a rowid table's
+`TEXT PRIMARY KEY` its own unique index, so one logical write is charged twice. Measured on
+`ctx.storage.sql`: insert 2 -> 1, update 1 either way, the serve HIT still reads one row, and 200
+rows of 12 KB html cost +0.32% on disk. The cheapest class benefits most -- `warmReassemble` went
+3 -> 2 rows, its index charge to zero -- and the windowed regeneration ceiling moved 7,575 -> 8,196.
 
 Two things that look like levers and are not. **Zero rows of a fill go to `watchdog`**, so
 uninstalling `dblog` buys nothing. And past ~85% off-Worker serving the binding meter becomes DO
@@ -625,9 +668,15 @@ are shared.
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |
 
-Cross-site heap dedup is **33.09%**; raw over best encoding on the live heap is **5.6-5.8x**, and the
-XOR-delta mechanism beats plain gzip by a margin between 1.5x and 8x that is not quotable across
-re-runs. Interned strings are 2.1-3.0% of linear memory against a 10% threshold.
+Cross-site heap dedup is **37.79%** on a provisioned pair, n=3 with zero spread, and
+`tests/integration/snapshot-dedup.spec.ts` pins it. It read 33.09% until 2026-08-28; nothing guarded
+the figure, which is how it drifted. The same runs read 39.94 / 39.94 / 76.03% on a pair of BARE
+objects, so that arm is reported and never quoted -- an object with no database has little structure
+to share and the fraction swings on what little there is.
+
+Raw over best encoding on the live heap is **5.6-5.8x**. XOR-delta at page granularity is refuted:
+the one-node arm reads 1.65x WORSE than plain gzip on three consecutive runs, and the best diverged
+arm lands on 1.000. Interned strings are 2.1-3.0% of linear memory against a 10% threshold.
 
 Content-keying the page store saves 21.05% of bytes on a real nine-path corpus -- Drupal's 404 is
 byte-identical across paths, and that one class is the entire saving -- but costs **4 charged rows

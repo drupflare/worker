@@ -337,7 +337,7 @@ costs 96,200 views/day.
 The optimum moves with the traffic mix and with CDN absorption, so compute it rather than copying a
 share: `optimalOffWorker()` in `scripts/measure/free-envelope.ts` derives it from the same model
 every other caller uses. Raising absorption does not converge on "mirror everything" — at absorption
-1, where R2 reads cannot bind at all, the peak lands at 0.888 and is bound by rows instead.
+1, where R2 reads cannot bind at all, the peak lands at 0.898 and is bound by rows instead.
 
 ## Outbound Mail
 

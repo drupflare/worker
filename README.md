@@ -159,7 +159,7 @@ with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
 | ceiling          | what it limits                     | bound by                  | free today                         |
 | ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
 | **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
-| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **7,575/day**                      |
+| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **8,196/day**                      |
 
 Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
 through the CDN without invoking the Worker. But "requests to static assets are free and unlimited"
@@ -214,10 +214,19 @@ and both are decisions a human makes. `/health` shows it, and `/_cfw` shows the 
 the largest style count that still fits.
 
 > [!CAUTION]
-> Do not enable the Workers Caching feature on free. It bills every request at the standard rate
-> _"including requests that are normally free: static asset requests"_ — converting the one free serving
-> path into a billed one. The name reads like what a cache-first architecture wants; the billing does
-> the opposite.
+> Do not enable the Workers Caching feature. Its cache key does not include the host, and this
+> product is multi-tenant by host — every site serves `/`, so one site's pages would be served to
+> another site's visitors. Cloudflare's cache-key documentation names this case directly:
+> _"white-labeled tenants where `tenant-a.example.com/index` and `tenant-b.example.com/index` must
+> produce different content — the cache key does not do this for you automatically."_ Partitioning it
+> needs a custom `cf.cacheKey` carrying the site id.
+>
+> It also bills every request at the standard rate _"including requests that are normally free:
+> static asset requests"_, which converts the one free serving path into a billed one. That is the
+> smaller problem, and on a paid plan it stops applying while the leak does not.
+>
+> The `caches.default` tier this project does use is a different mechanism and is safe: its key
+> carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.
 
 ---
 

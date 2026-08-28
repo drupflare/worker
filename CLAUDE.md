@@ -16,13 +16,15 @@ that catch the most mistakes:
 
 ## Scoring a Proposal
 
-Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings
-and they differ by 476x: serving is bound by Worker requests at 100,000/day, regeneration by rows
-written. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
-either.
+Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
+serving is bound by Worker requests at 100,000/day, regeneration by rows written at 8,196/day
+windowed and 2,777 on the alarm chain -- so regeneration is the tighter one by 12x and 36x
+respectively. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
+either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
 
 A cache hit still costs one Worker request, and decomposition spends the DO quota it is trying to
-dodge. Rows-per-fill is 3 to 62 depending on what is already warm, not a flat number.
+dodge. Rows-per-fill is 2 to 156 depending on what is already warm, not a flat number, and
+`tests/integration/rows-per-fill-audit.spec.ts` pins each class.
 
 **When a measurement kills an approach, close the approach and keep the goal.** The tell is "X does
 not move today's dominant constraint, therefore X is closed" -- the first half is a measurement and
@@ -324,6 +326,14 @@ release lane, which hydrates the payload first and sets `REQUIRE_ARTIFACTS=1`.
 Three vitest projects exist because workerd cannot do `node:child_process` or `node:fs`: `workers`
 runs in workerd, `node` runs what needs a real PHP binary or filesystem, `e2e` needs a server and is
 excluded from `bun run test`.
+
+**A fourth lane drives a BROWSER, and it exists because no HTTP lane could see the defect that
+opened it.** `bun run test:browser` runs Playwright over `bun run dev` against `tests/e2e/browser/`.
+The files are `*.pw.ts` rather than `*.spec.ts` so the vitest `e2e` glob cannot collect them, and it
+is NOT part of `bun run test` -- the gate stays hermetic. Every spec fails on a browser console error
+or an uncaught page error, which is the assertion that separates a working page from a 200 whose
+widget threw. `/user/register` and `/user/*/edit` were a white screen on every site and the e2e lane
+read both as healthy.
 
 PHP suites live in the siblings, and **they are the authority on their own module** -- what ships is
 `assets/driver.json`, packed from those same checkouts, and nothing tests the pack's PHP directly.

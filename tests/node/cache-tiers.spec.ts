@@ -17,16 +17,20 @@ const LITERAL = /'x-cfw-cache':\s*'([A-Z]+)'/g;
 const SET_CALL = /set\('x-cfw-cache',\s*'([A-Z]+)'\)/g;
 // `pageResponse()` takes the tier as an argument, so those never appear as a header literal
 const PAGE_RESPONSE = /pageResponse\(\s*\w+,\s*'([A-Z]+)'/g;
+// the shell path chooses between two tiers on the verdict, and BOTH branches ship
+const TERNARY = /'x-cfw-cache':[^,]*?\?\s*'([A-Z]+)'\s*:\s*'([A-Z]+)'/g;
 
 function tiersInSource(): Map<string, string[]> {
 	const found = new Map<string, string[]>();
 	for (const file of SOURCES) {
 		const text = readFileSync(resolve(ROOT, file), 'utf8');
-		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE]) {
+		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE, TERNARY]) {
 			re.lastIndex = 0;
 			for (const m of text.matchAll(re)) {
-				const tier = m[1] as string;
-				found.set(tier, [...(found.get(tier) ?? []), file]);
+				for (const tier of m.slice(1)) {
+					if (tier === undefined) continue;
+					found.set(tier, [...(found.get(tier) ?? []), file]);
+				}
 			}
 		}
 	}
@@ -75,7 +79,8 @@ describe('the generation header', () => {
 		expect(blocks.length).toBeGreaterThan(2);
 		for (const block of blocks) {
 			const window = block.slice(0, 600);
-			const tier = /^\s*'([A-Z]+)'/.exec(block)?.[1] ?? '?';
+			// not anchored, so a tier picked by a ternary still names itself in the failure
+			const tier = /'([A-Z]+)'/.exec(block.slice(0, 200))?.[1] ?? '?';
 			expect(window, `the ${tier} response omits x-cfw-generation`).toContain(
 				'x-cfw-generation'
 			);

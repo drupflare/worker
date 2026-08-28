@@ -19,6 +19,7 @@
  *       <drupal-root> [route] [--terminate] [--count] [--n=1] [--run-cron]
  */
 
+use Drupal\Component\Utility\Timer;
 use Drupal\Core\Database\Database;
 use Drupal\Core\DrupalKernel;
 use Drupal\Core\Site\Settings;
@@ -26,7 +27,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpKernel\HttpKernelInterface;
 
 // #region counting statement
-final class ProbeCountingStatement extends \PDOStatement
+final class ProbeCountingStatement extends PDOStatement
 {
 	public static int $count = 0;
 
@@ -77,7 +78,7 @@ $autoloader = require_once $root . '/autoload.php';
 
 // the shipped tree is Fiber-patched for emscripten; native PHP has real Fibers
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $ms = fn() => microtime(true) * 1000;
@@ -111,7 +112,7 @@ $serve = function (string $path) use (
 		ProbeCountingStatement::$queries = [];
 		ProbeCountingStatement::$record = $record;
 		$pdo = Database::getConnection()->getClientConnection();
-		$pdo->setAttribute(\PDO::ATTR_STATEMENT_CLASS, [ProbeCountingStatement::class, []]);
+		$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [ProbeCountingStatement::class, []]);
 	}
 
 	// wall time on a laptop swings 2x on scheduling alone, so CPU is the figure
@@ -147,13 +148,13 @@ $serve = function (string $path) use (
 		$q0 = ProbeCountingStatement::$count;
 		$k0 = $cpu();
 		$c0 = microtime(true);
-		\Drupal::service('cron')->run();
+		Drupal::service('cron')->run();
 		$cronMs = round((microtime(true) - $c0) * 1000, 2);
 		$cronCpuMs = round(($cpu() - $k0) * 1000, 2);
 		$cronQueries = ProbeCountingStatement::$count - $q0;
 		// Cron::invokeCronHandlers() already wraps every implementation in
 		// Timer::start('cron_<module>'), so the per-module split is free
-		$t = new \ReflectionProperty(\Drupal\Component\Utility\Timer::class, 'timers');
+		$t = new ReflectionProperty(Timer::class, 'timers');
 		$t->setAccessible(true);
 		foreach ($t->getValue() as $name => $info) {
 			if (str_starts_with((string) $name, 'cron_')) {
@@ -191,7 +192,7 @@ $serve = function (string $path) use (
 // collector is not itself part of the measurement
 $cronLast = function () use ($root): ?string {
 	$db = $root . '/sites/default/files/.sqlite';
-	$pdo = new \PDO('sqlite:' . $db);
+	$pdo = new PDO('sqlite:' . $db);
 	$row = $pdo
 		->query("select value from key_value where collection='state' and name='system.cron_last'")
 		->fetchColumn();

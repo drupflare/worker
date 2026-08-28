@@ -81,7 +81,7 @@ $autoloader = require_once $root . '/autoload.php';
 // scripts/patch-drupal.mjs rewrote core's \Fiber call sites to \PhpWasmSyncFiber for emscripten,
 // which has no ucontext. Native PHP has real Fibers, so alias straight back
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $req = Request::create('/', 'GET');

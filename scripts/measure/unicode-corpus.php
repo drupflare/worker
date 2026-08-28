@@ -296,7 +296,7 @@ namespace {
 			// is the closest pin available and it is NOT that version -- oniguruma is the
 			// regex engine. ext-intl's answer is recorded beside it when the build has one
 			'oniguruma' => defined('MB_ONIGURUMA_VERSION') ? MB_ONIGURUMA_VERSION : null,
-			'icuUnicode' => class_exists('IntlChar') ? \IntlChar::getUnicodeVersion() : null,
+			'icuUnicode' => class_exists('IntlChar') ? IntlChar::getUnicodeVersion() : null,
 			'scalars' => 0x110000 - (SURROGATE_HI - SURROGATE_LO + 1),
 		],
 		'case' => [

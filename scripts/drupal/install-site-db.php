@@ -34,6 +34,7 @@
 use Drupal\Core\DrupalKernel;
 use Drupal\Core\Site\Settings;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 $argvRest = array_slice($argv, 1);
 $flags = array_values(array_filter($argvRest, fn($a) => str_starts_with($a, '--')));
@@ -113,7 +114,7 @@ $classLoader = require_once $root . '/autoload.php';
 // the packed tree aliases Fiber so the wasm runtime can find it; a native install must not trip
 // over the alias being absent
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 require_once $root . '/core/includes/install.core.inc';
 
@@ -170,11 +171,11 @@ Settings::initialize($root, $sitePath, $classLoader);
 $kernel->boot();
 $kernel->preHandle($request);
 
-$installer = \Drupal::service('module_installer');
+$installer = Drupal::service('module_installer');
 $extra = array_filter(explode(',', (string) $opt('extra-modules', 'media')));
 $installedExtra = [];
 foreach ($extra as $module) {
-	if (!\Drupal::moduleHandler()->moduleExists($module)) {
+	if (!Drupal::moduleHandler()->moduleExists($module)) {
 		$installer->install([$module]);
 		$installedExtra[] = $module;
 	}
@@ -182,7 +183,7 @@ foreach ($extra as $module) {
 
 // the same two trims `scripts/drupal/trim-site-config.php` applies to a live tree, because this
 // runtime has no outbound socket: with advisories on, SystemHooks::cron() GETs updates.drupal.org
-\Drupal::configFactory()->getEditable('system.advisories')->set('enabled', false)->save();
+Drupal::configFactory()->getEditable('system.advisories')->set('enabled', false)->save();
 
 $settingsFile = $absSite . '/settings.php';
 $source = file_get_contents($settingsFile);
@@ -196,13 +197,13 @@ if (!preg_match('/^\s*\$settings\[.auto_create_htaccess.\]/m', $source)) {
 // install-time log noise. 40 rows of it shipped in the pack, and a starter database that arrives
 // carrying another site's install log is dirt rather than content
 $truncated = 0;
-if (\Drupal::database()->schema()->tableExists('watchdog')) {
-	$truncated = (int) \Drupal::database()
+if (Drupal::database()->schema()->tableExists('watchdog')) {
+	$truncated = (int) Drupal::database()
 		->select('watchdog')
 		->countQuery()
 		->execute()
 		->fetchField();
-	\Drupal::database()->truncate('watchdog')->execute();
+	Drupal::database()->truncate('watchdog')->execute();
 }
 
 // WAL first, or the copy loses whatever the last transactions wrote: the installer leaves a -wal
@@ -213,11 +214,11 @@ if (\Drupal::database()->schema()->tableExists('watchdog')) {
 // connection (Connection.php:151), so a raw `new PDO()` cannot rebuild them and fails with
 // "no such collation sequence". A plain sqlite3 client reading this file hits the same wall, which
 // is worth knowing before debugging one.
-$db = \Drupal::database();
+$db = Drupal::database();
 $db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 $db->query('VACUUM');
 
-$kernel->terminate($request, new \Symfony\Component\HttpFoundation\Response());
+$kernel->terminate($request, new Response());
 // #endregion
 
 @mkdir(dirname($out), 0775, true);

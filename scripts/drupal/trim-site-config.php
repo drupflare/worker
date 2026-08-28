@@ -34,7 +34,7 @@ $root = realpath($root);
 chdir($root);
 $autoloader = require_once $root . '/autoload.php';
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $request = Request::create('/', 'GET');
@@ -46,11 +46,11 @@ Settings::initialize($root, $sitePath, $autoloader);
 $kernel->boot();
 $kernel->preHandle($request);
 
-$factory = \Drupal::configFactory();
+$factory = Drupal::configFactory();
 $advisories = $factory->getEditable('system.advisories');
 $before = $advisories->get('enabled');
 $advisories->set('enabled', false)->save();
-$after = \Drupal::config('system.advisories')->get('enabled');
+$after = Drupal::config('system.advisories')->get('enabled');
 
 // settings.php is shipped read-only in this tree, so widen it for the append and
 // put the mode back

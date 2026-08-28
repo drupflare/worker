@@ -15,7 +15,7 @@
  * because this machine runs other builds.
  *
  * warm and fresh are separate invocations by design: DrupalKernel::boot() calls
- * \Drupal::setContainer(), so a fresh kernel silently repoints every \Drupal::
+ * Drupal::setContainer(), so a fresh kernel silently repoints every Drupal::
  * static and the two cannot coexist in one interpreter.
  *
  *   php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/bench/bench-minimal.php \
@@ -50,7 +50,7 @@ require_once $probe ?? $root . '/pw-probe.php';
 // fibers and Drupal's call sites are written against them, so alias straight
 // back rather than running the synchronous stand-in here
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $out = pw_bench_profile([

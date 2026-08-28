@@ -141,7 +141,7 @@ $autoloader = require_once $root . '/autoload.php';
 // scripts/patch-drupal.mjs rewrote core's \Fiber call sites to \PhpWasmSyncFiber for emscripten,
 // which has no ucontext; native PHP has real Fibers, so alias straight back
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $req = Request::create($paths[0], 'GET');
@@ -165,10 +165,10 @@ foreach ($paths as $path) {
 // after the render, never before: several `twig.extension` services depend on `url_generator`,
 // which needs a request on the stack, so building the twig service early throws
 /** @var \Drupal\Core\Template\TwigEnvironment $twig */
-$twig = \Drupal::service('twig');
+$twig = Drupal::service('twig');
 
 // resolve each extra hook through the theme registry, so the ACTIVE theme's override wins
-$registry = \Drupal::service('theme.registry')->get();
+$registry = Drupal::service('theme.registry')->get();
 foreach ($extraHooks as $hook) {
 	if (!isset($registry[$hook]['template'])) {
 		$extraTemplates[] = "!! hook $hook is not in the theme registry";
@@ -197,7 +197,7 @@ foreach ($extraTemplates as $name) {
 		$forced[$name] = get_class($e) . ': ' . $e->getMessage();
 	}
 }
-$localHash = \Drupal::getContainer()->getParameter('twig_extension_hash');
+$localHash = Drupal::getContainer()->getParameter('twig_extension_hash');
 
 // #region the retarget
 /**

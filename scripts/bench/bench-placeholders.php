@@ -74,7 +74,7 @@ function measure(string $label, callable $fn): array
 // 1. Entity query with a large IN() set -- the canonical risk shape.
 foreach ([50, 150, 500, 2000] as $n) {
 	$results[] = measure("entityQuery nid IN ($n ids)", function () use ($n) {
-		\Drupal::entityQuery('node')
+		Drupal::entityQuery('node')
 			->accessCheck(false)
 			->condition('nid', range(1, $n), 'IN')
 			->execute();
@@ -83,17 +83,17 @@ foreach ([50, 150, 500, 2000] as $n) {
 
 // 2. Loading many entities at once -- what a Views page does after its query.
 $results[] = measure('loadMultiple(500 nids)', function () {
-	\Drupal::entityTypeManager()->getStorage('node')->loadMultiple(range(1, 500));
+	Drupal::entityTypeManager()->getStorage('node')->loadMultiple(range(1, 500));
 });
 
 // 3. Config entity load, which fans out into key_value reads.
 $results[] = measure('config entity loadMultiple', function () {
-	\Drupal::entityTypeManager()->getStorage('node_type')->loadMultiple();
+	Drupal::entityTypeManager()->getStorage('node_type')->loadMultiple();
 });
 
 // 4. Direct select with a large IN(), bypassing the entity layer.
 $results[] = measure('select IN (1000)', function () {
-	\Drupal::database()
+	Drupal::database()
 		->select('node_field_data', 'n')
 		->fields('n', ['nid'])
 		->condition('nid', range(1, 1000), 'IN')

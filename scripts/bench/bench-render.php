@@ -36,7 +36,7 @@ $autoloader = require_once $root . '/autoload.php';
 // Fibers, and Drupal's call sites are written against them, so alias straight
 // back rather than running the synchronous stand-in here.
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $t = fn() => microtime(true) * 1000;
@@ -92,7 +92,7 @@ $prepared->setAccessible(true);
 $warmServe = function (string $path) use ($kernel, $prepared) {
 	$req = Request::create($path, 'GET');
 	$prepared->setValue($kernel, false);
-	$stack = \Drupal::service('request_stack');
+	$stack = Drupal::service('request_stack');
 	while ($stack->getCurrentRequest() !== null) {
 		$stack->pop();
 	}

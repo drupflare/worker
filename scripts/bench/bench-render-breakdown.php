@@ -16,8 +16,8 @@
  * one loop runs with the decorators installed but the timer off and the
  * difference is reported.
  *
- * Warm kernel only. A fresh kernel calls \Drupal::setContainer() and would
- * repoint every \Drupal:: static at a container whose services are not the
+ * Warm kernel only. A fresh kernel calls Drupal::setContainer() and would
+ * repoint every Drupal:: static at a container whose services are not the
  * decorated ones.
  *
  *   php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/bench/bench-render-breakdown.php \
@@ -49,7 +49,7 @@ $autoloader = require_once $root . '/autoload.php';
 require_once $probe ?? $root . '/pw-probe.php';
 
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $out = pw_bench_breakdown([

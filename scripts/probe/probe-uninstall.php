@@ -28,7 +28,7 @@ $root = realpath($root);
 chdir($root);
 $autoloader = require_once $root . '/autoload.php';
 if (!class_exists('PhpWasmSyncFiber', false)) {
-	class_alias(\Fiber::class, 'PhpWasmSyncFiber');
+	class_alias(Fiber::class, 'PhpWasmSyncFiber');
 }
 
 $request = Request::create('/', 'GET');
@@ -40,17 +40,17 @@ Settings::initialize($root, $sitePath, $autoloader);
 $kernel->boot();
 $kernel->preHandle($request);
 
-$before = array_keys(\Drupal::service('module_handler')->getModuleList());
+$before = array_keys(Drupal::service('module_handler')->getModuleList());
 $error = null;
 $ok = null;
 $t0 = microtime(true);
 try {
-	$ok = \Drupal::service('module_installer')->uninstall([$module], true);
+	$ok = Drupal::service('module_installer')->uninstall([$module], true);
 } catch (\Throwable $e) {
 	$error = get_class($e) . ': ' . $e->getMessage();
 }
 $ms = round((microtime(true) - $t0) * 1000, 1);
-$after = array_keys(\Drupal::service('module_handler')->getModuleList());
+$after = array_keys(Drupal::service('module_handler')->getModuleList());
 
 echo json_encode(
 	[

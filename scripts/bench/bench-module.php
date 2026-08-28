@@ -61,8 +61,8 @@ $kernel->preHandle($request);
 
 $tBoot = marks();
 
-$installer = \Drupal::service('module_installer');
-$handler = \Drupal::service('module_handler');
+$installer = Drupal::service('module_installer');
+$handler = Drupal::service('module_handler');
 $already = $handler->moduleExists($module);
 
 $result = null;

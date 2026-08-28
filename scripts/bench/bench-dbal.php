@@ -40,7 +40,7 @@ $kernel->boot();
 
 $t = fn() => microtime(true) * 1000;
 $out = [];
-$db = \Drupal::database();
+$db = Drupal::database();
 
 // the wasm run's first number was taken with three loggers still attached; prove
 // this one is not
@@ -86,7 +86,7 @@ $out['rawPdo']['indexedMs'] = round(($t() - $a) / $n, 4);
 // amplifying it? Same A/B as the /dbal route: global scope keeps variables in a
 // hashtable, function scope compiles them to CVs.
 $M = 400;
-$dbz = \Drupal::database();
+$dbz = Drupal::database();
 $dbz->query('SELECT 1')->fetchAll();
 $a = $t();
 for ($i3 = 0; $i3 < $M; $i3++) {

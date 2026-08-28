@@ -382,21 +382,29 @@ export const DEFAULT_FILL_BATCH = 5;
  */
 export const ROWS_PER_FILL = {
 	/** page bin only, dynamic_page_cache left warm: a reassemble rather than a render */
-	warmReassemble: 3,
+	warmReassemble: 2,
 	/** both bins empty -- a real render, and what a tag invalidation costs to undo */
-	realRender: 13,
+	realRender: 12,
 	/** the front page on a freshly migrated object, which also writes cfw_meta and the queue */
 	firstFillAfterMigrate: 19,
 	/**
-	 * a path never routed on this object; mostly one-time cache_render/routes/discovery.
+	 * a path never routed on this object, once the object has filled something else.
 	 *
-	 * 62 HERE AND 67 IN THE MEASUREMENT TABLE ARE BOTH RIGHT, and the difference has been
-	 * "corrected" in the wrong direction once. 67 is what was measured BEFORE the `page` bin was
-	 * nulled; 62 is the same fill after, because Drupal's internal page cache was adding 4-5 rows on
-	 * top of every class. `warmReassemble` carries the same relationship more visibly, 8 -> 3. Every
-	 * figure in this object is post-`cache_page`; the report's table is the historical reading.
+	 * RE-MEASURED 2026-08-28 at 24, n=3 and zero spread, by
+	 * `tests/integration/rows-per-fill-audit.spec.ts`. It stood at 62, which reproduces as neither
+	 * this class nor {@link firstFillOnFreshObject} either side of it -- 62 and the report's 67 were
+	 * the same fill before and after the `page` bin was nulled, and the pack has moved since.
 	 */
-	firstEverForPath: 62
+	firstEverForPath: 24,
+	/**
+	 * THE FIRST FILL ON A FRESH OBJECT, which pays the whole shared-bin warm-up once.
+	 *
+	 * A class of its own rather than the worst end of `firstEverForPath`: `cache_discovery`,
+	 * `cache_default` and `cache_routes` are populated once per OBJECT, not once per path, so the
+	 * second never-routed path costs 25 against this 157. Charging every new path 157 overstates a
+	 * fleet's cost by 6x; leaving it out understates each new site by one 157-row event.
+	 */
+	firstFillOnFreshObject: 156
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
@@ -670,7 +678,7 @@ export function envelope(
 			slackFraction: availableGbS / FREE_QUOTAS.durationGbSPerDay
 		},
 		// Class A is a WRITE, so it prices regeneration rather than serving: one mirrored page per
-		// fill. 1M/month is 33,333/day against a rows-bound ceiling of ~7,575, so it is not close --
+		// fill. 1M/month is 33,333/day against a rows-bound ceiling of ~8,196, so it is not close --
 		// but it is in the model now rather than assumed away
 		regenerationsPerDay: Math.floor(Math.min(byDo, byRows, byR2ClassA, byDuration)),
 		regenerationBoundBy: (['do', 'rows', 'r2ClassA', 'duration'] as const).reduce(

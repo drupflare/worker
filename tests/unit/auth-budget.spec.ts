@@ -44,13 +44,15 @@ describe('the constants are pinned to the envelope script, not restated', () => 
 
 	it('prices an authenticated view as a realRender, not a warm reassemble', () => {
 		// an authenticated view empties both bins for that user, so it is the render figure. Pricing
-		// it as warmReassemble (3) would overstate the allowance by 4.3x
+		// it as warmReassemble (2) would overstate the allowance six-fold
 		expect(ROWS_PER_AUTH_RENDER).toBe(ROWS_PER_FILL.realRender);
 		expect(ROWS_PER_AUTH_RENDER).not.toBe(ROWS_PER_FILL.warmReassemble);
 	});
 
-	it('is the 13 the coordinator measured, not the retired flat 17', () => {
-		expect(ROWS_PER_AUTH_RENDER).toBe(13);
+	it('is the 12 the audit measured, not the retired flat 17', () => {
+		// 13 until the serve tables became WITHOUT ROWID and a fill stopped paying an index row;
+		// `tests/integration/rows-per-fill-audit.spec.ts` is what re-measures it
+		expect(ROWS_PER_AUTH_RENDER).toBe(12);
 	});
 });
 
@@ -124,12 +126,12 @@ describe('authAllowance: the reservation splits the meter', () => {
 		expect(a.rowsForAnonymous).toBe(75_000);
 	});
 
-	it('buys 1,923 authenticated views/day at 13 rows each', () => {
-		expect(authAllowance({ PLAN: 'free' }).rendersPerDay).toBe(1_923);
+	it('buys 2,083 authenticated views/day at 12 rows each', () => {
+		expect(authAllowance({ PLAN: 'free' }).rendersPerDay).toBe(2_083);
 	});
 
 	it('is bound by rows rather than DO requests', () => {
-		// 25,000 rows / 13 = 1,923; 25,000 DO requests / 1 = 25,000. Rows bind by 13x, which is why
+		// 25,000 rows / 12 = 2,083; 25,000 DO requests / 1 = 25,000. Rows bind by 12x, which is why
 		// the reservation is expressed as a rows fraction
 		const a = authAllowance({ PLAN: 'free' });
 		expect(a.boundBy).toBe('rows');
@@ -161,13 +163,13 @@ describe('authAllowance: the reservation splits the meter', () => {
 		// the whole reservation is only safe if what remains still clears the real workload
 		const a = authAllowance({ PLAN: 'free' });
 		const full = envelope(undefined, { windowed: true });
-		expect(full.regenerationsPerDay).toBe(7_575);
+		expect(full.regenerationsPerDay).toBe(8_196);
 		expect(full.regenerationBoundBy).toBe('rows');
 		// rows scale linearly, so the anonymous slice is the same ceiling times the leftover fraction
 		const anonymous = Math.floor(
 			full.regenerationsPerDay * (a.rowsForAnonymous / DAILY_ROWS_QUOTA)
 		);
-		expect(anonymous).toBe(5_681);
+		expect(anonymous).toBe(6_147);
 		// 1,000/day is the need at 3M visits/month and 1% dynamic
 		expect(anonymous / 1_000).toBeGreaterThan(5);
 	});
@@ -248,17 +250,17 @@ describe('decideAuthMode: the ladder, and it never goes dark', () => {
 	it('renders while inside the allowance', () => {
 		const d = decideAuthMode(get, { day: '2026-08-13', renders: 10 }, free, now);
 		expect(d.mode).toBe('render');
-		expect(d.remaining).toBe(1_913);
+		expect(d.remaining).toBe(2_073);
 	});
 
 	it('renders on the very last unit of the allowance', () => {
-		const d = decideAuthMode(get, { day: '2026-08-13', renders: 1_922 }, free, now);
+		const d = decideAuthMode(get, { day: '2026-08-13', renders: 2_082 }, free, now);
 		expect(d.mode).toBe('render');
 		expect(d.remaining).toBe(1);
 	});
 
 	it('degrades a read to stale exactly at the allowance, not one past it', () => {
-		const d = decideAuthMode(get, { day: '2026-08-13', renders: 1_923 }, free, now);
+		const d = decideAuthMode(get, { day: '2026-08-13', renders: 2_083 }, free, now);
 		expect(d.mode).toBe('stale');
 		expect(d.remaining).toBe(0);
 	});
@@ -281,8 +283,8 @@ describe('decideAuthMode: the ladder, and it never goes dark', () => {
 	});
 
 	it('names the numbers in the reason, so a header explains itself', () => {
-		const d = decideAuthMode(get, { day: '2026-08-13', renders: 2_000 }, free, now);
-		expect(d.reason).toContain('2000/1923');
+		const d = decideAuthMode(get, { day: '2026-08-13', renders: 2_500 }, free, now);
+		expect(d.reason).toContain('2500/2083');
 	});
 
 	it('refills after midnight UTC, from the same stale record', () => {
@@ -328,7 +330,7 @@ describe('the Durable Object contract: one codec, two callers', () => {
 		const spend = { day: '2026-08-13', renders: 42 };
 		const headers = new Headers(authSpendHeaders(spend, allowance));
 		expect(headers.get(AUTH_SPENT_HEADER)).toBe('42');
-		expect(headers.get(AUTH_ALLOWANCE_HEADER)).toBe('1923');
+		expect(headers.get(AUTH_ALLOWANCE_HEADER)).toBe('2083');
 		expect(headers.get(AUTH_DAY_HEADER)).toBe('2026-08-13');
 		expect(parseAuthSpend(headers)).toEqual(spend);
 	});

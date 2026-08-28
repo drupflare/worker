@@ -55,10 +55,10 @@ export const SITE_STORAGE_BYTES = {
 	/** the seeded database alone, `databaseSize` after `/migrate?all=1` */
 	seed: 4_616_192,
 	/**
-	 * On a MIGRATED but COLD object, 3.7x the warm case (1,247 ms / 553 pages against 33 ms / 148,
+	 * On a MIGRATED but COLD object, 3.7x the warm case (1,247 ms / 552 pages against 33 ms / 148,
 	 * both `ok`). The model keeps the cold figure so a storage ceiling is not optimistic.
 	 */
-	heapSnapshot: 36_241_408,
+	heapSnapshot: 36_175_872,
 	/** the same snapshot on a site that has been through `/firstrun` and served one page */
 	warmHeapSnapshot: 9_699_328
 } as const;

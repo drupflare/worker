@@ -110,7 +110,7 @@ describe('a site as a delta against another site image', () => {
 	it(
 		'stores 3.7x less once the site is warm, and the model quotes the cold figure',
 		async () => {
-			// 1,247 ms / 553 pages cold against 33 ms / 148 warm, both ok: the warm kernel reads
+			// 1,247 ms / 552 pages cold against 33 ms / 148 warm, both ok: the warm kernel reads
 			// caches instead of rebuilding them
 			const cold = freshSite();
 			await inObject(cold, (s: ServeDo) => call(s, '/__migrate?all=1&prefill=0'));

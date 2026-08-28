@@ -1,4 +1,4 @@
-import { isPaid } from '../ops/plan';
+import { isPaid } from '../ops/plan.js';
 /**
  * First-run migration, replayed in JavaScript straight into `ctx.storage.sql`.
  *

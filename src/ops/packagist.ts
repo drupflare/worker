@@ -1,4 +1,4 @@
-import { satisfies, type Satisfaction } from './composer-constraint';
+import { satisfies, type Satisfaction } from './composer-constraint.js';
 
 /**
  * Decides whether a module can be installed, in ONE cacheable subrequest, and refuses with the

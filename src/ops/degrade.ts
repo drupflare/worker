@@ -27,8 +27,8 @@
  * for weeks with no path back. It is projected and warned about separately.
  */
 
-import type { PlanEnv } from './plan';
-import { limitFor, THRESHOLDS } from './thresholds';
+import type { PlanEnv } from './plan.js';
+import { limitFor, THRESHOLDS } from './thresholds.js';
 
 /**
  * The daily allowance for one meter, read from `THRESHOLDS` rather than restated.

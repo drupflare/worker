@@ -1,10 +1,10 @@
-import { isPaid, type PlanEnv, type ResolvedPlan } from '../ops/plan';
+import { isPaid, type PlanEnv, type ResolvedPlan } from '../ops/plan.js';
 import {
 	projectImageTransforms,
 	thresholdReport,
 	type ImagePlan,
 	type MeterReading
-} from '../ops/thresholds';
+} from '../ops/thresholds.js';
 
 /**
  * | surface    | state                                                                        |

@@ -55,9 +55,6 @@ const DISQUALIFIERS = [
 /** each outbound connection defers eviction for at most this long, per Cloudflare's lifecycle page */
 export const OUTBOUND_PIN_SECONDS = 15 * 60;
 
-/** idle wait before a hibernation-eligible object hibernates */
-export const HIBERNATE_AFTER_SECONDS = 10;
-
 /** idle wait before a NON-eligible object is evicted outright; a range, so both ends are carried */
 export const EVICT_AFTER_SECONDS = { min: 70, max: 140 };
 
@@ -89,6 +86,8 @@ export function hibernationEligible(state: ResidencyState = {}): Eligibility {
  * @param outboundHeldSeconds how long an outbound socket stayed open, if one did.
  */
 export function idleBilledSeconds(state: ResidencyState, outboundHeldSeconds = 0): number {
+	// zero, not the ~10 s wait before it actually hibernates: Cloudflare does not bill an idle
+	// object that is ELIGIBLE, so the wait is not a billing input
 	if (hibernationEligible(state).eligible) return 0;
 	// an outbound connection defers eviction until it closes AND the inactivity window elapses,
 	// capped at 15 minutes of pinning per connection

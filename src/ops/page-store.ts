@@ -1,4 +1,4 @@
-import { isPaid, type PlanEnv } from './plan';
+import { isPaid, type PlanEnv } from './plan.js';
 
 /**
  * The page cache tier that survives a colo, for the paid plan only.

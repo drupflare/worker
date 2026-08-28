@@ -1,5 +1,5 @@
-import { refusalFor, scoreModule, vectorFor } from './capability-contract';
-import { satisfies } from './composer-constraint';
+import { refusalFor, scoreModule, vectorFor } from './capability-contract.js';
+import { satisfies } from './composer-constraint.js';
 
 /** one catalog entry: a pre-packed module and what it needs */
 export type CatalogEntry = {
@@ -38,7 +38,7 @@ export type CatalogEntry = {
  * queue already solves; only a call whose answer must arrive inside the same render is truly
  * blocked.
  */
-import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers';
+import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers.js';
 
 export type ModuleCapability = 'deferrable-outbound' | 'blocking-outbound' | 'cron';
 

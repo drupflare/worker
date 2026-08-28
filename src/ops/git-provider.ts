@@ -226,7 +226,9 @@ export function pullsRequest(remote: Remote): { url: string; pick: (b: unknown) 
 						sha: str(obj(obj(pr.source).commit).hash),
 						author: str(obj(pr.author).display_name) ?? '',
 						url: str(obj(obj(pr.links).html).href) ?? '',
-						draft: false
+						// `pullrequest.draft` is in Atlassian's published spec; hardcoding false
+						// reported every Bitbucket draft as ready to merge
+						draft: pr.draft === true
 					};
 				})
 		};

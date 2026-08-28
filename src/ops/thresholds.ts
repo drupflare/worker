@@ -1,4 +1,4 @@
-import { isPaid, type PlanEnv } from './plan';
+import { isPaid, type PlanEnv } from './plan.js';
 
 /**
  * Every meter a site can run out of, what it costs, and HOW IT FAILS.

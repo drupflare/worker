@@ -22,7 +22,7 @@
  * so an operator can run a paid profile on free or the reverse without editing code.
  */
 
-import { isPaid, type PlanEnv } from './plan';
+import { isPaid, type PlanEnv } from './plan.js';
 
 /** the per-plan defaults; every field is a per-invocation budget or a visitor-patience bound */
 export type PlanProfile = {

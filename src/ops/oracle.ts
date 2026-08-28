@@ -1,5 +1,5 @@
-import { tierFor, type RuntimeTier } from './catalog';
-import { checkInstallable, type InstallVerdict } from './packagist';
+import { tierFor, type RuntimeTier } from './catalog.js';
+import { checkInstallable, type InstallVerdict } from './packagist.js';
 
 /**
  * A compatibility oracle in KV, so the common answer costs no subrequest at all.

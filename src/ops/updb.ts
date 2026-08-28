@@ -254,7 +254,7 @@
  * one HTTP poke per beat in a test.
  */
 
-import { UPDB_FLUSH_STEPS, UPDB_VERIFY, updbPlan, updbUnit } from '../drupal/updb-php';
+import { UPDB_FLUSH_STEPS, UPDB_VERIFY, updbPlan, updbUnit } from '../drupal/updb-php.js';
 
 export { UPDB_FLUSH_STEPS, UPDB_VERIFY };
 

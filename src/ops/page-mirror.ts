@@ -26,7 +26,7 @@
  * @see scripts/measure/free-envelope.ts for the model this feeds
  */
 
-import type { MirrorBucket } from '../db/file-store';
+import type { MirrorBucket } from '../db/file-store.js';
 
 /** the `cfw_page` columns a mirror needs, and nothing more */
 export type MirrorablePage = {

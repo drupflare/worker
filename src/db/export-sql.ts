@@ -1,4 +1,4 @@
-import type { SqlLike } from './migrate-sql';
+import type { SqlLike } from './migrate-sql.js';
 
 /**
  * The export half of backup/restore, on the HOST side rather than in PHP.

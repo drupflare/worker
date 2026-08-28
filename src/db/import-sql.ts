@@ -1,11 +1,11 @@
-import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store';
+import { DO_SQLITE_MAX_STATEMENT_CHARS } from './heap-store.js';
 import type {
 	MigrationChunk,
 	MigrationLoader,
 	MigrationManifest,
 	SqlLike,
 	StorageLike
-} from './migrate-sql';
+} from './migrate-sql.js';
 
 /**
  * The other half of `/export`, which had none: replaying a dump back into a Durable Object.

@@ -1,4 +1,4 @@
-import { cronHookList, runCronHook, runCronQueue } from '../drupal/cron-php';
+import { cronHookList, runCronHook, runCronQueue } from '../drupal/cron-php.js';
 
 /**
  * Garbage collection and the decomposed cron chain.

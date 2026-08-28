@@ -678,6 +678,97 @@ Bucket attribution against native PHP, per render:
 
 The two most expensive buckets are not the renderer.
 
+**THAT MULTIPLIER IS NOT A SHARE, AND READING IT AS ONE MISRANKS THE WORK.** It is how much slower
+wasm is than native for that bucket. The share of a native steady-state render, measured per bucket
+by `scripts/bench/bench-render-breakdown.php` over 5 accumulated renders at 5.676 ms each:
+
+| bucket | ms/render | calls/render | share |
+| --- | --- | --- | --- |
+| events | 1.512 | 7 | 26.6% |
+| renderer | 1.388 | 34 | 24.5% |
+| `cache_contexts` | 0.598 | 113 | 10.5% |
+| theme | 0.547 | 14 | 9.6% |
+| `render_cache.get` | 0.427 | 6 | 7.5% |
+| twig.execute | 0.322 | 14 | 5.7% |
+| residual | 0.605 | -- | 10.7% |
+
+`events` is 7 calls costing 1.512 ms, so it is the LISTENERS doing work rather than dispatch
+overhead; a frozen listener table would return only the resolution part of it.
+
+#### The Cache-Context Memo
+
+`convertTokensToKeys()` is called **51 times over 13 distinct token lists** on a steady-state front
+page, so **74.5% of the calls repeat a list already answered in the same request**, and **zero token
+lists produced two different answers** -- which is what makes a memo sound rather than merely cheap.
+Core recomputes every time: `optimizeTokens()` plus a `getContext()` per surviving token, with
+nothing remembering it just did exactly that. The nested `optimizeTokens()` calls fall 51 -> 13 with
+it. `bench-context-memo.php` is the instrument; `MemoizedCacheContextsManager` in the `drupflare`
+module is the change.
+
+Measured on three interleaved pairs at n=25, native and local: **4.006 ms -> 3.619 ms median, ~9.7%**,
+every pair favouring the memo and the rendered body identical at 12,330 bytes in both arms.
+
+**The generation is not just the request, and that is the whole safety argument.** `AccountSwitcher`
+changes the current user mid-request and `user.permissions`, `user.roles` and `user` all read from
+it, so a request-keyed memo would serve a key computed for the previous account -- the uid-1 leak
+shape this project has already shipped once. The generation carries the account id, and
+`load-classes.php` asserts a switch invalidates. Removing the account id from the generation makes
+that assertion fail with `[probe]=first`, the stale key, which is the falsification.
+
+#### Two Levers Priced And Not Taken
+
+**A DO-local cache in front of the Drupal bins is bounded at 4.4%.** The entire database cost of a
+steady-state render is **0.249 ms of 5.676 ms** across 8 queries, so that is the ceiling for any
+read-side change to how bins are stored, before any invalidation risk. It does not touch rows
+written either, which is the meter that binds; the write-side saving on those bins was already taken
+by `WITHOUT ROWID`.
+
+**Route-match memoisation is refused on a mechanism, not on its size.** Route matching is **1 call
+per render at 0.138-0.159 ms with ZERO repeats within a request**, so a request-scoped memo saves
+nothing by construction and a cross-request one is bounded at 3.8%. The refusal is that
+`AccessAwareRouter::matchRequest()` runs the access checks, so memoising its result caches an access
+decision across requests. Only the matching below access could be memoised safely, for less than
+that 3.8%.
+
+#### Anonymous Specialisation Is Already Built, Three Times
+
+Per-listener timing, which the shared `events` bucket cannot show, on a 4.5 ms steady-state render:
+
+| listener | ms | share |
+| --- | --- | --- |
+| `kernel.view` :: `MainContentViewSubscriber` | 2.762 | 61% |
+| `kernel.response` :: `HtmlResponseSubscriber` | 0.775 | 17% |
+| `kernel.response` :: `HtmlResponsePlaceholderStrategySubscriber` | 0.304 | 6.8% |
+| `kernel.request` :: `RouterListener` | 0.181 | 4.0% |
+| `kernel.response` :: `DynamicPageCacheSubscriber` | 0.069 | 1.5% |
+| `kernel.request` :: `AuthenticationSubscriber` (x2) | **0.015** | **0.3%** |
+| `MaintenanceModeSubscriber`, `TimeZoneResolver`, `ReplicaKillSwitch` | 0.020 | 0.4% |
+
+**The whole pool a "skip session, auth and user negotiation for anonymous" specialisation would
+remove is ~0.035 ms, 0.8% of a render.** It is that small because the host already renders anonymous
+fills with NO cookies, so Drupal's session and authentication paths short-circuit on their own.
+`kernel.request` in total is 4.3%, and most of that is the router.
+
+The reason there is nothing left to win is that the fast path exists three times over: `page_cache`
+is enabled and returns from `kernel.request` before any of the listeners above run, `cfw_page` sits
+above it, and the edge cache above that. **The render measured here is the triple-miss path.**
+Building a fourth "is this request anonymous?" branch would add a security-relevant check -- the
+exact check that has gone wrong here before -- to recover 0.8%.
+
+**The one anonymous-specific target worth its own measurement is the placeholder strategy**, at
+**0.304 ms (6.8%)**. `big_pipe` is enabled, and BigPipe only placeholders a session-carrying render,
+so on an anonymous fill its per-placeholder negotiation runs and declines every time. Forcing the
+single-flush strategy when the host says the fill is anonymous is semantically a no-op there. Not
+built; the number is recorded so it can be scored rather than re-guessed.
+
+**Measuring the router took two failed instruments and both failed silently.** Swapping the container
+entry after boot throws `ServiceCircularReferenceException` -- `router -> router.no_access_checks ->
+router.request_context -> router_listener` -- which is the same cycle `pw-probe.php` documents for
+Twig. Swapping it after the first render succeeds and then reads **0 calls**, because
+`router_listener` captured the original object when it was built. A count of zero from a probe that
+was never reached reads exactly like a router that costs nothing. The listener's reference has to be
+rebound by reflection, which is what `pw_probe_twig_in_engine()` already does for the theme engine.
+
 ### Install and Module Enable
 
 One router rebuild is **2,095 rows**, and a module enable through Drupal's own `ModuleInstaller`
@@ -691,7 +782,7 @@ are shared.
 
 | item | bytes |
 | --- | --- |
-| heap snapshot, cold object | 36,241,408 over 553 pages |
+| heap snapshot, cold object | 36,175,872 over 552 pages |
 | heap snapshot, configured and served once | 9,699,328 over 148 pages |
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |

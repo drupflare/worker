@@ -371,7 +371,7 @@ with <code>bun scripts/measure/free-envelope.ts</code>, never against a millisec
 <td><strong>Regeneration</strong></td>
 <td>distinct pages re-rendered per day</td>
 <td><strong>rows written</strong></td>
-<td><strong>7,575/day</strong></td>
+<td><strong>8,196/day</strong></td>
 </tr>
 </tbody>
 </table>
@@ -449,10 +449,17 @@ allowance. A warning, never a repair: the remedies are dropping a style or cutti
 and both are decisions a human makes. <code>/health</code> shows it, and <code>/_cfw</code> shows the full projection with
 the largest style count that still fits.</p>
 <div class="tsd-alert tsd-alert-caution"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertCaution"></use></svg><span>Caution</span></div><p>
-Do not enable the Workers Caching feature on free. It bills every request at the standard rate
-<em>&quot;including requests that are normally free: static asset requests&quot;</em> — converting the one free serving
-path into a billed one. The name reads like what a cache-first architecture wants; the billing does
-the opposite.</p>
+Do not enable the Workers Caching feature. Its cache key does not include the host, and this
+product is multi-tenant by host — every site serves <code>/</code>, so one site's pages would be served to
+another site's visitors. Cloudflare's cache-key documentation names this case directly:
+<em>&quot;white-labeled tenants where <code>tenant-a.example.com/index</code> and <code>tenant-b.example.com/index</code> must
+produce different content — the cache key does not do this for you automatically.&quot;</em> Partitioning it
+needs a custom <code>cf.cacheKey</code> carrying the site id.</p>
+<p>It also bills every request at the standard rate <em>&quot;including requests that are normally free:
+static asset requests&quot;</em>, which converts the one free serving path into a billed one. That is the
+smaller problem, and on a paid plan it stops applying while the leak does not.</p>
+<p>The <code>caches.default</code> tier this project does use is a different mechanism and is safe: its key
+carries both the origin and the site id. <code>tests/node/cache-partition.spec.ts</code> holds both halves.</p>
 </div>
 <hr>
 <h2 id="📋-table-of-contents" class="tsd-anchor-link">📋 Table of Contents<a href="#📋-table-of-contents" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>

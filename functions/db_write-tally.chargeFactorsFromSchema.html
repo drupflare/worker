@@ -26,6 +26,9 @@ as <code>sqlite_autoindex_*</code> rows without being inferred, and PARTIAL inde
 engine's <code>partial</code> flag rather than on a regex over the DDL. <code>AUTOINCREMENT</code> is still read from the
 DDL text because no pragma reports it, and it costs a charged row of its own -- the
 <code>sqlite_sequence</code> rewrite measured in <code>tests/unit/db/index-charge-model.spec.ts</code>.</p>
+<p><code>WITHOUT ROWID</code> is read from the DDL for the same reason and corrects the opposite error: the
+pragma reports the primary key as an autoindex there too, but the key IS the table, so adding a
+base row double-counts it.</p>
 <p>A table that does not exist is OMITTED rather than given a factor of 0, so <code>splitChargedRows()</code>
 reports it as inexact instead of silently pricing it as pure data.</p>
 </div>
@@ -36,7 +39,7 @@ reports it as inexact instead of silently pricing it as pure data.</p>
 <li><span><span class="tsd-kind-parameter">tables</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/db/write-tally.ts#L453">src/db/write-tally.ts:453</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/defdbda0ee8c567dbbf6fb455131e4ace03669a2/src/db/write-tally.ts#L457">src/db/write-tally.ts:457</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

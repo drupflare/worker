@@ -1,0 +1,41 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-writes-probe",
+	"main": "../../src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"GEN_BUCKET_MS": "5000",
+		"RENDER_BUDGET_MS": "25000",
+		"PLAN": "paid"
+	},
+	"workers_dev": true,
+	"observability": { "enabled": true },
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		},
+		{
+			"type": "Data",
+			"globs": ["**/*.zst"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "../../.edge-assets",
+		"binding": "ASSETS"
+	},
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-85.ts"
+	}
+}

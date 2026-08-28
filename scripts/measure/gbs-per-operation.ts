@@ -278,12 +278,20 @@ if (import.meta.main) {
 	console.log(`\nwaiting ${settle}s for ingestion; an empty result before then is not evidence`);
 	await new Promise((r) => setTimeout(r, settle * 1000));
 
+	// THE END IS PADDED AND THE START IS NOT, and both halves of that were learned the hard way.
+	// A window tight at the END read `(no row)` for six of seven classes: the dataset buckets by
+	// MINUTE, so a drive that finishes mid-minute lands in a bucket stamped after its own window.
+	// Padding the START as well then pulled PROVISIONING back in and every class inherited a
+	// ~790-row floor, which is a 3,952-row migration divided by the repeat count -- a contaminated
+	// row that still passes its allocation check, so nothing else would have caught it.
+	const queryStart = startedAt;
+	const queryEnd = new Date(Date.parse(endedAt) + 180_000).toISOString();
 	const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
 		method: 'POST',
 		headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
 		body: JSON.stringify({
 			query: GQL,
-			variables: { account, start: startedAt, end: endedAt }
+			variables: { account, start: queryStart, end: queryEnd }
 		})
 	});
 	const body = await res.json();

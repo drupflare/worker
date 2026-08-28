@@ -1,0 +1,51 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-freesite",
+	"main": "../../src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free",
+		"PW_DIAGNOSTICS": "1"
+	},
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		},
+		{
+			"type": "Data",
+			"globs": ["**/*.zst"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"kv_namespaces": [
+		{ "binding": "CONFIG_KV", "id": "251ccdd49b714b11991cd559efccd693" }
+	],
+	"d1_databases": [
+		{
+			"binding": "FLEET_DB",
+			"database_name": "drupflare-fleet",
+			"database_id": "50f2303b-3c9b-4fc9-8b1b-67888063a728"
+		}
+	],
+	"ai": { "binding": "AI" },
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "/private/tmp/claude-502/-Users-gamer-gmitch215-drupflare-worker/ff4b78e1-b7fa-4336-b4e1-24e6c4c4ee14/scratchpad/free-assets",
+		"binding": "ASSETS"
+	},
+	"observability": { "enabled": true },
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-85.ts"
+	}
+}

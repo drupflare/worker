@@ -250,15 +250,43 @@ const master = db
 	)
 	.all();
 
+/**
+ * Whether a cache bin should be stored as its primary-key B-tree rather than as a rowid table.
+ *
+ * A rowid table gives a `TEXT PRIMARY KEY` its own unique index, so one stored row is charged
+ * twice on the meter that binds regeneration. Every bin `DatabaseBackend` creates keys on a TEXT
+ * `cid`, and 13 of the 14 carry no secondary index at all, so that second charge IS the whole
+ * index cost. Measured on a steady-state render: 8 charged rows -> 6, and the bins' index charge
+ * 3 -> 0, with zero spread over three runs (`tests/integration/cache-bin-rowid.spec.ts`).
+ *
+ * Scoped to `cache_` deliberately. `router` at 3x and `key_value` at 2x pay the same autoindex and
+ * are NOT converted here: neither is on the render path, both are on the install path, and nothing
+ * has measured whether anything depends on their rowid ordering. A rule applied to 71 tables on the
+ * strength of a measurement of 14 is the over-reach this file should not make.
+ */
+function wantsWithoutRowid(name: string, ddl: string): boolean {
+	if (!name.startsWith('cache_')) return false;
+	// WITHOUT ROWID requires a primary key and forbids AUTOINCREMENT outright
+	if (!/PRIMARY\s+KEY/i.test(ddl) || /AUTOINCREMENT/i.test(ddl)) return false;
+	// an INTEGER primary key already IS the rowid, so there is no separate index to save
+	if (/\bINTEGER\s+PRIMARY\s+KEY\b/i.test(ddl)) return false;
+	return !/\bWITHOUT\s+ROWID\b/i.test(ddl);
+}
+
 const tableDdl: { s: string; p: PackedParam[] }[] = [];
 const laterDdl: { s: string; p: PackedParam[] }[] = [];
 const tables: string[] = [];
+const withoutRowidTables: string[] = [];
 for (const o of master) {
 	const name = String(o.name ?? '');
 	// engine-owned objects refuse to be created, and miniflare adds its own bookkeeping
 	if (!name || name.startsWith('sqlite_') || name.startsWith('__miniflare')) continue;
 	const stmt = { s: String(o.sql).replace(/;+\s*$/, ''), p: [] };
 	if (o.type === 'table') {
+		if (wantsWithoutRowid(name, stmt.s)) {
+			stmt.s += ' WITHOUT ROWID';
+			withoutRowidTables.push(name);
+		}
 		tableDdl.push(stmt);
 		tables.push(name);
 	} else {
@@ -492,6 +520,7 @@ const manifest = {
 	notes: {
 		collationsRewritten,
 		sessionsSynthesised,
+		withoutRowidTables,
 		base64Values,
 		bigintValues,
 		// a TEXT column holding bytes that are not valid UTF-8; nonzero means some value
@@ -514,7 +543,8 @@ const biggest = [...chunkMeta].sort((a, b) => b.bytes - a.bytes).slice(0, 5);
 console.log(`source          ${resolve(source)}`);
 console.log(`                ${manifest.sourceBytes.toLocaleString()} bytes on disk`);
 console.log(
-	`tables          ${tables.length}${sessionsSynthesised ? ' (+1 synthesised: sessions)' : ''}`
+	`tables          ${tables.length}${sessionsSynthesised ? ' (+1 synthesised: sessions)' : ''}` +
+		`, ${withoutRowidTables.length} WITHOUT ROWID`
 );
 console.log(`rows            ${totalRows.toLocaleString()}`);
 console.log(

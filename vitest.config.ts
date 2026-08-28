@@ -75,7 +75,13 @@ const STATIC_TREE = 'assets/core/misc/drupal.js';
  */
 const ARTIFACT_SPECS = [
 	'tests/integration/admin-config.spec.ts',
+	// twenty joined on 2026-08-28, found by hiding assets/drupal-pf/core.pf.json locally and
+	// running the gate -- the same state a clean checkout is in. Master had been red since
+	// 2026-08-22 because each of these reaches a real render and nothing listed them
+	'tests/integration/anonymous-register.spec.ts',
 	'tests/integration/autoincrement.spec.ts',
+	'tests/integration/cache-bin-rowid.spec.ts',
+	'tests/integration/capability-contract.spec.ts',
 	'tests/integration/contrib-verify.spec.ts',
 	'tests/integration/cron-wire.spec.ts',
 	'tests/integration/crossings.spec.ts',
@@ -83,19 +89,29 @@ const ARTIFACT_SPECS = [
 	'tests/integration/csrf.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
+	'tests/integration/fill-bins.spec.ts',
 	'tests/integration/firstrun.spec.ts',
+	'tests/integration/git-remotes.spec.ts',
 	'tests/integration/guzzle-handler.spec.ts',
 	'tests/integration/heap-growth.spec.ts',
 	'tests/integration/host-bridges.spec.ts',
+	'tests/integration/image-toolkit.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
-	'tests/integration/loaded-extensions.spec.ts',
 	'tests/integration/linear-memory.spec.ts',
+	'tests/integration/loaded-extensions.spec.ts',
+	'tests/integration/long64-abi.spec.ts',
 	'tests/integration/mail-drupal.spec.ts',
 	'tests/integration/module-behaviour.spec.ts',
 	'tests/integration/module-enable.spec.ts',
+	'tests/integration/multipart-submit.spec.ts',
+	'tests/integration/opcache-ab.spec.ts',
 	'tests/integration/ops-surface.spec.ts',
+	'tests/integration/pack-consistency.spec.ts',
+	'tests/integration/page-content-key.spec.ts',
+	'tests/integration/php-allocator.spec.ts',
 	'tests/integration/php-clock.spec.ts',
 	'tests/integration/render-origin.spec.ts',
+	'tests/integration/rows-per-fill-audit.spec.ts',
 	// these three joined the list on 2026-08-22 rather than being written into it: the serving-lane
 	// work made a non-GET and a session-carrying request fall THROUGH to the gated lane instead of
 	// being answered from cfw_page, so eight assertions that used to stop at the cache now end in a
@@ -106,9 +122,16 @@ const ARTIFACT_SPECS = [
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
 	'tests/integration/shell-derivation.spec.ts',
+	'tests/integration/shell-verify-cost.spec.ts',
+	'tests/integration/shell-verify.spec.ts',
+	'tests/integration/shell.spec.ts',
+	'tests/integration/snapshot-dedup.spec.ts',
+	'tests/integration/snapshot-delta.spec.ts',
+	'tests/integration/speculative-replay.spec.ts',
 	'tests/integration/statement-census.spec.ts',
 	'tests/integration/static-sweep.spec.ts',
 	'tests/integration/submission-wall.spec.ts',
+	'tests/integration/without-rowid.spec.ts',
 	'tests/integration/workload-matrix.spec.ts',
 	'tests/integration/write-amplification.spec.ts',
 	'tests/unit/runtime/assets-ignore.spec.ts'

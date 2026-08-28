@@ -46,6 +46,7 @@ jobs:
 
       - name: Resolve the Requested Interpreter
         env:
+          EVENT: ${{ github.event_name }}
           VARIANT: ${{ github.event.client_payload.variant || inputs.variant }}
           PHP_VERSION: ${{ github.event.client_payload.php_version || inputs.php_version }}
           ARTIFACT_ID: ${{ github.event.client_payload.artifact_id || inputs.artifact_id }}
@@ -56,6 +57,20 @@ jobs:
           if [ -z "$VARIANT" ] || [ -z "$PHP_VERSION" ]; then
             echo "::error::the trigger named no variant or no php version" >&2
             exit 1
+          fi
+          PINNED="$(jq -r '.variant' interp.lock.json)"
+          PINNED_PHP="$(jq -r '.phpVersion' interp.lock.json)"
+          if [ "$EVENT" = 'repository_dispatch' ] &&
+             { [ "$VARIANT" != "$PINNED" ] || [ "$PHP_VERSION" != "$PINNED_PHP" ]; }; then
+            {
+              echo "::notice::phasm published '$VARIANT' php '$PHP_VERSION'."
+              echo "This repository ships '$PINNED' php '$PINNED_PHP', so nothing is proposed."
+              echo "phasm builds every experiment arm and announces each one; a control arm is a"
+              echo "different product, not an upgrade of this one. Adopt it deliberately with"
+              echo "workflow_dispatch, which is not filtered."
+            } >&2
+            echo "SKIPPED=1" >> "$GITHUB_ENV"
+            exit 0
           fi
           case "$VARIANT" in
             *[!a-zA-Z0-9._-]*)
@@ -81,14 +96,17 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Set up Bun
+        if: ${{ !env.SKIPPED }}
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 'latest'
 
       - name: Install Dependencies
+        if: ${{ !env.SKIPPED }}
         run: bun install --frozen-lockfile
 
       - name: Check the zstd CLI Is Present
+        if: ${{ !env.SKIPPED }}
         run: |
           if ! command -v zstd > /dev/null; then
             sudo apt-get update
@@ -97,6 +115,7 @@ jobs:
           zstd --version
 
       - name: Resolve the Release Payload
+        if: ${{ !env.SKIPPED }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -117,7 +136,7 @@ jobs:
           fi
 
       - name: Hydrate the Incumbent Tree
-        if: ${{ env.HAVE_PAYLOAD }}
+        if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: |
           if [ -n "$PAYLOAD_TAG" ]; then
             set -- "--tag=$PAYLOAD_TAG"
@@ -127,12 +146,13 @@ jobs:
           bun run hydrate "$@"
 
       - name: Measure the Incumbent Bundle
-        if: ${{ env.HAVE_PAYLOAD }}
+        if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: |
           bun run release:check | tee /tmp/incumbent.txt
           echo "INCUMBENT=$(tail -1 /tmp/incumbent.txt)" >> "$GITHUB_ENV"
 
       - name: Fetch and Pack the New Interpreter
+        if: ${{ !env.SKIPPED }}
         env:
           GH_TOKEN: ${{ secrets.PHASM_TOKEN }}
         run: |
@@ -147,17 +167,17 @@ jobs:
           bun scripts/fetch-interpreter.ts "${ARGS[@]}" --pin | tee /tmp/fetch.txt
 
       - name: Price the New Bundle Against the Free Ceiling
-        if: ${{ env.HAVE_PAYLOAD }}
+        if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: |
           bun run release:check | tee /tmp/bundle.txt
           echo "BUNDLE=$(tail -1 /tmp/bundle.txt)" >> "$GITHUB_ENV"
 
       - name: Build the Deploy Payload
-        if: ${{ env.HAVE_PAYLOAD }}
+        if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         run: bun run release:payload | tee /tmp/payload.txt
 
       - name: Upload the Payload
-        if: ${{ env.HAVE_PAYLOAD }}
+        if: ${{ !env.SKIPPED && env.HAVE_PAYLOAD }}
         uses: actions/upload-artifact@v7
         with:
           name: drupflare-worker-payload-${{ env.VARIANT }}-php${{ env.PHP_VERSION }}
@@ -170,6 +190,7 @@ jobs:
           if-no-files-found: error
 
       - name: Reconcile the Pin into One Pull Request
+        if: ${{ !env.SKIPPED }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -182,6 +203,18 @@ jobs:
       - name: Interpreter to Job Summary
         if: ${{ !cancelled() }}
         run: |
+          if [ -n "$SKIPPED" ]; then
+            {
+              echo "## Interpreter update skipped"
+              echo
+              echo "phasm published \`${VARIANT}\` php \`${PHP_VERSION}\`."
+              echo "This repository ships \`$(jq -r .variant interp.lock.json)\`"
+              echo "php \`$(jq -r .phpVersion interp.lock.json)\`, so no pin was proposed."
+              echo
+              echo "Adopt another arm with workflow_dispatch, which is not filtered."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           {
             echo "## Interpreter update"
             echo

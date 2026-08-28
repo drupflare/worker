@@ -213,10 +213,24 @@ It never fails the install; offline you get a stub and a printed list of what wa
 **The pack cannot be restored that way.** `assets/drupal-pf` and `assets/drupal-sql` need a native
 PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere, so they
 arrive only in a published release payload via `bun run hydrate`. Until one exists,
-`ARTIFACT_SPECS` in `vitest.config.ts` -- **19 files, measured from CI, never guessed** -- is
-excluded and the lane prints what it dropped. **Count it, do not quote it**: this line said 15 while
-the list held 17, and the "51 files / 1,521 tests still run" that used to follow moved with it and
+`ARTIFACT_SPECS` in `vitest.config.ts` -- **measured, never guessed** -- is excluded and the lane
+prints what it dropped. **Count it, do not quote it**: this line said 15 while the list held 17, then
+19 while it held 34, and the "51 files / 1,521 tests still run" that used to follow moved with it and
 was never re-measured. The lane prints both numbers when it skips.
+
+**A LOCAL GATE CANNOT SEE THIS AND MASTER STAYED RED FOR SIX DAYS BECAUSE OF IT.** Every dev machine
+has the pack, so a spec that reaches a real render passes here and fails on a clean checkout with
+`per-file pack not reachable: core.pf.json 404`. Twenty had accumulated. Reproduce the clean-checkout
+state before trusting a green local run on anything that renders:
+
+```sh
+mv assets/drupal-pf/core.pf.json assets/drupal-pf/core.pf.json.absent
+bun run test
+mv assets/drupal-pf/core.pf.json.absent assets/drupal-pf/core.pf.json
+```
+
+Back the file up first -- it arrives only from a release payload, so a lost rename is not recoverable
+from this repository. Anything that fails there belongs in `ARTIFACT_SPECS`.
 
 Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter against the tree that
 ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.

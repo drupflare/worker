@@ -96,6 +96,17 @@ export function buildPin(
 }
 
 /**
+ * The pristine glue a tuned one is emitted from, so a fetch can be compared against the seam.
+ *
+ * The seam imports `.tuned.mjs`, which `restore-artifacts.ts` derives from the download; a fetch
+ * writes only the pristine file. Comparing them raw made {@link assertSeamImports} throw on EVERY
+ * fetch, so `bun run build:wasm` could not complete at all.
+ */
+export function pristineGlue(path: string): string {
+	return path.replace(/-worker\.tuned\.mjs$/, '-worker.mjs');
+}
+
+/**
  * Asserts the canonical config's binary seam imports the files this fetch just wrote.
  *
  * Without it a fetch for the wrong PHP version succeeds, writes `.interp/php8.3.*`, and leaves the
@@ -107,7 +118,7 @@ export function buildPin(
  * @throws naming both sides, because the failure is a version mismatch and not a missing file.
  */
 export function assertSeamImports(root: string, result: FetchResult): void {
-	const imports = interpreterFiles(root);
+	const imports = interpreterFiles(root).map(pristineGlue);
 	const missing = [result.frame, result.glue].filter((path) => !imports.includes(path));
 	if (missing.length) {
 		throw new Error(

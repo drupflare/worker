@@ -30,19 +30,15 @@ import { TextDecoder } from 'node:util';
  * BLOB containing a raw newline or a NUL survives neither the literal nor a
  * line-delimited file. Bound params have no escaping problem to get wrong.
  *
- * Text rather than base64 where possible. A BLOB whose bytes are valid UTF-8 ships as
- * a string, which is both smaller than base64 and a closer match to what the live site
- * holds: Drupal's own writes cross the codec as PHP strings and land in those columns
- * as TEXT already. Base64 is the fallback for genuinely binary values, not the default.
+ * Text rather than base64 where possible: a BLOB whose bytes are valid UTF-8 ships as a
+ * string, smaller than base64 and closer to what Drupal's own writes land as. Base64 is
+ * the fallback for genuinely binary values.
  *
- * ORDER. Table DDL first, then every row, then indexes and triggers. Indexes last
- * because index maintenance per insert is pure waste when the table is being filled
- * from empty, and nothing reads the database until the cursor reports done.
+ * ORDER. Table DDL, then every row, then indexes and triggers -- index maintenance per
+ * insert is waste while the table fills from empty, and nothing reads until done.
  *
- * CHUNK SIZING is by cost, not by statement count. One `cache_container` row is 500 KB
- * and one `key_value` row is 40 bytes; a fixed statement count would put a 1.4 MB write
- * and a 2 KB write in the same budget. Each chunk closes on whichever limit trips
- * first.
+ * CHUNK SIZING is by cost, not statement count: one `cache_container` row is 500 KB and
+ * one `key_value` row is 40 bytes, so each chunk closes on whichever limit trips first.
  */
 
 /** One bound param in its JSON form, including the two tagged forms JSON cannot carry. */

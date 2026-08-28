@@ -18,11 +18,10 @@
  * when the paths it `produces` are on disk, so a re-run after a failure resumes rather than restarting
  * -- which matters because the pipeline is minutes long and three of its steps are downloads.
  *
- * EVERY PAYLOAD ARTIFACT HAS A PRODUCER HERE, including `assets/prefill.json`. That one holds the
- * RUNTIME's own rendered bytes, so it cannot be baked on native PHP -- but "needs the runtime" is not
- * the same as "needs a deploy", and `scripts/bake-prefill.ts` boots `wrangler dev` locally, migrates
- * a throwaway site and lifts the pages. It is the one step marked optional: it binds a port, and a
- * busy port is not a reason to discard twelve finished steps.
+ * EVERY PAYLOAD ARTIFACT HAS A PRODUCER HERE, including `assets/prefill.json`, which holds the
+ * RUNTIME's own rendered bytes -- "needs the runtime" is not "needs a deploy", so
+ * `scripts/bake-prefill.ts` boots `wrangler dev` locally. It is the one optional step, because a
+ * busy port is not a reason to discard twelve finished ones.
  *
  * @see scripts/hydrate.ts for the payload half
  * @see docs/building-from-source.md for what each step is for and why the order is the order

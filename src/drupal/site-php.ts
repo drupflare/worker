@@ -1771,6 +1771,28 @@ const SCHEMA_REPAIR = String.raw`
  */
 const PACK_CONSISTENCY = String.raw`
   $fixed = [];
+  // loadLegacyIncludes() runs from preHandle(), not boot(), so a kernel booted to run this and
+  // nothing else has no module_config_sort() -- which is what ModuleInstaller::install() calls.
+  // Measured on a deployed free site: every firstrun reported
+  // 'module-failed:Call to undefined function module_config_sort()' and the driver module was
+  // never installed, so system_requirements() told the owner to install it by hand
+  try {
+    $kernel = $GLOBALS['__pw_kernel'] ?? null;
+    if ($kernel !== null && method_exists($kernel, 'loadLegacyIncludes')) {
+      $kernel->loadLegacyIncludes();
+    }
+    // and the router rebuild inside install() builds a RequestContext from the current request,
+    // so one has to be on the stack; the same trio the enable path already sets up
+    $stack = \Drupal::service('request_stack');
+    if ($stack->getCurrentRequest() === null) {
+      $stack->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+    }
+    // hook_modules_installed reaches update_storage_clear(), a plain function in update.module,
+    // and a bare boot has loaded no .module file at all
+    \Drupal::moduleHandler()->loadAll();
+  } catch (\Throwable $e) {
+    $fixed[] = 'includes-failed:' . substr($e->getMessage(), 0, 120);
+  }
   try {
     $installer = \Drupal::service('module_installer');
     $driverModule = \Drupal::database()->getProvider();
@@ -1803,14 +1825,30 @@ const PACK_CONSISTENCY = String.raw`
   // Drupal reports "No image toolkit is configured" while cfw_images sits in the packed module
   // unused. It is a real toolkit rather than a stub -- getimagesize() is ext-standard and needs no
   // gd, so dimensions stay correct and resizing defers to delivery.
+  //
+  // WITH NO TOOLKIT AT ALL, /user/register AND /user/*/edit ARE A WSOD. ImageFactory resolves the
+  // id from the AVAILABLE toolkits, so with none it holds NULL and getSupportedExtensions() raises
+  // PluginNotFoundException on the empty id -- which the user picture field hits on every account
+  // form. Found by opening the sign-up page in a browser.
   try {
     $manager = \Drupal::service('image.toolkit.manager');
+    // the definitions are cached from before this module was enabled, so a read without this sees
+    // only gd and the branch below silently declines to fix anything
+    $manager->clearCachedDefinitions();
+    $defined = array_keys($manager->getDefinitions());
     $available = array_keys($manager->getAvailableToolkits());
     $imageConfig = \Drupal::configFactory()->getEditable('system.image');
     $selected = $imageConfig->get('toolkit');
-    if (!in_array($selected, $available, true) && in_array('cfw_images', $available, true)) {
+    if (in_array($selected, $available, true)) {
+      // already usable, nothing to do
+    } elseif (in_array('cfw_images', $available, true)) {
       $imageConfig->set('toolkit', 'cfw_images')->save();
       $fixed[] = 'toolkit:cfw_images';
+    } else {
+      // NOT silent: with no available toolkit every account form raises, so a repair that cannot
+      // run has to say so rather than report an empty list
+      $fixed[] = 'toolkit-unavailable:defined=' . implode(',', $defined)
+        . ';available=' . implode(',', $available);
     }
   } catch (\Throwable $e) {
     $fixed[] = 'toolkit-failed:' . substr($e->getMessage(), 0, 120);
@@ -3290,6 +3328,9 @@ ${SCHEMA_REPAIR}
     'transactions' => $counter('transactionCount') - $before['transactions'],
     'speculative' => $counter('speculativeCount') - $before['speculative'],
     'replayed' => $counter('replayedStatementCount') - $before['replayed'],
+    // WHY each replay happened, not just how many. Two mechanisms were proposed for these on a
+    // count alone and neither moved it; a reason cannot be guessed at a third time
+    'refusals' => method_exists($db, 'predictionRefusals') ? $db->predictionRefusals() : [],
   ];
   $out['ok'] = ($out['id'] ?? 0) > 0;
 } catch (\Throwable $e) {

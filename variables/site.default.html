@@ -28,7 +28,7 @@
 <li><span><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/site.SiteWorkerEnv.html" class="tsd-signature-type tsd-kind-interface">SiteWorkerEnv</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">Response</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/site.ts#L615">src/site.ts:615</a></li></ul></aside></div></li></ul></li>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/site.ts#L619">src/site.ts:619</a></li></ul></aside></div></li></ul></li>
 <li class="tsd-parameter">
 <h5 id="scheduled"><span class="tsd-kind-method">scheduled</span><span class="tsd-signature-symbol">:</span> function</h5>
 <ul class="tsd-signatures">
@@ -37,8 +37,9 @@
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Cron entry point for the warm window.</p>
 <p>A Cron Trigger is the right driver on the free plan: it costs no visitor request, and
-the window it opens amortises one boot across an entire queue drain. WINDOW_SITES is
-a comma list because one Worker serves many sites and each has its own object.</p>
+the window it opens amortises one boot across an entire queue drain.</p>
+<p>The SET comes from <code>cfw_fleet</code> rather than a var: a cron has no request and no hostname, and
+site identity here IS the hostname. See <a href="../functions/ops_fleet.warmTargets.html" class="tsd-kind-function">warmTargets</a>.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -48,9 +49,9 @@ a comma list because one Worker serves many sites and each has its own object.</
 <li><span><span class="tsd-kind-parameter">ctx</span>: <span class="tsd-signature-type">ExecutionContext</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/site.ts#L1012">src/site.ts:1012</a></li></ul></aside></div></li></ul></li></ul></div><aside class="tsd-sources">
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/site.ts#L1018">src/site.ts:1018</a></li></ul></aside></div></li></ul></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/site.ts#L614">src/site.ts:614</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/site.ts#L618">src/site.ts:618</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

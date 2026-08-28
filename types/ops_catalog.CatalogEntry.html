@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">CatalogEntry</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#bytes">bytes</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#core">core</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#name">name</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#needs">needs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <a href="ops_catalog.ModuleCapability.html" class="tsd-signature-type tsd-kind-type-alias">ModuleCapability</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#php">php</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#r2">r2</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requires">requires</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#version">version</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L5">src/ops/catalog.ts:5</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L5">src/ops/catalog.ts:5</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -42,21 +42,21 @@
 <div class="tsd-comment tsd-typography"><p>uncompressed bytes, so a caller can refuse before reading</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L30">src/ops/catalog.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L30">src/ops/catalog.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="core"><span>core</span><a href="#core" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">core</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the Drupal core constraint this pack was built against</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L12">src/ops/catalog.ts:12</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L12">src/ops/catalog.ts:12</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="name"><span>name</span><a href="#name" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">name</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>composer name, e.g. <code>drupal/pathauto</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L7">src/ops/catalog.ts:7</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L7">src/ops/catalog.ts:7</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="needs"><code class="tsd-tag">Optional</code><span>needs</span><a href="#needs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">needs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <a href="ops_catalog.ModuleCapability.html" class="tsd-signature-type tsd-kind-type-alias">ModuleCapability</a><span class="tsd-signature-symbol">[]</span></div>
@@ -69,33 +69,33 @@ visitor uses it because the runtime cannot do the thing it assumes.</p>
 <code>automated_cron.interval = 0</code>, so a cron-driven module is UNWIRED rather than impossible.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L26">src/ops/catalog.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L26">src/ops/catalog.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="php"><code class="tsd-tag">Optional</code><span>php</span><a href="#php" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">php</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the PHP constraint this pack declares, when it declares one</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L14">src/ops/catalog.ts:14</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L14">src/ops/catalog.ts:14</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="r2"><span>r2</span><a href="#r2" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">r2</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the R2 key prefix; the mount appends <code>.pf.json</code> and <code>.pf.bin</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L10">src/ops/catalog.ts:10</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L10">src/ops/catalog.ts:10</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="requires"><code class="tsd-tag">Optional</code><span>requires</span><a href="#requires" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">requires</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>other catalog modules this one needs, by composer name</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L28">src/ops/catalog.ts:28</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L28">src/ops/catalog.ts:28</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="version"><span>version</span><a href="#version" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">version</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/catalog.ts#L8">src/ops/catalog.ts:8</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/catalog.ts#L8">src/ops/catalog.ts:8</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

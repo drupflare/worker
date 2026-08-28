@@ -12,12 +12,13 @@
 <li><a href="" aria-current="page">DEFAULT_MAIL_DRAIN_LIMIT</a></li></ul>
 <h1>Variable DEFAULT_MAIL_DRAIN_LIMIT<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">DEFAULT_MAIL_DRAIN_LIMIT</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">5</span></div>
-<div class="tsd-comment tsd-typography"><p>How many queued messages one drain may send.</p>
-<p>Each send is one of the 50 subrequests an invocation gets -- a <code>fetch</code> on the Cloudflare lanes, a
-socket on the SMTP one -- and the fill batch in the same firing has already spent several.</p>
+<div class="tsd-comment tsd-typography"><p>How many queued messages one drain may send: <a href="ops_mail.MAIL_DRAIN_BUDGET_MS.html" class="tsd-kind-variable">MAIL_DRAIN_BUDGET_MS</a> over one send.</p>
+<p>The meter is DURATION, not the 50 subrequests this used to cite -- <code>connect()</code> blocks
+hibernation and the socket is held for the whole sequential batch, so the object is billed wall
+clock for every conversation in it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/mail.ts#L189">src/ops/mail.ts:189</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/mail.ts#L190">src/ops/mail.ts:190</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

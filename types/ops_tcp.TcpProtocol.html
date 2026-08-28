@@ -13,6 +13,9 @@
 <h1>Type Alias TcpProtocol</h1></div>
 <div class="tsd-signature"><span class="tsd-kind-type-alias">TcpProtocol</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;redis&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;syslog&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>The TCP tier of the CFW network capability: deferred, scripted, operator-scoped.</p>
+<p><strong>Imported from <code>edgeport/core</code>, not the package root</strong>, which re-exports 20 namespaces it never
+imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
+not bundle.</p>
 <p><strong><code>cfw_tcp_connect()</code> / <code>read()</code> / <code>write()</code> / <code>close()</code> CANNOT EXIST, and that is a property of
 the interpreter rather than a gap in this file.</strong> <code>Host::call()</code> is <code>$reply = $invoke($json)</code>: the
 wasm stack cannot suspend without JSPI or Asyncify, so any host function that awaits hands PHP a
@@ -31,7 +34,7 @@ therefore cached-or-deferred, <code>syslog</code> has none and is fire-and-forge
 registry entry.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/tcp.ts#L38">src/ops/tcp.ts:38</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/tcp.ts#L40">src/ops/tcp.ts:40</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

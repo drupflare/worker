@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">AuthAllowance</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#boundby">boundBy</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;rows&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;do&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#dorequestsreserved">doRequestsReserved</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#enforced">enforced</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#fraction">fraction</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rendersperday">rendersPerDay</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsforanonymous">rowsForAnonymous</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsperrender">rowsPerRender</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsreserved">rowsReserved</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L130">src/ops/auth-budget.ts:130</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L130">src/ops/auth-budget.ts:130</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -39,57 +39,59 @@
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="boundby"><span>bound<wbr/>By</span><a href="#boundby" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">boundBy</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;rows&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;do&quot;</span></div>
-<div class="tsd-comment tsd-typography"><p>which meter runs out first inside the reservation</p>
+<div class="tsd-comment tsd-typography"><p>Which meter runs out first inside the reservation.</p>
+<p><code>'do'</code> is reachable but no shipped configuration reaches it: the quotas are equal and a
+render is one hop, so rows always win. It turns over if a render stops being one hop.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L143">src/ops/auth-budget.ts:143</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L148">src/ops/auth-budget.ts:148</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="dorequestsreserved"><span>do<wbr/>Requests<wbr/>Reserved</span><a href="#dorequestsreserved" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">doRequestsReserved</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>DO requests/day the reservation buys, at one hop per render</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L141">src/ops/auth-budget.ts:141</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L141">src/ops/auth-budget.ts:141</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="enforced"><span>enforced</span><a href="#enforced" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">enforced</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>false on paid, where none of these meters bind</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L145">src/ops/auth-budget.ts:145</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L150">src/ops/auth-budget.ts:150</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="fraction"><span>fraction</span><a href="#fraction" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">fraction</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the fraction actually applied, after clamping</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L132">src/ops/auth-budget.ts:132</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L132">src/ops/auth-budget.ts:132</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rendersperday"><span>renders<wbr/>Per<wbr/>Day</span><a href="#rendersperday" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rendersPerDay</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>authenticated views/day the reservation buys</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L139">src/ops/auth-budget.ts:139</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L139">src/ops/auth-budget.ts:139</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsforanonymous"><span>rows<wbr/>For<wbr/>Anonymous</span><a href="#rowsforanonymous" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsForAnonymous</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows/day left for anonymous regeneration</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L137">src/ops/auth-budget.ts:137</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L137">src/ops/auth-budget.ts:137</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsperrender"><span>rows<wbr/>Per<wbr/>Render</span><a href="#rowsperrender" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsPerRender</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L133">src/ops/auth-budget.ts:133</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L133">src/ops/auth-budget.ts:133</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsreserved"><span>rows<wbr/>Reserved</span><a href="#rowsreserved" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsReserved</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows/day authenticated traffic may spend</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/auth-budget.ts#L135">src/ops/auth-budget.ts:135</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/auth-budget.ts#L135">src/ops/auth-budget.ts:135</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

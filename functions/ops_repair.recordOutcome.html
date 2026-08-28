@@ -17,9 +17,8 @@
 <div class="tsd-signature tsd-anchor-link" id="recordoutcome"><span class="tsd-kind-call-signature">recordOutcome</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">state</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_repair.RepairState.html" class="tsd-signature-type tsd-kind-type-alias">RepairState</a><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">outcome</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">code</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">ok</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_repair.RepairState.html" class="tsd-signature-type tsd-kind-type-alias">RepairState</a><a href="#recordoutcome" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Folds one outcome into the state.</p>
-<p>A DIFFERENT failure code resets the strike count rather than adding to it. Two unrelated faults are not
-evidence of one durable condition, and summing them is how a site gets quarantined for having two
-different bad days.</p>
+<p>A DIFFERENT failure code resets the strike count: two unrelated faults are not evidence of one
+durable condition, and summing them quarantines a site for having two bad days.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +28,7 @@ different bad days.</p>
 <li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_repair.RepairState.html" class="tsd-signature-type tsd-kind-type-alias">RepairState</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b8bab2d879c7266a8c0133c9961c1f66fe70c25e/src/ops/repair.ts#L48">src/ops/repair.ts:48</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/79dc3bc562e24a7301d79f55a682bfcca77ff1b7/src/ops/repair.ts#L42">src/ops/repair.ts:42</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

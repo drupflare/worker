@@ -16,7 +16,7 @@
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a></p>
 <p><strong>Drupal 11 running on Cloudflare Workers.</strong> No VPS, no container, no origin server — PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit, at <strong>2,659,444</strong> zstd bytes
+the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit, at 2,671,380 zstd bytes
 against the 3,145,728 free-plan ceiling (<code>interp.lock.json</code>).</p>
 <div class="tsd-alert tsd-alert-note"><div class="tsd-alert-title"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertNote"></use></svg><span>Note</span></div><p>
 No release is published yet, and the deploy button pulls from a release payload. <code>assets/</code> is
@@ -24,9 +24,9 @@ No release is published yet, and the deploy button pulls from a release payload.
 HTTPS GET of a release asset, with no Docker, no token and no PHP.</p>
 </div>
 <p>The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
-free plan's bundle limit with every extension intact. Cold boot is <strong>1,398 ms</strong> of <code>cpuTime</code> on a
+free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of <code>cpuTime</code> on a
 deployed worker, and boot work is saturated: cutting boot cost per fill by 20x moves the regeneration
-ceiling <strong>1.1%</strong>. Rows written is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
+ceiling 1.1%. Rows written is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
 <hr>
 <h2 id="⚖️-drupflare-vs-a-traditional-vps" class="tsd-anchor-link">⚖️ Drupflare vs a Traditional VPS<a href="#⚖️-drupflare-vs-a-traditional-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Drupflare targets <strong>solo, indie and budget-bound sites</strong>, where the cost is the hours rather than the
@@ -375,7 +375,7 @@ with <code>bun scripts/measure/free-envelope.ts</code>, never against a millisec
 </tr>
 </tbody>
 </table>
-<p>Serving has a way out. Pages served from an <strong>R2 public bucket on a custom domain</strong> are answered
+<p>Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
 through the CDN without invoking the Worker. But &quot;requests to static assets are free and unlimited&quot;
 describes <strong>Workers Static Assets</strong>, which are uploaded at deploy time and cannot hold a page rendered
 at runtime; R2 is metered at <strong>10M Class B operations/month</strong>. So the floor is <strong>3.0M -&gt; ~10M
@@ -389,8 +389,8 @@ ordered by view count so a limited budget publishes what actually moves traffic 
 answers a page without the Worker running. Both page tiers, the edge cache and the optional KV
 tier, cost one Worker request each because the Worker has to run to consult them. The ceiling
 shipping today is the 3.0M row above, saturated; the floor once pages do move off-Worker is
-<strong>3.33x</strong>, 10M R2 Class B operations/month against 100,000 Worker requests/day.</p>
-<p><strong>There is no single rows-per-fill figure.</strong> A fill costs <strong>3 to 62 rows</strong> depending on what is
+3.33x, 10M R2 Class B operations/month against 100,000 Worker requests/day.</p>
+<p><strong>There is no single rows-per-fill figure.</strong> A fill costs 3 to 62 rows depending on what is
 already warm, so the model names four measured warmth classes rather than averaging them;
 <code>ROWS_PER_FILL</code> in <code>scripts/measure/free-envelope.ts</code> carries all four, and <code>warmthMix</code> prices a
 realistic spread. Every figure is counted at the storage handle, so it includes the host's own
@@ -434,11 +434,11 @@ writes -- notably the <code>cfw_page</code> insert that stores the whole rendere
 </tbody>
 </table>
 <p>Two levers that look plausible are not levers. Uninstalling <code>dblog</code> does not reduce rows per fill:
-measured, <strong>zero</strong> rows of a fill go to <code>watchdog</code>. And past ~85% off-Worker serving the binding meter
+measured, zero rows of a fill go to <code>watchdog</code>. And past ~85% off-Worker serving the binding meter
 becomes <strong>DO requests</strong>, not rows, so trimming rows per fill beyond that point moves the rows meter and
 does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.</p>
 <h3 id="the-image-transform-cap" class="tsd-anchor-link">The Image Transform Cap<a href="#the-image-transform-cap" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>Cloudflare Images allows <strong>5,000 unique transformations per month</strong> on free, and it fails as a <strong>hard
+<p>Cloudflare Images allows 5,000 unique transformations per month on free, and it fails as a <strong>hard
 cap rather than a bill</strong>. Every image style is a transformation, so ten styles over 2,000 images is
 20,000 -- 4x over. It is the only quota here measured per month rather than per day, so it does not
 clear at midnight.</p>
@@ -449,7 +449,7 @@ allowance. A warning, never a repair: the remedies are dropping a style or cutti
 and both are decisions a human makes. <code>/health</code> shows it, and <code>/_cfw</code> shows the full projection with
 the largest style count that still fits.</p>
 <div class="tsd-alert tsd-alert-caution"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertCaution"></use></svg><span>Caution</span></div><p>
-Do <strong>not</strong> enable the Workers Caching feature on free. It bills every request at the standard rate
+Do not enable the Workers Caching feature on free. It bills every request at the standard rate
 <em>&quot;including requests that are normally free: static asset requests&quot;</em> — converting the one free serving
 path into a billed one. The name reads like what a cache-first architecture wants; the billing does
 the opposite.</p>
@@ -517,7 +517,7 @@ it can be split at all. First-run migration moved from PHP to JavaScript, from o
 invocation to <strong>62 chunks</strong>, each sized to fit the cap on its own.</li>
 </ol>
 <h3 id="static-assets" class="tsd-anchor-link">Static Assets<a href="#static-assets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>Drupal's stylesheets, scripts, fonts and images are served by <strong>Workers Assets</strong> from <code>assets/core/</code>,
+<p>Drupal's stylesheets, scripts, fonts and images are served by Workers Assets from <code>assets/core/</code>,
 at the <code>/core/**</code> URLs Drupal already emits. All three PHP packers skip those extensions because PHP
 never opens them, and nothing serves a file out of the in-memory filesystem over HTTP, so the asset
 layer is the only thing that can answer them. <code>scripts/pack-static.ts</code> copies the tree; Workers Assets
@@ -581,7 +581,7 @@ and every meter except Worker requests has roughly 5x headroom.</p>
 </tr>
 <tr>
 <td>PHP 8.5, nothing cut</td>
-<td><strong>2,659,444 bytes</strong> zstd, from 12,218,396 raw; this is what ships</td>
+<td><strong>2,671,380 bytes</strong> zstd, from 12,234,574 raw; this is what ships</td>
 <td><code>interp.lock.json</code></td>
 </tr>
 <tr>
@@ -627,7 +627,7 @@ database in one shot instead, which is faster locally:</p>
 
 <h3 id="first-boot" class="tsd-anchor-link">First Boot<a href="#first-boot" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>A deployed site has an empty Durable Object until something asks it for a page. The first request
-records the ask, arms the alarm chain and answers <strong>503</strong> with a self-refreshing page, and the object
+records the ask, arms the alarm chain and answers 503 with a self-refreshing page, and the object
 replays the packed database one chunk per invocation until the cursor is done.</p>
 <table>
 <thead>
@@ -683,7 +683,7 @@ log.</p>
 <pre><code class="bash"><span class="hl-0">curl</span><span class="hl-1"> </span><span class="hl-2">&quot;localhost:8787/firstrun&quot;</span>
 </code><button type="button">Copy</button></pre>
 
-<p>Once claimed, <code>/firstrun</code> answers <strong>409</strong>. Reconfiguring is <code>POST /firstrun?force=1</code> with
+<p>Once claimed, <code>/firstrun</code> answers 409. Reconfiguring is <code>POST /firstrun?force=1</code> with
 <code>Authorization: Bearer &lt;ownerToken&gt;</code>, which resets the administrator password.</p>
 <h3 id="log-in" class="tsd-anchor-link">Log In<a href="#log-in" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Log in at <code>/user/login</code> as <code>admin</code> with the <code>adminPass</code> from the claim. That is the Drupal account,
@@ -716,7 +716,7 @@ and it is the only credential that reaches the administrative UI.</p>
 </tr>
 </tbody>
 </table>
-<p>Without it those four answer <strong>401</strong> with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route
+<p>Without it those four answer 401 with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route
 answers 404 to the same caller.</p>
 <p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
 rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
@@ -930,14 +930,14 @@ prefill                            the pages, rendered by a local wrangler dev a
 
 <p>Run <code>bun run build:plan</code> first — it prints the plan and names every tool this machine is missing
 before it spends a minute on the 180 MB tree download. Only <code>decoder</code> needs Docker, and only once.</p>
-<p><strong><a href="media/building-from-source.md"><code>docs/building-from-source.md</code></a></strong> is the full account: what each step
+<p><a href="media/building-from-source.md"><code>docs/building-from-source.md</code></a> is the full account: what each step
 produces, why the order is the order, what caches on what, and why <code>prefill</code> is the one step allowed
 to fail without failing the build.</p>
 <hr>
 <h2 id="🔧-configuration" class="tsd-anchor-link">🔧 Configuration<a href="#🔧-configuration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Every knob is a <code>vars</code> entry in <code>wrangler.jsonc</code>, and every one has a working default. Eleven of them
 can also be overridden at runtime through the <code>CONFIG_KV</code> namespace without a redeploy.
-<strong><a href="media/configuration.md"><code>docs/configuration.md</code></a></strong> is the full reference: every variable, its
+<a href="media/configuration.md"><code>docs/configuration.md</code></a> is the full reference: every variable, its
 default, what reads it, and what breaks when it is wrong. Three vars are worth stating here, plus the
 two setup flows a new site runs once.</p>
 <h3 id="_" class="tsd-anchor-link"><code>SITE_ORIGIN</code><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
@@ -956,7 +956,7 @@ which is what stops a mailed reset link pointing the recipient at their own mach
 because a single render on 8.5 emits several severity-7 deprecation notices with full stack traces.
 An unrecognised value is the default rather than an error.</p>
 <h3 id="_-2" class="tsd-anchor-link"><code>MAX_BODY_BYTES</code><a href="#_-2" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>The largest non-file request body the edge forwards, defaulting to <strong>2 MiB</strong>. Over it, the request is
+<p>The largest non-file request body the edge forwards, defaulting to 2 MiB. Over it, the request is
 refused with 413 before any Durable Object hop. It is a heap guard rather than a bandwidth one:
 <code>parse_str()</code> on a form body allocates inside a 128 MB isolate, and <code>foo[][][][][]=bar</code> repeated
 turns a few hundred kilobytes of wire into far more of it. <code>multipart/form-data</code> is exempt, so file
@@ -1145,14 +1145,13 @@ docs/                configuration, the source build, repository layout, measure
 <a href="https://github.com/drupflare/phasm"><code>phasm</code></a>. See <a href="#-repositories">Repositories</a>.</p>
 <hr>
 <h2 id="🧪-testing" class="tsd-anchor-link">🧪 Testing<a href="#🧪-testing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>Three vitest projects. <strong>3,701 tests across 182 files</strong> in the commit gate, plus <strong>1,106 PHP
-assertions</strong> and a 72-test end-to-end lane that needs a running server.</p>
+<p>Three vitest projects, plus PHP suites in the sibling repositories and an end-to-end lane that needs
+a running server.</p>
 <table>
 <thead>
 <tr>
 <th>lane</th>
 <th>command</th>
-<th>count</th>
 <th>runs in</th>
 </tr>
 </thead>
@@ -1160,31 +1159,26 @@ assertions</strong> and a 72-test end-to-end lane that needs a running server.</
 <tr>
 <td>vitest <code>workers</code></td>
 <td><code>bun run test:workers</code></td>
-<td><strong>2,757</strong> in 127 files</td>
 <td>workerd, via <code>@cloudflare/vitest-pool-workers</code></td>
 </tr>
 <tr>
 <td>vitest <code>node</code></td>
 <td><code>bun run test:node</code></td>
-<td><strong>944</strong> in 55 files</td>
 <td>Node, for oracles workerd cannot host</td>
 </tr>
 <tr>
 <td>both, merged coverage</td>
 <td><code>bun run test</code></td>
-<td><strong>3,701</strong> in 182 files</td>
-<td>one invocation</td>
+<td>one invocation; this is the commit gate</td>
 </tr>
 <tr>
 <td>PHP suites</td>
 <td>see below</td>
-<td><strong>1,106</strong> across 7 suites</td>
 <td>real PHP, in the sibling repos</td>
 </tr>
 <tr>
 <td>e2e</td>
 <td><code>bun run test:e2e</code></td>
-<td><strong>72</strong> in 9 files</td>
 <td>needs a running server</td>
 </tr>
 </tbody>
@@ -1199,7 +1193,6 @@ have a script here; all take this repository's <code>drupal-src/</code> as <code
 <tr>
 <th>suite</th>
 <th>repo</th>
-<th>assertions</th>
 <th>run from here</th>
 </tr>
 </thead>
@@ -1207,43 +1200,36 @@ have a script here; all take this repository's <code>drupal-src/</code> as <code
 <tr>
 <td><code>tests/health-suite.php</code></td>
 <td><code>drupflare</code></td>
-<td>644</td>
 <td><code>bun run test:health</code></td>
 </tr>
 <tr>
 <td><code>tests/run-driver-suite.php</code></td>
 <td><code>rom</code></td>
-<td>238</td>
 <td><code>bun run test:php</code></td>
 </tr>
 <tr>
 <td><code>tests/load-classes.php</code></td>
 <td><code>drupflare</code></td>
-<td>95</td>
 <td><code>php</code>, with the var</td>
 </tr>
 <tr>
 <td><code>tests/pdo-shim.php</code></td>
 <td><code>rom</code></td>
-<td>61</td>
 <td><code>php</code>, with the var</td>
 </tr>
 <tr>
 <td><code>tests/cfw-tcp.php</code></td>
 <td><code>drupflare</code></td>
-<td>35</td>
 <td><code>php</code></td>
 </tr>
 <tr>
 <td><code>tests/solarium-transport.php</code></td>
 <td><code>drupflare</code></td>
-<td>17</td>
 <td><code>bun run test:solarium</code></td>
 </tr>
 <tr>
 <td><code>tests/run-installer.php</code></td>
 <td><code>rom</code></td>
-<td>16</td>
 <td><code>php</code>, with the var</td>
 </tr>
 </tbody>
@@ -1253,8 +1239,6 @@ have a script here; all take this repository's <code>drupal-src/</code> as <code
 
 <p><code>run-installer.php</code> drives Drupal's own installer against the driver with core's sqlite driver as a
 child-process control. It needs a real filesystem, so it has no counterpart here.</p>
-<p><strong>Re-measure these counts before quoting them.</strong> Every number in this table has been stale at least
-once, in both directions.</p>
 <h3 id="three-vitest-projects" class="tsd-anchor-link">Three Vitest Projects<a href="#three-vitest-projects" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><code>workers</code> is the default lane and where most of the subject lives. <code>node</code> exists because
 workerd cannot host two things the suite needs, both verified rather than assumed:</p>
@@ -1268,8 +1252,8 @@ database against its source.</li>
 <p>Without that second project a PHP-oracle suite has to either transliterate the PHP and test the
 copy, or stay outside vitest forever. <code>tests/node/mb-fix-iconv.spec.ts</code> is the first occupant:
 it recovers two platform controls that had to be dropped when <code>mb-fix</code> moved into workerd, and
-it <strong>skips rather than fails</strong> when no <code>php</code> is on PATH.</p>
-<p><code>e2e</code> is the third and is excluded from <code>bun run test</code> on purpose: it needs a running worker and, for
+it skips rather than fails when no <code>php</code> is on PATH.</p>
+<p><code>e2e</code> is the third and is excluded from <code>bun run test</code>: it needs a running worker and, for
 most of its specs, a running server to talk to. A commit gate that can be unavailable is not a gate.
 It skips when nothing is reachable and fails when <code>CI</code> is set, so a lane that quietly stopped running
 is distinguishable from one that passed.</p>
@@ -1287,7 +1271,7 @@ all with <code>carryforward: true</code>.</p>
 <li><code>transactionSync()</code> has no Node equivalent; <code>BEGIN</code> as SQL is refused outright.</li>
 <li>The host caps a statement at <strong>100 bound parameters</strong>; local PDO allows 32,766. That gap
 hid a live cache-write defect behind a green suite.</li>
-<li>In-PHP <code>microtime()</code> and JS <code>Date.now()</code> both return <strong>0</strong> on the edge.</li>
+<li>In-PHP <code>microtime()</code> and JS <code>Date.now()</code> both return 0 on the edge.</li>
 </ul>
 <h3 id="coverage" class="tsd-anchor-link">Coverage<a href="#coverage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Coverage uses <code>provider: 'istanbul'</code>, not <code>v8</code>. The v8 provider reads coverage off the Node
@@ -1371,337 +1355,58 @@ walking a checkout wholesale would pull <code>node_modules/</code> and <code>ven
 rebuilds the pack from the modules on disk and compares it to <code>assets/driver.json</code> byte for byte, so
 a stale pack fails the gate.</p>
 <h2 id="🧩-contrib-modules" class="tsd-anchor-link">🧩 Contrib Modules<a href="#🧩-contrib-modules" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>Installing a module works on a deployed site, measured at <strong>6,810 ms</strong> of Durable Object CPU with
+<p>Installing a module works on a deployed site, measured at 6,810 ms of Durable Object CPU with
 the module present in <code>core.extension</code> afterwards on 6 of 6 attempts. The cache is cold for one
 visit while the pages the install invalidated are re-rendered.</p>
-<!-- module-table:begin -->
-<p><strong>58 verified, 1 untested, 3 blocked.</strong> Verified means the gate enabled the module and asserted an observable it owns, and it is the only state that is a support claim. Untested means nobody has enabled it here: the evidence column says what the capability analysis concluded, which is an inference about the runtime rather than an observation about the module.</p>
-<p>Contrib modules are development dependencies here, verified against the test build and not shipped. The pack carries 4 (Admin Toolbar, Ctools, Pathauto, Token); the other 54 verified rows are tested that way and marked, so a site stays small and adds only what it asks for.</p>
+<p><strong>62 modules are verified, 1 is untested and 3 are blocked.</strong> Verified means the gate enabled the
+module against a real site and asserted an observable the module owns. Nothing reaches that state by
+inspection.</p>
+<p>Contrib is a development dependency. The shipped pack carries four modules (<code>admin_toolbar</code>,
+<code>ctools</code>, <code>pathauto</code>, <code>token</code>); the rest are verified against a test build and installed by a site
+that asks for them, so a new site stays small.</p>
+<h3 id="verified" class="tsd-anchor-link">Verified<a href="#verified" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>address</code>, <code>admin_toolbar</code>, <code>backup_migrate</code>, <code>better_exposed_filters</code>, <code>captcha</code>, <code>coffee</code>,
+<code>colorbox</code>, <code>config_ignore</code>, <code>crop</code>, <code>csv_serialization</code>, <code>ctools</code>, <code>devel</code>, <code>easy_breadcrumb</code>,
+<code>editor_advanced_link</code>, <code>entity</code>, <code>entity_browser</code>, <code>entity_reference_revisions</code>, <code>externalauth</code>,
+<code>facets</code>, <code>field_group</code>, <code>filefield_sources</code>, <code>focal_point</code>, <code>google_analytics</code>, <code>google_tag</code>,
+<code>honeypot</code>, <code>imageapi_optimize</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
+<code>jquery_ui_datepicker</code>, <code>jquery_ui_menu</code>, <code>json_field</code>, <code>key</code>, <code>libraries</code>, <code>linkit</code>, <code>mailsystem</code>,
+<code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>paragraphs</code>,
+<code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>scheduler</code>, <code>search_api</code>,
+<code>search_api_solr</code>, <code>simple_sitemap</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>, <code>twig_tweak</code>,
+<code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>, <code>views_bulk_operations</code>,
+<code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
+<p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> rather than the module installer.</p>
+<h3 id="blocked" class="tsd-anchor-link">Blocked<a href="#blocked" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <table>
 <thead>
 <tr>
 <th>Module</th>
-<th>State</th>
-<th>Evidence</th>
+<th>Why</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Address</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>address</code>, <code>address_country</code> and <code>address_zone</code> field types are registered and <code>address.country_repository</code>, <code>address.address_format_repository</code> and <code>address.subdivision_repository</code> resolve. None of the three is in the container beforehand. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
+<td><code>redis</code></td>
+<td>a cache read has to answer inside the request that asked, and outbound calls here resolve on a later one</td>
 </tr>
 <tr>
-<td>Admin Toolbar</td>
-<td>verified</td>
-<td>enabled against a real site in the workers lane; its own routes appear in the <code>router</code> table after the install-triggered rebuild</td>
+<td><code>smtp</code></td>
+<td>needs a socket open during the request that sends the mail; <code>CfwMail</code> reads its settings and sends over the host transport instead</td>
 </tr>
 <tr>
-<td>Backup Migrate</td>
-<td>verified</td>
-<td>enabled against a real site; it installed four config entity types and six default source and destination entities -- <code>default_db</code>, <code>entire_site</code>, the two file destinations and a daily schedule -- and 24 routes. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Better Exposed Filters</td>
-<td>verified</td>
-<td>enabled against a real site; its three widget plugin managers and <code>better_exposed_filters.bef_helper</code> are in the container afterwards and absent before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Captcha</td>
-<td>verified</td>
-<td>enabled against a real site; its schema hook created <code>captcha_sessions</code> and 8 routes appear in the <code>router</code> table. Its routes are named with underscores, so a dotted module-prefix match finds none of them. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Coffee</td>
-<td>verified</td>
-<td>enabled against a real site; <code>coffee.url_generator</code> resolves and <code>coffee.configuration</code> is installed, which is the config its command palette reads. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Colorbox</td>
-<td>verified</td>
-<td>enabled against a real site; <code>colorbox.settings</code> is installed and its admin route is in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Config Ignore</td>
-<td>verified</td>
-<td>enabled against a real site; <code>config_ignore.settings</code> is installed and its admin route is in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Crop</td>
-<td>verified</td>
-<td>enabled against a real site; it created the crop entity type as four tables -- <code>crop</code>, <code>crop_field_data</code>, <code>crop_revision</code>, <code>crop_field_revision</code> -- and installed <code>crop_type</code> as a config entity type. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Csv Serialization</td>
-<td>verified</td>
-<td>enabled against a real site; <code>serializer-&gt;supportsEncoding('csv')</code> is true afterwards and false before, with <code>json</code> true throughout as the control that the serializer is answering at all. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Ctools</td>
-<td>verified</td>
-<td>enabled against a real site in the workers lane; <code>core.extension</code> grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has</td>
-</tr>
-<tr>
-<td>Devel</td>
-<td>verified</td>
-<td>enabled against a real site; <code>devel.dumper</code> and <code>plugin.manager.devel_dumper</code> resolve, its route and error subscribers are in the container, and it installs its own menu. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Easy Breadcrumb</td>
-<td>verified</td>
-<td>enabled against a real site; <code>easy_breadcrumb.settings</code> is installed and its admin route is in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Editor Advanced Link</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>editor_advanced_link_link</code> CKEditor 5 plugin is registered and its two asset libraries resolve. Library discovery needs <code>common.inc</code> loaded first -- <code>JS_LIBRARY</code> and <code>CSS_COMPONENT</code> are defined there, not by the autoloader. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Entity</td>
-<td>verified</td>
-<td>enabled against a real site; <code>entity.bundle_plugin_installer</code>, <code>entity.bundle_entity_duplicator</code> and <code>access_checker.entity_revision</code> resolve afterwards and are absent before. A substring match on its name is NOT evidence here: most of what matches <code>entity</code> in the container is core. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Entity Browser</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>entity_browser</code> config entity type is installed and six of its routes are in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Entity Reference Revisions</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>entity_reference_revisions</code> field type and its <code>entity_reference_revisions_entity_view</code> formatter are registered, and <code>entity_reference_revisions.orphan_purger</code> is in the container. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Externalauth</td>
-<td>verified</td>
-<td>enabled against a real site; its schema hook created <code>authmap</code>, which is the table the identity mapping lives in. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Facets</td>
-<td>verified</td>
-<td>enabled against a real site; all five of its plugin managers resolve. It creates no table and ships no config, so the container IS the observable. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Field Group</td>
-<td>verified</td>
-<td>enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- <code>plugin.manager.field_group.formatters</code>, <code>field_group.subscriber</code> and <code>field_group.param_converter</code> all resolve after the install, with a core service as the control. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Filefield Sources</td>
-<td>verified</td>
-<td>enabled against a real site; <code>plugin.manager.filefield_sources</code>, its field access check and its own service all resolve. Ships no stable release, so this is the 2.0 development branch and the row says so. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Focal Point</td>
-<td>verified</td>
-<td>enabled against a real site; <code>focal_point.settings</code> is installed and it created the <code>crop.type.focal_point</code> crop type inside the dependency it pulled in. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Google Analytics</td>
-<td>verified</td>
-<td>enabled against a real site; <code>google_analytics.visibility</code>, <code>.accounts</code> and <code>.javascript_cache</code> resolve and <code>google_analytics.settings</code> is installed. The tag it emits is client-side, so nothing outbound is involved. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Google Tag</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>google_tag_container</code> config entity type and <code>google_tag.settings</code> are installed, with eight routes. Nothing outbound happens in PHP -- the snippet it injects is called by the browser. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Honeypot</td>
-<td>verified</td>
-<td>enabled against a real site; its schema hook created <code>honeypot_user</code>. The recommended default over any captcha here, because a hidden field and a submission timer are entirely local and cost no outbound round trip. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Imageapi Optimize</td>
-<td>verified</td>
-<td>enabled against a real site; its processor plugin manager resolves, <code>imageapi_optimize.settings</code> is installed and the pipeline config entity type is registered. The BINARY pipelines shell out and cannot run here; the pipeline plugin point is what was verified. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Imce</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>imce_profile</code> config entity type and both shipped profiles -- <code>admin</code> and <code>member</code> -- are installed, with nine routes. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Jquery Ui</td>
-<td>verified</td>
-<td>enabled against a real site; 24 asset libraries resolve for it afterwards and none before, <code>core</code> and <code>widget</code> among them. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Jquery Ui Autocomplete</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>autocomplete</code> library resolves for it afterwards and none before. It ships no code of its own -- jquery_ui declares the library on its behalf, so the library existing IS the module working. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Jquery Ui Datepicker</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>datepicker</code> library resolves for it afterwards and none before. Four files on disk and no PHP, so its library is the only observable it has. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Jquery Ui Menu</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>menu</code> library resolves for it afterwards and none before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Json Field</td>
-<td>verified</td>
-<td>enabled against a real site; it registers the <code>json</code> field type with core's field-type manager and its <code>json_field.views</code> service resolves. Its normalizer is a TAGGED service, which the compiler folds into the serializer and removes from the public map, so asking the container for it by id fails on a module that installed correctly. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Key</td>
-<td>verified</td>
-<td>enabled against a real site; its repository and three plugin managers resolve and the <code>key</code> config entity type is registered. A key PROVIDER that reads a file or an external service is a separate question. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Libraries</td>
-<td>verified</td>
-<td>enabled against a real site; <code>libraries.settings</code> is installed, which is where its external library definitions are read from. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Linkit</td>
-<td>verified</td>
-<td>enabled against a real site; its matcher and substitution managers resolve alongside the suggestion manager, and <code>linkit_profile</code> is registered. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Mailsystem</td>
-<td>verified</td>
-<td>enabled against a real site; <code>mailsystem.settings</code> is installed and its admin route is in the <code>router</code> table. It is how a site selects <code>cfw_mail</code>, so it is the module a site drops smtp in favour of. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Menu Block</td>
-<td>verified</td>
-<td>enabled against a real site; <code>menu_block:main</code> and <code>menu_block:footer</code> are block plugin derivatives it provides. <code>access_check.admin_menu_block_page</code> reads as its service and is CORE's -- the before reading is what said so. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Metatag</td>
-<td>verified</td>
-<td>enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Migrate Plus</td>
-<td>verified</td>
-<td>enabled against a real site; both config entity types it exists to provide are installed -- <code>migration.entity_type</code> and <code>migration_group.entity_type</code>. It ships no config OBJECTS, so a <code>migrate_plus.%</code> config probe finds nothing and would read as inert. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Module Filter</td>
-<td>verified</td>
-<td>enabled against a real site; <code>module_filter.settings</code> is installed and its admin route is in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Openid Connect</td>
-<td>blocked</td>
-<td>drupal/openid_connect needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket <strong>Lift:</strong> the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: <code>WITH_OPENSSL=0</code>, so PHP cannot verify an RS256 <code>id_token</code> even if handed one synchronously, and an unverified <code>id_token</code> is an unauthenticated login. <code>src/ops/oidc.ts</code> completes the exchange at a route the host owns, verifies the signature with <code>crypto.subtle</code>, and hands PHP a single-use claims ticket; <code>Drupal\drupflare\Network\CfwOidc</code> maps it onto <code>drupal/externalauth</code>, which is itself <code>verified</code>. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider genuinely signed for another of its clients; the setup page is live and states the <code>externalauth</code> dependency</td>
-</tr>
-<tr>
-<td>Paragraphs</td>
-<td>verified</td>
-<td>enabled against a real site; it created its entity type as four tables -- <code>paragraphs_item</code>, <code>paragraphs_item_field_data</code>, <code>paragraphs_item_revision</code>, <code>paragraphs_item_revision_field_data</code>. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Pathauto</td>
-<td>verified</td>
-<td>enabled against a real site, given the pattern the shipped database does not carry; a node saved as &quot;Pathauto Probe Title&quot; produced the <code>path_alias</code> row <code>/node/1 -&gt; /probe/pathauto-probe-title</code>. Pointed at <code>canonical_entities:user</code> the same run writes no row, so the assertion tracks this pattern rather than an ambient alias</td>
-</tr>
-<tr>
-<td>Purge</td>
-<td>verified</td>
-<td>enabled against a real site; <code>purge.queue</code>, <code>purge.processors</code>, <code>purge.purgers</code> and the invalidation factory all resolve. What it would PURGE is this host, which already invalidates from cache tags. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Queue Ui</td>
-<td>verified</td>
-<td>enabled against a real site; its admin routes are in the <code>router</code> table, and routes are the whole module. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Recaptcha</td>
-<td>verified</td>
-<td>enabled against a real site; captcha came with it, so dependency resolution ran, and it installed its own configuration. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Redirect</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>redirect</code> table exists and 11 of its routes are in the <code>router</code> table, so both halves of a route subscriber over its own table are present. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Redis</td>
-<td>blocked</td>
-<td>drupal/redis needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket <strong>Lift:</strong> none needed for the cache: the Durable Object's own SQLite IS the backend, so this is a dependency the architecture removes. <code>Drupal\drupflare\Network\CfwTcp</code> covers the rest of what a site would reach Redis for</td>
-</tr>
-<tr>
-<td>Scheduler</td>
-<td>verified</td>
-<td>enabled against a real site; it installed its own configuration and its routes are in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Search Api</td>
-<td>verified</td>
-<td>enabled against a real site; it created <code>search_api_item</code> and <code>search_api_task</code>, which is where the database backend writes, and its index routes are in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Search Api Solr</td>
-<td>untested</td>
-<td>Its transport is not the blocker. Measured 2026-08-24 by installing it: it pulls <code>maennchen/zipstream-php</code>, which declares <code>php-64bit</code>, so composer emits a <code>platform_check.php</code> asserting <code>PHP_INT_SIZE === 8</code>. That check used to abort every request before Drupal booted, taking all 56 other contrib cases with it; the shipping build is 64-bit as of 2026-08-25 and it now passes. With <code>platform-check: false</code> the module installs clean and 57/57 pass: <code>plugin.manager.search_api_solr.connector</code>, <code>solarium.query_helper</code> and its four solr config entity types all resolve, none of them before. The transport was measured separately against solarium 6.4.2 and is interceptable: the default connector picks <code>extension_loaded('curl') ? new Curl() : new Http()</code>, this build has no curl, so it lands on the stream adapter, and <code>SolariumTransport</code> short-circuits that through Solarium's own <code>PreExecuteRequest</code> with no module change</td>
-</tr>
-<tr>
-<td>Simple Sitemap</td>
-<td>verified</td>
-<td>enabled against a real site; <code>simple_sitemap.generator</code>, <code>simple_sitemap.queue_worker</code> and <code>simple_sitemap.sitemap_writer</code> resolve, both <code>simple_sitemap</code> and <code>simple_sitemap_type</code> are registered entity types and <code>simple_sitemap.settings</code> is installed, none of it before. It was refused outright until the host supplied a pure-PHP <code>XMLWriter</code> and cleared its one install block through <code>hook_requirements_alter()</code> -- <code>extension_loaded('xmlwriter')</code> is a built-in and cannot be shimmed. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Smtp</td>
-<td>blocked</td>
-<td>drupal/smtp needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket <strong>Lift:</strong> the replacement ships and IS now selected: <code>system.mail</code> is forced to <code>cfw_mail</code> in the settings override, so a site that drops smtp gets a working mailer rather than <code>php_mail</code>, which this runtime cannot run. AND ITS CONFIGURATION IS NOW READ, 2026-08-24: the module installs here and its socket never runs, so a site that filled in its relay and saved had a complete SMTP configuration nothing looked at, and its operator had to type the same host, port and password again as Worker vars. <code>CfwMail</code> passes <code>smtp.settings</code> to <code>cfwMail</code>, <code>mailEnvFromSite()</code> maps it onto the transport vars and the deployment's own vars still win. The settings are persisted to <code>cfw_meta</code> because the ALARM re-resolves the transport and never sees the message. So the module stays blocked -- the socket is what refuses it -- while both the capability and now the configuration are covered</td>
-</tr>
-<tr>
-<td>Stage File Proxy</td>
-<td>verified</td>
-<td>enabled against a real site; <code>stage_file_proxy.settings</code> is installed, which is what its fetch path reads. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Svg Image</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>image</code> field formatter is <code>Drupal\svg_image\...\SvgImageFormatter</code> afterwards and core's <code>ImageFormatter</code> before, and the <code>image_image</code> widget moves the same way. It takes core's plugin ids over rather than adding its own. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Token</td>
-<td>verified</td>
-<td>enabled against a real site; <code>[random:hash:md5]</code> resolves to 32 hex digits, and it is declared by <code>token.tokens.inc</code> and by nothing in core -- with <code>ctools</code> enabled in its place the same call returns the literal. Controls both ways: <code>[nosuchtype:nosuchtoken]</code> comes back untouched, and core's <code>[site:name]</code> still answers</td>
-</tr>
-<tr>
-<td>Twig Tweak</td>
-<td>verified</td>
-<td>enabled against a real site; its twig extension and four view builders resolve, which is the whole of what it adds. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Video Embed Field</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>video_embed_field</code> field type, its <code>video_embed_field_video</code> formatter and <code>video_embed_field.provider_manager</code> are all present afterwards and absent before. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Views Bulk Operations</td>
-<td>verified</td>
-<td>enabled against a real site; <code>views_bulk_operations.processor</code>, <code>views_bulk_operations.data</code> and its action plugin manager resolve, the <code>views_bulk_operations_delete_entity</code> action is registered, and four of its routes are in the <code>router</code> table. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Views Data Export</td>
-<td>verified</td>
-<td>enabled against a real site; the <code>data_export</code> views display and style plugins are registered, which is the whole module. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Webform</td>
-<td>verified</td>
-<td>enabled against a real site; four of its plugin managers resolve, the <code>webform</code> table exists and its shipped option sets are installed. Submissions are ordinary form POSTs. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
-</tr>
-<tr>
-<td>Xmlsitemap</td>
-<td>verified</td>
-<td>enabled against a real site; <code>xmlsitemap_generator</code> and <code>xmlsitemap.link_storage</code> resolve, the <code>xmlsitemap</code> table exists and its settings are installed. Required as a dev dependency and verified against the test build rather than shipped, so a site does not carry it unless it asks for it</td>
+<td><code>openid_connect</code></td>
+<td>verifying an RS256 <code>id_token</code> needs OpenSSL, which this interpreter is built without; <code>/oidc</code> does the exchange in the Worker</td>
 </tr>
 </tbody>
 </table>
-<!-- module-table:end -->
+<h3 id="untested" class="tsd-anchor-link">Untested<a href="#untested" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>search_gov_results_api</code> renders results from an API call made while its form is building. The
+deferred tier carries that across two renders, so the first search for a term pays a retry. No run
+has exercised it against a live <a href="http://Search.gov">Search.gov</a> key.</p>
 <h2 id="🧱-limitations" class="tsd-anchor-link">🧱 Limitations<a href="#🧱-limitations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>These are properties of the runtime, measured rather than assumed. They belong in release
-notes, not in support tickets.</p>
+<p>These are measured properties of the runtime. They belong in release notes, not in support
+tickets.</p>
 <ul>
 <li><strong>Case-insensitive matching is ASCII-only.</strong> Durable Object SQLite has no user-defined
 collations, so Drupal's <code>NOCASE_UTF8</code> becomes builtin <code>NOCASE</code>. <code>Ünicode</code> does not match
@@ -1872,6 +1577,11 @@ and are the authority on their own module.</p>
 <ul>
 <li><a href="#how-the-php-reaches-the-edge"><span>How the <wbr/>PHP <wbr/>Reaches the <wbr/>Edge</span></a></li></ul></li>
 <li><a href="#🧩-contrib-modules"><span>🧩 <wbr/>Contrib <wbr/>Modules</span></a></li>
+<li>
+<ul>
+<li><a href="#verified"><span>Verified</span></a></li>
+<li><a href="#blocked"><span>Blocked</span></a></li>
+<li><a href="#untested"><span>Untested</span></a></li></ul></li>
 <li><a href="#🧱-limitations"><span>🧱 <wbr/>Limitations</span></a></li>
 <li><a href="#📊-technical-report"><span>📊 <wbr/>Technical <wbr/>Report</span></a></li>
 <li><a href="#🤝-contributing"><span>🤝 <wbr/>Contributing</span></a></li>

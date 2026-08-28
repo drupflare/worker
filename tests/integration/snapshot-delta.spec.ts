@@ -160,12 +160,20 @@ describe('a site as a delta against another site image', () => {
 						})
 					);
 					expect(r.status, await r.clone().text()).toBe(200);
-					// unchecked this settles nothing: a cold object answers the warming page and every
-					// arm then diverges from a baseline that was never warm
-					let served = await call(site, '/__serve?path=/&edge=0');
-					for (let i = 0; served.status === 503 && i < 5; i++) {
-						served = await call(site, '/__serve?path=/&edge=0');
-					}
+
+					// FILL FIRST, THEN SERVE. Unchecked this settles nothing -- a cold object answers
+					// the warming page and every arm diverges from a baseline that was never warm --
+					// but the previous form polled `/__serve` five times with no wait, and that is a
+					// race rather than a check. A miss QUEUES the fill for the alarm and answers 503
+					// `warming`, so retrying immediately re-reads the same not-yet-done work: the
+					// retries cannot succeed any faster than the alarm, and under full-suite load the
+					// alarm loses. That failed three times in the gate and passed every time in
+					// isolation, which is exactly the shape a timing race has.
+					//
+					// `fillOne()` renders inline in this invocation, so the page exists before
+					// anything asks for it and the serve below is a plain HIT with nothing to wait on.
+					await site.fillOne('/');
+					const served = await call(site, '/__serve?path=/&edge=0');
 					expect(served.status, await served.clone().text()).toBe(200);
 				});
 				return stub;

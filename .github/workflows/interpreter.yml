@@ -9,7 +9,7 @@ on:
         description: 'The phasm rc name to fetch'
         type: string
         required: true
-        default: control85
+        default: long64
       php_version:
         description: 'The PHP version in the artifact filenames'
         type: string

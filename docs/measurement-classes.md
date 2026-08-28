@@ -18,7 +18,7 @@ Same input, same output, no clock. A bundle's gzipped size, the number of `CREAT
 in the shipped pack, the charged rows one stored row costs, the chunk count of a migration, the
 number of collected test cases. Asking the question twice gives the same answer by definition.
 
-This is the only class a shared CI runner can produce honestly, so it is the only class the
+This is the only class a shared CI runner can produce reliably, so it is the only class the
 `Class A Metrics` workflow collects, archives and gates. `scripts/measure/collect-metrics.ts`
 emits one JSON document; `scripts/measure/metrics-gate.ts` compares it to the document archived by
 the last passing master run and exits non-zero when a metric crosses its tolerance.

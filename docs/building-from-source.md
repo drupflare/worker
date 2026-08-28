@@ -58,7 +58,7 @@ spends a minute:
 | `git`      | any     | `siblings`             |                                                            |
 | `tar`      | any     | `tree`                 |                                                            |
 
-Two of these run under `node` rather than `bun` on purpose. `pack-sql.ts` needs `node:sqlite`.
+Two of these run under `node` rather than `bun`. `pack-sql.ts` needs `node:sqlite`.
 `pack-drupal.ts` writes `core.bin.gz` from `gzipSync(blob, { level: 9 })`, and the two runtimes do
 not emit the same deflate stream for the same input, so running it under Bun would move a shipped
 asset with nothing reporting it.
@@ -371,7 +371,7 @@ and two `core/*.json`. **Zero `*.routing.yml`, zero `.install`, zero `config/sch
 release is the code-only case, and no route, schema or config default moved.
 
 **`tree-diff.mjs` cannot see the static half.** Its `SHIPPED` regex matches the extensions the PHP
-packs carry, and `css` and `js` are deliberately not among them, because `assets:static` serves those
+packs carry, and `css` and `js` are not among them, because `assets:static` serves those
 instead. Diffed separately, 11 browser-fetchable files changed, of which two match `pack-static.ts`'s
 own `SERVED` set and therefore ship: `core/misc/ajax.js` and `core/misc/details.js`. Read
 `objectsToUpload` as the pack half of a rollout rather than as the whole of one.

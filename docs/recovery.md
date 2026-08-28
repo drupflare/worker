@@ -107,7 +107,7 @@ two different dumps into one file is caught.
 
 `POST /restore` with the dump as the request body. **This route is diagnostic-gated, not
 owner-gated**: it needs `PW_DIAGNOSTICS=1`, because it overwrites a whole database. Export is a
-supported customer-facing property; restore is an operator action taken deliberately.
+supported customer-facing property; restore is an operator action.
 
 The body is stored, not executed. `storeImport()` splits it into statements, refuses at store time if
 any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
@@ -124,7 +124,7 @@ complete stored import exists.
 | Accidental content deletion | PITR to just before the delete               | anything written after the bookmark; the object must still exist                                                                                   | `GET /pitr?at=<t>` then `POST /pitr?bookmark=<b>`                            |
 | Bad module update           | PITR, then `wrangler rollback` if code moved | files already mirrored to R2; a config change an editor made after the update                                                                      | as above, plus `wrangler rollback [VERSION_ID]`                              |
 | Corrupted config            | `/restore` of the last good dump             | content created since that dump; needs `PW_DIAGNOSTICS=1`                                                                                          | `POST /restore?label=pre-fix` with the dump as the body                      |
-| Failed migration            | re-run the migration                         | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump deliberately excludes it                                                    | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
+| Failed migration            | re-run the migration                         | nothing, if the cursor survived; `cfw_migrate` is resumable and a dump excludes it                                                                 | `drangler migrate ...`; `GET /migrate` reports `chunk`, `chunks` and `done`  |
 | Whole-object loss           | `/restore` into a new object                 | PITR entirely -- the log died with the object; `hash_salt` unless the dump used `?secrets=1`                                                       | `POST /restore` against the new site name                                    |
 | Worker version rollback     | `wrangler rollback`                          | **the database.** Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions | `wrangler rollback [VERSION_ID] --name <worker>`                             |
 | R2 asset loss               | the mirror refills from the object           | nothing; the object is the durable copy and R2 is a cache in front of it                                                                           | no operator route; `/__mirror` is DO-internal and the alarm drains the queue |
@@ -157,5 +157,5 @@ like a backup.
 
 - `docs/configuration.md` -- `PW_DIAGNOSTICS`, the `FILES` binding and the runtime overrides
 - `docs/external-database.md` -- why the data lives in the object
-- `TECHNICAL_REPORT.md` DEEP DIVE B -- the 100,000-character statement ceiling and the other
+- `TECHNICAL_REPORT.md`, Platform Constraints -- the 100,000-character statement ceiling and the other
   measured Durable Object SQLite limits

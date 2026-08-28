@@ -176,8 +176,8 @@ instruments. `CLAUDE.md` freezes `src/probes/**` on the same grounds. `release-p
 
 ## QA Coverage of the Report's Claims
 
-Thirteen load-bearing claims from the executive summary and above the FOLD, scored by what a test can
-catch. Three classes:
+Thirteen load-bearing claims from the report's executive summary, scored by what a test can catch.
+Three classes:
 
 - **(a) arithmetic or model** -- hermetic, free, in the gate.
 - **(b) artifact** -- needs bytes on disk; runs in the release lane, which hydrates the payload.
@@ -186,7 +186,7 @@ catch. Three classes:
 | #   | claim                                                                   | class | caught?                                                                                                                                                                                                                                                                                     |
 | --- | ----------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | the bundle fits the 3 MiB ceiling                                       | b     | **yes.** `bun run release:check` parses wrangler's printed figure and fails over the ceiling; the release lane runs it. `tests/unit/bundle-size.spec.ts` covers the arithmetic.                                                                                                             |
-| 2   | PHP 8.5 is 2,659,444 zstd bytes with nothing dropped to fit             | b     | **yes, both halves since 2026-08-22.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
+| 2   | PHP 8.5 is 2,671,380 zstd bytes with nothing dropped to fit             | b     | **yes, both halves since 2026-08-22.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
 | 3   | serving 3.0M visits/month, regeneration 7,575 renders/day               | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                                        |
 | 4   | a fill costs 3 / 13 / 19 / 62 rows                                      | a     | **partly.** `tests/unit/db/write-tally.spec.ts` counts rows through a real Durable Object; the four warmth classes are model constants.                                                                                                                                                     |
 | 5   | first-run migration is 62 chunks                                        | a     | **yes.** `assets/drupal-sql/manifest.json` reports `"chunks": 62`. The count moves with the packed database, so quote the manifest rather than a document.                                                                                                                                  |

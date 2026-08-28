@@ -34,7 +34,7 @@ Exceeding the free query limit fails the operation with an error rather than bil
 Hyperdrive does not support MySQL `COM_STMT_PREPARE`, so prepared statements have to be removed from
 MySQL queries; named prepared statements work only through `postgres.js` and `node-postgres`.
 
-Two things are worth being exact about. **A cached query still counts** against the daily limit, so
+Two properties govern what the cache buys. **A cached query still counts** against the daily limit, so
 query caching buys latency and origin load, never quota. And **the cache is keyed on statement text**
 including comments, which means a comment naming a volatile function such as `NOW()` can make a
 query uncacheable; Cloudflare does not document SQL comments as a cache-control API and recommends a
@@ -149,8 +149,8 @@ measured on a deployed throwaway with the `page` and `dynamic_page_cache` bins e
 warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 queries is roughly
 **6,666 renders/day**.
 
-Score that against the two ceilings in RULE 0b. The regeneration ceiling is **1,052 renders/day**
-cold and **7,575** windowed, bound by rows written. Hyperdrive's free query budget lands inside that
+Score that against the two ceilings. The regeneration ceiling is **2,777 renders/day** cold and
+**7,575** windowed, bound by rows written. Hyperdrive's free query budget lands inside that
 range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
 lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.
@@ -171,7 +171,8 @@ same reason `drupal/redis` stays refused: the answer has to arrive inside the re
 It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
 rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer
 reads that lose precision above 2^53, and the absence of `NOCASE_UTF8` and `REGEXP`. Those are
-documented in DEEP DIVE B of `TECHNICAL_REPORT.md` and each one has broken something real. Hyperdrive
+documented under Platform Constraints in `TECHNICAL_REPORT.md` and each one has broken something
+real. Hyperdrive
 is a compatibility escape hatch, not a capacity one.
 
 ## What It Costs
@@ -180,9 +181,9 @@ is a compatibility escape hatch, not a capacity one.
   first. There is no free tier of "a Postgres you own".
 - **The consistency primitives.** The generation counter, the resumable migration and the chunked
   restore would each need rewriting against a different concurrency model.
-- **A JSPI interpreter, or an async bridge for every statement.** This is the blocking item, and it
-  is measured rather than assumed: RULE 0b puts JSPI at about 1% of the regeneration ceiling as a
-  performance lever, so it would be built for this reason alone.
+- **A JSPI interpreter, or an async bridge for every statement.** This is the blocking item. JSPI is
+  worth about 1% of the regeneration ceiling as a performance lever, so it would be built for
+  this reason alone.
 - **A second failure domain.** Today a site is up when its object is up. With an external database it
   is up when the object, Hyperdrive and the database are all up.
 
@@ -190,4 +191,4 @@ is a compatibility escape hatch, not a capacity one.
 
 - `docs/recovery.md` -- what backs the site up and what restores it
 - `docs/configuration.md` -- every var and binding
-- `TECHNICAL_REPORT.md` DEEP DIVE B -- the measured Durable Object SQLite limits
+- `TECHNICAL_REPORT.md`, Platform Constraints -- the measured Durable Object SQLite limits

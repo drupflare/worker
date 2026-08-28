@@ -141,18 +141,18 @@ value all fall through to the var.
 
 ## Serving and Caching
 
-| var                  | default   | what it does                                                             |
-| -------------------- | --------- | ------------------------------------------------------------------------ |
-| `GEN_BUCKET_MS`      | 5,000     | how long the edge reuses a resolved site generation before re-reading it |
-| `MAX_BODY_BYTES`     | 2 MiB     | largest non-file request body the edge forwards                          |
-| `PAGE_KV_ENABLED`    | per plan  | force the cross-colo KV page tier on (`1`) or off (`0`)                  |
-| `PAGE_KV_TTL`        | 86,400    | seconds a stored page lives; floored at KV's own 60 s minimum            |
-| `RENDER_BUDGET_MS`   | per plan  | wall-clock ms a MISS may spend rendering before handing off to the alarm |
-| `FILL_BATCH_SIZE`    | per plan  | pages one alarm firing may fill before re-arming; capped at 50           |
-| `FILL_BATCH_WALL_MS` | per plan  | wall-clock ms one alarm firing may occupy the object; capped at 60,000   |
-| `WINDOW_SITES`       | `default` | which sites the scheduled fill window drives                             |
-| `WINDOW_MAX_FILLS`   | 50        | fills one window may drive                                               |
-| `WINDOW_WALL_MS`     | 60,000    | wall-clock ms one window may run                                         |
+| var                  | default  | what it does                                                                   |
+| -------------------- | -------- | ------------------------------------------------------------------------------ |
+| `GEN_BUCKET_MS`      | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
+| `MAX_BODY_BYTES`     | 2 MiB    | largest non-file request body the edge forwards                                |
+| `PAGE_KV_ENABLED`    | per plan | force the cross-colo KV page tier on (`1`) or off (`0`)                        |
+| `PAGE_KV_TTL`        | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
+| `RENDER_BUDGET_MS`   | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm       |
+| `FILL_BATCH_SIZE`    | per plan | pages one alarm firing may fill before re-arming; capped at 50                 |
+| `FILL_BATCH_WALL_MS` | per plan | wall-clock ms one alarm firing may occupy the object; capped at 60,000         |
+| `WINDOW_SITES`       | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet |
+| `WINDOW_MAX_FILLS`   | 50       | fills one window may drive                                                     |
+| `WINDOW_WALL_MS`     | 60,000   | wall-clock ms one window may run                                               |
 
 ### `MAX_BODY_BYTES`
 
@@ -287,7 +287,7 @@ three; `tests/unit/runtime/assets-ignore.spec.ts` fails when the two disagree.
 
 **One boolean that exposes arbitrary SQL against the site database (`/sql`), a whole-database
 overwrite (`/restore`) and arbitrary PHP (`/php`).** Diagnostic routes fail closed without it.
-`bun run dev` sets it; a deployed configuration must not. It is deliberately absent from the KV
+`bun run dev` sets it; a deployed configuration must not. It is absent from the KV
 override allow-list — KV is operator-writable, and every name on that list has a worst case of a slow
 site rather than a change in what is reachable.
 
@@ -506,6 +506,59 @@ Object's own SQLite is the cache backend.
 
 `syslog` is the shape this tier serves without compromise, because syslog over TCP never replies.
 
+## Workers AI
+
+Inference is a queued tier over the same queue as outbound HTTP and TCP. A model call is declared,
+run between PHP invocations, and read on a later one. `src/ops/ai.ts` runs it.
+
+| binding or var | default        | what it does                                          |
+| -------------- | -------------- | ----------------------------------------------------- |
+| `AI`           | —              | the Workers AI binding; the tier is absent without it |
+| `AI_MODELS`    | four model ids | comma-separated allow-list of model ids               |
+
+The binding rather than the REST API. A REST call to `api.cloudflare.com` needs an
+`Authorization: Bearer` header and the account id in its URL, which would put the account token in a
+queue row; the binding carries its own authorisation.
+
+**Neurons are a fourth meter.** 10,000 per day on Workers Free and Workers Paid alike, reset at
+00:00 UTC, and exhaustion is HTTP 429 with error 3036 rather than a bill. Neither the serving ceiling
+nor the regeneration ceiling sees it. `/ai` reports a projected cost per call, derived from
+Cloudflare's published per-model rate and an approximate token count; the binding returns no metered
+figure, so the projection is arithmetic and is labelled as such.
+
+Measured on a deployed free-plan site: a `llama-3.3-70b` completion projects to 102.62 neurons, which
+is **97 completions a day**. A `bge-m3` embedding of a short text projects to 0.01, and indexing 1,000
+nodes at 500 tokens each is about 5% of one day. **Embedding-backed search fits the free allocation
+and chat completion does not.**
+
+### Two Catalogues
+
+Cloudflare publishes two model lists and the difference matters to a site owner.
+
+| catalogue                         | what it is                                                           |
+| --------------------------------- | -------------------------------------------------------------------- |
+| Workers AI, `/workers-ai/models/` | every entry Cloudflare-hosted; inference runs on Cloudflare hardware |
+| unified AI catalog, `/ai/models/` | the above plus third-party models reached through AI Gateway         |
+
+The extra entries on the unified catalogue are external providers — OpenAI, Anthropic, Google, xAI —
+reached over AI Gateway and billed through it. A prompt sent to one leaves Cloudflare.
+
+`Partner` is a separate axis and is not the same thing. A Partner model on the Workers AI catalogue
+has proprietary weights and still runs on Cloudflare hardware: Deepgram, Leonardo, Black Forest Labs
+and NVIDIA all appear there. The privacy line is Cloudflare-hosted against external provider, not
+open-weight against partner.
+
+`AI_MODELS` is the control. Its default list is Cloudflare-hosted only.
+
+### What This Tier Does Not Do
+
+**No inline AI in a render.** A block or field formatter calling a provider during a page render
+holds the object across the round trip, which makes it ineligible for hibernation and bills as wall
+clock. The surfaces this tier fits are the ones that already retry and already show progress:
+generation on save, moderation, alt text, summarisation, and embedding on the cron path.
+
+**No streaming.** The unit this queue carries is a finished response body.
+
 ## OIDC Login
 
 A login is completed by the Worker, not by PHP. The callback is an ordinary request, so the token
@@ -643,7 +696,7 @@ statuses and does not use the word "checks".
 GitLab has no scope narrower than `api` for writing a status. Bitbucket has no personal access
 token: an Atlassian API token authenticates as HTTP Basic with the account email as the username, so
 its row on the page asks for one. A plain remote has nowhere to put a status, so `statusRequest()`
-returns null for it rather than guessing an endpoint.
+returns null for it.
 
 Gitea takes `state` on the way in and answers `status` on the way out, which is worth knowing when
 reading a status back through its API.

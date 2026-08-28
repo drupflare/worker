@@ -1,5 +1,5 @@
 import type { SiteEnv as BaseSiteEnv } from '@drupflare/durabledb/do-sqlite';
-import type { SendEmailLike } from './ops/mail';
+import type { SendEmailLike } from './ops/mail.js';
 
 /**
  * The worker's environment: `@drupflare/durabledb`'s generic shape plus the vars only this
@@ -106,6 +106,17 @@ export interface SiteEnv extends BaseSiteEnv {
 	SYSLOG_URL?: string;
 	/** APP-NAME on every record this site ships; defaults to `drupal` */
 	SYSLOG_APP_NAME?: string;
+
+	/**
+	 * The Workers AI binding, and the model allow-list; see `src/ops/ai.ts`.
+	 *
+	 * A binding rather than the REST API, because the binding carries its own authorisation while a
+	 * REST call would need the account token readable from a queue row. Absent on any account that
+	 * has not enabled Workers AI, which is why every reader treats it as optional.
+	 */
+	AI?: { run(model: string, input: Record<string, unknown>): Promise<unknown> } | null;
+	/** comma-separated model ids; unset means the short default list */
+	AI_MODELS?: string;
 
 	/**
 	 * The OIDC client secret, for a provider that issued one; see `src/ops/oidc.ts`.

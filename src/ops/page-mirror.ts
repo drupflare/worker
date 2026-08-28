@@ -12,7 +12,7 @@
  * 333,333/day against the 100,000/day Worker-request ceiling, so the floor is **3.3x** rather than the
  * 12.5x once quoted. Anything above that floor comes from Cloudflare's CDN absorbing reads in front of
  * the bucket, and that hit ratio is unmeasured. Writes are not the constraint: 1M Class A/month is
- * 33,333/day against an 8,196/day regeneration ceiling.
+ * 33,333/day against an 10,869/day regeneration ceiling.
  *
  * MIRROR TO THE OPTIMUM, NOT TO EVERYTHING. Once R2's read meter binds, moving more traffic off the
  * Worker spends a 333,333/day meter faster to save a 100,000/day one, so the lever has a maximum

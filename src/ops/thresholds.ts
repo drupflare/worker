@@ -96,7 +96,7 @@ export const THRESHOLDS: readonly Threshold[] = [
 		paid: null,
 		failure: 'error',
 		spentBy: 'a page render (13 rows), an authenticated view (13), an alarm re-arm (1)',
-		note: 'The regeneration ceiling, and what actually binds it: 8,196 regenerations/day windowed.'
+		note: 'The regeneration ceiling, and what actually binds it: 10,869 regenerations/day windowed.'
 	},
 	{
 		id: 'do-requests',

@@ -93,6 +93,16 @@ describe('two sites, snapshotted at wasm-page granularity', () => {
 			// the correction itself: a provisioned site carries a materially larger heap, so a
 			// fraction taken on the bare arm is a fraction of the wrong denominator
 			expect(provisioned.pagesB).toBeGreaterThan(bare.pagesB);
+
+			// PINNED, because nothing guarded it and the report's figure went stale by 4.7 points.
+			// The provisioned arm reads 0.3779 on three consecutive runs with zero spread, so it is
+			// an exact property of the pack rather than a noisy measurement
+			expect(provisioned.sharedFraction).toBeCloseTo(0.3779, 4);
+			// and the BARE arm is deliberately NOT pinned: the same three runs read 0.3994, 0.3994
+			// and 0.7603 on it. An object with no database has little structure to share, so the
+			// fraction swings on what little there is -- which is the reason a fleet figure is
+			// quoted from the provisioned arm and never from this one
+			expect(bare.sharedFraction).toBeGreaterThan(0);
 		},
 		TIMEOUT
 	);

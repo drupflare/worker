@@ -269,7 +269,12 @@ export default defineConfig({
 						remoteBindings: false,
 						wrangler: { configPath: './wrangler.jsonc' },
 						miniflare: {
-							bindings: { PW_DIAGNOSTICS: '1' },
+							// DRUPFLARE_MEASURE gates the wall-clock instruments, which cannot be
+							// hermetic; forwarded because the pool has its own env
+							bindings: {
+								PW_DIAGNOSTICS: '1',
+								DRUPFLARE_MEASURE: process.env.DRUPFLARE_MEASURE ?? '0'
+							},
 							// costs nothing measurable: `false` moved a four-file run 12.08s -> 11.77s,
 							// inside the noise, because the isolate is rebuilt per FILE either way
 							isolatedStorage: true

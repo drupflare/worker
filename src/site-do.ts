@@ -3233,6 +3233,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	// #endregion
 
+	/**
+	 * The serve tables are WITHOUT ROWID, because a TEXT primary key otherwise costs a second
+	 * charged row on every insert.
+	 *
+	 * SQLite gives a rowid table's text key its own unique index, so one logical write is charged
+	 * twice on the meter that binds regeneration. Storing the row inside the key's own B-tree charges
+	 * once. Measured on `ctx.storage.sql`: insert 2 -> 1, update 1 either way, the serve HIT still
+	 * reads one row, and 200 rows of 12 KB html cost +0.32% on disk. On a `warmReassemble` fill
+	 * `cfw_page` is 2 of the 3 charged rows, so this is the cheapest class's largest single item.
+	 *
+	 * None of these has a rowid consumer -- no `last_insert_rowid()`, no `INTEGER PRIMARY KEY` alias.
+	 * `IF NOT EXISTS` means an existing site keeps its rowid tables rather than being migrated, which
+	 * is deliberate: the saving is not worth a rebuild of a live page store.
+	 */
 	ensureServeTables(): void {
 		if (this.serveTablesReady) return;
 		this.sql.exec(
@@ -3243,7 +3257,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
         html TEXT NOT NULL,
         rendered_at INTEGER NOT NULL,
         render_ms REAL
-      )`
+      ) WITHOUT ROWID`
 		);
 		this.sql.exec(
 			`CREATE TABLE IF NOT EXISTS cfw_fill_queue (
@@ -3251,7 +3265,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
         queued_at INTEGER NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT
-      )`
+      ) WITHOUT ROWID`
 		);
 		// scalars the Worker needs cheaply; the generation counter lives here rather
 		// than in ctx.storage.kv because a bump can fire from inside execSql(), which
@@ -3260,7 +3274,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			`CREATE TABLE IF NOT EXISTS cfw_meta (
         k TEXT PRIMARY KEY,
         v TEXT NOT NULL
-      )`
+      ) WITHOUT ROWID`
 		);
 		// Site-installed module source, from `composer require` or a git remote. PER FILE
 		// rather than one archive blob: a Durable Object record caps at 2,199,995 bytes and a tarball

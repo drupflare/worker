@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { stripExportWrappers } from './glue-exports.js';
 
 /**
  * Emscripten's heap-growth policy, re-emitted at a chosen step.
@@ -22,7 +23,8 @@ const PAGE = 65_536;
 export const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
 
 /** every pointer ABI a glue is emitted for; `null` is wasm32, which needs no suffix */
-export type Abi = null | 'wasm64' | 'long64' | 'wasm32';
+export type Abi =
+	null | 'wasm64' | 'long64' | 'wasm32' | 'emmalloc' | 'bulkmem' | 'impmem' | 'zendalloc';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {
@@ -76,8 +78,20 @@ export function variantPath(step: number): string {
  * wasm64 falls back deliberately -- its sweep ran at 0.05 and a number here would be invented.
  */
 const STEP_BY_ABI: Record<string, number> = { wasm32: 0.08 };
+// emmalloc/bulkmem/impmem/zendalloc are long64 plus ONE flag each, so they inherit long64's 0.13
+// rather than getting a number nobody swept -- an arm measured at a different growth policy is not
+// an arm
 
+/**
+ * `DRUPFLARE_ABI_STEP` forces the step for an ABI arm, which is the only way to read raw DEMAND.
+ *
+ * The peak is `align(max(demand, old * (1 + step)))`, so at 0.13 four arms whose demand differs by
+ * less than a rung all report the SAME peak -- which reads as "no effect" and is quantisation. At
+ * step 0 the heap grows by exactly what was asked for.
+ */
 export function stepFor(abi: Abi): number {
+	const forced = Number(process.env.DRUPFLARE_ABI_STEP);
+	if (Number.isFinite(forced) && forced >= 0) return forced;
 	return (abi !== null && STEP_BY_ABI[abi]) || SHIPPING_STEP;
 }
 
@@ -85,12 +99,16 @@ export function stepFor(abi: Abi): number {
 export const TUNED_GLUE = '.interp/php8.5-worker.tuned.mjs';
 
 /**
- * Emits the glue for an ABI at {@link stepFor}.
+ * Emits the glue for an ABI at {@link stepFor}, with the export trampolines collapsed.
  *
  * Written BESIDE the pristine file rather than over it. `restore-artifacts.ts` verifies the
  * download against `cdn-manifest.json`, so rewriting in place would either break that check or
  * force the hash to cover a file this repo edits -- and a hash that covers a locally-mutated file
  * guarantees nothing.
+ *
+ * Two transforms, one file: the growth step, and `stripExportWrappers` for the bundle bytes. They
+ * ride together because both must apply to the copy the shipping seam imports, and a second emitter
+ * is a second thing to forget.
  */
 export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 	const from = glueFor(abi);
@@ -100,8 +118,9 @@ export function emitTunedGlue(root = process.cwd(), abi: Abi = null): string {
 	if (!STEP_SITE.test(glue)) {
 		throw new Error(`growth site not found in ${from}; emscripten changed its emitted form`);
 	}
+	const stepped = glue.replace(STEP_SITE, `oldSize*(1+${stepFor(abi)}/cutDown)`);
 	const out = resolve(root, tunedGlueFor(abi));
-	writeFileSync(out, glue.replace(STEP_SITE, `oldSize*(1+${stepFor(abi)}/cutDown)`));
+	writeFileSync(out, stripExportWrappers(stepped).source);
 	return out;
 }
 

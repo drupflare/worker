@@ -1,5 +1,6 @@
 import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
 import { existsSync } from 'node:fs';
+import { availableParallelism, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
@@ -152,8 +153,9 @@ if (growthGlue && !existsSync(growthGlue)) {
  * policies, which has happened at this exact seam before.
  */
 const abi = process.env.DRUPFLARE_ABI as Abi | undefined;
-if (abi !== undefined && abi !== 'wasm64' && abi !== 'long64') {
-	throw new Error(`DRUPFLARE_ABI must be wasm64 or long64 when set; got ${abi}`);
+const ABI_ARMS = ['wasm64', 'long64', 'emmalloc', 'bulkmem', 'impmem', 'zendalloc'];
+if (abi !== undefined && !ABI_ARMS.includes(abi)) {
+	throw new Error(`DRUPFLARE_ABI must be one of ${ABI_ARMS.join(', ')} when set; got ${abi}`);
 }
 const abiWasm = abi ? `.interp/php8.5-${abi}.wasm` : null;
 const abiPristine = abi ? glueFor(abi) : null;
@@ -221,6 +223,43 @@ const binaryAlias = haveShipping
 				seamAlias(DEFAULT_SEAM, 'tests/helpers/php-binary-absent.ts')
 			];
 
+/**
+ * How many workerd isolates the `workers` project may run at once.
+ *
+ * MEMORY is the binding constraint, not cores: every lane instantiates PHP, and the shipping build
+ * reaches a 113,770,496-byte linear memory on an authenticated render. Budgeting 400 MiB a lane
+ * covers that plus V8's own overhead, and half of physical memory keeps the machine usable.
+ *
+ * CI stays at 1 by default. A hosted runner is 4 cores against a workload that is 12 MB of wasm per
+ * lane, and a lane that OOMs there fails the whole gate rather than one file.
+ * `DRUPFLARE_TEST_WORKERS` overrides either way.
+ */
+const MIB = 1_048_576;
+
+/**
+ * WHAT A WORKER-LOADING SPEC COSTS, AND WHY IT IS NOT THE APPLICATION GRAPH.
+ *
+ * Measured: a leaf import is 34 ms, six large `src/ops/*` modules together are 96 ms, and
+ * `src/site.ts` is 2.60 s -- so the whole per-file cost is the 12,218,393-byte interpreter
+ * instantiating into a fresh isolate. 68 of 142 spec files pay it, at 3.3 s alone and ~6.5 s under
+ * eight contending lanes, which is 444 s of the suite's 280 s wall clock.
+ *
+ * Both obvious remedies are refused rather than untried. Consolidating the 58 integration specs
+ * breaks the one-spec-file-per-domain rule and the failure attribution that comes with it.
+ * Importing the seam dynamically WOULD work here, because the gate aliases a pre-compiled
+ * `CompiledWasm`, and would break production, where workerd forbids request-time codegen -- a lane
+ * divergence at the exact seam that already ran 8.3 in the gate against 8.5 on the edge.
+ */
+function workerLanes(): number {
+	const explicit = Number(process.env.DRUPFLARE_TEST_WORKERS);
+	if (Number.isFinite(explicit) && explicit >= 1) return Math.floor(explicit);
+	if (process.env.CI) return 1;
+	const byMemory = Math.floor((totalmem() * 0.5) / (400 * MIB));
+	// leave two cores for the host, and cap at 8: past that the lanes contend on the same SQLite
+	const byCores = availableParallelism() - 2;
+	return Math.max(2, Math.min(byCores, byMemory, 8));
+}
+
 export default defineConfig({
 	test: {
 		projects: [
@@ -231,6 +270,8 @@ export default defineConfig({
 						wrangler: { configPath: './wrangler.jsonc' },
 						miniflare: {
 							bindings: { PW_DIAGNOSTICS: '1' },
+							// costs nothing measurable: `false` moved a four-file run 12.08s -> 11.77s,
+							// inside the noise, because the isolate is rebuilt per FILE either way
 							isolatedStorage: true
 						}
 					})
@@ -244,8 +285,12 @@ export default defineConfig({
 					name: 'workers',
 					include: ['tests/unit/**/*.spec.ts', 'tests/integration/**/*.spec.ts'],
 					exclude: haveArtifacts || listAll ? [] : ARTIFACT_SPECS,
-					maxWorkers: process.env.CI ? 1 : 2,
-					testTimeout: 15000
+					maxWorkers: workerLanes(),
+					// 30s, not 15s: a worker-loading spec imports the interpreter in ~6.5 s under
+					// eight contending lanes, so 15 s left specs that do no real work timing out as
+					// `STACK_TRACE_ERROR` whenever the machine was also busy. The ones that boot PHP
+					// set their own 900 s, so this bounds the cheap specs and hides no real hang
+					testTimeout: 30000
 				}
 			},
 			{

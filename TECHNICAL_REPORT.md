@@ -1047,6 +1047,14 @@ Export the list from `src/` and hold the const in both directions.
 12. **`PLAN=free` is this project's var, not Cloudflare's plan.** A deployed run on a paid account
     measures cost, which is plan-independent, and never enforcement. The free CPU cap also has a
     burst allowance: one large request succeeds where the same request repeated fails 11 of 15.
+13. **Two artifacts are only comparable in the same MODE.** Where the thing being compared exists
+    only because of a condition -- an emptied bin, a flag, a cold cache -- the other side has to be
+    produced under that same condition, or the structural difference reads as a finding. Shell
+    verification cost three comparators to this: a shell has BigPipe holes only because harvesting
+    empties the `render` bin, so its personalised regions never aggregate their `#attached`
+    libraries into the head, and an ordinary render of the same page carries a different asset set
+    by construction. The diff pointed at offset 3407, `action-links.css` against `block.css`, which
+    looks like a defect and is a mode mismatch. Harvesting both sides made them equal byte for byte.
 
 Suspect the instrument first. Most moved verdicts in this project moved because the instrument was
 wrong, not the system.

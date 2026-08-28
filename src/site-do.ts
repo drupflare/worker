@@ -909,6 +909,14 @@ function prefillDefault(env?: SiteEnv | null): boolean {
 }
 
 /**
+ * How a shell-served response was authorised for the visitor who received it.
+ *
+ * `proven` and `refused` both answer from the visitor's OWN harvest, so they differ in what
+ * happened to the stored shell rather than in what reached the browser.
+ */
+export type ShellVerdict = 'cached' | 'proven' | 'refused';
+
+/**
  * Whether an authenticated GET may be answered from a stored shell.
  *
  * OFF unless an operator says `1`, on both plans, and that default is the point rather than
@@ -3301,6 +3309,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
         PRIMARY KEY (path, permissions_hash)
       )`
 		);
+		// which visitors a stored shell has been PROVEN correct for, keyed to the harvest it was
+		// proven against so a re-harvest voids every one. WITHOUT ROWID because a TEXT primary key in
+		// a rowid table gets its own unique index and charges 2 rows an insert rather than 1
+		this.sql.exec(
+			`CREATE TABLE IF NOT EXISTS cfw_shell_verified (
+        path TEXT NOT NULL,
+        permissions_hash TEXT NOT NULL,
+        uid TEXT NOT NULL,
+        harvested_at INTEGER NOT NULL,
+        verified_at INTEGER NOT NULL,
+        PRIMARY KEY (path, permissions_hash, uid)
+      ) WITHOUT ROWID`
+		);
 		// the health ledger sits with the serve tables because `repair_state` lives in cfw_meta and
 		// the quarantine check reads it on every alarm; a lazily-created ledger would mean the first
 		// finding is the one that cannot be recorded
@@ -3623,6 +3644,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * selects it. A miss therefore costs one fragment render (measured at 4-5 ms of gate-lane wall
 	 * clock against 20-21 for the render it would have replaced), not a wasted page.
 	 *
+	 * NO VISITOR IS SERVED AN ASSEMBLY THAT WAS NOT PROVEN AGAINST THEIR OWN RENDER. The harvest's
+	 * two-session agreement is a proof about two people, and a third whose shared region differs --
+	 * an unread count, a per-user block core did not placeholder -- is exactly what it cannot see.
+	 * So the first request from each `(path, permissions_hash, uid)` re-harvests for that visitor
+	 * and requires their normalised shell to equal the stored one BYTE FOR BYTE. See
+	 * {@link verifyShellFor} for what that costs and why the comparison has to be harvest-against-
+	 * harvest rather than page-against-page.
+	 *
 	 * EVERY failure returns null. A shell that does not match, a fragment that did not render, a
 	 * hole with no fragment: all of them fall through to the ordinary render, because the
 	 * alternative to a correct page here is somebody else's page.
@@ -3631,11 +3660,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		path: string,
 		cookie: string,
 		origin: string
-	): Promise<{ html: string; holes: number } | null> {
+	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
 		this.ensureServeTables();
 		const candidates = this.sql
-			.exec<{ permissions_hash: string; shell: string; slots: string; recipes: string }>(
-				'SELECT permissions_hash, shell, slots, recipes FROM cfw_shell WHERE path = ?',
+			.exec<{
+				permissions_hash: string;
+				shell: string;
+				slots: string;
+				recipes: string;
+				harvested_at: number;
+			}>(
+				'SELECT permissions_hash, shell, slots, recipes, harvested_at FROM cfw_shell WHERE path = ?',
 				path
 			)
 			.toArray();
@@ -3655,6 +3690,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const row = candidates.find((c) => c.permissions_hash === identity.permissionsHash);
 		if (!row) return null;
 
+		const uid = String(identity.uid ?? '');
+		if (uid === '') return null;
+		if (!this.shellVerified(path, row.permissions_hash, uid, row.harvested_at)) {
+			return this.verifyShellFor(path, cookie, origin, row);
+		}
+
 		let slots: IdentitySlot[];
 		try {
 			slots = JSON.parse(String(row.slots)) as IdentitySlot[];
@@ -3671,7 +3712,118 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// an unfilled hole is a region the visitor would simply not see, which is worse than paying
 		// for the render this was avoiding
 		if (out.unfilled.length > 0) return null;
-		return { html: out.html, holes: out.filled.length };
+		return { html: out.html, holes: out.filled.length, verified: 'cached' };
+	}
+
+	/** whether this visitor has been proven against the harvest the stored shell came from */
+	shellVerified(path: string, hash: string, uid: string, harvestedAt: number): boolean {
+		return (
+			(this.sql
+				.exec<{ n: number }>(
+					`SELECT COUNT(*) AS n FROM cfw_shell_verified
+           WHERE path = ? AND permissions_hash = ? AND uid = ? AND harvested_at = ?`,
+					path,
+					hash,
+					uid,
+					harvestedAt
+				)
+				.toArray()[0]?.n ?? 0) > 0
+		);
+	}
+
+	/**
+	 * Proves a stored shell against ONE visitor's own render, and answers them from it.
+	 *
+	 * ## The comparison is harvest-against-harvest, and the other three do not work
+	 *
+	 * Byte equality with the visitor's ordinary page cannot be the check, for a structural reason
+	 * rather than a fixable one: a shell exists only because harvesting EMPTIES the render bin, so
+	 * its personalised regions are BigPipe holes whose `#attached` libraries never reach the
+	 * document head. An ordinary render substitutes those regions inline and aggregates their
+	 * libraries in. The two pages therefore carry different asset sets by construction -- measured
+	 * diverging at offset 3407, `action-links.css` against `block.css` -- and no amount of
+	 * neutralising closes that. Comparing an assembly against a normalised shell fails from the
+	 * other side: `normaliseShell()` requires placeholders, and an assembly has filled its holes
+	 * while an ordinary render never had any.
+	 *
+	 * Harvesting the visitor puts both sides in the same mode, which is what makes them comparable.
+	 * It is also exactly the comparison {@link harvestShellFor} already makes between its two
+	 * sessions, so this widens a proof rather than inventing one.
+	 *
+	 * ## What it costs, and why it still pays
+	 *
+	 * Measured on the gate lane in rows written, which is the tighter of the two free ceilings.
+	 * THE ASSEMBLY IS THE STABLE ONE: it writes 0, in every arm, because it touches no cache bin.
+	 * The rest move with how warm the path already is -- a render measured 4 rows on a path
+	 * rendered repeatedly and 10 on a colder one, and the harvest's 34 is followed by a repaying
+	 * render of 16 to 22. So the toll is 40 to 52 rows and break-even is 4 to 13 requests, after
+	 * which the visitor's every request is free rather than cheap.
+	 *
+	 * `shell-verify-cost.spec.ts` measures all four rather than quoting them, because the case for
+	 * paying the toll at all is arithmetic and would go stale silently.
+	 *
+	 * THE HARVEST BODY IS WHAT THE VISITOR RECEIVES, which is why the toll buys a page rather than
+	 * only a proof. `sendContent()` captures the complete BigPipe stream -- placeholders, the
+	 * replacement scripts that fill them, and the `stop` event -- so it is Drupal's own output for
+	 * this request, not something assembled.
+	 */
+	async verifyShellFor(
+		path: string,
+		cookie: string,
+		origin: string,
+		row: { permissions_hash: string; shell: string; harvested_at: number }
+	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
+		const out = await this.runJson(harvestShell(path, { cookie, origin }));
+		if (out['ok'] !== true) return null;
+		const body = String(out['html'] ?? '');
+		const mine = normaliseShell(body);
+		if (!mine.ok) return null;
+
+		const uid = String(out['uid'] ?? '');
+		if (uid === '' || uid === '0') return null;
+
+		if (mine.shell !== String(row.shell)) {
+			// the shell carries something this visitor does not render, so it belongs to whoever it
+			// was harvested from. Dropping it is the only safe move: it is shared by construction
+			this.sql.exec(
+				'DELETE FROM cfw_shell WHERE path = ? AND permissions_hash = ?',
+				path,
+				row.permissions_hash
+			);
+			this.sql.exec('DELETE FROM cfw_shell_verified WHERE path = ?', path);
+			let at = 0;
+			while (at < mine.shell.length && mine.shell[at] === row.shell[at]) at++;
+			// durable rather than in memory, because an operator who re-harvests would otherwise
+			// store the same unsafe shell again with nothing on record saying why it went
+			this.metaSet(
+				'shellRefusal',
+				JSON.stringify({
+					path,
+					uid,
+					at,
+					mine: mine.shell.slice(at, at + 120),
+					stored: String(row.shell).slice(at, at + 120),
+					when: this.nowMs()
+				})
+			);
+			return { html: body, holes: placeholderIds(body).length, verified: 'refused' };
+		}
+
+		// ponytail: unbounded, and the natural bound is (harvested paths x role sets x users) with
+		// harvesting an operator action; add an LRU if a site ever makes this table large
+		this.sql.exec(
+			`INSERT INTO cfw_shell_verified (path, permissions_hash, uid, harvested_at, verified_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(path, permissions_hash, uid) DO UPDATE SET
+         harvested_at = excluded.harvested_at,
+         verified_at = excluded.verified_at`,
+			path,
+			row.permissions_hash,
+			uid,
+			row.harvested_at,
+			this.nowMs()
+		);
+		return { html: body, holes: placeholderIds(body).length, verified: 'proven' };
 	}
 
 	/**
@@ -4122,6 +4274,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// a bump with no `cachetags` behind it has nothing telling Drupal the page changed, so a
 		// refill would answer from `dynamic_page_cache` and re-store byte-identical HTML
 		const purgedDynamic = reason === 'cachetags' ? 0 : this.purgeDynamicPageCache();
+		// A SHELL CACHES THE WHOLE SHARED REGION -- nav, blocks, footer, site name -- and Drupal
+		// knows nothing about it, so no cache tag reaches it and nothing else would ever invalidate
+		// it. Purged on EVERY bump including `cachetags` for that reason, unlike the dynamic bin
+		// above. Assembly then stops until an operator re-harvests, which is the right direction to
+		// fail: a stale shell is served to every authenticated visitor at once
+		const purgedShells = Number(
+			this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_shell').toArray()[0]
+				?.c ?? 0
+		);
+		if (purgedShells > 0) {
+			this.sql.exec('DELETE FROM cfw_shell');
+			this.sql.exec('DELETE FROM cfw_shell_verified');
+		}
 		this.metaSet('generation', next);
 		this.metaSet('last_bump', `${next}:${reason}:${this.nowMs()}`);
 		this.bumps = (this.bumps ?? 0) + 1;
@@ -4144,6 +4309,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			generation: next,
 			reason,
 			purgedPages,
+			purgedShells,
 			purgedDynamic,
 			requeued,
 			droppedFromRequeue
@@ -7644,7 +7810,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 										'content-type': 'text/html; charset=UTF-8',
 										// a shell is shared; the ASSEMBLED page is one visitor's
 										'cache-control': 'private, no-store',
-										'x-cfw-cache': 'ASSEMBLED',
+										// only a `cached` verdict assembled anything; the other two
+										// answer from the visitor's own harvest
+										'x-cfw-cache':
+											assembled.verified === 'cached'
+												? 'ASSEMBLED'
+												: 'VERIFY',
+										'x-cfw-shell-verified': assembled.verified,
 										'x-cfw-generation': String(this.generation()),
 										'x-cfw-shell-holes': String(assembled.holes),
 										'x-cfw-serve-ms': String(Date.now() - t0),
@@ -7957,6 +8129,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						.map((c) => c.trim())
 						.filter((c) => c !== '');
 					if (request.method !== 'POST') {
+						this.ensureServeTables();
+						const refusal = this.metaGet('shellRefusal');
 						return Response.json({
 							path: shellPath,
 							enabled: shellAssemblyEnabled(this.env),
@@ -7966,7 +8140,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 									permissions_hash: string;
 									harvested_at: number;
 								}>('SELECT path, permissions_hash, harvested_at FROM cfw_shell')
-								.toArray()
+								.toArray(),
+							// which visitors a stored shell has been proven for; a shell with none is
+							// harvested but has never been assembled from
+							verified: this.sql
+								.exec<{
+									path: string;
+									permissions_hash: string;
+									uid: string;
+									verified_at: number;
+								}>(
+									'SELECT path, permissions_hash, uid, verified_at FROM cfw_shell_verified'
+								)
+								.toArray(),
+							// WITHOUT THIS A REFUSAL IS INVISIBLE: the row is deleted, so an operator
+							// sees an empty `stored` and no reason a harvest they took has gone
+							lastRefusal: refusal === null ? null : (JSON.parse(refusal) as unknown)
 						});
 					}
 					await this.ensurePhp();

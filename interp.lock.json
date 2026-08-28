@@ -2,29 +2,29 @@
 	"name": "drupflare-interpreter-pin",
 	"version": 1,
 	"repo": "drupflare/phasm",
-	"variant": "long64",
+	"variant": "control85",
 	"phpVersion": "8.5",
-	"artifactId": "9587977159",
+	"artifactId": "9674621199",
 	"frame": {
-		"raw": 12234574,
-		"packed": 2671380,
-		"declared": 12234574
+		"raw": 12218393,
+		"packed": 2659436,
+		"declared": 12218393
 	},
 	"files": [
 		{
 			"path": ".interp/php8.5-worker.mjs",
-			"bytes": 865849,
-			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72"
+			"bytes": 863402,
+			"sha256": "016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb"
 		},
 		{
 			"path": ".interp/php8.5.wasm",
-			"bytes": 12234574,
-			"sha256": "1a06a07554c136befdce8681777199a67328a906f65cb4f047fd53bbc75b05c9"
+			"bytes": 12218393,
+			"sha256": "a7833d7da382b27aa9339b116863bc9b48a3610835b7693a27a4a71a8c257d9f"
 		},
 		{
 			"path": ".interp/php8.5.wasm.zst",
-			"bytes": 2671380,
-			"sha256": "1e5018acbe22b7fe385899b8a591968c07d4af3ec71a14db836f86d6e7c093d4"
+			"bytes": 2659436,
+			"sha256": "7589a606f7e42702c9f47a78d173bbeda0691621f61a2f767a042b813b8b7c01"
 		}
 	]
 }

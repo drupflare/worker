@@ -72,6 +72,8 @@ export type BumpResult = {
 	generation: number;
 	reason: string;
 	purgedPages: number;
+	/** stored shells dropped; a shell caches the shared region and no cache tag reaches it */
+	purgedShells: number;
 	/** rows removed from `cache_dynamic_page_cache`, or -1 when the bin does not exist yet */
 	purgedDynamic: number;
 	requeued: number;
@@ -140,7 +142,12 @@ export type ServeDo = {
 		path: string,
 		cookie: string,
 		origin: string
-	) => Promise<{ html: string; holes: number } | null>;
+	) => Promise<{
+		html: string;
+		holes: number;
+		verified: import('../../src/site-do').ShellVerdict;
+	} | null>;
+	shellVerified: (path: string, hash: string, uid: string, harvestedAt: number) => boolean;
 	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
 	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
 	gitRemotes: () => { id: string; provider: string; repo: string; branch: string }[];

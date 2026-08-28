@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { GUZZLE_HANDLER_CHECK } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, GUZZLE_HANDLER_CHECK } from '../../src/drupal/site-php';
 import { deferredKey, ttlFor } from '../../src/ops/deferred-post';
-import { inObject, provisionedSite, type ServeDo } from '../helpers/serve-do';
+import { freshSite, inObject, provisionedSite, type ServeDo } from '../helpers/serve-do';
 
 /**
  * `Drupal::httpClient()` on the shipping binary, end to end.
@@ -61,5 +61,66 @@ describe('the Guzzle handler a non-suspending build installs', () => {
 			checks.some((c) => c.label.startsWith('CONTROL:')),
 			'the control ran'
 		).toBe(true);
+	}, 900_000);
+
+	it('rejects on the first call and answers on the second, which is the deferred contract', async () => {
+		// THE CYCLE ITSELF, which the test above deliberately skips by seeding the row. Every claim
+		// that a module "cannot work here because a deferred exchange always misses" rests on what
+		// happens on call TWO, and nothing had measured it -- `search_gov_results_api` was
+		// classified `blocked` on a sentence about a cycle no test had ever run
+		const url = 'https://cfw-deferred.invalid/results';
+		const body = '{"results":[{"title":"a stored answer"}]}';
+		const ask = `<?php
+			$out = ['first' => null, 'second' => null];
+			try {
+				\\Drupal::httpClient()->get('${url}');
+				$out['first'] = 'resolved';
+			} catch (\\Throwable $e) {
+				$out['first'] = 'rejected:' . get_class($e) . ':' . substr($e->getMessage(), 0, 200);
+			}
+			echo json_encode($out);`;
+
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+			site.ensureHttpTables();
+			await site.runJson(BOOT_KERNEL);
+			const first = (await site.runJson(ask)) as Record<string, unknown>;
+			// the queue row the miss armed, which is the deferral being real rather than a failure
+			const queued = site.sql
+				.exec('SELECT url FROM cfw_http_queue WHERE url = ?', url)
+				.toArray().length;
+			// stand in for the drain: the endpoint does not resolve, and what is under test is the
+			// READ on the second call rather than `fetch()` itself
+			site.sql.exec('DELETE FROM cfw_http_queue WHERE url = ?', url);
+			site.sql.exec(
+				`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
+				 VALUES (?, ?, 200, ?, ?, ?, ?)`,
+				deferredKey('GET', url, ''),
+				url,
+				JSON.stringify({ 'content-type': 'application/json' }),
+				body,
+				site.nowMs(),
+				site.nowMs() + ttlFor('GET')
+			);
+			const second = (await site.runJson(`<?php
+				try {
+					$r = \\Drupal::httpClient()->get('${url}');
+					echo json_encode(['second' => 'resolved', 'body' => (string) $r->getBody()]);
+				} catch (\\Throwable $e) {
+					echo json_encode(['second' => 'rejected:' . get_class($e)]);
+				}`)) as Record<string, unknown>;
+			return { first, queued, second };
+		});
+
+		console.log(`[guzzle-deferred] ${JSON.stringify(out)}`);
+
+		// a REJECTION, not an empty body: Guzzle's `http_errors` does not raise on 2xx, so a 202
+		// deferral note would be `Json::decode()`d and iterated by a caller that never checked
+		expect(String(out.first['first'])).toContain('rejected:');
+		expect(out.queued, 'the miss armed no queue row, so nothing would ever fetch it').toBe(1);
+		// and the second call gets the real body, which is what makes the cycle a latency cost
+		// rather than a capability refusal
+		expect(out.second['second']).toBe('resolved');
+		expect(out.second['body']).toBe(body);
 	}, 900_000);
 });

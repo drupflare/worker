@@ -71,9 +71,18 @@ The exposure is hibernation eligibility rather than arithmetic; see Hibernation 
 
 ### Where It Wins and Where It Does Not
 
-The architecture wins by not rendering rather than by rendering faster. An uncached render is ~3.6x
-slower than native PHP, and one site is one Durable Object is one thread that cannot be made bigger.
-Content sites win decisively; busy authenticated editorial workflows do not.
+The architecture wins by not rendering rather than by rendering faster. An uncached render costs
+**2,127 ms** of edge `cpuTime`, and one site is one Durable Object is one thread that cannot be made
+bigger. Content sites win decisively; busy authenticated editorial workflows do not.
+
+**The 3.57x wasm penalty is not that number and must not be read as it.** It is a warm-kernel ratio
+between two interpreters on ONE machine, with the container already built; the edge figure is the
+whole request. The README carried `34 ms` for this row until 2026-08-29, which is `9.47 x 3.57` --
+an arithmetic product of a native measurement and a local ratio, published under a provenance code
+meaning "measured on deployed infrastructure", and 62x below what the deployed meter reports.
+`scripts/bench/bench-render-breakdown.php` calls the 33.8 ms basis an inference in its own header.
+The neighbouring `page_cache` row is genuinely 1 ms because a stored-page serve runs at a 20x
+`activeTime/cpuTime` ratio; a render runs at **1x**, so no divisor carries across.
 
 ---
 
@@ -607,6 +616,25 @@ understates each new site by one 156-row event.
 rows of 12 KB html cost +0.32% on disk. The cheapest class benefits most -- `warmReassemble` went
 3 -> 2 rows, its index charge to zero -- and the windowed regeneration ceiling moved 7,575 -> 8,196.
 
+**THE SAME SHAPE WAS WORTH MORE ON DRUPAL'S OWN CACHE BINS.** Every bin `DatabaseBackend` creates
+keys on a TEXT `cid`, and `scripts/measure/index-audit.ts` reports 13 of the 14 with NO secondary
+index at all -- so the autoindex WAS their entire index cost. `scripts/pack-sql.ts` now emits the 14
+bins `WITHOUT ROWID`, and `Schema::createTableSql()` in the `cfw_do_sqlite` driver does the same for
+a bin a module adds at runtime, which the packer never sees. Verified through Drupal's own installer.
+Measured on a steady-state render at **8 charged rows -> 6**, bins' index
+charge **3 -> 0**, n=3 with zero spread. Every warmth class fell with it: `firstFillOnFreshObject`
+156 -> **103**, `firstEverForPath` 24 -> **14**, `realRender` 12 -> **9**, and `warmReassemble`
+alone unchanged at 2 because it writes only `cfw_page`. The windowed regeneration ceiling moved
+**8,196 -> 10,869/day**.
+
+Two things that were nearly reported wrong here. A first pass read 11 -> 6 and **3 of those 5 rows
+were warmth, not the conversion**: one warming render leaves `cache_menu` and `cache_discovery` cold,
+so they are written in the control arm and not in the treatment arm. Both arms need the same warmth
+before the comparison means anything. And `index-audit.ts` does not model `WITHOUT ROWID` at all, so
+it reports "the floor in this schema is 2x" and "factor 1.0 (nothing to win): NO TABLE" -- both are
+statements about the instrument rather than the schema, and the second one would have closed this
+lever outright.
+
 Two things that look like levers and are not. **Zero rows of a fill go to `watchdog`**, so
 uninstalling `dblog` buys nothing. And past ~85% off-Worker serving the binding meter becomes DO
 requests rather than rows, so trimming rows beyond that point moves a meter the ceiling no longer
@@ -668,11 +696,19 @@ are shared.
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |
 
-Cross-site heap dedup is **37.79%** on a provisioned pair, n=3 with zero spread, and
-`tests/integration/snapshot-dedup.spec.ts` pins it. It read 33.09% until 2026-08-28; nothing guarded
-the figure, which is how it drifted. The same runs read 39.94 / 39.94 / 76.03% on a pair of BARE
-objects, so that arm is reported and never quoted -- an object with no database has little structure
-to share and the fraction swings on what little there is.
+Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
+`tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;
+nothing guarded the figure, which is how it drifted.
+
+**IT WAS THEN PINNED TO 37.79% ON THE STRENGTH OF THREE IDENTICAL RUNS, AND THAT WAS THE NEXT
+ERROR.** "n=3 with zero spread" was read as an exact property of the pack and written into the spec
+with a tolerance of 0.00005. Seven runs read 0.3472, 0.3779 five times, and 0.3797 -- the outliers
+appeared only once the full suite ran the spec under load, which is also why it passed alone and
+failed in the gate. **Three identical readings are evidence of a mode, not of zero variance**, and a
+tolerance that tight is a guard that fails on the truth. It is a band now.
+
+A pair of BARE objects read 39.94 / 39.94 / 76.03%, so that arm is reported and never quoted -- an
+object with no database has little structure to share and the fraction swings on what little there is.
 
 Raw over best encoding on the live heap is **5.6-5.8x**. XOR-delta at page granularity is refuted:
 the one-node arm reads 1.65x WORSE than plain gzip on three consecutive runs, and the best diverged

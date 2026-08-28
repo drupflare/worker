@@ -17,7 +17,7 @@ that catch the most mistakes:
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
-serving is bound by Worker requests at 100,000/day, regeneration by rows written at 8,196/day
+serving is bound by Worker requests at 100,000/day, regeneration by rows written at 10,869/day
 windowed and 2,777 on the alarm chain -- so regeneration is the tighter one by 12x and 36x
 respectively. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
 either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)

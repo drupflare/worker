@@ -18,8 +18,8 @@ against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 
 The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of `cpuTime` on a
-deployed worker, and boot work is saturated: cutting boot cost per fill by 20x moves the regeneration
-ceiling 1.1%. Rows written is the meter that binds. See [Free vs Paid](#-free-vs-paid).
+deployed worker, and boot work is close to saturated: cutting boot cost per fill by 20x moves the
+regeneration ceiling 2.1%. Rows written is the meter that binds. See [Free vs Paid](#-free-vs-paid).
 
 ---
 
@@ -42,8 +42,8 @@ and is stated as a range or omitted.
 | **Anonymous page served from**             | edge cache, **~85%** of traffic, **0** Durable Object requests                                                                                    | your box, every request                                              | M edge  |
 | **`page_cache` hit**                       | **1 ms** of Durable Object CPU, 1 statement                                                                                                       | full LEMP round trip                                                 | M edge  |
 | **`dynamic_page_cache` hit**               | **26 ms**, 6 statements                                                                                                                           | —                                                                    | M edge  |
-| **Full uncached render**                   | **34 ms**, both bins emptied, 13 statements                                                                                                       | **9.47 ms** native PHP, warm kernel                                  | M both  |
-| **Wasm penalty**                           | **3.57x** warm / **3.94x** cold vs native PHP                                                                                                     | 1x by definition                                                     | M local |
+| **Full uncached render**                   | **2,127 ms** of Durable Object CPU (n=10, 1,982-2,579), both bins emptied                                                                         | **9.47 ms** native PHP, warm kernel                                  | M edge  |
+| **Wasm penalty, warm kernel only**         | **3.57x** warm / **3.94x** cold vs native PHP — a same-machine ratio, not the edge cost above                                                     | 1x by definition                                                     | M local |
 | **Cold start**                             | **1,398 ms** measured (n=3, and the platform is bimodal by 400-600 ms) — paid absorbs it, free amortises it off the request path                  | ~0; the box is already running                                       | M edge  |
 | **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not                                           | whatever the box does before it swaps                                | M edge  |
 | **Worker bundle**                          | fits the 3 MiB free-plan limit                                                                                                                    | n/a                                                                  | M local |

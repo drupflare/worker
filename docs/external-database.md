@@ -150,7 +150,7 @@ warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 
 **6,666 renders/day**.
 
 Score that against the two ceilings. The regeneration ceiling is **2,777 renders/day** cold and
-**8,196** windowed, bound by rows written. Hyperdrive's free query budget lands inside that
+**10,869** windowed, bound by rows written. Hyperdrive's free query budget lands inside that
 range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
 lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.

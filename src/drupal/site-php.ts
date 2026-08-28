@@ -446,8 +446,88 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   // request Drupal treats as an empty submission, which returns 200 and looks like it worked.
   $method = strtoupper($method === "" ? "GET" : $method);
   $parameters = [];
+  $uploads = [];
   $isForm = stripos($contentType, "application/x-www-form-urlencoded") !== false;
+  $isMultipart = stripos($contentType, "multipart/form-data") !== false;
   if ($method !== "GET" && $body !== "" && $isForm) { parse_str($body, $parameters); }
+
+  // MULTIPART IS PARSED BY HAND, because PHP fills $_POST and $_FILES only for a real POST SAPI and
+  // this interpreter has none. Without it every form carrying a file field submitted an EMPTY
+  // request: Drupal saw no form_id, rebuilt the form and answered 200, so /user/register and
+  // /user/*/edit discarded every submission with no error anywhere. A file field is what sets
+  // enctype, so the blast radius is every node type with an image, media add, and both account forms.
+  //
+  // NO REGEX AND NO APOSTROPHES: this fragment is emitted inside a single-quoted eval string, so an
+  // apostrophe closes it and a backslash needs doubling. substr parsing sidesteps both.
+  if ($method !== "GET" && $body !== "" && $isMultipart) {
+    $quoted = function ($line, $key) {
+      $at = stripos($line, $key . "=\"");
+      if ($at === false) { return null; }
+      $from = $at + strlen($key) + 2;
+      $end = strpos($line, "\"", $from);
+      if ($end === false) { return null; }
+      return substr($line, $from, $end - $from);
+    };
+    $boundary = "";
+    $bat = stripos($contentType, "boundary=");
+    if ($bat !== false) {
+      $boundary = trim(substr($contentType, $bat + 9));
+      $semi = strpos($boundary, ";");
+      if ($semi !== false) { $boundary = substr($boundary, 0, $semi); }
+      $boundary = trim($boundary, "\" ");
+    }
+    if ($boundary !== "") {
+      $pairs = [];
+      foreach (explode("--" . $boundary, $body) as $part) {
+        if (trim($part) === "" || trim($part) === "--") { continue; }
+        $split = strpos($part, "\r\n\r\n");
+        if ($split === false) { continue; }
+        $head = substr($part, 0, $split);
+        $value = substr($part, $split + 4);
+        // the CRLF before the next boundary belongs to the delimiter, not to the value
+        if (substr($value, -2) === "\r\n") { $value = substr($value, 0, -2); }
+        $name = "";
+        $filename = null;
+        $partType = "application/octet-stream";
+        foreach (explode("\r\n", trim($head)) as $line) {
+          if (stripos($line, "content-disposition:") === 0) {
+            $got = $quoted($line, "name");
+            if ($got !== null) { $name = $got; }
+            $filename = $quoted($line, "filename");
+          } elseif (stripos($line, "content-type:") === 0) {
+            $partType = trim(substr($line, 13));
+          }
+        }
+        if ($name === "") { continue; }
+        if ($filename === null) {
+          $pairs[] = urlencode($name) . "=" . urlencode($value);
+          continue;
+        }
+        // an unchosen file arrives as filename="" with an empty body; treating that as an upload
+        // makes Drupal validate a zero-byte file nobody sent
+        if ($filename === "") { continue; }
+        $tmp = tempnam(sys_get_temp_dir(), "cfwup");
+        if ($tmp === false) { continue; }
+        file_put_contents($tmp, $value);
+        $entry = ["name" => $filename, "type" => $partType, "tmp_name" => $tmp,
+                  "error" => 0, "size" => strlen($value)];
+        // $_FILES holds a per-COLUMN array for a bracketed name, the shape Drupal
+        // managed_file element emits, as in files[user_picture_0]. One level is what a form sends
+        $open = strpos($name, "[");
+        if ($open !== false && substr($name, -1) === "]") {
+          $outer = substr($name, 0, $open);
+          $inner = substr($name, $open + 1, strlen($name) - $open - 2);
+          if (!isset($uploads[$outer])) {
+            $uploads[$outer] = ["name" => [], "type" => [], "tmp_name" => [], "error" => [], "size" => []];
+          }
+          foreach ($entry as $col => $val) { $uploads[$outer][$col][$inner] = $val; }
+        } else {
+          $uploads[$name] = $entry;
+        }
+      }
+      if ($pairs !== []) { parse_str(implode("&", $pairs), $parameters); }
+    }
+  }
 
   $server = [];
   if ($contentType !== "") { $server["CONTENT_TYPE"] = $contentType; }
@@ -476,7 +556,7 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   // a relative one Symfony fills in "localhost", which is why a deployed site put http://localhost
   // into every canonical tag, form action, Location header and password-reset mail.
   $url = $origin === "" ? $path : rtrim($origin, "/") . $path;
-  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($url, $method, $parameters, $cookies, [], $server, $body);
+  $request = \\Symfony\\Component\\HttpFoundation\\Request::create($url, $method, $parameters, $cookies, $uploads, $server, $body);
 
   // the superglobals follow the request rather than leading it, so a fragment reading $_POST and
   // one reading the Request agree -- INCLUDING the host trio, which is read directly by code that

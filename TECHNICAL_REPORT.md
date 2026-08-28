@@ -715,6 +715,32 @@ shape this project has already shipped once. The generation carries the account 
 `load-classes.php` asserts a switch invalidates. Removing the account id from the generation makes
 that assertion fail with `[probe]=first`, the stale key, which is the falsification.
 
+#### The Recompute Census, And Why A1 Did Not Generalise
+
+A1 removed 74.5% repeated work from one service and took ~9.7% off a render, so the obvious next move
+is to look for the same shape elsewhere. `scripts/bench/bench-recompute-census.php` does that: per
+method it records calls, DISTINCT argument lists and wall clock, and ranks by repeat rate times cost
+rather than by cost -- cost alone ranks the renderer first, and the renderer is doing the work rather
+than repeating it. The wrappers are generated from each service's RUNTIME class, because
+`language_manager` is `ConfigurableLanguageManager` with the language module and `LanguageManager`
+without it.
+
+**The repeat phenomenon is everywhere and it is already cheap.** Of the services the census actually
+reached, `language_manager::getLanguage` repeats 91.7% over 12 calls, `entity_type.manager::
+getDefinition` 96.0% over 25, `current_user::id` 96.2% over 26 -- and the whole recoverable total is
+**0.0556 ms of 3.904 ms, 1.4%**. Those services carry their own static caches, so a repeat costs a
+property read. What made `convertTokensToKeys()` worth memoising was not its repeat rate but that
+each call did real work: `optimizeTokens()` plus a `getContext()` per token, 113 times.
+
+**AND THE CENSUS LIED UNTIL IT HAD A CONTROL.** Nine of fifteen services were swapped into the
+container and never called, because their consumers captured them at construction --
+`placeholder_strategy`, `html_response.attachments_processor`, `asset.resolver`, `render_cache`,
+`router.route_provider`, `module_handler` and three more. Each recorded nothing, which is
+indistinguishable in the output from a service with no repeated work, and all four of the ones added
+specifically to chase the placeholder cost were in that set. The census now reports
+`swappedButNeverCalled` separately, so a zero is never read as a measurement. This is the second time
+in one session that a container swap produced a silent zero; the first was the router.
+
 #### Two Levers Priced And Not Taken
 
 **A DO-local cache in front of the Drupal bins is bounded at 4.4%.** The entire database cost of a
@@ -801,8 +827,13 @@ tolerance that tight is a guard that fails on the truth. It is a band now.
 A pair of BARE objects read 39.94 / 39.94 / 76.03%, so that arm is reported and never quoted -- an
 object with no database has little structure to share and the fraction swings on what little there is.
 
-Raw over best encoding on the live heap is **5.6-5.8x**. XOR-delta at page granularity is refuted:
-the one-node arm reads 1.65x WORSE than plain gzip on three consecutive runs, and the best diverged
+Raw over best encoding on the live heap is **5.6-5.8x**. XOR-delta at page granularity is refuted,
+and the reason changed under it: the one-node arm read **1.65x WORSE** than plain gzip on three
+consecutive runs, and now reads **0.974 / 0.976** -- about 2.5% BETTER -- because the `WITHOUT ROWID`
+cache bins and one added container class changed what is in the heap. **Parity is still not a lever**:
+2.5% does not pay for a delta format, a base-image dependency and a restore path, against site-image
+dedup at 34.7-38.0%. The spec now asserts a band around parity rather than a direction, since a
+direction that flips on an unrelated pack change was never the property worth guarding. The best diverged
 arm lands on 1.000. Interned strings are 2.1-3.0% of linear memory against a 10% threshold.
 
 Content-keying the page store saves 21.05% of bytes on a real nine-path corpus -- Drupal's 404 is

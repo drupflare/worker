@@ -39,6 +39,53 @@ if ($name === '') {
   return;
 }
 
+// A THEME IS A DIFFERENT INSTALLER, and it was not reachable at all.
+// composer/installers puts a drupal-theme under themes/contrib, extension.list.module does not
+// list themes and module_installer cannot install one -- so a contrib theme had no route in and
+// could not be verified however well it would have worked. Handled here and returned, so the
+// module path below is untouched.
+try {
+  $themes = \Drupal::service('extension.list.theme')->reset()->getList();
+} catch (\Throwable $e) {
+  $themes = [];
+}
+if (isset($themes[$name])) {
+  $out['kind'] = 'theme';
+  $out['modulePath'] = $themes[$name]->getPath();
+  $enabledThemes = array_keys(\Drupal::config('core.extension')->get('theme') ?? []);
+  $out['alreadyEnabled'] = in_array($name, $enabledThemes, true);
+  if ($dryRun) {
+    $out['ok'] = true;
+    echo json_encode($out);
+    return;
+  }
+  try {
+    // the same three the module path needs: install() rebuilds the router, which builds a request
+    // context from the current request and reaches functions only a real request has loaded
+    $kernel = $GLOBALS['__pw_kernel'] ?? null;
+    if ($kernel !== null && method_exists($kernel, 'loadLegacyIncludes')) {
+      $kernel->loadLegacyIncludes();
+    }
+    $stack = \Drupal::service('request_stack');
+    if ($stack->getCurrentRequest() === null) {
+      $stack->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+    }
+    \Drupal::moduleHandler()->loadAll();
+    $result = \Drupal::service('theme_installer')->install([$name], true);
+    $out['installReturned'] = $result;
+    $nowThemes = array_keys(\Drupal::configFactory()->getEditable('core.extension')->get('theme') ?? []);
+    $out['nowEnabled'] = in_array($name, $nowThemes, true);
+    $out['ok'] = $out['nowEnabled'];
+  } catch (\Throwable $e) {
+    $out['throwClass'] = get_class($e);
+    $out['throwMessage'] = $e->getMessage();
+    $out['throwAt'] = $e->getFile() . ':' . $e->getLine();
+    $out['ok'] = false;
+  }
+  echo json_encode($out);
+  return;
+}
+
 $listBefore = [];
 try {
   $extension = \Drupal::configFactory()->get('core.extension');

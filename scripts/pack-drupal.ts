@@ -113,10 +113,14 @@ if (process.env.PACK_INDEX === '1') {
 	// commerceguys/addressing, svg_image needs enshrined/svg-sanitize, smtp needs phpmailer. The
 	// index predates all of them, so packing the module alone installs it and then fatals on a
 	// class -- the doctrine/lexer shape again, one directory over.
+	// `themes/contrib` is swept too, because `composer/installers` maps `type: drupal-theme` there
+	// and a contrib theme was therefore absent from every fixture pack -- so a theme case could not
+	// be written at all, and `uswds_base` sat unverifiable for a reason nothing in the runtime
+	// refuses
 	const contrib = new Set<string>();
 	const fixtureTrees =
 		process.env.PACK_CONTRIB === '1'
-			? ['modules/contrib/**/*', 'vendor/**/*', 'libraries/**/*']
+			? ['modules/contrib/**/*', 'themes/contrib/**/*', 'vendor/**/*', 'libraries/**/*']
 			: [];
 	for (const tree of fixtureTrees) {
 		for await (const p of glob(tree, { cwd: root })) {

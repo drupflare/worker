@@ -25,8 +25,8 @@ HTTPS GET of a release asset, with no Docker, no token and no PHP.</p>
 </div>
 <p>The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of <code>cpuTime</code> on a
-deployed worker, and boot work is saturated: cutting boot cost per fill by 20x moves the regeneration
-ceiling 1.1%. Rows written is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
+deployed worker, and boot work is close to saturated: cutting boot cost per fill by 20x moves the
+regeneration ceiling 2.1%. Rows written is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
 <hr>
 <h2 id="⚖️-drupflare-vs-a-traditional-vps" class="tsd-anchor-link">⚖️ Drupflare vs a Traditional VPS<a href="#⚖️-drupflare-vs-a-traditional-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Drupflare targets <strong>solo, indie and budget-bound sites</strong>, where the cost is the hours rather than the
@@ -94,13 +94,13 @@ and is stated as a range or omitted.</p>
 </tr>
 <tr>
 <td><strong>Full uncached render</strong></td>
-<td><strong>34 ms</strong>, both bins emptied, 13 statements</td>
+<td><strong>2,127 ms</strong> of Durable Object CPU (n=10, 1,982-2,579), both bins emptied</td>
 <td><strong>9.47 ms</strong> native PHP, warm kernel</td>
-<td>M both</td>
+<td>M edge</td>
 </tr>
 <tr>
-<td><strong>Wasm penalty</strong></td>
-<td><strong>3.57x</strong> warm / <strong>3.94x</strong> cold vs native PHP</td>
+<td><strong>Wasm penalty, warm kernel only</strong></td>
+<td><strong>3.57x</strong> warm / <strong>3.94x</strong> cold vs native PHP — a same-machine ratio, not the edge cost above</td>
 <td>1x by definition</td>
 <td>M local</td>
 </tr>
@@ -279,13 +279,13 @@ visits/month with the same feature set as paid.</strong></p>
 </tr>
 <tr>
 <td>Uncached render</td>
-<td><strong>34 ms</strong></td>
+<td><strong>2,127 ms</strong> DO CPU (n=10)</td>
 <td><strong>9.47 ms</strong></td>
-<td>M both</td>
+<td>M edge</td>
 </tr>
 <tr>
-<td>Wasm penalty</td>
-<td><strong>3.57x</strong> warm / 3.94x cold</td>
+<td>Wasm penalty, warm kernel</td>
+<td><strong>3.57x</strong> warm / 3.94x cold, same-machine ratio</td>
 <td>1x by definition</td>
 <td>M local</td>
 </tr>
@@ -303,9 +303,10 @@ visits/month with the same feature set as paid.</strong></p>
 </tr>
 </tbody>
 </table>
-<p>An uncached render is ~3.6x slower, and the architecture wins by not rendering rather than by rendering
-faster. If your traffic is mostly authenticated or write-heavy, that trade goes the wrong way and a VPS
-is the better tool — see below.</p>
+<p>The architecture wins by not rendering rather than by rendering faster. The 3.57x is a warm-kernel
+ratio taken on one machine; an uncached render as the edge bills it is ~2.1 s, which is the figure
+that matters and is why ~99% of traffic must never reach one. If your traffic is mostly
+authenticated or write-heavy, that trade goes the wrong way and a VPS is the better tool — see below.</p>
 <h3 id="where-a-vps-still-wins" class="tsd-anchor-link">Where a VPS Still Wins<a href="#where-a-vps-still-wins" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul>
 <li><strong>Authenticated and write-heavy traffic.</strong> One site is one Durable Object is one thread, and you
@@ -371,7 +372,7 @@ with <code>bun scripts/measure/free-envelope.ts</code>, never against a millisec
 <td><strong>Regeneration</strong></td>
 <td>distinct pages re-rendered per day</td>
 <td><strong>rows written</strong></td>
-<td><strong>8,196/day</strong></td>
+<td><strong>10,869/day</strong></td>
 </tr>
 </tbody>
 </table>
@@ -451,13 +452,17 @@ the largest style count that still fits.</p>
 <div class="tsd-alert tsd-alert-caution"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertCaution"></use></svg><span>Caution</span></div><p>
 Do not enable the Workers Caching feature. Its cache key does not include the host, and this
 product is multi-tenant by host — every site serves <code>/</code>, so one site's pages would be served to
-another site's visitors. Cloudflare's cache-key documentation names this case directly:
-<em>&quot;white-labeled tenants where <code>tenant-a.example.com/index</code> and <code>tenant-b.example.com/index</code> must
-produce different content — the cache key does not do this for you automatically.&quot;</em> Partitioning it
-needs a custom <code>cf.cacheKey</code> carrying the site id.</p>
-<p>It also bills every request at the standard rate <em>&quot;including requests that are normally free:
-static asset requests&quot;</em>, which converts the one free serving path into a billed one. That is the
-smaller problem, and on a paid plan it stops applying while the leak does not.</p>
+another site's visitors. Cloudflare states it plainly: <em>&quot;The cache key does not include the host,
+so a request to <code>/api/users/42</code> hits the same cached entry whether it came in through
+<code>api.example.com</code>, <code>api.example.net</code>, a service binding, or a <code>workers.dev</code> URL.&quot;</em></p>
+<p><strong>Zone settings cannot add the host back.</strong> <em>&quot;No zone configuration for caching applies to Workers
+Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
+Worker's cache.&quot;</em> The zone-level cache-key documentation does put the host in the key, and it
+describes a different product; reading it as evidence about this one is the trap.</p>
+<p>It is also not the serving lever it appears to be. A hit skips Worker execution but is still
+<em>&quot;billed at the standard Workers request rate&quot;</em>, so the 100,000/day meter does not move — and it
+<em>&quot;bills requests that are normally free: static asset requests and worker-to-worker invocations&quot;</em>,
+making it a net increase. What it saves is CPU, which is not a meter this project is bound by.</p>
 <p>The <code>caches.default</code> tier this project does use is a different mechanism and is safe: its key
 carries both the origin and the site id. <code>tests/node/cache-partition.spec.ts</code> holds both halves.</p>
 </div>

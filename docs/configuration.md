@@ -266,6 +266,20 @@ A shell is harvested under two sessions of one role set and stored only when bot
 identical bytes. A visitor whose permissions hash differs from the stored shell's falls through to
 an ordinary render.
 
+Each visitor's first request for a harvested path re-harvests under their own session and requires
+their normalised shell to equal the stored one byte for byte. That response carries
+`x-cfw-cache: VERIFY` and is answered from their own harvest rather than from the shell; later
+requests carry `x-cfw-cache: ASSEMBLED`. A shell that disagrees is deleted and the reason is
+recorded in `cfw_meta` under `shellRefusal`.
+
+The proof is stored per `(path, permissions hash, uid)` and voided when the path is harvested
+again. It costs 40 to 52 rows written once per visitor and path, against 4 to 10 for each render it
+then replaces; an assembly writes none.
+
+A generation bump drops every stored shell, including a `cachetags` bump. A shell caches the shared
+region of a page and Drupal has no cache tag pointing at it, so nothing else would invalidate it.
+Assembly stops on that path until the shell is harvested again.
+
 `HEAP_SNAPSHOT` is on and costs **31,784,960 bytes across 159 rows per site**, plus a 5,993 ms
 one-off to take the image. It buys 2,310 ms (fast mode) to 3,578 ms (slow mode) off every module
 install, n=8 per arm, present in both modes of a bimodal population.
@@ -337,7 +351,7 @@ costs 96,200 views/day.
 The optimum moves with the traffic mix and with CDN absorption, so compute it rather than copying a
 share: `optimalOffWorker()` in `scripts/measure/free-envelope.ts` derives it from the same model
 every other caller uses. Raising absorption does not converge on "mirror everything" — at absorption
-1, where R2 reads cannot bind at all, the peak lands at 0.888 and is bound by rows instead.
+1, where R2 reads cannot bind at all, the peak lands at 0.898 and is bound by rows instead.
 
 ## Outbound Mail
 

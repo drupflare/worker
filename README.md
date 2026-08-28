@@ -18,8 +18,8 @@ against the 3,145,728 free-plan ceiling (`interp.lock.json`).
 
 The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of `cpuTime` on a
-deployed worker, and boot work is saturated: cutting boot cost per fill by 20x moves the regeneration
-ceiling 1.1%. Rows written is the meter that binds. See [Free vs Paid](#-free-vs-paid).
+deployed worker, and boot work is close to saturated: cutting boot cost per fill by 20x moves the
+regeneration ceiling 2.1%. Rows written is the meter that binds. See [Free vs Paid](#-free-vs-paid).
 
 ---
 
@@ -42,8 +42,8 @@ and is stated as a range or omitted.
 | **Anonymous page served from**             | edge cache, **~85%** of traffic, **0** Durable Object requests                                                                                    | your box, every request                                              | M edge  |
 | **`page_cache` hit**                       | **1 ms** of Durable Object CPU, 1 statement                                                                                                       | full LEMP round trip                                                 | M edge  |
 | **`dynamic_page_cache` hit**               | **26 ms**, 6 statements                                                                                                                           | —                                                                    | M edge  |
-| **Full uncached render**                   | **34 ms**, both bins emptied, 13 statements                                                                                                       | **9.47 ms** native PHP, warm kernel                                  | M both  |
-| **Wasm penalty**                           | **3.57x** warm / **3.94x** cold vs native PHP                                                                                                     | 1x by definition                                                     | M local |
+| **Full uncached render**                   | **2,127 ms** of Durable Object CPU (n=10, 1,982-2,579), both bins emptied                                                                         | **9.47 ms** native PHP, warm kernel                                  | M edge  |
+| **Wasm penalty, warm kernel only**         | **3.57x** warm / **3.94x** cold vs native PHP — a same-machine ratio, not the edge cost above                                                     | 1x by definition                                                     | M local |
 | **Cold start**                             | **1,398 ms** measured (n=3, and the platform is bimodal by 400-600 ms) — paid absorbs it, free amortises it off the request path                  | ~0; the box is already running                                       | M edge  |
 | **Free-plan capacity**                     | **~100,000 page views/day** (~3M/month), saturated; every visit costs one Worker request, cached or not                                           | whatever the box does before it swaps                                | M edge  |
 | **Worker bundle**                          | fits the 3 MiB free-plan limit                                                                                                                    | n/a                                                                  | M local |
@@ -92,14 +92,15 @@ Performance, with the full provenance in
 |                             | Drupflare                                                 | native PHP on a VPS     | prov.   |
 | --------------------------- | --------------------------------------------------------- | ----------------------- | ------- |
 | Cached page (the ~99% case) | **1 ms** DO CPU, 1 statement                              | full LEMP round trip    | M edge  |
-| Uncached render             | **34 ms**                                                 | **9.47 ms**             | M both  |
-| Wasm penalty                | **3.57x** warm / 3.94x cold                               | 1x by definition        | M local |
+| Uncached render             | **2,127 ms** DO CPU (n=10)                                | **9.47 ms**             | M edge  |
+| Wasm penalty, warm kernel   | **3.57x** warm / 3.94x cold, same-machine ratio           | 1x by definition        | M local |
 | Isolate startup             | **112 ms** of a 1,000 ms limit, not billed to the request | n/a; the box is running | M edge  |
 | Cold boot                   | **1,398 ms**, amortised off the request path              | ~0                      | M edge  |
 
-An uncached render is ~3.6x slower, and the architecture wins by not rendering rather than by rendering
-faster. If your traffic is mostly authenticated or write-heavy, that trade goes the wrong way and a VPS
-is the better tool — see below.
+The architecture wins by not rendering rather than by rendering faster. The 3.57x is a warm-kernel
+ratio taken on one machine; an uncached render as the edge bills it is ~2.1 s, which is the figure
+that matters and is why ~99% of traffic must never reach one. If your traffic is mostly
+authenticated or write-heavy, that trade goes the wrong way and a VPS is the better tool — see below.
 
 ### Where a VPS Still Wins
 
@@ -159,7 +160,7 @@ with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
 | ceiling          | what it limits                     | bound by                  | free today                         |
 | ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
 | **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
-| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **7,575/day**                      |
+| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **10,869/day**                     |
 
 Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
 through the CDN without invoking the Worker. But "requests to static assets are free and unlimited"
@@ -214,10 +215,24 @@ and both are decisions a human makes. `/health` shows it, and `/_cfw` shows the 
 the largest style count that still fits.
 
 > [!CAUTION]
-> Do not enable the Workers Caching feature on free. It bills every request at the standard rate
-> _"including requests that are normally free: static asset requests"_ — converting the one free serving
-> path into a billed one. The name reads like what a cache-first architecture wants; the billing does
-> the opposite.
+> Do not enable the Workers Caching feature. Its cache key does not include the host, and this
+> product is multi-tenant by host — every site serves `/`, so one site's pages would be served to
+> another site's visitors. Cloudflare states it plainly: _"The cache key does not include the host,
+> so a request to `/api/users/42` hits the same cached entry whether it came in through
+> `api.example.com`, `api.example.net`, a service binding, or a `workers.dev` URL."_
+>
+> **Zone settings cannot add the host back.** _"No zone configuration for caching applies to Workers
+> Caching. Cache Rules, Cache Response Rules, Page Rules, cache level settings … have no effect on a
+> Worker's cache."_ The zone-level cache-key documentation does put the host in the key, and it
+> describes a different product; reading it as evidence about this one is the trap.
+>
+> It is also not the serving lever it appears to be. A hit skips Worker execution but is still
+> _"billed at the standard Workers request rate"_, so the 100,000/day meter does not move — and it
+> _"bills requests that are normally free: static asset requests and worker-to-worker invocations"_,
+> making it a net increase. What it saves is CPU, which is not a meter this project is bound by.
+>
+> The `caches.default` tier this project does use is a different mechanism and is safe: its key
+> carries both the origin and the site id. `tests/node/cache-partition.spec.ts` holds both halves.
 
 ---
 

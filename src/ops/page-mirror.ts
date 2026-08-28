@@ -12,7 +12,7 @@
  * 333,333/day against the 100,000/day Worker-request ceiling, so the floor is **3.3x** rather than the
  * 12.5x once quoted. Anything above that floor comes from Cloudflare's CDN absorbing reads in front of
  * the bucket, and that hit ratio is unmeasured. Writes are not the constraint: 1M Class A/month is
- * 33,333/day against a 7,575/day regeneration ceiling.
+ * 33,333/day against an 10,869/day regeneration ceiling.
  *
  * MIRROR TO THE OPTIMUM, NOT TO EVERYTHING. Once R2's read meter binds, moving more traffic off the
  * Worker spends a 333,333/day meter faster to save a 100,000/day one, so the lever has a maximum
@@ -21,7 +21,7 @@
  * On the default mix at zero CDN absorption it computes 0.769 for 432,900 views/day, against 336,700
  * for mirroring everything: maximising gives up 96,200 views/day, a fifth of what the mirror is for.
  * Raising absorption does not walk that towards "mirror everything" either -- at absorption 1, where
- * R2 reads cannot bind, the peak lands at 0.888 and is bound by ROWS instead.
+ * R2 reads cannot bind, the peak lands at 0.898 and is bound by ROWS instead.
  *
  * @see scripts/measure/free-envelope.ts for the model this feeds
  */

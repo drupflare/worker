@@ -1,0 +1,76 @@
+name: Keep Proposal Branches Current
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: Update Behind Pull Requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Update Every Behind Branch This Repository Owns
+        env:
+          GH_TOKEN: ${{ secrets.BRANCH_UPDATE_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE: ${{ github.ref_name }}
+          HAVE_PUSH_TOKEN: ${{ secrets.BRANCH_UPDATE_TOKEN != '' }}
+        run: |
+          gh pr list --state open --base "$BASE" \
+            --json number,headRefName,mergeStateStatus,isCrossRepository \
+            > /tmp/prs.json
+          COUNT=0
+          SKIPPED=0
+          while read -r NUMBER HEAD STATE CROSS; do
+            [ -z "$NUMBER" ] && continue
+            if [ "$CROSS" = 'true' ]; then
+              echo "#$NUMBER ($HEAD) is from a fork, so this token cannot push to it"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            case "$HEAD" in
+              renovate/*)
+                echo "#$NUMBER ($HEAD) is rebased by renovate itself"
+                SKIPPED=$((SKIPPED + 1))
+                continue
+                ;;
+            esac
+            if [ "$STATE" != 'BEHIND' ]; then
+              echo "#$NUMBER ($HEAD) is $STATE, nothing to update"
+              continue
+            fi
+            if gh pr update-branch "$NUMBER"; then
+              echo "#$NUMBER ($HEAD) updated onto $BASE"
+              COUNT=$((COUNT + 1))
+            else
+              echo "::warning::#$NUMBER ($HEAD) could not be updated onto $BASE" >&2
+              SKIPPED=$((SKIPPED + 1))
+            fi
+          done < <(jq -r '.[] | "\(.number) \(.headRefName) \(.mergeStateStatus) \(.isCrossRepository)"' /tmp/prs.json)
+          {
+            echo "## Proposal branch freshness"
+            echo
+            echo "- Base: \`$BASE\`"
+            echo "- Updated: $COUNT"
+            echo "- Left alone: $SKIPPED"
+            echo
+            if [ "$HAVE_PUSH_TOKEN" != 'true' ]; then
+              echo "Updating with the workflow token does not raise a \`synchronize\` event,"
+              echo "so checks on an updated branch stay as they were and need re-running from"
+              echo "the Actions tab. Set a \`BRANCH_UPDATE_TOKEN\` secret to have them start"
+              echo "on their own."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

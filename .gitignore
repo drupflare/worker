@@ -42,6 +42,9 @@ assets/drupal/*
 coverage/
 *.lcov
 .vitest-cache/
+# the browser lane's reporter output and its per-failure traces, screenshots and videos
+playwright-report/
+playwright-results/
 
 # typedoc output; built in CI and deployed to gh-pages, never committed to master
 typedoc/

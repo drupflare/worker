@@ -74,7 +74,7 @@ function fixture(): MetricsDocument {
 				servingBoundBy: 'worker',
 				regenerationsPerDay: 1052,
 				regenerationBoundBy: 'do',
-				windowedRegenerationsPerDay: 7575,
+				windowedRegenerationsPerDay: 10869,
 				verdict: 'fits'
 			},
 			packShape: {
@@ -345,7 +345,7 @@ describe('the reading a reviewer gets instead of a row', () => {
 		expect(reading).toContain(`leaving ${(FREE_CEILING - 2_879_099).toLocaleString()} under`);
 		expect(reading).toContain('100,000 views/day bound by Worker requests');
 		expect(reading).toContain('1,052 regenerations/day bound by Durable Object requests');
-		expect(reading).toContain('7,575 windowed');
+		expect(reading).toContain('10,869 windowed');
 		expect(reading).toContain('67.3% of every stored row is index maintenance');
 		expect(reading).toContain('1,342 rows in 79 chunks');
 		expect(reading).toContain('50 workers spec files (1,453 cases)');

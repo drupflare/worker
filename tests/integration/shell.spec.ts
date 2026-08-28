@@ -319,6 +319,13 @@ describe('P7: the object stores and serves a shell', () => {
 				const mixedRoles = await site.harvestShellFor('/', [aliceJar, adminJar], origin);
 
 				site.env.SHELL_ASSEMBLY = '1';
+				// TWICE, because bob has never been proven against this shell: the first request
+				// buys the proof and is answered from his own harvest, and only the second is an
+				// assembly. See `shell-verify.spec.ts`
+				const proving = await site.fetch(
+					new Request('https://do.local/__serve?path=/', { headers: { cookie: bobJar } })
+				);
+				await proving.text();
 				const served = await site.fetch(
 					new Request('https://do.local/__serve?path=/', { headers: { cookie: bobJar } })
 				);
@@ -334,7 +341,10 @@ describe('P7: the object stores and serves a shell', () => {
 					twoSessions,
 					mixedRoles,
 					status: served.status,
+					provingCache: proving.headers.get('x-cfw-cache'),
+					provingVerdict: proving.headers.get('x-cfw-shell-verified'),
 					cache: served.headers.get('x-cfw-cache'),
+					verdict: served.headers.get('x-cfw-shell-verified'),
 					holes: served.headers.get('x-cfw-shell-holes'),
 					control: served.headers.get('cache-control'),
 					// derived here rather than returned whole: the body is 27 KB and the assertions
@@ -356,7 +366,12 @@ describe('P7: the object stores and serves a shell', () => {
 			expect(seen.mixedRoles.stored).toBe(false);
 			expect(seen.rows).toBe(1);
 
+			// the first request bought the proof and was answered from bob's own harvest; only the
+			// second is assembled from the shared shell
+			expect(seen.provingCache).toBe('VERIFY');
+			expect(seen.provingVerdict).toBe('proven');
 			expect(seen.cache).toBe('ASSEMBLED');
+			expect(seen.verdict).toBe('cached');
 			expect(seen.status).toBe(200);
 			expect(Number(seen.holes)).toBeGreaterThan(0);
 			// a shell is shared; the page assembled from it is one visitor's and must never be stored

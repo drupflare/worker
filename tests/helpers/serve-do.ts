@@ -1,6 +1,7 @@
 import { SELF, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/migrate-sql';
+import type { RenderRequest } from '../../src/drupal/site-php';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -71,6 +72,8 @@ export type BumpResult = {
 	generation: number;
 	reason: string;
 	purgedPages: number;
+	/** stored shells dropped; a shell caches the shared region and no cache tag reaches it */
+	purgedShells: number;
 	/** rows removed from `cache_dynamic_page_cache`, or -1 when the bin does not exist yet */
 	purgedDynamic: number;
 	requeued: number;
@@ -139,7 +142,12 @@ export type ServeDo = {
 		path: string,
 		cookie: string,
 		origin: string
-	) => Promise<{ html: string; holes: number } | null>;
+	) => Promise<{
+		html: string;
+		holes: number;
+		verified: import('../../src/site-do').ShellVerdict;
+	} | null>;
+	shellVerified: (path: string, hash: string, uid: string, harvestedAt: number) => boolean;
 	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
 	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
 	gitRemotes: () => { id: string; provider: string; repo: string; branch: string }[];
@@ -165,7 +173,9 @@ export type ServeDo = {
 	fillOne: (
 		targetPath?: string | null,
 		bins?: string[],
-		destruct?: boolean | string
+		destruct?: boolean | string,
+		/** method, body and content type, so a spec can drive a SUBMISSION rather than a GET */
+		request?: RenderRequest
 	) => Promise<FillOutcome>;
 	strikeFillHead: (error: string) => number | null;
 	handleIndex: (binary: never) => { id: number; add?: (o: object) => number } | null;

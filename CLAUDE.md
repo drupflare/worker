@@ -16,13 +16,15 @@ that catch the most mistakes:
 
 ## Scoring a Proposal
 
-Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings
-and they differ by 476x: serving is bound by Worker requests at 100,000/day, regeneration by rows
-written. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
-either.
+Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
+serving is bound by Worker requests at 100,000/day, regeneration by rows written at 10,869/day
+windowed and 2,777 on the alarm chain -- so regeneration is the tighter one by 12x and 36x
+respectively. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
+either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
 
 A cache hit still costs one Worker request, and decomposition spends the DO quota it is trying to
-dodge. Rows-per-fill is 3 to 62 depending on what is already warm, not a flat number.
+dodge. Rows-per-fill is 2 to 156 depending on what is already warm, not a flat number, and
+`tests/integration/rows-per-fill-audit.spec.ts` pins each class.
 
 **When a measurement kills an approach, close the approach and keep the goal.** The tell is "X does
 not move today's dominant constraint, therefore X is closed" -- the first half is a measurement and
@@ -211,10 +213,24 @@ It never fails the install; offline you get a stub and a printed list of what wa
 **The pack cannot be restored that way.** `assets/drupal-pf` and `assets/drupal-sql` need a native
 PHP Drupal bake plus `assets/drupal/site.sqlite`, whose trim recipe is written down nowhere, so they
 arrive only in a published release payload via `bun run hydrate`. Until one exists,
-`ARTIFACT_SPECS` in `vitest.config.ts` -- **19 files, measured from CI, never guessed** -- is
-excluded and the lane prints what it dropped. **Count it, do not quote it**: this line said 15 while
-the list held 17, and the "51 files / 1,521 tests still run" that used to follow moved with it and
+`ARTIFACT_SPECS` in `vitest.config.ts` -- **measured, never guessed** -- is excluded and the lane
+prints what it dropped. **Count it, do not quote it**: this line said 15 while the list held 17, then
+19 while it held 34, and the "51 files / 1,521 tests still run" that used to follow moved with it and
 was never re-measured. The lane prints both numbers when it skips.
+
+**A LOCAL GATE CANNOT SEE THIS AND MASTER STAYED RED FOR SIX DAYS BECAUSE OF IT.** Every dev machine
+has the pack, so a spec that reaches a real render passes here and fails on a clean checkout with
+`per-file pack not reachable: core.pf.json 404`. Twenty had accumulated. Reproduce the clean-checkout
+state before trusting a green local run on anything that renders:
+
+```sh
+mv assets/drupal-pf/core.pf.json assets/drupal-pf/core.pf.json.absent
+bun run test
+mv assets/drupal-pf/core.pf.json.absent assets/drupal-pf/core.pf.json
+```
+
+Back the file up first -- it arrives only from a release payload, so a lost rename is not recoverable
+from this repository. Anything that fails there belongs in `ARTIFACT_SPECS`.
 
 Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter against the tree that
 ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.
@@ -324,6 +340,14 @@ release lane, which hydrates the payload first and sets `REQUIRE_ARTIFACTS=1`.
 Three vitest projects exist because workerd cannot do `node:child_process` or `node:fs`: `workers`
 runs in workerd, `node` runs what needs a real PHP binary or filesystem, `e2e` needs a server and is
 excluded from `bun run test`.
+
+**A fourth lane drives a BROWSER, and it exists because no HTTP lane could see the defect that
+opened it.** `bun run test:browser` runs Playwright over `bun run dev` against `tests/e2e/browser/`.
+The files are `*.pw.ts` rather than `*.spec.ts` so the vitest `e2e` glob cannot collect them, and it
+is NOT part of `bun run test` -- the gate stays hermetic. Every spec fails on a browser console error
+or an uncaught page error, which is the assertion that separates a working page from a 200 whose
+widget threw. `/user/register` and `/user/*/edit` were a white screen on every site and the e2e lane
+read both as healthy.
 
 PHP suites live in the siblings, and **they are the authority on their own module** -- what ships is
 `assets/driver.json`, packed from those same checkouts, and nothing tests the pack's PHP directly.

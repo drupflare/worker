@@ -93,6 +93,20 @@ describe('two sites, snapshotted at wasm-page granularity', () => {
 			// the correction itself: a provisioned site carries a materially larger heap, so a
 			// fraction taken on the bare arm is a fraction of the wrong denominator
 			expect(provisioned.pagesB).toBeGreaterThan(bare.pagesB);
+
+			// A BAND, NOT A PIN, AND THE PIN WAS THE ERROR. This asserted `toBeCloseTo(0.3779, 4)`
+			// on the strength of three consecutive identical runs, read as "an exact property of the
+			// pack". It is not: seven runs read 0.3472, 0.3779 x5 and 0.3797, and the outliers only
+			// appeared once the suite ran it under load. Three identical readings are evidence of a
+			// mode, never of zero variance -- a tolerance of 0.00005 on a figure that moves three
+			// points is a guard that fails on the truth.
+			expect(provisioned.sharedFraction).toBeGreaterThan(0.3);
+			expect(provisioned.sharedFraction).toBeLessThan(0.45);
+			// and the BARE arm is deliberately NOT pinned: the same three runs read 0.3994, 0.3994
+			// and 0.7603 on it. An object with no database has little structure to share, so the
+			// fraction swings on what little there is -- which is the reason a fleet figure is
+			// quoted from the provisioned arm and never from this one
+			expect(bare.sharedFraction).toBeGreaterThan(0);
 		},
 		TIMEOUT
 	);

@@ -35,7 +35,7 @@ export const SHIPPED: Record<string, ShippedTable> = {
 "tags" TEXT NULL DEFAULT NULL,
 "checksum" VARCHAR(255) NOT NULL,
  PRIMARY KEY ("cid")
-)`
+) WITHOUT ROWID`
 			// no secondary indexes: CfwCacheBackend drops expire and created on every bin except
 			// cache_data, which is the only one the host garbage-collects
 		]
@@ -52,7 +52,7 @@ export const SHIPPED: Record<string, ShippedTable> = {
 "tags" TEXT NULL DEFAULT NULL,
 "checksum" VARCHAR(255) NOT NULL,
  PRIMARY KEY ("cid")
-)`
+) WITHOUT ROWID`
 		]
 	},
 	watchdog: {
@@ -146,7 +146,14 @@ export const SHIPPED: Record<string, ShippedTable> = {
 	}
 };
 
-/** the host's own serve table, which stores the rendered page (`src/site-do.ts:1695`) */
+/**
+ * the host's own serve table, which stores the rendered page (`ensureServeTables()` in
+ * `src/site-do.ts`)
+ *
+ * The `WITHOUT ROWID` is not decoration: this copy sat without it while the real table had it, so
+ * `index-charge-model.spec.ts` measured a rowid table, asserted 2 charged rows, and passed against a
+ * shape that has not shipped since the serve tables were converted.
+ */
 export const CFW_PAGE_DDL = `CREATE TABLE cfw_page (
         path TEXT PRIMARY KEY,
         status INTEGER NOT NULL,
@@ -154,4 +161,4 @@ export const CFW_PAGE_DDL = `CREATE TABLE cfw_page (
         html TEXT NOT NULL,
         rendered_at INTEGER NOT NULL,
         render_ms REAL
-      )`;
+      ) WITHOUT ROWID`;

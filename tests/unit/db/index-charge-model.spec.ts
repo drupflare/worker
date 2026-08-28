@@ -65,16 +65,16 @@ function cacheRow(n: number): unknown[] {
 }
 
 describe('the charge model against the engine, one case per primary-key form', () => {
-	it('charges a text primary key for its implicit index: cache bins cost 2 per row', async () => {
+	it('charges a text primary key for its implicit index: cache bins now cost 1 per row', async () => {
 		const ddl = SHIPPED.cacheDynamicPageCache!.ddl;
 		const charged = await inObject(freshSite(), (site) =>
 			measureInsert(site.sql, ddl, CACHE_INSERT, cacheRow, 10)
 		);
-		// 1 table row + 1 primary-key index. The `_created` and `_expire` indexes are gone:
-		// CfwCacheBackend drops them on every bin except cache_data, which is the only one the
-		// host garbage-collects, so this went from 4 to 2
-		expect(charged / 10).toBe(2);
-		expect(predict(ddl)).toBe(2);
+		// ONE table row and no index at all. Two levers got here: CfwCacheBackend drops `_created`
+		// and `_expire` on every bin except cache_data (4 -> 2), and the pack now stores the bin in
+		// its own primary key (2 -> 1)
+		expect(charged / 10).toBe(1);
+		expect(predict(ddl)).toBe(1);
 	});
 
 	it('charges NOTHING for a rowid primary key, because there is no index to keep', async () => {
@@ -184,7 +184,7 @@ describe('the charge model against the engine, one case per primary-key form', (
 		expect(predict(ddl)).toBe(2);
 	});
 
-	it('charges the host serve table 2, so storing the page is not where the cost is', async () => {
+	it('charges the host serve table 1, so storing the page is not where the cost is', async () => {
 		const charged = await inObject(freshSite(), (site) =>
 			measureInsert(
 				site.sql,
@@ -195,15 +195,15 @@ describe('the charge model against the engine, one case per primary-key form', (
 				10
 			)
 		);
-		// 12,304 bytes of HTML -- the measured front page -- still costs 2 charged rows, because
-		// the meter counts rows and index entries rather than bytes
-		expect(charged / 10).toBe(2);
-		expect(predict([CFW_PAGE_DDL])).toBe(2);
+		// 12,304 bytes of HTML -- the measured front page -- costs ONE charged row, because the meter
+		// counts rows and index entries rather than bytes and the table is stored in its own key
+		expect(charged / 10).toBe(1);
+		expect(predict([CFW_PAGE_DDL])).toBe(1);
 	});
 });
 
 describe('write shapes an insert-only model cannot price', () => {
-	it('charges a re-store of the same cid the full 2 again, so a re-fill is not cheaper', async () => {
+	it('charges a re-store of the same cid the full 1 again, so a re-fill is not cheaper', async () => {
 		const cost = await inObject(freshSite(), (site) => {
 			const first = measureInsert(
 				site.sql,
@@ -220,12 +220,12 @@ describe('write shapes an insert-only model cannot price', () => {
 			).rowsWritten;
 			return { first, again };
 		});
-		expect(cost.first).toBe(2);
+		expect(cost.first).toBe(1);
 		// THE SHAPE THAT MATTERS FOR A FILL. Drupal's cache backend merges, and a merge over an
-		// existing cid rewrites the row and re-keys its primary index, so it costs the same 2 it
-		// did when it was new. There is no warm discount to find here -- dropping the secondary
-		// indexes halved the figure without changing that.
-		expect(cost.again).toBe(2);
+		// existing cid rewrites the row, so it costs the same 1 it did when it was new. There is no
+		// warm discount to find here -- dropping the secondary indexes and then storing the row in
+		// its own key both moved the figure without changing that.
+		expect(cost.again).toBe(1);
 	});
 
 	it('charges an UPDATE only for the indexes whose columns actually moved', async () => {
@@ -278,7 +278,7 @@ describe('write shapes an insert-only model cannot price', () => {
 				.rowsWritten;
 			return { inserted, deleted };
 		});
-		expect(cost.inserted).toBe(20);
+		expect(cost.inserted).toBe(10);
 		// the same asymmetry `router-rebuild-cost.spec.ts` found: index maintenance is billed on
 		// the way in and free on the way out, so every lever is on the insert side
 		expect(cost.deleted).toBe(10);
@@ -286,12 +286,17 @@ describe('write shapes an insert-only model cannot price', () => {
 });
 
 describe('what dropping the two cache indexes actually bought', () => {
-	it('halved a cache row from 4 charged rows to 2, measured rather than modelled', async () => {
+	it('took a cache row from 4 charged rows to 1, measured rather than modelled', async () => {
 		// the INDEXED form is built here rather than read from SHIPPED, because SHIPPED is now the
 		// dropped form -- reading it for both sides would compare 2 against 2 and report a 1.00x
-		// "win" while passing
+		// "win" while passing. **AND THE `WITHOUT ROWID` HAS TO COME BACK OFF IT**, which is the
+		// same trap one level deeper: SHIPPED now also stores the row in its key, so leaving the
+		// clause on measured 3 against 1 and understated the original 4x form it is meant to be
 		const indexed = [
-			SHIPPED.cacheDynamicPageCache!.ddl[0] as string,
+			(SHIPPED.cacheDynamicPageCache!.ddl[0] as string).replace(
+				/\s*WITHOUT\s+ROWID\s*$/i,
+				''
+			),
 			'CREATE INDEX "cache_dynamic_page_cache_created" ON "cache_dynamic_page_cache" ("created")',
 			'CREATE INDEX "cache_dynamic_page_cache_expire" ON "cache_dynamic_page_cache" ("expire")'
 		];
@@ -308,13 +313,14 @@ describe('what dropping the two cache indexes actually bought', () => {
 			return { full, bare };
 		});
 		expect(cost.full).toBe(40);
-		expect(cost.bare).toBe(20);
-		// so the recorded 12-row fill is now 6, a 2.00x move on the meter that binds regeneration --
-		// and unlike nulling the bin it costs no render
-		expect(cost.full / cost.bare).toBe(2);
+		expect(cost.bare).toBe(10);
+		// the 4x form against what ships: dropping the two secondary indexes took it 4 -> 2, and
+		// storing the row in its own primary key took that 2 -> 1. Unlike nulling the bin, neither
+		// costs a render
+		expect(cost.full / cost.bare).toBe(4);
 	});
 
-	it('leaves the primary key index in place, because that one is not optional', async () => {
+	it('stores the row IN the primary key, so there is no separate index left', async () => {
 		const charged = await inObject(freshSite(), (site) =>
 			measureInsert(
 				site.sql,
@@ -324,8 +330,10 @@ describe('what dropping the two cache indexes actually bought', () => {
 				10
 			)
 		);
-		// 2, not 1: `cid` is the lookup the bin exists for, so the floor for any cache bin is 2
-		expect(charged / 10).toBe(2);
+		// 1: the bin IS its `cid` B-tree, so the lookup the bin exists for costs no extra entry.
+		// This asserted 2 and called it "the floor for any cache bin" while the table was a rowid
+		// table; the floor was a property of that choice rather than of the bin
+		expect(charged / 10).toBe(1);
 	});
 });
 
@@ -336,13 +344,26 @@ describe('the decomposition the audit reports', () => {
 		...SHIPPED.cachePage!.ddl
 	].map((s) => ({ s, p: [] }));
 
+	/**
+	 * The same two bins as ROWID tables, which is the schema the historical fills were recorded on.
+	 *
+	 * SHIPPED now stores each bin in its own primary key, so reading it for a historical
+	 * decomposition would divide by today's factor and re-describe a fill that stored 3 rows as one
+	 * that stored 6. The clause is stripped rather than the DDL retyped, so a column change upstream
+	 * still reaches both forms.
+	 */
+	const asRowid: PackStatement[] = statements.map((s) => ({
+		...s,
+		s: s.s.replace(/\s*WITHOUT\s+ROWID\s*$/i, '')
+	}));
+
 	it('splits the recorded fill into 3 data rows and 9 index entries, AS MEASURED', () => {
 		// against the 4x schema the 12-row fill was recorded on, not the 2x schema that ships now.
 		// `splitFill` divides by the CURRENT factor, so passing today's audit would re-decompose a
 		// historical total as 6 data rows -- a fill that really stored 3. The measurement did not
 		// change; the divisor did
 		const asMeasured = auditSchema([
-			...statements,
+			...asRowid,
 			{
 				s: 'CREATE INDEX "cache_dynamic_page_cache_created" ON "cache_dynamic_page_cache" ("created")',
 				p: []
@@ -362,19 +383,30 @@ describe('the decomposition the audit reports', () => {
 		expect(split.rows.every((r) => r.exact)).toBe(true);
 	});
 
-	it('and the same fill on the SHIPPED schema is 3 data rows and 3 index entries', () => {
+	it('and the same fill on the SHIPPED schema is 3 data rows and 0 index entries', () => {
+		// 2 and 1 rather than 4 and 2: at one charged row per stored row the charged total IS the
+		// data row count, which is the whole point of the conversion
 		const split = splitFill(
-			{ cache_dynamic_page_cache: 4, cache_page: 2 },
+			{ cache_dynamic_page_cache: 2, cache_page: 1 },
 			auditSchema(statements)
 		);
 		expect(split.dataRows).toBe(3);
-		expect(split.indexRows).toBe(3);
+		expect(split.indexRows).toBe(0);
 		expect(split.rows.every((r) => r.exact)).toBe(true);
 	});
 
 	it('refuses to round when the charged total is not a whole multiple of the factor', () => {
-		const split = splitFill({ cache_dynamic_page_cache: 7 }, auditSchema(statements));
-		// 7 / 2 is not a fill shape; reporting "3.5 data rows" or silently rounding would
+		// DRIVEN OVER THE ROWID FORM, because a factor of 1 divides every total cleanly and the
+		// refusal this asserts could never fire on the shipped bins
+		const indexed = auditSchema([
+			...asRowid,
+			{
+				s: 'CREATE INDEX "cache_dynamic_page_cache_created" ON "cache_dynamic_page_cache" ("created")',
+				p: []
+			}
+		]);
+		const split = splitFill({ cache_dynamic_page_cache: 7 }, indexed);
+		// 7 / 3 is not a fill shape; reporting "2.33 data rows" or silently rounding would
 		// turn a wrong assumption about the statements into a confident number
 		expect(split.rows[0]?.exact).toBe(false);
 	});

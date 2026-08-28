@@ -41,6 +41,8 @@ export type ParsedTable = {
 	 * constraint `PRIMARY KEY ("id")` over an INTEGER column -- because sqlite treats them the same.
 	 */
 	pkIsRowid: boolean;
+	/** declared `WITHOUT ROWID`, so the table IS its primary-key B-tree and that key costs nothing */
+	withoutRowid: boolean;
 	/**
 	 * whether the key is declared AUTOINCREMENT, which costs a charged row of its own.
 	 *
@@ -185,7 +187,16 @@ export function parseCreateTable(sql: string): ParsedTable | null {
 	const pkIsRowid = pk.length === 1 && pkType === 'INTEGER';
 	const autoincrement = /\bAUTOINCREMENT\b/i.test(text.slice(open, close));
 
-	return { name: ident(head, 1), columns, pk, pkIsRowid, autoincrement, uniqueConstraints };
+	return {
+		name: ident(head, 1),
+		columns,
+		pk,
+		pkIsRowid,
+		// after the closing paren, so it is read from the whole statement rather than the body
+		withoutRowid: /\bWITHOUT\s+ROWID\b/i.test(text.slice(close)),
+		autoincrement,
+		uniqueConstraints
+	};
 }
 
 export function parseCreateIndex(sql: string): ParsedIndex | null {
@@ -248,9 +259,17 @@ export function chargePerInsertedRow(table: ParsedTable, indexes: ParsedIndex[])
 	return 1 + implicitIndexCount(table) + (table.autoincrement ? 1 : 0) + explicit;
 }
 
-/** indexes sqlite creates without being asked: the primary key's unless it is the rowid, plus UNIQUE */
+/**
+ * indexes sqlite creates without being asked: the primary key's unless it is the rowid, plus UNIQUE
+ *
+ * A `WITHOUT ROWID` table IS its primary-key B-tree, so that key costs no separate entry. Reading
+ * the DDL for it corrects an error this instrument made about its own shipped pack: with the 14
+ * cache bins converted it still reported them at 2x, and printed "the floor in this schema is 2x"
+ * and "factor 1.0 (nothing to win): NO TABLE" -- a verdict that would have closed the lever that
+ * had already been applied.
+ */
 export function implicitIndexCount(table: ParsedTable): number {
-	const key = table.pkIsRowid || table.pk.length === 0 ? 0 : 1;
+	const key = table.pkIsRowid || table.pk.length === 0 || table.withoutRowid ? 0 : 1;
 	return key + table.uniqueConstraints.length;
 }
 

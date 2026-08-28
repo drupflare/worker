@@ -25,7 +25,7 @@ measures bytes it cannot compress further.
 | Cold boot | **1,398 ms** (n=3) | edge `cpuTime` |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **7,575 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
+| Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
@@ -39,7 +39,7 @@ accumulate 142 ms with no single invocation over 10 ms.
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **7,575/day** |
+| **Regeneration** | distinct pages re-rendered per day | **rows written** | **10,869/day** |
 
 Score any proposal with `bun scripts/measure/free-envelope.ts`; it fails a workload that misses
 either ceiling, and `tests/unit/free-envelope.spec.ts` covers the arithmetic. Two properties decide
@@ -71,9 +71,18 @@ The exposure is hibernation eligibility rather than arithmetic; see Hibernation 
 
 ### Where It Wins and Where It Does Not
 
-The architecture wins by not rendering rather than by rendering faster. An uncached render is ~3.6x
-slower than native PHP, and one site is one Durable Object is one thread that cannot be made bigger.
-Content sites win decisively; busy authenticated editorial workflows do not.
+The architecture wins by not rendering rather than by rendering faster. An uncached render costs
+**2,127 ms** of edge `cpuTime`, and one site is one Durable Object is one thread that cannot be made
+bigger. Content sites win decisively; busy authenticated editorial workflows do not.
+
+**The 3.57x wasm penalty is not that number and must not be read as it.** It is a warm-kernel ratio
+between two interpreters on ONE machine, with the container already built; the edge figure is the
+whole request. The README carried `34 ms` for this row until 2026-08-29, which is `9.47 x 3.57` --
+an arithmetic product of a native measurement and a local ratio, published under a provenance code
+meaning "measured on deployed infrastructure", and 62x below what the deployed meter reports.
+`scripts/bench/bench-render-breakdown.php` calls the 33.8 ms basis an inference in its own header.
+The neighbouring `page_cache` row is genuinely 1 ms because a stored-page serve runs at a 20x
+`activeTime/cpuTime` ratio; a render runs at **1x**, so no divisor carries across.
 
 ---
 
@@ -130,7 +139,7 @@ fronted by a custom domain.
 
 A render happens off the request path. A MISS queues the path in `cfw_fill_queue`, the alarm renders
 it in batches, and `fillOne()` upserts the result into `cfw_page`. The queue is capped at 500, since
-an anonymous visitor asking for distinct paths otherwise grows it forever at ~13 rows each.
+an anonymous visitor asking for distinct paths otherwise grows it forever at ~12 rows each.
 
 `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `RENDER_BUDGET_MS`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
 `LAZY_FS_BUDGET_BYTES` and `PREFILL` are read on this chain, which never passes through `handle()`.
@@ -508,6 +517,35 @@ without deploying.
 
 ---
 
+### Worker Startup
+
+| limit | value |
+| --- | --- |
+| global-scope CPU | **1 second** (raised from 400 ms on 2025-10-10) |
+| global-scope memory | **128 MB** |
+| what exceeding it does | rejects the DEPLOY with error 10021, not a runtime failure |
+
+`wrangler check startup` on the shipping config: **104.0 ms active** of that budget, bundle 2,904 KiB
+gzip. The zstd inflate and the `WebAssembly.Module` compile are what spends it.
+
+This closes the "pre-warm at startup" idea. PHP's boot is 1,398 ms of `cpuTime` against a 1,000 ms
+ceiling, and its heap peaks near 115 MB against 128 MB, so the interpreter cannot be booted at module
+scope at any price. The headroom that does exist is for cheap work, and nothing cheap has been named.
+
+### Requests That Never Reach the Worker
+
+Two paths, and only two, cost nothing against the 100,000/day serving ceiling:
+
+- **Static assets.** `run_worker_first` defaults to `false`, so a request matching a file in the
+  assets directory is served without invoking the Worker, and Cloudflare bills those at zero. The
+  serving ceiling is therefore ~100,000 page views rather than 100,000 divided by the asset count.
+- **A hostname not routed to the Worker at all**, which is what an R2 custom domain is.
+
+A zone Cache Rule is NOT one of them: a Worker route runs the Worker before the cache is consulted.
+The Workers Caching feature does skip the Worker on a hit, but bills the request anyway -- and its
+cache key omits the host, which for a host serving many sites at `/` is a cross-tenant leak rather
+than a saving. `tests/node/cache-partition.spec.ts` refuses it in a shipping config.
+
 ## Measured Costs
 
 ### Boot
@@ -559,10 +597,43 @@ boot; reporting a mean would fold a 1.4 s boot into a 23 ms write.
 
 ### Rows Per Fill
 
-There is no single figure. A fill is **3 / 13 / 19 / 62 rows** depending on what is already warm, and
-`ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` names all four classes; the model defaults to
-`realRender: 13`. Every figure is counted at the storage handle, so it includes the host's own writes
--- notably the `cfw_page` insert that stores the whole rendered page.
+There is no single figure. A fill is **2 / 12 / 19 / 24 / 156 rows** depending on what is already
+warm, and `ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` names all five classes; the model
+defaults to `realRender: 12`. Every figure is counted at the storage handle, so it includes the
+host's own writes -- notably the `cfw_page` insert that stores the whole rendered page.
+`tests/integration/rows-per-fill-audit.spec.ts` re-measures each class and pins it; three consecutive
+runs read identical counts, so these are exact charges rather than noisy readings.
+
+Two of those classes were wrong until 2026-08-28. `firstEverForPath` stood at 62 and measures 24, and
+the most expensive case had no class at all: the FIRST fill on a fresh object costs **156**, because
+`cache_discovery`, `cache_default` and `cache_routes` are populated once per OBJECT rather than once
+per path. Charging every new path the fresh-object figure overstates a fleet six-fold; leaving it out
+understates each new site by one 156-row event.
+
+**The serve tables are `WITHOUT ROWID`, which is worth a row per fill.** SQLite gives a rowid table's
+`TEXT PRIMARY KEY` its own unique index, so one logical write is charged twice. Measured on
+`ctx.storage.sql`: insert 2 -> 1, update 1 either way, the serve HIT still reads one row, and 200
+rows of 12 KB html cost +0.32% on disk. The cheapest class benefits most -- `warmReassemble` went
+3 -> 2 rows, its index charge to zero -- and the windowed regeneration ceiling moved 7,575 -> 8,196.
+
+**THE SAME SHAPE WAS WORTH MORE ON DRUPAL'S OWN CACHE BINS.** Every bin `DatabaseBackend` creates
+keys on a TEXT `cid`, and `scripts/measure/index-audit.ts` reports 13 of the 14 with NO secondary
+index at all -- so the autoindex WAS their entire index cost. `scripts/pack-sql.ts` now emits the 14
+bins `WITHOUT ROWID`, and `Schema::createTableSql()` in the `cfw_do_sqlite` driver does the same for
+a bin a module adds at runtime, which the packer never sees. Verified through Drupal's own installer.
+Measured on a steady-state render at **8 charged rows -> 6**, bins' index
+charge **3 -> 0**, n=3 with zero spread. Every warmth class fell with it: `firstFillOnFreshObject`
+156 -> **103**, `firstEverForPath` 24 -> **14**, `realRender` 12 -> **9**, and `warmReassemble`
+alone unchanged at 2 because it writes only `cfw_page`. The windowed regeneration ceiling moved
+**8,196 -> 10,869/day**.
+
+Two things that were nearly reported wrong here. A first pass read 11 -> 6 and **3 of those 5 rows
+were warmth, not the conversion**: one warming render leaves `cache_menu` and `cache_discovery` cold,
+so they are written in the control arm and not in the treatment arm. Both arms need the same warmth
+before the comparison means anything. And `index-audit.ts` does not model `WITHOUT ROWID` at all, so
+it reports "the floor in this schema is 2x" and "factor 1.0 (nothing to win): NO TABLE" -- both are
+statements about the instrument rather than the schema, and the second one would have closed this
+lever outright.
 
 Two things that look like levers and are not. **Zero rows of a fill go to `watchdog`**, so
 uninstalling `dblog` buys nothing. And past ~85% off-Worker serving the binding meter becomes DO
@@ -607,6 +678,123 @@ Bucket attribution against native PHP, per render:
 
 The two most expensive buckets are not the renderer.
 
+**THAT MULTIPLIER IS NOT A SHARE, AND READING IT AS ONE MISRANKS THE WORK.** It is how much slower
+wasm is than native for that bucket. The share of a native steady-state render, measured per bucket
+by `scripts/bench/bench-render-breakdown.php` over 5 accumulated renders at 5.676 ms each:
+
+| bucket | ms/render | calls/render | share |
+| --- | --- | --- | --- |
+| events | 1.512 | 7 | 26.6% |
+| renderer | 1.388 | 34 | 24.5% |
+| `cache_contexts` | 0.598 | 113 | 10.5% |
+| theme | 0.547 | 14 | 9.6% |
+| `render_cache.get` | 0.427 | 6 | 7.5% |
+| twig.execute | 0.322 | 14 | 5.7% |
+| residual | 0.605 | -- | 10.7% |
+
+`events` is 7 calls costing 1.512 ms, so it is the LISTENERS doing work rather than dispatch
+overhead; a frozen listener table would return only the resolution part of it.
+
+#### The Cache-Context Memo
+
+`convertTokensToKeys()` is called **51 times over 13 distinct token lists** on a steady-state front
+page, so **74.5% of the calls repeat a list already answered in the same request**, and **zero token
+lists produced two different answers** -- which is what makes a memo sound rather than merely cheap.
+Core recomputes every time: `optimizeTokens()` plus a `getContext()` per surviving token, with
+nothing remembering it just did exactly that. The nested `optimizeTokens()` calls fall 51 -> 13 with
+it. `bench-context-memo.php` is the instrument; `MemoizedCacheContextsManager` in the `drupflare`
+module is the change.
+
+Measured on three interleaved pairs at n=25, native and local: **4.006 ms -> 3.619 ms median, ~9.7%**,
+every pair favouring the memo and the rendered body identical at 12,330 bytes in both arms.
+
+**The generation is not just the request, and that is the whole safety argument.** `AccountSwitcher`
+changes the current user mid-request and `user.permissions`, `user.roles` and `user` all read from
+it, so a request-keyed memo would serve a key computed for the previous account -- the uid-1 leak
+shape this project has already shipped once. The generation carries the account id, and
+`load-classes.php` asserts a switch invalidates. Removing the account id from the generation makes
+that assertion fail with `[probe]=first`, the stale key, which is the falsification.
+
+#### The Recompute Census, And Why A1 Did Not Generalise
+
+A1 removed 74.5% repeated work from one service and took ~9.7% off a render, so the obvious next move
+is to look for the same shape elsewhere. `scripts/bench/bench-recompute-census.php` does that: per
+method it records calls, DISTINCT argument lists and wall clock, and ranks by repeat rate times cost
+rather than by cost -- cost alone ranks the renderer first, and the renderer is doing the work rather
+than repeating it. The wrappers are generated from each service's RUNTIME class, because
+`language_manager` is `ConfigurableLanguageManager` with the language module and `LanguageManager`
+without it.
+
+**The repeat phenomenon is everywhere and it is already cheap.** Of the services the census actually
+reached, `language_manager::getLanguage` repeats 91.7% over 12 calls, `entity_type.manager::
+getDefinition` 96.0% over 25, `current_user::id` 96.2% over 26 -- and the whole recoverable total is
+**0.0556 ms of 3.904 ms, 1.4%**. Those services carry their own static caches, so a repeat costs a
+property read. What made `convertTokensToKeys()` worth memoising was not its repeat rate but that
+each call did real work: `optimizeTokens()` plus a `getContext()` per token, 113 times.
+
+**AND THE CENSUS LIED UNTIL IT HAD A CONTROL.** Nine of fifteen services were swapped into the
+container and never called, because their consumers captured them at construction --
+`placeholder_strategy`, `html_response.attachments_processor`, `asset.resolver`, `render_cache`,
+`router.route_provider`, `module_handler` and three more. Each recorded nothing, which is
+indistinguishable in the output from a service with no repeated work, and all four of the ones added
+specifically to chase the placeholder cost were in that set. The census now reports
+`swappedButNeverCalled` separately, so a zero is never read as a measurement. This is the second time
+in one session that a container swap produced a silent zero; the first was the router.
+
+#### Two Levers Priced And Not Taken
+
+**A DO-local cache in front of the Drupal bins is bounded at 4.4%.** The entire database cost of a
+steady-state render is **0.249 ms of 5.676 ms** across 8 queries, so that is the ceiling for any
+read-side change to how bins are stored, before any invalidation risk. It does not touch rows
+written either, which is the meter that binds; the write-side saving on those bins was already taken
+by `WITHOUT ROWID`.
+
+**Route-match memoisation is refused on a mechanism, not on its size.** Route matching is **1 call
+per render at 0.138-0.159 ms with ZERO repeats within a request**, so a request-scoped memo saves
+nothing by construction and a cross-request one is bounded at 3.8%. The refusal is that
+`AccessAwareRouter::matchRequest()` runs the access checks, so memoising its result caches an access
+decision across requests. Only the matching below access could be memoised safely, for less than
+that 3.8%.
+
+#### Anonymous Specialisation Is Already Built, Three Times
+
+Per-listener timing, which the shared `events` bucket cannot show, on a 4.5 ms steady-state render:
+
+| listener | ms | share |
+| --- | --- | --- |
+| `kernel.view` :: `MainContentViewSubscriber` | 2.762 | 61% |
+| `kernel.response` :: `HtmlResponseSubscriber` | 0.775 | 17% |
+| `kernel.response` :: `HtmlResponsePlaceholderStrategySubscriber` | 0.304 | 6.8% |
+| `kernel.request` :: `RouterListener` | 0.181 | 4.0% |
+| `kernel.response` :: `DynamicPageCacheSubscriber` | 0.069 | 1.5% |
+| `kernel.request` :: `AuthenticationSubscriber` (x2) | **0.015** | **0.3%** |
+| `MaintenanceModeSubscriber`, `TimeZoneResolver`, `ReplicaKillSwitch` | 0.020 | 0.4% |
+
+**The whole pool a "skip session, auth and user negotiation for anonymous" specialisation would
+remove is ~0.035 ms, 0.8% of a render.** It is that small because the host already renders anonymous
+fills with NO cookies, so Drupal's session and authentication paths short-circuit on their own.
+`kernel.request` in total is 4.3%, and most of that is the router.
+
+The reason there is nothing left to win is that the fast path exists three times over: `page_cache`
+is enabled and returns from `kernel.request` before any of the listeners above run, `cfw_page` sits
+above it, and the edge cache above that. **The render measured here is the triple-miss path.**
+Building a fourth "is this request anonymous?" branch would add a security-relevant check -- the
+exact check that has gone wrong here before -- to recover 0.8%.
+
+**The one anonymous-specific target worth its own measurement is the placeholder strategy**, at
+**0.304 ms (6.8%)**. `big_pipe` is enabled, and BigPipe only placeholders a session-carrying render,
+so on an anonymous fill its per-placeholder negotiation runs and declines every time. Forcing the
+single-flush strategy when the host says the fill is anonymous is semantically a no-op there. Not
+built; the number is recorded so it can be scored rather than re-guessed.
+
+**Measuring the router took two failed instruments and both failed silently.** Swapping the container
+entry after boot throws `ServiceCircularReferenceException` -- `router -> router.no_access_checks ->
+router.request_context -> router_listener` -- which is the same cycle `pw-probe.php` documents for
+Twig. Swapping it after the first render succeeds and then reads **0 calls**, because
+`router_listener` captured the original object when it was built. A count of zero from a probe that
+was never reached reads exactly like a router that costs nothing. The listener's reference has to be
+rebound by reflection, which is what `pw_probe_twig_in_engine()` already does for the theme engine.
+
 ### Install and Module Enable
 
 One router rebuild is **2,095 rows**, and a module enable through Drupal's own `ModuleInstaller`
@@ -620,14 +808,33 @@ are shared.
 
 | item | bytes |
 | --- | --- |
-| heap snapshot, cold object | 36,241,408 over 553 pages |
+| heap snapshot, cold object | 36,175,872 over 552 pages |
 | heap snapshot, configured and served once | 9,699,328 over 148 pages |
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |
 
-Cross-site heap dedup is **33.09%**; raw over best encoding on the live heap is **5.6-5.8x**, and the
-XOR-delta mechanism beats plain gzip by a margin between 1.5x and 8x that is not quotable across
-re-runs. Interned strings are 2.1-3.0% of linear memory against a 10% threshold.
+Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
+`tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;
+nothing guarded the figure, which is how it drifted.
+
+**IT WAS THEN PINNED TO 37.79% ON THE STRENGTH OF THREE IDENTICAL RUNS, AND THAT WAS THE NEXT
+ERROR.** "n=3 with zero spread" was read as an exact property of the pack and written into the spec
+with a tolerance of 0.00005. Seven runs read 0.3472, 0.3779 five times, and 0.3797 -- the outliers
+appeared only once the full suite ran the spec under load, which is also why it passed alone and
+failed in the gate. **Three identical readings are evidence of a mode, not of zero variance**, and a
+tolerance that tight is a guard that fails on the truth. It is a band now.
+
+A pair of BARE objects read 39.94 / 39.94 / 76.03%, so that arm is reported and never quoted -- an
+object with no database has little structure to share and the fraction swings on what little there is.
+
+Raw over best encoding on the live heap is **5.6-5.8x**. XOR-delta at page granularity is refuted,
+and the reason changed under it: the one-node arm read **1.65x WORSE** than plain gzip on three
+consecutive runs, and now reads **0.974 / 0.976** -- about 2.5% BETTER -- because the `WITHOUT ROWID`
+cache bins and one added container class changed what is in the heap. **Parity is still not a lever**:
+2.5% does not pay for a delta format, a base-image dependency and a restore path, against site-image
+dedup at 34.7-38.0%. The spec now asserts a band around parity rather than a direction, since a
+direction that flips on an unrelated pack change was never the property worth guarding. The best diverged
+arm lands on 1.000. Interned strings are 2.1-3.0% of linear memory against a 10% threshold.
 
 Content-keying the page store saves 21.05% of bytes on a real nine-path corpus -- Drupal's 404 is
 byte-identical across paths, and that one class is the entire saving -- but costs **4 charged rows
@@ -840,6 +1047,14 @@ Export the list from `src/` and hold the const in both directions.
 12. **`PLAN=free` is this project's var, not Cloudflare's plan.** A deployed run on a paid account
     measures cost, which is plan-independent, and never enforcement. The free CPU cap also has a
     burst allowance: one large request succeeds where the same request repeated fails 11 of 15.
+13. **Two artifacts are only comparable in the same MODE.** Where the thing being compared exists
+    only because of a condition -- an emptied bin, a flag, a cold cache -- the other side has to be
+    produced under that same condition, or the structural difference reads as a finding. Shell
+    verification cost three comparators to this: a shell has BigPipe holes only because harvesting
+    empties the `render` bin, so its personalised regions never aggregate their `#attached`
+    libraries into the head, and an ordinary render of the same page carries a different asset set
+    by construction. The diff pointed at offset 3407, `action-links.css` against `block.css`, which
+    looks like a defect and is a mode mismatch. Harvesting both sides made them equal byte for byte.
 
 Suspect the instrument first. Most moved verdicts in this project moved because the instrument was
 wrong, not the system.

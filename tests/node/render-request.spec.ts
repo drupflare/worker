@@ -66,11 +66,22 @@ describe('renderPage threads the request', () => {
 	 */
 	it('passes parsed parameters into Request::create, not only $_POST', () => {
 		const php = renderPage('/');
+		// the fifth argument is `$uploads`, not `[]`: multipart parts are parsed into a
+		// $_FILES-shaped array, and passing an empty literal there dropped every file field
 		expect(php).toContain(
-			'Request::create($url, $method, $parameters, $cookies, [], $server, $body)'
+			'Request::create($url, $method, $parameters, $cookies, $uploads, $server, $body)'
 		);
 		expect(php).toContain('parse_str($body, $parameters)');
 		expect(php).toContain('$_POST = $parameters;');
+	});
+
+	it('parses a multipart body, which PHP does not do without a POST SAPI', () => {
+		const php = renderPage('/');
+		// the branch that was missing entirely; without it Drupal saw no form_id and answered 200
+		expect(php).toContain('multipart/form-data');
+		expect(php).toContain('$uploads = [];');
+		// an unchosen file part must not read as an upload
+		expect(php).toContain('if ($filename === "") { continue; }');
 	});
 
 	/**

@@ -43,20 +43,23 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 		expect(audit.totals.explicitIndexes).toBe(157);
 	});
 
-	it('has NO table that charges 1.0 rows per row, so the floor is 2 and not 1', () => {
-		expect(audit.perTable.filter((t) => t.chargePerRow === 1)).toHaveLength(0);
-		expect(audit.totals.minChargePerRow).toBe(2);
+	it('reaches a floor of 1 on the cache bins, which used to be unreachable', () => {
+		// this asserted "NO table charges 1.0, so the floor is 2" and that was a property of the
+		// INSTRUMENT: `implicitIndexCount()` counted a primary key it could not see was WITHOUT
+		// ROWID. With the 14 bins converted and the model corrected, 13 of them sit at 1
+		expect(audit.perTable.filter((t) => t.chargePerRow === 1).length).toBeGreaterThan(0);
+		expect(audit.totals.minChargePerRow).toBe(1);
 	});
 
-	it('spends five eighths of every stored row on index maintenance', () => {
+	it('spends nine sixteenths of every stored row on index maintenance', () => {
 		// 1,342 / 3,939 / 0.6314 before the content type, 1,356 / 3,967 / 0.6305 after it. Enabling
 		// drupflare in the pack took 40 stale cache rows OUT -- rows keyed to the pre-install module
 		// list, which the runtime would have read as warm and wrong -- so the count falls while the
 		// ratio rises: a cache row is cheap in indexes and dropping it leaves the index-heavy tables
 		// a larger share. 3,883 -> 3,464 is the partial router_alias index
 		expect(audit.totals.dataRows).toBe(1316);
-		expect(audit.totals.chargedRows).toBe(3464);
-		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.5883, 3);
+		expect(audit.totals.chargedRows).toBe(3246);
+		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.5607, 3);
 	});
 
 	/**
@@ -70,7 +73,7 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 	it('under-reports the shipped total by exactly the rows a partial index does store', () => {
 		const aliased = ROUTES - 402;
 		expect(aliased).toBe(17);
-		expect(audit.totals.chargedRows + aliased).toBe(3481);
+		expect(audit.totals.chargedRows + aliased).toBe(3263);
 	});
 });
 
@@ -145,13 +148,13 @@ describe.skipIf(SKIP)('the remaining sparse index, and why it is left alone', ()
 });
 
 describe.skipIf(SKIP)('the cache bins, which are the fill path', () => {
-	it('ships 14 bins, and 13 of them now charge 2 rows per stored row rather than 4', () => {
+	it('ships 14 bins, and 13 of them now charge ONE row per stored row', () => {
 		// the 26 secondary indexes are gone: nothing on this runtime reads them, because
 		// DatabaseBackend::getMultiple() selects by cid and garbageCollection() cannot run here
 		const bins = audit.perTable.filter((t) => t.table.startsWith('cache_'));
 		expect(bins).toHaveLength(14);
 		for (const bin of bins.filter((b) => b.table !== 'cache_data')) {
-			expect(bin.chargePerRow, bin.table).toBe(2);
+			expect(bin.chargePerRow, bin.table).toBe(1);
 			expect(bin.explicitIndexes, bin.table).toEqual([]);
 		}
 	});
@@ -160,7 +163,7 @@ describe.skipIf(SKIP)('the cache bins, which are the fill path', () => {
 		// gcPass() caps it with ORDER BY created and sweeps it with expire < ?; dropping these
 		// would turn every alarm into a full scan of the bin
 		const data = audit.perTable.find((t) => t.table === 'cache_data');
-		expect(data?.chargePerRow).toBe(4);
+		expect(data?.chargePerRow).toBe(3);
 		expect(data?.explicitIndexes.map((i) => i.name).sort()).toEqual([
 			'cache_data_created',
 			'cache_data_expire'
@@ -199,14 +202,14 @@ describe.skipIf(SKIP)('the recorded fill, decomposed', () => {
 		expect(dpc?.indexRows).toBe(6);
 	});
 
-	it('and the SAME fill now charges 6 rather than 12, which is the win', () => {
+	it('and the SAME fill now charges 3 rather than 12, which is the win', () => {
 		// 3 data rows unchanged; the bins that stored them went from 4x to 2x
 		const split = splitChargedRows(RECORDED_FILL_CHARGED_ROWS, AS_MEASURED);
 		const nowCharged = split.rows.reduce((n, r) => {
 			const bin = audit.perTable.find((t) => t.table === r.table);
 			return n + r.dataRows * (bin?.chargePerRow ?? 0);
 		}, 0);
-		expect(nowCharged).toBe(6);
+		expect(nowCharged).toBe(3);
 	});
 });
 
@@ -234,11 +237,13 @@ describe.skipIf(SKIP)('the DDL the workers lane measures still matches the pack'
 		).toBe(audit.perTable.find((t) => t.table === shipped.table)?.chargePerRow);
 	});
 
-	it('prices the host serve table at 2, which no pack statement can drift', () => {
+	it('prices the host serve table at 1, which no pack statement can drift', () => {
 		// cfw_page is created by src/site-do.ts rather than shipped in the pack, so this is the one
-		// DDL here with no pack counterpart; it is included because the fill writes to it
+		// DDL here with no pack counterpart; it is included because the fill writes to it. Its key
+		// is TEXT and NOT the rowid, and the table is stored in that key -- so the charge is 1
 		const table = parseCreateTable(CFW_PAGE_DDL);
 		expect(table?.pkIsRowid).toBe(false);
-		expect(chargePerInsertedRow(table!, [])).toBe(2);
+		expect(table?.withoutRowid).toBe(true);
+		expect(chargePerInsertedRow(table!, [])).toBe(1);
 	});
 });

@@ -9,18 +9,20 @@ import { isPaid, type PlanEnv } from './plan.js';
  * | ceiling                      | value                              |
  * | ---------------------------- | ---------------------------------- |
  * | serving                      | 100,000/day, worker-bound, **1.00x** |
- * | regeneration, windowed       | **7,575/day, rows-bound**          |
+ * | regeneration, windowed       | **10,869/day, rows-bound**         |
  * | regeneration, alarm chain    | 1,052/day, do-bound                |
  *
  * At the default 25% reservation that splits as:
  *
  * | slice                        | rows/day | what it buys                              |
  * | ---------------------------- | -------- | ----------------------------------------- |
- * | authenticated                | 25,000   | **1,923 authenticated views/day**         |
- * | anonymous regeneration       | 75,000   | **5,681 regenerations/day** (5.68x need)  |
+ * | authenticated                | 25,000   | **2,777 authenticated views/day**         |
+ * | anonymous regeneration       | 75,000   | **8,151 regenerations/day** (8.15x need)  |
  *
  * The anonymous side still clears the 1,000 regenerations/day a 3M-visit month needs at 1% dynamic,
- * with 5.68x headroom, which is the property that makes the reservation safe to take.
+ * with 8.15x headroom, which is the property that makes the reservation safe to take.
+ *
+ * All three moved when the pack's cache bins became `WITHOUT ROWID` and a render fell 12 -> 9 rows.
  *
  * Paid has no reservation. The meters it is protecting do not bind there, and a limit that exists
  * only to be never reached is a limit a reader has to explain later.
@@ -38,7 +40,7 @@ import { isPaid, type PlanEnv } from './plan.js';
 export const DAILY_ROWS_QUOTA = 100_000;
 
 /** `ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs */
-export const ROWS_PER_AUTH_RENDER = 13;
+export const ROWS_PER_AUTH_RENDER = 9;
 
 /** `FREE_QUOTAS.doRequestsPerDay`, same quota shape as rows */
 export const DAILY_DO_QUOTA = 100_000;

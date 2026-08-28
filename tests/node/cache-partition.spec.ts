@@ -4,11 +4,23 @@ import { describe, expect, it } from 'vitest';
 /**
  * The Workers Cache feature is keyed WITHOUT the host, and this product is multi-tenant by host.
  *
- * Cloudflare's own cache-key documentation names this exact shape as the case its default does not
- * handle: "white-labeled tenants where `tenant-a.example.com/index` and `tenant-b.example.com/index`
- * must produce different content -- the cache key does not do this for you automatically". Every site
- * here serves `/`, so enabling `cache` in a shipping config serves one site's front page to another
- * site's visitors.
+ * `developers.cloudflare.com/workers/cache/cache-keys/`: "The cache key does not include the host, so
+ * a request to `/api/users/42` hits the same cached entry whether it came in through
+ * `api.example.com`, `api.example.net`, a service binding, or a `workers.dev` URL." Every site here
+ * serves `/`, so enabling `cache` in a shipping config serves one site's front page to another site's
+ * visitors.
+ *
+ * **AND ZONE CACHE RULES CANNOT ADD THE HOST BACK**, which is what makes this structural rather than
+ * a tuning gap: "No zone configuration for caching applies to Workers Caching. Cache Rules, Cache
+ * Response Rules, Page Rules, cache level settings ... have no effect on a Worker's cache." The zone
+ * cache-key documentation DOES put the host in the key, and reading it as evidence about this feature
+ * is the mistake to avoid -- they are different products and only one of them is host-blind.
+ *
+ * Two further reasons it is not the serving lever it looks like, both from Cloudflare's own pages. A
+ * hit skips Worker EXECUTION but is still "billed at the standard Workers request rate", so the
+ * 100,000/day meter does not move; and enabling it "bills requests that are normally free: static
+ * asset requests and worker-to-worker invocations", so it is a net INCREASE in metered requests.
+ * What it does buy is CPU, which is not a meter this project is bound by.
  *
  * `caches.default` is a DIFFERENT mechanism and is safe: `cacheKey()` in `src/site.ts` builds a key
  * carrying both the origin and the site id, so neither half of the pair can collide. This guards only

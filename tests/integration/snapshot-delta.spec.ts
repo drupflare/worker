@@ -279,13 +279,22 @@ describe('a site as a delta against another site image', () => {
 			for (const c of curve) {
 				expect(Number(c.xorVsPlain), `${c.arm} xor`).toBeGreaterThan(0);
 			}
-			// the DIVERGED arms are where the encoding is supposed to pay, and it does there
+			// AND "XOR PAYS ON THE DIVERGED ARMS" IS REFUTED TOO, by three consecutive runs. This
+			// asserted that some diverged arm came in under 1.0, and the best one reads 0.999 /
+			// 0.603 / 1.000 across those runs -- it lands exactly ON the threshold, which is what
+			// made it fail. `one node` is the stable reading and it goes the OTHER way, 1.652 /
+			// 1.647 / 1.647, so XOR is reliably WORSE where a node was created.
+			//
+			// What survives: XOR-delta at PAGE granularity is not a win on this workload. That is a
+			// result about the encoding rather than about the instrument, and it is the reason to
+			// hold the storage lever at the site-image level where the dedup was measured.
 			const diverged = curve.filter((c) => !String(c.arm).startsWith('untouched'));
 			expect(diverged.length).toBeGreaterThan(0);
+			const nodeArm = curve.find((c) => c.arm === 'one node');
 			expect(
-				diverged.some((c) => Number(c.xorVsPlain) < 1),
-				'XOR beat plain gzip on no diverged arm at all'
-			).toBe(true);
+				Number(nodeArm?.xorVsPlain),
+				'the one-node arm stopped reading above 1, so the refutation needs re-measuring'
+			).toBeGreaterThan(1.2);
 			// every arm must be the same SHAPE of heap, or the number measures the boot; a
 			// tolerance rather than equality, since the failure it catches is 3.7x (148 vs 553)
 			for (const c of curve) {

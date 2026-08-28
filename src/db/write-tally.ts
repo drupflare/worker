@@ -447,6 +447,10 @@ const SAFE_TABLE = /^[A-Za-z0-9_]+$/;
  * DDL text because no pragma reports it, and it costs a charged row of its own -- the
  * `sqlite_sequence` rewrite measured in `tests/unit/db/index-charge-model.spec.ts`.
  *
+ * `WITHOUT ROWID` is read from the DDL for the same reason and corrects the opposite error: the
+ * pragma reports the primary key as an autoindex there too, but the key IS the table, so adding a
+ * base row double-counts it.
+ *
  * A table that does not exist is OMITTED rather than given a factor of 0, so `splitChargedRows()`
  * reports it as inexact instead of silently pricing it as pure data.
  */
@@ -465,8 +469,14 @@ export function chargeFactorsFromSchema(
 			.exec(`PRAGMA index_list("${table}")`)
 			.toArray()
 			.filter((row) => Number(row['partial'] ?? 0) === 0).length;
+		const text = String(ddl['sql'] ?? '');
+		// a WITHOUT ROWID table IS its primary-key B-tree, and `index_list` reports that key as an
+		// autoindex exactly as it does for a rowid table -- so counting it adds a charge the engine
+		// never makes. Measured: such an insert charges 1 and this returned 2
+		const withoutRowid = /\bWITHOUT\s+ROWID\b/i.test(text);
 		factors[table] =
-			1 + indexes + (/\bAUTOINCREMENT\b/i.test(String(ddl['sql'] ?? '')) ? 1 : 0);
+			(withoutRowid ? Math.max(1, indexes) : 1 + indexes) +
+			(/\bAUTOINCREMENT\b/i.test(text) ? 1 : 0);
 	}
 	return factors;
 }

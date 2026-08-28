@@ -1,4 +1,4 @@
-import type { SiteEnv } from './env';
+import type { SiteEnv } from './env.js';
 import {
 	AUTH_MODE_HEADER,
 	AUTH_REASON_HEADER,
@@ -10,22 +10,24 @@ import {
 	utcDayKey,
 	type AuthBudgetEnv,
 	type AuthSpend
-} from './ops/auth-budget';
-import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit';
-import { isCacheTier } from './ops/cache-tiers';
+} from './ops/auth-budget.js';
+import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit.js';
+import { isCacheTier } from './ops/cache-tiers.js';
 import {
 	ensureFleetTable,
 	fleetSummary,
 	listSites,
 	rolloutProgress,
-	type FleetDb
-} from './ops/fleet';
-import { callbackUri } from './ops/oidc';
-import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store';
-import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan';
-import { resolveSite, siteStubOptions } from './ops/site-id';
-import { bearerToken } from './ops/site-secrets';
-import { SitePhpDurableObject } from './site-do';
+	warmTargets,
+	type FleetDb,
+	type FleetRow
+} from './ops/fleet.js';
+import { callbackUri } from './ops/oidc.js';
+import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store.js';
+import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan.js';
+import { resolveSite, siteStubOptions } from './ops/site-id.js';
+import { bearerToken } from './ops/site-secrets.js';
+import { SitePhpDurableObject } from './site-do.js';
 import {
 	ADMIN_PAGES,
 	parseDrush,
@@ -40,7 +42,7 @@ import {
 	type OidcSetupRow,
 	type OpsEntry,
 	type RemoteRow
-} from './ui/admin';
+} from './ui/admin.js';
 
 export { SitePhpDurableObject };
 
@@ -127,6 +129,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/writeworkload',
 	'/capability',
 	'/tcp',
+	'/ai',
 	'/git',
 	'/httpdrain',
 	'/nativefetch',
@@ -272,6 +275,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/writeworkload': '/__writeworkload',
 	'/capability': '/__capability',
 	'/tcp': '/__tcp',
+	'/ai': '/__ai',
 	'/git': '/__git',
 	'/githook': '/__githook',
 	'/httpdrain': '/__httpdrain',
@@ -1006,19 +1010,42 @@ export default {
 	 * Cron entry point for the warm window.
 	 *
 	 * A Cron Trigger is the right driver on the free plan: it costs no visitor request, and
-	 * the window it opens amortises one boot across an entire queue drain. WINDOW_SITES is
-	 * a comma list because one Worker serves many sites and each has its own object.
+	 * the window it opens amortises one boot across an entire queue drain.
+	 *
+	 * The SET comes from `cfw_fleet` rather than a var: a cron has no request and no hostname, and
+	 * site identity here IS the hostname. See {@link warmTargets}.
 	 */
 	async scheduled(
 		event: ScheduledController,
 		env: SiteWorkerEnv,
 		ctx: ExecutionContext
 	): Promise<void> {
-		const sites = String(env?.WINDOW_SITES ?? 'default')
+		const configured = String(env?.WINDOW_SITES ?? '')
 			.split(',')
 			.map((s) => s.trim())
 			.filter(Boolean);
-		for (const site of sites) {
+		let fleet: FleetRow[] | null = null;
+		if (env.FLEET_DB) {
+			// written by the object, so a bound-but-empty database is "no sites yet"
+			await ensureFleetTable(env.FLEET_DB);
+			fleet = await listSites(env.FLEET_DB);
+		}
+		const targets = warmTargets(fleet, configured, Date.now());
+		// loud rather than silent: this warmed an object no visitor reaches and reported success
+		// every time, because idFromName() creates whatever it is handed
+		if (targets.unknown.length > 0) {
+			console.warn(`warm window: no such site, not creating: ${targets.unknown.join(', ')}`);
+		}
+		if (targets.stale.length > 0) {
+			console.warn(`warm window: past the heartbeat, skipped: ${targets.stale.join(', ')}`);
+		}
+		if (targets.sites.length === 0) {
+			const why =
+				fleet === null ? 'no FLEET_DB and no WINDOW_SITES' : `${fleet.length} reported`;
+			console.warn(`warm window: nothing to warm (${why})`);
+			return;
+		}
+		for (const site of targets.sites) {
 			ctx.waitUntil(runFillWindow(env, site));
 		}
 	}

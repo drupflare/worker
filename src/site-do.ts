@@ -1,5 +1,5 @@
 import '@drupflare/cartridge/shim';
-import type { SiteEnv } from './env';
+import type { SiteEnv } from './env.js';
 import type { CacheTier } from './ops/cache-tiers.js';
 import {
 	attemptBudget,
@@ -44,6 +44,15 @@ import {
 import { warmingResponse } from './ops/warming-page.js';
 
 import {
+	aiEnabled,
+	aiQueueUrl,
+	allowedModels,
+	isAiUrl,
+	neuronCost,
+	runAiExchange
+} from './ops/ai.js';
+
+import {
 	mkdirp,
 	mountDriver,
 	mountDrupalLazy,
@@ -61,7 +70,9 @@ import {
 	bindable,
 	toPositional,
 	type ExecSqlResult,
-	type SqlBindings
+	type ExecTxnResult,
+	type SqlBindings,
+	type TxnRequest
 } from '@drupflare/durabledb/do-sqlite';
 import { PhpBase, type PhpBaseModuleFactory, type PhpRuntimeArgs } from 'php-wasm/PhpBase';
 import {
@@ -71,7 +82,7 @@ import {
 	dumpChunk,
 	dumpDatabase,
 	type DumpCursor
-} from './db/export-sql';
+} from './db/export-sql.js';
 import {
 	base64ToBytes,
 	bytesToBase64,
@@ -85,7 +96,7 @@ import {
 	renameFile,
 	statFile,
 	type MirrorBucket
-} from './db/file-store';
+} from './db/file-store.js';
 import {
 	HeapChunkDigestError,
 	captureHandles,
@@ -101,8 +112,8 @@ import {
 	writeHeapSnapshot,
 	type HandleIndex,
 	type StreamFS
-} from './db/heap-store';
-import { latestImport, storeImport, storedImportLoader } from './db/import-sql';
+} from './db/heap-store.js';
+import { latestImport, storeImport, storedImportLoader } from './db/import-sql.js';
 import {
 	SqlMigrator,
 	assetChunkLoader,
@@ -110,26 +121,29 @@ import {
 	ensureMigrateTable,
 	readMigrateCursor,
 	type MigrateCursor
-} from './db/migrate-sql';
-import { repairWideIntegers, type Row as WideRow } from './db/wide-integers';
+} from './db/migrate-sql.js';
+import { repairWideIntegers, type Row as WideRow } from './db/wide-integers.js';
 import {
 	amplification,
 	chargeFactorsFromSchema,
 	countingSql,
+	countingStorage,
 	emptyTally,
 	overheadShare,
 	rankTally,
+	readSourceTables,
 	routerRebuilds,
 	splitChargedRows,
+	writeTargetTable,
 	type WriteTally
-} from './db/write-tally';
-import { ARGON2_FIX, installArgon2 } from './drupal/argon2-fix';
-import { CURL_FIX } from './drupal/curl-fix';
-import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php';
-import { FILES_PROBE } from './drupal/files-php';
-import { ICONV_FIX } from './drupal/iconv-fix';
-import { MB_FIX } from './drupal/mb-fix';
-import { OPENSSL_FIX, installSign } from './drupal/openssl-fix';
+} from './db/write-tally.js';
+import { ARGON2_FIX, installArgon2 } from './drupal/argon2-fix.js';
+import { CURL_FIX } from './drupal/curl-fix.js';
+import { ENABLE_MODULE, ENABLE_VERIFY } from './drupal/enable-php.js';
+import { FILES_PROBE } from './drupal/files-php.js';
+import { ICONV_FIX } from './drupal/iconv-fix.js';
+import { MB_FIX } from './drupal/mb-fix.js';
+import { OPENSSL_FIX, installSign } from './drupal/openssl-fix.js';
 import {
 	BOOT_KERNEL,
 	BOOT_PHASES,
@@ -152,11 +166,11 @@ import {
 	type BootPhase,
 	type RenderRequest,
 	type WriteWorkload
-} from './drupal/site-php';
-import { SODIUM_FIX, installAead, installBlake2b } from './drupal/sodium-fix';
-import { tcpLive } from './drupal/tcp-php';
-import { XMLWRITER_FIX } from './drupal/xmlwriter-fix';
-import { ZLIB_FIX, installZlib } from './drupal/zlib-fix';
+} from './drupal/site-php.js';
+import { SODIUM_FIX, installAead, installBlake2b } from './drupal/sodium-fix.js';
+import { tcpLive } from './drupal/tcp-php.js';
+import { XMLWRITER_FIX } from './drupal/xmlwriter-fix.js';
+import { ZLIB_FIX, installZlib } from './drupal/zlib-fix.js';
 import {
 	DAILY_DO_QUOTA,
 	DAILY_ROWS_QUOTA,
@@ -166,7 +180,7 @@ import {
 	secondsUntilUtcReset,
 	spendForToday,
 	type AuthSpend
-} from './ops/auth-budget';
+} from './ops/auth-budget.js';
 import {
 	authorizeUrl,
 	callbackUrl,
@@ -179,35 +193,35 @@ import {
 	revoke,
 	type PendingAuth,
 	type TokenSet
-} from './ops/cf-oauth';
+} from './ops/cf-oauth.js';
 import {
 	CORE_VERSION_KEY,
 	invalidateVersionPinnedCaches,
 	type InvalidationResult
-} from './ops/core-version';
-import { cronOptions, gcPass, writeCursor } from './ops/cron';
+} from './ops/core-version.js';
 import {
 	cronBudget,
 	cronDue,
 	cronIntervalMs,
 	driveCron,
 	drupalCronEnabled
-} from './ops/cron-drive';
+} from './ops/cron-drive.js';
+import { cronOptions, gcPass, writeCursor } from './ops/cron.js';
 import {
 	crossingsSince,
 	emptyCrossings,
 	snapshotCrossings,
 	wrapCrossings,
 	type CrossingTally
-} from './ops/crossings';
-import { dailyLimit, degradation, readOnlyResponse, type Degradation } from './ops/degrade';
+} from './ops/crossings.js';
+import { dailyLimit, degradation, readOnlyResponse, type Degradation } from './ops/degrade.js';
 import {
 	ensureFleetTable,
 	reportSite,
 	shouldReport,
 	type FleetDb,
 	type FleetRow
-} from './ops/fleet';
+} from './ops/fleet.js';
 import {
 	PROVIDERS,
 	authHeaders,
@@ -227,7 +241,7 @@ import {
 	type ProviderId,
 	type PullRequest,
 	type Remote
-} from './ops/git-provider';
+} from './ops/git-provider.js';
 import {
 	branchNames,
 	discoverRefs,
@@ -236,7 +250,7 @@ import {
 	requestRefs,
 	type Advertisement,
 	type SmartRemote
-} from './ops/git-smart';
+} from './ops/git-smart.js';
 import {
 	DEFAULT_POLL_MINUTES,
 	backoffMs,
@@ -248,19 +262,9 @@ import {
 	selectFiles,
 	type PollState,
 	type SyncPlan
-} from './ops/git-sync';
-import { hibernationEligible } from './ops/hibernation';
-import { phpLogCeiling, phpLogPasses } from './ops/log-level';
-import {
-	drainMailQueue,
-	mailDrainEnabled,
-	mailDrainLimit,
-	mailEnvFromSite,
-	mergeMailEnv,
-	queueMail,
-	resolveMailTransport,
-	type MailEnv
-} from './ops/mail';
+} from './ops/git-sync.js';
+import { hibernationEligible } from './ops/hibernation.js';
+import { phpLogCeiling, phpLogPasses } from './ops/log-level.js';
 import {
 	applyDnsPlan,
 	createSendingSubdomain,
@@ -272,12 +276,35 @@ import {
 	requiredDns,
 	zoneRecords,
 	type RecordAction
-} from './ops/mail-onboard';
-import { resolveInstallable } from './ops/oracle';
-import { distOf, metadataUrl, pickVersion, unpackZip, type Registry } from './ops/package-install';
-import { drainPageMirrors, queuePageMirror } from './ops/page-mirror';
-import { KV_OVERRIDABLE, isFree, isPaid, planFlag, resolveSettings, type PlanKv } from './ops/plan';
-import { planProfile, resolvePlanNumber } from './ops/plan-profile';
+} from './ops/mail-onboard.js';
+import {
+	drainMailQueue,
+	mailDrainEnabled,
+	mailDrainLimit,
+	mailEnvFromSite,
+	mergeMailEnv,
+	queueMail,
+	resolveMailTransport,
+	type MailEnv
+} from './ops/mail.js';
+import { resolveInstallable } from './ops/oracle.js';
+import {
+	distOf,
+	metadataUrl,
+	pickVersion,
+	unpackZip,
+	type Registry
+} from './ops/package-install.js';
+import { drainPageMirrors, queuePageMirror } from './ops/page-mirror.js';
+import { planProfile, resolvePlanNumber } from './ops/plan-profile.js';
+import {
+	KV_OVERRIDABLE,
+	isFree,
+	isPaid,
+	planFlag,
+	resolveSettings,
+	type PlanKv
+} from './ops/plan.js';
 import {
 	isQuarantined,
 	parseState,
@@ -285,7 +312,7 @@ import {
 	release,
 	serialiseState,
 	shouldRollback
-} from './ops/repair';
+} from './ops/repair.js';
 import {
 	assemble,
 	fillIdentity,
@@ -295,9 +322,9 @@ import {
 	shellSafety,
 	type Identity,
 	type IdentitySlot
-} from './ops/shell-assembly';
-import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock';
-import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin';
+} from './ops/shell-assembly.js';
+import { SHIPPED_CORE_VERSION, SHIPPED_LOCK_VERSIONS } from './ops/shipped-lock.js';
+import { ORIGIN_KEY, chooseOrigin, pinnable } from './ops/site-origin.js';
 import {
 	OWNER_TOKEN_KEY,
 	bearerToken,
@@ -308,7 +335,7 @@ import {
 	randomKeyBase64,
 	tokenMatches,
 	type SecretStore
-} from './ops/site-secrets';
+} from './ops/site-secrets.js';
 import {
 	RingBuffer,
 	SEVERITY,
@@ -319,8 +346,8 @@ import {
 	runHostTripwires,
 	type Finding,
 	type Observation
-} from './ops/supervisor';
-import { projectImageTransforms } from './ops/thresholds';
+} from './ops/supervisor.js';
+import { projectImageTransforms } from './ops/thresholds.js';
 import {
 	ensureUpdbTables,
 	readRun as readUpdbRun,
@@ -328,8 +355,13 @@ import {
 	updbOptions,
 	updbStep,
 	type UpdbDeps
-} from './ops/updb';
-import { DEFAULT_OPCACHE_MODE, opcacheIni, opcacheMode, type OpcacheMode } from './runtime/opcache';
+} from './ops/updb.js';
+import {
+	DEFAULT_OPCACHE_MODE,
+	opcacheIni,
+	opcacheMode,
+	type OpcacheMode
+} from './runtime/opcache.js';
 
 // held in cfw_meta rather than KV: an operator-writable client id is a phishing surface, see
 // the docblock in ops/cf-oauth.ts
@@ -767,8 +799,8 @@ class PhpStatic extends PhpBase {
 					// the opcache seam. `src/runtime/opcache.ts` carries the three arms and why the
 					// write-only file cache is still the shipping one; `OPCACHE_MODE` selects
 					...opcacheIni(mode),
-					// a wasm-side OOM is otherwise completely silent: PHP turns the heap
-					// refusal into exit(1) with nothing on stderr (AGENT-FINDINGS A.1)
+					// NOT a guard: `USE_ZEND_ALLOC=0`, so the check that would enforce this is in an
+					// allocator that is off -- measured, an 8M cap holds 38 MB. See php-allocator.spec
 					'memory_limit=96M'
 				].join('\n'),
 				printErr: (t: string) => note(`err: ${t}`),
@@ -1197,12 +1229,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	phpLaneEntries?: number;
 	storageLaneServes?: number;
 	/**
-	 * Trend rings for the three signals a slope is claimed about.
-	 *
-	 * Held here rather than inside `src/ops/supervisor.ts`, which is not allowed to own state: a
-	 * tripwire keeping its own history would keep a poisoned observation alive across the very
-	 * recycle the layer exists to survive. In-memory on purpose -- an eviction should forget the
-	 * trend rather than resume a stale one.
+	 * Trend rings for the three signals a slope is claimed about. Held here rather than in
+	 * `src/ops/supervisor.ts`, which owns no state: a tripwire keeping its own history would carry
+	 * a poisoned observation across the recycle the layer exists to survive.
 	 */
 	memoryRing = new RingBuffer();
 	rowsRing = new RingBuffer();
@@ -1211,6 +1240,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	pageBytes = new Map<string, number[]>();
 	/** what the last supervised alarm found, for `/__health` */
 	lastFindings?: Finding[];
+	/** speculative replays whose read touches no table the buffer writes; see execTxn() */
+	txnSkippable?: number;
+	/** statements those replays ran, which is the size of the lever rather than its value */
+	txnSkippableStatements?: number;
+	/** why a replay was NOT skippable, so no opportunity reads differently from a blind parser */
+	txnSkipUnparseable?: number;
+	txnSkipUnattributed?: number;
+	txnSkipOverlap?: number;
+	/** the split a read filter lives or dies on: a replay with no read has nothing to filter */
+	txnSpeculativeWithRead?: number;
+	txnSpeculativeNoRead?: number;
+	/** the counted storage handle; `storage-metered.spec.ts` fails on a direct `ctx.storage` write */
+	storage: DurableObjectStorage;
 	// #endregion
 
 	constructor(ctx: DurableObjectState, env: SiteEnv) {
@@ -1223,29 +1265,21 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.heapRestore = null;
 		this.heapRestoreCursor = null;
 		this.migrated = false;
-		// counts the HOST's writes as well as Drupal's; see countingSql(). Now installed
-		// UNCONDITIONALLY, where it used to be gated on PW_DIAGNOSTICS, because the daily
-		// rows-written meter is a product reading rather than a diagnostic: the Limits page
-		// showed "nothing measures this yet" for the one meter that binds regeneration.
-		//
-		// The per-table tally stays opt-in behind the routes that arm it. What is always on is
-		// one addition per WRITE statement and nothing at all on a read.
-		this.sql = countingSql(
-			this.sql,
-			() => this.writeTally,
-			(rows) => {
-				this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + rows;
-			}
-		);
+		// counts the HOST's writes as well as Drupal's, and UNCONDITIONALLY: the daily rows meter
+		// is a product reading rather than a diagnostic. The per-table tally stays route-gated
+		const charge = (rows: number) => {
+			this.rowsSinceFlush = (this.rowsSinceFlush ?? 0) + rows;
+		};
+		this.sql = countingSql(this.sql, () => this.writeTally, charge);
+		// the KV half of the same meter: `setAlarm` alone is 360 rows/day on an idle site
+		this.storage = countingStorage(this.ctx.storage, () => this.writeTally, charge);
 	}
 
 	/**
 	 * Builds the interpreter, installs the bridge, mounts the tree. Once.
 	 *
-	 * Lazy rather than in the constructor so boot cost is attributable to a route
-	 * and measurable on its own. /request-boot already proved a static build can
-	 * be instantiated inside a request handler (bootMs 36) -- no runtime codegen,
-	 * so workerd permits it.
+	 * Lazy rather than in the constructor so boot cost is attributable to a route. A static build
+	 * instantiates inside a request handler because it needs no runtime codegen.
 	 */
 	async ensurePhp(opts: { skipRestore?: boolean } = {}): Promise<PhpInstance> {
 		if (this.php) {
@@ -1408,7 +1442,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// the binary and its mount survive to the next firing; the cursor is what makes this
 			// object unservable until the remaining chunks land.
 			if (this.heapRestoreCursor) {
-				await this.ctx.storage.setAlarm(this.nowMs() + 1);
+				await this.storage.setAlarm(this.nowMs() + 1);
 				throw new HeapRestoreIncomplete(this.heapRestoreCursor);
 			}
 		}
@@ -1959,6 +1993,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				let res: TcpResult;
 				if (isTcpUrl(url)) {
 					res = await runTcpExchange(url, sent, this.env ?? {});
+				} else if (isAiUrl(url)) {
+					res = await runAiExchange(url, sent, this.env ?? {});
 				} else {
 					const http = await fetch(url, {
 						method,
@@ -2604,7 +2640,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** one transaction, so a half-written module can never be what the next boot mounts */
 	private gitApply(id: string, plan: SyncPlan, sha: string): void {
 		const now = this.nowMs();
-		this.ctx.storage.transactionSync(() => {
+		this.storage.transactionSync(() => {
 			for (const path of plan.deletes) {
 				this.sql.exec(
 					'DELETE FROM cfw_module_file WHERE path = ? AND package = ?',
@@ -2640,7 +2676,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		sha: string
 	): void {
 		const now = this.nowMs();
-		this.ctx.storage.transactionSync(() => {
+		this.storage.transactionSync(() => {
 			this.sql.exec('DELETE FROM cfw_module_file WHERE package = ?', id);
 			for (const [path, source] of before) {
 				this.sql.exec(
@@ -3699,8 +3735,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const path = last ? String(last.filled) : undefined;
 		const bytes = last && typeof last.bytes === 'number' ? last.bytes : undefined;
 
-		const heap = this.php ? (this.heapBytes(this.php.binary)?.length ?? 0) : 0;
-		if (heap > 0) this.memoryRing.push(heap);
+		// MEMFS resident bytes, not `HEAPU8.length`: total linear memory moves only on a grow, and
+		// two rungs reach the cap, so four rising readings of it cannot happen
+		const lazy = lazyMountBytes(this.mountInfo);
+		const memory =
+			lazy.resident > 0
+				? lazy.resident
+				: this.php
+					? (this.heapBytes(this.php.binary)?.length ?? 0)
+					: 0;
+		if (memory > 0) this.memoryRing.push(memory);
 		const rowsToday = this.dailyRows();
 		const doToday = this.dailyDoRequests();
 		this.rowsRing.push(rowsToday);
@@ -4121,7 +4165,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 */
 	armFillAlarm(): void {
 		try {
-			const armed = this.ctx.storage.setAlarm(this.nowMs() + 1);
+			const armed = this.storage.setAlarm(this.nowMs() + 1);
 			if (armed && typeof armed.catch === 'function') armed.catch(() => {});
 		} catch {
 			/* an unschedulable alarm must not fail the save that triggered it */
@@ -4170,17 +4214,48 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			result.rows = repaired.rows as typeof result.rows;
 			this.wideRepairs = (this.wideRepairs ?? 0) + 1;
 		}
-		// the tally used to be taken HERE, and that was the bug. This override is the PHP driver's
-		// entry point, so it sees Drupal's statements and nothing else -- every write the host makes
-		// on its own behalf goes through `this.sql.exec()` directly. Counting moved into
-		// `countingSql()`, which wraps the storage handle itself and therefore sees both halves;
-		// super.execSql() runs through that same wrapped handle, so these statements are still
-		// counted, exactly once.
+		// the tally is NOT taken here: this is the PHP driver's entry point and sees none of the
+		// host's own writes. `countingSql()` wraps the handle both halves run through
 		if (!this.suppressBump && !this.bumpCoalesced && CACHETAG_WRITE.test(sql)) {
 			this.bumpCoalesced = true;
 			this.bumpGeneration('cachetags');
 		}
 		return result;
+	}
+
+	/**
+	 * Counts speculative replays whose read could not have seen the buffer anyway.
+	 *
+	 * An INSTRUMENT, not a lever: skipping a replay also skips `rememberResults()`, and an
+	 * unresolved buffer index is answered by another replay. Measured, the count is zero -- every
+	 * replay on a content write carries no read at all.
+	 */
+	override execTxn(req: TxnRequest): ExecTxnResult {
+		const statements = Array.isArray(req?.statements) ? req.statements : [];
+		if (req?.commit === false) {
+			if (req?.read) this.txnSpeculativeWithRead = (this.txnSpeculativeWithRead ?? 0) + 1;
+			else this.txnSpeculativeNoRead = (this.txnSpeculativeNoRead ?? 0) + 1;
+		}
+		if (req?.commit === false && req?.read && statements.length > 0) {
+			const read = readSourceTables(req.read.sql);
+			const written = statements.map((s) => writeTargetTable(s.sql));
+			// WHY it is not skippable is the measurement: no opportunity and a blind classifier
+			// both read as zero, and only one of them closes the row
+			if (!read) this.txnSkipUnparseable = (this.txnSkipUnparseable ?? 0) + 1;
+			else if (written.includes(null)) {
+				this.txnSkipUnattributed = (this.txnSkipUnattributed ?? 0) + 1;
+			} else {
+				const dirty = new Set(written.map((t) => String(t).toLowerCase()));
+				if (read.some((t) => dirty.has(t.toLowerCase()))) {
+					this.txnSkipOverlap = (this.txnSkipOverlap ?? 0) + 1;
+				} else {
+					this.txnSkippable = (this.txnSkippable ?? 0) + 1;
+					this.txnSkippableStatements =
+						(this.txnSkippableStatements ?? 0) + statements.length;
+				}
+			}
+		}
+		return super.execTxn(req);
 	}
 
 	/**
@@ -4223,11 +4298,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/**
 	 * The bins a fill empties on itself.
 	 *
-	 * `dynamic_page_cache` used to be here and was **6 of the 7 charged rows a fill writes**, on the
-	 * meter that binds regeneration. Leaving it warm is measured at 2.37x, byte-identical output, and
-	 * tag invalidation still reaches the warm entry through its checksum. The two things that DID
-	 * depend on the purge are handled where they belong: a non-tag bump purges the bin itself, and
-	 * `gcDynamicPageCache()` bounds it.
+	 * `dynamic_page_cache` used to be here, on the meter that binds regeneration. Leaving it warm is
+	 * **1.4x** on a site whose page table actually fills -- 5 charged rows against 7, byte-identical
+	 * output -- and tag invalidation still reaches the warm entry through its checksum. The two
+	 * things that DID depend on the purge are handled where they belong: a non-tag bump purges the
+	 * bin itself, and `gcDynamicPageCache()` bounds it.
+	 *
+	 * THE FIGURE HERE WAS 2.37x AND THAT ARM STORED NOTHING. It reported the narrow arm at zero
+	 * charged rows, which no working site reaches: `fillOne()` upserts `cfw_page` whenever the
+	 * response is cacheable and that insert is the largest write in a fill.
+	 * `tests/integration/fill-bins.spec.ts` derives the ratio and asserts the store is non-empty
+	 * first, so an arm that measures nothing fails instead of reporting a number.
 	 */
 	static readonly FILL_BINS = ['page'];
 
@@ -4636,7 +4717,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (!this._migrator) {
 			this._migrator = new SqlMigrator({
 				sql: this.sql,
-				storage: this.ctx.storage,
+				storage: this.storage,
 				now: () => this.nowMs(),
 				...assetChunkLoader(this.env, sqlChunkPrefix(this.env))
 			});
@@ -4690,7 +4771,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			`INSERT INTO cfw_meta (k, v) VALUES ('provision_requested', '1')
 			 ON CONFLICT(k) DO NOTHING`
 		);
-		await this.ctx.storage.setAlarm(this.nowMs() + 1);
+		await this.storage.setAlarm(this.nowMs() + 1);
 	}
 
 	async hasMigrationManifest(): Promise<boolean> {
@@ -4776,7 +4857,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							sql: this.sql,
 							runJson: (code: string) => this.runJson(code),
 							phpReady: () => !!this.php,
-							txn: (fn: () => void) => this.ctx.storage.transactionSync(fn),
+							txn: (fn: () => void) => this.storage.transactionSync(fn),
 							nowMs: () => this.nowMs()
 						} satisfies UpdbDeps,
 						updbOptions(this.env)
@@ -4848,7 +4929,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// arm the continuation here rather than only in alarm(), so the very first /migrate
 		// call is enough to finish the job unattended
 		if (!out.done && migrationSelfDrives(this.env)) {
-			await this.ctx.storage.setAlarm(this.nowMs() + 1);
+			await this.storage.setAlarm(this.nowMs() + 1);
 			out.continuation = 'alarm armed';
 		}
 		return { ...out, engine: 'sql' };
@@ -4989,9 +5070,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// however many times an operator rewrites KV
 		await this.adoptSettings();
 		const outcomes: Array<Payload | null> = [];
-		const budgetMs = fillBatchWallMs(this.env);
 		const maxPages = fillBatchSize(this.env);
-		const startedAt = Date.now();
 
 		// An in-flight heap restore OWNS the alarm chain and comes before everything, including
 		// migration.
@@ -5024,7 +5103,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			await this.ctx.storage.setAlarm(this.nowMs() + decision.delayMs);
+			await this.storage.setAlarm(this.nowMs() + decision.delayMs);
 			return outcome;
 		}
 
@@ -5055,7 +5134,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					this.migrateFailures = 0;
 				}
 				const delay = migrateAlarmDelayMs(pending.migrate, this.migrateFailures);
-				await this.ctx.storage.setAlarm(this.nowMs() + delay);
+				await this.storage.setAlarm(this.nowMs() + delay);
 				return pending;
 			}
 		}
@@ -5076,7 +5155,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.lastAlarmOutcome = outcome;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			await this.ctx.storage.setAlarm(
+			await this.storage.setAlarm(
 				this.nowMs() + updbAlarmDelayMs(outcome?.updb, updbOptions(this.env))
 			);
 			return outcome;
@@ -5095,14 +5174,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const repair = parseState(this.metaGet('repair_state'));
 		if (isQuarantined(repair)) {
 			const point = latestImport(this.sql);
-			const decision = shouldRollback(repair, point);
+			const decision = shouldRollback(repair, point, this.nowMs());
 			// DECIDED AND NOW EXECUTED. `shouldRollback()` was computed, recorded in
 			// `lastAlarmOutcome` and dropped, so the rung that exists to restore a site
 			// reported its intention every 60 s and never restored anything.
 			if (decision.rollback && point) {
 				const restore = new SqlMigrator({
 					sql: this.sql,
-					storage: this.ctx.storage,
+					storage: this.storage,
 					now: () => this.nowMs(),
 					...storedImportLoader(this.sql, Number(point.id))
 				});
@@ -5112,7 +5191,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				this.lastAlarmOutcome = { rollback: decision, restore: out };
 				this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 				this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-				await this.ctx.storage.setAlarm(this.nowMs() + (out.done ? 60_000 : 1));
+				await this.storage.setAlarm(this.nowMs() + (out.done ? 60_000 : 1));
 				return this.lastAlarmOutcome;
 			}
 			this.lastAlarmOutcome = {
@@ -5125,7 +5204,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
 			// a slow tick: nothing here is urgent, because the site is still serving
-			await this.ctx.storage.setAlarm(this.nowMs() + 60_000);
+			await this.storage.setAlarm(this.nowMs() + 60_000);
 			return this.lastAlarmOutcome;
 		}
 
@@ -5136,7 +5215,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (this.migratePartial()) {
 			this.lastAlarmOutcome = { skipped: 'migration incomplete' };
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
-			await this.ctx.storage.setAlarm(this.nowMs() + 1000);
+			await this.storage.setAlarm(this.nowMs() + 1000);
 			return this.lastAlarmOutcome;
 		}
 
@@ -5184,10 +5263,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// nothing left to do, or the object has been busy long enough
 			if (!outcome || (outcome.filled === null && outcome.failed === undefined)) break;
 			if ((outcome.remaining ?? 0) === 0) break;
-			if (Date.now() - startedAt >= budgetMs) {
-				outcomes.push({ stopped: 'wall-budget', afterPages: i + 1 });
-				break;
-			}
+			// no wall-clock break: the clock does not advance across a synchronous `php._run()`,
+			// so `fillBatchSize` is what bounds the batch
 		}
 
 		this.lastAlarmOutcome = outcomes.length === 1 ? outcomes[0] : outcomes;
@@ -5235,28 +5312,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 		}
 
-		// DRUPAL'S OWN CRON, and until now it had never run on any site.
+		// DRUPAL'S OWN CRON, which until now had never run on any site: `gcPass()` is host-side SQL
+		// that never enters the interpreter, so `hook_cron` was never invoked and Scheduler,
+		// Search API and Simple XML Sitemap installed cleanly and did nothing.
 		//
-		// `gcPass()` above is host-side SQL that never enters the interpreter, so `hook_cron` was
-		// never invoked at all -- which is exactly why scheduler, simple_sitemap and search_api
-		// indexing install cleanly and then silently do nothing. A module that enables and never
-		// runs is worse than a refusal, because the site looks fine.
-		//
-		// Sliced, and bounded three ways: `cronStep()` runs one unit per firing, and the budget
-		// caps units, rows and wall time. Placed after GC and before the HTTP drain for the same
-		// reason both sit after the fills -- a waiting visitor outranks background work.
-		//
-		// ON by default, off with DRUPAL_CRON=0. It shipped off, which quietly made six contrib
-		// modules do nothing at all -- Scheduler never publishes, Search API never indexes, Simple
-		// XML Sitemap never generates -- with no error anywhere, because "cron has not run" is
-		// indistinguishable from "there was nothing to do". The budget is what makes the default
-		// safe: 6 units / 500 rows / 500 ms per firing is under 0.5% of the daily row budget, so a
-		// site cronning every alarm all day cannot consume the regeneration ceiling.
-		const cronLastRun = (await this.ctx.storage.get<number>('cronLastRunMs')) ?? null;
+		// ON by default, off with DRUPAL_CRON=0, and the budget is what makes that safe: 6 units /
+		// 500 rows / 500 ms per firing is under 0.5% of the daily row budget. Placed after GC and
+		// before the HTTP drain, because a waiting visitor outranks background work.
+		const cronLastRun = (await this.storage.get<number>('cronLastRunMs')) ?? null;
 		if (drupalCronEnabled(this.env) && cronLastRun === null) {
 			// start the clock without running: the first pass lands one interval from here rather
 			// than on the busiest alarm the site will ever have
-			await this.ctx.storage.put('cronLastRunMs', this.nowMs());
+			await this.storage.put('cronLastRunMs', this.nowMs());
 		} else if (
 			drupalCronEnabled(this.env) &&
 			// the quota ladder's first rung: cron is regeneration nobody is waiting on, so it stops
@@ -5265,9 +5332,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			cronDue(cronLastRun, this.nowMs(), cronIntervalMs(this.env))
 		) {
 			try {
-				await this.ctx.storage.put('cronLastRunMs', this.nowMs());
+				await this.storage.put('cronLastRunMs', this.nowMs());
 				const driven = await driveCron(
-					await this.ctx.storage.get<string>('cronCursor'),
+					await this.storage.get<string>('cronCursor'),
 					{ sql: this.sql, runJson: (code: string) => this.runJson(code) },
 					// the origin is the site's, read from the pin rather than from a request:
 					// cron has none, and a mail link built against the default points the
@@ -5275,7 +5342,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					{ ...cronOptions(this.env), origin: this.canonicalOrigin(null) },
 					cronBudget(this.env)
 				);
-				await this.ctx.storage.put('cronCursor', writeCursor(driven.cursor));
+				await this.storage.put('cronCursor', writeCursor(driven.cursor));
 				this.lastCron = driven;
 				this.lastCronAt = Date.now();
 			} catch (e: any) {
@@ -5475,7 +5542,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.consecutiveFillFailures =
 			cls === 'failure' ? (this.consecutiveFillFailures ?? 0) + 1 : 0;
 		this.lastAlarmClass = cls;
-		await this.ctx.storage.setAlarm(this.nowMs() + delayMs);
+		await this.storage.setAlarm(this.nowMs() + delayMs);
 		return this.lastAlarmOutcome;
 	}
 
@@ -5894,26 +5961,6 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						probe: await this.runJson(PROBE_RUNTIME)
 					});
 
-				// the other half of MIGRATE_DB: a site that cannot be extracted is not a
-				// product. Streams as SQL text so a fleet backup can push it to R2.
-				/**
-				 * Dumps the database as replayable SQL, host-side rather than through PHP.
-				 *
-				 * `dumpDatabase()` reads `typeof()` and `hex()` and never the column, so no value
-				 * crosses a double; the PHP fragment could not represent BLOB, NUL or wide integers.
-				 */
-				/**
-				 * Stores a dump as a restore point and arms the alarm to replay it.
-				 *
-				 * The replay runs on the alarm because the invocation that accepts the upload must
-				 * not also be the one holding a half-overwritten site open.
-				 */
-				/**
-				 * Answers whether the presented bearer token owns this site.
-				 *
-				 * Separate from `/__export` because the Worker in front decides BEFORE it proxies: a
-				 * 401 must not cost a database dump.
-				 */
 				/**
 				 * The health ledger, the repair state and what the last alarm found.
 				 *
@@ -5931,7 +5978,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					return Response.json({
 						repair: state,
 						quarantined: isQuarantined(state),
-						rollback: shouldRollback(state, latestImport(this.sql)),
+						rollback: shouldRollback(state, latestImport(this.sql), this.nowMs()),
 						lastFindings: this.lastFindings ?? [],
 						ledger: this.sql
 							.exec(
@@ -6426,7 +6473,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * operator cannot reach the 30-day window at all.
 				 */
 				case '/__pitr': {
-					const storage = this.ctx.storage as unknown as {
+					const storage = this.storage as unknown as {
 						getCurrentBookmark?: () => Promise<string>;
 						getBookmarkForTime?: (at: Date) => Promise<string>;
 						onNextSessionRestoreBookmark?: (b: string) => Promise<string>;
@@ -6514,12 +6561,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						);
 					}
 					const stored = storeImport(this.sql, await request.text(), {
-						storage: this.ctx.storage,
+						storage: this.storage,
 						generation: url.searchParams.get('label') ?? String(this.nowMs()),
 						source: '/__restore',
 						nowMs: this.nowMs()
 					});
-					await this.ctx.storage.setAlarm(this.nowMs() + 1);
+					await this.storage.setAlarm(this.nowMs() + 1);
 					return Response.json({ ok: true, ...stored });
 				}
 
@@ -7294,6 +7341,49 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					return Response.json({ first, drained, second });
 				}
 
+				/**
+				 * One queued inference, driven the way PHP would drive it.
+				 *
+				 * Queue, drain, read -- three steps rather than one call, because that IS
+				 * the tier: the interpreter cannot await, so the answer is only ever read
+				 * on an invocation after the one that asked. The neuron figure is
+				 * PROJECTED from the published rate, not metered; the binding does not
+				 * return a count.
+				 */
+				case '/__ai': {
+					const model =
+						url.searchParams.get('model') ?? (allowedModels(this.env)[0] as string);
+					const prompt = url.searchParams.get('prompt') ?? 'Say hello in five words.';
+					const input = url.searchParams.get('text')
+						? { text: [url.searchParams.get('text') as string] }
+						: { prompt };
+					const body = JSON.stringify(input);
+					const queueUrl = aiQueueUrl(model);
+					this.queueHttp(queueUrl, 'POST', body, {});
+					const drained = await this.drainHttpQueue(3);
+					const row = this.sql
+						.exec<Row<{ status: number; body: string }>>(
+							'SELECT status, body FROM cfw_http_cache WHERE key = ?',
+							deferredKey('POST', queueUrl, body, {})
+						)
+						.toArray()[0];
+					// a rough token count so the projection has an input; four characters per
+					// token is the usual approximation and it is labelled as one
+					const inputTokens = Math.ceil(body.length / 4);
+					return Response.json({
+						enabled: aiEnabled(this.env),
+						model,
+						allowed: allowedModels(this.env),
+						drained,
+						status: row?.status ?? null,
+						answer: row?.body ?? null,
+						neurons: {
+							projected: neuronCost(model, inputTokens, 500),
+							basis: 'published rate x approx 4 chars/token, 500 output tokens'
+						}
+					});
+				}
+
 				case '/__httpdrain':
 					return Response.json(
 						await this.drainHttpQueue(Number(url.searchParams.get('limit') ?? 5))
@@ -7452,9 +7542,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// /user/login never fill. Pull the alarm in whenever it is further away
 					// than the next tick.
 					const soon = this.nowMs() + 1;
-					const existing = await this.ctx.storage.getAlarm();
+					const existing = await this.storage.getAlarm();
 					if (existing === null || existing > soon + 50) {
-						await this.ctx.storage.setAlarm(soon);
+						await this.storage.setAlarm(soon);
 					}
 
 					// Rendering here is safe against the gate: fetch() takes the one gate
@@ -7511,12 +7601,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// One `ctx.storage.put`, inside the ~13 rows a real render already writes,
 						// so the accounting does not meaningfully change what it accounts for.
 						if (authenticated) {
-							const stored = await this.ctx.storage.get<AuthSpend>('authSpend');
+							const stored = await this.storage.get<AuthSpend>('authSpend');
 							// spendForToday() discards a record from another UTC day rather than
 							// carrying it, which is what makes the budget daily rather than forever
 							const today = spendForToday(stored ?? null);
 							today.renders += 1;
-							await this.ctx.storage.put('authSpend', today);
+							await this.storage.put('authSpend', today);
 							this.authSpend = today;
 						}
 						// try the stored shell before paying for a render. Never for a submission,
@@ -7690,6 +7780,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const txnBefore = this.txnCount ?? 0;
 					const txnStmtBefore = this.txnStatements ?? 0;
 					const specBefore = this.txnSpeculative ?? 0;
+					const skipBefore = this.txnSkippable ?? 0;
+					const skipStmtBefore = this.txnSkippableStatements ?? 0;
 					const t0 = Date.now();
 					const php = await this.runJson(
 						saveNode({
@@ -7705,6 +7797,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						transactions: (this.txnCount ?? 0) - txnBefore,
 						transactionStatements: (this.txnStatements ?? 0) - txnStmtBefore,
 						speculativeReplays: (this.txnSpeculative ?? 0) - specBefore,
+						skippableReplays: (this.txnSkippable ?? 0) - skipBefore,
+						skippableStatements: (this.txnSkippableStatements ?? 0) - skipStmtBefore,
 						generationBefore: genBefore,
 						generationAfter: this.generation(),
 						cfwPageRowsBefore: cachedBefore,
@@ -7728,6 +7822,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const before = this.queryCount;
 					const txnBefore = this.txnCount ?? 0;
 					const specBefore = this.txnSpeculative ?? 0;
+					// rows and bytes here; CPU comes from the platform meter, which is per-object
+					const rowsBefore = this.dailyRows();
+					const bytesBefore = Number(this.sql.databaseSize);
 					const t0 = Date.now();
 					const php = await this.runJson(
 						writeWorkload(op as WriteWorkload, {
@@ -7735,13 +7832,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							nid: Number(url.searchParams.get('nid') ?? 0)
 						})
 					);
+					const bytesAfter = Number(this.sql.databaseSize);
 					return Response.json({
 						...php,
 						op,
 						wallMs: Date.now() - t0,
 						hostStatementsTotal: this.queryCount - before,
 						transactions: (this.txnCount ?? 0) - txnBefore,
-						speculativeReplays: (this.txnSpeculative ?? 0) - specBefore
+						speculativeReplays: (this.txnSpeculative ?? 0) - specBefore,
+						chargedRows: this.dailyRows() - rowsBefore,
+						databaseSizeBefore: bytesBefore,
+						databaseSizeAfter: bytesAfter,
+						databaseSizeDelta: bytesAfter - bytesBefore
 					});
 				}
 
@@ -7876,8 +7978,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// gate and this is what makes a DEPLOYED firing observable
 						cron: {
 							enabled: drupalCronEnabled(this.env),
-							lastRunMs:
-								(await this.ctx.storage.get<number>('cronLastRunMs')) ?? null,
+							lastRunMs: (await this.storage.get<number>('cronLastRunMs')) ?? null,
 							intervalMs: cronIntervalMs(this.env)
 						},
 						// PHP-to-host crossings for the LAST render, per capability. Not a billed
@@ -7894,7 +7995,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// from Cloudflare's condition list, so the keep-warm chain costs a row per
 						// arm and buys no residency
 						hibernation: hibernationEligible({
-							pendingAlarm: (this.alarmFirings ?? 0) > 0,
+							// ARMED, not ever-fired: `alarmFirings` is true forever after the first
+							pendingAlarm: (await this.storage.getAlarm()) !== null,
 							outboundSocket: this.mailSocketOpen === true
 						}),
 						cached: this.sql
@@ -8066,7 +8168,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 */
 				case '/__armfill': {
 					const queued = this.queueDepth();
-					if (queued > 0) await this.ctx.storage.setAlarm(this.nowMs() + 1);
+					if (queued > 0) await this.storage.setAlarm(this.nowMs() + 1);
 					return Response.json({ ok: true, queued, armed: queued > 0 });
 				}
 
@@ -8094,7 +8196,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					let rolledBack = 0;
 					for (let i = 0; i < speculations; i++) {
 						try {
-							this.ctx.storage.transactionSync(() => {
+							this.storage.transactionSync(() => {
 								this.sql.exec(
 									'INSERT INTO cfw_txn_probe (data) VALUES (?)',
 									`spec-${i}`

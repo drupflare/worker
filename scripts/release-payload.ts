@@ -39,8 +39,18 @@ import { decodeLatin1, readEntry, readPack } from './scrub-pack-secrets';
 /** the only two directories a payload may write into; `vendor/` is deliberately not one of them */
 export const PAYLOAD_ROOTS = ['assets/', '.interp/'] as const;
 
-/** one entry of the payload plan: a single file, or every file under a directory */
-export type PlanEntry = { readonly path: string; readonly dir?: boolean };
+/**
+ * One entry of the payload plan: a single file, or every file under a directory.
+ *
+ * `optional` is for a directory whose EMPTINESS is a legitimate outcome rather than a build that did
+ * not finish. `assets/themes` is the case: a site with no contrib or custom theme produces nothing
+ * there, and requiring a representative file broke `build:local` on exactly such a checkout.
+ */
+export type PlanEntry = {
+	readonly path: string;
+	readonly dir?: boolean;
+	readonly optional?: boolean;
+};
 
 /**
  * The asset half of the payload, declared rather than re-derived.
@@ -54,7 +64,7 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/prefill.json' },
 	{ path: 'assets/core', dir: true },
 	{ path: 'assets/modules', dir: true },
-	{ path: 'assets/themes', dir: true },
+	{ path: 'assets/themes', dir: true, optional: true },
 	{ path: 'assets/drupal-pf/core.pf.json' },
 	{ path: 'assets/drupal-pf/core.pf.bin' },
 	{ path: 'assets/drupal-sql', dir: true }
@@ -246,7 +256,9 @@ export function expandPlan(root: string, plan: ReturnType<typeof payloadPlan>): 
 	for (const entry of [...plan.assets, ...plan.records]) {
 		const abs = join(root, entry.path);
 		if (!existsSync(abs)) {
-			missing.push(entry.path);
+			// an optional directory that does not exist is a site with nothing to put in it, not a
+			// build that stopped early
+			if (!entry.optional) missing.push(entry.path);
 			continue;
 		}
 		if (entry.dir) out.push(...walk(root, entry.path));

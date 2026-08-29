@@ -398,11 +398,16 @@ describe('a source-built tree carries everything the payload does', () => {
 		// runtime, so "needs a deploy" was never true
 		const produced = LOCAL_STEPS.flatMap((s) => [...s.produces, ...(s.refreshes ?? [])]);
 		const unproduced = PAYLOAD_ASSETS.filter((asset) =>
-			// a payload DIRECTORY entry is covered by a step producing anything inside it: `sql` names
-			// `drupal-sql/manifest.json`, because a directory that exists and is empty is not built
-			asset.dir
-				? !produced.some((p) => p.startsWith(`${asset.path}/`))
-				: !produced.includes(asset.path)
+			// an OPTIONAL entry has no representative file by definition: `assets/themes` is empty on
+			// a checkout with no contrib theme, and demanding one there is what broke `build:local`
+			asset.optional
+				? false
+				: // a payload DIRECTORY entry is covered by a step producing anything inside it: `sql`
+					// names `drupal-sql/manifest.json`, because a directory that exists and is empty
+					// is not built
+					asset.dir
+					? !produced.some((p) => p.startsWith(`${asset.path}/`))
+					: !produced.includes(asset.path)
 		).map((a) => a.path);
 		expect(unproduced, 'the payload ships an artifact nothing here builds').toEqual([]);
 	});

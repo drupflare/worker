@@ -445,15 +445,14 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		id: 'static',
 		title: 'copy the browser-fetchable core and contrib trees into the Workers Assets directory',
 		// one representative file per subtree rather than the directories, so a half-finished copy
-		// does not read as done the way a non-empty directory would. ALL THREE, because
-		// `assets/core/` cannot answer `/modules/contrib/**` or `/themes/contrib/**`, and the css
-		// of an enabled module or theme would 404 without them. `assets:static` has always written
-		// the themes subtree; it was the payload and `.assetsignore` that never carried it
-		produces: [
-			'assets/core/misc/drupal.js',
-			'assets/modules/contrib/token/css/token.css',
-			'assets/themes/contrib/uswds_base/starterkits/uswds_base_subtheme/css/uswds_base.css'
-		],
+		// does not read as done the way a non-empty directory would. BOTH, because `assets/core/`
+		// cannot answer `/modules/contrib/**` and an enabled module's css would 404 without it.
+		//
+		// `assets/themes` is written by the same command and is NOT named here: a checkout with no
+		// contrib or custom theme produces an empty one, which is a real outcome rather than a
+		// half-finished copy. Naming a representative file broke `build:local` on such a checkout,
+		// so the payload carries that entry as optional instead
+		produces: ['assets/core/misc/drupal.js', 'assets/modules/contrib/token/css/token.css'],
 		inputs: ['drupal-src/core/lib/Drupal.php'],
 		tools: ['bun'],
 		commands: () => [['bun', 'run', 'assets:static']],

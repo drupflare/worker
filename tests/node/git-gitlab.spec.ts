@@ -95,9 +95,11 @@ beforeAll(async () => {
 		skip = true;
 	}
 	if (skip) {
-		if (process.env.CI) {
+		// CFW_RIG rather than CI; see the note in git-forge.spec.ts. GitLab is behind
+		// `--profile heavy` and wants ~4 GB, so the gate could not start it even if it wanted to
+		if (process.env.CFW_RIG) {
 			throw new Error(
-				`e2e: no GitLab at ${BASE} (required in CI). Start it with ` +
+				`e2e: no GitLab at ${BASE} (CFW_RIG is set, so one was expected). Start it with ` +
 					'`docker compose -f docker/compose.yml --profile heavy up -d gitlab`.'
 			);
 		}

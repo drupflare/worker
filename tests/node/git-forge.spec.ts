@@ -127,9 +127,14 @@ beforeAll(async () => {
 		skip = true;
 	}
 	if (skip) {
-		if (process.env.CI) {
+		// CFW_RIG, not CI. This spec lives in the NODE lane, which `bun run test` runs and which
+		// CLAUDE.md requires to stay hermetic -- and the gate workflow starts no containers, so
+		// keying on CI made every gate run demand a rig nothing provides. The loud failure is kept
+		// for a lane that DECLARES it brought one up, which is where a silent skip would hide a
+		// broken rig
+		if (process.env.CFW_RIG) {
 			throw new Error(
-				`e2e: no ${FORGE} at ${BASE} (required in CI). ` +
+				`e2e: no ${FORGE} at ${BASE} (CFW_RIG is set, so one was expected). ` +
 					`Start it with \`docker compose -f docker/compose.yml up -d ${FORGE}\`.`
 			);
 		}

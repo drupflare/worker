@@ -179,7 +179,19 @@ describe('a site as a delta against another site image', () => {
 					//
 					// `fillOne()` renders inline in this invocation, so the page exists before
 					// anything asks for it and the serve below is a plain HIT with nothing to wait on.
-					await site.fillOne('/');
+					// AND ITS OUTCOME IS CHECKED. Driving the fill removed the race with the alarm
+					// and then discarded what the fill said, so a fill that did not store the page
+					// came back one line later as `503 warming` -- the same message the race used
+					// to produce, naming nothing. Under full-suite load the render can lose the
+					// gate, which is transient and not the property this file measures, so it is
+					// retried; a fill that keeps failing now fails with its own reason.
+					let outcome = await site.fillOne('/');
+					for (let attempt = 0; attempt < 3 && outcome.filled !== '/'; attempt++) {
+						outcome = await site.fillOne('/');
+					}
+					expect(outcome.filled, `/ was not filled: ${JSON.stringify(outcome)}`).toBe(
+						'/'
+					);
 					const served = await call(site, '/__serve?path=/&edge=0');
 					expect(served.status, await served.clone().text()).toBe(200);
 				});

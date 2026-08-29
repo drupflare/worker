@@ -74,6 +74,7 @@ function checkout(seam: string, ignore?: string): string {
 				'!/prefill.json',
 				'!/core/',
 				'!/modules/',
+				'!/themes/',
 				'!/drupal-pf/',
 				'/drupal-pf/*',
 				'!/drupal-pf/core.pf.json',
@@ -89,6 +90,9 @@ function checkout(seam: string, ignore?: string): string {
 	// shipping its own css or js used to 404 on every page that included it
 	mkdirSync(join(root, 'assets/modules/contrib/token/css'), { recursive: true });
 	writeFileSync(join(root, 'assets/modules/contrib/token/css/token.css'), '.t{}');
+	// and the theme half, which `assets:static` built and neither list carried
+	mkdirSync(join(root, 'assets/themes/contrib/example/css'), { recursive: true });
+	writeFileSync(join(root, 'assets/themes/contrib/example/css/example.css'), '.e{}');
 	writeFileSync(join(root, 'assets/drupal-pf/core.pf.json'), '[]');
 	writeFileSync(join(root, 'assets/drupal-pf/core.pf.bin'), 'binary');
 	writeFileSync(join(root, 'assets/drupal-sql/manifest.json'), '{"chunks":1}');
@@ -188,8 +192,9 @@ describe('expanding the plan to files', () => {
 		// the static tree is a directory entry too, and it is walked rather than named
 		expect(files).toContain('assets/core/misc/drupal.js');
 		expect(files).toContain('assets/modules/contrib/token/css/token.css');
+		expect(files).toContain('assets/themes/contrib/example/css/example.css');
 		expect(files).toContain('.interp/zstddec.wasm');
-		expect(files.length).toBe(12);
+		expect(files.length).toBe(13);
 	});
 
 	it('carries the build records the gate reads and the edge never serves', () => {

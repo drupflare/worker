@@ -56,7 +56,15 @@ const STATIC = [
 	['/core/themes/olivero/fonts/lora/lora-v14-latin-regular.woff2', 'a url() inside that CSS'],
 	// the contrib half, and it is a different subtree rather than a deeper path: `assets/core/`
 	// cannot answer `/modules/**`, so the first enabled module shipping its own css 404s
-	['/modules/contrib/token/css/token.css', 'a contrib module stylesheet']
+	['/modules/contrib/token/css/token.css', 'a contrib module stylesheet'],
+	// the THIRD subtree, and it was missing for the whole life of the project. `assets:static`
+	// builds `assets/themes` and neither `.assetsignore` nor `PAYLOAD_ASSETS` carried it, so the
+	// bidirectional check between those two stayed green while both omitted it -- a guard between
+	// two lists cannot see what the packer writes to a third place
+	[
+		'/themes/contrib/uswds_base/starterkits/uswds_base_subtheme/css/uswds_base.css',
+		'a contrib theme stylesheet'
+	]
 ] as const;
 
 /**

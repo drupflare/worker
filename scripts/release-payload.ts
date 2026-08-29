@@ -54,6 +54,7 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/prefill.json' },
 	{ path: 'assets/core', dir: true },
 	{ path: 'assets/modules', dir: true },
+	{ path: 'assets/themes', dir: true },
 	{ path: 'assets/drupal-pf/core.pf.json' },
 	{ path: 'assets/drupal-pf/core.pf.bin' },
 	{ path: 'assets/drupal-sql', dir: true }
@@ -273,6 +274,7 @@ const PRODUCED_BY: Record<string, string> = {
 	'assets/prefill.json': 'bun scripts/lift-prefill.ts (needs a running worker)',
 	'assets/core': 'bun run assets:static (needs drupal-src)',
 	'assets/modules': 'bun run assets:static (needs drupal-src)',
+	'assets/themes': 'bun run assets:static (needs drupal-src)',
 	'assets/drupal/twig-bake.json': 'bun run assets:twig',
 	'assets/drupal-pf': 'bun run assets:twig && bun run assets:core && bun run assets:pack',
 	'assets/drupal-sql': 'bun run assets:sql (needs assets/drupal/site.sqlite)',

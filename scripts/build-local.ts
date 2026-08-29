@@ -445,9 +445,15 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		id: 'static',
 		title: 'copy the browser-fetchable core and contrib trees into the Workers Assets directory',
 		// one representative file per subtree rather than the directories, so a half-finished copy
-		// does not read as done the way a non-empty directory would. BOTH, because `assets/core/`
-		// cannot answer `/modules/contrib/**` and an enabled module's css would 404 without it
-		produces: ['assets/core/misc/drupal.js', 'assets/modules/contrib/token/css/token.css'],
+		// does not read as done the way a non-empty directory would. ALL THREE, because
+		// `assets/core/` cannot answer `/modules/contrib/**` or `/themes/contrib/**`, and the css
+		// of an enabled module or theme would 404 without them. `assets:static` has always written
+		// the themes subtree; it was the payload and `.assetsignore` that never carried it
+		produces: [
+			'assets/core/misc/drupal.js',
+			'assets/modules/contrib/token/css/token.css',
+			'assets/themes/contrib/uswds_base/starterkits/uswds_base_subtheme/css/uswds_base.css'
+		],
 		inputs: ['drupal-src/core/lib/Drupal.php'],
 		tools: ['bun'],
 		commands: () => [['bun', 'run', 'assets:static']],

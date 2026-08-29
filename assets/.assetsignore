@@ -35,6 +35,10 @@
 # layer is the only thing that can answer them. scripts/pack-static.ts writes it
 !/core/
 !/modules/
+# and /themes/, which `assets:static` has always built and nothing ever shipped: the payload list
+# and this file agreed with each other, so the bidirectional check between them stayed green while
+# both were missing the subtree the packer writes. A contrib or custom theme's css 404s without it
+!/themes/
 
 # the lazy mount's per-file pack; prefix is fixed at drupal-pf in @drupflare/cartridge/fs
 !/drupal-pf/

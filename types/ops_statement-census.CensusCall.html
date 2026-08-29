@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">CensusCall</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#fingerprint">fingerprint</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#key">key</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#name">name</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#resultbytes">resultBytes</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rows">rows</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsread">rowsRead</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswritten">rowsWritten</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#table">table</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#viatxn">viaTxn</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L10">src/ops/statement-census.ts:10</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L10">src/ops/statement-census.ts:10</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -43,57 +43,57 @@
 <div class="tsd-comment tsd-typography"><p>the statement's shape, literals and bindings normalised to <code>?</code>; null when it carried no SQL</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L14">src/ops/statement-census.ts:14</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L14">src/ops/statement-census.ts:14</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="key"><span>key</span><a href="#key" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L27">src/ops/statement-census.ts:27</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L27">src/ops/statement-census.ts:27</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="name"><span>name</span><a href="#name" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">name</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the capability crossed for; <code>cfwSqlExec</code> and <code>cfwSqlTxn</code> are the only ones carrying SQL</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L12">src/ops/statement-census.ts:12</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L12">src/ops/statement-census.ts:12</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="resultbytes"><span>result<wbr/>Bytes</span><a href="#resultbytes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">resultBytes</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>bytes the host returned, so a cheap statement with an expensive reply is visible</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L22">src/ops/statement-census.ts:22</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L22">src/ops/statement-census.ts:22</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rows"><span>rows</span><a href="#rows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rows</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows handed back across the bridge, which is not <code>rowsRead</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L20">src/ops/statement-census.ts:20</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L20">src/ops/statement-census.ts:20</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsread"><span>rows<wbr/>Read</span><a href="#rowsread" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsRead</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows SQLite touched, which is what the row-read meter charges</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L17">src/ops/statement-census.ts:17</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L17">src/ops/statement-census.ts:17</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswritten"><span>rows<wbr/>Written</span><a href="#rowswritten" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWritten</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L18">src/ops/statement-census.ts:18</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L18">src/ops/statement-census.ts:18</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="table"><span>table</span><a href="#table" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">table</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L15">src/ops/statement-census.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L15">src/ops/statement-census.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="viatxn"><span>via<wbr/>Txn</span><a href="#viatxn" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">viaTxn</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>true when the statement arrived inside a <code>cfwSqlTxn</code> batch rather than on its own</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b20bcdcf3a009515d01358db08a655b6b4af3ebb/src/ops/statement-census.ts#L24">src/ops/statement-census.ts:24</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/876caf8ea68605c6c818fff67f4afeb05331138f/src/ops/statement-census.ts#L24">src/ops/statement-census.ts:24</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

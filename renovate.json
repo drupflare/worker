@@ -6,6 +6,11 @@
 	"packageRules": [
 		{
 			"matchUpdateTypes": ["minor", "patch", "pin", "digest"]
+		},
+		{
+			"matchPackageNames": ["typescript"],
+			"matchUpdateTypes": ["major"],
+			"enabled": false
 		}
 	]
 }

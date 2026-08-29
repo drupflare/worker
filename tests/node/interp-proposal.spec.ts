@@ -255,12 +255,23 @@ describe('superseding', () => {
 		expect(closing.map((p) => p.number)).toEqual([6, 5, 4]);
 	});
 
-	it('leaves another variant, another version and every other lane open', () => {
-		const open = [
-			pr(8, 'interp/control84-php8.4-1'),
-			pr(9, 'interp/control85-php8.4-1'),
-			pr(3, 'renovate/typescript-7.x')
-		];
+	/**
+	 * THE #16 CASE, and it used to assert the opposite.
+	 *
+	 * This read "leaves another variant open", which sounds careful and was the defect: a proposal
+	 * pinning `control85` sat against a repository shipping `long64`, nothing ever ran for control85
+	 * again, so nothing ever closed it. The same orphaning happens on any future switch, to whichever
+	 * arm was shipping before. One interpreter ships at a time, so one proposal stays open.
+	 */
+	it('closes a proposal for a variant this repository is not shipping', () => {
+		// this file's canonical variant IS control85, so the orphan here is the other arm; live it
+		// was the mirror image, a control85 proposal against a repository shipping long64
+		const open = [pr(16, 'interp/long64-php8.5'), pr(8, 'interp/control84-php8.4-1')];
+		expect(supersede(open, V, P, CANONICAL).map((p) => p.number)).toEqual([16, 8]);
+	});
+
+	it('never touches a lane that is not an interpreter proposal', () => {
+		const open = [pr(3, 'renovate/typescript-7.x'), pr(11, 'renovate/all-minor-patch')];
 		expect(supersede(open, V, P, CANONICAL)).toEqual([]);
 	});
 });

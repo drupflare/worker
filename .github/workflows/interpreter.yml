@@ -70,6 +70,7 @@ jobs:
               echo "workflow_dispatch, which is not filtered."
             } >&2
             echo "SKIPPED=1" >> "$GITHUB_ENV"
+            echo "RETIRE_STALE=1" >> "$GITHUB_ENV"
             exit 0
           fi
           case "$VARIANT" in
@@ -94,6 +95,35 @@ jobs:
             echo "SOURCE_COMMIT=$SOURCE_COMMIT"
             echo "PAYLOAD_TAG=$PAYLOAD_TAG"
           } >> "$GITHUB_ENV"
+
+      - name: Retire Proposals for an Arm This Repository Does Not Ship
+        if: ${{ env.RETIRE_STALE }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          PINNED="$(jq -r '.variant' interp.lock.json)"
+          PINNED_PHP="$(jq -r '.phpVersion' interp.lock.json)"
+          KEEP="interp/${PINNED}-php${PINNED_PHP}"
+          CLOSED=0
+          while read -r NUMBER HEAD; do
+            [ -z "$NUMBER" ] && continue
+            case "$HEAD" in interp/*) ;; *) continue ;; esac
+            [ "$HEAD" = "$KEEP" ] && continue
+            gh pr close "$NUMBER" --delete-branch \
+              --comment "Closed by the interpreter lane: this repository ships \`${PINNED}\` php \`${PINNED_PHP}\`, and one interpreter proposal is open at a time. Adopt another arm with workflow_dispatch." \
+              && CLOSED=$((CLOSED + 1))
+          done < <(gh pr list --state open --limit 200 --json number,headRefName \
+            --jq '.[] | "\(.number) \(.headRefName)"')
+          {
+            echo "## Interpreter proposals retired"
+            echo
+            echo "- Shipping: \`${PINNED}\` php \`${PINNED_PHP}\` (kept: \`${KEEP}\`)"
+            echo "- Closed: $CLOSED"
+            echo
+            echo "A proposal for an arm this repository does not ship would otherwise stay open"
+            echo "forever: nothing runs for that arm again, so nothing closes it."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Bun
         if: ${{ !env.SKIPPED }}

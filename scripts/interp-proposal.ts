@@ -195,7 +195,24 @@ export function decide(input: DecisionInput): Decision {
 	};
 }
 
-/** every open pull request this run replaces; the kept branch is never among them */
+/** whether a branch is an interpreter proposal at all, for ANY variant and version */
+export function isProposalBranch(branch: string): boolean {
+	return /^interp\/.+-php\d+\.\d+(-[0-9]+)?$/.test(branch);
+}
+
+/**
+ * Every open pull request this run replaces; the kept branch is never among them.
+ *
+ * ACROSS VARIANTS, not just within one. This used to retire only proposals matching the SAME
+ * variant and version, which left a proposal for an arm this repository does not ship open forever:
+ * nothing ever ran for that arm again, so nothing ever closed it. #16 pinned `control85` while the
+ * lock said `long64` and would have sat there permanently -- and the same thing happens on any
+ * future switch, where the abandoned arm is whichever one was shipping before.
+ *
+ * One interpreter ships at a time, so one proposal should be open at a time. A human evaluating a
+ * different arm through `workflow_dispatch` still gets their proposal; what closes is the one they
+ * are moving away from, which is the outcome they asked for.
+ */
 export function supersede(
 	open: readonly ProposalPr[],
 	variant: string,
@@ -203,7 +220,10 @@ export function supersede(
 	keep: string | null
 ): ProposalPr[] {
 	return open.filter(
-		(pr) => matchesProposal(pr.headRefName, variant, phpVersion) && pr.headRefName !== keep
+		(pr) =>
+			pr.headRefName !== keep &&
+			(matchesProposal(pr.headRefName, variant, phpVersion) ||
+				isProposalBranch(pr.headRefName))
 	);
 }
 

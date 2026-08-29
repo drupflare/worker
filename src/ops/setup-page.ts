@@ -109,12 +109,32 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'refused');
-    const lines = ['Claimed. Store these now, they are shown once.'];
-    if (data.adminPass) lines.push('admin password: ' + data.adminPass);
+    // the password the visitor typed is one they already have; anything the host generated is
+    // shown once and nowhere else, so that case must not be navigated away from on a timer
+    const chose = Boolean(body.adminPass);
+    const lines = chose
+      ? ['Claimed. Sign in with these:']
+      : ['Claimed. Store these now, they are shown once.'];
+    lines.push('username: admin');
+    if (data.adminPass) lines.push('password: ' + data.adminPass);
+    else if (chose) lines.push('password: the one you just entered');
     if (data.ownerToken) lines.push('owner token: ' + data.ownerToken);
-    lines.push('Log in at /user/login as admin.');
     out.innerHTML = '<pre></pre>';
     out.firstChild.textContent = lines.join('\\n');
+    const go = document.createElement('p');
+    go.innerHTML = '<a href="/user/login">Log in as admin</a>';
+    out.appendChild(go);
+    if (chose) {
+      const note = document.createElement('p');
+      out.appendChild(note);
+      let left = 5;
+      const tick = () => {
+        note.textContent = 'Taking you to the login page in ' + left + '...';
+        if (left-- <= 0) location.href = '/user/login';
+        else setTimeout(tick, 1000);
+      };
+      tick();
+    }
   } catch (err) {
     button.disabled = false;
     out.textContent = 'Could not claim this site: ' + err.message;

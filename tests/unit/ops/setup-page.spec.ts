@@ -62,6 +62,24 @@ describe('the page itself', () => {
 		expect(html).not.toMatch(/<(?:link|img|script)[^>]+(?:src|href)="(?:https?:)?\/\//);
 	});
 
+	/**
+	 * A GENERATED password is shown once and nowhere else, so the page must not navigate away from
+	 * it on a timer. One the visitor typed is one they already have, so it may.
+	 */
+	it('sends the owner to the login page only when they chose the password', () => {
+		expect(html).toContain('const chose = Boolean(body.adminPass)');
+		expect(html).toContain("location.href = '/user/login'");
+		// the redirect sits inside the branch rather than beside it
+		const branch = html.slice(html.indexOf('if (chose) {'));
+		expect(branch).toContain("location.href = '/user/login'");
+		// and a link is always offered, so the no-timer case is not a dead end
+		expect(html).toContain('Log in as admin');
+	});
+
+	it('names the account, not just the password', () => {
+		expect(html).toContain("lines.push('username: admin')");
+	});
+
 	it('tells a crawler to stay away, in the markup and in the headers', () => {
 		expect(html).toContain('name="robots" content="noindex"');
 		const res = setupResponse('https://site.example');

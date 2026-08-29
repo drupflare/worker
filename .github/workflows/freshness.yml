@@ -52,6 +52,14 @@ jobs:
                 continue
                 ;;
             esac
+            if [ "$STATE" = 'UNKNOWN' ]; then
+              for _ in 1 2 3 4 5; do
+                sleep 3
+                STATE="$(gh pr view "$NUMBER" --json mergeStateStatus --jq .mergeStateStatus)"
+                [ "$STATE" != 'UNKNOWN' ] && break
+              done
+              echo "#$NUMBER ($HEAD) resolved to $STATE"
+            fi
             if [ "$STATE" != 'BEHIND' ]; then
               echo "#$NUMBER ($HEAD) is $STATE, nothing to update"
               continue

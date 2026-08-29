@@ -23,8 +23,17 @@ describe('interp.lock.json against cdn-manifest.json', () => {
 			pinned,
 			`${entry.mirrors} is mirrored from the CDN but absent from ${PIN_PATH}`
 		).toBeDefined();
-		expect(pinned?.sha256).toBe(entry.sha256);
-		expect(pinned?.bytes).toBe(entry.bytes);
+		// NAMED, because a bare sha mismatch here reads as a corrupt file and is almost always a
+		// half-finished interpreter bump. The proposal moves `interp.lock.json` alone; the bytes it
+		// names still have to be published, or `restore-artifacts.ts` hands every clean checkout and
+		// every CI run the PREVIOUS binary and the two files disagree forever
+		const remedy =
+			`${entry.mirrors}: ${PIN_PATH} names ${String(pinned?.sha256).slice(0, 12)} and ` +
+			`cdn-manifest.json names ${entry.sha256.slice(0, 12)}. An interpreter bump is two ` +
+			'steps: `bun run backup:cdn` publishes the new bytes, `bun run backup:manifest` ' +
+			'rewrites this manifest, and both land with the pin.';
+		expect(pinned?.sha256, remedy).toBe(entry.sha256);
+		expect(pinned?.bytes, remedy).toBe(entry.bytes);
 	});
 
 	it('names the variant in the CDN key, so the ABI is readable from either file', () => {

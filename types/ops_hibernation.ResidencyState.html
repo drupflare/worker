@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">ResidencyState</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#inflightfetch">inflightFetch</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#outboundsocket">outboundSocket</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pendingalarm">pendingAlarm</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pendingtimer">pendingTimer</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requestinflight">requestInFlight</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#standardwebsocket">standardWebSocket</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L28">src/ops/hibernation.ts:28</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L28">src/ops/hibernation.ts:28</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -40,42 +40,42 @@
 <div class="tsd-comment tsd-typography"><p>an awaited <code>fetch()</code> still in flight</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L32">src/ops/hibernation.ts:32</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L32">src/ops/hibernation.ts:32</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="outboundsocket"><code class="tsd-tag">Optional</code><span>outbound<wbr/>Socket</span><a href="#outboundsocket" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">outboundSocket</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>an outbound TCP socket from <code>connect()</code>, or an outbound WebSocket</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L38">src/ops/hibernation.ts:38</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L38">src/ops/hibernation.ts:38</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pendingalarm"><code class="tsd-tag">Optional</code><span>pending<wbr/>Alarm</span><a href="#pendingalarm" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pendingAlarm</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>an armed alarm; deliberately present and deliberately not disqualifying</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L40">src/ops/hibernation.ts:40</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L40">src/ops/hibernation.ts:40</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pendingtimer"><code class="tsd-tag">Optional</code><span>pending<wbr/>Timer</span><a href="#pendingtimer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pendingTimer</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>a <code>setTimeout</code> or <code>setInterval</code> callback that has not fired</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L30">src/ops/hibernation.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L30">src/ops/hibernation.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="requestinflight"><code class="tsd-tag">Optional</code><span>request<wbr/>In<wbr/>Flight</span><a href="#requestinflight" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">requestInFlight</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>a request or event whose handler has not returned</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L36">src/ops/hibernation.ts:36</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L36">src/ops/hibernation.ts:36</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="standardwebsocket"><code class="tsd-tag">Optional</code><span>standard<wbr/>Web<wbr/>Socket</span><a href="#standardwebsocket" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">standardWebSocket</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the standard WebSocket API, as opposed to the hibernatable one</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/f794a0f85547a15a5dc00f5bd73d1005a29831e8/src/ops/hibernation.ts#L34">src/ops/hibernation.ts:34</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/98fdf51975886988e1ce9222b8149ef7ad702ff9/src/ops/hibernation.ts#L34">src/ops/hibernation.ts:34</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

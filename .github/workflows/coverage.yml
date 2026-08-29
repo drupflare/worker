@@ -47,6 +47,16 @@ jobs:
           key: interp-${{ hashFiles('cdn-manifest.json') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Fetch Drupal Tree
+        run: bun run fetch:drupal
       - name: Pack the Drupal Modules
         run: bun run assets:driver
       - name: Set up PHP
@@ -114,6 +124,16 @@ jobs:
           key: interp-${{ hashFiles('cdn-manifest.json') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Fetch Drupal Tree
+        run: bun run fetch:drupal
       - name: Pack the Drupal Modules
         run: bun run assets:driver
       - name: Set up PHP

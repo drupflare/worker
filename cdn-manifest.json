@@ -247,9 +247,9 @@
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
-			"bytes": 12234574,
-			"sha256": "1a06a07554c136befdce8681777199a67328a906f65cb4f047fd53bbc75b05c9",
-			"md5": "68b3c2f5e1f996bfddfd4e1ce44586e5",
+			"bytes": 12234575,
+			"sha256": "94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458",
+			"md5": "1488008fc46b3182f335beff4d29cad7",
 			"mirrors": ".interp/php8.5.wasm",
 			"note": "the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8"
 		},

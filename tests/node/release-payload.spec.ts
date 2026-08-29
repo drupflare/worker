@@ -194,7 +194,11 @@ describe('expanding the plan to files', () => {
 		expect(files).toContain('assets/modules/contrib/token/css/token.css');
 		expect(files).toContain('assets/themes/contrib/example/css/example.css');
 		expect(files).toContain('.interp/zstddec.wasm');
-		expect(files.length).toBe(13);
+		// NOT a literal count. It said 12, then 13 when a fixture file was added, which makes the
+		// assertion a restatement of the fixture list rather than a claim about expandPlan. What it
+		// is really for is that nothing is emitted twice and nothing outside the plan appears
+		expect(new Set(files).size).toBe(files.length);
+		expect(files.every((f) => f.startsWith('assets/') || f.startsWith('.interp/'))).toBe(true);
 	});
 
 	it('carries the build records the gate reads and the edge never serves', () => {

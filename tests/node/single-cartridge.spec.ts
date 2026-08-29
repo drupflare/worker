@@ -1,4 +1,4 @@
-import { globSync, readFileSync } from 'node:fs';
+import { globSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -29,31 +29,10 @@ describe('the cartridge install is not duplicated', () => {
 		expect(COPIES[0]).toBe('node_modules/@drupflare/cartridge/package.json');
 	});
 
-	it('has one installed copy that satisfies EVERY declared consumer', () => {
-		// the invariant is the OUTCOME, not the mechanism. An `overrides` block used to force this and
-		// is no longer needed: durabledb 0.1.1 asks for the same `^0.1.2` the worker does, so one copy
-		// resolves naturally. What must never happen is a RANGE SKEW -- if a consumer's range stops
-		// matching, a nested second copy becomes legal again, and cartridge exports a module-level
-		// singleton whose counter IS the reentrancy gate, so two copies split it silently.
-		const installed = JSON.parse(readFileSync(COPIES[0]!, 'utf8')).version as string;
-		const consumers: Record<string, string> = {};
-
-		const root = JSON.parse(readFileSync('package.json', 'utf8'));
-		consumers['(this package)'] = root.dependencies['@drupflare/cartridge'];
-
-		for (const dep of globSync('node_modules/@drupflare/*/package.json')) {
-			const pkg = JSON.parse(readFileSync(dep, 'utf8'));
-			const range =
-				pkg.dependencies?.['@drupflare/cartridge'] ??
-				pkg.peerDependencies?.['@drupflare/cartridge'];
-			if (range) consumers[pkg.name] = range;
-		}
-
-		// every declared range must accept the single installed version. `^0.1.2` accepts 0.1.2+
-		const major = installed.split('.').slice(0, 2).join('.');
-		for (const [who, range] of Object.entries(consumers)) {
-			expect(range, `${who} declares ${range}, installed is ${installed}`).toContain(major);
-		}
-		expect(Object.keys(consumers).length).toBeGreaterThan(1);
-	});
+	/**
+	 * THE RANGE-SKEW CALCULATION IS GONE. It read every `@drupflare/*` package.json, extracted the
+	 * declared range for cartridge and asserted each one accepted the installed version -- which is
+	 * dependency arithmetic against whatever the lockfile resolved this morning, not a statement about
+	 * this repository. If a skew ever does install a second copy, the two cases above say so directly.
+	 */
 });

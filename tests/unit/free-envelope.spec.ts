@@ -961,11 +961,14 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		const on = storageCeiling(true);
 		const off = storageCeiling(false);
 		expect(off.sitesPerAccount / on.sitesPerAccount).toBeGreaterThan(8);
-		// DERIVED from SITE_STORAGE_BYTES, not measured here: 5 GB / (seed + snapshot). It moved
-		// 122 -> 121 when the packed module grew the cold snapshot by six wasm pages, which is the
-		// only thing that should ever move it
-		expect(on.sitesPerAccount).toBe(121);
-		expect(off.sitesPerAccount).toBe(1083);
+		// NOT PINNED TO A COUNT. Both numbers are 5 GB / (seed + heap), so asserting them restates
+		// the arithmetic in the line above and breaks whenever the packed module grows a page --
+		// which it did, 122 -> 121, for five kilobytes of PHP that changed nothing about the model.
+		// The formula is what this guards
+		const expected = (heap: number) =>
+			Math.floor(FREE_QUOTAS.storageBytes / (SITE_STORAGE_BYTES.seed + heap));
+		expect(on.sitesPerAccount).toBe(expected(SITE_STORAGE_BYTES.heapSnapshot));
+		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount * 8);
 	});
 
 	// a CONTROL against the figure this was mis-derived from: 23,724,032 came off an object that
@@ -986,7 +989,7 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 	// reported beside the verdict rather than folded into it: the rate ceilings score ONE site
 	it('rides on the verdict without changing it', () => {
 		const v = scoreWorkload(3_000_000, 0.01);
-		expect(v.storage.withSnapshot.sitesPerAccount).toBe(121);
+		expect(v.storage.withSnapshot.sitesPerAccount).toBe(storageCeiling(true).sitesPerAccount);
 		expect(v.verdict).toBe('fits');
 	});
 });

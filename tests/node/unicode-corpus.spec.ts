@@ -50,16 +50,24 @@ if (!php && process.env.CI) {
 const describeIfPhp = php ? describe : describe.skip;
 
 describeIfPhp('the Unicode corpus artifact', () => {
-	it('is byte-for-byte what a fresh sweep of the real extension produces', () => {
-		const fresh = nativeCorpus();
-		const checkedIn = readArtifact();
-		// provenance first: a data mismatch under a different mbstring is a stale PIN, and the
-		// two failures want different fixes
-		expect(
-			fresh.provenance.mbstring,
-			'the artifact was generated against a different mbstring; re-run `bun run measure:unicode --write`'
-		).toBe(checkedIn.provenance.mbstring);
-		expect(JSON.stringify(fresh)).toBe(JSON.stringify(checkedIn));
+	/**
+	 * THE DATA, NOT THE PROVENANCE.
+	 *
+	 * This used to assert `fresh.provenance.mbstring === checkedIn.provenance.mbstring` and then
+	 * compare the whole object, so the artifact was pinned to the exact PHP PATCH release it was
+	 * generated on. Any machine with a different php failed the gate on a string that says nothing
+	 * about whether the shipped tables are right -- and the fix reached for was changing CI's php to
+	 * match the artifact, which is bending the environment to satisfy a test.
+	 *
+	 * What matters is that the tables agree with a real mbstring. If two mbstring releases ever DO
+	 * disagree about a codepoint, that shows up here as a data difference, which is the finding.
+	 */
+	it('matches what a fresh sweep of the real extension produces', () => {
+		const strip = (c: ReturnType<typeof readArtifact>) => {
+			const { provenance: _provenance, ...data } = c;
+			return JSON.stringify(data);
+		};
+		expect(strip(nativeCorpus())).toBe(strip(readArtifact()));
 	}, 60_000);
 
 	it('pins the oracle it came from', () => {

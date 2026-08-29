@@ -9,20 +9,15 @@
 <div class="tsd-page-title">
 <h1>drupflare/worker - v1.0.0</h1></div>
 <div class="tsd-panel tsd-typography"><h1 id="🐘-drupflare-drupal-on-cloudflare-workers" class="tsd-anchor-link">🐘 Drupflare — Drupal on Cloudflare Workers<a href="#🐘-drupflare-drupal-on-cloudflare-workers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1>
-<p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
-<a href="https://github.com/drupflare/worker/actions/workflows/build.yml"><img src="https://github.com/drupflare/worker/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+<p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a></p>
+<hr>
+<p><a href="https://github.com/drupflare/worker/actions/workflows/build.yml"><img src="https://github.com/drupflare/worker/actions/workflows/build.yml/badge.svg" alt="Build"></a>
 <a href="https://github.com/drupflare/worker/actions/workflows/prettier.yml"><img src="https://github.com/drupflare/worker/actions/workflows/prettier.yml/badge.svg" alt="Prettier"></a>
 <a href="https://codecov.io/gh/drupflare/worker"><img src="https://codecov.io/gh/drupflare/worker/branch/master/graph/badge.svg" alt="codecov"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a></p>
 <p><strong>Drupal 11 running on Cloudflare Workers.</strong> No VPS, no container, no origin server — PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit, at 2,671,380 zstd bytes
-against the 3,145,728 free-plan ceiling (<code>interp.lock.json</code>).</p>
-<div class="tsd-alert tsd-alert-note"><div class="tsd-alert-title"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertNote"></use></svg><span>Note</span></div><p>
-No release is published yet, and the deploy button pulls from a release payload. <code>assets/</code> is
-121 MB of generated packs and is gitignored, so <code>bun run build</code> hydrates that payload: a plain
-HTTPS GET of a release asset, with no Docker, no token and no PHP.</p>
-</div>
+the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit.</p>
 <p>The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of <code>cpuTime</code> on a
 deployed worker, and boot work is close to saturated: cutting boot cost per fill by 20x moves the

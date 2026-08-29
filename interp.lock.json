@@ -4,11 +4,11 @@
 	"repo": "drupflare/phasm",
 	"variant": "long64",
 	"phpVersion": "8.5",
-	"artifactId": "9587977159",
+	"artifactId": "9674599820",
 	"frame": {
-		"raw": 12234574,
-		"packed": 2671380,
-		"declared": 12234574
+		"raw": 12234575,
+		"packed": 2671745,
+		"declared": 12234575
 	},
 	"files": [
 		{
@@ -18,13 +18,13 @@
 		},
 		{
 			"path": ".interp/php8.5.wasm",
-			"bytes": 12234574,
-			"sha256": "1a06a07554c136befdce8681777199a67328a906f65cb4f047fd53bbc75b05c9"
+			"bytes": 12234575,
+			"sha256": "94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458"
 		},
 		{
 			"path": ".interp/php8.5.wasm.zst",
-			"bytes": 2671380,
-			"sha256": "1e5018acbe22b7fe385899b8a591968c07d4af3ec71a14db836f86d6e7c093d4"
+			"bytes": 2671745,
+			"sha256": "2e5e143e90e9cae4b095a245b4784f8e2ebccdc2a58a2b55ee673c5298b6fe85"
 		}
 	]
 }

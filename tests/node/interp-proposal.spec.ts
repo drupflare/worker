@@ -7,6 +7,7 @@ import {
 	bumpComment,
 	decide,
 	isLegacyProposalBranch,
+	isProposalBot,
 	matchesProposal,
 	plan,
 	proposalBody,
@@ -240,6 +241,31 @@ describe('whether a branch is still only what the reconciler put there', () => {
 	it('rejects a commit that touched anything else', () => {
 		expect(branchIsPristine(1, ['interp.lock.json', 'src/site-do.ts'])).toBe(false);
 		expect(branchIsPristine(1, ['wrangler.jsonc'])).toBe(false);
+	});
+});
+
+describe('recognising the bot that owns a proposal', () => {
+	/**
+	 * Every shape GitHub renders the same actor in. Comparing the raw string churned #16 -> #17 ->
+	 * #18 on one unchanged branch, because `gh pr list --json author` says `app/github-actions` and
+	 * the constant is the bare name.
+	 */
+	it('accepts the bare login, the app form and the bracket form', () => {
+		expect(isProposalBot('github-actions')).toBe(true);
+		expect(isProposalBot('app/github-actions')).toBe(true);
+		expect(isProposalBot('github-actions[bot]')).toBe(true);
+	});
+
+	it('still refuses a person, which is the guard this protects', () => {
+		expect(isProposalBot('gmitch215')).toBe(false);
+		expect(isProposalBot('app/renovate')).toBe(false);
+		expect(isProposalBot('')).toBe(false);
+	});
+
+	it('reuses a proposal the bot opened rather than replacing it', () => {
+		expect(reusable(pr(18, CANONICAL, 'OPEN', 'app/github-actions'))).toBe(true);
+		expect(reusable(pr(18, CANONICAL, 'OPEN', 'gmitch215'))).toBe(false);
+		expect(reusable(null)).toBe(true);
 	});
 });
 

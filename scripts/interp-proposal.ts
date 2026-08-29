@@ -74,7 +74,22 @@ export const BOT_LOGIN = 'github-actions';
  * to prevent.
  */
 export function reusable(pr: ProposalPr | null): boolean {
-	return pr === null || pr.author === BOT_LOGIN;
+	return pr === null || isProposalBot(pr.author);
+}
+
+/**
+ * Whether a login names the workflow bot, in any of the shapes GitHub renders it.
+ *
+ * COMPARING THE RAW STRING CHURNED EVERY PROPOSAL. `gh pr list --json author` reports an App actor
+ * as `app/github-actions`, the REST API reports `github-actions[bot]`, and `BOT_LOGIN` is the bare
+ * name -- so `reusable()` never recognised the bot's OWN pull request, retired it as if a human had
+ * opened it, and created a replacement on every run. #16 became #17 became #18 on one unchanged
+ * branch, each closed a second before the next was opened, and the reviewer lost the thread every
+ * time. The guard this protects is real (an automated pin must not stay attributed to a person);
+ * only the comparison was wrong.
+ */
+export function isProposalBot(author: string): boolean {
+	return author.replace(/^app\//, '').replace(/\[bot\]$/, '') === BOT_LOGIN;
 }
 
 export type DecisionInput = {

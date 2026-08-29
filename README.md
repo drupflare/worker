@@ -1,6 +1,9 @@
 # 🐘 Drupflare — Drupal on Cloudflare Workers
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker)
+
+---
+
 [![Build](https://github.com/drupflare/worker/actions/workflows/build.yml/badge.svg)](https://github.com/drupflare/worker/actions/workflows/build.yml)
 [![Prettier](https://github.com/drupflare/worker/actions/workflows/prettier.yml/badge.svg)](https://github.com/drupflare/worker/actions/workflows/prettier.yml)
 [![codecov](https://codecov.io/gh/drupflare/worker/branch/master/graph/badge.svg)](https://codecov.io/gh/drupflare/worker)
@@ -8,13 +11,7 @@
 
 **Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server — PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
-the database. **8.5 is what ships**, with nothing dropped to fit, at 2,671,380 zstd bytes
-against the 3,145,728 free-plan ceiling (`interp.lock.json`).
-
-> [!NOTE]
-> No release is published yet, and the deploy button pulls from a release payload. `assets/` is
-> 121 MB of generated packs and is gitignored, so `bun run build` hydrates that payload: a plain
-> HTTPS GET of a release asset, with no Docker, no token and no PHP.
+the database. **8.5 is what ships**, with nothing dropped to fit.
 
 The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of `cpuTime` on a

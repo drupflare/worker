@@ -961,7 +961,10 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		const on = storageCeiling(true);
 		const off = storageCeiling(false);
 		expect(off.sitesPerAccount / on.sitesPerAccount).toBeGreaterThan(8);
-		expect(on.sitesPerAccount).toBe(122);
+		// DERIVED from SITE_STORAGE_BYTES, not measured here: 5 GB / (seed + snapshot). It moved
+		// 122 -> 121 when the packed module grew the cold snapshot by six wasm pages, which is the
+		// only thing that should ever move it
+		expect(on.sitesPerAccount).toBe(121);
 		expect(off.sitesPerAccount).toBe(1083);
 	});
 
@@ -983,7 +986,7 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 	// reported beside the verdict rather than folded into it: the rate ceilings score ONE site
 	it('rides on the verdict without changing it', () => {
 		const v = scoreWorkload(3_000_000, 0.01);
-		expect(v.storage.withSnapshot.sitesPerAccount).toBe(122);
+		expect(v.storage.withSnapshot.sitesPerAccount).toBe(121);
 		expect(v.verdict).toBe('fits');
 	});
 });

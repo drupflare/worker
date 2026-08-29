@@ -57,8 +57,13 @@ export const SITE_STORAGE_BYTES = {
 	/**
 	 * On a MIGRATED but COLD object, 3.7x the warm case (1,247 ms / 552 pages against 33 ms / 148,
 	 * both `ok`). The model keeps the cold figure so a storage ceiling is not optimistic.
+	 *
+	 * IT MOVES WITH THE PACKED MODULE, in whole wasm pages. 36,241,408 before the container gained
+	 * a class, 36,175,872 after, and 36,569,088 once the module added the requirements alter and the
+	 * deferred-cron hook -- six pages for ~5 KB of PHP. Re-measure rather than adjust: the spec
+	 * compares this against a fresh run of the same build, so a wrong value here is a wrong ceiling.
 	 */
-	heapSnapshot: 36_175_872,
+	heapSnapshot: 36_569_088,
 	/** the same snapshot on a site that has been through `/firstrun` and served one page */
 	warmHeapSnapshot: 9_699_328
 } as const;

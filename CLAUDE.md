@@ -434,6 +434,11 @@ a local change there is the silent-drift shape this file exists to prevent.
 - `src/drupal/*-php.ts` are mostly `String.raw` blocks holding PHP source. A backtick inside a PHP
   comment truncates the block and breaks the PHP while leaving the JavaScript valid - this has
   happened twice. `tests/node/php-fragments.spec.ts` runs `php -l` over all of them; keep it green.
+  **An APOSTROPHE is the same hazard one level in.** `PW_SERVE_INLINE` is embedded in a
+  single-quoted PHP string, so a `'` anywhere inside it - including in a `//` comment, where it
+  reads as ordinary prose - closes that string and the next word becomes a stray identifier.
+  Writing "the status report's Web server row" in a comment produced
+  `syntax error, unexpected identifier "s"`. Say "the Web server row on the status report" instead.
 - **A shim over an INTERNAL PHP function does not need `eval()`.** `mb-fix.ts` wraps its
   declarations in one and `zlib-fix.ts` does not: a conditional function declaration is
   bound at runtime, not at compile time, so `if (!extension_loaded('zlib')) { function gzencode(){} }`

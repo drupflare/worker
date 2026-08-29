@@ -536,6 +536,9 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   // ON THE REQUEST BAG, not just \$_SERVER: flood control reads \$request->getClientIp(), and
   // Request::create() builds its own bag, so an assignment afterwards is invisible to it
   if ($clientIp !== "") { $server["REMOTE_ADDR"] = $clientIp; }
+  // same reason, and it is why the Web server row on the status report was BLANK: it reads
+  // \$request->server->get("SERVER_SOFTWARE") and the \$_SERVER assignment below never reached the bag
+  $server["SERVER_SOFTWARE"] = "Cloudflare Workers";
 
   // THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
   // so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
@@ -567,6 +570,7 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   if ($request->isSecure()) { $_SERVER["HTTPS"] = "on"; } else { unset($_SERVER["HTTPS"]); }
   $_SERVER["REQUEST_METHOD"] = $method;
   if ($clientIp !== "") { $_SERVER["REMOTE_ADDR"] = $clientIp; }
+  $_SERVER["SERVER_SOFTWARE"] = $request->server->get("SERVER_SOFTWARE");
   // EVERY input superglobal, not just $_POST. When a CSRF token fails, FormBuilder empties the
   // request and calls $request->overrideGlobals() to make the globals agree
   // (FormBuilder.php:1024-1030); on a real SAPI those globals die with the process and here they

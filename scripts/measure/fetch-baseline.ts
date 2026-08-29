@@ -66,11 +66,23 @@ function tryGh(args: string[]): string | null {
  * Picks the run whose archived document answers a question about a ref.
  *
  * A tag or a commit resolves to the run for that exact sha; the default resolves to the newest
- * passing push on master, which is what a pull request is asking about.
+ * completed push on master, which is what a pull request is asking about.
+ *
+ * NOT "the newest PASSING run", and that distinction wedged the gate for a week. The baseline is a
+ * record of what master MEASURES, which is a fact whether or not the gate liked it -- but only a
+ * successful run could become one, and the gate cannot succeed while the baseline is stale. Master
+ * was red for six days, the archived figure froze at the last green commit, and every run after it
+ * compared a week of accumulated growth against it: `driverPack.bytes` 362,191 -> 526,056, +45%
+ * against a +10% allowance, with no way out that did not involve editing the tolerance.
+ *
+ * A run that failed BEFORE producing a document is skipped anyway, because the caller requires a
+ * live `metrics` artifact and walks on without one. So this widens the search to runs that measured
+ * something, not to runs that measured nothing.
  */
 export function pickRun(rows: readonly RunRow[], sha?: string): RunRow | undefined {
-	const passing = rows.filter((r) => r.conclusion === 'success');
-	return sha ? passing.find((r) => r.headSha === sha) : passing[0];
+	// a cancelled run may have uploaded half a document; a failed one uploaded a whole one
+	const usable = rows.filter((r) => r.conclusion === 'success' || r.conclusion === 'failure');
+	return sha ? usable.find((r) => r.headSha === sha) : usable[0];
 }
 
 /** whether the artifact a run uploaded is still downloadable */
@@ -93,7 +105,6 @@ export function resolveRef(ref: string | undefined, repo: string): Resolution {
 		'run',
 		'list',
 		`--workflow=${WORKFLOW}`,
-		'--status=success',
 		'--limit=50',
 		'--json',
 		'databaseId,headSha,createdAt,conclusion'
@@ -106,8 +117,8 @@ export function resolveRef(ref: string | undefined, repo: string): Resolution {
 		return {
 			state: 'no-run',
 			detail: ref
-				? `no passing ${WORKFLOW} run for ${ref} (${sha?.slice(0, 7)}) in the last 50`
-				: `no passing ${WORKFLOW} push run on master`
+				? `no completed ${WORKFLOW} run for ${ref} (${sha?.slice(0, 7)}) in the last 50`
+				: `no completed ${WORKFLOW} push run on master`
 		};
 	}
 

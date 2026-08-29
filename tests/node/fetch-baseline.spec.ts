@@ -34,9 +34,25 @@ describe('picking the run that answers the question', () => {
 		expect(pickRun(rows)?.databaseId).toBe(3);
 	});
 
-	it('never takes a run that failed, however recent', () => {
+	/**
+	 * THE WEDGE THIS USED TO CAUSE. It read "never takes a run that failed", which sounds strict and
+	 * froze the baseline for a week: only a passing run could become one, and the gate could not
+	 * pass while the baseline was a week stale. `driverPack.bytes` compared 526,056 against a
+	 * 362,191 recorded before six days of merges, +45% against a +10% allowance, and no run after it
+	 * could ever refresh the figure. The baseline records what master MEASURED, which is true
+	 * whether or not the gate liked it.
+	 */
+	it('takes a failed run, because a failed gate still measured master', () => {
 		const rows = [
 			row({ databaseId: 9, conclusion: 'failure' }),
+			row({ databaseId: 8, conclusion: 'success' })
+		];
+		expect(pickRun(rows)?.databaseId).toBe(9);
+	});
+
+	it('refuses a cancelled run, which may have uploaded half a document', () => {
+		const rows = [
+			row({ databaseId: 9, conclusion: 'cancelled' }),
 			row({ databaseId: 8, conclusion: 'success' })
 		];
 		expect(pickRun(rows)?.databaseId).toBe(8);

@@ -210,8 +210,8 @@
 		{
 			"key": "assets/drupal/site.sqlite",
 			"bytes": 7585792,
-			"sha256": "a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974",
-			"md5": "d62c74571fc35f2b0b3559b8f70e2b9d"
+			"sha256": "2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a",
+			"md5": "bb6d5813b0638d00835aaeaf522e2e52"
 		}
 	],
 	"archived": [
@@ -235,8 +235,15 @@
 			"bytes": 7585792,
 			"sha256": "a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974",
 			"md5": "d62c74571fc35f2b0b3559b8f70e2b9d",
+			"note": "change counter 19, superseded by cc27; no mirrors field because it is history now"
+		},
+		{
+			"key": "snapshots/site.sqlite.2259f3f96066",
+			"bytes": 7585792,
+			"sha256": "2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a",
+			"md5": "bb6d5813b0638d00835aaeaf522e2e52",
 			"mirrors": "assets/drupal/site.sqlite",
-			"note": "the canonical lineage at change counter 19, pinned by digest so a later edit cannot move it"
+			"note": "the canonical lineage at change counter 27, which carries the page max_age fix"
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",

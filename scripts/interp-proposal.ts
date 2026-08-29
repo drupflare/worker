@@ -351,7 +351,20 @@ export function proposalBody(facts: ProposalFacts): string {
 	lines.push(
 		'',
 		`The payload carrying these bytes is attached to run ${facts.runId || 'n/a'}.`,
-		'The rollback unit is a Worker version, so ship this on its own.'
+		'The rollback unit is a Worker version, so ship this on its own.',
+		'',
+		'**This branch is red until the bytes are published, and that is expected.** It moves',
+		'`interp.lock.json` only. Every clean checkout and every CI run restores `.interp/` from the',
+		'CDN, which still serves the previous binary, so `interp-pin-agreement.spec.ts` reports the',
+		'two files disagreeing. Publishing is the other half and needs R2 credentials this workflow',
+		'does not carry:',
+		'',
+		'```sh',
+		'bun run backup:cdn       # upload the new interpreter to the bucket',
+		'bun run backup:manifest  # rewrite cdn-manifest.json with its digest',
+		'```',
+		'',
+		'Commit the rewritten manifest onto this branch and the gate goes green.'
 	);
 	return lines.join('\n') + '\n';
 }

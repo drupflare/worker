@@ -21,8 +21,18 @@ export const FREE_QUOTAS = {
 	rowsWrittenPerDay: 100_000,
 	/** 50x the write allowance and a SEPARATE meter; a render reads nowhere near 50 per write */
 	rowsReadPerDay: 5_000_000,
-	/** a `setAlarm()` is one row written, so a keep-warm chain spends 360 rows/day doing nothing */
+	/**
+	 * What ONE idle warming tick charges, measured.
+	 *
+	 * It charged THREE until the daily meters were rate-limited: the `setAlarm`, plus one row each
+	 * for `flushDailyRows()` and `flushDailyDoRequests()`. On an idle tick the only writes those two
+	 * had to record were their own, so the meter sustained itself and cost 32.4% of free's daily row
+	 * budget to count almost nothing. `shouldFlushMeters()` now gates them and a tick charges the
+	 * `setAlarm` alone; `tests/integration/warm-alarm-cost.spec.ts` pins it at 1.
+	 */
 	rowsPerAlarmArm: 1,
+	/** the two daily-meter rows, charged once per {@link METER_FLUSH_SECONDS} rather than per tick */
+	rowsPerMeterFlush: 2,
 	// one message costs THREE: a write, a read and a delete, each per 64 KB
 	queueOperationsPerDay: 10_000,
 	queueOperationsPerMessage: 3,
@@ -114,16 +124,29 @@ export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 /** the keep-warm chain's re-arm interval, `KEEP_WARM_MS` in `src/ops/cron.ts` */
 export const KEEP_WARM_MS = 240_000;
 
+/** how often the daily meters pay for their two rows, `METER_FLUSH_MS` in `src/site-do.ts` */
+export const METER_FLUSH_SECONDS = 60;
+
 /**
  * What the keep-warm chain costs a FLEET before a single visitor arrives.
  *
  * The per-site figure reads as noise -- 360 rows/day, 0.36% -- and the fleet figure does not: the
  * free DO quotas are ACCOUNT-WIDE, and the same 360 arms spend the DO request allowance too.
  *
- * **AND THE CHAIN BUYS NOTHING IT IS BELIEVED TO BUY.** An armed alarm is absent from Cloudflare's
- * hibernation-eligibility list, so it does not hold the object resident -- see
- * {@link ../../src/ops/hibernation.ts}. It costs two meters and delivers no warmth. This function
- * exists so that trade is arithmetic rather than an assumption.
+ * **AND THE CHAIN AT 240 s BUYS NOTHING IT IS BELIEVED TO BUY.** An armed alarm is absent from
+ * Cloudflare's hibernation-eligibility list, so ARMING one does not hold the object resident -- see
+ * {@link ../../src/ops/hibernation.ts}. At the shipping interval it costs two meters and delivers no
+ * warmth. This function exists so that trade is arithmetic rather than an assumption.
+ *
+ * **WHAT DOES BUY WARMTH IS THE FIRING, AND ONLY BELOW THE THRESHOLD.** This docblock used to stop
+ * at the sentence above, which is a measurement of 240 s wearing the clothes of a general fact.
+ * Measured on a deployed worker: an object re-armed every 8 s kept ONE incarnation across 71
+ * consecutive alarms holding a 32 MB allocation, because each firing resets the idle clock before
+ * the 10 s deadline; at 12, 20, 30 and 45 s the id changed on every probe. So the interval is the
+ * whole variable, and `HIBERNATION_IDLE_MS` in `src/ops/cron.ts` is where it lives.
+ *
+ * Duration stays out of it either way: during the gap the object is idle and ELIGIBLE to hibernate,
+ * and an idle-eligible object is not billed for duration. Warming spends requests and rows.
  *
  * @param sites how many sites share one account's daily allowance.
  * @param keepWarmMs the re-arm interval; the default is what ships.
@@ -142,7 +165,20 @@ export function keepWarmFleetCost(
 } {
 	const armsPerSitePerDay = Math.floor((SECONDS_PER_DAY * 1000) / Math.max(1, keepWarmMs));
 	const perDay = Math.max(0, sites) * armsPerSitePerDay;
-	const rowsPerDay = perDay * FREE_QUOTAS.rowsPerAlarmArm;
+	// two terms rather than one, because the meter flush is on its own clock: a tick charges the
+	// setAlarm, and the daily counters charge their two rows once per flush interval however often
+	// the object wakes. Folding them into a per-arm constant would make the figure wrong at every
+	// interval except the one it was derived at.
+	// capped by the FIRINGS, because a flush happens inside an alarm and an object that wakes every
+	// 240 s cannot flush every 60 s. Without the cap the model charged a 240 s chain for 1,440
+	// flushes it never performs.
+	const flushesPerSitePerDay = Math.min(
+		armsPerSitePerDay,
+		Math.floor(SECONDS_PER_DAY / METER_FLUSH_SECONDS)
+	);
+	const rowsPerDay =
+		perDay * FREE_QUOTAS.rowsPerAlarmArm +
+		Math.max(0, sites) * flushesPerSitePerDay * FREE_QUOTAS.rowsPerMeterFlush;
 	return {
 		armsPerSitePerDay,
 		rowsPerDay,
@@ -150,9 +186,19 @@ export function keepWarmFleetCost(
 		doRequestsPerDay: perDay,
 		rowShare: rowsPerDay / FREE_QUOTAS.rowsWrittenPerDay,
 		doRequestShare: perDay / FREE_QUOTAS.doRequestsPerDay,
+		// against ROWS PER SITE rather than arms per site: the two are no longer the same number
+		// once the meter flush has its own term, and dividing by arms would report a fleet twice
+		// the size the row meter actually allows
 		saturatingSites: Math.floor(
-			Math.min(FREE_QUOTAS.rowsWrittenPerDay, FREE_QUOTAS.doRequestsPerDay) /
-				Math.max(1, armsPerSitePerDay)
+			Math.min(
+				FREE_QUOTAS.rowsWrittenPerDay /
+					Math.max(
+						1,
+						armsPerSitePerDay * FREE_QUOTAS.rowsPerAlarmArm +
+							flushesPerSitePerDay * FREE_QUOTAS.rowsPerMeterFlush
+					),
+				FREE_QUOTAS.doRequestsPerDay / Math.max(1, armsPerSitePerDay)
+			)
 		)
 	};
 }
@@ -425,7 +471,9 @@ export const ROWS_PER_FILL = {
 	 * 156 -> 103 with the `WITHOUT ROWID` bins, which is where the conversion pays most: this class
 	 * is almost entirely shared-bin inserts.
 	 */
-	firstFillOnFreshObject: 103
+	// 103 before the commit sequence; the clock costs 2 rows on a fill that writes authoritative
+	// state, and nothing on one that does not -- a read writes none by construction
+	firstFillOnFreshObject: 105
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

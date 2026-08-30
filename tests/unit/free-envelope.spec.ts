@@ -840,29 +840,47 @@ describe('the optimal mirror share', () => {
 });
 
 describe('the keep-warm chain, priced across a FLEET rather than one site', () => {
-	it('costs 360 arms a day per site, which is the figure that reads as noise', () => {
+	/**
+	 * A firing charges one row for its `setAlarm` and the daily meters charge two more whenever
+	 * their flush interval has elapsed. At 240 s every firing is past the interval, so all three
+	 * are charged; at the 8 s warming interval the flush is amortised across 7.5 firings.
+	 */
+	it('costs 360 arms a day per site and three rows on each of them', () => {
 		const one = keepWarmFleetCost(1);
 		expect(one.armsPerSitePerDay).toBe(360);
-		expect(one.rowsPerDay).toBe(360);
-		// 0.36% of the write allowance. Correct, and the reason nobody multiplied it
-		expect(one.rowShare).toBeCloseTo(0.0036, 6);
+		expect(one.rowsPerDay).toBe(1_080);
+		expect(one.rowShare).toBeCloseTo(0.0108, 6);
 	});
 
 	it('spends TWO account-wide meters, not one', () => {
 		const fleet = keepWarmFleetCost(100);
-		expect(fleet.rowsPerDay).toBe(36_000);
+		expect(fleet.rowsPerDay).toBe(108_000);
 		// the DO request quota "includes alarm invocations", so the same 360 arms are charged
 		// twice over -- the model had a line for neither
 		expect(fleet.doRequestsPerDay).toBe(36_000);
-		expect(fleet.rowShare).toBeCloseTo(0.36, 6);
+		expect(fleet.rowShare).toBeCloseTo(1.08, 6);
 		expect(fleet.doRequestShare).toBeCloseTo(0.36, 6);
 	});
 
-	it('saturates a free account at 277 sites with ZERO visitors', () => {
-		expect(keepWarmFleetCost(1).saturatingSites).toBe(277);
-		const saturated = keepWarmFleetCost(277);
+	/** rows bind before requests, which is what makes the meter flush worth its own term */
+	it('saturates a free account at 92 sites with ZERO visitors', () => {
+		expect(keepWarmFleetCost(1).saturatingSites).toBe(92);
+		const saturated = keepWarmFleetCost(92);
 		expect(saturated.rowShare).toBeLessThanOrEqual(1);
-		expect(keepWarmFleetCost(278).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
+		expect(keepWarmFleetCost(93).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
+	});
+
+	/**
+	 * The interval that keeps an object resident, which is the one that ships when `SITE_WARM` is
+	 * on. The flush is amortised here rather than charged per firing, which is the whole saving.
+	 */
+	it('amortises the meter flush at the 8 s warming interval', () => {
+		const warm = keepWarmFleetCost(1, 8_000);
+		expect(warm.armsPerSitePerDay).toBe(10_800);
+		// 10,800 setAlarm rows + 1,440 flushes x 2
+		expect(warm.rowsPerDay).toBe(13_680);
+		expect(warm.rowShare).toBeCloseTo(0.1368, 4);
+		expect(warm.doRequestShare).toBeCloseTo(0.108, 4);
 	});
 
 	it('scales inversely with the interval, so the lever is arithmetic rather than a rewrite', () => {

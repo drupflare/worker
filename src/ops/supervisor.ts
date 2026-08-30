@@ -177,13 +177,22 @@ export function renderSizeAnomaly(obs: Observation): Finding | null {
  * A PHP-side handler cannot see this: no PHP fatal, no printErr, Drupal's logger never runs. The
  * counter on `globalThis` is the ONLY place it is observable, which is exactly why this tripwire
  * is in the host and not in PHP.
+ *
+ * `warn` AND NOT `error`, because the severity above was calibrated to the paragraph above it and
+ * the stub is what stopped that being true. Reaching a free identifier killed the invocation;
+ * reaching the stub returns -1, `fopen()` returns false, and PHP handles it. Measured: with the
+ * three outbound-HTTPS cron hooks on and a cold fetch cache, the first round trips this 10 times,
+ * `error` starts at `reset`, three rounds reach `quarantine` and EVERY PAGE ANSWERS 503 -- so a
+ * newly provisioned site took itself down the first time cron ran, over a feed fetch that had
+ * already fallen back correctly. A graceful degradation must not escalate to an outage. An
+ * invocation that genuinely dies is caught by the tripwires that watch renders.
  */
 export function bridgeAsyncifyCalled(obs: Observation): Finding | null {
 	const calls = obs.asyncifyCalls ?? 0;
 	if (calls <= 0) return null;
 	return {
 		code: 'bridge.asyncify_called',
-		severity: 'error',
+		severity: 'warn',
 		scope: 'glue',
 		context: `${calls} call(s) reached the Asyncify stub; a stream open failed`
 	};

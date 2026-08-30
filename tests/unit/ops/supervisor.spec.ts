@@ -121,9 +121,17 @@ describe('render.size_anomaly: the uid-1 disclosure', () => {
 	});
 });
 
-describe('bridge.asyncify_called: the uncatchable JS throw', () => {
+describe('bridge.asyncify_called: the stub the glue falls back to', () => {
 	it('fires on any call at all', () => {
-		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })?.severity).toBe('error');
+		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })).not.toBeNull();
+	});
+
+	// the stub returns -1 and fopen() returns false, which PHP handles, so this observes rather
+	// than escalating. At `error` a cold fetch cache took a fresh site to quarantine on its first
+	// cron round and every page answered 503
+	it('observes rather than escalating, so a handled fallback cannot quarantine a site', () => {
+		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })?.severity).toBe('warn');
+		expect(initialRung('warn')).toBe('observe');
 	});
 
 	it('does not fire at zero', () => {

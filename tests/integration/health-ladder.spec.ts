@@ -100,26 +100,23 @@ describe('the health layer is reachable from the object, not only from its own s
 		await inObject(freshSite(), (site) => {
 			const h = health(site);
 			h.ensureServeTables();
-			h.supervise([{ filled: '/', bytes: 0, remaining: 0 }]);
-			h.supervise([{ filled: '/', bytes: 0, remaining: 0 }]);
+			// a median for /a first, so the anomaly below has something to be measured against
+			for (let i = 0; i < 4; i++) h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
+			h.supervise([{ filled: '/a', bytes: 90038, remaining: 0 }]);
+			h.supervise([{ filled: '/a', bytes: 90038, remaining: 0 }]);
 			expect(JSON.parse(String(h.metaGet('repair_state'))).strikes).toBe(2);
 
-			// a different condition entirely: the Asyncify stub was reached, which is a dead stream
-			// wrapper killing the invocation. Two unrelated faults are not evidence of one durable
-			// condition, and summing them is how a site gets quarantined for two different bad days
-			(globalThis as { __cfwAsyncifyCalls?: number }).__cfwAsyncifyCalls = 1;
-			try {
-				const found = h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
-				expect(found.map((f) => f.code)).toContain('bridge.asyncify_called');
+			// a different condition entirely: a 200 with a zero-byte body. Two unrelated faults are
+			// not evidence of one durable condition, and summing them is how a site gets
+			// quarantined for two different bad days
+			const found = h.supervise([{ filled: '/', bytes: 0, remaining: 0 }]);
+			expect(found.map((f) => f.code)).toContain('render.empty');
 
-				const state = JSON.parse(String(h.metaGet('repair_state')));
-				// back to 1 rather than on to 3, so this second condition did NOT quarantine the site
-				expect(state.strikes).toBe(1);
-				expect(state.code).toBe('bridge.asyncify_called');
-				expect(state.rung).toBe('observe');
-			} finally {
-				(globalThis as { __cfwAsyncifyCalls?: number }).__cfwAsyncifyCalls = 0;
-			}
+			const state = JSON.parse(String(h.metaGet('repair_state')));
+			// back to 1 rather than on to 3, so this second condition did NOT quarantine the site
+			expect(state.strikes).toBe(1);
+			expect(state.code).toBe('render.empty');
+			expect(state.rung).toBe('observe');
 		});
 	});
 
@@ -127,14 +124,36 @@ describe('the health layer is reachable from the object, not only from its own s
 		await inObject(freshSite(), (site) => {
 			const h = health(site);
 			h.ensureServeTables();
-			(globalThis as { __cfwAsyncifyCalls?: number }).__cfwAsyncifyCalls = 4;
+			// a stable median for /a first, or there is nothing for the anomaly to be measured against
+			for (let i = 0; i < 4; i++) h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
+			// then the same path an order of magnitude larger, three rounds running
+			for (let i = 0; i < 3; i++) h.supervise([{ filled: '/a', bytes: 90038, remaining: 0 }]);
+			const state = JSON.parse(String(h.metaGet('repair_state')));
+			// three of these is a durable condition whatever the severity label says
+			expect(state.code).toBe('render.size_anomaly');
+			expect(state.rung).toBe('quarantine');
+		});
+	});
+
+	// measured: with the three outbound-HTTPS cron hooks on and a cold fetch cache, the first cron
+	// round trips the stub 10 times. At `error` that reached quarantine in three rounds and every
+	// page answered 503, so a fresh site took itself down over a feed fetch that had already fallen
+	// back correctly
+	it('the Asyncify stub NEVER quarantines, however many rounds reach it', async () => {
+		await inObject(freshSite(), (site) => {
+			const h = health(site);
+			h.ensureServeTables();
+			(globalThis as { __cfwAsyncifyCalls?: number }).__cfwAsyncifyCalls = 10;
 			try {
-				for (let i = 0; i < 3; i++)
+				for (let i = 0; i < 5; i++)
 					h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
-				const state = JSON.parse(String(h.metaGet('repair_state')));
-				// three of these is a durable condition whatever the severity label says
-				expect(state.code).toBe('bridge.asyncify_called');
-				expect(state.rung).toBe('quarantine');
+				expect((h.lastFindings ?? []).map((f) => f.code)).toContain(
+					'bridge.asyncify_called'
+				);
+				const state = JSON.parse(String(h.metaGet('repair_state') ?? '{}'));
+				expect(state.rung ?? 'observe').toBe('observe');
+				expect(state.strikes ?? 0).toBe(0);
+				expect(state.quarantinedAt ?? null).toBeNull();
 			} finally {
 				(globalThis as { __cfwAsyncifyCalls?: number }).__cfwAsyncifyCalls = 0;
 			}

@@ -112,16 +112,14 @@ const ARTIFACT_SPECS = [
 	'tests/integration/php-clock.spec.ts',
 	'tests/integration/render-origin.spec.ts',
 	'tests/integration/rows-per-fill-audit.spec.ts',
-	// these three joined the list on 2026-08-22 rather than being written into it: the serving-lane
-	// work made a non-GET and a session-carrying request fall THROUGH to the gated lane instead of
-	// being answered from cfw_page, so eight assertions that used to stop at the cache now end in a
-	// real render. The behaviour is the C77 fix working; needing the pack is the consequence
 	'tests/integration/serve-chain.spec.ts',
 	'tests/integration/serve-invalidation.spec.ts',
 	'tests/integration/serve-lanes.spec.ts',
 	'tests/integration/serve-migration.spec.ts',
 	'tests/integration/serve-restore.spec.ts',
 	'tests/integration/shell-derivation.spec.ts',
+	'tests/integration/shell-seed.spec.ts',
+	'tests/integration/replica-invariant.spec.ts',
 	'tests/integration/shell-verify-cost.spec.ts',
 	'tests/integration/shell-verify.spec.ts',
 	'tests/integration/shell.spec.ts',

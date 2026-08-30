@@ -36,16 +36,27 @@ import { emitTunedGlue, glueFor } from './measure/growth-glue.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
+/** where a restorable mirror is allowed to land, so one bad manifest entry cannot write anywhere */
+const RESTORE_ROOTS = ['.interp/', 'assets/drupal/site.sqlite'];
+
 /**
- * What a clean clone needs to run the gate: the interpreter the TEST lane loads.
+ * What a clean clone needs that it cannot build: the interpreter, and the site database.
  *
  * Taken from the manifest's `mirrors` field rather than hardcoded -- those entries already record
  * that `vendor/static-control85/php8.5*` in the bucket is the shipping binary saved under phasm's
  * variant name, and where it belongs on disk. Everything else in `vendor/` is the 18-arm measurement
  * fleet the frozen probes read, which is 198 MB and which no contributor needs to run tests.
+ *
+ * `assets/drupal/site.sqlite` IS THE OTHER ONE, and it is the reason `bun run build:local` could not
+ * finish on a clean checkout: it is hand-trimmed, nothing in the repository regenerates it, and it is
+ * gitignored -- so the `sql` step, whose own note calls it "the TRACKED site.sqlite", had no input.
+ * The bucket has carried it all along. With it restorable, every remaining artifact is buildable from
+ * source and a lane with no release is a lane that builds rather than a lane that skips.
  */
 function wanted(manifest: CdnManifest): ArchivedEntry[] {
-	return [...(manifest.archived ?? ARCHIVED)].filter((e) => e.mirrors?.startsWith('.interp/'));
+	return [...(manifest.archived ?? ARCHIVED)].filter((e) =>
+		RESTORE_ROOTS.some((root) => e.mirrors?.startsWith(root))
+	);
 }
 
 /** whether the file at `path` already has this digest; the local file IS the cache */

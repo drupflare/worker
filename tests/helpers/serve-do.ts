@@ -52,6 +52,8 @@ export type RenderCall = {
 	origin: string;
 	/** what Drupal will see as `REMOTE_ADDR`, and therefore what flood control keys on */
 	clientIp: string;
+	/** the inbound `Accept`, which decides whether Drupal wraps an AJAX response for an iframe */
+	accept: string;
 	code: string;
 };
 
@@ -130,6 +132,9 @@ export type ServeDo = {
 	ensureHttpTables: () => void;
 	queueDepth: () => number;
 	generation: () => number;
+	/** the authoritative commit sequence; advances on every invalidation, unlike `generation` */
+	commitSeq: () => number;
+	advanceCommit: () => number;
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
 	nowMs: () => number;
@@ -147,6 +152,16 @@ export type ServeDo = {
 		holes: number;
 		verified: import('../../src/site-do').ShellVerdict;
 	} | null>;
+	seedShellFrom: (
+		path: string,
+		cookie: string,
+		origin: string
+	) => Promise<{
+		html: string;
+		holes: number;
+		verified: import('../../src/site-do').ShellVerdict;
+	} | null>;
+	lastCron?: Record<string, unknown>;
 	shellVerified: (path: string, hash: string, uid: string, harvestedAt: number) => boolean;
 	/** the git tier: the remote list, the API, the sync engine and the alarm's poll */
 	handleGit: (url: URL, deliverBase?: string) => Promise<Response>;
@@ -185,6 +200,8 @@ export type ServeDo = {
 	installCapabilities: (binary: Record<string, (json: string) => string>) => void;
 	/** the crossing tally; `calls` is the per-statement census log, armed by assigning `[]` */
 	crossings?: import('../../src/ops/crossings').CrossingTally;
+	/** the per-table write tally, armed by assigning `emptyTally()` and read back in place */
+	writeTally?: import('../../src/db/write-tally').WriteTally;
 	/** the in-memory attempt log `/__capability` reports; refusals carry their reason */
 	mails?: Array<{
 		to: unknown;
@@ -197,7 +214,13 @@ export type ServeDo = {
 	adoptSettings: () => Promise<void>;
 	handle: (request: Request, url: URL) => Promise<Response>;
 	degradation: (nowMs?: number) => import('../../src/ops/degrade').Degradation;
-	shellCandidates: () => { safe: number; unsafe: number; reasons: Record<string, number> };
+	shellCandidates: () => {
+		safe: number;
+		unsafe: number;
+		reasons: Record<string, number>;
+		answerable: boolean;
+		how: string;
+	};
 	invalidateOnCoreUpgrade: () => { deleted: number } | null;
 	queueHttp: (url: string, method?: string, body?: string) => void;
 	httpCacheGet: (
@@ -415,11 +438,19 @@ export function decodeRenderCall(code: string): RenderCall {
 	// body, content type, cookie, origin -- do not land in the destruct field
 	const destruct = /=\s*cfw_serve\(\$path, ([^,)]*)/.exec(code)?.[1] ?? '';
 	const origin = /\$origin = json_decode\("\\"(.*?)\\""\)/.exec(code)?.[1] ?? '';
-	// the last of the trailing request arguments, so it is read off the CALL rather than off the
-	// `$origin` assignment the origin above matches
-	const clientIp =
-		/cfw_serve\(\$path,[^;]*?,\s*json_decode\("\\"([^"\\]*)\\""\)\);/.exec(code)?.[1] ?? '';
-	return { path, bins, destruct, origin, clientIp, code };
+	// BY POSITION, not by "the last one". Reading the trailing arguments off the end broke silently
+	// the first time one was appended: `accept` went on after `clientIp`, so a spec asserting the
+	// visitor address read the Accept header instead and got an empty string with nothing to
+	// explain it. The order here is the order `cfw_serve()` declares.
+	// terminated on `);` FOLLOWED BY A NEWLINE, not on the first `;`. A real `Accept` carries one
+	// inside it (`*/*; q=0.01`), so a `[^;]*` bound stops in the middle of the argument list and
+	// matches nothing at all
+	const call = /=\s*cfw_serve\(\$path,[\s\S]*?\);\n/.exec(code)?.[0] ?? '';
+	const args = [...call.matchAll(/json_decode\("\\"([^"\\]*)\\""\)/g)].map((m) => m[1] ?? '');
+	const [, , , cookieArg, originArg, clientIp = '', accept = ''] = args;
+	void cookieArg;
+	void originArg;
+	return { path, bins, destruct, origin, clientIp, accept, code };
 }
 
 /**

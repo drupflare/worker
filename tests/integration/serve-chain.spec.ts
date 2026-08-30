@@ -230,9 +230,20 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 		expect(out.login.body).toContain('<title>/user/login</title>');
 	});
 
-	it('drops back to the keep-warm interval once the queue is empty', async () => {
+	/**
+	 * Both branches, because the idle interval is what decides whether the object stays resident.
+	 *
+	 * With `SITE_WARM` on -- the default -- an empty queue re-arms UNDER the 10 s hibernation
+	 * threshold, which is the whole mechanism: the firing resets the idle clock. With it off the
+	 * chain drops back to `KEEP_WARM_MS`, and a later MISS is what pulls it back in.
+	 *
+	 * This asserted `> 60000` unconditionally and was written before warming existed, so it failed
+	 * on the shipped default reading 7,995 ms. The number was right and the assertion was old.
+	 */
+	async function idleRearmMs(warm: boolean): Promise<number> {
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
+			if (!warm) site.env.SITE_WARM = '0';
 			stubRender(site, ({ path }) => pageFor(path));
 			queuePath(site, '/');
 		});
@@ -241,8 +252,18 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 			alarmAt: await site.ctx.storage.getAlarm(),
 			now: Date.now()
 		}));
-		// 240 s, and a later MISS is what pulls it back in; see the /__serve comment
-		expect(Number(out.alarmAt) - out.now).toBeGreaterThan(60000);
+		return Number(out.alarmAt) - out.now;
+	}
+
+	it('re-arms under the hibernation threshold once the queue is empty', async () => {
+		const gap = await idleRearmMs(true);
+		expect(gap).toBeGreaterThan(0);
+		// under 10 s or the object hibernates and the warming buys nothing
+		expect(gap).toBeLessThan(10_000);
+	});
+
+	it('drops back to the keep-warm interval when warming is off', async () => {
+		expect(await idleRearmMs(false)).toBeGreaterThan(60_000);
 	});
 });
 
@@ -258,6 +279,51 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
  * `AssetControllerBase::deliver()` answers 301 whenever an aggregate URL's hash does not match the
  * one it recomputes, which is every aggregate URL in the prefilled HTML.
  */
+describe('cron yields to a fill backlog', () => {
+	/**
+	 * The quota ladder is a DAILY meter, so it cannot say whether a visitor is waiting right now: a
+	 * warming site is well inside quota and still has an empty page for every path. Cron used to be
+	 * gated on the ladder alone while its comment claimed it stopped "before anything a visitor can
+	 * see". With the outbound-HTTPS hooks back a round is 11 units rather than 7, several entering
+	 * the interpreter, and a site took several firings to warm instead of one.
+	 */
+	it('does not run cron while a fill batch left work behind', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			// more than one batch drains, so the loop ends with the queue still non-empty. One
+			// firing that empties its own queue is NOT the case here -- cron rightly runs then
+			await site.storage.put('cronLastRunMs', 0);
+			for (let i = 0; i < 20; i++) await serveDirect(site, `/p${i}`, '&inline=0');
+			const queuedBefore = site.queueDepth();
+			await site.alarm();
+			return {
+				queuedBefore,
+				queuedAfter: site.queueDepth(),
+				ranCron: site.lastCron !== undefined
+			};
+		});
+		expect(out.queuedBefore).toBeGreaterThan(5);
+		// the premise of the assertion below: this firing did not get through the backlog
+		expect(out.queuedAfter).toBeGreaterThan(0);
+		expect(out.ranCron).toBe(false);
+	});
+
+	it('runs it once the queue is empty', async () => {
+		const stub = await provisionedSite();
+		await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.storage.put('cronLastRunMs', 0);
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const ran = await inObject(stub, async (site) => {
+			await site.alarm();
+			return site.lastCron !== undefined;
+		});
+		expect(ran).toBe(true);
+	});
+});
+
 describe('a redirect is answered, not stored', () => {
 	it('carries the Location through and writes no cfw_page row', async () => {
 		const stub = await provisionedSite();
@@ -906,6 +972,31 @@ describe('the render origin is pinned, not believed', () => {
 			return calls;
 		});
 		expect(out[0]?.clientIp).toBe('203.0.113.7');
+	});
+
+	/**
+	 * THE ACCEPT HEADER DECIDES THE SHAPE OF EVERY AJAX RESPONSE, and it never reached Symfony.
+	 *
+	 * `AjaxResponseSubscriber::onResponse()` wraps the JSON in a `<textarea>` and relabels it
+	 * `text/html` when `Accept` contains `text/html`, which is an IE9 iframe-upload workaround.
+	 * `Request::create()` supplies its own default of `text/html,application/xhtml+xml,...` when the
+	 * server bag carries none, so the wrap fired on EVERY AJAX request no matter what the browser
+	 * asked for, and `ajax.js` raised `Drupal.AjaxError` on all of them. Measured in a browser on
+	 * Add field, where choosing a field type is an AJAX POST: the admin got "Oops, something went
+	 * wrong" and no field could be created on any site.
+	 */
+	it('hands the inbound Accept to the render, so an AJAX response is not wrapped for an iframe', async () => {
+		const stub = await provisionedSite();
+		const out = await inObject(stub, async (site) => {
+			const calls = stubRender(site, ({ path }) => pageFor(path));
+			await site.fetch(
+				new Request('https://real.example/__serve?path=%2F', {
+					headers: { accept: 'application/json, text/javascript, */*; q=0.01' }
+				})
+			);
+			return calls;
+		});
+		expect(out[0]?.accept).toBe('application/json, text/javascript, */*; q=0.01');
 	});
 
 	it('CONTROL: emits no address when the request carried none', async () => {

@@ -110,10 +110,21 @@ const call = (site: ServeDo, path: string, init?: RequestInit) =>
 		.fetch(new Request(`https://do.local${path}`, init))
 		.then((r) => r.json() as Promise<Payload>);
 
-/** every user table's row count, so a stored-row delta needs no assumption about the statements */
+/**
+ * Every user table's row count, so a stored-row delta needs no assumption about the statements.
+ *
+ * `_cf_%` is excluded alongside `sqlite_%` because those are the RUNTIME's tables, not the site's:
+ * a Durable Object carries `_cf_METADATA` and `_cf_KV`, they appear in `sqlite_master`, and
+ * selecting from either raises `SQLITE_AUTH`. Filtering only `sqlite_%` was enough until the
+ * runtime started reporting them, at which point every case in this file died counting a table it
+ * was never entitled to read.
+ */
 function countAll(site: ServeDo): Record<string, number> {
 	const tables = site.sql
-		.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+		.exec(
+			`SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'`
+		)
 		.toArray()
 		.map((r) => String(r['name']));
 	const counts: Record<string, number> = {};

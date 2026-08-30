@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { glob, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { composerAutoloadFiles, sdcSiblings } from './pack-completion.ts';
 
 /**
  * Packs the real file set a cold Drupal request touches into one blob plus an
@@ -271,6 +272,57 @@ if (process.env.PACK_INDEX === '1') {
 	// being opened and would otherwise pack a duplicate 6.5 MB copy.
 	paths = [...completed].filter((p) => !p.startsWith('sites/default/files/')).sort();
 	console.error(`profiled ${profiled.length} -> ${units.size} units -> ${paths.length} files`);
+}
+
+// A SINGLE-DIRECTORY COMPONENT'S STYLESHEET IS DISCOVERED WITH file_exists(), so the skip lists
+// above silently strip it. `ComponentPluginManager::findAsset()` stats `<dir>/<name>.css` and
+// returns NULL when it is absent, so the component's auto-generated library carries no CSS and the
+// browser is never told to fetch it -- while `assets/core` serves the file correctly the whole time.
+// Measured on the admin toolbar: `admin-reset-styles.css` does `all: revert` inside
+// `[data-drupal-admin-styles]` and nothing re-dresses it, so every toolbar button rendered as a raw
+// `2px outset` UA button and every menu link as blue underlined text.
+//
+// The bytes are packed rather than stubbed because aggregation READS them; with `css.preprocess`
+// on, an empty file would aggregate to nothing and fail the same way one directory further along.
+// Keyed off the manifests ALREADY in the pack, so a component ships its stylesheet exactly when it
+// ships its definition; a test fixture nothing packed stays unpacked.
+const sdcAssets = sdcSiblings(paths, (p) => existsSync(join(root, p)));
+if (sdcAssets.length > 0) {
+	const before = paths.length;
+	paths = [...new Set([...paths, ...sdcAssets])];
+	console.error(`sdc: ${sdcAssets.length} component assets, ${paths.length - before} new`);
+}
+
+// COMPOSER'S `files` AUTOLOAD IS REQUIRED BEFORE ANY CLASS RESOLVES, so a missing member is not a
+// fatal on the path that uses the package -- it is a fatal on every request. A pinned list cannot
+// see a dependency added after it was pinned, and two already had been: `halaxa/json-machine` and
+// `league/csv` were in `autoload_files.php` and in neither pack, so the next bake would have
+// shipped an autoloader that dies opening its own manifest.
+const autoloadFiles = join(root, 'vendor/composer/autoload_files.php');
+if (existsSync(autoloadFiles)) {
+	const required = composerAutoloadFiles(await readFile(autoloadFiles, 'utf8'));
+	const known = new Set(paths);
+	const add = new Set<string>();
+	for (const entry of required) {
+		if (known.has(entry) || !existsSync(join(root, entry))) continue;
+		// the PACKAGE, not the one file: `league/csv`'s entry is a two-line shim that requires its
+		// sibling, so adding the named file alone just moves the fatal one `require` along. A
+		// package whose bootstrap the list never saw is a package the list never saw at all --
+		// the doctrine/lexer case, which is why vendor is completed wholesale elsewhere
+		const unit = entry.match(/^(vendor\/[^/]+\/[^/]+)\//)?.[1];
+		if (unit === undefined) {
+			add.add(entry);
+			continue;
+		}
+		for await (const p of glob(`${unit}/**/*.php`, { cwd: root })) {
+			if (p.includes('/tests/') || p.includes('/Tests/')) continue;
+			if (!known.has(p)) add.add(p);
+		}
+	}
+	if (add.size > 0) {
+		paths = [...paths, ...add];
+		console.error(`composer files: +${add.size} files completing ${required.length} entries`);
+	}
 }
 
 const parts: Buffer[] = [];

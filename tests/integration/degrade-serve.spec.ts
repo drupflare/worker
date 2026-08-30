@@ -175,6 +175,11 @@ describe('shell candidates on the serve-stats surface', () => {
 		expect(out.safe).toBe(1);
 		expect(out.unsafe).toBe(1);
 		expect(Object.keys(out.reasons)[0]).toContain('no placeholders');
+		// the seeded row above cannot occur in production -- fillOne() refuses a session-carrying
+		// response and an anonymous render carries no placeholders -- so the count is exercised here
+		// and unanswerable on a real site. Stated on the result rather than left as a zero
+		expect(out.answerable).toBe(false);
+		expect(out.how).toContain('harvest');
 	});
 
 	it('reports zero candidates on a site with no pages, rather than dividing by nothing', async () => {
@@ -182,7 +187,10 @@ describe('shell candidates on the serve-stats surface', () => {
 			markProvisioned(obj);
 			return obj.shellCandidates();
 		});
-		expect(out).toEqual({ safe: 0, unsafe: 0, reasons: {} });
+		expect(out.safe).toBe(0);
+		expect(out.unsafe).toBe(0);
+		expect(out.reasons).toEqual({});
+		expect(out.answerable).toBe(false);
 	});
 });
 

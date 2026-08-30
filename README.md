@@ -15,8 +15,9 @@ the database. **8.5 is what ships**, with nothing dropped to fit.
 
 The interpreter ships as a zstd frame inflated at module scope, which is what lets PHP 8.5 fit the
 free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of `cpuTime` on a
-deployed worker, and boot work is close to saturated: cutting boot cost per fill by 20x moves the
-regeneration ceiling 2.1%. Rows written is the meter that binds. See [Free vs Paid](#-free-vs-paid).
+deployed worker, and a site no longer pays it: a Durable Object holds its interpreter across an
+8-second alarm re-arm, measured across 71 consecutive alarms. Rows written is the meter that binds.
+See [Free vs Paid](#-free-vs-paid).
 
 ---
 
@@ -67,7 +68,8 @@ and are marked so:
 
 So paid-vs-VPS is **roughly $12-108/year**, and at the bottom of the market it is close to a wash. The
 row that has no VPS equivalent is the first one: **there is no $0 VPS, and free carries ~3.0M
-visits/month with the same feature set as paid.**
+visits/month with the same feature set as paid** -- including both performance levers, which default
+on regardless of plan.
 
 What actually differs is the column that cannot be filled in:
 
@@ -102,9 +104,14 @@ authenticated or write-heavy, that trade goes the wrong way and a VPS is the bet
 ### Where a VPS Still Wins
 
 - **Authenticated and write-heavy traffic.** One site is one Durable Object is one thread, and you
-  cannot buy a bigger one. Content sites win decisively; a busy editorial workflow does not.
-- **Cold start.** 1,398 ms of CPU, which no single free invocation can hold, so it is amortised off
-  the request path rather than eliminated.
+  cannot buy a bigger one. Content sites win decisively; a busy editorial workflow does not. That is
+  a property of this topology rather than of the platform -- a namespace holds unlimited objects, and
+  a measured read-replica pool scales an authenticated read workload past one lane. No replica pool
+  ships, so the limit above is the one in front of you today.
+- **Cold start on a site nobody visits.** 1,398 ms of CPU, which no single free invocation can hold.
+  A warm object does not pay it, and warming is on by default -- but a site quiet enough to be
+  evicted entirely, or one that has spent its daily meter, pays it on the next visit. A VPS is
+  already running.
 - **Arbitrary contrib modules.** Anything wanting `exec`, image libraries or sockets needs a shim or
   is refused by name. That is an engineering backlog, not a solved problem. **Uploads are no longer
   on this list** -- `public://` and `private://` are backed by the Durable Object's own SQL, so a
@@ -112,7 +119,9 @@ authenticated or write-heavy, that trade goes the wrong way and a VPS is the bet
   system was MEMFS, so an upload lived as long as its isolate while the `file_managed` row
   describing it survived, and the site accumulated entities pointing at nothing.
 - **A raw uncached render is ~3.6x slower** than native PHP. The architecture wins by not rendering,
-  not by rendering faster.
+  not by rendering faster -- and where it must render for a logged-in visitor, shell assembly cuts
+  the render rather than the boot. Both together put an authenticated page at roughly **467 ms**
+  against 3,525 ms with neither, but a VPS with a warm PHP-FPM pool is still ahead of that.
 
 ### What the Self-Repair Layer Replaces
 
@@ -152,6 +161,44 @@ Free's limits are **aggregate daily budgets**, not the 10 ms per-invocation CPU 
 constrains one execution unit; the architecture chooses what an execution unit is. Score any change
 with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
 
+### What One Site Actually Gets
+
+Both performance levers are **on by default on both plans**, because one site is the case to price
+for and at one site neither costs much. A warm object spends 10.8% of free's two daily meters and
+$0 marginal on paid, where 328,752 alarms a month sit inside 1,000,000 included object requests.
+
+| authenticated page      |     boot |   render |       total | vs neither |
+| ----------------------- | -------: | -------: | ----------: | ---------: |
+| neither lever           | 1,398 ms | 2,127 ms |    3,525 ms |          - |
+| warm only               |        0 | 2,127 ms |    2,127 ms |       -40% |
+| shell assembly only     | 1,398 ms |  ~467 ms |   ~1,865 ms |       -47% |
+| **both, on by default** |        0 |  ~467 ms | **~467 ms** |   **-87%** |
+
+A cached page is **0 ms in every row**: it answers off the object's own SQL without booting PHP, so
+neither lever can make one faster. What they speed up is the tier that always renders, which is the
+logged-in one. The boot saving is a measured subtraction; the render saving derives from a measured
+4-5 ms against 20-21 ms ratio for a fragment render against the render it replaces, and applying that
+ratio to an edge `cpuTime` figure is an assumption rather than a reading.
+
+**A "fill" is one page being rendered and stored so the next visitor gets it instantly**, and a save
+is what causes most of them: a content change empties the whole site's page cache, not just the page
+edited, so every page has to be earned back. `PREFILL_ON_SAVE` re-queues the 25 busiest paths
+automatically; the rest fill when somebody asks. So for one site, fills/day is roughly
+`saves/day x 25` plus whatever else gets visited.
+
+| your site                    | saves/day | fills/day | share of free |
+| ---------------------------- | --------: | --------: | ------------: |
+| personal blog, 80 pages      |         1 |       ~55 |            2% |
+| small business, 200 pages    |         2 |      ~150 |            5% |
+| club or nonprofit, 500 pages |         5 |      ~375 |           14% |
+| local news, 1,500 pages      |        20 |    ~1,300 |           47% |
+| busy news, 3,000 pages       |        50 |    ~2,750 |           99% |
+
+In plain terms: **on free you can publish about 50 times a day on a 3,000-page site** before
+regeneration binds, and serve ~3M pageviews/month while doing it. Free's quotas are ACCOUNT-WIDE
+though, so several warm sites on one free account share that; a site that spends its daily meter
+drops back to the slow re-arm on its own and recovers at midnight UTC.
+
 ### The Two Ceilings
 
 | ceiling          | what it limits                     | bound by                  | free today                         |
@@ -184,13 +231,13 @@ host rather than a cache.
 
 ### Where the Work Pays
 
-| lever                                                  |      worth | note                                                                            |
-| ------------------------------------------------------ | ---------: | ------------------------------------------------------------------------------- |
-| Serve cached pages off-Worker (R2 custom domain)       |      ≥3.3x | serving only; the floor is R2's 10M Class B ops/month, the CDN carries the rest |
-| **Null the `page` bin** (8 -> 3 rows, warm fill)       |  **2.67x** | **done.** It duplicated bytes the host already stores in `cfw_page`             |
-| Cut the remaining rows per fill (13 -> 4)              |      3.25x | audit the fill's own bookkeeping; `cfw_page` is now most of what is left        |
-| **Anything boot-directed** (JSPI, heap restore, `-O3`) | **~1.01x** | **saturated for this ceiling.** A 20x cut in boot cost per fill buys 1.1%       |
-| More slicing / decomposition                           |   negative | alarms are counted DO requests; a 6-way split measured 5,555 -> 4,166 fills/day |
+| lever                                                  |      worth | note                                                                                                                                                                                                                          |
+| ------------------------------------------------------ | ---------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Serve cached pages off-Worker (R2 custom domain)       |      ≥3.3x | serving only; the floor is R2's 10M Class B ops/month, the CDN carries the rest                                                                                                                                               |
+| **Null the `page` bin** (8 -> 3 rows, warm fill)       |  **2.67x** | **done.** It duplicated bytes the host already stores in `cfw_page`                                                                                                                                                           |
+| Cut the remaining rows per fill (13 -> 4)              |      3.25x | audit the fill's own bookkeeping; `cfw_page` is now most of what is left                                                                                                                                                      |
+| **Anything boot-directed** (JSPI, heap restore, `-O3`) | **~1.01x** | **saturated for this CEILING**, and that is the whole claim: a 20x cut in boot cost per fill buys 1.1% of the regeneration budget. It says nothing about LATENCY, where holding the object resident removes the boot outright |
+| More slicing / decomposition                           |   negative | alarms are counted DO requests; a 6-way split measured 5,555 -> 4,166 fills/day                                                                                                                                               |
 
 Two levers that look plausible are not levers. Uninstalling `dblog` does not reduce rows per fill:
 measured, zero rows of a fill go to `watchdog`. And past ~85% off-Worker serving the binding meter

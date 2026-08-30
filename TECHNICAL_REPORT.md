@@ -23,7 +23,9 @@ measures bytes it cannot compress further.
 | Isolate startup | **112 ms** median (n=5) of a 1,000 ms budget | Cloudflare `Worker Startup Time` |
 | Startup billed to a request | **0-1 ms**; it is not billed | edge `cpuTime`, 3 cold isolates |
 | Cold boot | **1,398 ms** (n=3) | edge `cpuTime` |
+| Cold boot, object held resident | **0 ms**; an 8 s alarm re-arm keeps one incarnation | 71 consecutive alarms, deployed |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
+| Authenticated page, both levers on | **~467 ms** against 3,525 with neither | derived; see Warming |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
 | Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
@@ -532,6 +534,13 @@ This closes the "pre-warm at startup" idea. PHP's boot is 1,398 ms of `cpuTime` 
 ceiling, and its heap peaks near 115 MB against 128 MB, so the interpreter cannot be booted at module
 scope at any price. The headroom that does exist is for cheap work, and nothing cheap has been named.
 
+**It does NOT close pre-warming as an objective, and the two were conflated.** Booting at STARTUP is
+refused by the numbers above. Keeping an object that has already booted RESIDENT is a different
+mechanism with a different meter, and it works: measured on a deployed worker, an object re-armed
+every 8 s kept one incarnation across 71 consecutive alarms while holding a 32 MB allocation, and at
+12, 20, 30 and 45 s the constructor ran again on every probe. See "Warming and the 10-Second
+Threshold".
+
 ### Requests That Never Reach the Worker
 
 Two paths, and only two, cost nothing against the 100,000/day serving ceiling:
@@ -551,7 +560,27 @@ than a saving. `tests/node/cache-partition.spec.ts` refuses it in a shipping con
 ### Boot
 
 Boot is one synchronous `php._run()`. No cursor design cuts it up; it needs a JSPI build or a
-permanently warm object.
+permanently warm object, and **the warm object is now the one that exists** - see "Warming and the
+10-Second Threshold".
+
+**WHY IT CANNOT BE SPLIT**, because "run it in slices" is the first thing anyone proposes. `_run()`
+enters wasm and the wasm stack runs to completion. A wasm module compiled `ASYNCIFY=0` has no
+suspension point in it, so there is nothing for a cursor to resume FROM: the JavaScript event loop
+cannot interrupt a synchronous wasm call, and PHP's own execution has no yield primitive the host can
+reach. Every other sliced thing here - the migration, `updb`, the cron chain - is divisible because
+the DIVISION IS IN THE HOST: each unit is a separate `_run()` with its state in SQL between them. A
+boot has no such seam, because the thing being built IS the in-memory state.
+
+The two mechanisms that would add a seam are the two named above. JSPI compiles in real suspension
+points, and was researched and closed: zero of 62 surveyed modules needs one, and `WITH_OPENSSL=0`
+means it could not have fixed the module that motivated it. A warm object removes the need for a seam
+instead of adding one, which is why it is the answer that shipped.
+
+**What is inside it**, from the cumulative table below: `kernel-boot` dominates everything before it
+by roughly 5x. That is Drupal building its service container and module handler - not I/O, not the
+pack, not the interpreter. `interpreter up, no PHP` is 484 ms of the total, so **two thirds of a cold
+boot is Drupal booting itself**, and it would cost the same on any host that could not keep a process
+alive between requests. PHP-FPM does keep one alive. That is the whole difference.
 
 | phase | edge cpuTime, min/med/max |
 | --- | --- |
@@ -569,9 +598,82 @@ sub-second marginals are noise; what survives is that `kernel-boot` dominates ev
 roughly 5x. **The per-object instantiate is 484 ms**, which is the figure a heap-restore or
 always-warm proposal is scored against.
 
-**Boot work is saturated.** Once the fill window amortises the boot, the regeneration ceiling is
-bound by rows written, so a 20x reduction in boot cost per fill moves the ceiling about **1%**. Rows
-work first.
+**Boot work is saturated FOR THE REGENERATION CEILING.** Once the fill window amortises the boot,
+that ceiling is bound by rows written, so a 20x reduction in boot cost per fill moves it about **1%**.
+Rows work first, and that is a statement about the CEILING.
+
+**It is not a statement about latency, and reading it as one closed the wrong thing.** A visitor
+waiting on a page that must render pays the whole 1,398 ms, and no row budget is involved. That is
+what warming removes.
+
+### Warming and the 10-Second Threshold
+
+Cloudflare hibernates an idle Durable Object after **10 seconds** and hibernation discards in-memory
+state, so `this.php` dies there. Measured on a deployed worker, with an object minting an id in its
+constructor and holding a 32 MB allocation so a changed id is a lost isolate rather than a proxy for
+one:
+
+| re-arm interval | result |
+| --- | --- |
+| none | id changed across a 20 s gap, the shortest tested |
+| **8 s** | **one incarnation across 71 consecutive alarms, 32 MB intact** |
+| 12 / 20 / 30 / 45 s | id changed on every probe; `alarmsSeen` never passed 1 |
+
+`KEEP_WARM_MS` shipped at 240,000, 24x the threshold, so nothing it governed was ever kept warm. Two
+places in this codebase had promoted "an armed alarm buys no warmth" into a general fact; it is true
+at 240 s and false at 8 s, because the FIRING resets the idle clock. Arming does not warm. Firing
+under the threshold does.
+
+**Duration is not the meter, and ROWS are.** An object waiting on an armed alarm is idle and ELIGIBLE
+to hibernate, and an idle-eligible object is not billed for duration. Measured on a deployed worker,
+n=116 firings across two objects, torn down afterwards:
+
+| meter | per firing | per day at 8 s | free budget | share |
+| --- | ---: | ---: | ---: | ---: |
+| DO requests | 1 | 10,800 | 100,000 | 10.8% |
+| rows, as measured | 3 | 32,400 | 100,000 | 32.4% |
+| **rows, after the fix** | **1** | **13,680** | 100,000 | **13.7%** |
+| wall time | 23.3 ms | 252 s | -- | -- |
+| duration | 2.9e-3 GB-s | 31.4 GB-s | 13,000 | 0.24% |
+
+**This paragraph said "one request and one row per firing", and the row half was wrong.** It was
+reasoned from the published "a `setAlarm()` is one row written" rather than measured, and
+`FREE_QUOTAS.rowsPerAlarmArm` carried the same 1. A firing charged THREE: the `setAlarm`, plus one
+row each for `flushDailyRows()` and `flushDailyDoRequests()`. **Two thirds of a warming tick's row
+cost was the daily meters recording their own writes** -- on an idle tick there is nothing else for
+them to record, so the counter sustained itself and was most of what it counted.
+
+`shouldFlushMeters()` now gates both on a 60 s interval or 25 pending rows, so an idle tick charges
+the `setAlarm` alone and the two meter rows are amortised across 7.5 firings: 10,800 + 1,440 x 2 =
+13,680 a day. `tests/integration/warm-alarm-cost.spec.ts` pins the per-tick count at exactly 1.
+
+The model had to grow a second term for this. Folding the flush into a per-arm constant is wrong at
+every interval except the one it was derived at, and the flush is additionally capped by the FIRINGS
+-- an object waking every 240 s cannot flush every 60 s, and without the cap the model charged a
+240 s chain for 1,440 flushes it never performs. `saturatingSites` moved with it, from 277 to **92**:
+it divided the quota by arms per site, and rows per site is no longer the same number.
+
+The two arms differed by one SQL insert and billed 23.34 ms against 23.14 ms, so the cost is the
+firing rather than the work.
+
+$0 marginal on paid, where 328,752 alarms a month sit inside 1,000,000 included object requests.
+Free's quotas are account-wide, so a site that spends its daily meter drops back to the slow re-arm
+on its own and recovers at midnight UTC.
+
+**What it is worth, per page class.** A cached page answers off `ctx.storage.sql` without booting
+PHP, so warming cannot make one faster by any amount. The tier that always renders is the
+authenticated one, because a session-carrying response is never stored in the anonymous bin:
+
+| authenticated page | boot | render | total |
+| --- | ---: | ---: | ---: |
+| neither lever | 1,398 ms | 2,127 ms | 3,525 ms |
+| warm only | 0 | 2,127 ms | 2,127 ms |
+| shell assembly only | 1,398 ms | ~467 ms | ~1,865 ms |
+| both | 0 | ~467 ms | **~467 ms** |
+
+The boot column is a measured subtraction. **The render column is derived across instruments** and is
+the softer half: a fragment render measured 4-5 ms of gate-lane wall clock against 20-21 ms for the
+render it replaces, and applying that ratio to an edge `cpuTime` figure assumes it transfers.
 
 ### Writes
 
@@ -840,6 +942,245 @@ Content-keying the page store saves 21.05% of bytes on a real nine-path corpus -
 byte-identical across paths, and that one class is the entire saving -- but costs **4 charged rows
 against 2** for a new body, because a `TEXT PRIMARY KEY` costs a table row plus an index row. Storage
 binds nothing here (30,880 bytes against a 5 GB allowance) and rows bind regeneration.
+
+### One Object Is Not a Site-Wide Throughput Ceiling
+
+A Durable Object is single-threaded, which has been read here as "a site is single-threaded". Those
+are different claims, and the second one is false: a namespace holds unlimited objects, so the
+question is whether a site's request population can be spread across several.
+
+**An authenticated GET writes no authoritative state under this SAPI**, which is what makes spreading
+it possible at all. Measured with the per-table write tally on a real render, steady state:
+
+| path | rows written | authoritative |
+| --- | ---: | --- |
+| `/` | 9 | none |
+| `/user/1` | 34 | none |
+| `/admin/content` | 47 | none |
+| `/admin/people` | 71 | none |
+| `/admin/structure/types` | 45 | none |
+| `/admin/reports/status` | 39 | `key_value`, `key_value_expire`, `watchdog`, `cfw_http_queue` |
+
+No `sessions` row, no `users_field_data.access`, no `flood`, no form state. Core attaches
+`UserRequestSubscriber` to `KernelEvents::TERMINATE` and throttles the access write by
+`session_write_interval`, so on a stock host it is periodic; here it does not happen at all, because
+this SAPI never dispatches terminate. Nothing depends on that deliberately, so
+`tests/integration/replica-invariant.spec.ts` is its only guard.
+
+**Replica-safety is a property of the REQUEST, not of the route**, and the status report is what
+showed it. Measured against a dev server whose fetch cache was warm it wrote only `key_value`; measured
+on a cold object it also wrote `watchdog`, because the advisories fetch failed and Drupal logged it.
+A route allow-list derived from either reading would have been wrong about the other. `watchdog`
+appears on any authenticated GET where Drupal logs.
+
+**And a table name is not an effect either.** Reading the collections rather than the table turned
+one verdict over: `key_value` holds `update_fetch_task:*` and `update:update_project_projects`, which
+are a disposable fetch queue, alongside **`state:system.private_key`**, which Drupal mints lazily and
+keys CSRF tokens and other HMACs on. Two replicas each minting their own would issue tokens the
+others reject. So the private key must arrive by replication or at seeding and may never be generated
+on a replica, while the rest of the same table can be dropped -- a per-table verdict is wrong in
+whichever direction it is set.
+
+This is why the guard in `src/ops/replica.ts` is effect-based rather than a route list. It walks the
+capabilities INSTALLED on the PHP module instead of a known list, classifies each SQL statement
+against the tables a replica may own, and refuses anything it does not recognise. Two capabilities
+had already drifted out of `CROSSING_NAMES` -- `cfwOidcClaims`, which deletes a durable ticket, and
+`cfwTcp`, which queues an outbound exchange -- so a list would have inherited that gap.
+
+**The scaling curve.** A fixed CPU burn rather than Drupal, so the absolute rates are not Drupal's;
+what the arm measures is the shape. Concurrency scaled WITH the replica count so per-replica offered
+load is constant at 48 connections, zero errors:
+
+| replicas | throughput | p50 | p95 | p99 | scaling | ideal |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 91.4/s | 528 ms | 634 ms | 639 ms | 1.00x | 1x |
+| 2 | 187.7/s | 499 ms | 592 ms | 710 ms | **2.05x** | 2x |
+| 4 | 288.9/s | 526 ms | 1,900 ms | 2,180 ms | 3.16x | 4x |
+| 8 | 523.2/s | 543 ms | 1,824 ms | 2,288 ms | 5.72x | 8x |
+
+p50 is flat across every arm, so per-request service time does not degrade as the pool grows. The
+primary fed every pull with no measurable degradation; replication lag was 13-87 ms.
+
+**The shortfall at 4 and 8 is NOT attributed.** Little's Law closes at 1 and 2 -- 48/0.528 = 90.9
+against 91.4 observed, 96/0.51 = 188 against 187.7 -- and opens a gap at 4 (predicted 364, observed
+289) and 8 (predicted 708, observed 523). Something above the service-time path constrains aggregate
+concurrency past N=2. A single Node process holding 384 sockets is a candidate and is not evidence;
+separating it needs a distributed generator, and 16 and 32 are not worth building until it is
+separated.
+
+**Three instrument errors had to fall first**, each of which produced a confident wrong curve:
+
+- `while (Date.now() < until)` as a CPU burn never terminates, because the clock is frozen between
+  I/O. Every request errored after ~37 s. The comment asserting it advanced across a compute loop was
+  a guess.
+- A shared-counter round-robin distributed unevenly and reported a completely FLAT curve
+  (102 / 99.6 / 110). Pinning the replica per worker turned the same rig into 1.00 / 1.80 / 2.14.
+- Fixed concurrency gave every arm a different per-replica load: N=1 collapsed with 2,227 errors at
+  160 connections while N=8 ran 20 per replica and was never saturated.
+
+The control that makes the numbers mean anything: the same generator against an endpoint doing no
+work reached **958 req/s**, which is what rules it out as the cap at N<=4.
+
+### What a Replica Actually Buys, and What One Costs
+
+**Replicas do not make a page faster. They raise how many pages run at once.**
+
+The measured p50 of 528 ms at N=1 is almost entirely QUEUEING, not service, and separating the two
+resolves an apparent contradiction in the numbers above: one single-threaded object cannot serve
+91.4 req/s if each request occupies it for 528 ms. It does not. Little's Law on the same arms:
+
+| replicas | conns | total req/s | per replica | **service time** | p50 residence | queueing |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 48 | 91.4 | 91.4 | **10.94 ms** | 528 ms | 517 ms |
+| 2 | 96 | 187.7 | 93.9 | **10.66 ms** | 499 ms | 488 ms |
+| 4 | 192 | 288.9 | 72.2 | **13.85 ms** | 526 ms | 512 ms |
+| 8 | 384 | 523.2 | 65.4 | **15.29 ms** | 543 ms | 528 ms |
+
+Service time is one over per-replica throughput; residence is what a client observes. **97% of the
+observed latency was requests waiting behind each other**, which is exactly what a pool removes.
+
+That table also localises the shortfall the earlier arms could not. Per-replica service time is flat
+through N=2 -- 10.94 to 10.66 ms, no degradation at all -- and then rises **27% at N=4 and 40% at
+N=8**. So the 4->8 gap is not the load generator and not the ideal-vs-actual ratio; it is each
+object getting slower as the pool grows, which points at placement or account-level contention and
+needs per-object `cpuTime` and DO identity to settle.
+
+**Sizing is a division, not a curve:**
+
+```text
+replicas = peak concurrent authenticated req/s / per-replica req/s
+```
+
+Per-replica throughput is one over the SERVICE time. The synthetic burn ran at 10.9 ms; a Drupal
+authenticated render does not:
+
+| authenticated render | service time | per-replica req/s |
+| --- | ---: | ---: |
+| neither lever | 3,525 ms | 0.28 |
+| warm only | 2,127 ms | 0.47 |
+| both levers | ~467 ms | 2.14 |
+
+**Which puts 32 replicas at ~68 authenticated renders per second, sustained** -- a large site. A busy
+editorial Drupal site runs 1-5, which is **1-3 replicas**. 32 was brainstormed and the arithmetic
+does not support it as a default. The ~467 ms is derived across instruments rather than measured at
+the edge, so treat that row as an order of magnitude and do not convert the synthetic 91.4 req/s into
+a Drupal capacity number.
+
+### Free Supports Replicas; What It Meters Is WARMTH
+
+Durable Objects are available on free, SQLite-backed, with unlimited objects per class. What free
+bounds is not how many replicas exist but how many are kept HOT, because warming spends the same
+daily meters serving does.
+
+Measured, per warmed object per day: **10,800 DO requests and 13,680 rows** -- 10,800 `setAlarm`
+rows plus 1,440 meter flushes at 2 rows each. **Rows bind first**, and an earlier version of this
+section checked only the request meter and put the ceiling at 9 objects. It is 7:
+
+| warmed objects | requests/day | rows/day | inside free? |
+| ---: | ---: | ---: | --- |
+| 2 (primary + 1 hot) | 21,600 | 27,360 | yes |
+| 4 | 43,200 | 54,720 | yes |
+| **7** | 75,600 | **95,760** | **yes, the ceiling** |
+| 8 | 86,400 | 109,440 | no, 9% over on rows |
+
+**A COLD REPLICA COSTS NOTHING.** It arms no alarm, serves no request and is not billed for duration
+while hibernating, so the pool size and the hot count are separate numbers. Free's shape is therefore
+a small hot pool plus cold burst capacity:
+
+```text
+primary        hot
+replica 0      hot
+replica 1..N   cold, woken on sustained contention, hibernating again after
+```
+
+The trade a cold replica makes is the 1,398 ms boot on its first request, against an extra
+independent execution lane for every request after it. That is the right trade for a burst tier and
+the wrong one for a latency floor.
+
+So a replica count belongs in configuration with a hard maximum and a separate hot-pool target,
+demand-driven rather than fixed. Free's always-hot maximum is 7 objects total; its cold pool is
+bounded by the daily request budget it would spend when actually used, not by its size.
+
+### What Each Replica Buys, Against a VPS
+
+A PHP-FPM worker and a replica are the same unit: one execution lane. So the comparison is
+lane-for-lane, and the only thing that differs is the service time per lane and what a lane costs.
+
+**Queueing delay is `(C / N - 1) x service_time`.** Observed latency at C concurrent authenticated
+requests, using the measured service times above and a **200 ms native PHP render, which is ASSUMED
+and is the weakest number here**:
+
+| pool | neither lever | warm only | both levers | VPS lane (assumed) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 70.50 s | 42.54 s | 9.34 s | 4.00 s |
+| 2 | 35.25 s | 21.27 s | 4.67 s | 2.00 s |
+| 4 | 17.62 s | 10.63 s | 2.33 s | 1.00 s |
+| 8 | 8.81 s | 5.32 s | 1.17 s | 0.50 s |
+| 16 | 4.41 s | 2.66 s | 0.58 s | 0.25 s |
+| 32 | 3.52 s | 2.13 s | **0.47 s** | 0.20 s |
+
+at C = 20. Two things fall out of it:
+
+**The sweet spot is exactly `N = peak concurrent authenticated requests`, and nothing above it buys
+anything.** Queueing reaches zero when `N >= C` and the row goes flat -- 32 replicas and 20 replicas
+are the same page at C=20. That is the answer to "what is the right number": not 32, not a constant,
+but the site's own peak concurrency.
+
+**Per lane the VPS is faster, so matching it takes more lanes.** 2.14 renders/sec against 5.00, a
+2.3x deficit, so throughput parity with an `M`-worker FPM pool needs roughly `2.3 M` replicas. What
+closes that gap is not more replicas but a shorter service time, which is what the two levers already
+did -- 0.28 to 2.14 renders/sec per lane, a 7.6x move.
+
+### Where the Cost Crosses Over
+
+Priced with Workers Paid ($5/mo, 10 M requests included, then $0.30/M), DO requests (1 M included,
+then $0.15/M), DO rows (50 M included, then $1.00/M), a measured 9 rows per warm authenticated
+render, and the hot pool sized to a peak of 10x average:
+
+| views/month | authenticated | hot objects | drupflare | $40 VPS |
+| ---: | ---: | ---: | ---: | --- |
+| 100,000 | 10% | 2 | **$5.00** | wins |
+| 1,000,000 | 10% | 2 | **$5.00** | wins |
+| 10,000,000 | 10% | 3 | **$5.15** | wins |
+| 50,000,000 | 10% | 10 | **$18.09** | wins |
+| 100,000,000 | 10% | 19 | $82.07 | loses |
+
+**The crossover against a $40/month VPS is ~67 million views a month**, about 26 views/sec sustained.
+Below it the architecture is cheaper; above it the per-request meters overtake a fixed monthly box.
+
+The reason the low end is so flat is that anonymous traffic never reaches an object at all, so a
+small site's bill is the Workers base fee and nothing else -- a VPS pays for peak capacity 24 hours a
+day whether or not anyone visits, and this does not.
+
+**Latency is the other half and it does not favour this architecture.** Unqueued, a VPS lane answers
+an authenticated render in less time than a replica does; replicas remove queueing, they do not make
+a lane faster. Where this wins on latency is the cached anonymous page, which is answered at the edge
+and which a VPS cannot match without putting a CDN in front of itself.
+
+### What a Hot Pool Costs on Paid
+
+Warming `N+1` objects at 8 s, per month, against 1,000,000 included DO requests and 50,000,000
+included rows:
+
+| replicas | requests/mo | rows/mo | duration | **total** |
+| ---: | ---: | ---: | ---: | ---: |
+| 3 | 1.30 M | 1.64 M | 118 GB-s | **$0.05** |
+| 7 | 2.59 M | 3.28 M | 236 GB-s | **$0.24** |
+| 15 | 5.18 M | 6.57 M | 452 GB-s | **$0.63** |
+| 31 | 10.37 M | 13.13 M | 934 GB-s | **$1.41** |
+
+Rows stay inside the included 50 M at every size, so requests are the only line that bills.
+
+**Cost does not decide the pool size on paid** -- 32 replicas kept permanently hot is under two
+dollars a month. Measured queueing relief and replica utilisation should decide it.
+
+**The 4 and 8 arms are not yet interpretable, and the reason is not recorded.** The on-platform
+generator saw 1,438 of 2,880 requests fail at N=2, and the run counted non-200 responses without
+capturing the status, the Cloudflare error code, or the account's usage at that moment. Cloudflare
+documents no general requests-per-second limit on Workers -- free has a 100,000/day request quota
+that answers Error 1027 when exhausted -- so "free-plan rate limiting" is a guess and is withdrawn
+until a run records the code. 16 and 32 are not worth building until a paid account has re-run
+1->2->4 on a real Drupal workload with per-object `cpuTime` and DO identity captured.
 
 ---
 

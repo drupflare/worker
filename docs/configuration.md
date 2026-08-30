@@ -189,22 +189,48 @@ knob.
 
 ## Cron
 
-| var                     | default   | what it does                                                      |
-| ----------------------- | --------- | ----------------------------------------------------------------- |
-| `DRUPAL_CRON`           | on        | whether Drupal cron runs from the alarm; `0` turns it off         |
-| `CRON_INTERVAL_MS`      | 900,000   | minimum gap between firings                                       |
-| `CRON_MAX_UNITS`        | 6         | hooks or queues one firing may run                                |
-| `CRON_MAX_ROWS`         | 500       | rows one firing may write                                         |
-| `CRON_MAX_MS`           | 500       | wall-clock ms one firing may occupy                               |
-| `CRON_QUEUE_BATCH_SIZE` | 5         | queue items drained per queue per firing                          |
-| `GC_INTERVAL_MS`        | 3,600,000 | gap between garbage-collection passes                             |
-| `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                           |
-| `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site |
+| var                     | default   | what it does                                                             |
+| ----------------------- | --------- | ------------------------------------------------------------------------ |
+| `DRUPAL_CRON`           | on        | whether Drupal cron runs from the alarm; `0` turns it off                |
+| `CRON_INTERVAL_MS`      | 900,000   | minimum gap between firings                                              |
+| `CRON_MAX_UNITS`        | 6         | hooks or queues one firing may run                                       |
+| `CRON_MAX_ROWS`         | 500       | rows one firing may write                                                |
+| `CRON_MAX_MS`           | 500       | wall-clock ms one firing may occupy                                      |
+| `CRON_QUEUE_BATCH_SIZE` | 5         | queue items drained per queue per firing                                 |
+| `GC_INTERVAL_MS`        | 3,600,000 | gap between garbage-collection passes                                    |
+| `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                                  |
+| `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site        |
+| `KEEP_WARM_MS`          | 240,000   | idle alarm re-arm; NOT a keep-warm, see below                            |
+| `SITE_WARM`             | off       | `1` re-arms below the hibernation threshold so the object stays resident |
+| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm; clamped under 10,000 whatever is set                    |
 
 **Cron defaults to on, and it used to default to off.** Six of twenty-five surveyed contrib modules
 were classified as needing cron for that reason: the capability was built and wired into the alarm,
 and nothing turned it on. A module that depends on cron does not fail when cron never runs, it
 silently does nothing.
+
+### Warming
+
+**A Durable Object hibernates after 10 seconds of idle and hibernation discards in-memory state, so
+`this.php` dies there.** Measured on a deployed worker rather than inferred: an object holding a
+32 MB allocation and an id minted in its constructor kept ONE incarnation across 71 consecutive 8 s
+alarms, and at 12, 20, 30 and 45 s the constructor ran again on every probe.
+
+`KEEP_WARM_MS` ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps
+nothing warm. The name is older than the measurement; it is an idle re-arm.
+
+`SITE_WARM=1` re-arms at `WARM_INTERVAL_MS` instead, clamped below 10,000 because a larger value
+spends a request and a row per firing and holds nothing - the worst of both.
+
+**Off by default on both plans, and the reason is a band rather than a plan.** A warm site costs
+10,800 object requests and 10,800 rows a day whatever its traffic. Below roughly 505 renders/day the
+alarms cost more than the CPU they save; above roughly 8,640 the site never idles 10 s and is already
+warm, so warming the busiest sites is backwards. What it buys, where it applies, is the 1,398 ms cold
+boot on every page that renders - which is the authenticated tier, since a cached page answers off
+SQL without booting PHP at all.
+
+Duration is not the meter. An object waiting on an armed alarm is idle and eligible to hibernate, and
+an idle-eligible object is not billed for duration; warming spends requests and rows.
 
 `CRON_INTERVAL_MS` is what makes the per-firing budget a budget. The alarm is not a clock — it
 re-arms at +1 ms while a fill queue is draining — so "once per alarm" during an active fill is once
@@ -260,11 +286,20 @@ login invocation has.
 ### `SHELL_ASSEMBLY`
 
 `1` allows an authenticated GET to be answered from a stored shell with its personalised regions
-filled at the edge. Default off, and nothing happens until a shell has been harvested for a path.
+filled at the edge. **Defaults on for a paid site and off for a free one**; an explicit `0` or `1`
+wins on either plan, and an empty value is treated as unset. The split is the row toll below, not
+the disclosure risk: no visitor is served an assembly that has not been proven against their own
+render.
 
-A shell is harvested under two sessions of one role set and stored only when both normalise to
-identical bytes. A visitor whose permissions hash differs from the stored shell's falls through to
-an ordinary render.
+A path with no stored shell is seeded from the next authenticated request, which is what lets
+assembly resume after an invalidation. Every bump purges every shell, because no Drupal cache tag
+reaches one, so without seeding the feature stops at the first content change until an operator
+re-harvests.
+
+An operator harvest takes two sessions of one role set and stores the shell only when both normalise
+to identical bytes. A seed takes one session, which widens what may be STORED and not what may be
+served. A visitor whose permissions hash differs from the stored shell's falls through to an ordinary
+render.
 
 Each visitor's first request for a harvested path re-harvests under their own session and requires
 their normalised shell to equal the stored one byte for byte. That response carries

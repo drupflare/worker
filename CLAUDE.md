@@ -341,6 +341,14 @@ Three vitest projects exist because workerd cannot do `node:child_process` or `n
 runs in workerd, `node` runs what needs a real PHP binary or filesystem, `e2e` needs a server and is
 excluded from `bun run test`.
 
+**The browser lane BUILDS THE PACK when there is no release, and used to skip instead.** It ran on
+every push and always passed having executed nothing: with no release `HAVE_PAYLOAD` was empty and
+every step was guarded on it, so five consecutive green runs ran zero specs. `bun run build:local`
+completes on a clean checkout now that `assets/drupal/site.sqlite` is restorable from the CDN, so the
+lane builds and runs. The from-source pack is a SUPERSET -- 19.74 MB against the shipped 11.49 -- and
+that is by construction: the shipped file list came from a traced run a checkout does not have, so
+the bootstrap globs every non-test file. Verified rendering: 200 in 26 ms cold, 3.6 ms warm.
+
 **A fourth lane drives a BROWSER, and it exists because no HTTP lane could see the defect that
 opened it.** `bun run test:browser` runs Playwright over `bun run dev` against `tests/e2e/browser/`.
 The files are `*.pw.ts` rather than `*.spec.ts` so the vitest `e2e` glob cannot collect them, and it
@@ -391,6 +399,102 @@ not Drupal core's legacy style.
 
 A malformed `phpcs.xml.dist` **fails silently and reports a fake pass**. Verify a ruleset change by
 loading it. `--` inside an XML comment is invalid.
+
+## A `run: false` is load-bearing, and three of them outlived their reason
+
+`CRON_HOOKS` switched `update`, `system` and `announcements_feed` off for "outbound HTTPS; there is
+no socket". True when written; false once the stream wrapper and `CachedFetchHandler`'s
+defer-and-answer-next-drain landed, and nothing re-read it. So `hook_cron` for `update` never fired
+on any site, the fetch queue was drained only by a human clicking Check, and **security advisories
+were never wired at all**. `drupflare` was not in `KNOWN_CRON_HOOKS` either, so `DeferredCron` -- the
+hook written to stop the update fetch latching -- had never run.
+
+A skipped hook is absent from every site rather than merely unverified, and nothing reports it.
+Before adding one, check the limit still holds.
+
+**`cronHookList()` IS EXPORTED, SPEC'D AND CALLED BY NOTHING**, so the chain always uses the
+hardcoded list and a customer-installed module's `hook_cron` never runs. Its docblock says the
+opposite. Not fixed.
+
+**AND TURNING THEM ON QUARANTINED THE SITE.** A cold fetch cache plus cron tripped
+`bridge.asyncify_called` to three strikes and every page answered 503 -- so a newly provisioned site,
+whose cache is always cold, took itself down on its first cron round. The tripwire's `error` severity
+was calibrated to the pre-stub behaviour where reaching a free identifier killed the invocation; the
+stub was added to make that survivable and the severity never moved. A graceful degradation must not
+escalate to an outage.
+
+## A Durable Object hibernates at 10 s, and `KEEP_WARM_MS` is 24x that
+
+Measured on a throwaway deploy, an object minting an id in its constructor and holding a 32 MB
+allocation: re-armed every **8 s** one incarnation survived **71 consecutive alarms**; at 12, 20, 30
+and 45 s the constructor ran again on every probe; with no alarm the id changed across a 20 s gap.
+
+So `KEEP_WARM_MS = 240_000` re-arms an idle alarm and keeps nothing warm. Two places had recorded the
+wider claim that an armed alarm "buys no warmth" as a general fact -- correct at 240 s, false at 8 s,
+because the FIRING resets the idle clock. Arming does not warm; firing under the threshold does.
+
+**Duration is not the meter.** An object waiting on an armed alarm is idle and ELIGIBLE to hibernate,
+and an idle-eligible object is not billed for duration. Warming spends requests and rows, one of each
+per firing, which is 10,800/day. `SITE_WARM` is off by default for that reason and not for a safety
+one. What it removes is the 1,398 ms boot from pages that render; a cached page answers off
+`ctx.storage.sql` without booting PHP, so warming cannot make one faster by any amount.
+
+## A meter that is most of what it counts
+
+An idle warming tick charged **three** rows: the `setAlarm`, plus one each for `flushDailyRows()` and
+`flushDailyDoRequests()`. On an idle tick the only writes those two have to record are their own, so
+the counter sustained itself -- 32,400 rows/day at 8 s, **32.4% of free's daily row budget to count
+almost nothing**. `shouldFlushMeters()` gates them on a 60 s interval or 25 pending rows and a tick
+now charges 1; `tests/integration/warm-alarm-cost.spec.ts` pins it.
+
+**`FREE_QUOTAS.rowsPerAlarmArm` was 1 and had never been measured.** It came from the published "a
+`setAlarm()` is one row written", which is true about the setAlarm and not about the firing. Score a
+warming proposal against a measurement, not against the platform's line item.
+
+Two modelling traps came out of fixing it, and both produce a confident wrong number:
+
+- **A cost with its own clock needs its own term.** Folding the meter flush into a per-arm constant
+  is right only at the interval it was derived at.
+- **The flush is capped by the FIRINGS.** An object waking every 240 s cannot flush every 60 s;
+  without the cap the model charged a 240 s chain for 1,440 flushes it never performs. `saturatingSites`
+  moved 277 -> 92 because it divided the quota by arms per site and rows per site is no longer that
+  number.
+
+## One object is not a site-wide throughput ceiling
+
+A Durable Object is single-threaded; a SITE is not, because a namespace holds unlimited objects.
+Measured on a throwaway rig with a fixed CPU burn, concurrency scaled with the pool so per-replica
+offered load stays constant: **1.00 / 2.05 / 3.16 / 5.72x at 1 / 2 / 4 / 8**, p50 flat throughout,
+zero errors. Little's Law closes at 1 and 2 and opens a gap at 4 and 8, so something above the
+service-time path constrains aggregate concurrency past N=2 -- **not attributed**, and 16/32 are not
+worth building until a distributed generator separates the load generator from the topology.
+
+**An authenticated GET writes no authoritative state under this SAPI**, which is what makes any of it
+possible. No `sessions`, no `users_field_data.access`, no `flood`. Core throttles the access write by
+`session_write_interval` on `KernelEvents::TERMINATE`; here it never fires at all because this SAPI
+does not dispatch terminate. Nothing depends on that deliberately, so
+`tests/integration/replica-invariant.spec.ts` is its only guard.
+
+**Classify the EFFECT, never the route and never the table.** Both cheap classifications were measured
+wrong on the same page:
+
+- `/admin/reports/status` wrote only `key_value` against a warm fetch cache and also `watchdog` against
+  a cold one, because the advisories fetch failed and Drupal logged it. `watchdog` appears on any
+  authenticated GET that logs.
+- `key_value` holds the disposable `update_fetch_task:*` queue **and `state:system.private_key`**, which
+  Drupal mints lazily and keys CSRF tokens on. Two replicas each minting their own issue tokens the
+  others reject, so it must arrive by replication and may never be generated on a replica.
+
+`src/ops/replica.ts` is therefore two allow-lists and no deny-list, and it walks the capabilities
+INSTALLED on the module rather than a list -- `cfwOidcClaims` and `cfwTcp` had both drifted out of
+`CROSSING_NAMES` and both mutate.
+
+**Three load-generator errors each produced a confident wrong curve**, and all three are cheap to
+repeat: a `while (Date.now() < until)` CPU burn never terminates because the clock is frozen between
+I/O; a shared-counter round-robin distributes unevenly and reported a completely FLAT curve; fixed
+concurrency gives every arm a different per-replica load, so N=1 collapsed at 160 connections while
+N=8 was never saturated. Always measure the generator's own ceiling against a no-work endpoint first
+-- here it was 958 req/s, which is what makes the rest mean anything.
 
 ## `supported` is not a state a module may be in
 

@@ -200,13 +200,14 @@ import {
 	type InvalidationResult
 } from './ops/core-version.js';
 import {
+	CRON_CLAIM_GRACE_MS,
 	cronBudget,
 	cronDue,
 	cronIntervalMs,
 	driveCron,
 	drupalCronEnabled
 } from './ops/cron-drive.js';
-import { cronOptions, gcPass, writeCursor } from './ops/cron.js';
+import { cronOptions, gcPass, idleRearmMs, writeCursor } from './ops/cron.js';
 import {
 	crossingsSince,
 	emptyCrossings,
@@ -314,6 +315,12 @@ import {
 	shouldRollback
 } from './ops/repair.js';
 import {
+	enforceReadOnly,
+	replicaReadOnly,
+	type ReadOnlyGuard,
+	type ReplicaRequiresPrimary
+} from './ops/replica.js';
+import {
 	assemble,
 	fillIdentity,
 	normaliseShell,
@@ -336,6 +343,7 @@ import {
 	tokenMatches,
 	type SecretStore
 } from './ops/site-secrets.js';
+import { classifyState } from './ops/state-inventory.js';
 import {
 	RingBuffer,
 	SEVERITY,
@@ -767,7 +775,37 @@ interface FillOutcome {
 		setCookie: string[];
 		/** `Location`, so a login's redirect survives instead of rendering as an empty 302 body */
 		location: string | null;
+		/** the `x-drupal-*` headers the client reads; see {@link passThroughHeaders} */
+		passHeaders?: Record<string, string>;
 	};
+}
+
+/**
+ * The response headers a render is allowed to set on the way out.
+ *
+ * `x-drupal-*` ONLY, and the prefix is the whole rule. These are headers Drupal sets for the
+ * BROWSER rather than for a cache -- `X-Drupal-Ajax-Token` is the one that matters, because ajax.js
+ * discards any response lacking it with "The response failed verification so will not be
+ * processed." A render that could set arbitrary headers could set `set-cookie`, `location` or a
+ * CORS header, so the prefix is a boundary and not a formality.
+ *
+ * @param raw
+ *   Whatever the render fragment reported, which is unvalidated JSON.
+ *
+ * @returns
+ *   Header name to value, lowercased, with anything outside the prefix dropped.
+ */
+export function passThroughHeaders(raw: unknown): Record<string, string> {
+	if (raw === null || typeof raw !== 'object') return {};
+	const out: Record<string, string> = {};
+	for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+		const key = String(name).toLowerCase();
+		if (!key.startsWith('x-drupal-')) continue;
+		// a newline would let one header become two, which is response splitting
+		if (/[\r\n]/.test(key) || typeof value !== 'string' || /[\r\n]/.test(value)) continue;
+		out[key] = value;
+	}
+	return out;
 }
 
 /**
@@ -919,13 +957,25 @@ export type ShellVerdict = 'cached' | 'proven' | 'refused';
 /**
  * Whether an authenticated GET may be answered from a stored shell.
  *
- * OFF unless an operator says `1`, on both plans, and that default is the point rather than
- * timidity: the failure mode of a wrong shell is one visitor seeing another's page, so it stays a
- * decision an operator makes about a site they have harvested rather than something that turns
- * itself on. `KV_OVERRIDABLE` carries it so turning it back off needs no redeploy.
+ * ON BY DEFAULT ON PAID, OFF ON FREE, and an explicit `SHELL_ASSEMBLY` still wins either way.
+ * `KV_OVERRIDABLE` carries it, so turning it off needs no redeploy.
+ *
+ * This used to be off on both plans on the reasoning that "the failure mode of a wrong shell is one
+ * visitor seeing another's page". That failure mode is real and it is also not what gates this
+ * lever, which is the distinction the old default missed. `assembleFor()` serves NO visitor until
+ * their own uid has passed `verifyShellFor()` -- a re-harvest of THEM, compared byte for byte
+ * against the stored shell, which on a mismatch deletes the shell, records the diverging offset and
+ * answers them from their own render. The two-session harvest authorises the STORE; the per-uid
+ * proof authorises the SERVE, and only the second stands between a visitor and someone else's page.
+ * Every other failure returns null and falls through to an ordinary render.
+ *
+ * SO THE SPLIT IS COST, NOT SAFETY. The first request per `(path, role set, uid)` pays a 40-52 row
+ * toll and breaks even after 4-13, which paid absorbs and free's 100,000 rows/day does not.
  */
 export function shellAssemblyEnabled(env?: SiteEnv | null): boolean {
-	return String(env?.SHELL_ASSEMBLY ?? '0') === '1';
+	const set = env?.SHELL_ASSEMBLY;
+	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	return true;
 }
 
 /**
@@ -996,6 +1046,19 @@ const CACHETAG_WRITE =
  * (6,810 ms of CPU, and the alarm is scheduled from the END of that work).
  */
 const INSTALL_FILL_DELAY_MS = 1000;
+
+/**
+ * How often the daily meters may pay for a row, and how many pending rows override that.
+ *
+ * 60 s against an 8 s warming tick means one flush per 7.5 firings rather than one per firing. The
+ * volume trigger is what keeps a busy site prompt; a warming tick charges one row, so 25 is far
+ * above anything an idle object can accumulate inside the interval.
+ */
+const METER_FLUSH_MS = 60_000;
+const METER_FLUSH_ROWS = 25;
+
+/** the authoritative commit sequence a replica fences on; see `advanceCommit()` */
+const COMMIT_SEQ_KEY = 'commit_seq';
 
 /**
  * Points the mounted site at this driver.
@@ -1180,6 +1243,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	crossingNames?: string[];
 	/** the tally at the start of the last render, so `/serve-stats` can report a per-render figure */
 	lastRenderCrossings?: CrossingTally;
+	/** when the daily meters last paid for a write; see `shouldFlushMeters()` */
+	lastMeterFlushMs?: number;
+	/** the read-only guard when `REPLICA_READ_ONLY` is set, null on a primary; see `src/ops/replica.ts` */
+	replicaGuard: ReadOnlyGuard | null = null;
+	/** every refusal this incarnation made, which is what a failover to the primary is counted from */
+	replicaRefusals: ReplicaRequiresPrimary[] = [];
 
 	/**
 	 * Whether an SMTP send is holding an outbound TCP socket right now.
@@ -1223,6 +1292,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastCronAt?: number;
 	/** per-path serve counts, in memory only; the R2 page mirror publishes the busiest first */
 	pageHits = new Map<string, number>();
+	/**
+	 * Paths a shell seed has already failed on, so it is attempted once rather than per request.
+	 *
+	 * A page whose theme placeholders nothing can never be a shell, and without this every
+	 * authenticated request to it would pay a harvest to rediscover that -- doubling the cost of the
+	 * render it was supposed to replace. In memory rather than durable: it costs no rows, and losing
+	 * it on hibernation only means one more attempt per isolate.
+	 */
+	shellSeedFailed = new Set<string>();
 	lastMirrorDrainAt?: number;
 	/** writes accumulated since the last alarm folded them into the daily total */
 	rowsSinceFlush?: number;
@@ -1355,6 +1433,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			binary as unknown as Record<string, unknown>,
 			this.crossings
 		);
+		// OUTSIDE the tally, so a refused call is not counted as a crossing that happened. Last of
+		// all for the same reason the tally is: a guard applied before an installer is overwritten by
+		// it, and here that would silently hand a replica a live mutating capability
+		this.replicaGuard = replicaReadOnly(this.env)
+			? enforceReadOnly(binary as unknown as Record<string, unknown>, (refusal) => {
+					this.replicaRefusals.push(refusal);
+				})
+			: null;
 		// before any PHP runs, because a handle minted before the pin is installed cannot be
 		// pinned retroactively -- see pinHandles()
 		this.pinHandles(binary);
@@ -3357,6 +3443,21 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return total;
 	}
 
+	/**
+	 * Whether this firing should pay for a daily-meter flush.
+	 *
+	 * Two triggers, and the volume one is what keeps a BUSY site's total prompt: a real firing that
+	 * moved rows flushes at once, an idle warming tick waits for the interval. The accumulator lives
+	 * in memory, so an eviction loses at most one interval of counting -- acceptable for a figure
+	 * whose job is "is this site trending over", and the alternative is a write on every tick.
+	 */
+	shouldFlushMeters(nowMs = this.nowMs()): boolean {
+		const pending = (this.rowsSinceFlush ?? 0) + (this.doRequestsSinceFlush ?? 0);
+		if (pending === 0) return false;
+		if (pending >= METER_FLUSH_ROWS) return true;
+		return nowMs - (this.lastMeterFlushMs ?? 0) >= METER_FLUSH_MS;
+	}
+
 	/** today's rows written, without flushing -- for a read that must not write */
 	dailyRows(nowMs = this.nowMs()): number {
 		const today = new Date(nowMs).toISOString().slice(0, 10);
@@ -3532,14 +3633,29 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/**
 	 * How many stored pages are shareable shells, and why the rest are not.
 	 *
-	 * Authenticated HTML is never cached. What can be is the part identical for everyone, with the
-	 * per-user regions left as BigPipe placeholders -- so the question "is that worth building here"
-	 * is answerable from the pages a site has already rendered, without building it.
+	 * A session-carrying response never enters `cfw_page`. What CAN be shared is the part identical
+	 * for everyone with the per-user regions left as BigPipe placeholders, which is what
+	 * `harvestShellFor()` produces.
 	 *
-	 * Counted rather than assumed. A site whose theme does not auto-placeholder anything has zero
-	 * candidates and gains nothing from fragment assembly however well it is implemented.
+	 * **AND THIS CANNOT ANSWER THE QUESTION IT WAS WRITTEN FOR.** The docblock used to say the
+	 * question "is that worth building here" is answerable from the pages a site has already
+	 * rendered. It is not: `cfw_page` holds only anonymous cookieless GETs, and an anonymous render
+	 * carries ZERO placeholders -- measured, the string `big_pipe` is absent from the markup
+	 * entirely, because BigPipe only applies to a request that has a session. So every row here is
+	 * `unsafe` by construction and `safe` is 0 for every site forever.
+	 *
+	 * It is kept because the REASON histogram over stored pages is real, and `answerable` is now on
+	 * the result so an operator deciding whether to set `SHELL_ASSEMBLY` reads a refusal rather than
+	 * a zero. Only a harvest against a real authenticated render answers it.
 	 */
-	shellCandidates(): { safe: number; unsafe: number; reasons: Record<string, number> } {
+	shellCandidates(): {
+		safe: number;
+		unsafe: number;
+		reasons: Record<string, number>;
+		/** false always, and stated rather than implied; see the note above */
+		answerable: boolean;
+		how: string;
+	} {
 		// self-sufficient rather than relying on the caller: /__serve-stats happens to call
 		// ensureServeTables() first, and nothing enforced that ordering
 		this.ensureServeTables();
@@ -3556,7 +3672,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			unsafe++;
 			reasons[verdict.reason] = (reasons[verdict.reason] ?? 0) + 1;
 		}
-		return { safe, unsafe, reasons };
+		return {
+			safe,
+			unsafe,
+			reasons,
+			answerable: false,
+			how: 'cfw_page holds only anonymous renders, which carry no placeholders; POST /shell?path= to harvest one authenticated render and get a real verdict'
+		};
 	}
 
 	/**
@@ -3633,6 +3755,88 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			holes: placeholderIds(normalised.shell).length,
 			permissionsHash
 		};
+	}
+
+	/**
+	 * Seeds a shell from ONE visitor, so assembly can restart without an operator.
+	 *
+	 * ## Why one sample is enough HERE and not in `harvestShellFor`
+	 *
+	 * The two-session agreement is a proof about two people, and it is what authorises storing a
+	 * shell an operator will never look at again. This path does not need it, because nothing is
+	 * ever SERVED on the strength of it: `assembleFor()` sends no visitor an assembly until their
+	 * own uid has passed `verifyShellFor()`, which re-harvests THEM and requires byte equality with
+	 * the stored shell. A shell seeded from one person and wrong for the next is deleted by that
+	 * check, on their first request, before it reaches them. The two-session rule guards the STORE;
+	 * the per-uid rule guards the SERVE, and only the second protects a visitor.
+	 *
+	 * ## Why this has to exist at all
+	 *
+	 * `bumpGeneration()` purges every shell on EVERY invalidation including `cachetags`, because no
+	 * Drupal cache tag reaches a shell. That is correct and it is also why assembly was off in
+	 * practice rather than in policy: after the first content change it stopped until a human ran a
+	 * harvest, so on a live site it was never running. Seeding restores it on the next
+	 * authenticated request instead.
+	 *
+	 * THE VISITOR IS NOT PAYING FOR NOTHING. `harvestShell()` captures Drupal's own complete BigPipe
+	 * stream, so its body IS this visitor's page; the caller returns it. The toll is the harvest's
+	 * rows, not a wasted render.
+	 */
+	async seedShellFrom(
+		path: string,
+		cookie: string,
+		origin: string
+	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
+		this.ensureServeTables();
+		const out = await this.runJson(harvestShell(path, { cookie, origin }));
+		if (out['ok'] !== true) return null;
+
+		const body = String(out['html'] ?? '');
+		const uid = String(out['uid'] ?? '');
+		if (uid === '' || uid === '0') return null;
+
+		// the same gate the operator path uses: no placeholders is not a shell, and an identity
+		// marker outside one means the page was built for somebody
+		const normalised = normaliseShell(body);
+		if (!normalised.ok) return null;
+
+		const recipes = (out['recipes'] ?? {}) as Record<string, unknown>;
+		const probe = await this.runJson(renderFragments(path, recipes, { cookie, origin }));
+		const identity = (probe['identity'] ?? {}) as Identity;
+		const permissionsHash = String(identity.permissionsHash ?? '');
+		if (permissionsHash === '') return null;
+
+		const at = this.nowMs();
+		this.sql.exec(
+			`INSERT INTO cfw_shell (path, permissions_hash, shell, slots, recipes, harvested_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(path, permissions_hash) DO UPDATE SET
+         shell = excluded.shell,
+         slots = excluded.slots,
+         recipes = excluded.recipes,
+         harvested_at = excluded.harvested_at`,
+			path,
+			permissionsHash,
+			normalised.shell,
+			JSON.stringify(normalised.slots),
+			JSON.stringify(recipes),
+			at
+		);
+		// this visitor's own normalised render IS the stored shell, so a verify would compare it
+		// against itself; recording it here spends one row instead of a second harvest
+		this.sql.exec(
+			`INSERT INTO cfw_shell_verified (path, permissions_hash, uid, harvested_at, verified_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(path, permissions_hash, uid) DO UPDATE SET
+         harvested_at = excluded.harvested_at,
+         verified_at = excluded.verified_at`,
+			path,
+			permissionsHash,
+			uid,
+			at,
+			at
+		);
+		return { html: body, holes: placeholderIds(normalised.shell).length, verified: 'proven' };
 	}
 
 	/**
@@ -3713,6 +3917,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// for the render this was avoiding
 		if (out.unfilled.length > 0) return null;
 		return { html: out.html, holes: out.filled.length, verified: 'cached' };
+	}
+
+	/** how many shells are stored for a path; 0 is what makes a seed the right move rather than a retry */
+	shellRows(path: string): number {
+		return Number(
+			this.sql
+				.exec<{ n: number }>('SELECT COUNT(*) AS n FROM cfw_shell WHERE path = ?', path)
+				.toArray()[0]?.n ?? 0
+		);
 	}
 
 	/** whether this visitor has been proven against the harvest the stored shell came from */
@@ -4287,6 +4500,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.sql.exec('DELETE FROM cfw_shell');
 			this.sql.exec('DELETE FROM cfw_shell_verified');
 		}
+		// content moved, so a path that could not be shelled before may be shellable now -- a block
+		// that placeholders was added, a theme changed. Keeping the refusals would make the first
+		// failure permanent for the life of the isolate
+		this.shellSeedFailed.clear();
 		this.metaSet('generation', next);
 		this.metaSet('last_bump', `${next}:${reason}:${this.nowMs()}`);
 		this.bumps = (this.bumps ?? 0) + 1;
@@ -4396,11 +4613,54 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 		// the tally is NOT taken here: this is the PHP driver's entry point and sees none of the
 		// host's own writes. `countingSql()` wraps the handle both halves run through
-		if (!this.suppressBump && !this.bumpCoalesced && CACHETAG_WRITE.test(sql)) {
-			this.bumpCoalesced = true;
-			this.bumpGeneration('cachetags');
+		if (!this.suppressBump) {
+			this.noteAuthoritativeWrite(sql);
+			if (!this.bumpCoalesced && CACHETAG_WRITE.test(sql)) {
+				this.bumpCoalesced = true;
+				this.bumpGeneration('cachetags');
+			}
 		}
 		return result;
+	}
+
+	/**
+	 * Advances the commit sequence when a statement writes authoritative state.
+	 *
+	 * KEYED ON THE TARGET TABLE, NOT ON CACHE-TAG INVALIDATION, because invalidation is not a
+	 * complete proxy for authoritative change. Measured: creating a user and rotating
+	 * `system.private_key` both mutate state a stale replica must not serve, and neither writes a
+	 * cache tag -- a clock driven off `cachetags` sat still through both.
+	 *
+	 * A `key_value` write counts without reading its collection, since the SQL alone does not carry
+	 * one. That over-advances on a disposable fetch-task row, and the asymmetry is deliberate:
+	 * advancing too often costs a replica a refresh, advancing too rarely serves stale authorization.
+	 */
+	noteAuthoritativeWrite(sql: string): void {
+		const table = writeTargetTable(sql);
+		if (table === null) return;
+		if (table === 'key_value' || table === 'key_value_expire') {
+			this.advanceCommit();
+			return;
+		}
+		if (classifyState(table) === 'AUTHORITATIVE') this.advanceCommit();
+	}
+
+	/**
+	 * A monotonic count of authoritative invalidations, which is what a replica fences on.
+	 *
+	 * SEPARATE FROM `generation` because that number is a page-cache purge counter: it is coalesced
+	 * per fill and stops moving once `cfw_page` is empty, since a second purge of an empty table
+	 * buys nothing. Correct for what it does, and unusable as a consistency clock -- measured, a
+	 * permission grant invalidated two tags and left the generation still.
+	 */
+	advanceCommit(): number {
+		const next = this.commitSeq() + 1;
+		this.metaSet(COMMIT_SEQ_KEY, next);
+		return next;
+	}
+
+	commitSeq(): number {
+		return Number(this.metaGet(COMMIT_SEQ_KEY, '0') ?? 0);
 	}
 
 	/**
@@ -4681,7 +4941,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							html: result.html,
 							renderMs: Number(result.renderMs ?? 0),
 							setCookie,
-							location: result.location == null ? null : String(result.location)
+							location: result.location == null ? null : String(result.location),
+							// only on the uncacheable branch, which is where every AJAX response is
+							passHeaders: passThroughHeaders(result.passHeaders)
 						}
 					})
 		};
@@ -5509,6 +5771,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// the quota ladder's first rung: cron is regeneration nobody is waiting on, so it stops
 			// before anything a visitor can see
 			this.degradation().cron &&
+			// AND IT YIELDS TO A FILL BACKLOG, which the line above only claimed. The quota ladder is
+			// a DAILY meter, so it says nothing about whether a visitor is waiting right now: a
+			// warming site is well inside quota with an empty page for every path. The fill batch
+			// above runs first, so this is zero on a firing that drained its own queue and non-zero
+			// only when the batch left work behind -- which is exactly when the next firing should
+			// spend its interpreter unit on a page rather than on cron. It matters more since the
+			// outbound-HTTPS hooks came back: a round is 11 units rather than 7
+			this.queueDepth() === 0 &&
 			cronDue(cronLastRun, this.nowMs(), cronIntervalMs(this.env))
 		) {
 			try {
@@ -5675,9 +5945,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// firing did -- the fills, the GC, the HTTP drain and the mirror puts -- rather than a
 		// prefix of it. Its own row lands in the next firing's total, which is correct: it is a
 		// real write and the meter must not exclude itself.
-		this.flushDailyRows();
-		// folded in the same firing, so the counter costs no row of its own
-		this.flushDailyDoRequests();
+		//
+		// RATE-LIMITED, and on an idle warming tick that is the difference between 3 charged rows
+		// and 1. Measured: a firing charges the `setAlarm` plus one row for each of these two
+		// flushes, and on an idle tick the only writes they have to record ARE those two flushes --
+		// so the meter sustained itself at 32.4% of free's daily row budget recording its own
+		// bookkeeping. Accumulating in memory and writing periodically keeps the total accurate and
+		// stops the counter from being most of what it counts.
+		if (this.shouldFlushMeters()) {
+			this.flushDailyRows();
+			// folded in the same firing, so the counter costs no row of its own
+			this.flushDailyDoRequests();
+			this.lastMeterFlushMs = this.nowMs();
+		}
 
 		// Report this site into the fleet inventory, which is what gives a security rollout a
 		// denominator. `shouldReport()` is what keeps this from spending a fleet-wide D1 meter to
@@ -5717,7 +5997,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			? 60_000
 			: alarmRearmDelayMs(cls, {
 					queueNonEmpty: remaining > 0 || httpRemaining > 0 || mailRemaining > 0,
-					failures: this.consecutiveFillFailures ?? 0
+					failures: this.consecutiveFillFailures ?? 0,
+					// this defaulted to 240 s, 24x the measured hibernation threshold, so an
+					// idle site lost its interpreter between every firing
+					// the ladder's rung doubles as the headroom argument: a site that has spent its
+					// daily meter stops paying to stay warm, and recovers at midnight UTC
+					idleMs: idleRearmMs(this.env, this.degradation().cron)
 				});
 		this.consecutiveFillFailures =
 			cls === 'failure' ? (this.consecutiveFillFailures ?? 0) + 1 : 0;
@@ -6967,6 +7252,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						statements: this.writeTally.statements,
 						rowsWritten: this.writeTally.rowsWritten,
 						ranked: rankTally(this.writeTally),
+						statementsByTable: this.writeTally.statementsByTable,
+						// already collected and never surfaced; it is what names WHICH statement made a
+						// route stateful, which no ratio of the other two counters can express
+						shapes: this.writeTally.shapes ?? {},
 						amplification: amplification(this.writeTally),
 						overheadShare: overheadShare(this.writeTally),
 						// the split `overheadShare` cannot give, against THIS object's schema rather
@@ -7382,11 +7671,30 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							adminName: str('adminName'),
 							adminMail: str('adminMail'),
 							adminPass: str('adminPass') ?? minted,
-							timezone: str('timezone')
+							timezone: str('timezone'),
+							// only on a genuine first claim: `force=1` reconfigures an account that
+							// already has a real birthday, and rewriting it would be the same lie
+							// pointed the other way
+							claimedAt: doneAt === null ? Math.floor(this.nowMs() / 1000) : undefined
 						})
 					);
 					if (applied?.ok) {
 						this.metaSet(FIRST_RUN_KEY, this.nowMs());
+						// CRON HAS NEVER RUN ON THIS SITE, so the status report reads whatever date
+						// the pack was baked with until the first pass lands -- a whole interval
+						// away, because `alarm()` starts the clock without running on a site it has
+						// never run for.
+						//
+						// NOT DUE IMMEDIATELY, and the grace is the point. The branch this
+						// backdating replaces says why: the first alarm after a claim already
+						// carries the migration, the first fills and the first render, and it is
+						// the busiest one the site will ever have. Due at +GRACE puts cron on the
+						// alarm AFTER that one, so the owner sees a real date within a minute
+						// instead of fifteen, and provisioning does not pay for it.
+						await this.storage.put(
+							'cronLastRunMs',
+							this.nowMs() - cronIntervalMs(this.env) + CRON_CLAIM_GRACE_MS
+						);
 						// claiming a site also fixes its origin, which closes the window
 						// trust-on-first-use leaves open: the owner is here, deliberately, on the
 						// host they mean. Overwrites whatever a first visitor pinned.
@@ -7798,11 +8106,28 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							this.php !== undefined
 						) {
 							const cookieHeader = request.headers.get('cookie') ?? '';
-							const assembled = await this.assembleFor(
-								path,
-								cookieHeader,
-								this.canonicalOrigin(url.origin)
-							);
+							const shellOrigin = this.canonicalOrigin(url.origin);
+							let assembled = await this.assembleFor(path, cookieHeader, shellOrigin);
+							// NOTHING STORED FOR THIS PATH, so seed one from this visitor. Without
+							// this the lever is inert on a live site: every invalidation purges every
+							// shell, and only an operator could put one back. `assembleFor()` still
+							// gates the SERVE on each uid's own byte-equality proof, so seeding from
+							// one sample widens what is stored and not what is trusted.
+							if (
+								assembled === null &&
+								!this.degradation().cron &&
+								!this.shellSeedFailed.has(path) &&
+								this.shellRows(path) === 0
+							) {
+								assembled = await this.seedShellFrom(
+									path,
+									cookieHeader,
+									shellOrigin
+								);
+								// a page whose theme placeholders nothing can never be a shell, and
+								// retrying would pay a harvest per request to rediscover that
+								if (assembled === null) this.shellSeedFailed.add(path);
+							}
 							if (assembled) {
 								return new Response(assembled.html, {
 									status: 200,
@@ -7838,14 +8163,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// Drupal's flood control keys on this; without it the whole site shares one
 						// bucket and 50 bad passwords lock everyone out of /user/login for an hour
 						const clientIp = request.headers.get('cf-connecting-ip') ?? '';
+						// AjaxResponseSubscriber keys the iframe-upload wrap on this header, and
+						// Request::create() defaults it to one that matches -- so every AJAX response
+						// arrived wrapped in a textarea and every one raised Drupal.AjaxError
+						const accept = request.headers.get('accept') ?? '';
 						const inbound: RenderRequest =
 							request.method === 'GET' || request.method === 'HEAD'
 								? cookie
-									? { origin, cookie, clientIp }
-									: { origin, clientIp }
+									? { origin, cookie, clientIp, accept }
+									: { origin, clientIp, accept }
 								: {
 										origin,
 										clientIp,
+										accept,
 										method: request.method,
 										// decoded from bytes rather than `.text()`, which workerd
 										// warns may corrupt a non-text content type -- a form field
@@ -7878,6 +8208,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							}
 							if (outcome.page.location) {
 								headers.set('location', outcome.page.location);
+							}
+							// ajax.js refuses a response with no `X-Drupal-Ajax-Token` unless the URL
+							// was pre-declared trusted, so dropping it broke every AJAX interaction
+							// that is not a plain form submit
+							for (const [name, value] of Object.entries(
+								outcome.page.passHeaders ?? {}
+							)) {
+								headers.set(name, value);
 							}
 							return new Response(String(outcome.page.html ?? ''), {
 								status: outcome.page.status,

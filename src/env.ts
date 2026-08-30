@@ -13,8 +13,15 @@ export interface SiteEnv extends BaseSiteEnv {
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
 	PREFILL?: string;
-	/** fragment assembly for authenticated GETs; OFF unless explicitly set to `1` */
+	/** fragment assembly for authenticated GETs; ON unless explicitly set to `0` */
 	SHELL_ASSEMBLY?: string;
+	/**
+	 * makes this object a read-only replica: every mutating host capability is refused.
+	 *
+	 * OFF unless explicitly `1`, and it must stay that way -- an object that answers writes is a
+	 * primary, and a primary that silently refuses them is a broken site. See `src/ops/replica.ts`.
+	 */
+	REPLICA_READ_ONLY?: string;
 	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
 	/** argon2id password hashing; OFF unless explicitly `1`, because it rehashes every login */

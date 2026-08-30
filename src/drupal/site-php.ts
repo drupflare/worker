@@ -428,7 +428,7 @@ class PhpWasmSyncFiber {
  */
 const PW_SERVE_INLINE = String.raw`
 if (!function_exists('cfw_serve')) { eval('
-function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "", $clientIp = "") {
+function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "", $clientIp = "", $accept = "") {
   $kernel = $GLOBALS["__pw_kernel"];
 
   // PHP\x27S HEADER LIST OUTLIVES THE REQUEST ON A PERSISTENT INTERPRETER, and session_start()
@@ -539,6 +539,23 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   // same reason, and it is why the Web server row on the status report was BLANK: it reads
   // \$request->server->get("SERVER_SOFTWARE") and the \$_SERVER assignment below never reached the bag
   $server["SERVER_SOFTWARE"] = "Cloudflare Workers";
+  // AND WITHOUT THIS, EVERY EXPIRABLE KEYVALUE WRITE LANDS IN 1970. Time::getRequestTime() reads
+  // REQUEST_TIME off this bag, so an absent one is 0, and DatabaseStorageExpirable stores
+  // REQUEST_TIME + \$ttl -- which for setWithExpire(\$k, \$v, 3600) is an expiry of 01:00 on
+  // 1 Jan 1970. The row is written and is already expired, so the next read filters it out and the
+  // GC deletes it. Measured on update_project_projects: getProjects() rebuilt it on every request,
+  // never saw it again, and update_available_releases stayed empty forever with no error anywhere.
+  // The rows that DID survive were the ones core happens to offset by
+  // getCurrentTime() - getRequestTime(), which is a full epoch when the second term is 0.
+  $now = time();
+  $server["REQUEST_TIME"] = $now;
+  $server["REQUEST_TIME_FLOAT"] = (float) $now;
+  // AND WITHOUT THIS, EVERY AJAX RESPONSE COMES BACK IN A TEXTAREA. AjaxResponseSubscriber wraps
+  // the JSON and relabels it text/html when Accept contains text/html, which is an IE9
+  // iframe-upload workaround -- and Request::create() supplies a DEFAULT Accept that matches it.
+  // So the browser asked for application/json, Drupal answered a wrapped text/html document, and
+  // Drupal.AjaxError fired on every AJAX request the admin makes. Measured on Add field.
+  if ($accept !== "") { $server["HTTP_ACCEPT"] = $accept; }
 
   // THE COOKIE IS WHY AN AUTHENTICATED REQUEST EXISTS AT ALL. Without it every request is uid 0,
   // so Drupal denies a create-entity route at the ROUTING layer and no form is ever built --
@@ -1250,6 +1267,18 @@ export interface RenderRequest {
 	 * at the edge, so it is trustworthy there and is whatever the client sent under `wrangler dev`.
 	 */
 	clientIp?: string;
+	/**
+	 * the raw `Accept` header, which decides the SHAPE of every AJAX response.
+	 *
+	 * `AjaxResponseSubscriber::onResponse()` wraps the JSON in a `<textarea>` and relabels it
+	 * `text/html` whenever `Accept` contains `text/html` -- an IE9 iframe-upload workaround. Absent
+	 * here, `Request::create()` fills in its own default of
+	 * `text/html,application/xhtml+xml,...`, so EVERY Drupal AJAX response came back wrapped and
+	 * `Drupal.AjaxError` fired on every one. Measured on Add field, where picking a field type is an
+	 * AJAX POST: the admin got "Oops, something went wrong" and no field could be created.
+	 * A browser asking for JSON sends `application/json, text/javascript`, which does not match.
+	 */
+	accept?: string;
 }
 
 export function renderPage(
@@ -1282,15 +1311,22 @@ export function renderPage(
 	// source is byte-identical; a cookie is enough on its own to need the argument list, because an
 	// authenticated GET is exactly the case this exists for
 	const clientIp = String(request.clientIp ?? '');
+	const accept = String(request.accept ?? '');
 	const requestArgs =
-		method === 'GET' && !request.body && !request.cookie && origin === '' && clientIp === ''
+		method === 'GET' &&
+		!request.body &&
+		!request.cookie &&
+		origin === '' &&
+		clientIp === '' &&
+		accept === ''
 			? ''
 			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(origin))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})`;
+				`, json_decode(${JSON.stringify(JSON.stringify(clientIp))})` +
+				`, json_decode(${JSON.stringify(JSON.stringify(accept))})`;
 
 	return String.raw`<?php
 ${FIBER_SHIM}
@@ -1386,6 +1422,19 @@ try {
   // what Drupal said about storing this, which page_cache_kill_switch and any module with a
   // reason to opt out both express here and nowhere else
   $out['cacheControl'] = $response->headers->get('cache-control');
+  // EVERY x-drupal-* HEADER, because dropping one silently changed what the BROWSER does.
+  // ajax.js refuses a response whose url is not in drupalSettings.ajaxTrustedUrl unless it carries
+  // X-Drupal-Ajax-Token, and answers "The response failed verification so will not be processed."
+  // -- so every AJAX interaction that was not a plain form submit died at the client with a valid
+  // response in hand. Measured on Add field. A prefix rather than a list, so the next one core adds
+  // is carried without anybody having to notice.
+  $passed = [];
+  foreach ($response->headers->all() as $name => $values) {
+    if (stripos((string) $name, 'x-drupal-') !== 0) { continue; }
+    $first = is_array($values) ? ($values[0] ?? null) : $values;
+    if ($first !== null) { $passed[(string) $name] = (string) $first; }
+  }
+  $out['passHeaders'] = $passed;
   // BOTH SOURCES, because Drupal sets a session cookie through neither one consistently:
   // a logout or a Symfony-managed cookie lands on the Response, while session_start() emits its
   // own Set-Cookie into PHP's header list, which the Response never sees. Reading one of them
@@ -1948,6 +1997,16 @@ export type FirstRunOptions = {
 	adminMail?: string;
 	adminPass?: string;
 	timezone?: string;
+	/**
+	 * Unix seconds to stamp on uid 1's `created`, or omitted to leave it alone.
+	 *
+	 * The pack ships an installed database, so uid 1 carries the date the pack was BAKED -- three
+	 * weeks before the site exists on a typical release. Passed in rather than read from the
+	 * interpreter's clock because `time()` inside a wasm run is the host's `Date.now()` and the
+	 * caller already knows when the claim happened. Omitted on a `force=1` reconfigure, where the
+	 * account is not new and rewriting its birthday would be a lie in the other direction.
+	 */
+	claimedAt?: number;
 };
 
 /** a node to create on the write path, which is the path renders never exercise */
@@ -1964,7 +2023,11 @@ export function firstRunConfig(options: FirstRunOptions = {}): string {
 		adminName: typeof options.adminName === 'string' ? options.adminName : null,
 		adminMail: typeof options.adminMail === 'string' ? options.adminMail : null,
 		adminPass: typeof options.adminPass === 'string' ? options.adminPass : null,
-		timezone: typeof options.timezone === 'string' ? options.timezone : null
+		timezone: typeof options.timezone === 'string' ? options.timezone : null,
+		claimedAt:
+			typeof options.claimedAt === 'number' && Number.isFinite(options.claimedAt)
+				? Math.floor(options.claimedAt)
+				: null
 	});
 	return String.raw`<?php
 ${FIBER_SHIM}
@@ -2051,6 +2114,12 @@ ${PACK_CONSISTENCY}
     if (!empty($opt['adminName'])) { $admin->setUsername($opt['adminName']); $out['applied'][] = 'uid1.name'; }
     if (!empty($opt['adminMail'])) { $admin->setEmail($opt['adminMail']); $out['applied'][] = 'uid1.mail'; }
     if (!empty($opt['adminPass'])) { $admin->setPassword($opt['adminPass']); $out['applied'][] = 'uid1.pass'; }
+    // the pack was installed weeks before this site existed, so uid 1's birthday is the BAKE date
+    // and the account reads as created before the site it belongs to
+    if (!empty($opt['claimedAt'])) {
+      $admin->set('created', (int) $opt['claimedAt']);
+      $out['applied'][] = 'uid1.created';
+    }
     $admin->activate();
     $admin->save();
     $out['adminName'] = $admin->getAccountName();
@@ -3121,6 +3190,76 @@ try {
 
 echo json_encode($out);
 `;
+
+/**
+ * An arbitrary Drupal operation, with the kernel booted and `$out` printed as JSON.
+ *
+ * The boot sequence is otherwise copied per-operation, and a spec that hand-rolls it gets a fragment
+ * that silently does nothing: a wrong bootstrap path throws before any Drupal code runs, the caller
+ * reads an empty result, and a test asserting "this mutation had no effect" PASSES for the wrong
+ * reason. Measured -- an invented `require_once '/drupal/cfw_bootstrap.php'` produced exactly that,
+ * and it read as a finding about cache-tag invalidation.
+ *
+ * `$out` is pre-declared and always echoed, and a throw lands in `$out['error']` rather than
+ * escaping, so a caller can tell "ran and did nothing" from "never ran".
+ *
+ * @param body
+ *   PHP to run with the kernel up. Assign into `$out` to report anything back.
+ */
+export function drupalOp(body: string): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+
+$out = ['ok' => false];
+
+$_SERVER['HTTP_HOST'] = 'localhost';
+$_SERVER['SERVER_NAME'] = 'localhost';
+$_SERVER['SERVER_PORT'] = '80';
+$_SERVER['REQUEST_URI'] = '/';
+$_SERVER['REQUEST_METHOD'] = 'GET';
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = '/drupal/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['DOCUMENT_ROOT'] = '/drupal';
+$_SERVER['REMOTE_ADDR'] = '127.0.0.1';
+$_SERVER['SERVER_SOFTWARE'] = 'workerd';
+$_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $boot = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($boot);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+    $out['bootedKernel'] = 1;
+  }
+
+  if (!defined('SAVED_NEW')) {
+    require_once '/drupal/core/includes/common.inc';
+  }
+
+${SCHEMA_REPAIR}
+
+${body}
+
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['trace'] = substr($e->getTraceAsString(), 0, 600);
+}
+echo json_encode($out);
+`;
+}
 
 /**
  * Creates one authenticated user with a known password, so a sequence can change identity.

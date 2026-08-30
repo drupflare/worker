@@ -13,9 +13,13 @@ import {
  * closed replicas entirely -- when a replica that HIBERNATES accrues no idle duration at all, so
  * that arithmetic never applied to it. These cases pin the distinction the closure lost.
  *
- * THE ALARM CASE IS THE ONE WORTH READING. A pending alarm is absent from Cloudflare's condition
- * list, so the keep-warm chain does not hold the object resident. It costs a row and a DO request
- * per arm and buys no warmth, which is the opposite of what the name suggests.
+ * THE ALARM CASE IS THE ONE WORTH READING, and its second half was wrong. A pending alarm is absent
+ * from Cloudflare's condition list, so an object WAITING on one is idle-eligible and accrues no
+ * duration; warming is a request and a row per firing and never a GB-s. What this block used to add
+ * -- that the chain therefore "buys no warmth" -- was a measurement of the 240 s shipping interval
+ * stated as a general fact. Measured on a deployed worker: at 8 s one incarnation survived 71
+ * consecutive alarms holding 32 MB; at 12, 20, 30 and 45 s the constructor ran again every time.
+ * Each firing resets the 10 s idle clock, so the interval is the whole variable.
  */
 
 describe('what makes a Durable Object ineligible to hibernate', () => {
@@ -25,11 +29,12 @@ describe('what makes a Durable Object ineligible to hibernate', () => {
 		expect(idleBilledSeconds({})).toBe(0);
 	});
 
-	it('does NOT disqualify a pending alarm, which is what keep-warm relies on being wrong', () => {
+	it('does NOT disqualify a pending alarm, so warming never touches the duration meter', () => {
 		const verdict = hibernationEligible({ pendingAlarm: true });
 		expect(verdict.eligible).toBe(true);
 		expect(verdict.blockedBy).toEqual([]);
-		// so an armed alarm costs its row and buys zero seconds of residency
+		// zero BILLED seconds is the claim, and it is about the meter rather than about residency:
+		// a firing under the threshold still holds the object, measured at 8 s over 71 alarms
 		expect(idleBilledSeconds({ pendingAlarm: true })).toBe(0);
 	});
 

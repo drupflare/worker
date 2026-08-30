@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CRON_CLAIM_GRACE_MS,
 	cronBudget,
 	cronDue,
 	cronIntervalMs,
@@ -228,6 +229,29 @@ describe('the interval gate, which is what makes cron-on-by-default safe', () =>
 		expect(cronDue(1_000_000, 1_000_000 + interval - 1, interval)).toBe(false);
 		expect(cronDue(1_000_000, 1_000_000 + interval, interval)).toBe(true);
 		expect(cronDue(1_000_000, 1_000_000 + interval * 4, interval)).toBe(true);
+	});
+
+	it('becomes due one grace period after a claim, not immediately and not an interval later', () => {
+		// A CLAIMED SITE MUST NOT WAIT AN INTERVAL. The status report reads `system.cron_last`, and
+		// on a fresh site that row is whatever the pack was baked with -- three weeks old on a
+		// typical release. The first alarm would otherwise only START the clock, so the owner sees a
+		// stale date for fifteen minutes on a site they just created.
+		//
+		// AND MUST NOT BE DUE ON THE VERY NEXT ALARM EITHER. That one carries the migration, the
+		// first fills and the first render; the branch this backdating replaces exists precisely to
+		// keep cron off it. `/firstrun` writes `now - interval + GRACE`, so both hold.
+		const interval = DEFAULT_CRON_INTERVAL_MS;
+		const claimedAt = 1_000_000;
+		const stamped = claimedAt - interval + CRON_CLAIM_GRACE_MS;
+
+		expect(cronDue(stamped, claimedAt, interval)).toBe(false);
+		expect(cronDue(stamped, claimedAt + CRON_CLAIM_GRACE_MS - 1, interval)).toBe(false);
+		expect(cronDue(stamped, claimedAt + CRON_CLAIM_GRACE_MS, interval)).toBe(true);
+	});
+
+	it('keeps the grace well under the interval, or the backdating does nothing', () => {
+		expect(CRON_CLAIM_GRACE_MS).toBeGreaterThan(0);
+		expect(CRON_CLAIM_GRACE_MS).toBeLessThan(DEFAULT_CRON_INTERVAL_MS / 2);
 	});
 
 	it('is not locked out by a clock that moved backwards', () => {

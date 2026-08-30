@@ -18,10 +18,17 @@
  * standard WebSocket API, no request still being processed, and no active outbound TCP socket
  * (`connect()`) or outbound WebSocket.
  *
- * A PENDING ALARM IS NOT ON THAT LIST, which is the reading that matters here. The keep-warm chain
- * arms an alarm and nothing else, so it does NOT hold the object resident and does NOT accrue
- * duration -- it costs a row per arm and buys no warmth. That is the opposite of what "keep-warm"
- * suggests and it was worth measuring before designing around it.
+ * A PENDING ALARM IS NOT ON THAT LIST, which is the reading that matters here: an object waiting on
+ * an armed alarm is idle-ELIGIBLE, so it accrues no duration while it waits. Warming therefore never
+ * shows up on the duration meter; it shows up on requests and rows, one of each per firing.
+ *
+ * ARMING IS NOT WHAT WARMS. THE FIRING IS, AND ONLY BELOW THE THRESHOLD. This block used to end by
+ * concluding the keep-warm chain "buys no warmth", which is a measurement of the 240 s shipping
+ * interval promoted into a general fact. Measured on a deployed worker: re-armed every 8 s, one
+ * incarnation survived 71 consecutive alarms holding a 32 MB allocation; at 12, 20, 30 and 45 s the
+ * constructor ran again on every probe. Each firing resets the 10 s idle clock, so an interval under
+ * it holds the object and an interval over it pays both meters for nothing. See
+ * `HIBERNATION_IDLE_MS` in `./cron.ts`.
  */
 
 /** what a caller left open at the moment the object went idle */

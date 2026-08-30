@@ -69,6 +69,21 @@ export const DEFAULT_CRON_BUDGET: CronBudget = { maxUnits: 6, maxRows: 500, maxM
  */
 export const DEFAULT_CRON_INTERVAL_MS = 15 * 60 * 1000;
 
+/**
+ * How long after a claim cron first becomes due.
+ *
+ * A claimed site otherwise reports the pack's bake date on its status report for a full interval,
+ * which reads as "cron has never run here" on a site created a minute ago. `/firstrun` backdates
+ * `cronLastRunMs` by `DEFAULT_CRON_INTERVAL_MS - CRON_CLAIM_GRACE_MS` so the first pass lands here
+ * instead.
+ *
+ * NOT ZERO. The alarm that follows a claim already carries the migration, the first fills and the
+ * first render, and it is the busiest one the site will ever have -- which is why `alarm()` starts
+ * the clock without running when it has never run before. One minute clears that alarm and is still
+ * immediate from the owner's point of view.
+ */
+export const CRON_CLAIM_GRACE_MS = 60 * 1000;
+
 /** the gap a site actually uses */
 export function cronIntervalMs(env?: CronDriveEnv | null): number {
 	const n = Number(env?.CRON_INTERVAL_MS);

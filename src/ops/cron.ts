@@ -218,7 +218,7 @@ export const EXPIRED_ROW_RULES = [
 ];
 
 /**
- * Which cron implementations run, and why the rest do not.
+ * Which cron implementations run, and why the one that does not is skipped.
  *
  * The six here are the measured set on this install, taken from
  * invokeAllWith('cron') against the real site rather than from the module list:
@@ -227,30 +227,28 @@ export const EXPIRED_ROW_RULES = [
  * RUN it -- a hook that reaches for a socket fails into a caught error because
  * src/worker-shim.js stubs Asyncify, so running an unknown hook costs an
  * invocation rather than the interpreter.
+ *
+ * A `run: false` here is load-bearing in a way a skipped test is not: the hook is absent from every
+ * site rather than merely unverified, and nothing reports it. Three of these entries outlived the
+ * limit that justified them. Before adding one, check the limit still holds.
  */
 export const CRON_HOOKS: Record<string, CronHookPolicy> = {
-	// UpdateFetcher GETs updates.drupal.org over HTTPS; there is no socket
-	update: { run: false, reason: 'outbound HTTPS (UpdateFetcher)' },
-	// AnnounceFetcher GETs the announcements feed over HTTPS
-	announcements_feed: {
-		run: false,
-		reason: 'outbound HTTPS (AnnounceFetcher)'
-	},
-	// SystemHooks::cron() calls SecurityAdvisoriesFetcher whenever
-	// system.advisories.enabled is TRUE, which it is on this site. The rest of its
-	// body is flood + cache + key_value_expire + queue garbage collection, which is
-	// exactly what gcPass() does in SQL, so skipping it loses only FieldPurger's
-	// deleted-field purge and a .htaccess write that means nothing on MEMFS. Set
-	// system.advisories.enabled to FALSE and this one becomes safe to run.
-	system: {
-		run: false,
-		reason: 'outbound HTTPS (SecurityAdvisoriesFetcher) unless system.advisories.enabled is FALSE'
-	},
+	// all three of these were `run: false` for "outbound HTTPS; there is no socket", which was true
+	// when it was written and stopped being true once the stream wrapper and CachedFetchHandler's
+	// defer-and-answer-next-drain landed. Nothing re-read the reason, so `hook_cron` for `update`
+	// never fired on any site: the fetch queue was only ever drained by a human clicking Check
+	// manually, and `system` being off is why security advisories were never wired at all
+	update: { run: true },
+	announcements_feed: { run: true },
+	system: { run: true },
 	// DblogHooks::cron() is one SELECT and one DELETE against watchdog; gc:watchdog
 	// is the same two statements for no kernel boot
 	dblog: { run: false, reason: 'superseded by the gc:watchdog SQL pass' },
 	file: { run: true },
-	layout_builder: { run: true }
+	layout_builder: { run: true },
+	// last in KNOWN_CRON_HOOKS as well, because its Order::Last only orders hooks within one
+	// drupal_cron() and this chain gives each its own firing
+	drupflare: { run: true }
 };
 
 /** The four knobs the GC passes and the chain read from env; all arrive as strings. */
@@ -259,6 +257,8 @@ export interface CronEnv {
 	CACHE_DATA_MAX_ROWS?: string | number;
 	WATCHDOG_ROW_LIMIT?: string | number;
 	KEEP_WARM_MS?: string | number;
+	WARM_INTERVAL_MS?: string | number;
+	SITE_WARM?: string | number;
 }
 
 /** the cron hook modules this site has, measured, for when discovery has not run */
@@ -268,7 +268,9 @@ export const KNOWN_CRON_HOOKS = [
 	'file',
 	'layout_builder',
 	'system',
-	'update'
+	'update',
+	// after `update`, whose deferral it corrects
+	'drupflare'
 ];
 
 /** how many queue items one invocation may process */
@@ -308,10 +310,69 @@ export function cronOptions(env?: CronEnv | null): CronOptions {
 	};
 }
 
-/** the idle re-arm, matching the keep-warm interval in src/do-sqlite.js */
+/**
+ * When a Durable Object loses its in-memory state, measured on a deployed worker.
+ *
+ * A throwaway object minted an id in its constructor and held a 32 MB allocation, so a changed id
+ * IS a lost isolate rather than a proxy for one. Re-arming its alarm every 8 s held ONE incarnation
+ * across 71 consecutive firings; at 12, 20, 30 and 45 s the id changed on every probe and
+ * `alarmsSeen` never passed 1, so those firings were paid for and warmed nothing. With no alarm the
+ * id changed across a 20 s gap, the shortest measured.
+ *
+ * The consequence for the name below: `KEEP_WARM_MS` shipped at 240,000, which is 24x this, so
+ * nothing it governed was ever kept warm. It is an idle RE-ARM and that is all it is.
+ */
+export const HIBERNATION_IDLE_MS = 10_000;
+
+/** the idle re-arm; NOT a keep-warm, see {@link HIBERNATION_IDLE_MS} */
 export function keepWarmMs(env?: CronEnv | null): number {
 	const n = Number(env?.KEEP_WARM_MS ?? 240000);
 	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 240000;
+}
+
+/**
+ * The re-arm that actually holds an object resident, for a site designated warm.
+ *
+ * Clamped below the threshold rather than trusted: a value above it buys nothing and still spends
+ * an object request and an alarm row per firing, which is the worst of both.
+ */
+export function warmIntervalMs(env?: CronEnv | null): number {
+	const n = Number(env?.WARM_INTERVAL_MS ?? 8000);
+	const ms = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 8000;
+	return Math.min(ms, HIBERNATION_IDLE_MS - 2000);
+}
+
+/**
+ * Whether this site re-arms fast enough to stay resident.
+ *
+ * ON BY DEFAULT on both plans, because ONE SITE is the case to price for and at one site it is
+ * close to free. 10,800 alarms a day is 328,752 a month, against 1,000,000 included object requests
+ * and 50,000,000 included rows on paid -- $0 marginal -- and 10.8% of free's two daily meters,
+ * leaving ~89,000 requests a day to serve with. What it removes is the 1,398 ms cold boot from every
+ * page that renders, which is the authenticated tier.
+ *
+ * THE FIGURE THAT ARGUED AGAINST IT WAS A FLEET FIGURE. $328/month is 1,000 warm sites, where rows
+ * cross the 50M included; per site it is $0.33 and at one site it is nothing. Free's quotas are
+ * ACCOUNT-WIDE though, so ten free sites warming is 108% of the meter -- which is what
+ * {@link idleRearmMs}'s headroom argument is for, rather than a default nobody would find.
+ */
+export function siteWarmEnabled(env?: CronEnv | null): boolean {
+	const set = env?.SITE_WARM;
+	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	return true;
+}
+
+/**
+ * The idle re-arm a site should use.
+ *
+ * @param hasHeadroom whether the quota ladder still permits background work. FALSE drops back to the
+ *   slow re-arm, which is what keeps an account-wide meter safe from several warm sites at once: on
+ *   free the quotas are shared, so ten warm sites would spend 108% of the daily rows on staying warm
+ *   and leave nothing to regenerate with. A degraded site un-warms itself and recovers at midnight
+ *   UTC rather than needing anybody to notice.
+ */
+export function idleRearmMs(env?: CronEnv | null, hasHeadroom = true): number {
+	return hasHeadroom && siteWarmEnabled(env) ? warmIntervalMs(env) : keepWarmMs(env);
 }
 
 /** a missing table is "nothing to do"; anything else is a real failure */

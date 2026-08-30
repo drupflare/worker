@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/cron-php';
 import {
-	CRON_HOOKS,
-	KNOWN_CRON_HOOKS,
 	advanceCursor,
+	CRON_HOOKS,
 	cronAlarmDelayMs,
 	cronUnits,
+	HIBERNATION_IDLE_MS,
+	idleRearmMs,
 	keepWarmMs,
+	KNOWN_CRON_HOOKS,
 	queueBatchSize,
 	readCursor,
+	siteWarmEnabled,
 	skippedCronHooks,
+	warmIntervalMs,
 	writeCursor
 } from '../../../src/ops/cron';
 
@@ -24,9 +28,9 @@ describe('cronUnits: the chain and what it deliberately omits', () => {
 	it.each([
 		["file's cron runs", 'hook:file', true],
 		["layout_builder's cron runs", 'hook:layout_builder', true],
-		["update's cron does NOT run", 'hook:update', false],
-		["announcements_feed's cron does NOT run", 'hook:announcements_feed', false],
-		["system's cron does NOT run", 'hook:system', false],
+		["update's cron runs, so something drains the fetch queue", 'hook:update', true],
+		["announcements_feed's cron runs", 'hook:announcements_feed', true],
+		["system's cron runs, so advisories are fetched", 'hook:system', true],
 		["dblog's cron does NOT run", 'hook:dblog', false]
 	])('%s', (_label, id, present) => {
 		expect(ids.includes(id)).toBe(present);
@@ -37,12 +41,12 @@ describe('cronUnits: the chain and what it deliberately omits', () => {
 		expect(ids[ids.length - 1]).toBe('cron_last');
 	});
 
-	it('is seven units: four pure SQL, three that may enter PHP', () => {
-		expect(units).toHaveLength(7);
+	it('is eleven units: four pure SQL, seven that may enter PHP', () => {
+		expect(units).toHaveLength(11);
 		expect(units.filter((u) => u.kind === 'sql')).toHaveLength(4);
-		// two hooks plus the queue; the queue only enters PHP when SQL says there is work
-		expect(units.filter((u) => u.kind === 'php')).toHaveLength(3);
-		expect(units.filter((u) => u.module)).toHaveLength(2);
+		// six hooks plus the queue; the queue only enters PHP when SQL says there is work
+		expect(units.filter((u) => u.kind === 'php')).toHaveLength(7);
+		expect(units.filter((u) => u.module)).toHaveLength(6);
 	});
 
 	it('never runs a hook for a module the site does not have', () => {
@@ -55,25 +59,30 @@ describe('cronUnits: the chain and what it deliberately omits', () => {
 describe('the skip policy carries its reasons', () => {
 	const skipped = skippedCronHooks();
 
-	it('skips four of the six implementations', () => {
-		expect(Object.keys(skipped)).toHaveLength(4);
+	it('skips one of the six implementations', () => {
+		expect(Object.keys(skipped)).toHaveLength(1);
 	});
 
 	it('gives every skip a real reason rather than a flag', () => {
 		expect(Object.values(skipped).every((v) => String(v).length > 10)).toBe(true);
 	});
 
-	it("update's reason names the outbound HTTPS this runtime lacks", () => {
-		expect(skipped.update).toMatch(/HTTPS/);
+	// the three that used to be skipped for "outbound HTTPS; there is no socket". The wrapper and
+	// CachedFetchHandler's deferral answer that now, and a site whose update hook never fires has
+	// no update data and no security advisories at all
+	it.each(['update', 'announcements_feed', 'system'])('%s is no longer skipped', (hook) => {
+		expect(skipped[hook]).toBeUndefined();
 	});
 
 	it("dblog's reason names the SQL pass that replaced it", () => {
 		expect(skipped.dblog).toMatch(/gc:watchdog/);
 	});
 
-	it('re-enables system when a site has the advisories fetch disabled', () => {
-		const units = cronUnits({ hookPolicy: { system: { run: true } } });
-		expect(units.some((u) => u.module === 'system')).toBe(true);
+	it('still honours an explicit skip from the caller', () => {
+		const units = cronUnits({
+			hookPolicy: { system: { run: false, reason: 'off for this site' } }
+		});
+		expect(units.some((u) => u.module === 'system')).toBe(false);
 	});
 
 	it('accounts for every known hook, so a new one cannot be silently dropped', () => {
@@ -162,6 +171,50 @@ describe('env plumbing for the step machine', () => {
 	it('an absent env yields defaults', () => {
 		expect(queueBatchSize(undefined)).toBeGreaterThan(0);
 		expect(keepWarmMs(undefined)).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * Measured on a deployed worker rather than reasoned about: an object holding a 32 MB allocation
+ * and an id minted in its constructor kept ONE incarnation across 71 consecutive 8 s alarms, and
+ * changed its id on every probe at 12, 20, 30 and 45 s with `alarmsSeen` never passing 1.
+ */
+describe('the warm re-arm has to beat the hibernation threshold', () => {
+	it('holds the threshold at the measured 10 s', () => {
+		expect(HIBERNATION_IDLE_MS).toBe(10_000);
+	});
+
+	it('is on by default, because at one site it is 10.8% of free and $0 on paid', () => {
+		expect(siteWarmEnabled(undefined)).toBe(true);
+		expect(siteWarmEnabled({ SITE_WARM: '1' })).toBe(true);
+		expect(siteWarmEnabled({ SITE_WARM: '0' })).toBe(false);
+	});
+
+	it('an explicitly unwarmed site keeps the slow idle re-arm', () => {
+		expect(idleRearmMs({ SITE_WARM: '0', KEEP_WARM_MS: '240000' })).toBe(240000);
+	});
+
+	it('a warmed site re-arms strictly under the threshold', () => {
+		const ms = idleRearmMs({ SITE_WARM: '1' });
+		expect(ms).toBeLessThan(HIBERNATION_IDLE_MS);
+		expect(ms).toBe(8000);
+	});
+
+	// free's quotas are ACCOUNT-WIDE, so ten warm sites would spend 108% of the daily rows on
+	// staying warm and leave nothing to regenerate with. A degraded site un-warms itself
+	it('falls back to the slow re-arm when the quota ladder has no headroom', () => {
+		expect(idleRearmMs({ SITE_WARM: '1', KEEP_WARM_MS: '240000' }, false)).toBe(240000);
+	});
+
+	// 12,000 was measured NOT to warm, so honouring it would spend an alarm per firing and keep
+	// nothing resident -- the worst of both
+	it('clamps a configured value that would not warm anything', () => {
+		expect(warmIntervalMs({ WARM_INTERVAL_MS: '45000' })).toBeLessThan(HIBERNATION_IDLE_MS);
+		expect(warmIntervalMs({ WARM_INTERVAL_MS: '12000' })).toBeLessThan(HIBERNATION_IDLE_MS);
+	});
+
+	it('ignores nonsense rather than producing 0 or NaN', () => {
+		expect(warmIntervalMs({ WARM_INTERVAL_MS: 'abc' })).toBeGreaterThan(0);
 	});
 });
 

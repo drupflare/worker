@@ -65,8 +65,16 @@ describe('cronStep: one full round', () => {
 
 		expect(seen).toEqual(cronUnits().map((u) => u.id));
 		expect(readCursor(raw, cronUnits().length).i).toBe(0);
-		// the whole point of the unit list: a round enters the interpreter exactly twice
-		expect(calls).toEqual(['file', 'layout_builder']);
+		// the whole point of the unit list: a round enters the interpreter once per hook that runs,
+		// and the three outbound-HTTPS ones are back because the deferral answers them now
+		expect(calls).toEqual([
+			'announcements_feed',
+			'file',
+			'layout_builder',
+			'system',
+			'update',
+			'drupflare'
+		]);
 	});
 });
 

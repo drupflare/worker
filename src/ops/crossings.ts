@@ -64,7 +64,11 @@ export const CROSSING_NAMES = [
 	'cfwFileDelete',
 	'cfwFileList',
 	'cfwFileStat',
-	'cfwFileRename'
+	'cfwFileRename',
+	// both were installed on the module and absent here, which is the drift this list exists to
+	// prevent: the census under-reported the bridge by two capabilities, and both of them mutate
+	'cfwOidcClaims',
+	'cfwTcp'
 ] as const;
 
 export type CrossingName = (typeof CROSSING_NAMES)[number];
@@ -150,7 +154,11 @@ export const BATCHABLE: Record<CrossingName, boolean> = {
 	cfwFileDelete: true,
 	cfwFileList: false,
 	cfwFileStat: true,
-	cfwFileRename: false
+	cfwFileRename: false,
+	// one ticket, redeemed once; there is never a second call to coalesce with
+	cfwOidcClaims: false,
+	// syslog fires and forgets, but redis reads its reply and decides the next call from it
+	cfwTcp: false
 };
 
 /** how many of a tally's crossings a batching change could remove, at best */

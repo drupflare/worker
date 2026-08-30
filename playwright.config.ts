@@ -41,7 +41,12 @@ export default defineConfig({
 	fullyParallel: false,
 	workers: 1,
 	forbidOnly: isCI,
-	retries: isCI ? 1 : 0,
+	// LOCALLY TOO, and it is not a way to hide a failure: playwright reports a retried pass as
+	// "flaky" rather than as "passed", so the signal survives. A cold authenticated render on the
+	// wasm interpreter genuinely exceeds the 30 s expect timeout on a busy machine, and without a
+	// retry that is indistinguishable from a broken page -- which is the comparison the house rules
+	// say to make before reporting either.
+	retries: 1,
 	// a cold render on the free plan is seconds, not milliseconds
 	timeout: 240_000,
 	expect: { timeout: 30_000 },

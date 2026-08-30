@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       payload_tag:
-        description: 'Release payload to hydrate from. Empty uses package.json version'
+        description: 'Release payload to hydrate from. Empty builds the pack from source'
         type: string
         required: false
 
@@ -28,7 +28,7 @@ jobs:
   browser:
     name: Render the Core Forms
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
@@ -55,13 +55,16 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
       - name: Cache the Restored Interpreter
         uses: actions/cache@v6
         with:
           path: .interp
           key: interp-${{ hashFiles('cdn-manifest.json') }}
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
 
       - name: Resolve the Release Payload
         env:
@@ -76,13 +79,35 @@ jobs:
             echo "::error::payload_tag '$TAG' names no release on this repository" >&2
             exit 1
           else
-            echo "HAVE_PAYLOAD=" >> "$GITHUB_ENV"
-            {
-              echo "::warning::no release '$TAG', so there is no pack to serve and no site to render."
-              echo "assets/drupal-pf and assets/drupal-sql arrive only in a payload."
-              echo "Publish one with bun run release:payload."
-            } >&2
+            echo "no release '$TAG'; this lane will build the pack from source"
           fi
+
+      - name: Resolve Drupal Version
+        id: drupalver
+        if: ${{ !env.HAVE_PAYLOAD }}
+        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        if: ${{ !env.HAVE_PAYLOAD }}
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Cache the Built Pack
+        if: ${{ !env.HAVE_PAYLOAD }}
+        uses: actions/cache@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
 
       - name: Hydrate the Checkout
         if: ${{ env.HAVE_PAYLOAD }}
@@ -94,27 +119,27 @@ jobs:
           fi
           bun run hydrate "$@"
 
+      - name: Build the Pack From Source
+        if: ${{ !env.HAVE_PAYLOAD }}
+        run: bun run build:local
+
       - name: Pack the Drupal Modules
-        if: ${{ env.HAVE_PAYLOAD }}
         run: bun run assets:driver
 
       - name: Cache the Playwright Browsers
-        if: ${{ env.HAVE_PAYLOAD }}
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Install Chromium
-        if: ${{ env.HAVE_PAYLOAD }}
         run: bunx playwright install --with-deps chromium
 
       - name: Run the Browser Lane
-        if: ${{ env.HAVE_PAYLOAD }}
         run: bun run test:browser
 
       - name: Upload the Playwright Report
-        if: ${{ failure() && env.HAVE_PAYLOAD }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
@@ -131,11 +156,15 @@ jobs:
             echo "## Browser lane"
             echo
             if [ -n "$HAVE_PAYLOAD" ]; then
-              echo "Hydrated from \`$RESOLVED_TAG\` and rendered the core forms in chromium."
-              echo "A console error on any page fails the lane; the vitest e2e project cannot see one."
+              echo "Hydrated from \`$RESOLVED_TAG\` and drove chromium against a real worker."
             else
-              echo "DID NOT RUN: no release at \`$RESOLVED_TAG\`."
-              echo "This lane boots a real worker and needs \`assets/drupal-pf\` and"
-              echo "\`assets/drupal-sql\`, which a clean checkout cannot build."
+              echo "No release at \`$RESOLVED_TAG\`, so the pack was built from source with"
+              echo "\`bun run build:local\` and chromium drove a real worker against it."
+              echo
+              echo "A source-built pack is a superset of a shipped one: the file list comes from a"
+              echo "traced run the checkout does not have, so the bootstrap globs every non-test file."
+              echo "Larger, same contents."
             fi
+            echo
+            echo "A console error on any page fails the lane; the vitest e2e project cannot see one."
           } >> "$GITHUB_STEP_SUMMARY"

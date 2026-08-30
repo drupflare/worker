@@ -19,8 +19,7 @@ const SURFACES: ReadonlyArray<readonly [string, string]> = [
 	['the module list, whose filter is the heaviest table JS in core', '/admin/modules'],
 	['block layout, which carries the drag-and-drop weight UI', '/admin/structure/block'],
 	['the status report, where every requirement row renders', '/admin/reports/status'],
-	['the permissions grid, the widest table an admin loads', '/admin/people/permissions'],
-	['a rendered node, which is where contextual links and BigPipe land', '/node/1']
+	['the permissions grid, the widest table an admin loads', '/admin/people/permissions']
 ];
 
 for (const [what, path] of SURFACES) {
@@ -32,3 +31,25 @@ for (const [what, path] of SURFACES) {
 		await expect(page.locator('body')).toBeVisible();
 	});
 }
+
+/**
+ * The node case, which cannot be a path constant.
+ *
+ * It used to be `/node/1` and that is an assumption about what is in the database, not about the
+ * runtime: on a state directory with no content it is a 404, so the spec failed for a reason that
+ * has nothing to do with rendering. The node is created here and its own URL followed.
+ */
+test('a rendered node, which is where contextual links and BigPipe land', async ({ page }) => {
+	await loginAsAdmin(page);
+
+	await gotoPage(page, '/node/add/page');
+	const title = `Admin Surface Node ${Date.now().toString(36)}`;
+	await page.locator('#edit-title-0-value').fill(title);
+	await page.getByRole('button', { name: 'Save' }).first().click();
+	await page.waitForLoadState('load');
+
+	await expect(page.getByRole('heading', { name: title })).toBeVisible();
+	expect(page.url(), 'the save redirected to the node').toMatch(
+		/\/node\/\d+|\/admin-surface-node/
+	);
+});

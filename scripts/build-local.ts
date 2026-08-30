@@ -359,8 +359,9 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 			copyFileSync(built, join(root, 'drupal-src/sites/default/settings.php'));
 		},
 		note:
-			'this is NOT how assets/drupal/site.sqlite is produced -- that one is tracked, and the ' +
-			'installer refuses to overwrite it. This database exists only so the bake can boot'
+			'this is NOT how assets/drupal/site.sqlite is produced -- that one is hand-trimmed and ' +
+			'arrives from the CDN, and the installer refuses to overwrite it. This database exists ' +
+			'only so the bake can boot'
 	},
 	{
 		id: 'patch',
@@ -468,7 +469,9 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		inputs: ['assets/drupal/site.sqlite'],
 		tools: ['node'],
 		commands: () => [['bun', 'run', 'assets:sql']],
-		note: 'reads the TRACKED site.sqlite, so this step alone works on a clone with nothing else built'
+		note:
+			'reads assets/drupal/site.sqlite, which `bun install` restores from the CDN -- so this ' +
+			'step alone works on a clone with nothing else built'
 	},
 	{
 		id: 'prefill',

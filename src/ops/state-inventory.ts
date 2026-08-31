@@ -22,7 +22,7 @@
  * - `LOCAL_EPHEMERAL` -- per-object by construction; a replica keeps its own and nothing is lost.
  * - `PRIMARY_ONLY_SIDE_EFFECT` -- an outbound or externally visible effect. Never performed on a
  *   replica, and dropping it is not automatically safe either.
- * - `UNKNOWN` -- unclassified, and therefore routed to the primary. The default, on purpose.
+ * - `UNKNOWN` -- unclassified, and therefore routed to the primary. This is the default.
  */
 export type StateStatus =
 	| 'AUTHORITATIVE'
@@ -68,15 +68,21 @@ const DERIVED_COLLECTION_PREFIXES = [
  *
  * ENUMERATED, never matched by pattern. A pattern that wrongly calls something local lets a replica
  * originate authoritative state, which is the failure mode this module exists to prevent; a pattern
- * that wrongly calls something authoritative only costs a failover. So the two directions get
- * different treatment on purpose -- see {@link AUTHORITATIVE_TABLE_PATTERNS}.
+ * that wrongly calls something authoritative only costs a failover, so the two directions get
+ * different treatment; see {@link AUTHORITATIVE_TABLE_PATTERNS}.
  */
 const LOCAL_TABLES: ReadonlySet<string> = new Set([
 	'cfw_page',
 	'cfw_shell',
 	'cfw_shell_verified',
+	// a compiled render plan: derived from two renders of a page this object can render again
+	'cfw_plan',
 	'cfw_meta',
 	'cfw_health',
+	// the primary's own replication log. Derived entirely from authoritative writes it already
+	// committed, so losing it costs a replica a restore rather than any state; and a REPLICA never
+	// writes one, because logging its own cache fills would replicate them back
+	'cfw_repl_log',
 	'cfw_fill_queue',
 	'cfw_serve',
 	// the fetch cache, and the boot heap snapshot: both rebuildable, both per-object
@@ -230,7 +236,7 @@ export function replicaMayOriginate(status: StateStatus): boolean {
 /**
  * Whether a request touching this state may be answered by a replica.
  *
- * `UNKNOWN` answers false, which is the whole point of having the status at all.
+ * `UNKNOWN` answers false, which is what the status is for.
  */
 export function replicaMayServe(status: StateStatus): boolean {
 	return status !== 'UNKNOWN' && status !== 'PRIMARY_ONLY_SIDE_EFFECT';

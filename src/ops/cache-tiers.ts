@@ -14,7 +14,16 @@ export const CACHE_TIERS = [
 	'VERIFY',
 	'EDGE',
 	'KV',
-	'DENY'
+	// a compiled render plan executed in the front worker's own isolate, with no object hop; the
+	// only tier that answers an AUTHENTICATED page without one
+	'PLAN',
+	'DENY',
+	// a replica refusing because it has not applied the generation the caller requires; a distinct
+	// tier because it is the only refusal a caller can fix by retrying somewhere else
+	'STALE',
+	// a replica meeting work it may not do; the caller retries on the primary. Single word like every
+	// other tier -- the contract scanner matches [A-Z]+ and a hyphen is invisible to it
+	'REFUSED'
 ] as const;
 
 export type CacheTier = (typeof CACHE_TIERS)[number];

@@ -21,10 +21,10 @@
  * THE OPTIONAL LAYERS COME FIRST BECAUSE THE GUARANTEED ONE WOULD SHADOW THEM. Derivation answers
  * for every real host, so anything below it is unreachable on exactly the hosts it exists to
  * configure -- a KV mapping consulted after derivation could never apply to a deployed site, which
- * is the whole point of having one. Ordering the two explicit layers above the inferred one is the
+ * is the case it exists for. Ordering the two explicit layers above the inferred one is the
  * same rule `resolveSiblings()` follows for the sibling checkouts.
  *
- * Layer 3 is also what makes layers 1 and 2 genuinely optional rather than nominally so: a deploy
+ * Layer 3 is also what makes layers 1 and 2 optional rather than nominally so: a deploy
  * that sets neither still resolves, and `localhost` -- which names no site -- falls past derivation
  * to the literal.
  */
@@ -59,7 +59,7 @@ const LOCATION_HINTS = new Set(['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac', '
 /**
  * Where a site's Durable Object should be created, or undefined for "wherever it lands".
  *
- * **UNSET IS THE DEFAULT AND IT IS DELIBERATE.** Placement follows the first request, which for a
+ * **UNSET IS THE DEFAULT.** Placement follows the first request, which for a
  * deploy-button site is wherever the deployer was. Guessing a region on their behalf trades latency
  * for one audience against latency for every other, and a one-click product has no way to ask - so
  * an owner who knows their audience pins it, and nobody else pays for a guess.
@@ -174,6 +174,54 @@ export interface SiteIdEnv {
 }
 
 /**
+ * How long an isolate reuses a host mapping before reading KV again.
+ *
+ * The same value and the same trade-off as `PLAN_MEMO_MS`, for a fact that changes less often: a
+ * hostname is pointed at a site about once in that site's life. A mapping written now applies
+ * everywhere within a minute.
+ */
+export const HOST_MEMO_MS = 60_000;
+
+/** null is a real answer here -- "this host has no mapping" is the common case and the expensive one */
+const hostMemo = new Map<string, { at: number; site: string | null }>();
+
+/** drops the isolate's host memo; tests use it, and so does an explicit refresh */
+export function resetHostMemo(): void {
+	hostMemo.clear();
+}
+
+/**
+ * The host's KV mapping, or null; read at most once per host per {@link HOST_MEMO_MS}.
+ *
+ * MEASURED ON A DEPLOYED WORKER, and this is why it exists: one WARM `CONFIG_KV.get()` costs 4 ms
+ * at the median (a key the colo has not seen costs 46-140 ms), and a production page request made
+ * TWO of them for the same host -- once in the catch-all
+ * rewrite and again in `siteFor()` -- for 8.5 ms before any other tier was consulted. Every
+ * measurement deploy in this repo sets `PW_DIAGNOSTICS=1` and calls `/serve?site=X`, which takes the
+ * `param` branch above and reads 0, so no arm had ever priced the shape that ships.
+ *
+ * A THROWN READ IS NOT MEMOISED. A KV blip must cost the next request a retry rather than pin
+ * derivation for a minute.
+ */
+async function mappedHost(env: SiteIdEnv, host: string, nowMs: number): Promise<string | null> {
+	const memo = hostMemo.get(host);
+	if (memo && nowMs - memo.at < HOST_MEMO_MS) return memo.site;
+	const kv = env.CONFIG_KV;
+	if (!kv) return null;
+	let mapped: string | null;
+	try {
+		mapped = await kv.get(siteKvKey(host));
+	} catch {
+		return null;
+	}
+	const site = mapped !== null && mapped.trim() !== '' ? mapped.trim() : null;
+	// bounded by the hosts one isolate sees; a clear is cheaper than an LRU here
+	if (hostMemo.size > 64) hostMemo.clear();
+	hostMemo.set(host, { at: nowMs, site });
+	return site;
+}
+
+/**
  * Resolves the site for a request.
  *
  * @param url - the request URL; `?site=` on it wins outright, unless `allowParam` says otherwise
@@ -183,7 +231,8 @@ export interface SiteIdEnv {
 export async function resolveSite(
 	url: URL,
 	env: SiteIdEnv | undefined,
-	opts: ResolveSiteOptions = {}
+	opts: ResolveSiteOptions = {},
+	nowMs: number = Date.now()
 ): Promise<ResolvedSite> {
 	if (opts.allowParam !== false) {
 		const explicit = url.searchParams.get('site');
@@ -194,14 +243,8 @@ export async function resolveSite(
 	if (env?.CONFIG_KV && host !== '') {
 		// a KV miss is the normal case and must never be an error: an unmapped host is not a fault,
 		// and a KV outage must degrade to derivation rather than take the site down
-		try {
-			const mapped = await env.CONFIG_KV.get(siteKvKey(host));
-			if (mapped !== null && mapped.trim() !== '') {
-				return { site: mapped.trim(), from: 'kv' };
-			}
-		} catch {
-			// fall through to derivation
-		}
+		const mapped = await mappedHost(env, host, nowMs);
+		if (mapped !== null) return { site: mapped, from: 'kv' };
 	}
 
 	const configured = env?.SITE_ID?.trim();

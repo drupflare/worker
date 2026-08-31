@@ -82,15 +82,15 @@ on regardless of plan.
 
 What actually differs is the column that cannot be filled in:
 
-| recurring obligation         | Drupflare                                             | VPS                                        |
-| ---------------------------- | ----------------------------------------------------- | ------------------------------------------ |
-| OS and kernel CVEs           | nothing to patch                                      | monthly, forever                           |
-| PHP minor and major upgrades | a binary swap, built in CI                            | yours, with a compatibility risk each time |
-| Webserver and PHP-FPM tuning | does not exist                                        | yours                                      |
-| Drupal security releases     | rollout planning built; **advisory detection is not** | yours, on the advisory's schedule          |
-| Backup verification          | export and restore chunked, resumable, rehearsed      | yours to configure, and to test            |
-| Uptime and alerting          | 19 tripwires plus a self-repair ladder                | uptime ping, if configured                 |
-| Traffic spike                | nothing to do                                         | resize, tune, add caching                  |
+| recurring obligation         | Drupflare                                         | VPS                                        |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------------ |
+| OS and kernel CVEs           | nothing to patch                                  | monthly, forever                           |
+| PHP minor and major upgrades | a binary swap, built in CI                        | yours, with a compatibility risk each time |
+| Webserver and PHP-FPM tuning | does not exist                                    | yours                                      |
+| Drupal security releases     | detected on the cron chain, reported by `/health` | yours, on the advisory's schedule          |
+| Backup verification          | export and restore chunked, resumable, rehearsed  | yours to configure, and to test            |
+| Uptime and alerting          | 19 tripwires plus a self-repair ladder            | uptime ping, if configured                 |
+| Traffic spike                | nothing to do                                     | resize, tune, add caching                  |
 
 **Price those at your own rate.** This project states no hourly figure.
 

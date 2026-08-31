@@ -43,12 +43,15 @@ describe('cronUnits: the chain and what it omits', () => {
 		expect(ids[ids.length - 1]).toBe('cron_last');
 	});
 
-	it('is eleven units: four pure SQL, seven that may enter PHP', () => {
-		expect(units).toHaveLength(11);
+	it('is twelve units: four pure SQL, eight that may enter PHP', () => {
+		expect(units).toHaveLength(12);
 		expect(units.filter((u) => u.kind === 'sql')).toHaveLength(4);
-		// six hooks plus the queue; the queue only enters PHP when SQL says there is work
-		expect(units.filter((u) => u.kind === 'php')).toHaveLength(7);
+		// six hooks, the advisory scan and the queue; the queue only enters PHP when SQL says there
+		// is work. `advisories` carries no module because the drupflare hook it would have been is
+		// not in the container the pack ships
+		expect(units.filter((u) => u.kind === 'php')).toHaveLength(8);
 		expect(units.filter((u) => u.module)).toHaveLength(6);
+		expect(units.map((u) => u.id)).toContain('advisories');
 	});
 
 	it('never runs a hook for a module the site does not have', () => {

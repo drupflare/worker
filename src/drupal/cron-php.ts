@@ -353,3 +353,44 @@ $out['ms'] = round($clock() - $t0, 2);
 echo json_encode($out);
 `;
 }
+
+/**
+ * Records what the update module found, without going through hook discovery.
+ *
+ * **The module's own `hook_cron` is not registered on an installed site.** Hook implementations are
+ * compiled into the container and the pack ships that prebuilt, so a class added after the bake is
+ * invisible: measured, `hasImplementations('cron', ['drupflare'])` answers false while the class
+ * loads fine and `runCronHook()` reports `no cron implementation`. A security signal that only
+ * reaches sites built after it shipped is not one, so the host calls the scanner directly.
+ *
+ * The class stays in the module because that is where the knowledge of `update_project_data`'s shape
+ * belongs; only the invocation moves here.
+ */
+export function runAdvisoryScan(origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ran' => false];
+$clock = function () { return microtime(true) * 1000; };
+$t0 = $clock();
+
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+
+  $class = 'Drupal\\drupflare\\Update\\AdvisoryScan';
+  if (!class_exists($class)) {
+    $out['reason'] = 'the drupflare module is not installed';
+  } else {
+    $scan = new $class(\Drupal::state(), \Drupal::service('keyvalue'));
+    $out['record'] = $scan->scan(time());
+    $out['ran'] = true;
+  }
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+$out['ms'] = round($clock() - $t0, 2);
+echo json_encode($out);
+`;
+}

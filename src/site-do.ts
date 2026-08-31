@@ -173,6 +173,12 @@ import { tcpLive } from './drupal/tcp-php.js';
 import { XMLWRITER_FIX } from './drupal/xmlwriter-fix.js';
 import { ZLIB_FIX, installZlib } from './drupal/zlib-fix.js';
 import {
+	ADVISORY_STATE_KEY,
+	advisoryFreshness,
+	readAdvisories,
+	type AdvisoryVerdict
+} from './ops/advisories.js';
+import {
 	DAILY_DO_QUOTA,
 	DAILY_ROWS_QUOTA,
 	authAllowance,
@@ -2390,6 +2396,30 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	copyBackoffMs(): number {
 		const asks = Number(this.metaGet(READMIT_ASKS_KEY) ?? '0') || 0;
 		return Math.min(CATCH_UP_INTERVAL_MS * 2 ** Math.max(0, asks - 1), 60_000);
+	}
+
+	/**
+	 * What the last advisory sweep found on this site.
+	 *
+	 * One indexed row read and no kernel boot, which is what lets `/__health` answer it on every call
+	 * and a fleet sweep ask every site cheaply. The module's cron hook is what fills it in.
+	 */
+	advisoryVerdict(): AdvisoryVerdict & { fresh: boolean; ageS: number } {
+		// a site that has never migrated has no `key_value` at all, and that reads as unknown for the
+		// same reason an absent row does: nothing has checked it
+		let row: { value: unknown } | undefined;
+		try {
+			row = this.sql
+				.exec(
+					`SELECT value FROM key_value WHERE collection = 'state' AND name = ?`,
+					ADVISORY_STATE_KEY
+				)
+				.toArray()[0] as { value: unknown } | undefined;
+		} catch {
+			row = undefined;
+		}
+		const verdict = readAdvisories(row?.value);
+		return { ...verdict, ...advisoryFreshness(verdict, Math.floor(this.nowMs() / 1000)) };
 	}
 
 	/** lane numbers waiting to be copied again, lowest first; read on the PRIMARY */
@@ -8301,6 +8331,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						repair: state,
 						quarantined: isQuarantined(state),
 						rollback: shouldRollback(state, latestImport(this.sql), this.nowMs()),
+						advisories: this.advisoryVerdict(),
 						lastFindings: this.lastFindings ?? [],
 						ledger: this.sql
 							.exec(

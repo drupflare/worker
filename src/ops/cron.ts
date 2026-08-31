@@ -1,4 +1,4 @@
-import { cronHookList, runCronHook, runCronQueue } from '../drupal/cron-php.js';
+import { cronHookList, runAdvisoryScan, runCronHook, runCronQueue } from '../drupal/cron-php.js';
 
 /**
  * Garbage collection and the decomposed cron chain.
@@ -87,6 +87,8 @@ export interface CronOptions {
 	hooks?: string[];
 	hookPolicy?: Record<string, CronHookPolicy>;
 	includeQueue?: boolean;
+	/** the advisory scan unit; off only for a test that is measuring something else */
+	includeAdvisories?: boolean;
 	includeCronLast?: boolean;
 	/**
 	 * the `scheme://host[:port]` a cron fragment boots Drupal against.
@@ -246,8 +248,13 @@ export const CRON_HOOKS: Record<string, CronHookPolicy> = {
 	dblog: { run: false, reason: 'superseded by the gc:watchdog SQL pass' },
 	file: { run: true },
 	layout_builder: { run: true },
-	// last in KNOWN_CRON_HOOKS as well, because its Order::Last only orders hooks within one
-	// drupal_cron() and this chain gives each its own firing
+	// A HOOK CLASS ADDED AFTER THE PACK WAS BAKED IS NOT IN THE CONTAINER, so this unit reports
+	// `no cron implementation` on every installed site and `DeferredCron` has never run anywhere.
+	// Measured: `hasImplementations('cron', ['drupflare'])` answers false while the class loads.
+	// Left ON rather than switched off, because a site whose container IS current does run it and a
+	// `run: false` would be absent from every site instead. The advisory scan it was meant to carry
+	// is its own unit for that reason; the fetch reopen still needs a container rebuild to reach an
+	// existing site
 	drupflare: { run: true }
 };
 
@@ -822,6 +829,12 @@ export function cronUnits(options: CronOptions = {}): CronUnit[] {
 			unreviewed: entry === undefined
 		});
 	}
+	// AFTER the hooks, because `update` is one of them and this reads what it computed. Its own unit
+	// rather than a module hook: the drupflare hook is not registered in the container the pack ships,
+	// so a site installed before the class existed would never run it
+	if (options.includeAdvisories !== false) {
+		units.push({ id: 'advisories', kind: 'php' });
+	}
 	if (options.includeQueue !== false) {
 		units.push({ id: 'queue', kind: 'php' });
 	}
@@ -982,8 +995,10 @@ export async function cronStep(
 				repeats < (options.maxQueueRepeats ?? 20);
 			result.repeats = repeats;
 		}
+	} else if (unit.id === 'advisories') {
+		result = await deps.runJson(runAdvisoryScan(options.origin));
 	} else {
-		// the only module-less php unit is `queue`, handled by the branch above
+		// the module-less php units are `queue` and `advisories`, both handled above
 		result = await deps.runJson(runCronHook(unit.module as string, options.origin));
 	}
 
@@ -1084,4 +1099,4 @@ export function cronAlarmDelayMs(
 	return options.idleMs ?? 240000;
 }
 
-export { cronHookList, runCronHook, runCronQueue };
+export { cronHookList, runAdvisoryScan, runCronHook, runCronQueue };

@@ -435,11 +435,23 @@ loading it. `--` inside an XML comment is invalid.
 no socket". True when written; false once the stream wrapper and `CachedFetchHandler`'s
 defer-and-answer-next-drain landed, and nothing re-read it. So `hook_cron` for `update` never fired
 on any site, the fetch queue was drained only by a human clicking Check, and **security advisories
-were never wired at all**. `drupflare` was not in `KNOWN_CRON_HOOKS` either, so `DeferredCron` -- the
-hook written to stop the update fetch latching -- had never run.
+were never wired at all**. All three now run, and advisory detection is `cron:advisories`.
 
 A skipped hook is absent from every site rather than merely unverified, and nothing reports it.
 Before adding one, check the limit still holds.
+
+**A `run: true` CAN BE JUST AS ABSENT, and `drupflare`'s is.** Hook implementations compile into the
+container and the pack ships it prebuilt, so a `#[Hook]` class added after the bake is invisible on
+every installed site: `hasImplementations('cron', ['drupflare'])` answers false while the class loads
+fine, and `runCronHook()` answers `no cron implementation`. `DeferredCron` has therefore never run
+anywhere, and adding `drupflare` to `KNOWN_CRON_HOOKS` only made the host schedule a firing with
+nothing to invoke.
+
+So a host-driven unit reaches an existing site and a module hook does not. That is why the advisory
+scan is `cron:advisories` calling `AdvisoryScan` directly rather than a second `#[Hook]` class -- the
+class stays in the module, where the knowledge of `update_project_data` belongs, and only the
+invocation moved. **Check `hasImplementations()` before assuming a new hook runs**; the unit reports
+`ran: false` with a reason and nothing escalates it.
 
 **`cronHookList()` IS EXPORTED, SPEC'D AND CALLED BY NOTHING**, so the chain always uses the
 hardcoded list and a customer-installed module's `hook_cron` never runs. Its docblock says the

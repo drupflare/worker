@@ -67,13 +67,17 @@ describe('cronStep: one full round', () => {
 		expect(readCursor(raw, cronUnits().length).i).toBe(0);
 		// what the unit list buys: a round enters the interpreter once per hook that runs,
 		// and the three outbound-HTTPS ones are back because the deferral answers them now
+		// the advisory scan enters PHP too and carries no module name, because the drupflare hook it
+		// would have been is not in the container the pack ships; the stub names an unnamed fragment
+		// `unknown`, and its POSITION is the assertion -- it has to follow `update`, whose data it reads
 		expect(calls).toEqual([
 			'announcements_feed',
 			'file',
 			'layout_builder',
 			'system',
 			'update',
-			'drupflare'
+			'drupflare',
+			'unknown'
 		]);
 	});
 });
@@ -248,7 +252,8 @@ describe('cronStep: recovering from a lost or stale cursor', () => {
 			return cronStep({ i: 7 }, stubDeps(sql), {
 				hooks: ['file'],
 				includeQueue: false,
-				includeCronLast: false
+				includeCronLast: false,
+				includeAdvisories: false
 			});
 		});
 		expect(step.unit).toBe('gc:watchdog');

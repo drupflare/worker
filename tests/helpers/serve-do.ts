@@ -148,6 +148,11 @@ export type ServeDo = {
 	isPoolLane: () => boolean;
 	/** the way out of WITHDRAWN: reset to CREATED and ask the primary for a fresh copy */
 	requestReadmission: () => Promise<{ asked: boolean; reason: string; stage: string }>;
+	/** what the last advisory sweep found; one row read, no kernel boot */
+	advisoryVerdict: () => import('../../src/ops/advisories').AdvisoryVerdict & {
+		fresh: boolean;
+		ageS: number;
+	};
 	/** empty and waiting on the primary, which is what the ask backoff is keyed on */
 	awaitingCopy: () => boolean;
 	copyBackoffMs: () => number;

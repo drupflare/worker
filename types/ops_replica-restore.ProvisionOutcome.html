@@ -13,7 +13,7 @@
 <h1>Type Alias ProvisionOutcome</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">ProvisionOutcome</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#copied">copied</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#cursor">cursor</a><span class="tsd-signature-symbol">?:</span> <a href="ops_replica-restore.ProvisionCursor.html" class="tsd-signature-type tsd-kind-type-alias">ProvisionCursor</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#done">done</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ok">ok</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#reason">reason</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#stage">stage</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#torn">torn</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L161">src/ops/replica-restore.ts:161</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L161">src/ops/replica-restore.ts:161</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,43 +36,43 @@
 <h3 class="tsd-anchor-link" id="copied"><code class="tsd-tag">Optional</code><span>copied</span><a href="#copied" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">copied</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L168">src/ops/replica-restore.ts:168</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L168">src/ops/replica-restore.ts:168</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="cursor"><code class="tsd-tag">Optional</code><span>cursor</span><a href="#cursor" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">cursor</span><span class="tsd-signature-symbol">?:</span> <a href="ops_replica-restore.ProvisionCursor.html" class="tsd-signature-type tsd-kind-type-alias">ProvisionCursor</a></div>
 <div class="tsd-comment tsd-typography"><p>absent when done, so a caller cannot resume a finished copy by accident</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L167">src/ops/replica-restore.ts:167</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L167">src/ops/replica-restore.ts:167</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="done"><span>done</span><a href="#done" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">done</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>whether the whole copy has landed; a lane reaches <code>VERIFIED</code> on the chunk that sets this</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L165">src/ops/replica-restore.ts:165</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L165">src/ops/replica-restore.ts:165</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ok"><span>ok</span><a href="#ok" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ok</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L162">src/ops/replica-restore.ts:162</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L162">src/ops/replica-restore.ts:162</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="reason"><span>reason</span><a href="#reason" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">reason</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L163">src/ops/replica-restore.ts:163</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L163">src/ops/replica-restore.ts:163</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="stage"><code class="tsd-tag">Optional</code><span>stage</span><a href="#stage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">stage</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L169">src/ops/replica-restore.ts:169</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L169">src/ops/replica-restore.ts:169</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="torn"><code class="tsd-tag">Optional</code><span>torn</span><a href="#torn" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">torn</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the primary committed mid-copy; restart rather than resume</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L171">src/ops/replica-restore.ts:171</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L171">src/ops/replica-restore.ts:171</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

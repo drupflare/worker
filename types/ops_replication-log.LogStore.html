@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">LogStore</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-call-signature" href="#exec-1">exec</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">params</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#read-1">read</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#txn-1">txn</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">fn</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-call-signature" href="#write-1">write</a><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">value</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replication-log.ts#L67">src/ops/replication-log.ts:67</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replication-log.ts#L67">src/ops/replication-log.ts:67</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -45,7 +45,7 @@
 <li><span><span class="tsd-kind-parameter">params</span>: <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replication-log.ts#L70">src/ops/replication-log.ts:70</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replication-log.ts#L70">src/ops/replication-log.ts:70</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="read"><span>read</span><a href="#read" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -58,7 +58,7 @@
 <li><span><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replication-log.ts#L68">src/ops/replication-log.ts:68</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replication-log.ts#L68">src/ops/replication-log.ts:68</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="txn"><span>txn</span><a href="#txn" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -73,7 +73,7 @@
 <li><span><span class="tsd-kind-parameter">fn</span>: <span class="tsd-signature-symbol">()</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">void</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replication-log.ts#L72">src/ops/replication-log.ts:72</a></li></ul></aside></div></li></ul></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replication-log.ts#L72">src/ops/replication-log.ts:72</a></li></ul></aside></div></li></ul></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="write"><span>write</span><a href="#write" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <ul class="tsd-signatures">
@@ -87,7 +87,7 @@
 <li><span><span class="tsd-kind-parameter">value</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">void</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replication-log.ts#L69">src/ops/replication-log.ts:69</a></li></ul></aside></div></li></ul></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replication-log.ts#L69">src/ops/replication-log.ts:69</a></li></ul></aside></div></li></ul></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

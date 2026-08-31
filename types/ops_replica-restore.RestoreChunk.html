@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">RestoreChunk</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#columns">columns</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#ddl">ddl</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#done">done</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#expect">expect</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#first">first</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#generation">generation</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rows">rows</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> (<span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span>)<span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#schemaversion">schemaVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#table">table</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L79">src/ops/replica-restore.ts:79</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L79">src/ops/replica-restore.ts:79</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -41,7 +41,7 @@
 <h3 class="tsd-anchor-link" id="columns"><span>columns</span><a href="#columns" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">columns</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L85">src/ops/replica-restore.ts:85</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L85">src/ops/replica-restore.ts:85</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="ddl"><code class="tsd-tag">Optional</code><span>ddl</span><a href="#ddl" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">ddl</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
@@ -51,14 +51,14 @@ built from the pack alone fails every insert with <code>no such table</code>. Ca
 exist without a second Drupal install on it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L96">src/ops/replica-restore.ts:96</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L96">src/ops/replica-restore.ts:96</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="done"><code class="tsd-tag">Optional</code><span>done</span><a href="#done" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">done</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the last chunk of the whole copy</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L105">src/ops/replica-restore.ts:105</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L105">src/ops/replica-restore.ts:105</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="expect"><code class="tsd-tag">Optional</code><span>expect</span><a href="#expect" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">expect</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
@@ -67,38 +67,38 @@ exist without a second Drupal install on it.</p>
 copy that stopped after <code>config</code> has a valid private key and no content.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L103">src/ops/replica-restore.ts:103</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L103">src/ops/replica-restore.ts:103</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="first"><code class="tsd-tag">Optional</code><span>first</span><a href="#first" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">first</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the first chunk for this table; existing rows are cleared before it lands</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L88">src/ops/replica-restore.ts:88</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L88">src/ops/replica-restore.ts:88</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="generation"><span>generation</span><a href="#generation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">generation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>the primary's commit generation when these rows were read</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L81">src/ops/replica-restore.ts:81</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L81">src/ops/replica-restore.ts:81</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rows"><span>rows</span><a href="#rows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rows</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> (<span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">[]</span>)<span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L86">src/ops/replica-restore.ts:86</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L86">src/ops/replica-restore.ts:86</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="schemaversion"><span>schema<wbr/>Version</span><a href="#schemaversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">schemaVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the pack generation both sides must agree on</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L83">src/ops/replica-restore.ts:83</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L83">src/ops/replica-restore.ts:83</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="table"><span>table</span><a href="#table" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">table</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/replica-restore.ts#L84">src/ops/replica-restore.ts:84</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/bd454d40bde9522b6502ac54d6ab9796f3bc0f91/src/ops/replica-restore.ts#L84">src/ops/replica-restore.ts:84</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

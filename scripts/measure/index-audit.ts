@@ -441,9 +441,8 @@ export function auditSchema(statements: PackStatement[]): Audit {
  * The per-table charged rows a real fill wrote, read off the meter rather than modelled.
  *
  * From the tally in `TECHNICAL_REPORT.md` -- cold boot plus first render, 63 statements and 12
- * charged rows, 100% attributed. It is quoted here because the whole point of the decomposition is
- * to divide a MEASURED total by a charge factor; substituting a modelled total would make the answer
- * circular.
+ * charged rows, 100% attributed. It is quoted here because the decomposition divides a MEASURED
+ * total by a charge factor; substituting a modelled total would make the answer circular.
  */
 export const RECORDED_FILL_CHARGED_ROWS: Record<string, number> = {
 	cache_dynamic_page_cache: 8,

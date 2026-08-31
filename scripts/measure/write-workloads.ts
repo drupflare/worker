@@ -32,7 +32,7 @@ export type WriteSample = {
 	databaseSizeDelta: number;
 };
 
-/** median, because the platform is bimodal by 400-600 ms and a mean hides which mode won */
+/** median, because a reported 400-600 ms bimodality means a mean hides which mode won */
 export function median(xs: readonly number[]): number {
 	if (xs.length === 0) return 0;
 	const s = [...xs].sort((a, b) => a - b);

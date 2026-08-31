@@ -10,7 +10,7 @@
  * EVERY FIGURE HERE IS A COUNT OR A BYTE, and no clock is read. That is a constraint on what may be
  * collected, not a style preference: RULE 0 in `CLAUDE.md` says an absolute CPU figure comes only
  * from `cpuTime` in `wrangler tail` on a deployed worker, in-PHP `microtime()` returns 0 on the edge,
- * and the platform is bimodal by 400-600 ms on the same object. A duration measured on a shared
+ * and a 400-600 ms bimodality has been reported on the same object. A duration measured on a shared
  * runner would be a plausible wrong number, which is the failure mode this project has paid for five
  * times. `docs/measurement-classes.md` is the four-class split and says which instrument owns what.
  *
@@ -220,7 +220,7 @@ export function collectPackShape(root: string): Metric<PackShapeMetric> {
 	if (!existsSync(path)) {
 		return { skipped: 'assets/drupal-sql/manifest.json is absent; run bun run assets:sql' };
 	}
-	// `source` is an absolute path on the packing machine, so it is deliberately not carried
+	// `source` is an absolute path on the packing machine, so it is not carried
 	const manifest = JSON.parse(readFileSync(path, 'utf8')) as {
 		generation: string;
 		sourceBytes: number;
@@ -290,7 +290,7 @@ export const LIST_ENV = { DRUPFLARE_LIST_ALL: '1' } as const;
  * that list the gate reported 21 deleted tests that still exist. It makes the enumeration cover the
  * repository rather than this machine.
  *
- * `tests/node` is deliberately absent from `cases`. `zlib-php.spec.ts` builds its `it.each` table
+ * `tests/node` is absent from `cases`. `zlib-php.spec.ts` builds its `it.each` table
  * from a live `php` subprocess, so the node lane's case count changes with whether PHP is installed
  * and with what that driver reports -- an environment reading wearing a count's clothes.
  */

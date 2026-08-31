@@ -2,7 +2,7 @@
 /**
  * Re-emits the shipping mb_* stack as a PHP file a native process can require.
  *
- * The generation is the point. A hand-copied `cfw_mb_sanitize` would be a second copy of a
+ * It generates rather than copies. A hand-copied `cfw_mb_sanitize` would be a second copy of a
  * function whose whole job is byte-for-byte agreement with native mbstring, and the wrapped-function
  * list would go stale the first time someone added a wrapper. Both are read out of the shipping
  * fragment.

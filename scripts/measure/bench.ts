@@ -10,8 +10,8 @@
  *
  * Four rules, enforced here rather than remembered:
  *
- * 1. **n >= 5 or no number.** {@link summarise} returns null below it. The platform is bimodal by
- *    400-600 ms, so an n=1 or n=3 verdict under ~500 ms is unsupportable.
+ * 1. **n >= 5 or no number.** {@link summarise} returns null below it. A 400-600 ms bimodality has
+ *    been reported, so an n=1 or n=3 verdict under ~500 ms is unsupportable.
  * 2. **Never a bare figure.** Every {@link Summary} carries n, min, median, max and spread, and
  *    {@link renderReport} has no format that omits them.
  * 3. **Pair on the same object.** Measured 2026-08-20: objects differ in MARGINAL RENDER COST by
@@ -62,8 +62,8 @@ export type Summary = {
 /**
  * n, min, median, max -- or null when there are not enough samples to say anything.
  *
- * Returning null rather than a number computed from n=2 is the whole point: a caller that wants a
- * figure has to handle the refusal, and "cannot be resolved at this n" is a real answer.
+ * It returns null rather than a number computed from n=2, so a caller that wants a figure has to
+ * handle the refusal; "cannot be resolved at this n" is a real answer.
  */
 export function summarise(values: readonly number[]): Summary | null {
 	const clean = values

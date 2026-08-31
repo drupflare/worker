@@ -162,7 +162,7 @@ export function removalFor(
 /**
  * Repeats of one statement SHAPE over DIFFERENT cids, which can be batched and cannot be removed.
  *
- * The census fingerprint collapses `IN (?)` arity on purpose, so six `getMultiple()` calls for six
+ * The census fingerprint collapses `IN (?)` arity, so six `getMultiple()` calls for six
  * different cids read as one fingerprint run six times. Scoring that as six removable queries is the
  * over-claim this function exists to prevent: batching them into one `getMultiple` still reads the
  * same rows and still returns the same bytes, so ONLY the statement column moves.
@@ -181,7 +181,7 @@ export function shapeRepeats(census: Census): Removal {
 }
 
 /**
- * Repeats of one statement with the SAME cid, which are genuinely redundant.
+ * Repeats of one statement with the SAME cid, which are redundant.
  *
  * These are the only repeats a deduplication could remove outright, so they are the only ones whose
  * rows and bytes come off. Prorated by the redundant share rather than attributed whole -- the first

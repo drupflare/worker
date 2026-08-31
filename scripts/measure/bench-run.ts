@@ -16,7 +16,7 @@
  * ## Why this drives `/serve` and not `/`
  *
  * The visitor path resolves the site from the HOSTNAME and passes `allowParam: false`, so `?site=`
- * on `/` is deliberately ignored -- `customer-a.example/about?site=customer-b` must not serve
+ * on `/` is ignored -- `customer-a.example/about?site=customer-b` must not serve
  * customer B's database. Every "object" would therefore have been the same object, and a paired
  * measurement across one object is not paired. `/serve` is a PUBLIC route that reads `?site=`, and
  * the only thing skipped by addressing it directly is the hostname lookup, which is Worker CPU and
@@ -163,7 +163,7 @@ export async function driveSamples(
  * Polls one object until it serves a 200, because a fresh object is not measurable.
  *
  * A never-migrated object answers 503 `warming` and arms an alarm; the replay is chunked, so the
- * object serves nothing until the chain drains. These requests are deliberately UNTAGGED so the
+ * object serves nothing until the chain drains. These requests are UNTAGGED so the
  * warm-up cannot be mistaken for a sample.
  */
 export async function warmObject(

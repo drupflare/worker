@@ -191,7 +191,7 @@ namespace {
 	 * and the wrapper used to sanitise its input as UTF-8 before looking at $from_encoding, which
 	 * turns a legal SJIS byte into "?" before the conversion starts.
 	 *
-	 * Single-byte and multi-byte source encodings are both here on purpose: the polyfill's
+	 * Single-byte and multi-byte source encodings are both here: the polyfill's
 	 * mapToUtf8 tries a two-byte key before a one-byte key, so a fix that walks bytes is right for
 	 * one family and wrong for the other.
 	 */

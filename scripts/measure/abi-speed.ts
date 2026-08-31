@@ -12,7 +12,7 @@ import { emitTunedGlue, glueFor, stepFor, tunedGlueFor, type Abi } from './growt
  *
  * RULE 0 reserves an absolute from a deployed worker because the isolate freezes its clock. That is
  * a rule about the PLATFORM; an ABI cost is a property of the BINARY, and the edge is the worse
- * place to read one: it is bimodal by 400-600 ms where this effect is a few percent.
+ * place to read one: a reported 400-600 ms spread swamps an effect of a few percent.
  *
  * `node` by default, because workerd is V8 and no other local lane shares that. `bun` runs the same
  * script on JavaScriptCore, so agreement across the two is what makes a ratio a property of the
@@ -136,7 +136,10 @@ const READY = `<?php echo PHP_INT_SIZE;`;
 const ABI_WASM: Record<string, string> = {
 	wasm32: '.interp/php8.5-wasm32.wasm',
 	long64: '.interp/php8.5-long64.wasm',
-	wasm64: '.interp/php8.5-wasm64.wasm'
+	wasm64: '.interp/php8.5-wasm64.wasm',
+	// long64 with the Zend VM threaded through musttail. Score it against `long64` and nothing
+	// else: against wasm32 the reading carries the integer-width difference as well
+	vmtailcall: '.interp/php8.5-vmtailcall.wasm'
 };
 
 export type Arm = {

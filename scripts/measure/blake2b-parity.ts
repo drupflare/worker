@@ -53,7 +53,7 @@ const OUT_LENGTHS = [16, 20, 32, 48, 64];
 const KEY_LENGTHS = [0, 16, 32, 64];
 const CHUNK_SIZES = [1, 7, 128, 1000];
 
-/** reproducible bytes that are deliberately not valid UTF-8, so the base64 bridge is exercised */
+/** reproducible bytes that are not valid UTF-8, so the base64 bridge is exercised */
 function pattern(n: number): Uint8Array {
 	const out = new Uint8Array(n);
 	for (let i = 0; i < n; i++) out[i] = (i * 37 + 11) & 0xff;

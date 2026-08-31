@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { stripExportWrappers } from './glue-exports.js';
+// `.ts` rather than this repo's usual `.js` specifier: `abi-speed.ts` imports this module under
+// NODE, which resolves the extension it is given and cannot map `.js` onto a `.ts` file. Bun and
+// vite both accept the explicit form, so this is the specifier that works in all three lanes --
+// with `.js` here, `measure:abi-speed` and `measure:abi-control` both fail to load
+import { stripExportWrappers } from './glue-exports.ts';
 
 /**
  * Emscripten's heap-growth policy, re-emitted at a chosen step.
@@ -22,9 +26,23 @@ const PAGE = 65_536;
 /** the shipping glue, and the only input; the `.wasm` is untouched because it holds no policy */
 export const SHIPPING_GLUE = '.interp/php8.5-worker.mjs';
 
-/** every pointer ABI a glue is emitted for; `null` is wasm32, which needs no suffix */
+/**
+ * Every arm a glue is emitted for; `null` is wasm32, which needs no suffix.
+ *
+ * `vmtailcall` is not a pointer ABI at all -- it is long64 with the Zend VM threaded through
+ * `musttail` rather than through call/return. It belongs here because this is what names an arm's
+ * files on disk, and `abi-speed.ts` scores whatever is named.
+ */
 export type Abi =
-	null | 'wasm64' | 'long64' | 'wasm32' | 'emmalloc' | 'bulkmem' | 'impmem' | 'zendalloc';
+	| null
+	| 'wasm64'
+	| 'long64'
+	| 'wasm32'
+	| 'emmalloc'
+	| 'bulkmem'
+	| 'impmem'
+	| 'zendalloc'
+	| 'vmtailcall';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {
@@ -75,7 +93,7 @@ export function variantPath(step: number): string {
  * The step per ABI, because the optimum is a property of that ABI's demand.
  *
  * `wasm32` is the OFF arm and keeps its own 0.08; reading 0.13 onto it costs 4.81 MiB for nothing.
- * wasm64 falls back deliberately -- its sweep ran at 0.05 and a number here would be invented.
+ * wasm64 falls back -- its sweep ran at 0.05 and a number here would be invented.
  */
 const STEP_BY_ABI: Record<string, number> = { wasm32: 0.08 };
 // emmalloc/bulkmem/impmem/zendalloc are long64 plus ONE flag each, so they inherit long64's 0.13

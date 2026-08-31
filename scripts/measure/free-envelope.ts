@@ -72,8 +72,13 @@ export const SITE_STORAGE_BYTES = {
 	 * a class, 36,175,872 after, and 36,569,088 once the module added the requirements alter and the
 	 * deferred-cron hook -- six pages for ~5 KB of PHP. Re-measure rather than adjust: the spec
 	 * compares this against a fresh run of the same build, so a wrong value here is a wrong ceiling.
+	 *
+	 * THEN IT FELL 3.5x, AND EVERY EARLIER VALUE WAS PRICING A DEFECT. The packed
+	 * `cache_container` row was keyed to a stale dependency hash, so the first `$kernel->boot()`
+	 * on every site rebuilt a 482 KB container into the heap. With the row readable the same
+	 * snapshot is 10,420,224, so the model had been charging every site 26 MB it never stored.
 	 */
-	heapSnapshot: 36_569_088,
+	heapSnapshot: 10_420_224,
 	/** the same snapshot on a site that has been through `/firstrun` and served one page */
 	warmHeapSnapshot: 9_699_328
 } as const;
@@ -87,7 +92,7 @@ export const SITE_STORAGE_BYTES = {
  */
 export const DO_GB_ALLOCATED = 0.128;
 
-/** seconds in a day, named because the idle-object arithmetic below is the whole point of it */
+/** seconds in a day, named because the idle-object arithmetic below is what uses it */
 export const SECONDS_PER_DAY = 86_400;
 
 /**
@@ -472,8 +477,11 @@ export const ROWS_PER_FILL = {
 	 * is almost entirely shared-bin inserts.
 	 */
 	// 103 before the commit sequence; the clock costs 2 rows on a fill that writes authoritative
-	// state, and nothing on one that does not -- a read writes none by construction
-	firstFillOnFreshObject: 105
+	// state, and nothing on one that does not -- a read writes none by construction.
+	// 105 -> 107 with the provisioning drop: this fill now pays the interpreter boot that
+	// `/__migrate` and `/__firstrun` used to leave resident, and a boot writes 2. Paid once per
+	// object, against an install whose whole heap it removes from the serving incarnation
+	firstFillOnFreshObject: 107
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
@@ -998,7 +1006,7 @@ export type Verdict = {
 	envelope: Envelope;
 	servingFits: boolean;
 	regenerationFits: boolean;
-	/** the whole point: a workload passes only when BOTH ceilings hold */
+	/** a workload passes only when BOTH ceilings hold */
 	verdict: 'fits' | 'serving-over' | 'regeneration-over' | 'both-over';
 	headroom: { servingRatio: number; regenerationRatio: number };
 	/**

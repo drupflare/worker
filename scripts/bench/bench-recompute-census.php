@@ -200,7 +200,7 @@ pw_serve($kernel, $route . '?warm=2');
  * What to census.
  *
  * Chosen because each is a value a request asks for repeatedly and which a generic CMS cannot assume
- * is stable, which is the shape A1 turned out to be. Deliberately NOT the renderer: it is expensive
+ * is stable, which is the shape A1 turned out to be. NOT the renderer: it is expensive
  * because it is doing the work, and a census ranked by cost alone would put it first and say nothing.
  */
 $targets = [

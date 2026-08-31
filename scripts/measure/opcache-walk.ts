@@ -9,7 +9,7 @@
  * `dirname()` is what the probe lists, so every uri here carries a trailing `/x` sentinel: asking
  * for `/tmp/<id>/drupal/x` lists `/tmp/<id>/drupal`.
  *
- * Requests are issued one at a time on purpose. A Durable Object is single-threaded, so
+ * Requests are issued one at a time. A Durable Object is single-threaded, so
  * concurrency buys nothing here and costs the ability to say what any one invocation measured.
  *
  * This reports COUNTS and NAMES, never a duration. Every timing in this project comes from

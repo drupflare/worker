@@ -55,7 +55,7 @@ export type Check =
 /**
  * Every gated metric, with the tolerance it earns.
  *
- * `bundle.gzippedBytes` carries two checks on purpose: the ceiling is the hard fail (over 3 MiB the
+ * `bundle.gzippedBytes` carries two checks: the ceiling is the hard fail (over 3 MiB the
  * worker cannot be deployed at all, `code: 10027`), and the drift check catches a 200 KB creep that
  * still fits and would otherwise be noticed only on the release that stopped fitting.
  *
@@ -138,7 +138,7 @@ export const CHECKS: readonly Check[] = [
 	{
 		path: 'freeEnvelope.servingViewsPerDay',
 		kind: 'noDecrease',
-		why: 'a model edit that lowers the serving ceiling should be deliberate'
+		why: 'a model edit that lowers the serving ceiling should be explicit'
 	},
 	{
 		path: 'freeEnvelope.regenerationsPerDay',

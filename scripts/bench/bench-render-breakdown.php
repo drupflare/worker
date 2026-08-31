@@ -12,7 +12,7 @@
  * The measurement lives in pw_bench_breakdown() inside pw-probe.php, which
  * src/min.js calls with the same arguments inside wasm. Attribution is
  * exclusive, so the buckets sum without double counting and the residual is
- * what is genuinely elsewhere. Instrumentation cost is measured, not assumed:
+ * what is elsewhere. Instrumentation cost is measured, not assumed:
  * one loop runs with the decorators installed but the timer off and the
  * difference is reported.
  *

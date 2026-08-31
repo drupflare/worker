@@ -74,22 +74,60 @@ export const credentials = (name: string, pass: string) =>
 	`name=${encodeURIComponent(name)}&pass=${encodeURIComponent(pass)}` +
 	'&form_id=user_login_form&op=Log+in';
 
-/** one login attempt through the real serve path */
-export const login = (site: ServeDo, name: string, pass: string) =>
-	render(site, '/user/login', formPost(credentials(name, pass)));
+/**
+ * One login attempt through the real serve path.
+ *
+ * **THE ORIGIN IS PART OF THE SESSION, and leaving it out is how a jar comes back valid for a host
+ * nothing later renders at.** Drupal names the session cookie from the request: `SESS` plus a hash
+ * of the host, and `SSESS` over HTTPS. Measured on one site -- an origin-less login sets
+ * `SESS49960de5880e8c687434170f6476605b`, the same login at `https://do.local` sets
+ * `SSESS7d46b4d0b026ef5597af0e93a9da2184`, and a route rendering at the second host reads the first
+ * jar as an anonymous visitor. Pass the origin the later renders will use.
+ */
+export const login = (site: ServeDo, name: string, pass: string, origin = '') =>
+	render(site, '/user/login', { ...formPost(credentials(name, pass)), origin });
 
-/** a migrated site with a known admin password; `/__firstrun` is the only thing that sets one */
+/**
+ * A migrated site with a known admin password; `/__firstrun` is the only thing that sets one.
+ *
+ * **THROWS ON A FAILED CLAIM, and it has to.** Swallowing it leaves no admin password, so every
+ * later login is anonymous and every authenticated assertion is quietly made against the
+ * access-denied page. That cost a spec: two arms compiling `/admin/content` both came back
+ * `unservable: []` and `generatorAgrees: true` at 15,452 bytes, which is Drupal's 403.
+ */
 export async function claimSite(
 	site: ServeDo,
 	adminPass: string,
 	siteName = 'Sweep'
 ): Promise<void> {
 	await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
-	await site.fetch(
+	const claimed = await site.fetch(
 		new Request('https://do.local/__firstrun', {
 			method: 'POST',
 			body: JSON.stringify({ adminPass, siteName }),
 			headers: { 'content-type': 'application/json' }
 		})
 	);
+	if (claimed.status !== 200) {
+		throw new Error(`/__firstrun answered ${claimed.status}: ${await claimed.text()}`);
+	}
+}
+
+/**
+ * Logs in and returns the cookie jar, refusing a session that is not one.
+ *
+ * The pair is separable and should not be: `login()` answering with no `Set-Cookie` produces an
+ * empty jar, which every later request carries happily as an anonymous visitor.
+ *
+ * A non-empty jar is NOT proof the session will be honoured; see `login()` on the origin.
+ */
+export async function loginJar(
+	site: ServeDo,
+	name: string,
+	pass: string,
+	origin = ''
+): Promise<string> {
+	const jar = cookieJar(await login(site, name, pass, origin));
+	if (jar === '') throw new Error(`login as ${name} set no session cookie`);
+	return jar;
 }

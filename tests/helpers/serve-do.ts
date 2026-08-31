@@ -76,6 +76,8 @@ export type BumpResult = {
 	purgedPages: number;
 	/** stored shells dropped; a shell caches the shared region and no cache tag reaches it */
 	purgedShells: number;
+	/** compiled plans dropped; tag-scoped on a `cachetags` bump, all of them otherwise */
+	purgedPlans: number;
 	/** rows removed from `cache_dynamic_page_cache`, or -1 when the bin does not exist yet */
 	purgedDynamic: number;
 	requeued: number;
@@ -95,6 +97,8 @@ export type BumpResult = {
  */
 export type ServeDo = {
 	ctx: {
+		/** `name` is set only for an object addressed through `idFromName()` */
+		id: { name?: string };
 		storage: {
 			sql: Sql;
 			getAlarm: () => Promise<number | null>;
@@ -135,6 +139,72 @@ export type ServeDo = {
 	/** the authoritative commit sequence; advances on every invalidation, unlike `generation` */
 	commitSeq: () => number;
 	advanceCommit: () => number;
+	/** the replica stage, which is durable and only moves through a legal transition */
+	replicaStage: () => string;
+	setReplicaStage: (next: string) => { stage: string; moved: boolean; reason: string };
+	/** the role, which comes from the object's own name rather than a deployment-wide var */
+	isReplica: () => boolean;
+	/** narrower: a pool lane has a stage lifecycle, a var-configured replica does not */
+	isPoolLane: () => boolean;
+	/** the way out of WITHDRAWN: reset to CREATED and ask the primary for a fresh copy */
+	requestReadmission: () => Promise<{ asked: boolean; reason: string; stage: string }>;
+	/** empty and waiting on the primary, which is what the ask backoff is keyed on */
+	awaitingCopy: () => boolean;
+	copyBackoffMs: () => number;
+	packGeneration: () => string | null;
+	/** the primary's queue of lanes owed a copy; a repair outranks growth */
+	laneRepairQueue: () => number[];
+	enqueueLaneRepair: (lane: number) => number[];
+	dequeueLaneRepair: (lane: number) => number[];
+	/** the replication log's own storage handle, which the position helpers read */
+	logStore: () => import('../../src/ops/replication-log').LogStore;
+	/** the primary half of replication: buffer during an invocation, seal at the end of it */
+	ensureReplicationLog: () => void;
+	bufferForReplication: (sql: string, params?: unknown) => void;
+	sealGeneration: () => Promise<{ generation: number; statements: number } | null>;
+	/** the whole invocation's invalidated cache tags, emptied on read */
+	flushTagPurge: () => string[];
+	/** latches after the first invalidation; every tier that stores something cacheable re-arms it */
+	bumpCoalesced?: boolean;
+	/** the scoped plan purge: flag at the write, judge against the complete tag set at the end */
+	stalePlans: () => void;
+	settlePlans: (tags: readonly string[]) => { purged: number; cleared: boolean };
+	purgePlansFor: (tags?: string[]) => number;
+	/** the last NON-EMPTY set, so a later request can observe it */
+	lastInvalidatedTags?: string[];
+	/** write forwarding: a lane collects during the invocation and flushes to the primary at the end */
+	collectForward: (statements: readonly string[], payload: unknown) => void;
+	flushForward: () => Promise<{
+		action: string;
+		reason: string;
+		generation?: number;
+	} | null>;
+	/** the rowid partition the driver is told to mint from, so two lanes cannot name the same id */
+	idPartition: () => { lane: number; lanes: number };
+	/** served requests: counted in memory, folded into a row on the meters' own interval */
+	flushServeRequests: () => number;
+	serveRequests: () => number;
+	/** the last catch-up round, so a spec can tell a promotion from a lane that never ran one */
+	lastCatchUp?: unknown;
+	/** the bulk copy that gets a replica to VERIFIED */
+	tableNames: () => string[];
+	provisionLane: (
+		lane: number,
+		cursor: import('../../src/ops/replica-restore').ProvisionCursor | null,
+		budget?: number
+	) => Promise<import('../../src/ops/replica-restore').ProvisionOutcome>;
+	snapshotRows: (
+		table: string,
+		offset: number,
+		limit: number
+	) => { columns: string[]; rows: unknown[][] };
+	applyRestoreChunk: (chunk: import('../../src/ops/replica-restore').RestoreChunk) => {
+		ok: boolean;
+		reason: string;
+		stage: string;
+		statements: number;
+		missing: string[];
+	};
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
 	nowMs: () => number;

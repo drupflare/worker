@@ -3,16 +3,34 @@ import {
 	AUTH_MODE_HEADER,
 	AUTH_REASON_HEADER,
 	AUTH_REQUEST_HEADER,
+	authAllowance,
 	decideAuthMode,
 	isAuthenticatedRequest,
 	parseAuthSpend,
 	secondsUntilUtcReset,
+	sessionCookieValue,
 	utcDayKey,
 	type AuthBudgetEnv,
 	type AuthSpend
 } from './ops/auth-budget.js';
 import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit.js';
 import { isCacheTier } from './ops/cache-tiers.js';
+import {
+	believedGeneration,
+	edgePlanEnabled,
+	edgePlanKey,
+	lookupEdgePlan,
+	noteEdgeRender,
+	planEligibility,
+	readEdgePlan,
+	rememberEdgeGeneration,
+	runEdgePlan,
+	shouldCheckKv,
+	storeEdgePlan,
+	withDeadline,
+	writeEdgePlan,
+	type PlanTier
+} from './ops/edge-plan.js';
 import {
 	ensureFleetTable,
 	fleetSummary,
@@ -25,8 +43,10 @@ import {
 import { callbackUri } from './ops/oidc.js';
 import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store.js';
 import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan.js';
+import { affinityKey, chooseTarget, replicaCount, shouldFailover } from './ops/replica-routing.js';
 import { resolveSite, siteStubOptions } from './ops/site-id.js';
 import { bearerToken } from './ops/site-secrets.js';
+import { writeForwardEnabled } from './ops/write-forwarding.js';
 import { SitePhpDurableObject } from './site-do.js';
 import {
 	ADMIN_PAGES,
@@ -120,6 +140,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/keepwarm',
 	'/fill',
 	'/assemble',
+	'/plan',
 	'/serve-stats',
 	'/bump',
 	'/export',
@@ -140,6 +161,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/ops',
 	'/installable',
 	'/writes',
+	'/replica',
 	'/files',
 	'/enable',
 	'/fleet',
@@ -244,6 +266,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/ops': '/__ops',
 	'/installable': '/__installable',
 	'/writes': '/__writes',
+	'/replica': '/__replica',
 	'/files': '/__files',
 	'/enable': '/__enable',
 	'/php': '/__php',
@@ -265,6 +288,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/setup/cf/callback': '/__cfoauth',
 	'/fill': '/__fill',
 	'/assemble': '/__assemble',
+	'/plan': '/__plan',
 	'/serve-stats': '/__serve-stats',
 	'/bump': '/__bump',
 	'/export': '/__export',
@@ -355,7 +379,7 @@ const NEVER_DRUPAL = [
  * 2 MiB, and it is a heap guard rather than a bandwidth one: `parse_str()` on a form body allocates
  * inside a 128 MB isolate, and `foo[][][][][]=bar` repeated turns a few hundred kilobytes of wire
  * into orders of magnitude more of it. Drupal's own `post_max_size` default is 8 MB, so this is
- * tighter -- deliberately, because there is no separate process to lose here.
+ * tighter, because there is no separate process to lose here.
  */
 
 /** what the guard decided, or null when the request may proceed */
@@ -372,9 +396,9 @@ export interface BodyTooLarge {
  * been consumed -- and consuming it to measure it is the cost the guard exists to avoid. A chunked
  * request declares none and falls through; the object's own limits still apply to it.
  *
- * A `multipart/form-data` body is EXEMPT. That is the file-upload shape, its size is the point, and
- * it is not `parse_str()`d into a nested array -- so the memory-bomb argument does not apply to it
- * and a 2 MiB cap on uploads would be a functional regression rather than a guard.
+ * A `multipart/form-data` body is EXEMPT. That is the file-upload shape, where size is expected,
+ * and it is not `parse_str()`d into a nested array -- so the memory-bomb argument does not apply
+ * to it and a 2 MiB cap on uploads would be a functional regression rather than a guard.
  *
  * @param env - `MAX_BODY_BYTES` overrides the default; `0` disables the guard entirely
  */
@@ -568,9 +592,15 @@ async function writeAuthSpend(
  * whatever the DO sent, and a rejection degrades to "no edge cache" instead of
  * failing the request.
  *
- * @returns an x-cfw-edge-put value
+ * EVERY REFUSAL IS SYNCHRONOUS AND THE WRITE IS NOT, which is why this returns the write rather than
+ * awaiting it. Measured on a deployed worker: an awaited `cache.put` of a 97 KB body costs 12.5 ms
+ * before the response leaves, and the same put handed to `waitUntil` costs 0. The header still
+ * reports the refusal by name; a stored page reports `deferred`, because "it was handed off" is what
+ * this function knows and "it landed" is not.
+ *
+ * @returns an x-cfw-edge-put value, and the write to defer when there is one
  */
-async function putPage(
+function putPage(
 	cache: Cache,
 	origin: string,
 	site: string,
@@ -579,10 +609,11 @@ async function putPage(
 	generation: number | null,
 	doCache: string,
 	isAuthenticated: boolean
-): Promise<string> {
-	if (res.status !== 200) return `skipped:${res.status}`;
-	if (doCache !== 'HIT' && doCache !== 'RENDER') return `skipped:${doCache}`;
-	if (generation === null) return 'skipped:no-generation';
+): { outcome: string; write?: Promise<unknown> } {
+	const refused = (outcome: string) => ({ outcome });
+	if (res.status !== 200) return refused(`skipped:${res.status}`);
+	if (doCache !== 'HIT' && doCache !== 'RENDER') return refused(`skipped:${doCache}`);
+	if (generation === null) return refused('skipped:no-generation');
 	// a structural refusal, not a cookie-pattern check. The shared key has no user in it, so a personalised
 	// response stored under it is served to the next anonymous visitor -- and this project has
 	// shipped exactly that: a render that kept uid 1 landed in the anonymous page cache at 90,038
@@ -590,8 +621,8 @@ async function putPage(
 	// caller says the REQUEST was authenticated, and Set-Cookie says the RESPONSE is per-user.
 	// The header allow-list below would silently drop Set-Cookie, which makes the stored copy look
 	// anonymous while carrying somebody's page, so this refuses before that can happen.
-	if (isAuthenticated) return 'skipped:authenticated';
-	if (res.headers.has('set-cookie')) return 'skipped:set-cookie';
+	if (isAuthenticated) return refused('skipped:authenticated');
+	if (res.headers.has('set-cookie')) return refused('skipped:set-cookie');
 
 	const headers = new Headers({
 		'content-type': res.headers.get('content-type') ?? 'text/html; charset=utf-8',
@@ -604,26 +635,44 @@ async function putPage(
 		if (v !== null) headers.set(h, v);
 	}
 
-	try {
-		await cache.put(
-			pageKey(origin, site, generation, path),
-			new Response(res.clone().body, { status: 200, headers })
-		);
-		return 'stored';
-	} catch (e: any) {
-		return `refused:${String(e?.message ?? e).slice(0, 120)}`;
-	}
+	// cloned HERE rather than inside the deferred write: the body below is returned to the caller and
+	// a clone taken after the response has been consumed is empty
+	const copy = new Response(res.clone().body, { status: 200, headers });
+	return {
+		outcome: 'deferred',
+		// a rejection degrades to "no edge cache", the same as the awaited version did
+		write: cache.put(pageKey(origin, site, generation, path), copy).catch(() => undefined)
+	};
 }
 
 export default {
-	async fetch(request: Request, env: SiteWorkerEnv): Promise<Response> {
+	async fetch(request: Request, env: SiteWorkerEnv, ctx?: ExecutionContext): Promise<Response> {
 		let url = new URL(request.url);
-		// resolved ONCE and overlaid, so the 16 `isPaid(env)` call sites downstream need no change
-		// and cannot disagree with each other about which plan this request is on
-		env = withPlan(env, await resolvePlan(env, env.CONFIG_KV));
-		// the numeric levers ride the same namespace, behind an allow-list: KV is operator-writable,
-		// so a blanket merge would let a KV write set PW_DIAGNOSTICS and reach /sql and /restore
-		env = withSettings(env, await resolveSettings(env.CONFIG_KV));
+		// STARTED HERE RATHER THAN AFTER THE ROUTE MATCH, because the two KV reads below and the
+		// catch-all's site resolution sat in front of it -- so `x-worker-ms` reported a front worker
+		// that had already spent 8-12 ms on a cold isolate and left it out of its own number
+		const t0 = Date.now();
+		// ISSUED TOGETHER, because they read two keys from one namespace and neither needs the other's
+		// answer. Measured on a deployed worker: a WARM `CONFIG_KV.get()` costs 4-6 ms, ten in series
+		// cost 54.5 ms and the same ten together cost 15. A key the colo has not seen costs 46-140 ms
+		const [plan, settings] = await Promise.all([
+			// resolved ONCE and overlaid, so the 16 `isPaid(env)` call sites downstream need no change
+			// and cannot disagree with each other about which plan this request is on
+			resolvePlan(env, env.CONFIG_KV),
+			// the numeric levers ride the same namespace, behind an allow-list: KV is operator-writable,
+			// so a blanket merge would let a KV write set PW_DIAGNOSTICS and reach /sql and /restore
+			resolveSettings(env.CONFIG_KV)
+		]);
+		env = withSettings(withPlan(env, plan), settings);
+		// A WRITE THAT NOTHING DOWNSTREAM READS DOES NOT BELONG BEFORE THE RESPONSE. Measured on a
+		// deployed worker: an awaited `caches.default.put` costs 9 ms for a small body and 12.5 ms for
+		// a 97 KB one, and the same put through `waitUntil` costs 0 before the response leaves. It
+		// does not reduce the invocation's billed wall time, only the time to answer.
+		const defer = (p: Promise<unknown> | undefined) => {
+			if (p === undefined) return;
+			if (ctx) ctx.waitUntil(p);
+			else void p;
+		};
 
 		// DRUPAL OWNS THE URL SPACE, so anything this Worker does not claim is a page request. Before
 		// this, `/` answered 404 on a deployed site as well as locally -- the only serving route was
@@ -683,10 +732,24 @@ export default {
 			}
 		}
 
-		const t0 = Date.now();
-		// one object per site; the name is the site identity
+		// one object per site; the name is the site identity, and a replica lane is that name plus a
+		// suffix. With no replicas configured `chooseTarget()` always answers the site itself
 		const site = await siteFor(url, env);
-		const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+		const lane = chooseTarget({
+			site,
+			method: request.method,
+			affinity: affinityKey({
+				session: sessionCookieValue(request.headers.get('cookie')),
+				address: request.headers.get('cf-connecting-ip'),
+				pathname: url.pathname
+			}),
+			replicas: replicaCount(env),
+			// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or owner
+			// route reads as itself; those pin to the primary
+			pathname: url.pathname,
+			writeForward: writeForwardEnabled(env)
+		});
+		const stub = env.SITE.get(env.SITE.idFromName(lane.target), siteStubOptions(env));
 
 		const cache = caches.default;
 		const origin = url.origin;
@@ -731,7 +794,7 @@ export default {
 		// large file. A form body is `parse_str()`d inside a 128 MB isolate, and a nested-array
 		// bomb -- `foo[][][][][]=bar` repeated -- costs orders of magnitude more heap than it does
 		// bytes on the wire. Refusing at the edge costs no DO request and no interpreter, and a
-		// multipart upload is exempt because that is the one shape whose size is the point.
+		// multipart upload is exempt because that is the one shape where size is expected.
 		const oversized = bodyTooLarge(request, env);
 		if (oversized !== null) {
 			return new Response(`${oversized.reason}\n`, {
@@ -766,8 +829,12 @@ export default {
 		const authenticated = isNeverDrupal(path) ? false : isAuthenticatedRequest(request);
 		let authMode: 'render' | 'stale' | 'read-only' = 'render';
 		let authReason = '';
+		// the reservation is enforced on FREE only, and `decideAuthMode()` discards the counter when it
+		// is not -- so reading it on paid cost one `cache.match` (9.5 ms on the first authenticated
+		// request per isolate) for an answer nothing consults
+		const enforced = authAllowance(env as AuthBudgetEnv).enforced;
 		if (authenticated && url.pathname === '/serve') {
-			const spend = await readAuthSpend(cache, origin, site, t0);
+			const spend = enforced ? await readAuthSpend(cache, origin, site, t0) : null;
 			const decision = decideAuthMode(request, spend, env as AuthBudgetEnv, t0);
 			authMode = decision.mode;
 			authReason = decision.reason;
@@ -794,6 +861,62 @@ export default {
 		// personalised is read or written, and the visitor gets the public page rather than a
 		// blank one. A degradation, not a refusal and not a dark site
 		const personalised = authenticated && authMode === 'render';
+		// #endregion
+
+		// #region compiled plans, answered from THIS isolate with no object hop
+		//
+		// The only tier that can answer an AUTHENTICATED page without one. `caches.default` and the KV
+		// page tier are both keyed without a user, so neither may ever hold one; this key carries the
+		// visitor's own cookie header, which makes a stored plan reachable only by the request that
+		// produced it. See `src/ops/edge-plan.ts` for the whole safety argument.
+		const planCookie = request.headers.get('cookie') ?? '';
+		const planWanted =
+			serving && personalised && request.method === 'GET' && edgePlanEnabled(env);
+		let planTier: PlanTier = planWanted ? 'miss' : 'skip:not-wanted';
+		if (planWanted) {
+			const planGeneration = believedGeneration(site, t0);
+			if (planGeneration === null) {
+				// this isolate has not learned a generation recently enough to fence a plan against;
+				// the object's answer below teaches it one
+				planTier = 'skip:generation-unknown';
+			} else {
+				const planKey = edgePlanKey(site, planGeneration, planCookie, path);
+				let held = lookupEdgePlan(planKey);
+				let from: PlanTier = 'mem';
+				// the tier for an isolate that knows the generation and has never seen this page,
+				// consulted at most once per key and never for longer than the hop it replaces --
+				// see COLD_READ_DEADLINE_MS, which exists because a key this colo has not seen costs
+				// 46-140 ms rather than the 5-6 a warm one does
+				if (held === null && shouldCheckKv(planKey)) {
+					const read = readEdgePlan(env, site, planGeneration, planCookie, path);
+					held = await withDeadline(read);
+					if (held !== null) {
+						storeEdgePlan(planKey, held);
+						from = 'kv';
+					} else {
+						// a read that missed the deadline still warms this isolate for the next request
+						const key = planKey;
+						defer(read.then((late) => late && storeEdgePlan(key, late)));
+					}
+				}
+				const html = held === null ? null : runEdgePlan(held);
+				if (html !== null) {
+					return new Response(html, {
+						status: 200,
+						headers: {
+							'content-type': 'text/html; charset=UTF-8',
+							// per-user: no shared cache between here and the browser may store it
+							'cache-control': 'private, no-store',
+							'x-cfw-cache': 'PLAN',
+							'x-cfw-plan': from,
+							'x-cfw-generation': String(planGeneration),
+							[AUTH_MODE_HEADER]: authMode,
+							'x-worker-ms': String(Date.now() - t0)
+						}
+					});
+				}
+			}
+		}
 		// #endregion
 
 		const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
@@ -903,15 +1026,26 @@ export default {
 			// this branch exists because it has run out
 			innerRequest.headers.delete('cookie');
 		}
-		const res = await stub.fetch(innerRequest);
+		// cloned BEFORE the send, because a replica that refuses has already consumed the request.
+		// Only ever a GET or HEAD -- `chooseTarget()` sends a write straight to the primary -- so the
+		// clone carries no body and the retry cannot double-apply anything
+		const retryOnPrimary = lane.role === 'replica' ? innerRequest.clone() : null;
+		let res = await stub.fetch(innerRequest);
+		if (retryOnPrimary !== null && shouldFailover(res)) {
+			// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
+			// from the status alone
+			res = await env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env)).fetch(
+				retryOnPrimary
+			);
+		}
 
 		// A MODULE INSTALL CANNOT WAKE ITS OWN FILL CHAIN, so this does it in a second event.
 		// `setAlarm()` from inside the install's own event resets the object and rolls the whole
 		// install back -- measured 0/6 landing with it and 6/6 without. The install answers
 		// `armFill: true` when it purged pages it wants re-rendered; poking `/__armfill` is one
 		// `setAlarm()` in an event of its own, which is the part that makes it safe.
-		// AN INSTALL LEAVES ITS OBJECT UNABLE TO DO ANYTHING ELSE, so the refill is deliberately
-		// NOT woken from here. The install ends with the isolate at ~110 MB of a 128 MB cap --
+		// AN INSTALL LEAVES ITS OBJECT UNABLE TO DO ANYTHING ELSE, so the refill is NOT woken
+		// from here. The install ends with the isolate at ~110 MB of a 128 MB cap --
 		// wasm linear memory never shrinks -- and the next event in that isolate is refused:
 		// poking `/__armfill` immediately returned "Durable Object's isolate exceeded its memory
 		// limit and was reset" on 6 of 6 deployed installs. Armed from INSIDE the install's own
@@ -938,21 +1072,71 @@ export default {
 			rawTier === null ? 'n/a' : isCacheTier(rawTier) ? rawTier : `unknown:${rawTier}`;
 		const doGeneration = asGeneration(res.headers.get('x-cfw-generation'));
 
-		// the counter rides along on a response already paid for, same as the generation
-		if (personalised) {
+		// the counter rides along on a response already paid for, same as the generation. The isolate
+		// memo is set synchronously inside these two, so only ANOTHER isolate waits on the cache copy
+		// -- which is why both are deferred rather than awaited
+		if (personalised && enforced) {
 			const reported = parseAuthSpend(res.headers);
-			if (reported) await writeAuthSpend(cache, origin, site, reported);
+			if (reported) defer(writeAuthSpend(cache, origin, site, reported));
 		}
 
 		// the generation rides along on a response we already paid for, so learning
 		// it -- including learning that a bump happened -- costs nothing extra
 		if (doGeneration !== null && doGeneration !== generation) {
-			await writeGeneration(cache, origin, site, bucket, doGeneration);
+			defer(writeGeneration(cache, origin, site, bucket, doGeneration));
 		}
+		// the plan tier fences on the generation this isolate last learned, which is this one
+		if (doGeneration !== null) rememberEdgeGeneration(site, doGeneration, Date.now());
 
-		const put = serving
-			? await putPage(cache, origin, site, path, res, doGeneration, doCache, personalised)
-			: 'skipped:not-serving';
+		// #region compiling a plan out of the render that just happened
+		//
+		// The whole compile runs behind `ctx.waitUntil`: reading the body, diffing two renders and
+		// proving the result are CPU this request does not have to wait for.
+		const eligible = planEligibility({
+			method: request.method,
+			status: res.status,
+			doCache,
+			contentType: res.headers.get('content-type'),
+			setCookie: res.headers.has('set-cookie'),
+			personalised,
+			generation: doGeneration,
+			cookie: planCookie
+		});
+		if (planWanted && !eligible.ok) planTier = eligible.reason as PlanTier;
+		if (planWanted && eligible.ok && doGeneration !== null) {
+			// the key is rebuilt from the generation the OBJECT reported, which is the one this render
+			// belongs to; the belief above may have been a window behind it
+			const key = edgePlanKey(site, doGeneration, planCookie, path);
+			// cloned now, read later: the body below is returned to the caller and a clone taken after
+			// that has been consumed is empty
+			const copy = res.clone();
+			const generationForPlan = doGeneration;
+			planTier = 'sampling';
+			defer(
+				copy
+					.text()
+					.then((html) => {
+						const compiled = noteEdgeRender(key, path, html);
+						if (compiled === null) return undefined;
+						return writeEdgePlan(
+							env,
+							site,
+							generationForPlan,
+							planCookie,
+							path,
+							compiled
+						);
+					})
+					.catch(() => undefined)
+			);
+		}
+		// #endregion
+
+		const paged = serving
+			? putPage(cache, origin, site, path, res, doGeneration, doCache, personalised)
+			: { outcome: 'skipped:not-serving' };
+		defer(paged.write);
+		const put = paged.outcome;
 
 		// mirror into KV so the next colo does not pay a DO request. `res.clone()` for the same
 		// reason putPage() does it -- the body below is returned to the caller and can only be read once.
@@ -969,12 +1153,25 @@ export default {
 				// a 503 warming placeholder is not a page; storing it would pin "warming" globally
 				kvPut = `skipped:${doCache}`;
 			} else {
-				const stored = await writePage(env, site, doGeneration, path, {
-					status: res.status,
-					contentType: res.headers.get('content-type') ?? 'text/html; charset=utf-8',
-					html: await res.clone().text()
-				});
-				kvPut = stored ? 'stored' : 'refused';
+				// cloned now, read later: the body below is returned to the caller, and a clone taken
+				// after that has been consumed is empty
+				const copy = res.clone();
+				const status = res.status;
+				const contentType = res.headers.get('content-type') ?? 'text/html; charset=utf-8';
+				const generationForKv = doGeneration;
+				defer(
+					copy
+						.text()
+						.then((html) =>
+							writePage(env, site, generationForKv, path, {
+								status,
+								contentType,
+								html
+							})
+						)
+						.catch(() => undefined)
+				);
+				kvPut = 'deferred';
 			}
 		} else if (serving) {
 			kvPut = 'skipped:disabled';
@@ -994,6 +1191,7 @@ export default {
 			// a tier that silently declined to store looks identical to one that stored, so the
 			// outcome is reported on the header a measurement reads
 			headers.set('x-cfw-kv-put', kvPut);
+			headers.set('x-cfw-plan', planTier);
 		}
 		if (authenticated) {
 			headers.set(AUTH_MODE_HEADER, authMode);

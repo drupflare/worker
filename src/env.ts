@@ -12,9 +12,18 @@ export interface SiteEnv extends BaseSiteEnv {
 	HEAP_SNAPSHOT?: string;
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
+	/**
+	 * linear memory above which the interpreter is dropped at the end of an invocation.
+	 *
+	 * Defaults to 117,440,512 (112 MiB) against a 128 MiB isolate. Raising it past ~120 MiB trades
+	 * the boot this avoids for the reset it exists to prevent.
+	 */
+	RECYCLE_ABOVE_BYTES?: string | number;
 	PREFILL?: string;
 	/** fragment assembly for authenticated GETs; ON unless explicitly set to `0` */
 	SHELL_ASSEMBLY?: string;
+	/** the front worker's compiled-plan tier; ON unless explicitly set to `0` */
+	EDGE_PLAN?: string;
 	/**
 	 * makes this object a read-only replica: every mutating host capability is refused.
 	 *
@@ -22,6 +31,41 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * primary, and a primary that silently refuses them is a broken site. See `src/ops/replica.ts`.
 	 */
 	REPLICA_READ_ONLY?: string;
+	/**
+	 * how many replica lanes a site has beyond the primary; 0 and unset mean one object per site.
+	 *
+	 * The var only tells the ROUTER how many lanes exist. An object's own role comes from its name,
+	 * so raising this cannot make an existing object read-only by accident.
+	 */
+	REPLICA_COUNT?: string;
+	/**
+	 * how long a SERVING lane may go without pulling the primary's log; the bound on staleness.
+	 *
+	 * A lane that stops replicating answers from a frozen copy and looks healthy, because the fence
+	 * refuses only a caller that states a freshness requirement and a visitor states none.
+	 */
+	REPLICA_LAG_MS?: string;
+	/**
+	 * lets a pool lane execute writes and forward them to the primary instead of refusing them.
+	 *
+	 * OFF unless explicitly `1`. The read path's safety argument covers reads; a lane that forwards
+	 * is doing something that argument does not reach.
+	 */
+	WRITE_FORWARD?: string;
+	/**
+	 * takes a heap image once per pack generation, so a cold boot can restore instead of booting.
+	 *
+	 * ON unless `0`. `HEAP_SNAPSHOT` gates the restore; this gates the PRODUCER. One image costs
+	 * 10,420,224 bytes, which is 0.2% of free's 5 GB.
+	 */
+	HEAP_IMAGE?: string;
+	/**
+	 * the object's own namespace, so a replica lane can pull the log from its primary.
+	 *
+	 * Optional here and required in `SiteWorkerEnv`: the front end cannot work without it, and a
+	 * Durable Object only needs it to reach a SIBLING -- which nothing did until catch-up.
+	 */
+	SITE?: DurableObjectNamespace;
 	/** the opcache arm: `file` (shipping), `shm` or `off`; see `src/runtime/opcache.ts` */
 	OPCACHE_MODE?: string;
 	/** argon2id password hashing; OFF unless explicitly `1`, because it rehashes every login */
@@ -61,6 +105,13 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * `wrangler tail` and out of a dev terminal unless it is asked for.
 	 */
 	PHP_LOG_LEVEL?: string;
+	/**
+	 * refuses an outbound fetch to a private, loopback or metadata address; ON unless `0`.
+	 *
+	 * PHP names the URL for `cfwFetch` and `cfwQueueFetch`, so any module that can build a string
+	 * chooses the destination. `0` is for the e2e rig, which points a site at containers on the host.
+	 */
+	OUTBOUND_GUARD?: string;
 	/** logs every Drupal statement through console.log, which survives an object reset */
 	PW_SQL_TRACE?: string;
 	/** first statement number to log, so a 256 KB tail budget covers the END of a long run */
@@ -105,7 +156,7 @@ export interface SiteEnv extends BaseSiteEnv {
 	 *
 	 * A whole URL rather than a host/port/user/pass set, because these carry credentials and a
 	 * secret is one binding: `redis://user:pass@host:6379/0` (or `rediss://` for TLS). The
-	 * ENDPOINT is deliberately the operator's -- PHP names an operation and never a host, or any
+	 * ENDPOINT is the operator's -- PHP names an operation and never a host, or any
 	 * module able to call a host function could reach arbitrary TCP.
 	 */
 	REDIS_URL?: string;

@@ -25,7 +25,7 @@ import { STORAGE_TABLE_PREFIX, writeTargetTable } from '../db/write-tally.js';
  * `?storage.` is {@link STORAGE_TABLE_PREFIX}, the host's own alarm and key-value bookkeeping,
  * which is per-object by construction.
  *
- * The named set is deliberately SHORT and deliberately not `cfw_`. A prefix rule over the host's
+ * The named set is SHORT and is not `cfw_`. A prefix rule over the host's
  * own tables would sweep in `cfw_mail_queue` (a committed message), `cfw_file` (durable file bytes)
  * and `cfw_http_queue` (an outbound request) -- three authoritative stores that happen to share a
  * naming convention with the page cache.
@@ -147,7 +147,7 @@ export class ReplicaRequiresPrimary extends Error {
  * Every one is a pure function of its arguments or a read of replica-local state. Everything else
  * -- including anything absent from this set -- is mutating and refused.
  *
- * `cfwLog` is safe on purpose and it is the one judgement call: it appends to an in-memory ring and
+ * `cfwLog` is the one judgement call: it appends to an in-memory ring and
  * writes `console.log`, neither of which is authoritative state. A watchdog ROW would be, and this
  * capability does not write one.
  */
@@ -238,6 +238,18 @@ function txnStatements(json: unknown): string[] | null {
 }
 
 /**
+ * The same transaction payload with `commit` forced off, or null when it cannot be read.
+ *
+ * Returned as a JSON string because that is what the capability was handed; rewriting the object in
+ * place would mutate what the caller still holds.
+ */
+export function speculative(json: unknown): string | null {
+	const body = parseJson(json) as Partial<TxnRequest> | null;
+	if (body === null || !Array.isArray(body.statements)) return null;
+	return JSON.stringify({ ...body, commit: false });
+}
+
+/**
  * Makes a replica physically unable to commit an authoritative side effect.
  *
  * Wraps the INSTALLED surface rather than a known list, so a capability added later is refused
@@ -250,10 +262,16 @@ function txnStatements(json: unknown): string[] | null {
  *   The instantiated PHP module, mutated in place.
  * @param onRefusal
  *   Called with each refusal before it is thrown; the caller uses it to record the failover.
+ * @param collect
+ *   Turns SQL refusal into forwarding. Given one, a mutating transaction is downgraded to the
+ *   driver's speculative path -- replayed, read through, rolled back -- and its statements are handed
+ *   here for the primary to commit. Only SQL forwards: a `mutating` capability is an outbound effect
+ *   like mail, and there is no rollback for one that has been sent.
  */
 export function enforceReadOnly(
 	binary: Record<string, unknown>,
-	onRefusal?: (refusal: ReplicaRequiresPrimary) => void
+	onRefusal?: (refusal: ReplicaRequiresPrimary) => void,
+	collect?: (statements: readonly string[], payload: unknown) => void
 ): ReadOnlyGuard {
 	const wrapped: Record<string, CapabilityVerdict> = {};
 	const refusals: ReplicaRequiresPrimary[] = [];
@@ -292,10 +310,37 @@ export function enforceReadOnly(
 			if (statements === null) refuse(name, 'the statement payload could not be read');
 			const write = statements!.find((sql) => !statementAllowedOnReplica(sql));
 			if (write !== undefined) {
-				refuse(
-					name,
-					`not a read and not replica-local: ${write.replace(/\s+/g, ' ').trim().slice(0, 120)}`
-				);
+				if (collect === undefined) {
+					refuse(
+						name,
+						`not a read and not replica-local: ${write.replace(/\s+/g, ' ').trim().slice(0, 120)}`
+					);
+				}
+				// forwarded rather than refused: run it speculatively so PHP reads through its own
+				// write, and hand the statements to the primary. `commit: false` is the driver's
+				// existing path and the rollback is what keeps this lane's database at its
+				// applied generation
+				const payload = speculative(args[0]);
+				if (payload === null) {
+					// AN EXEC WRITE IS NOT FORWARDABLE HERE AND THAT IS THE DRIVER'S JOB TO AVOID.
+					// `cfwSqlExec` has no rollback, so there is no way to run this locally and discard
+					// it; the driver replays an unbuffered write as a one-statement transaction so it
+					// arrives on the branch above. Reaching this means the two disagree about whether
+					// this connection holds a residue class, and a failover is the safe answer
+					refuse(
+						name,
+						name === 'cfwSqlExec'
+							? 'a write on the exec bridge cannot be rolled back, so it cannot be forwarded'
+							: 'the transaction payload could not be downgraded'
+					);
+				}
+				collect!(statements!, args[0]);
+				mutated = true;
+				try {
+					return inner(payload, ...args.slice(1));
+				} finally {
+					mutated = false;
+				}
 			}
 			mutated = true;
 			try {

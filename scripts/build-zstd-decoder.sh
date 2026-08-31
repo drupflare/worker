@@ -10,7 +10,7 @@
 # 65,014 bytes raw, ~24,798 gzipped. It has ONE import,
 # `env.emscripten_notify_memory_growth`, which the consumer stubs.
 #
-# The output is gitignored on purpose -- this repo does not commit binaries. Re-run after a clone.
+# The output is gitignored -- this repo does not commit binaries. Re-run after a clone.
 #
 # It is also CACHED, because the inputs are pinned: one zstd tarball verified by sha256, compiled by
 # one pinned emsdk image. Re-running produces the same 65 KB, so an existing decoder is reused and

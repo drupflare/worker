@@ -14,7 +14,7 @@
  * bun scripts/fetch-interpreter.ts control85 8.5 4102938475 --pin
  * ```
  *
- * @see scripts/pack-wasm-zstd.ts which this calls to produce the shipped frame
+ * @see scripts/pack-wasm-brotli.ts which this calls to produce the shipped frame
  * @see src/runtime/php-binary-85.ts for the seam that imports the result
  * @see .github/workflows/interpreter.yml which drives this from a phasm publish
  */
@@ -22,7 +22,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { packWasm } from './pack-wasm-zstd';
+import { packWasmBrotli } from './pack-wasm-brotli';
 import { interpreterFiles, sha256 } from './release-payload';
 
 const OUT_DIR = '.interp';
@@ -38,7 +38,6 @@ export type FetchResult = {
 	frame: string;
 	raw: number;
 	packed: number;
-	declared: number;
 	artifactId: string;
 	/** true when the binary was already on disk and no artifact was downloaded */
 	cached?: boolean;
@@ -50,15 +49,20 @@ export type FetchResult = {
  * The binaries themselves are 9-12 MB and gitignored, so this is the only part of an interpreter
  * bump that a reviewer can read. It records the artifact id because phasm rebuilds the same rc to
  * different bytes -- 12,218,400 then 12,218,393 -- so "the newest artifact" does not name a build.
+ *
+ * Version 2 dropped `frame.declared`. It read the inflated length back out of the zstd frame header,
+ * and the frame is brotli now, which has no such field. Nothing is lost: `files[].sha256` already
+ * content-addresses the frame, which is the stronger identity the declared length was standing in
+ * for.
  */
 export type InterpreterPin = {
 	name: 'drupflare-interpreter-pin';
-	version: 1;
+	version: 2;
 	repo: string;
 	variant: string;
 	phpVersion: string;
 	artifactId: string;
-	frame: { raw: number; packed: number; declared: number };
+	frame: { raw: number; packed: number };
 	files: { path: string; bytes: number; sha256: string }[];
 };
 
@@ -81,12 +85,12 @@ export function buildPin(
 ): InterpreterPin {
 	return {
 		name: 'drupflare-interpreter-pin',
-		version: 1,
+		version: 2,
 		repo,
 		variant,
 		phpVersion,
 		artifactId: result.artifactId,
-		frame: { raw: result.raw, packed: result.packed, declared: result.declared },
+		frame: { raw: result.raw, packed: result.packed },
 		files: [result.wasm, result.glue, result.frame].sort().map((path) => ({
 			path,
 			bytes: statSync(path).size,
@@ -171,14 +175,13 @@ export function fetchInterpreter(
 
 	if (!force && artifactId === undefined && interpreterIsCurrent(phpVersion)) {
 		const { wasm, glue } = interpreterPaths(phpVersion);
-		const { raw, packed, declared, out } = packWasm(wasm, OUT_DIR);
+		const { raw, packed, out } = packWasmBrotli(wasm, OUT_DIR);
 		return {
 			wasm,
 			glue,
 			frame: out,
 			raw,
 			packed,
-			declared,
 			artifactId: 'cached',
 			cached: true
 		};
@@ -218,10 +221,8 @@ export function fetchInterpreter(
 	renameSync(gotWasm, wasm);
 	renameSync(gotGlue, glue);
 
-	// packWasm refuses a frame whose header disagrees with the file it packed, so the declared size
-	// is checked here rather than left for a startup throw on the edge
-	const { raw, packed, declared, out } = packWasm(wasm, OUT_DIR);
-	return { wasm, glue, frame: out, raw, packed, declared, artifactId: String(id) };
+	const { raw, packed, out } = packWasmBrotli(wasm, OUT_DIR);
+	return { wasm, glue, frame: out, raw, packed, artifactId: String(id) };
 }
 
 if (import.meta.main) {
@@ -240,10 +241,10 @@ if (import.meta.main) {
 	const result = fetchInterpreter(variant, phpVersion, artifactId, force);
 	if (!args.includes('--any-version')) assertSeamImports(process.cwd(), result);
 	console.log(
-		`${result.wasm}  raw=${result.raw}  packed to ${result.packed} zstd bytes` +
+		`${result.wasm}  raw=${result.raw}  packed to ${result.packed} brotli bytes` +
 			(result.cached ? '  [already on disk, --force re-downloads]' : '')
 	);
-	console.log(`${result.frame}  declares ${result.declared} inflated bytes`);
+	console.log(`${result.frame}`);
 	console.log(`${result.glue}`);
 	if (args.includes('--pin')) {
 		const pin = buildPin(result, variant, phpVersion);

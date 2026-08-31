@@ -19,7 +19,7 @@
 		},
 		{
 			"type": "Data",
-			"globs": ["**/*.zst"],
+			"globs": ["**/*.zst", "**/*.br"],
 			"fallthrough": true
 		}
 	],

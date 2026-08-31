@@ -88,6 +88,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/crud-journey.spec.ts',
 	'tests/integration/csrf.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
+	'tests/integration/effect-census.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/fill-bins.spec.ts',
 	'tests/integration/firstrun.spec.ts',
@@ -96,6 +97,7 @@ const ARTIFACT_SPECS = [
 	'tests/integration/heap-growth.spec.ts',
 	'tests/integration/host-bridges.spec.ts',
 	'tests/integration/image-toolkit.spec.ts',
+	'tests/integration/interpreter-recycle.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/linear-memory.spec.ts',
 	'tests/integration/loaded-extensions.spec.ts',
@@ -110,6 +112,19 @@ const ARTIFACT_SPECS = [
 	'tests/integration/page-content-key.spec.ts',
 	'tests/integration/php-allocator.spec.ts',
 	'tests/integration/php-clock.spec.ts',
+	// wholly gated on DRUPFLARE_MEASURE until each grew an ungated gate-sized counterpart, which
+	// renders for real
+	'tests/integration/authenticated-throughput.spec.ts',
+	'tests/integration/plan-amortisation.spec.ts',
+	'tests/integration/plan-coverage.spec.ts',
+	'tests/integration/render-floor-ladder.spec.ts',
+	// and this one imports `scripts/bench/pw-plan-replay.php?raw`, which is UNTRACKED rather than
+	// gitignored, so a clean checkout could not COLLECT it either -- the same shape as
+	// `render-buckets.spec.ts` above and equally invisible while the gate never ran the file
+	'tests/integration/render-plan-arms.spec.ts',
+	// imports `assets/probe/pw-probe.php?raw`, which is gitignored, so a clean checkout cannot
+	// COLLECT it even though the spec itself is gated on DRUPFLARE_MEASURE and never runs
+	'tests/integration/render-buckets.spec.ts',
 	'tests/integration/render-origin.spec.ts',
 	'tests/integration/rows-per-fill-audit.spec.ts',
 	'tests/integration/serve-chain.spec.ts',
@@ -294,7 +309,10 @@ export default defineConfig({
 							// hermetic; forwarded because the pool has its own env
 							bindings: {
 								PW_DIAGNOSTICS: '1',
-								DRUPFLARE_MEASURE: process.env.DRUPFLARE_MEASURE ?? '0'
+								DRUPFLARE_MEASURE: process.env.DRUPFLARE_MEASURE ?? '0',
+								DRUPFLARE_PLAN_ON_DPC: process.env.DRUPFLARE_PLAN_ON_DPC ?? '0',
+								DRUPFLARE_PLAN_ROUTES: process.env.DRUPFLARE_PLAN_ROUTES ?? '0',
+								DRUPFLARE_PLAN_TIMING_N: process.env.DRUPFLARE_PLAN_TIMING_N ?? '15'
 							},
 							// costs nothing measurable: `false` moved a four-file run 12.08s -> 11.77s,
 							// inside the noise, because the isolate is rebuilt per FILE either way

@@ -49,17 +49,16 @@ overwrites a database.
 The restore applies on the object's next start. The undo bookmark is obtainable only from the call
 that schedules the restore, so it is returned rather than logged.
 
-**It is not supported in local development, and it does not say so the way you would expect.**
-Cloudflare's wording is that "a durable log of data changes is not stored locally". Measured
-2026-08-24: all three methods EXIST in the local runtime. `getBookmarkForTime()` throws "This
-Durable Object's storage back-end does not implement point-in-time recovery", but
-`getCurrentBookmark()` answers
-`00000000-00000000-00000000-00000000000000000000000000000000` instead of throwing.
+**It is unsupported in local development, and the local runtime signals that badly.** Cloudflare's
+wording is that "a durable log of data changes is not stored locally". Measured 2026-08-24: all three
+methods EXIST in the local runtime. `getBookmarkForTime()` throws "This Durable Object's storage
+back-end does not implement point-in-time recovery", while `getCurrentBookmark()` answers
+`00000000-00000000-00000000-00000000000000000000000000000000` and throws nothing.
 
 So a feature-detect on the method passes and hands back a bookmark that would schedule a restore to
 the beginning of time. `/pitr` refuses an all-zero bookmark by VALUE for that reason, and reports
 `supported: false` with the platform's own sentence when the API throws. Any claim about what a
-restore actually does still needs a deployed test.
+restore does on the edge still needs a deployed test.
 
 ## The Export Dump
 
@@ -74,8 +73,8 @@ REAL is the one class read directly.
 What a dump contains:
 
 - **Structure only** for tables whose rows regenerate: every `cache_*` bin, `cachetags`, `sessions`,
-  `semaphore`, `flood`, `queue`, `watchdog`, `history`, the `search_*` tables and `cfw_page`. This is
-  correctness rather than size. A restored `cache_container` would boot the site on the previous
+  `semaphore`, `flood`, `queue`, `watchdog`, `history`, the `search_*` tables and `cfw_page`. Size is
+  the smaller half of the reason. A restored `cache_container` would boot the site on the previous
   site's service container, and `cachetags` checksums that disagree with the bins they describe leave
   rows that are present and permanently rejected.
 - **Nothing at all** from `cfw_migrate`, `cfw_import` and `cfw_import_chunk`. A dump carrying
@@ -149,7 +148,7 @@ put it. For a site whose object still exists, PITR covers the last 30 days with 
 own; the dump is what covers everything else.
 
 Two properties make an unattended export practical: `?cursor=` walks the database in bounded chunks
-rather than building the whole file in one invocation, and a 409 tells the caller the file it just
+instead of building the whole file in one invocation, and a 409 tells the caller the file it just
 built is not replayable, so a backup job can fail loudly instead of storing something that reads
 like a backup.
 

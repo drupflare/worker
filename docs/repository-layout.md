@@ -77,7 +77,7 @@ submodule would put a Docker toolchain in a clean clone's dependency path.
 
 52 files, 88,300 bytes, all committed: **44 wrangler probe configs**, their README, one probe seam
 config, two binary seams and four data files from the boot-phase sweeps. `CLAUDE.md` keeps them
-prettier-ignored — they are kept for reproduction, not maintained.
+prettier-ignored; they are kept for reproduction and left unmaintained.
 
 The 282 MB of `experiments/wrangler/.wrangler` miniflare state this section used to describe is gone;
 it regenerates on the next `wrangler dev` and is gitignored.
@@ -85,12 +85,12 @@ it regenerates on the next `wrangler dev` and is gitignored.
 ## `assets/core/`
 
 24 MB, 4,028 files, produced by `bun run assets:static` from step 13 of the source build. It is the
-browser-fetchable half of the Drupal tree — `css`, `js`, fonts and images under `core/` — copied to
+browser-fetchable half of the Drupal tree (`css`, `js`, fonts and images under `core/`) copied to
 where Workers Assets serves it at the `/core/**` URLs Drupal already emits.
 
-All three PHP packers skip those extensions, correctly, because PHP never opens them. But nothing
-serves a file out of the PHP MEMFS over HTTP either, so before this every stylesheet, script and font
-404'd. It is a copy rather than a pack: Workers Assets content-hashes, caches and compresses what it
+All three PHP packers skip those extensions, correctly, because PHP never opens them. Nothing serves
+a file out of the PHP MEMFS over HTTP either, so before this every stylesheet, script and font 404'd.
+It copies where the packers pack: Workers Assets content-hashes, caches and compresses what it
 serves, and a hit never reaches the Worker, so the tree costs nothing against either free-tier
 ceiling.
 
@@ -105,9 +105,10 @@ page references answers 200.
 bundle only through the unaliased default seam `src/runtime/php-binary.ts` and the `src/probes/**`
 configs, so it is a local store of hand-built binaries kept for reproducing past measurements.
 
-Never delete, move or overwrite anything under it. What has changed is the recovery position, not the
-rule: **35 of 35 keys are in `drupflare-cdn`**, and every one matches on size and on ETag-against-md5.
-`vendor/static-o3mbsjlj/php8.3-worker.mjs{,.wasm}` were the last two missing and were uploaded.
+Never delete, move or overwrite anything under it. The rule stands and the recovery position has
+moved: **35 of 35 keys are in `drupflare-cdn`**, and every one matches on size and on
+ETag-against-md5. `vendor/static-o3mbsjlj/php8.3-worker.mjs{,.wasm}` were the last two missing and
+were uploaded.
 
 `vendor/php8.3.wasm`, `vendor/php8.4.wasm` and their `-web.mjs` glue are the only reproducible entries:
 `bun run vendor` copies them out of the `php-wasm` npm package. They cost 27 MB and are backed up, and
@@ -133,8 +134,8 @@ Four things need it. `assets:twig`, `assets:core`, `assets:pack` and `assets:sta
 build input. `bun run test:php` and the sibling PHP suites in `../drupflare` and `../rom` take it as
 `DRUPAL_ROOT`.
 `composer analyze` resolves `\Drupal\Core\...` against it through `phpstan.neon`. An IDE indexes it for
-the same reason. Everything except the packers degrades to skipped or unresolved without it rather than
-failing loudly, so the tree being absent is quiet.
+the same reason. Everything except the packers degrades to skipped or unresolved without it, and none
+of them fails loudly, so the tree being absent is quiet.
 
 ## `.siblings/`
 
@@ -186,7 +187,7 @@ Three classes:
 | #   | claim                                                                      | class | caught?                                                                                                                                                                                                                                                                                     |
 | --- | -------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | the bundle fits the 3 MiB ceiling                                          | b     | **yes.** `bun run release:check` parses wrangler's printed figure and fails over the ceiling; the release lane runs it. `tests/unit/bundle-size.spec.ts` covers the arithmetic.                                                                                                             |
-| 2   | PHP 8.5 is 2,671,380 zstd bytes with nothing dropped to fit                | b     | **yes, both halves since 2026-08-22.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
+| 2   | PHP 8.5 is 2,485,488 brotli bytes with nothing dropped to fit              | b     | **yes, both halves since 2026-08-22.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
 | 3   | serving 3.0M visits/month, regeneration 10,869 renders/day                 | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                                        |
 | 4   | a fill costs 2 / 12 / 19 / 24 / 156 rows                                   | a     | **yes.** `tests/integration/rows-per-fill-audit.spec.ts` drives every class on one object and pins it; three consecutive runs read identical counts.                                                                                                                                        |
 | 5   | first-run migration is 62 chunks                                           | a     | **yes.** `assets/drupal-sql/manifest.json` reports `"chunks": 62`. The count moves with the packed database, so quote the manifest rather than a document.                                                                                                                                  |
@@ -205,12 +206,12 @@ so a binary swap that dropped `opcache` would pass this repository's gate and ch
 
 ## Nightly Automation
 
-| lane                                                                    | asserts       | cost                                            | verdict                                                                                                                                                             |
-| ----------------------------------------------------------------------- | ------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| model figures: free envelope, ceiling arithmetic, rows-per-fill classes | every (a) row | seconds, hermetic                               | already in the gate; a nightly adds nothing a push does not                                                                                                         |
-| artifact figures: payload manifest, frame sizes, chunk count, Twig keys | the (b) rows  | one payload download plus a dry-run, ~3 minutes | built, in the release lane. Worth running nightly against the latest release to catch an asset that has been deleted or replaced                                    |
-| CDN backup intact                                                       | 40 keys       | 40 HEADs, no credentials                        | built. `.github/workflows/backup.yml`, nightly at 05:20                                                                                                             |
-| edge figures: `cpuTime`, cold boot, render cost                         | the (c) rows  | a deploy, a tail and a teardown per run         | no. It needs a deploy into an account carrying production workers, and the platform is bimodal by 400-600 ms, so an n=1 nightly figure is noise reported as a trend |
+| lane                                                                    | asserts       | cost                                            | verdict                                                                                                                                                   |
+| ----------------------------------------------------------------------- | ------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| model figures: free envelope, ceiling arithmetic, rows-per-fill classes | every (a) row | seconds, hermetic                               | already in the gate; a nightly adds nothing a push does not                                                                                               |
+| artifact figures: payload manifest, frame sizes, chunk count, Twig keys | the (b) rows  | one payload download plus a dry-run, ~3 minutes | built, in the release lane. Worth running nightly against the latest release to catch an asset that has been deleted or replaced                          |
+| CDN backup intact                                                       | 40 keys       | 40 HEADs, no credentials                        | built. `.github/workflows/backup.yml`, nightly at 05:20                                                                                                   |
+| edge figures: `cpuTime`, cold boot, render cost                         | the (c) rows  | a deploy, a tail and a teardown per run         | no. It needs a deploy into an account carrying production workers, and a reported 400-600 ms spread makes an n=1 nightly figure noise reported as a trend |
 
 The recommendation is the split that exists: **push proves the model, the release proves the artifact, and
 nothing automated proves the edge.** The one addition worth making is a nightly re-run of the release

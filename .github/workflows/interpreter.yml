@@ -66,7 +66,7 @@ jobs:
               echo "::notice::phasm published '$VARIANT' php '$PHP_VERSION'."
               echo "This repository ships '$PINNED' php '$PINNED_PHP', so nothing is proposed."
               echo "phasm builds every experiment arm and announces each one; a control arm is a"
-              echo "different product, not an upgrade of this one. Adopt it deliberately with"
+              echo "different product, not an upgrade of this one. Adopt it explicitly with"
               echo "workflow_dispatch, which is not filtered."
             } >&2
             echo "SKIPPED=1" >> "$GITHUB_ENV"
@@ -134,15 +134,6 @@ jobs:
       - name: Install Dependencies
         if: ${{ !env.SKIPPED }}
         run: bun install --frozen-lockfile
-
-      - name: Check the zstd CLI Is Present
-        if: ${{ !env.SKIPPED }}
-        run: |
-          if ! command -v zstd > /dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y zstd
-          fi
-          zstd --version
 
       - name: Resolve the Release Payload
         if: ${{ !env.SKIPPED }}

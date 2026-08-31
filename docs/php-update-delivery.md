@@ -12,12 +12,12 @@ Scope: the interpreter only. Drupal core, contrib and the packed database move o
 A running Worker cannot swap its PHP binary. The change unit is a redeploy.
 
 - **The interpreter is a bundle-time module.** `src/runtime/php-binary-85.ts` reaches it with
-  `import blob from '../../.interp/php8.5.wasm.zst'`, and `wrangler.jsonc` maps `**/*.zst` to module
-  type `Data`. Wrangler resolves a module import when the bundle is built. No runtime API adds a
-  module to a deployed bundle.
-- **The compile happens at module scope.** `wasmModuleFromZstd` calls
-  `new WebAssembly.Module(bytes)` during top-level evaluation. `workerd` permits codegen during
-  startup and refuses it at request time.
+  `import blob from '../../.interp/php8.5.wasm.br'`, and `wrangler.jsonc` maps `**/*.zst` and
+  `**/*.br` to module type `Data`. Wrangler resolves a module import when the bundle is built. No
+  runtime API adds a module to a deployed bundle.
+- **The compile happens at module scope.** The seam calls `new WebAssembly.Module(bytes)` during
+  top-level evaluation, after inflating the frame with `brotliDecompressSync` from `node:zlib`.
+  `workerd` permits codegen during startup and refuses it at request time.
 - **Startup cannot fetch.** Cloudflare refuses asynchronous I/O in global scope: "Disallowed
   operation called within global scope. Asynchronous I/O (ex: fetch() or connect()), setting a
   timeout, and generating random values are not allowed within global scope." `env` is importable at
@@ -83,29 +83,29 @@ commit and tag reach the consumer only over `repository_dispatch`.
 three values, and the workflow refuses a variant that is not a phasm rc name, a PHP version that is
 not `<major>.<minor>`, and a non-numeric artifact id.
 
-The run hydrates the current release payload first. That supplies `assets/`, the zstd decoder and
-the incumbent interpreter, so the bundle is measured against the tree that actually ships, and the
-incumbent figure is recorded before the swap.
+The run hydrates the current release payload first. That supplies `assets/` and the incumbent
+interpreter, so the bundle is measured against the tree that actually ships, and the incumbent figure
+is recorded before the swap.
 
-Three checks stand between the download and the pull request. Each throws, each fails its step, and
+Two checks stand between the download and the pull request. Each throws, each fails its step, and
 a failed step ends the run: no payload is uploaded and no branch is pushed.
 
-1. **The frame declares the binary.** `assertDeclaredSize()` in `scripts/pack-wasm-zstd.ts` reads
-   the zstd frame header with cartridge's own `zstdContentSize()` and compares it to the file that
-   was packed. The frame is written to disk only after the comparison passes. A frame that declares
-   the wrong length, or omits the field, fails at isolate startup on the edge, where the only
-   symptom is an exit code.
-2. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch-interpreter.ts`
+There used to be a third. `assertDeclaredSize()` read the inflated length out of the zstd frame
+header and compared it to the file that was packed, which caught a frame compressed from a stream
+rather than a file: zstd omits the field there, and the symptom on the edge is an exit code with
+nothing else. The frame is brotli now and has no such field, so the check has no subject. What
+replaces it is `files[].sha256` in `interp.lock.json`, which content-addresses the frame.
+
+1. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch-interpreter.ts`
    reads the interpreter imports out of the seam `wrangler.jsonc` aliases and requires the fetched
    frame and glue to be among them. On a hydrated tree a fetch for the wrong PHP version otherwise
    builds cleanly, passes the size gate, and measures the incumbent.
-3. **The bundle fits the free ceiling.** `bun run release:check` dry-runs the canonical config,
+2. **The bundle fits the free ceiling.** `bun run release:check` dry-runs the canonical config,
    parses the gzip figure wrangler prints with `parseWranglerGzipBytes()`, and throws above
    3,145,728 bytes. The dry run also proves the entrypoint and the binary alias still resolve.
 
-`tests/node/interp-fetch.spec.ts` covers the first two directly, including a round trip through the
-real `zstd` CLI. `tests/node/release-payload.spec.ts` covers the KiB-to-bytes conversion and the
-ceiling arithmetic.
+`tests/node/interp-fetch.spec.ts` covers the first directly.
+`tests/node/release-payload.spec.ts` covers the KiB-to-bytes conversion and the ceiling arithmetic.
 
 ## Output
 
@@ -190,11 +190,12 @@ Cloudflare guarantees that "for a given deployment, requests to each Durable Obj
 the same Worker version". So `wrangler versions deploy <new>@10 <current>@90` puts roughly 10% of
 sites entirely on the new interpreter rather than scattering 10% of requests. An object reassigned a
 version is reset and drops its interpreter, so each rollout step costs one cold boot per object
-moved: 1,398 ms of edge cpuTime, n=3, on a platform that is bimodal by 400-600 ms.
+moved: 1,398 ms of edge cpuTime, n=3, on a platform whose 400-600 ms bimodality is unverified as a
+standing property.
 
 Percentages are the only lever wrangler exposes, so the canary set cannot be chosen. Treat the
 presence of a quarantined row (`isQuarantined()` in `src/ops/repair.ts`) in the canary set as a
-reason to abort rather than as health data.
+reason to abort, and never as health data.
 
 Read the result out of `cfw_health`, which is capped at `LEDGER_MAX_ROWS` and indexed on `ts DESC`.
 
@@ -208,7 +209,8 @@ Read the result out of `cfw_health`, which is capped at `LEDGER_MAX_ROWS` and in
 | `budget.rows_written`                        | a regression in the meter that binds regeneration                                                                                                                  |
 
 Do not gate on CPU. An absolute figure comes only from `cpuTime` on a deployed version, and the
-platform's 400-600 ms spread means a canary window cannot support a boot-time verdict at n=1 or n=3.
+platform's reported 400-600 ms spread means a canary window cannot support a boot-time verdict at
+n=1 or n=3.
 
 An available upgrade must not enter `recordOutcome()`. `src/ops/repair.ts` counts consecutive
 same-code failures toward quarantine and rollback, and an upgrade is not a fault.
@@ -255,7 +257,7 @@ and a version change introduces no new row class.
 
 Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated. The
 one plan-sensitive number is the 3 MiB bundle ceiling against 10 MiB on paid, which the gate reads
-from wrangler rather than assuming.
+from wrangler.
 
 ## Rejected Alternatives
 
@@ -282,7 +284,7 @@ from wrangler rather than assuming.
   `ExitStatus: Program terminated with exit(-2)`; the cause was opcache, which reads
   `opcache.file_cache` during PHP's module startup, before the mount sequence creates
   `/tmp/opcache`. `src/site-do.ts:599` sets it to `/tmp`, which emscripten's MEMFS always creates.
-  8.5 has rendered on a deployed worker since — the opcache file-cache counts in that comment were
+  8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
   read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
   bundle builds and fits.
 - **A minor-version bump.** 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
@@ -292,5 +294,5 @@ from wrangler rather than assuming.
   first.
 - **Multiple Worker scripts.** Gradual deployments split versions of a single script. A fleet on N
   independently deployed scripts is N rollouts.
-- **Toolchain pins are split.** The frame needs the `zstd` CLI, the decoder is pinned to
-  `emscripten/emsdk:3.1.68`, and the interpreter is pinned to a builder image digest.
+- **Toolchain pins are split.** The frame needs no external tool -- `node:zlib` packs it and
+  `node:zlib` inflates it on the edge -- and the interpreter is pinned to a builder image digest.

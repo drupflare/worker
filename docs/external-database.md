@@ -67,7 +67,7 @@ Today a new site costs one Durable Object and no account-level resource at all.
 ### The Interpreter Cannot Await
 
 `SqlLike.exec()` in `src/db/migrate-sql.ts` is synchronous and returns a cursor, and every write path
-runs inside `ctx.storage.transactionSync()`. That is not a style choice: PHP compiled to wasm is a
+runs inside `ctx.storage.transactionSync()`. The runtime forces that: PHP compiled to wasm is a
 synchronous interpreter, and the shipping build is not a JSPI build. `wrangler.jsonc` aliases
 `./runtime/php-binary.js` to `src/runtime/php-binary-85.ts`; the JSPI seam
 (`src/runtime/php-binary-jspi.ts`) targets an 8.3 experiment build and does not ship. Without JSPI,
@@ -131,9 +131,9 @@ statements and a repeat render 18, so a cold render would spend roughly 1 to 1.4
 alone at the distant figure, on top of the boot.
 
 The documented remedy is `placement.region`, which pins the Worker to the database's cloud region.
-That is the opposite of `SITE_LOCATION_HINT`, which is a per-call, KV-overridable lever precisely so
-a site can live near its visitors. Today those statements cost no network at all, because the storage
-is inside the object making the call.
+That is the opposite of `SITE_LOCATION_HINT`, a per-call, KV-overridable lever that exists so a site
+can live near its visitors. Today those statements cost no network at all, because the storage is
+inside the object making the call.
 
 ### An Open Socket Bills Duration
 
@@ -172,8 +172,7 @@ It would also close a set of compatibility gaps that come from Durable Object SQ
 rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer
 reads that lose precision above 2^53, and the absence of `NOCASE_UTF8` and `REGEXP`. Those are
 documented under Platform Constraints in `TECHNICAL_REPORT.md` and each one has broken something
-real. Hyperdrive
-is a compatibility escape hatch, not a capacity one.
+real. Hyperdrive is a compatibility escape hatch, and no kind of capacity lever.
 
 ## What It Costs
 

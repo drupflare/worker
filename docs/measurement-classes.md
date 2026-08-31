@@ -55,7 +55,7 @@ bump moves either one, the gate reports it, and the next master document records
 
 The case count is collected under `DRUPFLARE_LIST_ALL=1`, which is what keeps it a property of the
 checkout. `vitest list` otherwise honours the `ARTIFACT_SPECS` exclusion, so it read 1,862 in CI
-against 2,066 on a checkout carrying the pack -- the same lane dependence that kept coverage out of
+against 2,066 on a checkout carrying the pack: the same lane dependence that kept coverage out of
 Class A, in a metric that had already been accepted. The gap held still while the exclusion list
 did; the commit that added two files to it was reported as deleting 21 tests.
 
@@ -89,12 +89,12 @@ Banned outright, in CI and out of it.
 
 In-PHP `microtime()` returns 0 on the edge. `Date.now()` inside the isolate returns 0 or a
 plausible wrong number; it has reported 114 ms for a 1,374 ms invocation. Zero is obviously broken
-and 114 survives review, which is what makes this class dangerous rather than merely useless. A
-local `wrangler dev` wall clock cannot even order two profiles correctly.
+and 114 survives review, which is what makes this class dangerous as well as useless. A local
+`wrangler dev` wall clock cannot even order two profiles correctly.
 
 Nothing in the metrics workflow may emit, archive or render a duration. `tests/node/metrics.spec.ts`
 asserts that the collected document matches no `durationMs`/`elapsed`/`timestamp` key and that the
-rendered summary carries no millisecond figure, so the ban is enforced rather than remembered.
+rendered summary carries no millisecond figure, so a build enforces the ban.
 
 ## Class D: Deployed CPU
 
@@ -104,7 +104,8 @@ empty tail proves nothing.
 
 It cannot be automated here. It needs a real deploy against an account that holds production
 workers, a `cfw-*` name, a teardown, and a check that the worker list returns to its prior
-baseline. It also needs an `n` and a spread with every figure: the platform is bimodal by 400-600 ms
+baseline. It also needs an `n` and a spread with every figure: the platform's reported 400-600 ms
+bimodality is unverified as a standing property
 on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.
 
 That makes it a `workflow_dispatch` shape with a credential and a human deciding to spend it, never
@@ -126,8 +127,8 @@ bun scripts/ensure-artifacts.ts --dry-run # what a lane can and cannot measure h
 collector. Three of the four inputs need no release payload: `assets/drupal/site.sqlite` is tracked
 so `assets:sql` always works, the modules come from the sibling checkouts, and the interpreter comes
 from the public CDN with no credential. Only `assets/drupal-pf` needs a payload, and no gated metric
-reads it, so a clean checkout gates every Class A metric and one reporting itself as not collected
-means something broke rather than something is missing.
+reads it, so a clean checkout gates every Class A metric, and a metric reporting itself as not
+collected means something broke.
 
 A master run that could not measure a metric contributes no baseline value for it rather than a
 zero, so a partially hydrated master run cannot silently drop the bundle figure to nothing.

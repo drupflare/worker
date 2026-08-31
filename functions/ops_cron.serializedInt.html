@@ -17,7 +17,7 @@
 <div class="tsd-signature tsd-anchor-link" id="serializedint"><span class="tsd-kind-call-signature">serializedInt</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">blob</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><a href="#serializedint" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Reads one integer out of a PHP-serialized array, without unserializing it.</p>
-<p>Deliberately NOT a general unserializer. Drupal stores config as
+<p>NOT a general unserializer. Drupal stores config as
 <code>serialize($array)</code> and the only value read here is dblog.settings row_limit, so
 the whole job is finding <code>s:9:&quot;row_limit&quot;;i:&lt;n&gt;;</code>. The length prefix and the
 requirement that the match follow a <code>;</code>, <code>{</code> or <code>}</code> are what stop a key name
@@ -37,7 +37,7 @@ why every caller has a fallback and an env override.</p>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><p>the integer, or null if it is absent or not an integer</p>
 <aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/cron.ts#L346">src/ops/cron.ts:346</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/cron.ts#L440">src/ops/cron.ts:440</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

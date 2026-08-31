@@ -17,12 +17,12 @@
 least that makes the mail path work: <code>user:read</code> identifies the account so the operator does not
 have to paste an account id alongside, and the two email scopes are what
 <code>POST /accounts/:id/email/sending/send</code> requires.</p>
-<p><code>workers-platform:write</code> is deliberately ABSENT. drupflare is already deployed by the time a
+<p><code>workers-platform:write</code> is ABSENT. drupflare is already deployed by the time a
 human sees the setup page, so a token that could rewrite the Worker buys nothing and would make a
 stolen token a remote-code-execution rather than a mail problem.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/cf-oauth.ts#L62">src/ops/cf-oauth.ts:62</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/cf-oauth.ts#L62">src/ops/cf-oauth.ts:62</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -13,14 +13,14 @@
 <h1>Variable DUMP_CHARS_PER_CHUNK<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">DUMP_CHARS_PER_CHUNK</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">1000000</span><span class="tsd-signature-symbol"> = 1_000_000</span></div>
 <div class="tsd-comment tsd-typography"><p>Characters per chunk.</p>
-<p><strong>BYTES, and the difference from the restore is the point.</strong> <code>IMPORT_STATEMENTS_PER_CHUNK</code> sizes a
+<p><strong>BYTES, where the restore counts statements.</strong> <code>IMPORT_STATEMENTS_PER_CHUNK</code> sizes a
 restore chunk by statement COUNT because a replay WRITES, and rows written is the meter that binds
 regeneration. An export writes nothing; what it spends is the memory to hold the encoded text and
 the CPU to hex it, both proportional to bytes. Sized by statement count instead, 40
 <code>cfw_file_chunk</code> rows -- 16 million characters -- would pass as one small chunk.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/db/export-sql.ts#L486">src/db/export-sql.ts:486</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/db/export-sql.ts#L486">src/db/export-sql.ts:486</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

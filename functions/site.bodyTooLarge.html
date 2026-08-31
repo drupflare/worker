@@ -20,9 +20,9 @@
 <p>READS <code>Content-Length</code> AND NOTHING ELSE, which is the only check available before the body has
 been consumed -- and consuming it to measure it is the cost the guard exists to avoid. A chunked
 request declares none and falls through; the object's own limits still apply to it.</p>
-<p>A <code>multipart/form-data</code> body is EXEMPT. That is the file-upload shape, its size is the point, and
-it is not <code>parse_str()</code>d into a nested array -- so the memory-bomb argument does not apply to it
-and a 2 MiB cap on uploads would be a functional regression rather than a guard.</p>
+<p>A <code>multipart/form-data</code> body is EXEMPT. That is the file-upload shape, where size is expected,
+and it is not <code>parse_str()</code>d into a nested array -- so the memory-bomb argument does not apply
+to it and a 2 MiB cap on uploads would be a functional regression rather than a guard.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -33,7 +33,7 @@ and a 2 MiB cap on uploads would be a functional regression rather than a guard.
 </div></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/site.BodyTooLarge.html" class="tsd-signature-type tsd-kind-interface">BodyTooLarge</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/site.ts#L381">src/site.ts:381</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/site.ts#L405">src/site.ts:405</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

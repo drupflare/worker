@@ -14,12 +14,12 @@
 <div class="tsd-signature"><span class="tsd-kind-variable">MAX_OPEN_STATES</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">64</span></div>
 <div class="tsd-comment tsd-typography"><p>How many incremental digests may be open at once.</p>
 <p>A state that is never finalised leaks its context for the life of the object, and a Durable
-Object outlives many requests. Refusing past the cap rather than evicting the oldest is the
-deliberate half: an evicted context would make a later <code>final()</code> answer a digest computed over
-part of the message, and a wrong content address is worse than a failed one.</p>
+Object outlives many requests. It refuses past the cap rather than evicting the oldest: an
+evicted context would make a later <code>final()</code> answer a digest computed over part of the message,
+and a wrong content address is worse than a failed one.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/drupal/sodium-fix.ts#L174">src/drupal/sodium-fix.ts:174</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/drupal/sodium-fix.ts#L174">src/drupal/sodium-fix.ts:174</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

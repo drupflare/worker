@@ -17,7 +17,7 @@
 <div class="tsd-signature tsd-anchor-link" id="locationhint"><span class="tsd-kind-call-signature">locationHint</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">SITE_LOCATION_HINT</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span><a href="#locationhint" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Where a site's Durable Object should be created, or undefined for &quot;wherever it lands&quot;.</p>
-<p><strong>UNSET IS THE DEFAULT AND IT IS DELIBERATE.</strong> Placement follows the first request, which for a
+<p><strong>UNSET IS THE DEFAULT.</strong> Placement follows the first request, which for a
 deploy-button site is wherever the deployer was. Guessing a region on their behalf trades latency
 for one audience against latency for every other, and a one-click product has no way to ask - so
 an owner who knows their audience pins it, and nobody else pays for a guess.</p>
@@ -34,7 +34,7 @@ ignores it afterwards, so setting this on a site that already exists moves nothi
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></h4><p>a validated hint, or undefined when unset or unrecognised</p>
 <aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/site-id.ts#L76">src/ops/site-id.ts:76</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/site-id.ts#L76">src/ops/site-id.ts:76</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

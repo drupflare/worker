@@ -16,7 +16,7 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="gccachedata"><span class="tsd-kind-call-signature">gcCacheData</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/ops_cron.CronSql.html" class="tsd-signature-type tsd-kind-interface">CronSql</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">options</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/ops_cron.CronOptions.html" class="tsd-signature-type tsd-kind-interface">CronOptions</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_cron.Ledger.html" class="tsd-signature-type tsd-kind-type-alias">Ledger</a><a href="#gccachedata" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Enforces a row cap on cache_data, then clears anything genuinely expired.</p>
+<div class="tsd-comment tsd-typography"><p>Enforces a row cap on cache_data, then clears anything expired.</p>
 <p>The row cap is the only thing that works here, and it is measured: all 144
 cache_data rows on the reference site have <code>expire = -1</code>, so an expire-based
 sweep removes exactly zero of them. 70 are RouteProvider's per-URL route cache
@@ -40,7 +40,7 @@ several rows, so ties are ordinary and core's condition over-deletes them.</p>
 <li><span><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/ops_cron.CronOptions.html" class="tsd-signature-type tsd-kind-interface">CronOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_cron.Ledger.html" class="tsd-signature-type tsd-kind-type-alias">Ledger</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/cron.ts#L512">src/ops/cron.ts:512</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/cron.ts#L606">src/ops/cron.ts:606</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

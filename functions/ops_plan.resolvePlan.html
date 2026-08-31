@@ -17,7 +17,7 @@
 <div class="tsd-signature tsd-anchor-link" id="resolveplan"><span class="tsd-kind-call-signature">resolvePlan</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ops_plan.PlanEnv.html" class="tsd-signature-type tsd-kind-type-alias">PlanEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">kv</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ops_plan.PlanKv.html" class="tsd-signature-type tsd-kind-type-alias">PlanKv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/ops_plan.ResolvedPlan.html" class="tsd-signature-type tsd-kind-type-alias">ResolvedPlan</a><span class="tsd-signature-symbol">&gt;</span><a href="#resolveplan" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The effective plan: KV first, then the deployed var, then free.</p>
-<p>KV WINS ON PURPOSE. <code>PLAN</code> is a <code>vars</code> entry, so upgrading an account meant editing the config and
+<p>KV WINS. <code>PLAN</code> is a <code>vars</code> entry, so upgrading an account meant editing the config and
 redeploying -- a deploy to change a fact the deploy does not control. An operator who upgrades
 flips one KV key and every isolate picks it up within <a href="../variables/ops_plan.PLAN_MEMO_MS.html" class="tsd-kind-variable">PLAN_MEMO_MS</a>.</p>
 <p>A missing binding, a KV error and an unrecognised value all fall through to the var rather than
@@ -33,7 +33,7 @@ limit, and guessing upward is the failure that costs money.</p>
 <li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = ...</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../types/ops_plan.ResolvedPlan.html" class="tsd-signature-type tsd-kind-type-alias">ResolvedPlan</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/plan.ts#L92">src/ops/plan.ts:92</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/plan.ts#L92">src/ops/plan.ts:92</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

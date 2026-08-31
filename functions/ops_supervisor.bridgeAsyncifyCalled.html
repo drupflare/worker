@@ -25,6 +25,14 @@ advertises http and https, so ordinary contrib code reaches for them.</p>
 <p>A PHP-side handler cannot see this: no PHP fatal, no printErr, Drupal's logger never runs. The
 counter on <code>globalThis</code> is the ONLY place it is observable, which is exactly why this tripwire
 is in the host and not in PHP.</p>
+<p><code>warn</code> AND NOT <code>error</code>, because the severity above was calibrated to the paragraph above it and
+the stub is what stopped that being true. Reaching a free identifier killed the invocation;
+reaching the stub returns -1, <code>fopen()</code> returns false, and PHP handles it. Measured: with the
+three outbound-HTTPS cron hooks on and a cold fetch cache, the first round trips this 10 times,
+<code>error</code> starts at <code>reset</code>, three rounds reach <code>quarantine</code> and EVERY PAGE ANSWERS 503 -- so a
+newly provisioned site took itself down the first time cron ran, over a feed fetch that had
+already fallen back correctly. A graceful degradation must not escalate to an outage. An
+invocation that does die is caught by the tripwires that watch renders.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -32,7 +40,7 @@ is in the host and not in PHP.</p>
 <li><span><span class="tsd-kind-parameter">obs</span>: <a href="../interfaces/ops_supervisor.Observation.html" class="tsd-signature-type tsd-kind-interface">Observation</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../interfaces/ops_supervisor.Finding.html" class="tsd-signature-type tsd-kind-interface">Finding</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/supervisor.ts#L181">src/ops/supervisor.ts:181</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/supervisor.ts#L190">src/ops/supervisor.ts:190</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

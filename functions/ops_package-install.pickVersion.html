@@ -21,7 +21,7 @@
 or <code>-RC</code> suffix. Both repositories list newest first, so this takes the first match rather than
 sorting -- a real version sort is <code>composer/semver</code>'s job and importing that reasoning here would
 be a second, worse copy of it.</p>
-<p>The constraint match is deliberately EXACT-OR-PREFIX rather than a range solver. A caret range
+<p>The constraint match is EXACT-OR-PREFIX rather than a range solver. A caret range
 needs a real semver implementation, and answering one wrongly would install a version the site
 cannot run. An unmatched constraint returns null, which the caller reports.</p>
 </div>
@@ -33,7 +33,7 @@ cannot run. An unmatched constraint returns null, which the caller reports.</p>
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">constraint</span>: <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/package-install.ts#L89">src/ops/package-install.ts:89</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/package-install.ts#L89">src/ops/package-install.ts:89</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

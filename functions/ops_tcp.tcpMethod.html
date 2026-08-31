@@ -17,7 +17,7 @@
 <div class="tsd-signature tsd-anchor-link" id="tcpmethod"><span class="tsd-kind-call-signature">tcpMethod</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">protocol</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_tcp.TcpProtocol.html" class="tsd-signature-type tsd-kind-type-alias">TcpProtocol</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">command</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;POST&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;GET&quot;</span><a href="#tcpmethod" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The HTTP method a TCP operation borrows, so the deferred tier's budget and TTL apply unchanged.</p>
-<p>Reusing them rather than inventing a second policy is the point: <code>attemptBudget()</code> already says a
+<p>They are reused rather than duplicated: <code>attemptBudget()</code> already says a
 non-idempotent operation gets one attempt, and a Redis <code>INCR</code> replayed after a timeout is the same
 defect as a captcha token replayed -- the first attempt may have landed and only failed to return.</p>
 </div>
@@ -28,7 +28,7 @@ defect as a captcha token replayed -- the first attempt may have landed and only
 <li><span><span class="tsd-kind-parameter">command</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">&quot;POST&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;GET&quot;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/tcp.ts#L222">src/ops/tcp.ts:222</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/tcp.ts#L222">src/ops/tcp.ts:222</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -17,10 +17,18 @@
 <div class="tsd-signature tsd-anchor-link" id="shellassemblyenabled"><span class="tsd-kind-call-signature">shellAssemblyEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../interfaces/env.SiteEnv.html" class="tsd-signature-type tsd-kind-interface">SiteEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#shellassemblyenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Whether an authenticated GET may be answered from a stored shell.</p>
-<p>OFF unless an operator says <code>1</code>, on both plans, and that default is the point rather than
-timidity: the failure mode of a wrong shell is one visitor seeing another's page, so it stays a
-decision an operator makes about a site they have harvested rather than something that turns
-itself on. <code>KV_OVERRIDABLE</code> carries it so turning it back off needs no redeploy.</p>
+<p>ON BY DEFAULT ON BOTH PLANS, and an explicit <code>SHELL_ASSEMBLY</code> still wins. <code>KV_OVERRIDABLE</code>
+carries it, so turning it off needs no redeploy.</p>
+<p>This used to be off on both plans on the reasoning that &quot;the failure mode of a wrong shell is one
+visitor seeing another's page&quot;. That failure mode is real and it is also not what gates this
+lever, which is the distinction the old default missed. <code>assembleFor()</code> serves NO visitor until
+their own uid has passed <code>verifyShellFor()</code> -- a re-harvest of THEM, compared byte for byte
+against the stored shell, which on a mismatch deletes the shell, records the diverging offset and
+answers them from their own render. The two-session harvest authorises the STORE; the per-uid
+proof authorises the SERVE, and only the second stands between a visitor and someone else's page.
+Every other failure returns null and falls through to an ordinary render.</p>
+<p>The first request per <code>(path, role set, uid)</code> pays a 40-52 row toll and breaks even after 4-13.
+At one site that fits free's 100,000 rows/day, which is why there is no plan branch here.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -28,7 +36,7 @@ itself on. <code>KV_OVERRIDABLE</code> carries it so turning it back off needs n
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/env.SiteEnv.html" class="tsd-signature-type tsd-kind-interface">SiteEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/site-do.ts#L927">src/site-do.ts:927</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/site-do.ts#L1124">src/site-do.ts:1124</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

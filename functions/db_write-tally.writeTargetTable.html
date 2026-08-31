@@ -17,7 +17,7 @@
 <div class="tsd-signature tsd-anchor-link" id="writetargettable"><span class="tsd-kind-call-signature">writeTargetTable</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><a href="#writetargettable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The table a write statement targets, or <code>null</code> when the statement writes nothing.</p>
-<p>Deliberately narrow. It recognises the five write forms Drupal's SQL generation actually emits and
+<p>Narrow. It recognises the five write forms Drupal's SQL generation actually emits and
 returns <code>null</code> for everything else -- an unattributed write shows up as <code>null</code> in
 the tally, which is visible, where a wrong guess would silently move rows onto the wrong table and
 corrupt the exact number the roadmap depends on.</p>
@@ -28,7 +28,7 @@ corrupt the exact number the roadmap depends on.</p>
 <li><span><span class="tsd-kind-parameter">sql</span>: <span class="tsd-signature-type">string</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/db/write-tally.ts#L9">src/db/write-tally.ts:9</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/db/write-tally.ts#L9">src/db/write-tally.ts:9</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

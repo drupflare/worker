@@ -13,7 +13,7 @@
 <h1>Variable PAID_PROFILE<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">PAID_PROFILE</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_plan-profile.PlanProfile.html" class="tsd-signature-type tsd-kind-type-alias">PlanProfile</a><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>Paid: sized for a 30 s per-invocation CPU budget, and bounded by HIT LATENCY rather than by it.</p>
-<p>THE BATCH IS SMALL ON PURPOSE, and the first version of this file got it wrong. A Durable Object
+<p>THE BATCH IS SMALL, and the first version of this file got it wrong. A Durable Object
 is single-threaded and <code>php._run()</code> is synchronous, so a fill occupies the object for its whole
 duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
 deployed worker at <code>fillBatchSize: 25</code>: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every
@@ -29,7 +29,7 @@ against 50 on free, but a fill in the same firing has already spent several, and
 carries a whole file through memory.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/336766b2587e765b349618dd4fe7afdf6a6eed2d/src/ops/plan-profile.ts#L83">src/ops/plan-profile.ts:83</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/57b954d39ef223d05956a2f5eeba6d3a4d70c3d8/src/ops/plan-profile.ts#L83">src/ops/plan-profile.ts:83</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

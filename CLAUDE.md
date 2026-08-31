@@ -8,11 +8,22 @@ Durable Object. This repo is the deployable product; the reusable pieces live in
 `TECHNICAL_REPORT.md` has a Measurement Rules section. Read it before producing a number. The two
 that catch the most mistakes:
 
-- **An absolute CPU figure comes only from `cpuTime` on a deployed worker.** PHP's `microtime()` and
-  the isolate's `Date.now()` are frozen between I/O, so a duration taken from either is wrong in a
-  way that survives review. Absolute timestamps from them are fine; deltas are not.
-- **The platform is bimodal by 400-600 ms on the same object**, so a single reading below ~500 ms
-  says nothing. State an n and a spread with every absolute.
+- **An absolute CPU figure comes only from `cpuTime` on a deployed worker.** The clock does not
+  advance across a synchronous `php._run()`, so a duration taken from PHP's `microtime()` or from
+  `Date.now()` AROUND ONE is wrong in a way that survives review.
+  **NARROWED 2026-08-30, because the rule as written discarded a working instrument.** A `Date.now()`
+  delta SPANNING I/O is usable: the clock updates on I/O completion, and an `x-worker-ms` delta
+  bracketing `stub.fetch()` tracked the platform's own `wallTimeMs` to within 1 ms on every arm of a
+  deployed run. So the rule is about deltas across synchronous PHP, not about `Date.now()` as such.
+- **`cpuTime` is 1 ms granular**, so a reading of 1 ms is the meter's floor rather than a measurement
+  of 1.0 ms. It bounds an invocation; it cannot resolve below itself. Amortise over many requests
+  when the quantity is sub-millisecond.
+- **State an n and a spread with every absolute.** The 400-600 ms bimodality this file used to assert
+  as a standing property **did not reproduce** across 640 client-side requests on a continuously
+  driven warm object: two samples exceeded their arm's median by more than 300 ms and both were
+  attributable, one queued behind a 5,907 ms alarm and one a 4,284 ms render. It may be a property of
+  cold or first invocations; as a general claim it is unverified, so re-observe it before designing
+  around it.
 
 ## Scoring a Proposal
 
@@ -180,16 +191,27 @@ config believes before checking the code.
 
 ## The gate and production reach the SAME interpreter by two different routes
 
-`wrangler.jsonc` aliases `./runtime/php-binary.js` to the zstd 8.5 seam. **Vite does not apply that
-alias**, so for the whole life of the project the test lane resolved the DEFAULT seam and ran PHP
+`wrangler.jsonc` aliases `./runtime/php-binary.js` to the compressed 8.5 seam. **Vite does not apply
+that alias**, so for the whole life of the project the test lane resolved the DEFAULT seam and ran PHP
 **8.3** from `vendor/static-free-v1`, an experiment arm, while production ran 8.5. Every dev machine
 has `vendor/`, so it was invisible until a clean checkout had neither.
 
-**The zstd seam cannot be used by the gate, and this is a platform limit rather than a preference.**
-`php-binary-85.ts` inflates and calls `new WebAssembly.Module` at module scope, which is correct in
-production because workerd permits codegen at worker STARTUP -- but a vitest spec is evaluated inside
-a fetch handler, so module scope there is REQUEST time and workerd answers `inflate.codegen-disallowed`.
+**The compressed seam cannot be used by the gate, and this is a platform limit rather than a
+preference.** `php-binary-85.ts` inflates and calls `new WebAssembly.Module` at module scope, which is
+correct in production because workerd permits codegen at worker STARTUP -- but a vitest spec is
+evaluated inside a fetch handler, so module scope there is REQUEST time and workerd refuses codegen.
 Measured by pointing the seam at it: every workers spec fails to load.
+
+**SO NOTHING IN THE GATE EXERCISES THE SHIPPING SEAM, and a change to it needs its own check.** The
+three that reach it, none of which is `bun run test`: `bunx wrangler deploy --dry-run` proves it
+bundles, `bunx wrangler dev --local` + a request proves the interpreter boots and Drupal renders, and
+a throwaway deploy proves the startup budget. All three ran for the brotli switch on 2026-08-30. The
+third read **104, 105, 107, 112 ms** (n=4, median 106) against a 1,000 ms limit, on a free worker
+importing the seam and nothing else, so a failure there could not have been anything else. The
+zstd-through-wasm path it replaced read 233/234/246 (n=3).
+
+**Cloudflare prints the startup time on UPLOAD, which makes a deploy the only instrument for it** --
+and a worker over the limit is refused at upload, so the deploy succeeding is half the measurement.
 
 So `vitest.config.ts` aliases the seam's two imports to the **raw** `.interp/php8.5.wasm` +
 `php8.5-worker.mjs`. A `.wasm` import arrives pre-compiled through the `CompiledWasm` rule and needs
@@ -276,7 +298,7 @@ dependency change, and prefer a subpath export (`edgeport/core`) over a package 
 
 ## A passing test does not mean anything calls it
 
-`src/ops/supervisor.ts` -- 11 tripwires, the health ledger, the circuit breaker,
+`src/ops/supervisor.ts` -- the host tripwires, the health ledger, the circuit breaker,
 `quarantineDecision()` -- was imported by `tests/unit/ops/supervisor.spec.ts` and by **nothing under
 `src/`**. It was green on every commit and absent from every deployed site. `repair_state` was read
 by the quarantine branch in `alarm()` and **written by nobody**, so L4 and L5 were not unbuilt; they
@@ -299,14 +321,21 @@ spec's stale-exemption half: it failed with both names the moment the files went
 the direction that matters, because an allow-list nobody prunes is how the next dead module
 gets waved through.
 
-The five entries on the list today are all legitimately off the edge: `src/ops/dormancy.ts` and
-`src/ops/module-table.ts` are build-lane tools driven by their own vitest specs, and
-`src/runtime/php-binary-{jspi,o2,zstd}.ts` are alias targets reached through a wrangler `alias`
-rather than through an import. The list may shrink without ceremony; **adding to it is the thing to
-think twice about**, because an entry is a promise the module is reached some other way rather than a
-way to silence the check.
+**Count the list, do not quote it** -- this paragraph said five while the list held six, which is the
+same drift the module table and the spec counts have shown. `bun run check:reachability` prints it.
+Every entry today is legitimately off the edge: `src/ops/dormancy.ts`, `src/ops/module-table.ts` and
+`src/ops/mutation-oracle.ts` are build-lane or discovery instruments driven by their own vitest
+specs, and `src/runtime/php-binary-{jspi,o2,zstd}.ts` are alias targets reached through a wrangler
+`alias` rather than through an import. The list may shrink without ceremony; **adding to it is the
+thing to think twice about**, because an entry is a promise the module is reached some other way
+rather than a way to silence the check.
 
 ## Commands
+
+**VITEST 4'S DEFAULT REPORTER HIDES CONSOLE OUTPUT FROM PASSING TESTS, and every `DRUPFLARE_MEASURE`
+spec here reports by printing and passing.** So the whole measurement lane currently prints nothing
+and exits green, which reads as "no output to give" rather than "output suppressed". `silent: false`
+does not fix it. Use `--reporter=verbose` to read any measurement spec.
 
 ```sh
 bun run test      # vitest: --project=workers --project=node
@@ -319,7 +348,7 @@ bun run check:reachability # which modules the edge imports; which are dead
 bun run hydrate         # a clean checkout -> deployable, from the release payload
 bun run release:payload # build that payload; needs vendor/ and the packs
 bun run release:check   # dry-run the canonical config and price it against the 3 MiB ceiling
-bun run build:wasm      # the zstd decoder (docker) and the interpreter (gh auth) into .interp/
+bun run build:wasm      # the interpreter into .interp/ (gh auth); no docker, the decoder is gone
 bun run backup:verify   # 40 CDN keys, no credentials
 
 bun run measure:abi-speed   # wasm32 vs long64 vs wasm64, interleaved, on node/V8
@@ -423,6 +452,52 @@ was calibrated to the pre-stub behaviour where reaching a free identifier killed
 stub was added to make that survivable and the severity never moved. A graceful degradation must not
 escalate to an outage.
 
+## The heap peak is per WORKLOAD; the isolate is charged per INCARNATION
+
+`USE_ZEND_ALLOC=0` means PHP returns nothing between requests, so demand inside one incarnation is
+the SUM of what it has done and the growth step rounds every rise up. Measured on one object:
+96.00 MiB booted, **108.50 after migrate + firstrun, 122.63 after the first authenticated render,
+138.63 after the second** -- 10.63 MiB past the 128 MiB isolate limit. So provisioning a site and
+then viewing two pages on it was over the ceiling BY CONSTRUCTION, which is the first-run path of
+every new site. On the edge that is `Durable Object's isolate exceeded its memory limit and was
+reset`: every in-flight request on the object is lost and a cascade of
+`Internal error in Durable Object storage caused object to be reset` follows.
+
+Every figure in `TECHNICAL_REPORT.md`'s Memory section is a single-workload peak, and each one is
+correct. None of them is what the isolate meters.
+
+**CRON WAS THE FIRST HYPOTHESIS AND IT WAS WRONG.** Both resets landed on an alarm whose logs were
+full of the update module's deferred fetches, which reads as a cause. A sweep of 16 firings moves
+linear memory by nothing at all. `tests/integration/interpreter-recycle.spec.ts` keeps that control
+so the next reader does not re-derive the same wrong answer from the same suggestive stack.
+
+**THE FIX IS AT PROVISIONING, AND THE CEILING VERSION WAS BUILT FIRST AND WAS NOT ENOUGH.** A drop
+keyed on linear memory runs BETWEEN invocations; on a deployed paid worker the reset happened INSIDE
+one -- the first authenticated `/admin/content` on each of four freshly provisioned sites went from
+the install's 108.50 straight past the limit in a single render, 4,661-4,936 ms of cpuTime, exception
+with no message and no stack. `/__migrate` and `/__firstrun` now drop the interpreter when they
+finish, the way `/__enable` always has, so the serving incarnation starts at `INITIAL_MEMORY` and the
+peak over four authenticated pages is 108.50, flat.
+
+`recycleIfOversized()` remains the backstop for everything else, dropping at the end of an invocation
+above `RECYCLE_ABOVE_BYTES` (112 MiB). It must run BETWEEN invocations: linear memory is reclaimed
+only when the old module is collected, so dropping mid-request holds both allocations at once.
+`/serve-stats` reports `recycles` and `lastRecycle` -- an object recycling on every request is paying
+a boot per page.
+
+**A FILL BATCH IS N WORKLOADS INSIDE ONE INVOCATION, so that drop cannot reach it.** The batch was
+bounded by page count alone; the wall-clock guard cannot bind because the clock does not advance
+across a synchronous `php._run()`. On paid at `fillBatchSize` 25 this reset all four freshly
+provisioned sites -- cpuTime 2,213-4,944 ms, exception with NO message and NO stack, then the storage
+cascade on every route. The batch reads `oversized()` and ends early, which hands the drop to the
+recycle at the bottom of the alarm. A message-less exception at high CPU is what this looks like;
+the memory-limit text only appears when the limit is crossed between invocations rather than inside
+one.
+
+The supervisor had detected this since it shipped. `memory.trend_rising` fires with the text
+"recycle at the next quiet moment", `warn` findings are recorded in the ledger, and **nothing ever
+acted on one**. Detection wired to no act is the same family as tested-but-never-called.
+
 ## A Durable Object hibernates at 10 s, and `KEEP_WARM_MS` is 24x that
 
 Measured on a throwaway deploy, an object minting an id in its constructor and holding a 32 MB
@@ -435,9 +510,16 @@ because the FIRING resets the idle clock. Arming does not warm; firing under the
 
 **Duration is not the meter.** An object waiting on an armed alarm is idle and ELIGIBLE to hibernate,
 and an idle-eligible object is not billed for duration. Warming spends requests and rows, one of each
-per firing, which is 10,800/day. `SITE_WARM` is off by default for that reason and not for a safety
-one. What it removes is the 1,398 ms boot from pages that render; a cached page answers off
-`ctx.storage.sql` without booting PHP, so warming cannot make one faster by any amount.
+per firing, which is 10,800/day. What it removes is the 1,398 ms boot from pages that render; a
+cached page answers off `ctx.storage.sql` without booting PHP, so warming cannot make one faster by
+any amount.
+
+**`SITE_WARM` IS ON BY DEFAULT, and this file said off until 2026-08-30.** `siteWarmEnabled()`
+returns true when the var is unset and there is no plan branch in it. Observed on the current tree: an
+object with an armed alarm re-arms every 8 s, climbed to 33 firings, stayed warm through every 25 s
+gap and served at 48.5 ms median. So the object that pays a cold serve is one whose chain has
+stopped, not every idle site. The figure that argued for off was a thousand-site fleet total, which
+is the wrong lever for a default -- see `no-per-site-pricing` in project memory.
 
 ## A meter that is most of what it counts
 
@@ -472,7 +554,7 @@ worth building until a distributed generator separates the load generator from t
 **An authenticated GET writes no authoritative state under this SAPI**, which is what makes any of it
 possible. No `sessions`, no `users_field_data.access`, no `flood`. Core throttles the access write by
 `session_write_interval` on `KernelEvents::TERMINATE`; here it never fires at all because this SAPI
-does not dispatch terminate. Nothing depends on that deliberately, so
+does not dispatch terminate. Nothing depends on that by design, so
 `tests/integration/replica-invariant.spec.ts` is its only guard.
 
 **Classify the EFFECT, never the route and never the table.** Both cheap classifications were measured
@@ -531,8 +613,8 @@ a local change there is the silent-drift shape this file exists to prevent.
 ## Conventions
 
 - `bunx`, never `npx`.
-- Imports use a `.js` specifier even for `.ts` files (`from './site-do.js'`). This is deliberate and
-  matches what bun resolves; `node` cannot resolve it, which is why some scripts must run under bun.
+- Imports use a `.js` specifier even for `.ts` files (`from './site-do.js'`). This matches what bun
+  resolves; `node` cannot resolve it, which is why some scripts must run under bun.
 - `src/probes/**` are frozen measurement instruments cited by figure in the report. Moving a file
   does not change what it measures; rewriting it might. Do not refactor them.
 - `src/drupal/*-php.ts` are mostly `String.raw` blocks holding PHP source. A backtick inside a PHP

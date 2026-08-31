@@ -46,7 +46,7 @@ export interface CronBudget {
 }
 
 /**
- * Deliberately small.
+ * Small.
  *
  * Six units covers the SQL passes and leaves room for one PHP unit on most firings. 500 rows is
  * under 0.5% of the free daily budget, so a cron that ran every alarm all day could not consume

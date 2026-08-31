@@ -139,7 +139,7 @@ export function warmTargets(
 	staleMs: number = FLEET_HEARTBEAT_MS
 ): WarmTargets {
 	// no inventory to check against, so the configured list is all there is and is taken on trust.
-	// An empty one drives NOTHING, which is the point -- there is no safe name to guess.
+	// An empty one drives NOTHING; there is no safe name to guess.
 	if (fleet === null) {
 		return {
 			sites: [...configured],

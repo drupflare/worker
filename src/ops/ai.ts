@@ -44,7 +44,7 @@ export type AiEnv = {
 /**
  * The models a site may call without configuration.
  *
- * Deliberately short and deliberately weighted toward embeddings: at 1,075 neurons per 1M input
+ * Short and weighted toward embeddings: at 1,075 neurons per 1M input
  * tokens, indexing 1,000 nodes at 500 tokens each is 538 neurons, about 5% of a day. A
  * `llama-3.3-70b` completion is 129 neurons, so the same allocation buys 77 of them. Both are
  * reachable; the docs owe a site owner the difference.

@@ -123,7 +123,7 @@ describe('invalidateVersionPinnedCaches', () => {
 	});
 
 	it('keeps every LIKE pattern inside the 50-byte platform ceiling', () => {
-		// DEEP DIVE B: a LIKE/GLOB pattern over 50 bytes is refused by DO SQLite
+		// a LIKE/GLOB pattern over 50 bytes is refused by DO SQLite
 		for (const { prefix } of VERSION_PINNED_CACHES) {
 			expect(new TextEncoder().encode(`${prefix}%`).length).toBeLessThan(50);
 		}

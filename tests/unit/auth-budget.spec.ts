@@ -366,7 +366,7 @@ describe('the wiring in src/site.ts', () => {
 	 * prettier changing quote style.
 	 */
 
-	it('decides authenticated-ness BEFORE the DO hop, which is the whole point', () => {
+	it('decides authenticated-ness BEFORE the DO hop', () => {
 		// after the hop the DO request is already spent, so the reservation would buy nothing
 		const decidedAt = siteSource.indexOf('isAuthenticatedRequest(request)');
 		const hopAt = siteSource.indexOf('await stub.fetch(innerRequest)');
@@ -388,11 +388,35 @@ describe('the wiring in src/site.ts', () => {
 	});
 
 	it('refuses to STORE a personalised page in the edge cache, structurally', () => {
-		expect(siteSource).toContain("if (isAuthenticated) return 'skipped:authenticated'");
 		// two independent signals: the request was authenticated, and the response is per-user
-		expect(siteSource).toContain(
-			"if (res.headers.has('set-cookie')) return 'skipped:set-cookie'"
+		expect(/if \(isAuthenticated\) return \w*\(?'skipped:authenticated'/.test(siteSource)).toBe(
+			true
 		);
+		expect(
+			/if \(res\.headers\.has\('set-cookie'\)\) return \w*\(?'skipped:set-cookie'/.test(
+				siteSource
+			)
+		).toBe(true);
+	});
+
+	/**
+	 * The edge write is deferred and the refusals are not.
+	 *
+	 * A refusal handed to `waitUntil` would store the page anyway and answer as though it had not, so
+	 * the two must not move together: `putPage` returns the refusal synchronously and returns the
+	 * WRITE for the caller to defer.
+	 */
+	it('keeps every store refusal ahead of the deferred write', () => {
+		const body = siteSource.slice(
+			siteSource.indexOf('function putPage('),
+			siteSource.indexOf('export default {')
+		);
+		const lastRefusal = body.lastIndexOf("'skipped:set-cookie'");
+		const write = body.indexOf('cache.put(');
+		expect(lastRefusal).toBeGreaterThan(-1);
+		expect(write).toBeGreaterThan(lastRefusal);
+		// and nothing inside putPage awaits, so the response does not wait on the cache
+		expect(/\bawait\b/.test(body)).toBe(false);
 	});
 
 	it('refuses to STORE a personalised page in KV too, because that key has no user in it either', () => {

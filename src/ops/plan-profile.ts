@@ -63,7 +63,7 @@ export const FREE_PROFILE: PlanProfile = {
 /**
  * Paid: sized for a 30 s per-invocation CPU budget, and bounded by HIT LATENCY rather than by it.
  *
- * THE BATCH IS SMALL ON PURPOSE, and the first version of this file got it wrong. A Durable Object
+ * THE BATCH IS SMALL, and the first version of this file got it wrong. A Durable Object
  * is single-threaded and `php._run()` is synchronous, so a fill occupies the object for its whole
  * duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
  * deployed worker at `fillBatchSize: 25`: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every

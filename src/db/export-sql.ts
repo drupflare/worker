@@ -76,9 +76,9 @@ export function isRegenerable(table: string): boolean {
  * the owner token that reaches `/export` and `/firstrun?force=1`, and a live Cloudflare OAuth access
  * AND refresh token with `email:write` on the operator's account.
  *
- * `hash_salt` is here for a different reason and it is the one a restore genuinely needs: it signs
+ * `hash_salt` is here for a different reason and it is the one a restore needs: it signs
  * one-time login links and form tokens, so anyone holding a dump that carries it can mint a valid
- * password-reset URL. `?secrets=1` is how a restore asks for all three on purpose.
+ * password-reset URL. `?secrets=1` is how a restore asks for all three.
  */
 export const SECRET_META_KEYS = new Set([
 	'owner_token',
@@ -239,7 +239,7 @@ export interface DumpResult {
 	offsetPaged: string[];
 }
 
-/** the Durable Object ceiling on statement text; see DEEP DIVE B */
+/** the Durable Object ceiling on statement text */
 export const DO_MAX_STATEMENT_CHARS = 100_000;
 
 /**
@@ -477,7 +477,7 @@ const MAX_DUMP_CHUNKS = 100_000;
 /**
  * Characters per chunk.
  *
- * **BYTES, and the difference from the restore is the point.** `IMPORT_STATEMENTS_PER_CHUNK` sizes a
+ * **BYTES, where the restore counts statements.** `IMPORT_STATEMENTS_PER_CHUNK` sizes a
  * restore chunk by statement COUNT because a replay WRITES, and rows written is the meter that binds
  * regeneration. An export writes nothing; what it spends is the memory to hold the encoded text and
  * the CPU to hex it, both proportional to bytes. Sized by statement count instead, 40
@@ -485,7 +485,7 @@ const MAX_DUMP_CHUNKS = 100_000;
  */
 export const DUMP_CHARS_PER_CHUNK = 1_000_000;
 
-/** rows per query before the budget is re-checked; adapts upward, and starts small on purpose */
+/** rows per query before the budget is re-checked; starts small and adapts upward */
 const FIRST_BATCH_ROWS = 8;
 const MAX_BATCH_ROWS = 500;
 

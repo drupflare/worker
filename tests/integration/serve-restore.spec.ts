@@ -188,7 +188,7 @@ describe('a site being restored refuses to serve until the restore lands', () =>
 			const before = await serveDirect(site, '/', '&lane=gate&inline=1&edge=0');
 
 			const migrator = restore(site, 'CREATE TABLE cfw_restore_probe (a);\nSELECT 1;');
-			// one chunk, so the restore is genuinely partway through when the request arrives
+			// one chunk, so the restore is partway through when the request arrives
 			const partial = await migrator.step({ maxChunks: 1 });
 			const during = await serveDirect(site, '/', '&lane=gate&inline=1&edge=0');
 
@@ -666,7 +666,7 @@ describe('a dump too big for one invocation, which is any site worth backing up'
  * database to the one that was exported, and the one comparison that came close (`router` has more
  * than zero rows) passes on a restore that dropped every other table.
  *
- * The instrument is deliberately NOT the exporter. `dumpDatabase()` drives `dumpChunk()`, so the
+ * The instrument is NOT the exporter. `dumpDatabase()` drives `dumpChunk()`, so the
  * chunked/one-shot equality above cannot see a row dropped at a chunk boundary: both halves drop it.
  */
 describe('the round trip reproduces the database, measured without the exporter', () => {

@@ -82,7 +82,7 @@ export function mountFor(name: string, composerType?: string): string {
  * sorting -- a real version sort is `composer/semver`'s job and importing that reasoning here would
  * be a second, worse copy of it.
  *
- * The constraint match is deliberately EXACT-OR-PREFIX rather than a range solver. A caret range
+ * The constraint match is EXACT-OR-PREFIX rather than a range solver. A caret range
  * needs a real semver implementation, and answering one wrongly would install a version the site
  * cannot run. An unmatched constraint returns null, which the caller reports.
  */

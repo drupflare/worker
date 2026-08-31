@@ -27,7 +27,7 @@ import {
  *      a spec asserting any of those got a migration report instead. The durable marker is what
  *      separates them, and the tests below fail if it is dropped in either direction.
  *
- * Artifact-free on purpose: the manifest check and the migrator are both replaced, so this runs on
+ * Artifact-free: the manifest check and the migrator are both replaced, so this runs on
  * a clean checkout with no packed chunks. What it asserts is the DECISION, which is host logic;
  * whether a real chunk replays is `serve-migration.spec.ts`, which is artifact-gated.
  */
@@ -261,7 +261,7 @@ describe('a stored page answers even before the site is provisioned', () => {
 	it('takes the storage lane, because a page row IS content', async () => {
 		// NOT AN OVERSIGHT, and worth pinning: the fast lane checks `migratePartial()` -- a
 		// half-finished migration, where the database underneath is actively being rewritten -- and
-		// deliberately not `neverMigrated()`. A row in `cfw_page` was put there by something that
+		// not `neverMigrated()`. A row in `cfw_page` was put there by something that
 		// had a database. Reordering the two checks would take `serve-lanes.spec.ts` down with it
 		const stub = freshSite();
 		const out = await inObject(stub, async (site) => {

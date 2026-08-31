@@ -84,7 +84,7 @@ describe('shellSafety', () => {
 	});
 
 	/**
-	 * A marker INSIDE a hole is fine, which is the whole point of a hole.
+	 * A marker INSIDE a hole is fine, which is what a hole is for.
 	 *
 	 * The scan runs against the page with placeholders removed. Without that, every real shell would
 	 * be refused the moment a personalised region mentioned a uid -- which is always.

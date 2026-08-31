@@ -358,7 +358,7 @@ export function proposalBody(facts: ProposalFacts): string {
 		lines.push(
 			'',
 			'> Opened by `github-actions[bot]`, so GitHub holds every workflow run on it at ' +
-				'`action_required` until it is approved from the Actions tab. That is deliberate: ' +
+				'`action_required` until it is approved from the Actions tab. That is intended: ' +
 				'a maintainer token would start the checks unattended and would also author this ' +
 				'pull request, which is not what an automated pin should look like.'
 		);

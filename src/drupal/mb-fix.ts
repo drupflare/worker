@@ -144,7 +144,7 @@ if (!function_exists('cfw_mb_ascii')) {
 	/**
 	 * Applies Unicode SpecialCasing final-sigma to an ALREADY-lowercased string.
 	 *
-	 * Deliberately not applied to mb_strtoupper: there is no uppercase counterpart and
+	 * Not applied to mb_strtoupper: there is no uppercase counterpart and
 	 * running it there would corrupt correct output. The strpos() guard is the common
 	 * case -- a string with no sigma in it cannot need this.
 	 */
@@ -351,7 +351,7 @@ function mb_strtoupper($string, $encoding = null) {
 }
 function mb_convert_case($string, $mode, $encoding = null) {
   // 0 UPPER, 1 LOWER, 2 TITLE, 3 FOLD, spelled as ints because the constants are defined by
-  // the polyfill bootstrap that this fragment deliberately runs before
+  // the polyfill bootstrap that this fragment runs before
   $s = cfw_mb_sanitize($string);
   $mode = (int) $mode;
   $utf8 = cfw_mb_utf8($encoding);

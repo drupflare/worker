@@ -29,7 +29,7 @@ import { describe, expect, it } from 'vitest';
  *
  * **Bucket comes out at exactly the wasm64 number**, which is the finding: P28 pays P26's price on
  * the structure Drupal allocates most of, and P26 was rejected on that price. `zend_string` is the
- * genuinely cheaper half, because `len` is a `size_t` and stays 4 bytes.
+ * cheaper half, because `len` is a `size_t` and stays 4 bytes.
  *
  * AND IT IS WORSE THAN "THE HASH IS THE CAUSE", which is what this file was written to show. The
  * case below was meant to prove the hash grew Bucket and the pointer did not; it FAILED, because

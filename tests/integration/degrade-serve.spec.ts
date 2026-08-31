@@ -109,7 +109,7 @@ describe('the read-only rung on the serving path', () => {
 	});
 
 	/**
-	 * A CACHED GET STILL SERVES. That is the point of the rung being where it is.
+	 * A CACHED GET STILL SERVES, which is why the rung sits where it does.
 	 *
 	 * Measured, a cache HIT costs the object 0 ms of cpuTime and writes nothing, so there is no
 	 * quota argument for refusing it. Refusing it would take the site dark for the rest of the day
@@ -130,7 +130,7 @@ describe('the read-only rung on the serving path', () => {
 	});
 
 	/**
-	 * A GET THAT MISSES IS REFUSED, and that asymmetry is deliberate.
+	 * A GET THAT MISSES IS REFUSED, and that asymmetry is intended.
 	 *
 	 * A miss would render, and a render costs ~13 rows the quota cannot pay for. The path stays on
 	 * the fill queue, so it appears once the day rolls over.

@@ -142,7 +142,7 @@ describe('projectImageTransforms: the multiplication nobody was doing', () => {
 		expect(p.remedies).toEqual([]);
 	});
 
-	it('warns before it breaks, which is the whole point of projecting', () => {
+	it('warns before it breaks, which is what projecting buys', () => {
 		// 4,500 of 5,000 is 90%: still working, and the last chance to act
 		const p = projectImageTransforms({ images: 900, styles: 5 }, { PLAN: 'free' });
 		expect(p.status).toBe('warn');

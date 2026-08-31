@@ -992,7 +992,7 @@ describe('the blind half: every static property of every declared class', () => 
 	 * a stale entry, because the key is the request that owns it.
 	 *
 	 * `views\Plugin\views\display\Page::$pageRenderArray` is the same shape, was found by the same
-	 * instrument, and is deliberately NOT fixed: it is overwritten by the next views page rather
+	 * instrument, and is NOT fixed: it is overwritten by the next views page rather
 	 * than accumulating, Drupal 11 core has no reader for it, and clearing it from `drupflare`
 	 * means reflection on a class name phpstan cannot resolve. It sits on the benign list above
 	 * with that reasoning, which is where a found-and-declined item belongs.

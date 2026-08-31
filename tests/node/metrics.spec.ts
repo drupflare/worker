@@ -321,7 +321,7 @@ describe('the rendered summary', () => {
 		expect(markdown).toContain('`packShape.rows`');
 		expect(markdown).toContain('assets/drupal-sql/manifest.json is absent');
 		expect(markdown).toContain('<= 3,145,728');
-		// the step summary must never carry a timing FIGURE; the header names cpuTime on purpose,
+		// the step summary must never carry a timing FIGURE; the header names cpuTime,
 		// to say where the one trustworthy absolute comes from
 		expect(markdown).not.toMatch(/\d\s*(ms|s|ms\/|seconds)\b/);
 	});

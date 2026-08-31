@@ -271,7 +271,7 @@ describe('ctools', () => {
 	 * its own, so the honest observable is that it reaches `core.extension` and the site still
 	 * functions afterwards.
 	 *
-	 * That is deliberately weaker than the other cases, and it is why ctools is recorded with what
+	 * That is weaker than the other cases, and it is why ctools is recorded with what
 	 * was actually exercised rather than a claim it "works".
 	 */
 	it(

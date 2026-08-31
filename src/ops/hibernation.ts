@@ -43,7 +43,7 @@ export type ResidencyState = {
 	requestInFlight?: boolean;
 	/** an outbound TCP socket from `connect()`, or an outbound WebSocket */
 	outboundSocket?: boolean;
-	/** an armed alarm; deliberately present and deliberately not disqualifying */
+	/** an armed alarm; present here and not disqualifying */
 	pendingAlarm?: boolean;
 };
 

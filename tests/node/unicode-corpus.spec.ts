@@ -195,7 +195,7 @@ describeIfPhp('the ICU vintage of this runtime', () => {
 			`[unicode] ${engine}: ${lower.length} lower / ${upper.length} upper scalars ` +
 				'differ from mbstring'
 		);
-		// no threshold on purpose -- the point is that the number exists and is not the oracle
+		// no threshold -- the number exists to be read, and is not the oracle
 		expect(Array.isArray(lower)).toBe(true);
 		expect(Array.isArray(upper)).toBe(true);
 	}, 60_000);

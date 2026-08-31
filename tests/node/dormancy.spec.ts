@@ -63,7 +63,7 @@ describe.skipIf(!available)('the shipped artifact has no undecided capabilities'
 	 * `undecided` means a capability the project intends to be active with nothing activating it --
 	 * the shape that produced the content-type, cron and pathauto defects. There is no third state.
 	 */
-	it('every capability is active or deliberately dormant', () => {
+	it('every capability is active or dormant by design', () => {
 		const rows = auditDormancy(configNames, {
 			'runtime:cron': true,
 			'runtime:deferred-outbound': true
@@ -71,7 +71,7 @@ describe.skipIf(!available)('the shipped artifact has no undecided capabilities'
 		const undecided = rows.filter((r) => r.state === 'undecided');
 		expect(
 			undecided.map((r) => `${r.id}: ${r.detail}`),
-			'a capability is neither active nor deliberately dormant'
+			'a capability is neither active nor dormant by design'
 		).toEqual([]);
 	});
 
@@ -88,7 +88,7 @@ describe.skipIf(!available)('the shipped artifact has no undecided capabilities'
 		).toEqual([]);
 	});
 
-	it('every deliberately dormant capability carries its reason and how to activate it', () => {
+	it('every dormant-by-design capability carries its reason and how to activate it', () => {
 		for (const cap of CAPABILITIES) {
 			if (cap.posture !== 'dormant-by-design') continue;
 			expect(cap.reason, cap.id).toBeDefined();
@@ -171,7 +171,7 @@ describe('auditDormancy', () => {
 		expect(rows[0]?.found).toBe(1);
 	});
 
-	it('accepts a deliberate dormancy and carries the reason through', () => {
+	it('accepts a recorded dormancy and carries the reason through', () => {
 		const rows = auditDormancy([], {}, [
 			{
 				id: 'y',

@@ -261,7 +261,7 @@ describe('the census classification', () => {
 		const c = census([
 			sql(one, { rows: 1, key: 'entity_view:block:a' }),
 			sql(one, { rows: 1, key: 'entity_view:block:b' }),
-			// the same cid a second time: this one is genuinely redundant
+			// the same cid a second time: this one is redundant
 			sql(one, { rows: 1, key: 'entity_view:block:b' })
 		]);
 		expect(c.rows[0]!.count).toBe(3);
@@ -307,7 +307,7 @@ describe('the subsystem a statement belongs to', () => {
 	});
 
 	it('answers `other` rather than guessing an owner for a shared bin', () => {
-		// `cache_discovery`, `cache_data` and `cache_default` are deliberately absent from the
+		// `cache_discovery`, `cache_data` and `cache_default` are absent from the
 		// table rules: without a cid there is nothing to attribute them by, and a plausible
 		// owner is worse than a visible gap
 		expect(subsystemOf('cache_discovery', null)).toBe('other');

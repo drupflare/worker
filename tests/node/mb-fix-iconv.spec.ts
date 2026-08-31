@@ -93,7 +93,7 @@ const STRRPOS_CASES: [string, string][] = [
  * Drives `cfw_iconv_strrpos` against the extension, and the upstream line beside it.
  *
  * The `Iconv` stand-in implements only `iconv()` and `iconv_strlen()`, over the real
- * extension. That is deliberate rather than a shortcut: those two helpers were never
+ * extension. That is not a shortcut: those two helpers were never
  * what was wrong, the fix is one index expression, and depending on the vendored
  * polyfill would mean depending on `drupal-src`, which is gitignored -- so this spec
  * would land in `ARTIFACT_SPECS` and stop running on a clean checkout. The wide

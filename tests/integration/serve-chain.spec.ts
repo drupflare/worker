@@ -76,7 +76,7 @@ describe('a cold MISS costs no interpreter and no render', () => {
 
 		expect(cold.status).toBe(503);
 		expect(cold.cache).toBe('MISS');
-		// the whole point of the tier: a MISS must not instantiate PHP
+		// the tier's claim: a MISS must not instantiate PHP
 		expect(cold.phpBooted).toBe('0');
 		expect(cold.inline).toBe('cold');
 		expect(cold.queueDepth).toBe(1);
@@ -103,20 +103,23 @@ describe('a cold MISS costs no interpreter and no render', () => {
 		expect(cold.estimateMs).toBeGreaterThan(cold.budgetMs);
 	});
 
-	it('counts the request durably and pulls the fill alarm in', async () => {
+	it('counts the request and pulls the fill alarm in', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
-			const before = site.metaGet('serve_requests', '0');
+			const before = site.serveRequests();
 			await serveDirect(site, '/');
 			return {
 				before,
-				after: site.metaGet('serve_requests', '0'),
+				after: site.serveRequests(),
 				alarmAt: await site.ctx.storage.getAlarm(),
 				now: Date.now()
 			};
 		});
-		expect(out.before).toBe('0');
-		expect(out.after).toBe('1');
+		expect(out.before).toBe(0);
+		// `serveRequests()` rather than the row: the count accumulates in memory and one row pays
+		// for many, because a row per view spent 15% of free's row budget counting something
+		// `pageHits` already counts for nothing
+		expect(out.after).toBe(1);
 		expect(out.alarmAt).not.toBeNull();
 		// armed for the next tick, not for the 240 s keep-warm interval
 		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
@@ -125,9 +128,13 @@ describe('a cold MISS costs no interpreter and no render', () => {
 	it('keeps the counter across an eviction, so an edge-tier assertion can rely on it', async () => {
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => serveDirect(site, '/'));
+		// THE ALARM IS WHAT MAKES IT DURABLE, and a serve arms one at +1 ms precisely so this
+		// window is a millisecond wide. Evicting without letting it fire measures the accumulator
+		// rather than the counter, and would have read as the count being lost
+		await driveAlarms(stub, (site) => Number(site.metaGet('serve_requests', '0')) > 0);
 		await evictDurableObject(stub);
-		const after = await inObject(stub, (site) => site.metaGet('serve_requests', '0'));
-		expect(after).toBe('1');
+		const after = await inObject(stub, (site) => site.serveRequests());
+		expect(after).toBe(1);
 	});
 });
 
@@ -873,7 +880,7 @@ describe('the render origin is pinned, not believed', () => {
 	});
 
 	/**
-	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED, and the split is the point.
+	 * A LOCAL ORIGIN IS USED BUT NEVER PINNED.
 	 *
 	 * Used, because `wrangler dev` on `localhost:8787` should render links to `localhost:8787` and
 	 * not to port 80. Not pinned, because every spec in this file reaches the object over

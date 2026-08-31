@@ -1,6 +1,8 @@
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_MAX_BODY_BYTES } from '../../src/ops/body-limit';
+import { isCacheTier } from '../../src/ops/cache-tiers';
+import { resetEdgePlans, SAMPLES_PER_COMPILE } from '../../src/ops/edge-plan';
 import { ensureFleetTable, reportSite, type FleetDb } from '../../src/ops/fleet';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
 import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
@@ -12,6 +14,7 @@ import {
 	queuePath,
 	seedPage,
 	serveThroughWorker,
+	SESSION_COOKIE,
 	stubRender,
 	type ServeProbe
 } from '../helpers/serve-do';
@@ -66,7 +69,7 @@ const serveRequestsOf = (site: string) =>
  * heap -- and this runtime has no separate process to lose, so an OOM takes the site's object with
  * it. Refusing here costs no DO request and no interpreter.
  *
- * `multipart/form-data` is exempt on purpose: that is the upload shape, its size is the point, and
+ * `multipart/form-data` is exempt: that is the upload shape, where size is expected, and
  * it is not parsed into a nested array. A 2 MiB cap on uploads would be a regression wearing a
  * guard's clothes.
  */
@@ -101,7 +104,7 @@ describe('an oversized request body never reaches the interpreter', () => {
 		expect(bodyTooLarge(at)).toBeNull();
 	});
 
-	it('exempts an upload, which is the one shape whose size is the point', () => {
+	it('exempts an upload, which is the one shape where size is expected', () => {
 		const upload = new Request('https://cfw.local/x', {
 			method: 'POST',
 			body: 'a=1',
@@ -207,13 +210,14 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(miss.cache).toBe('MISS');
 		expect(miss.status).toBe(503);
 		expect(doHit.cache).toBe('HIT');
-		// the DO answered, and the Worker put a copy at the edge
+		// the DO answered, and the Worker handed the edge copy to waitUntil. `deferred` says the
+		// write was issued; the EDGE hit two lines down is what says it landed
 		expect(doHit.edge).toBe('MISS');
-		expect(doHit.edgePut).toBe('stored');
+		expect(doHit.edgePut).toBe('deferred');
 		expect(edge).not.toBeNull();
 		expect(edge?.cache).toBe('EDGE');
 		expect(edge?.edge).toBe('HIT');
-		// the whole point of the tier: no DO request at all, asserted on the object's own
+		// the tier's claim: no DO request at all, asserted on the object's own
 		// persisted counter rather than on timing
 		expect(after).toBe(before);
 		// and the object's own verdict is preserved separately, so a measurement can tell an
@@ -243,7 +247,29 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		// the answer cannot be a copy the poll itself cached
 		expect(bypass.cache).toBe('HIT');
 		expect(bypass.edge).toBe('MISS');
-		expect(bypass.edgePut).toBe('stored');
+		expect(bypass.edgePut).toBe('deferred');
+	});
+
+	/**
+	 * The three writes a serve makes are issued and not awaited.
+	 *
+	 * MEASURED ON A DEPLOYED WORKER, which is why this is worth a test: an awaited
+	 * `caches.default.put` costs 9 ms for a small body and 12.5 ms for a 97 KB one before the
+	 * response leaves, and the same put through `waitUntil` costs 0. The refusals stay synchronous,
+	 * so a page that must not be stored is still refused by name rather than deferred.
+	 */
+	it('defers the edge write and still refuses by name', async () => {
+		const site = 'deferred';
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>d</title>'));
+
+		const first = await serveThroughWorker(site, '/');
+		expect(first.edgePut).toBe('deferred');
+		// the deferred write is the only thing that could have produced this
+		expect((await untilEdge(site, '/'))?.cache).toBe('EDGE');
+
+		// a path the object refuses is refused synchronously, not handed to waitUntil
+		const denied = await serveThroughWorker(site, '/.env');
+		expect(denied.edgePut).not.toBe('deferred');
 	});
 });
 
@@ -431,7 +457,7 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 	});
 
 	/**
-	 * `/export` is an OWNER route, not a diagnostic, and the difference is the whole point.
+	 * `/export` is an OWNER route, not a diagnostic.
 	 *
 	 * It used to sit in the diagnostic set beside `/sql` (arbitrary SQL) and `/restore` (a
 	 * whole-database overwrite) behind one boolean, so taking your own data out required exposing a
@@ -990,5 +1016,216 @@ describe('a submission survives the catch-all rewrite', () => {
 		} as unknown as typeof env);
 		expect(res.status).toBe(200);
 		expect(s.seen[0]?.pathname).toBe('/__serve');
+	});
+});
+
+/**
+ * The compiled-plan tier in front of the Durable Object.
+ *
+ * The observable is the HOP COUNT: this tier exists because a hop costs 12 ms of payload-independent
+ * round trip on a deployed paid worker against 0 for isolate memory, so a spec that only checked the
+ * bytes would pass against a tier that answered correctly and still went to the object.
+ *
+ * The namespace is a stand-in rather than a real object, because what is under test is which
+ * requests the front worker SENDS. A real render would put the interpreter and the pack in the way
+ * of an assertion about the worker.
+ */
+describe('the compiled plan tier', () => {
+	const COOKIE_A = `${SESSION_COOKIE}=session-alpha`;
+	const COOKIE_B = `${SESSION_COOKIE}=session-bravo`;
+	/** what the first render of a route looks like before Drupal's asset library cache is warm */
+	const WARMUP = `<html><body>${'a'.repeat(300)}<link rel="stylesheet" href="/x.css"></body></html>`;
+	const STEADY = `<html><body>${'a'.repeat(300)}<p>steady</p></body></html>`;
+
+	beforeEach(() => resetEdgePlans());
+
+	/** a namespace that renders, reports a generation, and counts what reached it */
+	function objectSpy(generation = () => 42) {
+		const seen: URL[] = [];
+		let n = 0;
+		return {
+			seen,
+			namespace: {
+				idFromName: (name: string) => ({ name, toString: () => name }),
+				newUniqueId: () => ({ toString: () => 'unique' }),
+				get: () => ({
+					fetch: async (r: Request) => {
+						seen.push(new URL(r.url));
+						n++;
+						return new Response(n === 1 ? WARMUP : STEADY, {
+							status: 200,
+							headers: {
+								'content-type': 'text/html; charset=UTF-8',
+								'x-cfw-cache': 'RENDER',
+								'x-cfw-generation': String(generation())
+							}
+						});
+					}
+				})
+			}
+		};
+	}
+
+	async function visit(
+		namespace: unknown,
+		path: string,
+		cookie: string,
+		overrides: Record<string, unknown> = {}
+	) {
+		const ctx = createExecutionContext();
+		const res = await worker.fetch(
+			new Request(`https://cfw.local${path}`, { headers: { cookie } }),
+			{ ...env, SITE: namespace, ...overrides } as unknown as typeof env,
+			ctx
+		);
+		const body = await res.text();
+		// the compile runs behind waitUntil, so nothing here may read the store before it finishes
+		await waitOnExecutionContext(ctx);
+		return {
+			body,
+			tier: res.headers.get('x-cfw-cache'),
+			plan: res.headers.get('x-cfw-plan'),
+			cacheControl: res.headers.get('cache-control')
+		};
+	}
+
+	it('answers from this isolate after three renders, with no further hop', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-basic';
+		const first = await visit(spy.namespace, path, COOKIE_A);
+		// nothing is served before the isolate has learned a generation to fence against; the render
+		// is recorded toward a compile, which is what `sampling` says
+		expect(first.tier).not.toBe('PLAN');
+		expect(first.plan).toBe('sampling');
+
+		for (let i = 1; i < SAMPLES_PER_COMPILE; i++) {
+			expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('sampling');
+		}
+		expect(spy.seen).toHaveLength(SAMPLES_PER_COMPILE);
+
+		const served = await visit(spy.namespace, path, COOKIE_A);
+		expect(served.tier).toBe('PLAN');
+		expect(served.plan).toBe('mem');
+		expect(served.body).toBe(STEADY);
+		// per-user output: nothing between here and the browser may store it
+		expect(served.cacheControl).toBe('private, no-store');
+		// THE POINT OF THE TIER. A correct body that still cost a hop is the failure this catches
+		expect(spy.seen).toHaveLength(SAMPLES_PER_COMPILE);
+		expect(isCacheTier('PLAN')).toBe(true);
+	});
+
+	it('compiles from renders two and three, so the asset warm-up cannot corrupt a plan', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-warmup';
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		const served = await visit(spy.namespace, path, COOKIE_A);
+		// the first render's stylesheet list is absent, which it would not be from a plan compiled
+		// against it -- that compile finds an unnamed varying region and refuses instead
+		expect(served.tier).toBe('PLAN');
+		expect(served.body).toBe(STEADY);
+		expect(served.body).not.toContain('stylesheet');
+	});
+
+	it('serves NOTHING to a second session, which is the whole safety argument', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-sessions';
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		expect((await visit(spy.namespace, path, COOKIE_A)).tier).toBe('PLAN');
+
+		const hopsBefore = spy.seen.length;
+		const other = await visit(spy.namespace, path, COOKIE_B);
+		// a different cookie cannot construct the key the first session's page is under, so it pays
+		// the object the same as any other first visit
+		expect(other.tier).not.toBe('PLAN');
+		expect(spy.seen).toHaveLength(hopsBefore + 1);
+	});
+
+	/**
+	 * A save is the invalidation, and it is what teaches this isolate the new generation.
+	 *
+	 * There is no cheaper way for it to find out: a bump made anywhere reaches this isolate on its
+	 * next Durable Object response, and until then {@link GENERATION_TRUST_MS} bounds how long it
+	 * keeps serving the old one -- the same two-window lag the shared generation pointer already has.
+	 */
+	it('drops every plan when a write moves the generation', async () => {
+		let generation = 42;
+		const spy = objectSpy(() => generation);
+		const path = '/plan-tier-bump';
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		expect((await visit(spy.namespace, path, COOKIE_A)).tier).toBe('PLAN');
+
+		generation = 43;
+		const ctx = createExecutionContext();
+		await worker.fetch(
+			new Request(`https://cfw.local${path}`, {
+				method: 'POST',
+				body: 'title=x',
+				headers: { cookie: COOKIE_A, 'content-type': 'application/x-www-form-urlencoded' }
+			}),
+			{ ...env, SITE: spy.namespace } as unknown as typeof env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+
+		const hopsBefore = spy.seen.length;
+		const afterBump = await visit(spy.namespace, path, COOKIE_A);
+		expect(afterBump.tier).not.toBe('PLAN');
+		expect(spy.seen).toHaveLength(hopsBefore + 1);
+	});
+
+	it('never compiles an anonymous render, which the shared tiers already answer', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-anon';
+		const first = await visit(spy.namespace, path, 'Drupal.toolbar.collapsed=1');
+		expect(first.plan).toBe('skip:not-wanted');
+		// later ones may be answered by the edge tier, which returns before this header is set; what
+		// has to hold for every one of them is that no plan tier ever claims an anonymous page
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
+			const res = await visit(spy.namespace, path, 'Drupal.toolbar.collapsed=1');
+			expect(res.tier).not.toBe('PLAN');
+			expect(res.plan).not.toBe('mem');
+		}
+	});
+
+	it('is switched off by EDGE_PLAN=0, which is the control arm every measurement needs', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-lever';
+		const off = { EDGE_PLAN: '0' };
+		for (let i = 0; i <= SAMPLES_PER_COMPILE; i++) {
+			const res = await visit(spy.namespace, path, COOKIE_A, off);
+			expect(res.tier).not.toBe('PLAN');
+			expect(res.plan).toBe('skip:not-wanted');
+		}
+		// every one of them paid the object, which is what the tier removes
+		expect(spy.seen).toHaveLength(SAMPLES_PER_COMPILE + 1);
+	});
+
+	it('refuses a response that rotates the session', async () => {
+		const seen: URL[] = [];
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					seen.push(new URL(r.url));
+					return new Response(STEADY, {
+						status: 200,
+						headers: {
+							'content-type': 'text/html; charset=UTF-8',
+							'x-cfw-cache': 'RENDER',
+							'x-cfw-generation': '42',
+							'set-cookie': `${SESSION_COOKIE}=rotated; Path=/`
+						}
+					});
+				}
+			})
+		};
+		const path = '/plan-tier-rotated';
+		await visit(namespace, path, COOKIE_A);
+		for (let i = 0; i < SAMPLES_PER_COMPILE + 2; i++) {
+			const res = await visit(namespace, path, COOKIE_A);
+			expect(res.tier).not.toBe('PLAN');
+			expect(res.plan).toBe('skip:set-cookie');
+		}
 	});
 });

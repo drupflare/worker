@@ -19,7 +19,7 @@ export const SITE = process.env.CFW_E2E_SITE ?? 'e2e';
 /**
  * Whether the endpoint answers at all.
  *
- * Deliberately does NOT require a 200: an un-migrated worker answers 503 or 404 and is still
+ * Does NOT require a 200: an un-migrated worker answers 503 or 404 and is still
  * reachable, and telling those apart is the specs' job rather than the gate's.
  */
 export async function endpointReachable(timeoutMs = 3000): Promise<boolean> {

@@ -418,7 +418,7 @@ describe('memory.trend_rising: the leak the monotonic check cannot see', () => {
 });
 
 describe('the registry runs every wire and stays O(1)', () => {
-	it('finds several at once on a genuinely sick observation', () => {
+	it('finds several at once on a sick observation', () => {
 		const found = runHostTripwires({
 			status: 200,
 			bytes: 0,

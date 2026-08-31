@@ -44,7 +44,7 @@ const REQUEST_TIMEOUT = 900_000;
 const ISOLATE_LIMIT = 128 * 1_048_576;
 
 /**
- * The pin, and it is deliberately not the isolate limit.
+ * The pin, and it is not the isolate limit.
  *
  * wasm linear memory is not the whole isolate: the compiled interpreter, the JS heap and the
  * mounted pack sit beside it and are not counted here. So the ceiling this asserts leaves room for
@@ -58,8 +58,8 @@ const ISOLATE_LIMIT = 128 * 1_048_576;
  * real pin -- 5 MB of regression headroom under a 128 MB isolate -- rather than a number no build
  * could pass.
  *
- * That margin is thin ON PURPOSE and is a product statement, not a test tolerance: an install on the
- * shipping interpreter genuinely runs close to the isolate limit, which is why it drops the
+ * That margin is thin, and is a product statement rather than a test tolerance: an install on the
+ * shipping interpreter runs close to the isolate limit, which is why it drops the
  * interpreter first and requeues rather than re-rendering.
  */
 const HEAP_CEILING = 120 * 1_048_576;
@@ -174,7 +174,7 @@ describe('the memory an enable costs', () => {
 			const resident = mount['resident']!!;
 
 			// the budget bounds the INFLATED cache and nothing else: the compressed layer is
-			// held outside it deliberately, because eviction is only reversible while the blob
+			// held outside it, because eviction is only reversible while the blob
 			// is there. So the pin on the pair is a JS-side ceiling, not the budget
 			expect(
 				blob + resident,

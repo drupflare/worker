@@ -40,8 +40,8 @@ export function needsSetup(request: Request, configured: boolean): boolean {
 /**
  * The page itself.
  *
- * The button is the whole point -- one POST, the credentials come back, and the site is claimed. It
- * is `fetch()` rather than a plain form because `/firstrun` takes a JSON body, and the curl command
+ * The button does the work: one POST, the credentials come back, and the site is claimed. It is
+ * `fetch()` rather than a plain form because `/firstrun` takes a JSON body, and the curl command
  * is printed underneath so the page still works with scripting off.
  */
 export function setupHtml(origin: string): string {

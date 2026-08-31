@@ -23,8 +23,8 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
  *
  * THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
  * CIPHER rather than a digest, so it shares no mechanism with the above: `crypto.subtle` offers
- * AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is the whole point of the
- * construction such a store chooses. `@noble/ciphers` is the library `edgeport` assembles SSH's
+ * AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is what such a store picks
+ * the construction for. `@noble/ciphers` is the library `edgeport` assembles SSH's
  * chacha20-poly1305 from, and it is synchronous.
  *
  * `extension_loaded('sodium')` stays FALSE either way, because the rest of the extension is not
@@ -167,9 +167,9 @@ export const GENERICHASH_KEYBYTES_MAX = 64;
  * How many incremental digests may be open at once.
  *
  * A state that is never finalised leaks its context for the life of the object, and a Durable
- * Object outlives many requests. Refusing past the cap rather than evicting the oldest is the
- * deliberate half: an evicted context would make a later `final()` answer a digest computed over
- * part of the message, and a wrong content address is worse than a failed one.
+ * Object outlives many requests. It refuses past the cap rather than evicting the oldest: an
+ * evicted context would make a later `final()` answer a digest computed over part of the message,
+ * and a wrong content address is worse than a failed one.
  */
 export const MAX_OPEN_STATES = 64;
 
@@ -232,9 +232,9 @@ export function readKey(key64: unknown): Uint8Array | undefined | string {
  * time and must never hold the whole thing: `hash` is the one-shot, and `init`/`update`/`final`
  * are the streaming form. The context stays here behind an integer handle for the reason
  * `CurlShim` keeps a handle at all -- there is nothing for PHP to hold. Unlike CurlShim's array,
- * this one cannot be a PHP value: a BLAKE2b context is eight 64-bit words plus a 128-byte buffer,
- * and `PHP_INT_SIZE` is 4 here, so a context that crossed the bridge would have to be re-encoded
- * on every 1 MiB chunk.
+ * this one cannot usefully be a PHP value: a BLAKE2b context is eight 64-bit words plus a 128-byte
+ * buffer, and crossing it through the codec on every 1 MiB chunk would encode and decode ~192 bytes
+ * of state per chunk to gain nothing PHP can read.
  *
  * A failure is a reply rather than a throw; the PHP half turns it into the `SodiumException`
  * ext-sodium raises.
@@ -334,7 +334,7 @@ export function installBlake2b(
  * one-shot and the streaming form are both reached, and `Hash::ofFile()` reaches the streaming one
  * on every captured file.
  *
- * `extension_loaded('sodium')` STAYS FALSE, deliberately. It is the guard this fragment is itself
+ * `extension_loaded('sodium')` STAYS FALSE. It is the guard this fragment is itself
  * written under, and a stub extension entry is the exact shape that took the isolate down at exit
  * 139 when it was tried for mbstring. A caller testing for the extension gets an honest no; a
  * caller calling the function gets a digest.

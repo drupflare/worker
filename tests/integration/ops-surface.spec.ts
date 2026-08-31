@@ -15,8 +15,7 @@ import { freshSite } from '../helpers/serve-do';
  * than like the regression it is.
  *
  * Driving the object directly. The registry read needs the driver module in the mount and no kernel,
- * so it works in this lane; the sliced operations themselves are not run by anything here, which is
- * the whole point.
+ * so it works in this lane; the sliced operations themselves are not run by anything here.
  */
 
 const OPS = 'https://do.local/__ops';

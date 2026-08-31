@@ -15,7 +15,7 @@ import { base64ToBytes, bytesToBase64 } from '../db/file-store.js';
  * `openssl_sign()`/`openssl_verify()` directly, so shimming the names PHP already uses makes them
  * work untouched. A new function would have required every one of them to be patched.
  *
- * WHAT IS DELIBERATELY NOT HERE. Key GENERATION, certificate parsing, `openssl_encrypt`, and the
+ * WHAT IS NOT HERE. Key GENERATION, certificate parsing, `openssl_encrypt`, and the
  * PKCS#7/CMS family. Signing and verification are what JWS and service-account JWTs need; the rest
  * is a much larger surface with no caller in this project, and shipping it unused would be the
  * [[tested-but-never-called]] failure this bridge exists to end for curl.

@@ -62,7 +62,7 @@ describe('codec: the 32-bit regressions', () => {
 	});
 
 	// THE CONTROL, and it is why this suite cannot pass vacuously. The old lossy behaviour
-	// stringified large integers; assert the current output is genuinely a number, so a
+	// stringified large integers; assert the current output is a number, so a
 	// regression to a string would fail here rather than be silently accepted
 	it('a large int does NOT decode to a string, which was the old lossy behaviour', () => {
 		const got = trip(1780000000000);

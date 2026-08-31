@@ -40,7 +40,7 @@ export interface Finding {
 /**
  * What the host can see at the end of a request or an alarm.
  *
- * Deliberately a flat bag of primitives rather than a live object: a tripwire that holds a
+ * A flat bag of primitives rather than a live object: a tripwire that holds a
  * reference to the interpreter could keep a poisoned one alive.
  */
 export interface Observation {
@@ -81,8 +81,8 @@ export interface Observation {
 	/**
 	 * Unique image transformations this site's CONFIGURATION implies: styles x images.
 	 *
-	 * A projection rather than a count, and that is the point -- the meter is a function of content
-	 * and configuration, both known in advance, so the answer does not have to wait for the failure.
+	 * A projection rather than a count: the meter is a function of content and configuration, both
+	 * known in advance, so the answer does not have to wait for the failure.
 	 */
 	imageTransforms?: number;
 	/** the monthly allowance, when the plan has one */
@@ -185,7 +185,7 @@ export function renderSizeAnomaly(obs: Observation): Finding | null {
  * `error` starts at `reset`, three rounds reach `quarantine` and EVERY PAGE ANSWERS 503 -- so a
  * newly provisioned site took itself down the first time cron ran, over a feed fetch that had
  * already fallen back correctly. A graceful degradation must not escalate to an outage. An
- * invocation that genuinely dies is caught by the tripwires that watch renders.
+ * invocation that does die is caught by the tripwires that watch renders.
  */
 export function bridgeAsyncifyCalled(obs: Observation): Finding | null {
 	const calls = obs.asyncifyCalls ?? 0;
@@ -449,7 +449,7 @@ export function fitTrend(samples: number[] | undefined): Trend | null {
  * binds, `setAlarm()` is itself one row, and the only cheap repair -- serving from a colder tier --
  * has to be chosen before the allowance is gone, not after.
  *
- * Deliberately silent once the meter has actually crossed its limit: at that point `budgetPressure`
+ * Silent once the meter has crossed its limit: at that point `budgetPressure`
  * reports the fact, and a projection about a limit already passed is noise. So the two never both
  * fire for the same meter.
  */

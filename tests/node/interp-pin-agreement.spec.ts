@@ -66,7 +66,7 @@ describe('the pinned bytes are the bytes on disk', () => {
 	 * `bun install` restores the interpreter from the CDN. A PARTIAL restore -- the wasm present and
 	 * a sibling missing -- makes `have` false with the wasm on disk, so the control failed on a
 	 * machine that was doing exactly what it should. What it is really guarding is that the skip is
-	 * honest: something the pin names is genuinely absent.
+	 * honest: something the pin names is absent.
 	 */
 	it.skipIf(have)('skips only because a pinned file is missing', () => {
 		const absent = pin.files.filter((f) => !existsSync(resolve(process.cwd(), f.path)));

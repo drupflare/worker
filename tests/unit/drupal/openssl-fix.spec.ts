@@ -60,7 +60,7 @@ describe('signing over the host bridge', () => {
 		if (checked.ok && 'valid' in checked) expect(checked.valid).toBe(true);
 	});
 
-	it('REFUSES a signature over different bytes, which is the whole point', () => {
+	it('REFUSES a signature over different bytes', () => {
 		const signed = signHostCall({ op: 'sign', b64: b64('a'), key: rsa.privateKey, algo: 6 });
 		if (!signed.ok || !('sigB64' in signed)) throw new Error('no signature');
 		const checked = signHostCall({

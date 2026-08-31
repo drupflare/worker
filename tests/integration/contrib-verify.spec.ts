@@ -809,7 +809,7 @@ const CASES: readonly Case[] = [
  *
  * Listed rather than tolerated, because a module in the pack and in nobody's assertion is the
  * stale-exemption shape: `everything the pack carries is covered` below fails on an addition, and
- * this is where an addition is answered deliberately.
+ * this is where an addition is answered explicitly.
  */
 const COVERED_ELSEWHERE: Readonly<Record<string, string>> = {
 	admin_toolbar: 'shipping pack; tests/integration/module-behaviour.spec.ts',
@@ -1171,7 +1171,7 @@ describe('contrib modules, enabled against a real site', () => {
 	 *
 	 * A module in the pack and in nobody's assertion is a support claim nothing establishes -- the
 	 * same shape as an allow-list nobody prunes. This fails on a module ADDED to the fixture with no
-	 * case, and `COVERED_ELSEWHERE` is where that is answered on purpose.
+	 * case, and `COVERED_ELSEWHERE` is where that is answered.
 	 */
 	it('covers every contrib module the mounted pack carries', async () => {
 		const packed = [...(await packedContrib())].sort();

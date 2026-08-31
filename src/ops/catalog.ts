@@ -33,10 +33,9 @@ export type CatalogEntry = {
 /**
  * A runtime capability a module may require, ordered by how hard it is to satisfy.
  *
- * `deferrable-outbound` is deliberately NOT a refusal. Treating every outbound need as a wall
- * classified reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the
- * queue already solves; only a call whose answer must arrive inside the same render is truly
- * blocked.
+ * `deferrable-outbound` is NOT a refusal. Treating every outbound need as a wall classified
+ * reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the queue already
+ * solves; only a call whose answer must arrive inside the same render is blocked.
  */
 import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers.js';
 
@@ -287,7 +286,7 @@ export async function loadCatalog(
 /**
  * What a module's capability needs mean for THIS runtime.
  *
- * Separate from the install verdict on purpose: `installable` answers "can composer resolve it",
+ * Separate from the install verdict: `installable` answers "can composer resolve it",
  * and that is orthogonal to "will it work here". reCAPTCHA resolves perfectly and needs a tier the
  * shipping runtime does not offer; Honeypot resolves the same way and needs nothing.
  */

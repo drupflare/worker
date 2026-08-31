@@ -66,7 +66,7 @@ describe('classify', () => {
 	});
 
 	it('reports an absent module as absent, never as its prediction', () => {
-		// the whole point: nothing was tested, so no capability verdict has been earned
+		// nothing was tested, so no capability verdict has been earned
 		expect(
 			classify({
 				...base,

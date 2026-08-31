@@ -17,7 +17,7 @@ import {
 /**
  * The driving half of the deployed harness.
  *
- * The pure parts are tested here; the deploy and the teardown are deliberately manual and live in
+ * The pure parts are tested here; the deploy and the teardown stay manual and live in
  * `BENCH_RUNBOOK`, because "verify the worker list returned to baseline" is not a step a script
  * should be trusted to have done on an account holding real production workers.
  *
@@ -306,7 +306,7 @@ describe('joining the query back to what was driven', () => {
 	});
 
 	/**
-	 * The manifest is read rather than recomputed, and that distinction is the point.
+	 * The manifest is read rather than recomputed.
 	 *
 	 * A report that regenerates the tags it expects cannot tell "this request was never driven"
 	 * from "it was driven and has not been ingested"; the first is a hole in the run and the second

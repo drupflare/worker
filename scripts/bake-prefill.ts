@@ -18,7 +18,7 @@
  * `drupal_static_reset()` does not clear, and the favicon resolved to a different path because the
  * packer drops `.ico` and native PHP's `file_exists()` therefore disagreed with wasm's. A prefilled
  * path is a HIT on its first ever request, so those bytes ARE the page a visitor sees, and the page
- * would change the first time it was genuinely re-rendered.
+ * would change the first time it was re-rendered.
  *
  * THE MIGRATION IS NOT OPTIONAL. `/serve` answers 202 on a site that has never been migrated, and
  * `renderOne` retries a 202 twelve times before giving up -- so skipping it produces a run that looks

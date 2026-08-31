@@ -86,7 +86,7 @@ describe('the packer acceptance gate goes GREEN only on an equivalent database',
 	});
 });
 
-describe('and RED on every divergence that matters, which is the point of having it', () => {
+describe('and RED on every divergence that matters', () => {
 	it('fails a missing table that is not a lazily-created cache bin', () => {
 		const built = fixture({ ...BAKED, tables: ['cache_page', 'cache_render'] });
 		const report = compareSiteDbs(fixture(BAKED), built);

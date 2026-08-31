@@ -491,7 +491,7 @@ describe('what a reviewer reads', () => {
 		const held = proposalBody({ ...facts, checksHeld: true });
 		expect(held).toContain('action_required');
 		expect(held).toContain('github-actions[bot]');
-		expect(held).toContain('deliberate');
+		expect(held).toContain('intended');
 		expect(proposalBody(facts)).not.toContain('action_required');
 	});
 });

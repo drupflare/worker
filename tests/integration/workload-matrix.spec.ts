@@ -18,12 +18,12 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *     re-sends statements the crossing count already counted once.
  *   - **bytes** is the rendered size, which is what the page store and the edge carry.
  *
- * WHAT IS DELIBERATELY NOT HERE: milliseconds. RULE 0 -- an absolute CPU figure comes only from
+ * WHAT IS NOT HERE: milliseconds. RULE 0 -- an absolute CPU figure comes only from
  * `cpuTime` on a deployed worker, and every in-isolate clock is frozen out there. A local timing
  * column would be the exact instrument error this project has made five times. The columns above
  * are COUNTS, and a count is the same number locally and on the edge.
  *
- * THE MEASUREMENT IS RELATIVE ON PURPOSE. Absolutes move with the pack; what P7 needs to know is
+ * THE MEASUREMENT IS RELATIVE. Absolutes move with the pack; what P7 needs to know is
  * whether an authenticated render costs enough MORE than an anonymous one to be worth a shell, and
  * that is a ratio. Each case asserts its shape rather than its value, and the docblock carries the
  * readings so a later run can be compared against them.

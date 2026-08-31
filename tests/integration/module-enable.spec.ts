@@ -85,7 +85,7 @@ describe('a module enable in the workers pool lane', () => {
 			const out = await inObject(freshSite(), async (site) => {
 				await migrate(site);
 				const enabled = await enable(site, 'token');
-				// the follow-up is the whole point: under wrangler dev this never returned
+				// the follow-up is what matters: under wrangler dev this never returned
 				const after = await sql(site, 'SELECT COUNT(*) AS c FROM config');
 				return { enabled, after };
 			});
@@ -139,7 +139,7 @@ describe('a module enable in the workers pool lane', () => {
 	 * so statements can only exceed rows by the handful of aliases -- and a quadratic replay shows
 	 * up here as an order of magnitude rather than a few percent: the same enable measured **3,012**
 	 * router statements over 421 rows before `RowidPlan`. Pinning statements rather than rows is
-	 * deliberate; rows move when a schema gains an index, and that is a different finding.
+	 * intended; rows move when a schema gains an index, and that is a different finding.
 	 */
 	it(
 		'reports what one enable costs in charged rows',

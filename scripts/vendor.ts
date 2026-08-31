@@ -9,7 +9,7 @@ const outDir = resolve(import.meta.dirname, '../vendor');
 /**
  * The versions extracted from the npm `php-wasm` package, which ships 8.0 through 8.5.
  *
- * **8.5 IS DELIBERATELY NOT HERE.** The interpreter that ships is a `phasm` build fetched into
+ * **8.5 IS NOT HERE.** The interpreter that ships is a `phasm` build fetched into
  * `.interp/` by `scripts/fetch-interpreter.ts`; npm's `php8.5-web.mjs` is the upstream default build
  * with the same version number and different bytes. Writing one to `vendor/php8.5.wasm` would put
  * two different 8.5 binaries a directory apart, which is how `static-free-v1` got bundled at 710,410

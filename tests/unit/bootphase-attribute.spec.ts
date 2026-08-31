@@ -50,7 +50,7 @@ p1-render-s2	1990
 
 describe('parseTag', () => {
 	it('keeps the dash inside a phase name', () => {
-		// the whole point: a first-dash split would call this phase `kernel`
+		// a first-dash split would call this phase `kernel`
 		expect(parseTag('p1-kernel-boot-s0')).toEqual({ phase: 'kernel-boot', sample: 0 });
 		expect(parseTag('p1-container-unserialize-s12')).toEqual({
 			phase: 'container-unserialize',
@@ -182,7 +182,7 @@ describe('attribute', () => {
 		expect(byPhase.get('kernel-boot')?.costMinMs).toBe(500);
 	});
 
-	it('is robust to the input arriving out of order', () => {
+	it('handles the input arriving out of order', () => {
 		const shuffled = parseTsv(SAMPLE_TSV.split('\n').reverse().join('\n'));
 		const again = new Map(attribute(summarise(shuffled)).map((r) => [r.phase, r.costMs]));
 		expect(again.get('kernel-boot')).toBe(500);

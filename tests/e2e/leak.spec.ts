@@ -42,7 +42,7 @@ import { firstDifference, maskNonces } from './helpers/twice.js';
 
 const skip = await e2eGate();
 
-/** the interleaving; `anon` appears twice on purpose, before and after the privileged identities */
+/** the interleaving; `anon` appears twice, before and after the privileged identities */
 const SEQUENCE = [
 	{ identity: 'anon-before', cookie: null },
 	{ identity: 'user-a', cookie: sessionCookie('a') },
@@ -197,7 +197,7 @@ describe.skipIf(skip)('the identity leak differential', () => {
 	});
 
 	it('reports what the run could not cover, so a pass is not over-read', () => {
-		// a deliberate, asserted statement of scope rather than a comment nobody reads: these
+		// an asserted statement of scope rather than a comment nobody reads: these
 		// cookies are Worker-shaped, not Drupal session records
 		const map = byIdentity(shots);
 		const authed = ['user-a', 'user-b', 'admin'].map(

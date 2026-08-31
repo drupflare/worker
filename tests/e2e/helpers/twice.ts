@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 /**
  * Run a step twice in the same object and compare the two results.
  *
- * **This is the whole point of the operation lane.** Five of this project's most expensive defects
+ * **This is what the operation lane is for.** Five of this project's most expensive defects
  * were the same class and all of them were invisible on the first request, because the first request
  * is the one that populates whatever static, memo or cache then lies to the second:
  *
@@ -120,7 +120,7 @@ export const VIEW_DOM_ID = /js-view-dom-id-[0-9a-f]{64}/g;
  * after migrate, 0 after a prefill-served read, and 1 after the first inline render. The key is
  * therefore per site, which is the correct posture and matches how `hash_salt` is handled.
  *
- * The consequence for comparison is the point: the prefilled page carries a `permissionsHash`
+ * The consequence for comparison: the prefilled page carries a `permissionsHash`
  * computed on the BUILD machine from a key no deployed site has, so a live re-render can never
  * reproduce the packed bytes. Any byte-identity assertion that spans the prefill/live boundary has
  * to mask this or it is asserting that two different sites share a secret.
@@ -141,7 +141,7 @@ export const FORM_NONCE = /form-[A-Za-z0-9_-]{40,}/g;
  * Everything that legitimately varies between two renders of identical content.
  *
  * Kept as one list so a comparison masks the known set and nothing else. Adding to it is a
- * deliberate act that should come with a measurement, because every entry is a thing this suite can
+ * explicit act that should come with a measurement, because every entry is a thing this suite can
  * no longer see.
  */
 export const RENDER_NONCES = [VIEW_DOM_ID, PERMISSIONS_HASH, FORM_NONCE];

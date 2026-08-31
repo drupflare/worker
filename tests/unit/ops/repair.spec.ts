@@ -79,7 +79,7 @@ describe('quarantine needs repeated failures of the SAME code', () => {
 
 	it('clears strikes on a pass but does NOT leave quarantine', () => {
 		// one good render says nothing about the condition that caused the quarantine, so release is a
-		// separate deliberate act
+		// separate explicit act
 		let s = strike(CLEAN_STATE, 'boom', QUARANTINE_STRIKES);
 		s = recordOutcome(s, pass, 5000);
 		expect(s.strikes).toBe(0);

@@ -8,9 +8,8 @@ import { lockVersions } from '../src/ops/packagist';
  *
  * Baked rather than fetched. The map is ~2.4 KB, and the installability check's whole value is that a
  * refusal costs ONE subrequest; spending a second one to learn what this site already ships would
- * halve that. It is also
- * genuinely part of the bundle's identity -- the lock and the packed Drupal tree have to agree, and a
- * runtime fetch could disagree with the tree that shipped beside it.
+ * halve that. It is also part of the bundle's identity -- the lock and the packed Drupal tree have
+ * to agree, and a runtime fetch could disagree with the tree that shipped beside it.
  *
  * `tests/node/shipped-lock.spec.ts` fails when this drifts from the lock on disk, because
  * `assets/driver.json` went silently stale twice by exactly this mechanism.

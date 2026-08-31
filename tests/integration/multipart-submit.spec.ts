@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { drupalOp } from '../../src/drupal/site-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -55,11 +56,12 @@ async function provisioned(): Promise<DurableObjectStub> {
 		);
 		expect(r.status, await r.clone().text()).toBe(200);
 		// the shipped pack registers admin_only, so a visitor cannot reach the form at all
+		// `drupalOp` rather than a bare fragment: provisioning drops the interpreter, so there is no
+		// resident container to reach `\Drupal::` through
 		await site.runJson(
-			`<?php
-			\\Drupal::configFactory()->getEditable("user.settings")->set("register", "visitors")->save();
-			\\Drupal::service("cache.config")->deleteAll();
-			echo json_encode(["ok" => true]);`
+			drupalOp(`\\Drupal::configFactory()->getEditable("user.settings")
+				->set("register", "visitors")->save();
+			\\Drupal::service("cache.config")->deleteAll();`)
 		);
 	});
 	return stub;

@@ -36,7 +36,7 @@ import { join, relative, resolve } from 'node:path';
 import { FREE_CEILING, measureBundle } from './measure/bundle-size';
 import { decodeLatin1, readEntry, readPack } from './scrub-pack-secrets';
 
-/** the only two directories a payload may write into; `vendor/` is deliberately not one of them */
+/** the only two directories a payload may write into; `vendor/` is not one of them */
 export const PAYLOAD_ROOTS = ['assets/', '.interp/'] as const;
 
 /**
@@ -139,7 +139,7 @@ export function shippedPaths(ignoreSource: string): string[] {
 /**
  * Asserts the declared asset plan and `.assetsignore` describe the same set.
  *
- * Bidirectional on purpose: a file added to the ignore file but not here would ship to the edge and be
+ * Bidirectional: a file added to the ignore file but not here would ship to the edge and be
  * missing from the payload, and one added here but not there would be carried and never uploaded.
  *
  * @throws when either side names something the other does not.

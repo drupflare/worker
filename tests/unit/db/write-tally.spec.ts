@@ -303,7 +303,7 @@ describe('the always-on write meter, separate from the diagnostic tally', () => 
 		};
 	}
 
-	it('counts writes with NO tally armed, which is the whole point', () => {
+	it('counts writes with NO tally armed', () => {
 		// the daily meter is a product reading; gating it behind the diagnostic tally is what
 		// left the Limits page showing "nothing measures this yet" for the binding meter
 		let seen = 0;

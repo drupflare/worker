@@ -830,7 +830,7 @@ describe('a restore that fails partway', () => {
 
 // #endregion
 
-describe('what a dump carries and what it deliberately leaves behind', () => {
+describe('what a dump carries and what it leaves behind', () => {
 	function withCaches(): DatabaseSync {
 		const db = new DatabaseSync(':memory:');
 		db.exec(`CREATE TABLE cache_container (cid TEXT PRIMARY KEY, data BLOB)`);

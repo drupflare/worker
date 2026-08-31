@@ -58,7 +58,7 @@ describe('the ladder', () => {
 		).toEqual({ origin: 'https://configured.example', from: 'var' });
 	});
 
-	/** the whole point: after one real request, a forged Host changes nothing */
+	/** after one real request, a forged Host changes nothing */
 	it('lets a pin win over an observation', () => {
 		expect(
 			chooseOrigin({ pinned: 'https://pinned.example', observed: 'https://attacker.example' })

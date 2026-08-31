@@ -160,8 +160,8 @@ $globs = [
 foreach ($globs as $label => $sql) { $probe($label, $sql); }
 
 // Q7: does sql.exec() bind a JS BigInt? The codec produces one for an integer
-// beyond Number.MAX_SAFE_INTEGER, and 32-bit PHP can only express it as an
-// envelope, so this is the only way the value can travel at all.
+// beyond Number.MAX_SAFE_INTEGER, which JSON cannot carry and a JS number cannot
+// hold exactly, so the envelope is the only way the value travels at all.
 $wide = '9007199254740993';
 $probe('bigint_write_envelope', 'UPDATE cfw_probe SET big = :b WHERE x = 1', [':b' => ['__phpint' => $wide]]);
 $probe('bigint_read_envelope', 'SELECT big FROM cfw_probe WHERE x = 1');
@@ -1417,6 +1417,13 @@ try {
   $out['bytes'] = strlen($body);
   $out['pageCache'] = $response->headers->get('x-drupal-cache');
   $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
+  // the cache tags this render bubbled, so a compiled plan can be invalidated by the same tags
+  // Drupal would invalidate the render cache with
+  try {
+    $out['cacheTags'] = $response instanceof \Drupal\Core\Cache\CacheableResponseInterface
+      ? array_values($response->getCacheableMetadata()->getCacheTags())
+      : [];
+  } catch (\Throwable $e) { $out['cacheTags'] = []; }
   $out['contentType'] = $response->headers->get('content-type');
   $out['location'] = $response->headers->get('location');
   // what Drupal said about storing this, which page_cache_kill_switch and any module with a
@@ -1792,7 +1799,7 @@ echo json_encode($out);
  * account, same hash salt. That is the literal first thing a user does and it was
  * on no list until now.
  *
- * Deliberately NOT Drupal's installer: that is the heaviest write workload in the
+ * NOT Drupal's installer: that is the heaviest write workload in the
  * product (1,052 ms and a 72.5 MB peak natively, never run in wasm) and it would
  * re-do work the pack already contains. This edits the four things that actually
  * differ per site, through Drupal's own APIs so the caches invalidate correctly.
@@ -2560,7 +2567,7 @@ echo json_encode([
  * wrapper populates, so `HeaderProcessor::parseHeaders([])` raises and every call rejects with
  * `RequestException: An error was encountered while creating the response`.
  *
- * THE CONTROL IS THE POINT OF THIS FRAGMENT. It drives core's handler over the same wrapper and
+ * THE CONTROL IS WHAT THIS FRAGMENT ADDS. It drives core's handler over the same wrapper and
  * the same cached row and requires it to STILL fail; a seam whose control goes green is measuring
  * something other than the defect and must be thrown away rather than kept. The caller seeds
  * `cfw_http_cache` itself, so nothing here touches the network.
@@ -2667,11 +2674,11 @@ echo json_encode([
  * submit" is not actionable; this reports which of four walls rejects it, with the value Drupal
  * actually saw at each stage.
  *
- * It builds the request the SAME WAY `cfw_serve()` does rather than calling it, because the whole
- * point is to hold the Request object and interrogate it -- `cfw_serve()` returns only a Response,
- * so the two questions that matter first (did Drupal see POST, did it see the values) are
- * unanswerable through it. The construction is duplicated deliberately and must be kept in step; if
- * they ever disagree, this probe is measuring something the serve path does not do.
+ * It builds the request the SAME WAY `cfw_serve()` does rather than calling it, because it has to
+ * hold the Request object and interrogate it -- `cfw_serve()` returns only a Response, so the two
+ * questions that matter first (did Drupal see POST, did it see the values) are unanswerable
+ * through it. The construction is duplicated and must be kept in step; if they ever disagree,
+ * this probe is measuring something the serve path does not do.
  */
 export function submissionProbe(options: {
 	path?: string;
@@ -3240,6 +3247,18 @@ try {
     $kernel->setSitePath($sitePath);
     \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
     $kernel->boot();
+    // A FRESHLY BOOTED KERNEL HAS AN EMPTY REQUEST STACK, and anything reaching routing then dies
+    // on RequestContext::fromRequest(null). Invisible while every caller ran after a render had
+    // pushed one; the provisioning drops made a cold container the ordinary case.
+    $stack = $kernel->getContainer()->get('request_stack');
+    if ($stack->getCurrentRequest() === null) {
+      $stack->push($boot);
+      $kernel->getContainer()->get('router.request_context')->fromRequest($boot);
+    }
+    // and the .module FILES, which only the HTTP kernel path loads. Without this a cold container
+    // has services but no procedural half: saving a user reached _user_mail_notify() and died
+    // "Call to undefined function"
+    $kernel->getContainer()->get('module_handler')->loadAll();
     $GLOBALS['__pw_kernel'] = $kernel;
     $out['bootedKernel'] = 1;
   }
@@ -3379,7 +3398,7 @@ export interface WriteWorkloadOptions {
  * shipped schema is on the CONTENT path instead -- `node`, `node_revision`, `path_alias`,
  * `file_managed`, `users`. None of them appears in a fill, so none of them has ever been priced.
  *
- * THE ENTITY API RATHER THAN A FORM, deliberately, and the difference is stated rather than
+ * THE ENTITY API RATHER THAN A FORM, and the difference is stated rather than
  * implied: a form submission also writes `sessions`, the form cache and flood control, so its total
  * is the operation PLUS the wrapper. This fragment isolates the entity write, which is the half the
  * per-table breakdown and the AUTOINCREMENT audit are about; `write-amplification.spec.ts` prices
@@ -3666,6 +3685,13 @@ try {
   $out['bytes'] = strlen($body);
   $out['status'] = $response->getStatusCode();
   $out['dynamicCache'] = $response->headers->get('x-drupal-dynamic-cache');
+  // the cache tags this render bubbled, so a compiled plan can be invalidated by the same tags
+  // Drupal would invalidate the render cache with
+  try {
+    $out['cacheTags'] = $response instanceof \Drupal\Core\Cache\CacheableResponseInterface
+      ? array_values($response->getCacheableMetadata()->getCacheTags())
+      : [];
+  } catch (\Throwable $e) { $out['cacheTags'] = []; }
   $out['uid'] = (int) \Drupal::currentUser()->id();
   $out['roles'] = array_values(\Drupal::currentUser()->getRoles());
   $out['ok'] = true;
@@ -3914,8 +3940,8 @@ echo json_encode($out);
  * booleans, and the boot is the expensive part.
  *
  * EACH PROBE IS WRAPPED, because a probe that throws must answer `false` rather than take the run
- * down -- several of them deliberately reference symbols that may not exist, which is the whole
- * point of asking.
+ * down -- several of them reference symbols that may not exist, which is what they are asking
+ * about.
  *
  * @param probes
  *   `id` to a PHP EXPRESSION evaluating to a boolean.

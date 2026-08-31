@@ -125,8 +125,12 @@ describe('P30: the opcache arms', () => {
 		expect((by('shm').opcache as { enabled: boolean } | null)?.enabled).toBe(true);
 		expect(by('shm').heap).toBeGreaterThan(ISOLATE_LIMIT);
 
-		// and off is cheaper than the shipping arm on BOTH memory axes
+		// and off is cheaper than the shipping arm on the MEMFS axis. The heap axis no longer
+		// separates them: it moves in whole growth steps, and once the packed `cache_container`
+		// row became readable neither arm builds a container, so both read `INITIAL_MEMORY`
+		// exactly. Asserting a difference below the reading's resolution is a probe that cannot
+		// fail either way.
 		expect(by('off').bytes).toBe(0);
-		expect(by('off').heap).toBeLessThan(by('file').heap);
+		expect(by('off').heap).toBe(by('file').heap);
 	}, 900_000);
 });

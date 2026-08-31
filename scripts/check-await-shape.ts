@@ -6,7 +6,7 @@ import { Glob } from 'bun';
  * `await` on a non-thenable is legal and does nothing except cost a microtask, so nothing fails and
  * nothing warns. What it costs is READING: every caller of `await resolveThing()` now believes
  * `resolveThing` does I/O, and the next person to touch it preserves an asynchrony that was never
- * there. The reverse case -- a function that genuinely returns a promise -- is fine unmarked, since
+ * there. The reverse case -- a function that does return a promise -- is fine unmarked, since
  * `function f(): Promise<T>` is a legitimate way to write one, so only the no-op await is reported.
  *
  *   bun scripts/check-await-shape.ts          # report

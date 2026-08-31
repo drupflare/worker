@@ -7,7 +7,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  *
  * login -> read -> create -> config -> status -> update -> read back -> delete -> read again
  *
- * **Sequential and stateful on purpose.** Each step depends on the one before, which is what catches
+ * **Sequential and stateful.** Each step depends on the one before, which is what catches
  * the failures a set of independent tests cannot: a session that does not survive between steps, a
  * form build id that does not outlive a hibernation, a cache not invalidated after an update, a
  * delete that leaves the page still served. None of those appear when every test starts from a fresh

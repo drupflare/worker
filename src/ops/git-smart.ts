@@ -154,7 +154,7 @@ export function requestRefs(ad: Advertisement): { id: string; ref: string; sha: 
 /**
  * The `POST /git-upload-pack` body for a shallow single-commit fetch.
  *
- * `side-band-64k` is deliberately NOT requested: without it the server writes the packfile as raw
+ * `side-band-64k` is NOT requested: without it the server writes the packfile as raw
  * bytes after the NAK instead of framing it, which removes a demux stage and cannot be sent anyway.
  */
 export function uploadPackRequest(want: string, depth = 1): Uint8Array {

@@ -45,8 +45,8 @@ export function recordOutcome(
 	nowMs: number
 ): RepairState {
 	if (outcome.ok) {
-		// a clean pass clears the strikes but does NOT un-quarantine: leaving quarantine is a separate,
-		// deliberate act, because one good render says nothing about the condition that caused it
+		// a clean pass clears the strikes but does NOT un-quarantine: leaving quarantine is a
+		// separate explicit act, because one good render says nothing about what caused the fault
 		return { ...state, code: null, strikes: 0 };
 	}
 	const code = outcome.code ?? 'unknown';
@@ -142,7 +142,7 @@ export function parseState(raw: string | null | undefined): RepairState {
 	}
 }
 
-/** clears quarantine after a successful repair; deliberate and explicit, never automatic */
+/** clears quarantine after a successful repair; explicit, never automatic */
 export function release(state: RepairState, nowMs: number): RepairState {
 	return {
 		rung: 'observe',

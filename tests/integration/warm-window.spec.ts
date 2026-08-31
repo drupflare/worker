@@ -251,7 +251,7 @@ describe('the daily rows-written meter', () => {
 	it('is a NO-OP when nothing was written, so a quiet alarm costs no row', async () => {
 		const got = await inObject(freshSite(), (site) => {
 			site.ensureServeTables();
-			// zero the accumulator FIRST, so the two flushes below have genuinely nothing
+			// zero the accumulator FIRST, so the two flushes below have nothing
 			// between them. Flushing to read a baseline would not work: the flush's own
 			// metaSet is a write, so it refills the accumulator it just drained.
 			site.rowsSinceFlush = 0;

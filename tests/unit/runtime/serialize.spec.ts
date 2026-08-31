@@ -61,7 +61,7 @@ describe('Gate', () => {
 		});
 		await expect(failed).rejects.toThrow('boom');
 
-		// the whole point: the next entrant still runs. A rejecting predecessor that held
+		// the next entrant still runs. A rejecting predecessor that held
 		// the link would deadlock every later caller, which is exactly how a nested acquire
 		// of this gate hung every request in the Durable Object once
 		await expect(gate.run(() => 'after')).resolves.toBe('after');

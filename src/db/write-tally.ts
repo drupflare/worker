@@ -1,7 +1,7 @@
 /**
  * The table a write statement targets, or `null` when the statement writes nothing.
  *
- * Deliberately narrow. It recognises the five write forms Drupal's SQL generation actually emits and
+ * Narrow. It recognises the five write forms Drupal's SQL generation actually emits and
  * returns `null` for everything else -- an unattributed write shows up as `null` in
  * the tally, which is visible, where a wrong guess would silently move rows onto the wrong table and
  * corrupt the exact number the roadmap depends on.

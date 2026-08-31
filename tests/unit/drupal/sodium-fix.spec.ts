@@ -84,7 +84,7 @@ describe('the BLAKE2b bridge computes BLAKE2b', () => {
 });
 
 describe('the incremental form shares one context across calls', () => {
-	it('chunked agrees with the one-shot, which is the whole point of Hash::ofStream()', () => {
+	it('chunked agrees with the one-shot, which is what Hash::ofStream() relies on', () => {
 		const states = emptyStates();
 		const init = blake2bHostCall({ op: 'init', len: 32 }, states);
 		expect(init.ok).toBe(true);
@@ -110,7 +110,7 @@ describe('the incremental form shares one context across calls', () => {
 	it('refuses a final length that disagrees with init, where ext-sodium leaks state bytes', () => {
 		// MEASURED on native 8.5.7: final($state, 64) on a state inited at 32 returns the 32-byte
 		// digest followed by 32 bytes of adjacent memory, which is not a digest at any length.
-		// Refusing is a deliberate divergence and the only one the parity run reports
+		// Refusing is an intended divergence and the only one the parity run reports
 		const states = emptyStates();
 		const init = blake2bHostCall({ op: 'init', len: 32 }, states);
 		const state = init.ok ? init.state : 0;

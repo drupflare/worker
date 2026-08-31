@@ -29,7 +29,8 @@ describe('module specifiers', () => {
 					const m = /^\s*(?:import|export)[^'"]*from\s+['"](\.[^'"]*)['"]/.exec(line);
 					if (!m) return;
 					const spec = m[1] as string;
-					if (!/\.(js|json|wasm|zst|mjs)$/.test(spec)) hits.push(`${f}:${i + 1} ${spec}`);
+					if (!/\.(js|json|wasm|zst|br|mjs)$/.test(spec))
+						hits.push(`${f}:${i + 1} ${spec}`);
 				});
 		}
 		expect(hits, `${hits.length} relative imports without an extension`).toEqual([]);

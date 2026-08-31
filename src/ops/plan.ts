@@ -80,7 +80,7 @@ export function resetPlanMemo(): void {
 /**
  * The effective plan: KV first, then the deployed var, then free.
  *
- * KV WINS ON PURPOSE. `PLAN` is a `vars` entry, so upgrading an account meant editing the config and
+ * KV WINS. `PLAN` is a `vars` entry, so upgrading an account meant editing the config and
  * redeploying -- a deploy to change a fact the deploy does not control. An operator who upgrades
  * flips one KV key and every isolate picks it up within {@link PLAN_MEMO_MS}.
  *
@@ -134,7 +134,7 @@ export const SETTINGS_KV_KEY = 'settings';
  * `/restore` (a whole-database overwrite). Every name here is a performance lever whose worst case
  * is a slow site; nothing here changes what is reachable.
  *
- * `PLAN` is deliberately absent: it has its own key and its own resolver, because it selects a whole
+ * `PLAN` is absent: it has its own key and its own resolver, because it selects a whole
  * profile rather than one number.
  *
  * THE MAIL CREDENTIALS ARE ABSENT FOR THE SAME REASON `PW_DIAGNOSTICS` IS. `MAIL_TRANSPORT` and
@@ -168,7 +168,19 @@ export const KV_OVERRIDABLE = [
 	// placement is the one entry here that is not a number, and it belongs on this list rather than
 	// in `vars` for the reason the list exists: an operator who learns where their audience is
 	// should not need a redeploy to act on it. Worst case is still a slow site
-	'SITE_LOCATION_HINT'
+	'SITE_LOCATION_HINT',
+	// the read replica pool. Both qualify on the list's own test: an unfilled lane refuses and the
+	// router retries the primary, so the worst case of a wrong value is a wasted hop. Turning the
+	// pool on and off is exactly the decision an operator makes after watching traffic, and it must
+	// not need a redeploy
+	'REPLICA_COUNT',
+	'REPLICA_LAG_MS',
+	// warming. On by default and on this list so a site sharing a free account with others can be
+	// un-warmed without shipping anything
+	'SITE_WARM',
+	// the front worker's compiled-plan tier. Same test as the rest: turning it off costs the object
+	// hop it always paid, which is a slow site and not a changed reachability
+	'EDGE_PLAN'
 ] as const;
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];

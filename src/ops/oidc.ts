@@ -57,7 +57,7 @@ export function callbackUri(origin: string): string {
 	return `${origin.replace(/\/+$/, '')}${CALLBACK_PATH}`;
 }
 
-/** the scopes a login needs and nothing more; `offline_access` is deliberately absent */
+/** the scopes a login needs and nothing more; `offline_access` is absent */
 export const DEFAULT_SCOPES = ['openid', 'profile', 'email'];
 
 export function discoveryUrl(issuer: string): string {
@@ -442,7 +442,7 @@ export function tokenRequestBody(code: string, verifier: string, config: OidcCon
 /**
  * Exchanges the code and verifies what comes back.
  *
- * The whole point of Tier B is in the `await`s here: they happen at a route the host owns, before
+ * Tier B lives in the `await`s here: they happen at a route the host owns, before
  * PHP is entered, so PHP never has to suspend.
  */
 export async function completeLogin(

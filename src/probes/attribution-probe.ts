@@ -4,7 +4,7 @@
  *
  * The slicing idea is: start expensive work in one invocation, park it, return,
  * then resume it in the next invocation so each gets a fresh 10 ms budget. That
- * rests on an undocumented behaviour — **which invocation is charged for work
+ * rests on an undocumented behaviour: **which invocation is charged for work
  * that was started in one and completed in another.**
  *
  * The question decomposes, and only the second half needs a JSPI build:
@@ -19,8 +19,8 @@
  * multi-hour rebuild.
  *
  * Method: /park burns a little, then awaits a promise held in DO memory and
- * returns. /resume resolves that promise, so the continuation — including a large
- * burn — runs during the resuming invocation. Read cpuTime per invocation from
+ * returns. /resume resolves that promise, so the continuation (including a large
+ * burn) runs during the resuming invocation. Read cpuTime per invocation from
  * `wrangler tail` and see where the large burn landed.
  */
 
@@ -40,7 +40,7 @@ interface Verdict {
  *
  * Iteration-counted, not clock-driven: Workers freeze Date.now() during
  * synchronous execution, so a deadline loop never terminates. The result must be
- * returned and used, or V8 eliminates the loop as dead code — both traps were hit
+ * returned and used, or V8 eliminates the loop as dead code; both traps were hit
  * and measured earlier in this project.
  */
 function burnCpu(units: number): number {

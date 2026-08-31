@@ -76,7 +76,7 @@ async function measure(site: ServeDo, budget?: number) {
 
 describe('the lazy-FS budget against real render demand', () => {
 	it(
-		'is deliberately BELOW demand, so eviction on the render path is the expected state',
+		'is BELOW demand, so eviction on the render path is the expected state',
 		async () => {
 			const out = await inObject(freshSite(), (site: ServeDo) => measure(site));
 
@@ -84,7 +84,7 @@ describe('the lazy-FS budget against real render demand', () => {
 			expect(out.budget, 'the lazy mount must be the one in use').toBeGreaterThan(0);
 			expect(out.budget).toBe(CONFIGURED_BUDGET);
 
-			// the trade, stated as an assertion: the budget does not cover demand, on purpose
+			// the trade, stated as an assertion: the budget does not cover demand
 			expect(CONFIGURED_BUDGET).toBeLessThan(MEASURED_DEMAND);
 			expect(out.evicted, 'a budget under demand must actually evict').toBeGreaterThan(0);
 		},

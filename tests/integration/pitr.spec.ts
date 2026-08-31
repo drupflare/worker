@@ -24,7 +24,7 @@ function withPitr(obj: ServeDo, bookmarks: Record<string, string> = {}): void {
 }
 
 describe('the local runtime, which answers rather than refuses', () => {
-	// the whole point: the method is present, so only the VALUE says the log is missing
+	// the method is present, so only the VALUE says the log is missing
 	it('refuses an all-zero bookmark and reports it', async () => {
 		const site = freshSite();
 		const body = (await (await call(site, '/__pitr')).json()) as Record<string, unknown>;

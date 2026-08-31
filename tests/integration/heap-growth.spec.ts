@@ -17,12 +17,12 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * At a step of 0 the geometric candidate collapses to `oldSize` and the new size becomes
  * `align(requestedSize, 64 KiB)`, so the peak IS demand, to a page.
  *
- * THE PROFILE LINE IS THE POINT. Each run prints one `[heap-profile]` record; the ladder driver
+ * THE PROFILE LINE IS THE OUTPUT. Each run prints one `[heap-profile]` record; the ladder driver
  * reads them across arms and does the cross-arm arithmetic, because "a smaller step must not produce
  * a larger peak" is a relationship between runs and cannot be asserted inside one.
  *
  * COUNTS AND BYTES ONLY, never milliseconds -- RULE 0. Growth overhead is real and it is a CPU cost,
- * so it is deliberately NOT scored here; a local clock cannot see it and an edge one would need a
+ * so it is NOT scored here; a local clock cannot see it and an edge one would need a
  * deploy per arm.
  */
 

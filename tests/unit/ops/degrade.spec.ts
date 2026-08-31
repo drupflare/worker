@@ -42,7 +42,7 @@ describe('the ladder', () => {
 			false,
 			false
 		]);
-		// a visitor waiting on a page still gets one; that is the whole point of the rung
+		// a visitor waiting on a page still gets one, which is why the rung sits here
 		expect(d.render).toBe(true);
 		expect(d.writes).toBe(true);
 	});

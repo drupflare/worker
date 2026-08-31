@@ -106,7 +106,7 @@ describe('the XChaCha20-Poly1305 bridge', () => {
 			key64: b64(bytes(16))
 		});
 		expect(r.ok).toBe(false);
-		// the whole point: not `auth`, so PHP throws instead of returning FALSE
+		// not `auth`, so PHP throws instead of returning FALSE
 		expect((r as { auth?: boolean }).auth).toBeFalsy();
 		expect((r as { error: string }).error).toContain('KEYBYTES');
 	});

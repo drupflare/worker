@@ -10,7 +10,7 @@
  *
  * A `const` exported from the entrypoint takes the whole worker down at startup. Exported
  * FUNCTIONS are fine, which is why `bodyTooLarge()` and `isNeverDrupal()` sit there without
- * complaint and only the number failed -- and why the trap is easy to walk into twice.
+ * complaint and only the number failed, which is what makes the distinction easy to miss twice.
  * `tests/unit/runtime/route-gate.spec.ts` pins the rule so the next constant fails a test rather
  * than a dev server.
  */

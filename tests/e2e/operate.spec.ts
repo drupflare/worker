@@ -319,7 +319,7 @@ describe.skipIf(skip)(`operating a site at ${ENDPOINT} (site ${site})`, () => {
 	 * offload private files, so they are not published to a bucket. That is a real control and it is
 	 * not the same control as refusing the write. Asserted here as what actually happens, so the
 	 * behaviour is pinned either way -- if it is later made to refuse, this fails and the decision
-	 * gets made deliberately rather than drifting.
+	 * gets made explicitly rather than drifting.
 	 */
 	it('12. accepts a private:// write at the wrapper, identically both times', async () => {
 		const pair = await twice(async () =>

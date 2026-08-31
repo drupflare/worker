@@ -24,7 +24,7 @@ if (!class_exists('XMLWriter', false)) {
 	/**
 	 * Enough of libxml's writer to generate a sitemap, and no more.
 	 *
-	 * Deliberately not final: the whole reason it exists is that a contrib class extends it.
+	 * Not final: it exists so a contrib class can extend it.
 	 */
 	class XMLWriter {
 		/** the document built so far */

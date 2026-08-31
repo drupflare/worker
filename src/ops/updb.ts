@@ -361,7 +361,7 @@ export interface UpdbUnit {
  * A PHP fragment's JSON reply, or the snapshot report, as one beat produced it.
  *
  * `Record<string, any>` and not `unknown`, with the trade named: the shape
- * genuinely depends on which of eleven units ran, every read below is already guarded by a
+ * depends on which of eleven units ran, every read below is already guarded by a
  * `typeof` or `Array.isArray` test, and `unknown` would turn each of those twelve guarded reads
  * into a cast without making any of them safer.
  */

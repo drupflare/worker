@@ -8,7 +8,7 @@ import { type ModuleCapability } from './catalog.js';
  * the authority for what ships; this is the working set, merged into it by `allKnownCapabilities()`.
  *
  * **THESE ARE ENGINEERING POSITIONS, NOT VERDICTS.** A module is `refused` only where the platform
- * genuinely cannot host it after asking what a rewrite would take. Every non-empty entry carries
+ * cannot host it after asking what a rewrite would take. Every non-empty entry carries
  * what it would take to move up a tier, because "blocked" without a route out is just a shrug.
  *
  * **An absent entry is `unknown`, never `works-today`.** `tierFor()` enforces that; this file must
@@ -214,7 +214,7 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/purge': {
 		needs: ['deferrable-outbound', 'cron'],
 		why: 'invalidation is a queue drained by cron, and each purger POSTs or PURGEs to a CDN. Both halves are deferrable; neither has to answer inside a render',
-		lift: 'the POST tier; the cron half is already driven. Worth noting this runtime already invalidates its OWN edge by bumping the generation, so purge is only needed for a CDN in front of it'
+		lift: 'the POST tier; the cron half is already driven. This runtime already invalidates its OWN edge by bumping the generation, so purge is only needed for a CDN in front of it'
 	},
 	// #endregion
 
@@ -256,7 +256,7 @@ export const MODULE_TIER_NOTES: Readonly<Record<string, TierNote>> = {
 	'drupal/openid_connect': {
 		needs: ['blocking-outbound'],
 		why: 'the authorization-code exchange POSTs to the identity provider token endpoint and must have the answer before it can finish the login response. Unlike a search query there is no partial answer to render',
-		lift: 'the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\\drupflare\\Network\\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider genuinely signed for another of its clients; the setup page is live and states the `externalauth` dependency'
+		lift: 'the MODULE stays refused and the CAPABILITY is covered instead, 2026-08-24. JSPI would not lift it either: `WITH_OPENSSL=0`, so PHP cannot verify an RS256 `id_token` even if handed one synchronously, and an unverified `id_token` is an unauthenticated login. `src/ops/oidc.ts` completes the exchange at a route the host owns, verifies the signature with `crypto.subtle`, and hands PHP a single-use claims ticket; `Drupal\\drupflare\\Network\\CfwOidc` maps it onto `drupal/externalauth`, which is itself `verified`. So a site gets provider login without this module. The round trip is exercised against a real Keycloak, including the refusal of a token the provider validly signed for another of its clients; the setup page is live and states the `externalauth` dependency'
 	},
 	// #endregion
 

@@ -95,7 +95,7 @@ export interface LocalStep {
 	 * Observed here, with `curl` failing identically, so it is the path to the origin rather than the
 	 * bucket or the script. The same bytes are in phasm's artifacts behind `gh` auth, over
 	 * github.com -- a different host on a different domain, which is what makes it a real fallback and
-	 * not a retry. Its tools are deliberately NOT part of the preflight: a fallback whose requirements
+	 * not a retry. Its tools are NOT part of the preflight: a fallback whose requirements
 	 * are demanded up front is just a requirement.
 	 */
 	fallback?: { commands: string[][]; tools: readonly ToolId[]; why: string };
@@ -162,7 +162,7 @@ export interface ResolvedSibling extends Sibling {
 /**
  * Finds each sibling, preferring what is already there over cloning.
  *
- * The order is deliberate and matches `.claude`-level convention elsewhere: an explicit environment
+ * The order matches the convention used elsewhere: an explicit environment
  * setting outranks an inference from the layout, and the developer layout outranks a private copy --
  * so somebody with `../rom` checked out builds against the tree they are editing rather than against
  * a clone of master that silently shadows it.
@@ -269,21 +269,14 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 	},
 	{
 		id: 'frame',
-		title: 'compress the interpreter into the zstd frame the seam imports',
-		produces: ['.interp/php8.5.wasm.zst'],
+		title: 'compress the interpreter into the brotli frame the seam imports',
+		produces: ['.interp/php8.5.wasm.br'],
 		inputs: ['.interp/php8.5.wasm'],
-		tools: ['bun', 'zstd'],
-		commands: () => [['bun', 'scripts/pack-wasm-zstd.ts', '.interp/php8.5.wasm']]
-	},
-	{
-		id: 'decoder',
-		title: 'build the wasm zstd decoder',
-		produces: ['.interp/zstddec.wasm'],
-		tools: ['docker'],
-		commands: () => [['bash', 'scripts/build-zstd-decoder.sh']],
-		note:
-			'the only step that needs Docker, and it runs once: the zstd version and the emsdk image ' +
-			'are both pinned, so the output is cached and never rebuilt on its own'
+		// NO zstd CLI and NO Docker any more. Node's own brotli packs it and `node:zlib` inflates it
+		// on the edge, so producer and consumer are the same implementation; the wasm zstd decoder
+		// step that used to sit here was the build's only Docker dependency
+		tools: ['bun'],
+		commands: () => [['bun', 'scripts/pack-wasm-brotli.ts', '.interp/php8.5.wasm']]
 	},
 	{
 		id: 'siblings',
@@ -483,8 +476,7 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 			'assets/driver.json',
 			'assets/drupal-pf/core.pf.bin',
 			'assets/drupal-sql/manifest.json',
-			'.interp/php8.5.wasm.zst',
-			'.interp/zstddec.wasm'
+			'.interp/php8.5.wasm.br'
 		],
 		tools: ['bun'],
 		// optional because the runtime does not need it: an absent prefill.json means the first

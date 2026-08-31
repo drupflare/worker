@@ -125,7 +125,7 @@ describe('a form anonymous users may submit', () => {
 });
 
 /**
- * What the probe above deliberately cannot answer: does a WRONG password differ from a right one?
+ * What the probe above cannot answer: does a WRONG password differ from a right one?
  *
  * The reported symptom was "login 200s on every request regardless of whether it was valid", and a
  * failed Drupal login legitimately answers 200 with the form re-rendered, so status alone proves

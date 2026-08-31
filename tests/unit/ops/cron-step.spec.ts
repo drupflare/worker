@@ -4,6 +4,8 @@ import {
 	advanceCursor,
 	CRON_HOOKS,
 	cronAlarmDelayMs,
+	cronHooksFor,
+	cronHooksFromList,
 	cronUnits,
 	HIBERNATION_IDLE_MS,
 	idleRearmMs,
@@ -17,7 +19,7 @@ import {
 	writeCursor
 } from '../../../src/ops/cron';
 
-describe('cronUnits: the chain and what it deliberately omits', () => {
+describe('cronUnits: the chain and what it omits', () => {
 	const units = cronUnits();
 	const ids = units.map((u) => u.id);
 
@@ -99,6 +101,57 @@ describe('the skip policy carries its reasons', () => {
 		expect(Array.isArray(KNOWN_CRON_HOOKS)).toBe(true);
 		expect(KNOWN_CRON_HOOKS.length).toBeGreaterThan(0);
 		expect(typeof CRON_HOOKS).toBe('object');
+	});
+
+	it('schedules a discovered module that is not on the shipped list', () => {
+		// the defect: `cronUnits()` fell back to KNOWN_CRON_HOOKS because nothing supplied a
+		// discovered list, so a contrib `hook_cron` never ran
+		expect(KNOWN_CRON_HOOKS).not.toContain('scheduler');
+		const modules = cronUnits({ hooks: ['system', 'scheduler'] })
+			.filter((u) => u.module)
+			.map((u) => u.module);
+		expect(modules).toContain('scheduler');
+		// no policy entry means unreviewed, and unreviewed RUNS
+		const scheduler = cronUnits({ hooks: ['scheduler'] }).find((u) => u.module === 'scheduler');
+		expect(scheduler?.unreviewed).toBe(true);
+	});
+});
+
+describe('discovering which hooks this site has', () => {
+	it('reads the module names out of a cronHookList payload', () => {
+		expect(cronHooksFromList({ ok: true, shapes: { system: [], scheduler: [] } })).toEqual([
+			'scheduler',
+			'system'
+		]);
+	});
+
+	it.each([
+		['a failed run', { ok: false, shapes: { system: [] } }],
+		['no shapes', { ok: true }],
+		['an empty site', { ok: true, shapes: {} }],
+		['nothing at all', null]
+	])('answers null for %s, so the caller keeps the list it has', (_label, payload) => {
+		expect(cronHooksFromList(payload)).toBe(null);
+	});
+
+	it('uses the shipped list and asks for discovery when nothing is cached', () => {
+		const out = cronHooksFor(null, 'abc');
+		expect(out.hooks).toEqual(KNOWN_CRON_HOOKS);
+		expect(out.stale).toBe(true);
+	});
+
+	it('uses the cache while the module set is unchanged', () => {
+		const out = cronHooksFor({ at: 'abc', hooks: ['system', 'scheduler'] }, 'abc');
+		expect(out.hooks).toEqual(['system', 'scheduler']);
+		expect(out.stale).toBe(false);
+	});
+
+	it('keeps serving the cached list while asking for a fresh one', () => {
+		// a module was enabled, so the cache is stale -- but it still describes the site better
+		// than the shipped list does, and re-discovery costs a kernel boot
+		const out = cronHooksFor({ at: 'abc', hooks: ['system', 'scheduler'] }, 'def');
+		expect(out.hooks).toEqual(['system', 'scheduler']);
+		expect(out.stale).toBe(true);
 	});
 });
 
@@ -261,7 +314,7 @@ describe('the PHP fragments cannot break the bundle', () => {
 		expect(fragments['runCronHook(file)']).toContain("invokeAllWith('cron'");
 	});
 
-	it('never calls drupal_cron, which is the whole point of the unit list', () => {
+	it('never calls drupal_cron, which is what the unit list replaces', () => {
 		for (const code of Object.values(fragments)) {
 			expect(/drupal_cron|\bcron\(\)->run\b/.test(code)).toBe(false);
 		}

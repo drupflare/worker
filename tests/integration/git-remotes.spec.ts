@@ -551,7 +551,7 @@ describe('a pull against a git server', () => {
 		const site = freshSite();
 		await connected(site);
 		// `preconnect` carried over rather than cast away: workers-types puts it on `typeof fetch`,
-		// so a bare function is genuinely not one
+		// so a bare function is not one
 		globalThis.fetch = Object.assign(async () => new Response('nope', { status: 429 }), {
 			preconnect: realFetch.preconnect
 		});

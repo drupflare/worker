@@ -270,10 +270,10 @@ describe('planning is pure, so the resume decision is one testable function', ()
 				.map((p) => p.step.id)
 		).toEqual(['twig', 'core']);
 		expect(
-			planLocalBuild(root, { skip: ['decoder'] })
+			planLocalBuild(root, { skip: ['frame'] })
 				.filter((p) => !p.run)
 				.map((p) => p.step.id)
-		).toEqual(['decoder']);
+		).toEqual(['frame']);
 	});
 
 	it('refuses a step name that does not exist rather than silently doing nothing', () => {
@@ -302,18 +302,26 @@ describe('the preflight names what is missing before minutes are spent', () => {
 			!missing.includes(tool);
 
 	it('reports a tool only when a step that will run needs it', () => {
-		// a machine with no Docker still builds everything else, and demanding it on a run that skips
-		// the decoder is how a preflight teaches people to ignore it
-		const planned = planLocalBuild(scratch(), { skip: ['decoder'] });
-		expect(missingTools(planned, absent('docker'))).toEqual([]);
+		// a machine missing one tool still builds everything that does not need it, and demanding it
+		// on a run that skips the step is how a preflight teaches people to ignore it
+		const planned = planLocalBuild(scratch(), { skip: ['frame'] });
+		expect(missingTools(planned, absent('zstd'))).toEqual([]);
 	});
 
 	it('names the steps blocked by each missing tool', () => {
 		const planned = planLocalBuild(scratch());
-		const [docker] = missingTools(planned, absent('docker'));
-		expect(docker?.tool).toBe('docker');
-		expect(docker?.steps).toEqual(['decoder']);
-		expect(docker?.hint).toBe(TOOL_HINTS.docker);
+		const [git] = missingTools(planned, absent('git'));
+		expect(git?.tool).toBe('git');
+		expect(git?.steps.length).toBeGreaterThan(0);
+		expect(git?.hint).toBe(TOOL_HINTS.git);
+	});
+
+	it('needs no Docker for any step', () => {
+		// the wasm zstd decoder was the build's ONLY Docker dependency and the brotli frame retired
+		// it: `node:zlib` inflates on the edge, so nothing has to be compiled to read the frame
+		const planned = planLocalBuild(scratch());
+		expect(missingTools(planned, absent('docker'))).toEqual([]);
+		expect(LOCAL_STEPS.flatMap((s) => s.tools)).not.toContain('docker');
 	});
 
 	it('carries a hint for every tool any step names', () => {

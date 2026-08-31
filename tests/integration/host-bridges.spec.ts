@@ -157,7 +157,7 @@ describe('cfw_zlib_dict, from PHP, on a binary that HAS ext-zlib', () => {
  *
  * `openssl_pkey_new()` is part of the extension this shim replaces, so PHP here cannot mint one --
  * and generating it in JS per run would make a failure depend on which key was drawn. This is test
- * material and is deliberately not a secret: it exists to be signed with in a spec.
+ * material and is not a secret: it exists to be signed with in a spec.
  */
 const RSA_PRIVATE_PEM =
 	'-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDUo48/eClNajU5\n/eLKqTqp9nQtxx+IRSz+pHxGqQKcrWtLIvUqiitwpLDFXYR+6J4oGovLKQWPUMKY\nX22rCNBtNwpHkGFwgbPTEKRZkuOv1eG3WunJSs5iDDkviArpqCDYLQ8d0COii3p/\nFzXWR0bziSwDAPFTCR7WsyKmkh/qncouHPtqzkdXYPV7VRUni3S3q7Dvrhoqassd\nsBh41K2Nzl2U0wSG5107ySDprnsFblFI7dWBMqMpKmcr5z5rPODlcdFloIQhpVCZ\ne0auAcT0UrhTEiLwZbkMThgmBg4B6wNfdpYML4y4HJGvuVsDfGH5QHXqzI+CCq+u\nlL1/n8r9AgMBAAECggEARv4ejuG25G5Pu/9cTy5F9EXgzwHasLvrxE61YT//K8Eo\nf8r5kIzV6QNLM3HAEUDnwNrwDlGxVgJwHcBKlJ5aPARyzabSKWZcW90EChXlJ6kg\ndX+Ia1iq5AhRtWFVx2IHKTWOBPWfWB76NGFS66obcaa8B3qyl3cFkUf4iyVhO4p7\n99UTfgwT0NXfMvpBOZo8wysToGtQ2/nAy3743f/RHaMq3O08zke/Zc2Xr0pOMcJE\nn9VH2+iNUzTyD482kc5djcTrgSSUcs7P9JKQ9F7FhMrkiQP/AIBX42BcNP3KMGsA\nOUf8CygUtlcAWv4Th+1DJFb/LyHwromYGMJtW4Uf7wKBgQDx0qd7DY++4Oc9D7Gb\n2G+7Vq5LgiBcvWLZYZRYRd/DG022BzVRih4tgpFcM9zrjG8tbfUmkj4Yauljdtjj\nsWVSP+kvpbmyEhnkGDwiCPO08ZVHtI9wmEZKZ9x9mC6X16qWALk0GqfyY1dpNk+3\nJozYGrqbpToFV/6fgOE8kDeo5wKBgQDhGud46/EEUbHQsxWrJAAaKuKtDgxFchoE\neaNXuxhCiVZk98YmHskDwq7lpxgobMVKi7kgjJDbH9n7XXqfuFnd3XunRu9rPkDk\nbitwrujSsNF3Yf+KV52a+gOYI8gt6+aNe6jW72ScJUKYsa8npR4pcvPEZzJPYNcn\nlH8RsWi8ewKBgQCahFPn2N6ExQh8h86hGkcqmVR9gwRSveCvrh4v2VYFQSkCqtBy\n7aIiyk8/bxQ2nmFb0erXXpK233mJyKMFupBXYecKPwbMtaw9hw7FYJr4f3U3gDQ3\nadVgLcVBqz/6Xh/uAUBV/sJZqwhrffyptsRAQbQDSCwuxe841A0Xub8W+QKBgAh+\nhGeKt7CLCKOwbkvj8uEJ5z3SfuIL+TFcCa7gz3yLRChRNTfxB3LN4N2nnYDBAfzb\nIuQ4iarLG+WhVGQ8h5+YoPbh9Vzdn4M/KQJ6hyyUIYNYvlTRE5BqiMIv73jUIwIJ\nvYhGxkwiF849PjfHwkicHti1cC+Qnu3Oa7EWObaLAoGAcHx1Fbe0/kkvJp/MDL+E\nILcSJVA5mgPxzQPYIB1+fKPLNOny/cumNnsYi/8JXBGsSHPVUl8YzyKRrNrmj1Yg\n6Qqpd3H4Hd/10qA4OmHrVYTLkOHuN7t8bJ4NkTIXZIe0P/XwNEeoTTxrkZL9hylJ\neCuL/3sG209FB5FXCx00zcA=\n-----END PRIVATE KEY-----\n';
@@ -241,7 +241,7 @@ describe('the argon2id bridge is LIVE, and does not shadow a built-in', () => {
 		// the half that says WHY this is a service swap and not a shim: password_hash() is a
 		// built-in, so a conditional declaration of it could never bind
 		expect(out.passwordHashExists).toBe(true);
-		// and the half that says the capability is genuinely absent from the interpreter, so the
+		// and the half that says the capability is absent from the interpreter, so the
 		// bridge is not decorative -- ext-argon2 is not in the build, so PHP offers only bcrypt
 		expect(out.argonDefined).toBe(false);
 		expect(out.algos).not.toContain('argon2id');

@@ -102,7 +102,7 @@ export function ensureFileTables(sql: FileSql): void {
     )`
 	);
 	// the R2 offload queue. A row here means "durable in the DO, not yet mirrored"; the drain
-	// clears it. Deliberately NOT the mechanism durability rests on -- see the module docblock.
+	// clears it. NOT the mechanism durability rests on -- see the module docblock.
 	sql.exec(
 		`CREATE TABLE IF NOT EXISTS cfw_file_mirror_queue (
       uri TEXT PRIMARY KEY,

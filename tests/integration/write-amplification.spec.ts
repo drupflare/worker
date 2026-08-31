@@ -15,12 +15,12 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * fill, so none of them had ever been priced. RULE 0c: the measurement closed a MECHANISM and left
  * the RESOURCE open.
  *
- * WHAT IS DELIBERATELY NOT HERE: milliseconds. RULE 0 -- an absolute CPU figure comes only from
+ * WHAT IS NOT HERE: milliseconds. RULE 0 -- an absolute CPU figure comes only from
  * `cpuTime` on a deployed worker, and every in-isolate clock is frozen out there. Every column below
  * is a COUNT, and a count is the same number locally and on the edge. Two full runs produced
  * byte-identical JSON, which is the determinism a count is supposed to have.
  *
- * THREE MULTIPLIERS STACK, and separating them is the whole point of the per-table split:
+ * THREE MULTIPLIERS STACK, and the per-table split is what separates them:
  *
  *   1. **index maintenance** -- one charged row per non-partial index per stored row.
  *      `chargeFactorsFromSchema()` reads it off THIS object's schema with `PRAGMA index_list`.

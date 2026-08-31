@@ -219,7 +219,7 @@ ${note ? `<div class="card"><p>${escapeHtml(note)}</p></div>` : ''}
 ${install}
 <table><thead><tr><th>Package</th><th>Newest</th><th>Verdict</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table>
 <p class="sub"><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>, not <code>repo.packagist.org</code> -- the latter 404s for every Drupal package, which made this answer <em>not-found</em> for the whole ecosystem until it was fixed.</p>
-<p class="sub">A verdict of <em>unverifiable</em> means the requirement could not be read, not that the module is broken. It is reported separately from <em>blocked</em> on purpose.</p>`;
+<p class="sub">A verdict of <em>unverifiable</em> means the requirement could not be read, not that the module is broken. It is reported separately from <em>blocked</em>.</p>`;
 }
 // #endregion
 

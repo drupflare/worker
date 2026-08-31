@@ -14,7 +14,7 @@ import { freshSite, inObject } from '../helpers/serve-do';
  * that still works is not a mitigated defect.
  *
  * **Configuring twice must not silently reset the admin password.** A retried POST is far more likely
- * than a deliberate reconfiguration, so the second one is a 409 unless `force=1` says otherwise.
+ * than an intended reconfiguration, so the second one is a 409 unless `force=1` says otherwise.
  *
  * These drive the Durable Object directly. The PHP side (`firstRunConfig`) needs a booted kernel and
  * is covered by `php -l` plus the deployed acceptance; what is asserted here is the route contract,
@@ -103,7 +103,7 @@ describe('the trust-on-first-use window closes once the site is provisioned', ()
 	/**
 	 * Marks the site provisioned without booting a kernel; `first_run_at` is the whole state.
 	 *
-	 * Turns `PW_DIAGNOSTICS` OFF, because the pool sets it to `1` and diagnostics is deliberately
+	 * Turns `PW_DIAGNOSTICS` OFF, because the pool sets it to `1` and diagnostics is
 	 * still a way past this check -- it already exposes `/sql`, so gating `force` against it would
 	 * be theatre. Left on, every case below would pass for the wrong reason.
 	 */
@@ -188,7 +188,7 @@ describe('the trust-on-first-use window closes once the site is provisioned', ()
  *
  * The render origin is trust-on-first-use (`src/ops/site-origin.ts`), which leaves one window open:
  * the first request after a deploy pins it, and that request is not necessarily the owner's. This
- * closes it from the other end -- the owner is here, deliberately, on the host they mean -- and it
+ * closes it from the other end -- the owner is here, on the host they mean -- and it
  * overwrites whatever a first visitor pinned.
  */
 describe('claiming a site pins its render origin', () => {

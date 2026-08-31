@@ -21,7 +21,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * allowed to be a reading. Every row carries a PROBE, this runs all of them in one boot, and each
  * answer must equal the row's `expected`.
  *
- * **The assertion is two-directional and that is the point.** A capability that quietly APPEARS
+ * **The assertion is two-directional.** A capability that quietly APPEARS
  * fails here as loudly as one that quietly disappears, so the contract cannot drift from the runtime
  * in either direction. A row that reads `expected: false` and starts answering `true` is a capability
  * nobody knew they had, and the module table would go on refusing modules that would now work.
@@ -145,7 +145,7 @@ describe('P8: every vector, on the interpreter that ships', () => {
 				expect(
 					out.vectors[v.id],
 					`${v.id} answered ${String(out.vectors[v.id])}, contract says ${String(v.expected)}. ` +
-						`${out.why[v.id] ?? 'no throw, so the capability is genuinely absent'}. ${v.evidence}`
+						`${out.why[v.id] ?? 'no throw, so the capability is absent'}. ${v.evidence}`
 				).toBe(v.expected);
 			}
 		},

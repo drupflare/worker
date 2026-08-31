@@ -62,7 +62,7 @@ function checkout(): string {
 		join(root, 'src/runtime/php-binary-85.ts'),
 		[
 			"import PHPFactory from '../../.interp/php8.5-worker.mjs';",
-			"import blob from '../../.interp/php8.5.wasm.zst';",
+			"import blob from '../../.interp/php8.5.wasm.br';",
 			"import decoder from '../../.interp/zstddec.wasm';",
 			'export { PHPFactory, blob, decoder };'
 		].join('\n')
@@ -74,10 +74,9 @@ function result(phpVersion: string, overrides: Partial<FetchResult> = {}): Fetch
 	return {
 		wasm: `.interp/php${phpVersion}.wasm`,
 		glue: `.interp/php${phpVersion}-worker.mjs`,
-		frame: `.interp/php${phpVersion}.wasm.zst`,
+		frame: `.interp/php${phpVersion}.wasm.br`,
 		raw: 12_218_393,
 		packed: 2_659_133,
-		declared: 12_218_393,
 		artifactId: '4102938475',
 		...overrides
 	};
@@ -129,40 +128,40 @@ describe('the pin is the only reviewable part of an interpreter bump', () => {
 		mkdirSync(join(root, '.interp'), { recursive: true });
 		writeFileSync(join(root, '.interp/php8.5.wasm'), 'wasm');
 		writeFileSync(join(root, '.interp/php8.5-worker.mjs'), 'glue');
-		writeFileSync(join(root, '.interp/php8.5.wasm.zst'), 'frame');
+		writeFileSync(join(root, '.interp/php8.5.wasm.br'), 'frame');
 
 		const paths = result('8.5', {
 			wasm: join(root, '.interp/php8.5.wasm'),
 			glue: join(root, '.interp/php8.5-worker.mjs'),
-			frame: join(root, '.interp/php8.5.wasm.zst')
+			frame: join(root, '.interp/php8.5.wasm.br')
 		});
 		const pin = buildPin(paths, 'control85', '8.5', 'drupflare/phasm');
 
 		expect(pin.name).toBe('drupflare-interpreter-pin');
-		expect(pin.version).toBe(1);
+		expect(pin.version).toBe(2);
 		expect(pin.variant).toBe('control85');
 		expect(pin.phpVersion).toBe('8.5');
 		expect(pin.artifactId).toBe('4102938475');
-		expect(pin.frame).toEqual({ raw: 12_218_393, packed: 2_659_133, declared: 12_218_393 });
+		expect(pin.frame).toEqual({ raw: 12_218_393, packed: 2_659_133 });
 		expect(pin.files).toHaveLength(3);
 		for (const file of pin.files) expect(file.sha256).toMatch(/^[0-9a-f]{64}$/);
 		expect(pin.files.map((f) => `${f.path.split('/').pop()}:${f.bytes}`)).toEqual([
 			'php8.5-worker.mjs:4',
 			'php8.5.wasm:4',
-			'php8.5.wasm.zst:5'
+			'php8.5.wasm.br:5'
 		]);
 	});
 
 	it('orders the files, so the same fetch produces the same pin', () => {
 		const root = fixture();
 		mkdirSync(join(root, '.interp'), { recursive: true });
-		for (const name of ['php8.5.wasm', 'php8.5-worker.mjs', 'php8.5.wasm.zst']) {
+		for (const name of ['php8.5.wasm', 'php8.5-worker.mjs', 'php8.5.wasm.br']) {
 			writeFileSync(join(root, '.interp', name), name);
 		}
 		const paths = result('8.5', {
 			wasm: join(root, '.interp/php8.5.wasm'),
 			glue: join(root, '.interp/php8.5-worker.mjs'),
-			frame: join(root, '.interp/php8.5.wasm.zst')
+			frame: join(root, '.interp/php8.5.wasm.br')
 		});
 		const once = buildPin(paths, 'control85', '8.5');
 		const twice = buildPin(paths, 'control85', '8.5');
@@ -189,7 +188,7 @@ describe('fetching a version the seam does not import measures the incumbent', (
 		} catch (cause) {
 			message = cause instanceof Error ? cause.message : String(cause);
 		}
-		expect(message).toContain('.interp/php8.5.wasm.zst');
-		expect(message).toContain('.interp/php8.3.wasm.zst');
+		expect(message).toContain('.interp/php8.5.wasm.br');
+		expect(message).toContain('.interp/php8.3.wasm.br');
 	});
 });

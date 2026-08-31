@@ -215,7 +215,7 @@ export const REDIS_REFUSED_COMMANDS: ReadonlySet<string> = new Set([
 /**
  * The HTTP method a TCP operation borrows, so the deferred tier's budget and TTL apply unchanged.
  *
- * Reusing them rather than inventing a second policy is the point: `attemptBudget()` already says a
+ * They are reused rather than duplicated: `attemptBudget()` already says a
  * non-idempotent operation gets one attempt, and a Redis `INCR` replayed after a timeout is the same
  * defect as a captcha token replayed -- the first attempt may have landed and only failed to return.
  */

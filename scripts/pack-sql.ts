@@ -32,7 +32,7 @@ import { TextDecoder } from 'node:util';
  *
  * Text rather than base64 where possible: a BLOB whose bytes are valid UTF-8 ships as a
  * string, smaller than base64 and closer to what Drupal's own writes land as. Base64 is
- * the fallback for genuinely binary values.
+ * the fallback for binary values.
  *
  * ORDER. Table DDL, then every row, then indexes and triggers -- index maintenance per
  * insert is waste while the table fills from empty, and nothing reads until done.
@@ -259,7 +259,7 @@ const master = db
  * index cost. Measured on a steady-state render: 8 charged rows -> 6, and the bins' index charge
  * 3 -> 0, with zero spread over three runs (`tests/integration/cache-bin-rowid.spec.ts`).
  *
- * Scoped to `cache_` deliberately. `router` at 3x and `key_value` at 2x pay the same autoindex and
+ * Scoped to `cache_`. `router` at 3x and `key_value` at 2x pay the same autoindex and
  * are NOT converted here: neither is on the render path, both are on the install path, and nothing
  * has measured whether anything depends on their rowid ordering. A rule applied to 71 tables on the
  * strength of a measurement of 14 is the over-reach this file should not make.

@@ -69,7 +69,7 @@ const restoreOnly = argv.includes('--restore');
 const passthrough = argv.includes('--') ? argv.slice(argv.indexOf('--') + 1) : [];
 
 // A backup left behind means the previous run mounted a fixture and did not put the shipping pack
-// back -- either `--mount` on purpose, or a kill between the two. Restoring rather than overwriting
+// back -- either an intended `--mount`, or a kill between the two. Restoring rather than overwriting
 // is the difference between recovering the artifact and losing it, so both cases restore first.
 if (present(BACKUP)) {
 	console.error('[contrib-fixture] a mounted fixture is in place; restoring the shipping pack');

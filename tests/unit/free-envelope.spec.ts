@@ -219,7 +219,7 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		expect(e.servingBoundBy).toBe('worker');
 		expect(e.duration.availableGbS).toBe(FREE_QUOTAS.durationGbSPerDay);
-		// ~271 of 13,000. The whole point of asserting it is that a later change which made a
+		// ~271 of 13,000. It is asserted so that a later change which made a
 		// render hold the object 50x longer would move this and nothing else in the model
 		expect(e.duration.servingUseGbS).toBeGreaterThan(0);
 		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
@@ -303,7 +303,7 @@ describe('HIBERNATING replicas, which the always-warm arithmetic does not touch'
 		expect(eight.regenerationBoundBy).toBe('rows');
 	});
 
-	it('is the SAME fleet size that always-warm refuses, which is the whole point', () => {
+	it('is the SAME fleet size that always-warm refuses', () => {
 		const warm = envelope(DEFAULT_MIX, { windowed: true, alwaysWarmObjects: 2 });
 		const hibernating = envelope(DEFAULT_MIX, {
 			windowed: true,
@@ -487,7 +487,7 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 	});
 
 	it('turns 3M/month from saturated into comfortable', () => {
-		// the whole point: 3M/month currently fits at exactly 1.00x with zero headroom
+		// 3M/month currently fits at exactly 1.00x with zero headroom
 		const saturated = scoreWorkload(3_000_000, 0.01, { windowed: true });
 		expect(saturated.headroom.servingRatio).toBeCloseTo(1.0, 5);
 
@@ -788,7 +788,7 @@ describe('the optimal mirror share', () => {
 		expect(o.boundBy).toBe('worker');
 	});
 
-	it('shows what maximising gives up, which is the whole point of the entry', () => {
+	it('shows what maximising gives up', () => {
 		const o = optimalOffWorker();
 		// mirroring everything mirrorable falls BACK, and by a fifth
 		expect(o.atFullMirror.share).toBeCloseTo(0.99, 3);
@@ -971,14 +971,18 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 // the sixth meter, and the only one that is not a daily rate: it answers "how many sites"
 describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', () => {
 	it('is bound by the snapshot rather than by the database', () => {
-		expect(SITE_STORAGE_BYTES.heapSnapshot).toBeGreaterThan(SITE_STORAGE_BYTES.seed * 5);
+		// over 5x the seed before the packed `cache_container` row was fixed and 2.26x after: the
+		// image fell 36,569,088 -> 10,420,224 once the first boot stopped rebuilding a 482 KB
+		// container. The snapshot still dominates, by a fraction of the margin it used to
+		expect(SITE_STORAGE_BYTES.heapSnapshot).toBeGreaterThan(SITE_STORAGE_BYTES.seed * 2);
 	});
 
-	// the arms differ by ~9x, so HEAP_SNAPSHOT is a fleet-size decision and not only a latency one
-	it('costs about 9x the sites to keep a stored heap', () => {
+	// the arms differ by ~3.3x, so HEAP_SNAPSHOT is a fleet-size decision and not only a latency one
+	it('costs about 3.3x the sites to keep a stored heap', () => {
 		const on = storageCeiling(true);
 		const off = storageCeiling(false);
-		expect(off.sitesPerAccount / on.sitesPerAccount).toBeGreaterThan(8);
+		// 9x while the model priced the container defect into every site
+		expect(off.sitesPerAccount / on.sitesPerAccount).toBeGreaterThan(3);
 		// NOT PINNED TO A COUNT. Both numbers are 5 GB / (seed + heap), so asserting them restates
 		// the arithmetic in the line above and breaks whenever the packed module grows a page --
 		// which it did, 122 -> 121, for five kilobytes of PHP that changed nothing about the model.
@@ -986,14 +990,16 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		const expected = (heap: number) =>
 			Math.floor(FREE_QUOTAS.storageBytes / (SITE_STORAGE_BYTES.seed + heap));
 		expect(on.sitesPerAccount).toBe(expected(SITE_STORAGE_BYTES.heapSnapshot));
-		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount * 8);
+		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount * 3);
 	});
 
 	// a CONTROL against the figure this was mis-derived from: 23,724,032 came off an object that
-	// had never migrated, 1.53x low
+	// had never migrated. IT USED TO BE 1.53x LOW AND IS NOW HIGH, because the container fix
+	// inverted which arm is bigger -- a bare object has no database to read the packed container
+	// from, so it is the one that builds one. Quoting it would now understate the fleet.
 	it('uses the provisioned snapshot size, not the bare-object one', () => {
 		expect(SITE_STORAGE_BYTES.heapSnapshot).not.toBe(23_724_032);
-		expect(storageCeiling(true).sitesPerAccount).toBeLessThan(
+		expect(storageCeiling(true).sitesPerAccount).toBeGreaterThan(
 			Math.floor(FREE_QUOTAS.storageBytes / (SITE_STORAGE_BYTES.seed + 23_724_032))
 		);
 	});

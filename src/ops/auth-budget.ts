@@ -86,13 +86,25 @@ const NOT_A_SESSION = new Set(['NO_CACHE', 'Drupal.visitor.name', 'Drupal.toolba
  * @returns true when at least one cookie name is session-shaped
  */
 export function hasSessionCookie(cookieHeader: string | null | undefined): boolean {
-	if (!cookieHeader) return false;
+	return sessionCookieValue(cookieHeader) !== null;
+}
+
+/**
+ * The value of the first session-shaped cookie, or null.
+ *
+ * Read as a replica ROUTING key, where the only property needed is that one visitor produces one
+ * stable string. It is hashed and never compared, so the credential does not become something a
+ * caller can read back off a routing decision.
+ */
+export function sessionCookieValue(cookieHeader: string | null | undefined): string | null {
+	if (!cookieHeader) return null;
 	for (const pair of cookieHeader.split(';')) {
-		const name = pair.split('=')[0]?.trim();
+		const eq = pair.indexOf('=');
+		const name = (eq < 0 ? pair : pair.slice(0, eq)).trim();
 		if (!name || NOT_A_SESSION.has(name)) continue;
-		if (SESSION_COOKIE_RE.test(name)) return true;
+		if (SESSION_COOKIE_RE.test(name)) return eq < 0 ? '' : pair.slice(eq + 1).trim();
 	}
-	return false;
+	return null;
 }
 
 /**

@@ -131,7 +131,7 @@ describe('P33: the shapes it covers', () => {
 	}
 
 	it('REFUSES a shape it cannot wrap, and leaves the lossy value rather than throwing', async () => {
-		// a CTE is deliberately outside the wrappable set; the honest outcome is the value the
+		// a CTE is outside the wrappable set; the honest outcome is the value the
 		// caller would have had anyway, not an exception on the serving path
 		const rows = (
 			await withTable((site) =>

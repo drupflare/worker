@@ -97,7 +97,7 @@ describe('tiers under the shipped capabilities', () => {
 	 * The `lift` field is where that gap is recorded.
 	 */
 	it('reports the cron modules against the capability, and records the unwired gap in lift', () => {
-		// `simple_sitemap` is NOT here any more, and the reason is the point: it is classified
+		// `simple_sitemap` is NOT here any more: it is classified
 		// `cron` and refused before cron is ever reached, on a missing `XMLWriter`. Its lift
 		// describes that instead, so requiring the cron sentence would force it to carry a lift for
 		// a question downstream of an install that does not happen
@@ -158,7 +158,7 @@ describe('tiers under the shipped capabilities', () => {
 	 * It was refused because a Solr query must answer inside the render that asked. Measured against
 	 * solarium 6.4.2, the transport is interceptable ABOVE the adapter -- `PreExecuteRequest` short-
 	 * circuits it and `search_api_solr` hands Drupal's dispatcher to the client -- so the deferred
-	 * tier reaches it after all. This assertion exists so the move is deliberate: if it ever reads
+	 * tier reaches it after all. This assertion exists so the move is explicit: if it ever reads
 	 * `refused` again, something regressed rather than a spec being tidied.
 	 */
 	// its transport is interceptable and is not what refuses it: a transitive `php-64bit` makes

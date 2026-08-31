@@ -283,7 +283,7 @@ export function projectImageTransforms(plan: ImagePlan, env?: PlanEnv | null): I
 				`or transform at most ${imagesThatFit.toLocaleString()} images at ${styles} styles`
 			);
 		}
-		// these two genuinely reduce uniques rather than deferring the problem
+		// these two reduce uniques rather than deferring the problem
 		remedies.push(
 			'serve one responsive size and let the browser scale, which is one unique per image'
 		);

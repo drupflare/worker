@@ -6,7 +6,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /**
  * Gate 1: every piece of persistent state a replica could meet has exactly one status.
  *
- * EXECUTABLE RATHER THAN A DOCUMENT, and the difference is the point: this walks a REAL provisioned
+ * EXECUTABLE RATHER THAN A DOCUMENT: this walks a REAL provisioned
  * site and classifies what is actually there, so state introduced by a core upgrade or a contrib
  * module appears here as `UNKNOWN` rather than as silence. `UNKNOWN` routes to the primary at
  * runtime, so an unclassified key costs a failover and never a divergence -- but it still has to be

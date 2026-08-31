@@ -85,7 +85,7 @@ describe('reading invocations rather than grouped aggregates', () => {
 	});
 
 	/**
-	 * ABSENT IS NOT ZERO, and the distinction is the whole point of the fix.
+	 * ABSENT IS NOT ZERO, which is what the fix turns on.
 	 *
 	 * A dropped or truncated event carries no `cpuTimeMs` field at all. Coercing that to 0 would
 	 * reintroduce the same lie from the other direction.

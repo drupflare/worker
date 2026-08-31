@@ -12,10 +12,10 @@
  * each fails by doing nothing: no exception, no log line, no failing test. The operator concludes
  * the feature does not work rather than that it was never switched on.
  *
- * **THERE ARE EXACTLY TWO LEGAL STATES, AND THE FORCED CHOICE IS THE POINT.** "Pathauto ships
+ * **THERE ARE EXACTLY TWO LEGAL STATES, AND THE CHOICE IS FORCED.** "Pathauto ships
  * without patterns" is a perfectly good product decision -- a pattern is a site owner's editorial
  * choice and guessing one is worse than none. What is not defensible is that nobody had decided.
- * A capability that is neither active nor deliberately dormant is the bug, and the audit names it.
+ * A capability that is neither active nor recorded dormant is the bug, and the audit names it.
  */
 
 /** what the audit concluded about one capability */
@@ -238,7 +238,7 @@ export function auditDormancy(
 					: `${found} ${cap.activatedBy}* object(s) ship`;
 		} else if (cap.posture === 'dormant-by-design') {
 			state = 'dormant-by-design';
-			detail = cap.reason ?? 'recorded as deliberately dormant';
+			detail = cap.reason ?? 'recorded as dormant by design';
 		} else if (cap.posture === 'no-activation-needed') {
 			state = 'active';
 			detail = 'needs no activation configuration';

@@ -152,7 +152,7 @@ async function buildTree(): Promise<void> {
 /**
  * Runs the packer in one mode and reads back all three artifacts.
  *
- * The out-dir is absolute on purpose: a relative one resolves under the repo's own `assets/`,
+ * The out-dir is absolute: a relative one resolves under the repo's own `assets/`,
  * which the rest of the suite reads.
  */
 async function pack(

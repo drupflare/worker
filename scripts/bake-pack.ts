@@ -234,7 +234,7 @@ for (const step of steps) {
 	}
 }
 
-console.log('\n# what is NOT done by this script, deliberately\n');
+console.log('\n# what is NOT done by this script\n');
 console.log('The container definition cannot be produced offline: its key folds in PHP_OS and the');
 console.log(
 	'absolute container_yamls path, so anything compiled here is keyed Darwin + a build path'

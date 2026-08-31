@@ -25,7 +25,7 @@ const kvOf = (value: string | null): PlanKv => ({ get: async () => value });
 beforeEach(() => resetPlanMemo());
 
 describe('resolvePlan', () => {
-	it('prefers KV over the deployed var, which is the whole point', async () => {
+	it('prefers KV over the deployed var', async () => {
 		const out = await resolvePlan({ PLAN: 'free' }, kvOf('paid'));
 		expect(out).toEqual({ plan: 'paid', source: 'kv' });
 	});

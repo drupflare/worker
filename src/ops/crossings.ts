@@ -27,7 +27,7 @@ export type CrossingTally = {
 	/**
 	 * per-statement detail, appended only when a caller has armed it with an array.
 	 *
-	 * Off by default and deliberately not a route: a cold fill crosses 233 times and each record
+	 * Off by default and not a route: a cold fill crosses 233 times and each record
 	 * decodes both sides of the payload, so leaving it on would put a diagnostic's allocation on
 	 * every render. `tests/integration/statement-census.spec.ts` is what arms it.
 	 */

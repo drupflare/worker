@@ -22,6 +22,17 @@ declare module '*.zst' {
 }
 
 /**
+ * The brotli frame `src/runtime/php-binary-85.ts` imports, which is what SHIPS.
+ *
+ * Same `Data` rule and same reason as `*.zst`; brotli is the better ratio on this binary and its
+ * decoder is in `node:zlib`, so nothing has to be bundled to inflate it.
+ */
+declare module '*.br' {
+	const bytes: ArrayBuffer;
+	export default bytes;
+}
+
+/**
  * The emscripten glue a `vendor/` or `assets/` build ships next to its `.wasm`.
  *
  * Declared because both directories are gitignored: on a machine that has never run

@@ -1,14 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { KV_OVERRIDABLE } from '../../../src/ops/plan';
 import {
 	FALLBACK_SITE,
+	HOST_MEMO_MS,
 	locationHint,
+	resetHostMemo,
 	resolveSite,
 	siteFromHost,
 	siteKvKey,
 	siteStubOptions,
 	type SiteIdEnv
 } from '../../../src/ops/site-id';
+
+// the host mapping is memoised per isolate, so a spec that did not reset it would read the
+// previous spec's mapping for the same host
+beforeEach(resetHostMemo);
 
 /**
  * Which site a request belongs to, when the caller did not say.
@@ -167,7 +173,7 @@ describe('the resolution order, which follows from which layers can be absent', 
 		});
 	});
 
-	it('keeps the derived layer reachable, so the optional ones are genuinely optional', async () => {
+	it('keeps the derived layer reachable, so the optional ones stay optional', async () => {
 		// the ordering trap: derivation answers for every real host, so putting it above KV or the
 		// var makes both unreachable on exactly the hosts they exist to configure
 		const derived = await resolveSite(at('https://example.com/'), undefined);
@@ -210,6 +216,120 @@ describe('a KV miss or outage must not take the site down', () => {
 		expect(await resolveSite(new URL('https://example.com/'), undefined)).toMatchObject({
 			site: 'example.com'
 		});
+	});
+});
+
+/**
+ * The host mapping is read from KV at most once per host per minute.
+ *
+ * MEASURED, and the number is why this exists: one `CONFIG_KV.get()` costs 4 ms at the median on a
+ * deployed worker, and a production page request made TWO for the same host -- once in the catch-all
+ * rewrite, again in `siteFor()` -- for 8.5 ms before any other tier was consulted. `param` and
+ * `nokv` both read 0, which is the shape every measurement deploy in this repo used, so no arm had
+ * ever priced the one that ships.
+ */
+describe('the host mapping is read once, not once per call site', () => {
+	/** counts reads so a memo hit is distinguishable from a second read returning the same answer */
+	const counting = (entries: Record<string, string>) => {
+		const state = { reads: 0 };
+		return {
+			state,
+			kv: {
+				get: async (key: string) => {
+					state.reads++;
+					return entries[key] ?? null;
+				}
+			}
+		};
+	};
+
+	it('reads KV once for two resolutions of the same host', async () => {
+		const { state, kv } = counting({ [siteKvKey('example.com')]: 'mapped' });
+		const env: SiteIdEnv = { CONFIG_KV: kv };
+		const a = await resolveSite(new URL('https://example.com/about'), env, {
+			allowParam: false
+		});
+		const b = await resolveSite(new URL('https://example.com/serve'), env, {
+			allowParam: false
+		});
+		expect(a).toEqual({ site: 'mapped', from: 'kv' });
+		expect(b).toEqual({ site: 'mapped', from: 'kv' });
+		expect(state.reads).toBe(1);
+	});
+
+	// the unmapped host is the common case AND the expensive one; a memo that only held hits
+	// would leave every default deployment paying both reads
+	it('memoises the absence of a mapping too', async () => {
+		const { state, kv } = counting({});
+		const env: SiteIdEnv = { CONFIG_KV: kv };
+		expect(await resolveSite(new URL('https://example.com/a'), env)).toMatchObject({
+			from: 'host'
+		});
+		expect(await resolveSite(new URL('https://example.com/b'), env)).toMatchObject({
+			from: 'host'
+		});
+		expect(state.reads).toBe(1);
+	});
+
+	it("keeps one host out of another host's answer", async () => {
+		const { state, kv } = counting({
+			[siteKvKey('a.example')]: 'site-a',
+			[siteKvKey('b.example')]: 'site-b'
+		});
+		const env: SiteIdEnv = { CONFIG_KV: kv };
+		expect((await resolveSite(new URL('https://a.example/'), env)).site).toBe('site-a');
+		expect((await resolveSite(new URL('https://b.example/'), env)).site).toBe('site-b');
+		expect(state.reads).toBe(2);
+	});
+
+	it('re-reads once the entry is older than the memo window', async () => {
+		const entries: Record<string, string> = { [siteKvKey('example.com')]: 'first' };
+		const { state, kv } = counting(entries);
+		const env: SiteIdEnv = { CONFIG_KV: kv };
+		expect((await resolveSite(new URL('https://example.com/'), env, {}, 1_000)).site).toBe(
+			'first'
+		);
+		entries[siteKvKey('example.com')] = 'second';
+		expect((await resolveSite(new URL('https://example.com/'), env, {}, 1_500)).site).toBe(
+			'first'
+		);
+		expect(
+			(await resolveSite(new URL('https://example.com/'), env, {}, 1_000 + HOST_MEMO_MS)).site
+		).toBe('second');
+		expect(state.reads).toBe(2);
+	});
+
+	// a blip must cost the next request a retry, not pin derivation for a minute
+	it('does not memoise a read that threw', async () => {
+		let reads = 0;
+		let failing = true;
+		const env: SiteIdEnv = {
+			CONFIG_KV: {
+				get: async () => {
+					reads++;
+					if (failing) throw new Error('KV is having a day');
+					return 'recovered';
+				}
+			}
+		};
+		expect((await resolveSite(new URL('https://example.com/'), env)).from).toBe('host');
+		failing = false;
+		expect(await resolveSite(new URL('https://example.com/'), env)).toEqual({
+			site: 'recovered',
+			from: 'kv'
+		});
+		expect(reads).toBe(2);
+	});
+
+	// `?site=` is answered above the memo, so a diagnostic call still costs no read at all
+	it('reads nothing when the parameter names the site', async () => {
+		const { state, kv } = counting({ [siteKvKey('example.com')]: 'mapped' });
+		const env: SiteIdEnv = { CONFIG_KV: kv };
+		expect(await resolveSite(new URL('https://example.com/serve?site=asked'), env)).toEqual({
+			site: 'asked',
+			from: 'param'
+		});
+		expect(state.reads).toBe(0);
 	});
 });
 

@@ -124,7 +124,7 @@ describe('the refusal names the conflict', () => {
 		const { conflicts } = checkRequirements({ 'drupal/core': '^10' }, INSTALLED);
 		expect(conflicts).toHaveLength(1);
 		expect(conflicts[0]!.reason).toBe('version');
-		// the whole point: the operator learns WHICH package and WHICH constraint
+		// the operator learns WHICH package and WHICH constraint
 		expect(conflicts[0]!.detail).toContain('drupal/core');
 		expect(conflicts[0]!.detail).toContain('11.4.5');
 		expect(conflicts[0]!.detail).toContain('^10');
@@ -298,7 +298,7 @@ describe('the whole check, end to end over an injected fetch', () => {
 		expect(DEFAULT_PLATFORM.php).toBeTruthy();
 	});
 
-	// the split is the point: a name in both maps would make `polyfilled` depend on key order
+	// the maps stay split because a name in both would make `polyfilled` depend on key order
 	it('keeps the native and polyfilled maps disjoint', () => {
 		const native = Object.keys(NATIVE_PLATFORM);
 		const overlap = Object.keys(POLYFILLED_PLATFORM).filter((k) => native.includes(k));

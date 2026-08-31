@@ -2,7 +2,7 @@
  * Reads the Unicode delta table the `drupflare` module ships, and degrades to the polyfill's own
  * answers when it is not mounted.
  *
- * THE DATA IS NOT HERE ON PURPOSE. It is `../drupflare/src/unicode-tables.php`, packed into
+ * THE DATA IS NOT HERE. It is `../drupflare/src/unicode-tables.php`, packed into
  * `assets/driver.json` by `bun run assets:driver` and written into MEMFS by `mountDriver()` at
  * `src/site-do.ts:1264` -- fifty lines before `MB_FIX` runs, which is what makes a `require` at
  * this point legal. Inlining it instead costs a measured 4,690 gzipped bytes of a bundle that has

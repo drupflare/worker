@@ -108,10 +108,12 @@ describe('a site as a delta against another site image', () => {
 	);
 
 	it(
-		'stores 3.7x less once the site is warm, and the model quotes the cold figure',
+		'stores about the same warm or cold, now that the packed container row is readable',
 		async () => {
-			// 1,247 ms / 552 pages cold against 33 ms / 148 warm, both ok: the warm kernel reads
-			// caches instead of rebuilding them
+			// THE 3.7x GAP THIS ASSERTED WAS THE CONTAINER DEFECT, not warmth. The packed
+			// `cache_container` row was keyed to a stale dependency hash, so a cold site rebuilt a
+			// 482 KB container into its heap -- 552 pages against 148, and `kernelBootMs` 1,024
+			// against 28. With the row readable both arms land near 10 MB and the ratio is ~1.07.
 			const cold = freshSite();
 			await inObject(cold, (s: ServeDo) => call(s, '/__migrate?all=1&prefill=0'));
 			const coldPages = await snapshotPages(cold);
@@ -142,8 +144,10 @@ describe('a site as a delta against another site image', () => {
 			expect(coldBytes).toBeLessThan(SITE_STORAGE_BYTES.heapSnapshot * 1.15);
 			expect(warmBytes).toBeGreaterThan(SITE_STORAGE_BYTES.warmHeapSnapshot * 0.85);
 			expect(warmBytes).toBeLessThan(SITE_STORAGE_BYTES.warmHeapSnapshot * 1.15);
-			// the direction is the claim; the exact ratio is allowed to drift with the pack
-			expect(coldBytes / warmBytes).toBeGreaterThan(2);
+			// cold is still the larger of the two, and by very little; asserting a RATIO here would
+			// be a pin on two numbers a page of packed PHP moves
+			expect(coldBytes).toBeGreaterThanOrEqual(warmBytes);
+			expect(coldBytes / warmBytes).toBeLessThan(1.5);
 		},
 		TIMEOUT
 	);

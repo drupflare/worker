@@ -37,7 +37,7 @@ export class DeferredBodyTooLarge extends Error {
 /**
  * The cache key for a deferred request.
  *
- * **IT IS NOT A HASH, AND THAT IS THE DELIBERATE CHOICE.** The obvious design is
+ * **IT IS NOT A HASH.** The obvious design is
  * `hash(method + url + body)`, and both available hashes are wrong here:
  *
  *   - A NON-CRYPTOGRAPHIC hash (FNV-1a, djb2) is forgeable. This key decides which cached response
@@ -106,7 +106,7 @@ const TRANSPORT_OWNED = new Set([
 ]);
 
 /**
- * SENT, but deliberately not part of the key.
+ * SENT, but not part of the key.
  *
  * `user-agent` identifies the CLIENT, never the caller and never the representation, so keying on it
  * splits one response into a row per client library. That is not theoretical: Guzzle's
@@ -115,12 +115,12 @@ const TRANSPORT_OWNED = new Set([
  * a property `CachedFetchHandler` documents and `guzzle-handler.spec.ts` measures.
  *
  * **This is the ONLY category excluded for a reason other than the transport owning it, and it is
- * deliberately small.** Under-keying is a DISCLOSURE -- serve one caller's authenticated response to
+ * kept small.** Under-keying is a DISCLOSURE -- serve one caller's authenticated response to
  * another -- while over-keying only costs a fetch, so anything credential-bearing or
  * representation-selecting stays in: `authorization`, `cookie`, `accept`, `accept-language` and
  * every header this runtime has never heard of.
  *
- * A server that genuinely varies its body on `User-Agent` would be served the wrong variant here.
+ * A server that varies its body on `User-Agent` would be served the wrong variant here.
  * The correct fix for that is `Vary` from the response, which needs a variant table rather than a
  * longer deny-list; nothing has measured it as a real cost, so it is not built.
  */
@@ -154,7 +154,7 @@ export function canonicalHeaders(headers: Record<string, string>): Array<[string
 /**
  * The set that goes on the WIRE, which is strictly larger than the keyed set.
  *
- * `user-agent` is here and absent from the key on purpose; dropping it from the wire too would be
+ * `user-agent` is here and absent from the key; dropping it from the wire too would be
  * the dropped-`Authorization` defect again, one header narrower.
  */
 export function headersToSend(headers: Record<string, string>): Record<string, string> {
@@ -235,7 +235,7 @@ export function isFresh(entry: Pick<CacheEntry, 'expiresAt'> | null, nowMs: numb
  * request cannot have the answer.** The queue drains on an alarm, so the synchronous read on the
  * first attempt necessarily misses.
  *
- * The states are deliberately few, because the Drupal-side shim has to act on them inside a form
+ * The states are few, because the Drupal-side shim has to act on them inside a form
  * validator with no ability to wait:
  *
  *   - `miss`      nothing queued; queue it and tell the caller to come back

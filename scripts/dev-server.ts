@@ -47,7 +47,7 @@ export interface DevServerOptions {
 	label: string;
 	port?: number;
 	config?: string;
-	/** `--var NAME:value` pairs; the diagnostic routes are off in `wrangler.jsonc` on purpose */
+	/** `--var NAME:value` pairs; the diagnostic routes are off in `wrangler.jsonc` */
 	vars?: Record<string, string>;
 	timeoutMs?: number;
 	/** leave the scratch directory behind, for debugging a boot that came up wrong */

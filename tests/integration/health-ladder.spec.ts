@@ -404,7 +404,7 @@ describe('/__health exposes the ledger and releases quarantine', () => {
 			const h = health(site);
 			h.ensureServeTables();
 			for (let i = 0; i < 3; i++) h.supervise([{ filled: '/', bytes: 0, remaining: 0 }]);
-			// a clean pass clears the STRIKES and deliberately does not un-quarantine: one good
+			// a clean pass clears the STRIKES and does not un-quarantine: one good
 			// render says nothing about the condition that caused it
 			h.supervise([{ filled: '/', bytes: 4096, remaining: 0 }]);
 			const still = JSON.parse(String(h.metaGet('repair_state')));

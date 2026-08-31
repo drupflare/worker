@@ -22,7 +22,7 @@ import { expect, gotoPage, loginAsAdmin, test } from './utils/fixtures.js';
  * corners. A dressed one has `border: 0`, `cursor: pointer` and a radius, all from `.toolbar-button`
  * in the component stylesheet and from nowhere else.
  *
- * WHAT IS DELIBERATELY NOT ASSERTED is that the stylesheet arrives as its own `<link>`. It does on
+ * WHAT IS NOT ASSERTED is that the stylesheet arrives as its own `<link>`. It does on
  * a site with aggregation off and an inline-rendered toolbar, and does not when BigPipe
  * placeholders it -- so that assertion fails on a correctly styled page, which makes it worse than
  * no assertion.

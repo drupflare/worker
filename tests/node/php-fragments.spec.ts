@@ -137,7 +137,7 @@ const FRAGMENTS: Array<[string, string]> = [
 	// string literal, whereas this one is plain PHP and a parse error in it is really caught here
 	['ZLIB_FIX', `<?php ${ZLIB_FIX}`],
 	// same reason as ZLIB_FIX: no eval(), so php -l sees the body. It carries a
-	// backtick-free comment on purpose -- a backtick inside a String.raw block
+	// backtick-free comment -- a backtick inside a String.raw block
 	// truncates the template literal and this fragment hit that while being written
 	['ICONV_FIX', `<?php ${ICONV_FIX}`],
 	// same shape again: no eval(), so php -l reads the eight curl_* declarations and the
@@ -169,7 +169,7 @@ const FRAGMENTS: Array<[string, string]> = [
 if (!php && process.env.CI) {
 	throw new Error(
 		'php is not on PATH and CI is set: the PHP fragment syntax gate would silently skip. ' +
-			'Install php in the workflow or narrow deliberately what CI claims to cover.'
+			'Install php in the workflow or narrow what CI claims to cover.'
 	);
 }
 

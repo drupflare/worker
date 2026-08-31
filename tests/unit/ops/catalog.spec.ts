@@ -488,7 +488,7 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 	});
 
 	/**
-	 * `openid_connect` rather than `search_api_solr`, and the swap is the point.
+	 * `openid_connect` rather than `search_api_solr`, and why they were swapped.
 	 *
 	 * Solr used to be the example here and stopped being one on 2026-08-23: its transport turned out
 	 * to be interceptable above the adapter, so it needs the DEFERRED tier rather than a suspending

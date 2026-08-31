@@ -259,7 +259,7 @@ if (!function_exists('cfw_zlib_dict')) {
 		/**
 		 * Compresses or decompresses against a preset dictionary.
 		 *
-		 * NOT shaped like a gz* function and deliberately not one: PHP has never had a dictionary
+		 * NOT shaped like a gz* function: PHP has never had a dictionary
 		 * parameter on gzcompress(), so widening one of those signatures would make a host-only
 		 * argument look like part of the language. function_exists('cfw_zlib_dict') is the feature
 		 * test a caller uses.

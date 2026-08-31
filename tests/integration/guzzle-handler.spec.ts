@@ -64,7 +64,7 @@ describe('the Guzzle handler a non-suspending build installs', () => {
 	}, 900_000);
 
 	it('rejects on the first call and answers on the second, which is the deferred contract', async () => {
-		// THE CYCLE ITSELF, which the test above deliberately skips by seeding the row. Every claim
+		// THE CYCLE ITSELF, which the test above skips by seeding the row. Every claim
 		// that a module "cannot work here because a deferred exchange always misses" rests on what
 		// happens on call TWO, and nothing had measured it -- `search_gov_results_api` was
 		// classified `blocked` on a sentence about a cycle no test had ever run

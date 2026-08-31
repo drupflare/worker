@@ -138,7 +138,7 @@ export function ensureOwnerToken(store: SecretStore, mint: () => string = random
  * Compares a presented token against the stored one in constant time.
  *
  * A `===` on a secret leaks its prefix through timing, and this one guards a whole-database dump.
- * The length check is deliberately NOT an early return on mismatch -- it folds the lengths into the
+ * The length check is NOT an early return on mismatch -- it folds the lengths into the
  * same accumulator so a wrong-length guess costs the same as a wrong-value one.
  */
 export function tokenMatches(presented: string | null | undefined, stored: string | null): boolean {

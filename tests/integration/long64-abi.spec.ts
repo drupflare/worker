@@ -32,7 +32,7 @@ describe('64-bit zend_long on 32-bit pointers', () => {
 
 			// long64 is the DEFAULT now, so an unset seam is long64 and `wasm32` is the off arm
 			if (ABI !== 'wasm32') {
-				// the whole point: the integer width without the pointer width
+				// the integer width without the pointer width
 				expect(out.phpIntSize).toBe(8);
 				expect(out.phpIntMax).toBe('9223372036854775807');
 				// 2^53+1 is the value a double cannot hold, so it proves a real 64-bit int

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { drupalOp } from '../../src/drupal/site-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -69,13 +70,12 @@ describe('first-run pack consistency', () => {
 					})
 				);
 				expect(res.status, await res.clone().text()).toBe(200);
+				// `drupalOp` rather than a bare fragment: provisioning drops the interpreter, so
+				// there is no resident container to reach `\Drupal::` through
 				const probe = (await site.runJson(
-					`<?php
-						$m = \\Drupal::config('core.extension')->get('module') ?: [];
-						echo json_encode([
-							'driver' => \\Drupal::database()->getProvider(),
-							'installed' => array_key_exists(\\Drupal::database()->getProvider(), $m),
-						]);`
+					drupalOp(`$m = \\Drupal::config('core.extension')->get('module') ?: [];
+						$out['driver'] = \\Drupal::database()->getProvider();
+						$out['installed'] = array_key_exists(\\Drupal::database()->getProvider(), $m);`)
 				)) as Record<string, unknown>;
 				return probe;
 			});
@@ -110,14 +110,11 @@ describe('first-run pack consistency', () => {
 				expect(res.status, await res.clone().text()).toBe(200);
 				const fixed = ((await res.json()) as Record<string, unknown>)['packConsistency'];
 				const probe = (await site.runJson(
-					`<?php
-						$m = \\Drupal::service('image.toolkit.manager');
+					drupalOp(`$m = \\Drupal::service('image.toolkit.manager');
 						$f = \\Drupal::service('image.factory');
-						echo json_encode([
-							'configured' => \\Drupal::config('system.image')->get('toolkit'),
-							'available' => array_keys($m->getAvailableToolkits()),
-							'resolved' => $f->getToolkitId(),
-						]);`
+						$out['configured'] = \\Drupal::config('system.image')->get('toolkit');
+						$out['available'] = array_keys($m->getAvailableToolkits());
+						$out['resolved'] = $f->getToolkitId();`)
 				)) as Record<string, unknown>;
 				return { fixed, probe };
 			});

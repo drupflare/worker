@@ -14,7 +14,7 @@ import { stubFetch } from '../helpers/stub-fetch';
  * into a `send_email` binding -- and a `cfwMail` that only records would fail all of them.
  *
  * The SMTP lane is covered at full protocol fidelity in `tests/unit/ops/mail.spec.ts`, where the
- * socket can be scripted. It is deliberately absent here: the alarm drain dials the real
+ * socket can be scripted. It is absent here: the alarm drain dials the real
  * `cloudflare:sockets`, and a gate test must not open one.
  */
 

@@ -48,7 +48,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * | `data-contextual-token="..."`             | per-session CSRF |
  * | `js-view-dom-id-<hash>`                   | per-RENDER nonce |
  *
- * `permissionsHash` did NOT vary between them, which is the point: it varies by ROLE, so it is what
+ * `permissionsHash` did NOT vary between them: it varies by ROLE, so it is what
  * keys a shell to a role set. admin against alice differs by the navigation module's whole asset
  * set, so shells are not shared across role sets and the hash is what refuses it.
  *

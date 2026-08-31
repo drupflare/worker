@@ -22,7 +22,7 @@
  * ## Which meters
  *
  * The two DAILY ceilings, and only those. Rows written and DO requests both reset at midnight UTC,
- * so a degraded site recovers on its own. The monthly image-transform cap is deliberately NOT on
+ * so a degraded site recovers on its own. The monthly image-transform cap is NOT on
  * this ladder: it does not reset at midnight, so degrading against it would leave a site throttled
  * for weeks with no path back. It is projected and warned about separately.
  */

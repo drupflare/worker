@@ -55,7 +55,7 @@ export const CF_OAUTH_CLIENT_ID = 'CF_OAUTH_CLIENT_ID';
  * have to paste an account id alongside, and the two email scopes are what
  * `POST /accounts/:id/email/sending/send` requires.
  *
- * `workers-platform:write` is deliberately ABSENT. drupflare is already deployed by the time a
+ * `workers-platform:write` is ABSENT. drupflare is already deployed by the time a
  * human sees the setup page, so a token that could rewrite the Worker buys nothing and would make a
  * stolen token a remote-code-execution rather than a mail problem.
  */

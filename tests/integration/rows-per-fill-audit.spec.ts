@@ -72,7 +72,7 @@ describe('rows per fill, against the constants the ceiling is computed from', ()
 					};
 				};
 
-				// the front page first, so `/user/login` below is genuinely a never-routed path on
+				// the front page first, so `/user/login` below is a never-routed path on
 				// an object whose shared bins are already populated
 				const firstEver = await arm('/user/login');
 				const anotherNewPath = await arm('/user/password');

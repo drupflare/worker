@@ -565,7 +565,7 @@ ${UPDB_PREAMBLE}
         $did[] = $step . ':not-purgeable';
       }
     } elseif ($step === 'bins') {
-      // genuinely unbounded in the worst case: deleteAll() on cache_render or cache_data is one
+      // unbounded in the worst case: deleteAll() on cache_render or cache_data is one
       // DELETE
       // whose row count is the bin's size, and rows written is the binding free-plan
       // meter. src/cron.js caps cache_data at 5,000 rows for exactly this reason, so
@@ -656,7 +656,7 @@ echo json_encode($out);
 /**
  * Reads back what the run changed, for the completion report.
  *
- * Deliberately separate from the units: it must be runnable after a halt as well
+ * Separate from the units: it must be runnable after a halt as well
  * as after a success, and it must never write.
  */
 export const UPDB_VERIFY = String.raw`<?php

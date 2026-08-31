@@ -59,7 +59,7 @@ const CACHE_INSERT =
 	'INSERT INTO cache_dynamic_page_cache (cid, data, expire, created, serialized, tags, checksum)' +
 	' VALUES (?, ?, ?, ?, ?, ?, ?)';
 
-/** a rendered response is the point of the bin, so the payload is sized like one rather than like 'x' */
+/** the bin holds rendered responses, so the payload is sized like one rather than like 'x' */
 function cacheRow(n: number): unknown[] {
 	return [`route:/node/${n}`, 'y'.repeat(4096), -1, 1786258127.5 + n, 0, 'rendered', '0'];
 }
@@ -385,7 +385,7 @@ describe('the decomposition the audit reports', () => {
 
 	it('and the same fill on the SHIPPED schema is 3 data rows and 0 index entries', () => {
 		// 2 and 1 rather than 4 and 2: at one charged row per stored row the charged total IS the
-		// data row count, which is the whole point of the conversion
+		// data row count, which is what the conversion buys
 		const split = splitFill(
 			{ cache_dynamic_page_cache: 2, cache_page: 1 },
 			auditSchema(statements)

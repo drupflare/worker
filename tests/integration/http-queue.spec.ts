@@ -207,6 +207,66 @@ describe('a url that cannot be fetched is retried and then dropped', () => {
 	});
 });
 
+describe('the SSRF guard, through the real capability', () => {
+	it('refuses a metadata address PHP asks for, and queues nothing', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+			// the table exists, so a 0 below means "refused" rather than "never created"
+			site.ensureHttpTables();
+			site.queueHttp('http://169.254.169.254/latest/meta-data/');
+			site.queueHttp('http://localhost:8080/admin');
+			// the normalised IPv4-mapped form, which is what `new URL()` turns the dotted one into
+			site.queueHttp('https://[::ffff:a9fe:a9fe]/');
+			return {
+				stats: await statsOf(site),
+				refusal: (site as unknown as { lastOutboundRefusal?: { reason: string } })
+					.lastOutboundRefusal
+			};
+		});
+
+		// nothing reached the queue, so nothing can reach the drain
+		expect(out.stats.httpQueue).toBe(0);
+		expect(out.refusal?.reason).toBeTruthy();
+	});
+
+	it('still queues an ordinary public url', async () => {
+		const stats = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+			site.queueHttp('https://updates.drupal.org/release-history/drupal/11.x');
+			return statsOf(site);
+		});
+		expect(stats.httpQueue).toBe(1);
+	});
+
+	it('refuses at the DRAIN as well, for a row that did not come through queueHttp', async () => {
+		// the check next to the `fetch()` is the one that matters; a row can reach the table by
+		// another path, and a guard only at the queue would not see it
+		const calls = stubFetch(
+			async () => new Response('should never be reached', { status: 200 })
+		);
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, HTTP_DRAIN_ON_ALARM: '0' };
+			site.ensureHttpTables();
+			site.sql.exec(
+				`INSERT INTO cfw_http_queue (key, url, method, body, headers, queued_at)
+				 VALUES (?, ?, ?, ?, ?, ?)`,
+				'seeded',
+				'http://169.254.169.254/latest/meta-data/',
+				'GET',
+				'',
+				'{}',
+				Date.now()
+			);
+			const drained = await site.drainHttpQueue(5);
+			return { drained, stats: await statsOf(site) };
+		});
+
+		expect(calls('169.254.169.254')).toEqual([]);
+		expect(out.stats.httpQueue).toBe(0);
+		expect(String(out.drained.drained?.[0]?.refused ?? '')).not.toBe('');
+	});
+});
+
 // #region TEMPORARY assertion counter
 import { afterAll as __afterAll, afterEach as __afterEach } from 'vitest';
 let __asserts = 0;

@@ -10,8 +10,8 @@ import { describe, expect, it } from 'vitest';
  * this: three `.mjs` specifiers that no ambient declaration covered, and three workflows that ran
  * `assets:driver` without checking out the modules it packs.
  *
- * Both checks are pure text over files in this repo, so they need no artifacts themselves -- which
- * is the point: a guard that needed the thing it guards could not run in the lane that fails.
+ * Both checks are pure text over files in this repo, so they need no artifacts themselves. A guard
+ * that needed the thing it guards could not run in the lane that fails.
  */
 
 const ROOT = resolve(import.meta.dirname, '../..');

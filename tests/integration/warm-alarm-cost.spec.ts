@@ -25,9 +25,18 @@ describe('an idle warming tick', () => {
 				markProvisioned(site);
 				site.ensureServeTables();
 				site.ensureHttpTables();
-				// a first firing settles whatever one-off state the object writes on its way to idle,
-				// so the reading below is of the STEADY tick rather than of the first one
-				await site.alarm();
+				// SETTLE TO THE STEADY TICK rather than assuming one firing gets there. One used to
+				// be enough; the heap image takes a firing of its own once per pack generation, so a
+				// fixed settle read the one-off and called it the steady cost
+				const settling: number[] = [];
+				for (let i = 0; i < 8; i++) {
+					site.writeTally = emptyTally();
+					await site.alarm();
+					settling.push(site.writeTally?.rowsWritten ?? -1);
+					site.writeTally = undefined;
+					const n = settling.length;
+					if (n >= 2 && settling[n - 1] === 1 && settling[n - 2] === 1) break;
+				}
 
 				const perFiring: number[] = [];
 				const tables: Record<string, number>[] = [];
@@ -38,11 +47,18 @@ describe('an idle warming tick', () => {
 					tables.push({ ...(site.writeTally?.byTable ?? {}) });
 					site.writeTally = undefined;
 				}
-				return { perFiring, tables, queue: site.queueDepth() };
+				return { perFiring, tables, settling, queue: site.queueDepth() };
 			});
 
 			// the control: an object with work to do is not measuring an idle tick
 			expect(seen.queue).toBe(0);
+
+			// the one-off REACHES the steady tick, which is what says the heap image and the
+			// provisioning writes do not recur. Their size is pinned where each is produced; summing
+			// them here would measure the first firing's fill work and call it warming's cost
+			expect(seen.settling.at(-1), `never settled to the steady tick: ${seen.settling}`).toBe(
+				1
+			);
 
 			for (const rows of seen.perFiring) {
 				// EXACTLY ONE: the `setAlarm`, and nothing else. This charged three until

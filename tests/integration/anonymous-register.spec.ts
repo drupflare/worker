@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { drupalOp, renderPage, type RenderRequest } from '../../src/drupal/site-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -68,11 +68,13 @@ describe('a visitor registering an account', () => {
 				);
 				expect(first.status, await first.clone().text()).toBe(200);
 
-				// the shipped default is admin-only, which is a 403 rather than a form
-				await site.runJson(`<?php
-					\\Drupal::configFactory()->getEditable('user.settings')
-						->set('register', 'visitors')->save();
-					echo json_encode(['ok' => true]);`);
+				// the shipped default is admin-only, which is a 403 rather than a form.
+				// `drupalOp` rather than a bare fragment: provisioning drops the interpreter, so
+				// there is no resident container to reach `\Drupal::` through
+				await site.runJson(
+					drupalOp(`\\Drupal::configFactory()->getEditable('user.settings')
+						->set('register', 'visitors')->save();`)
+				);
 
 				const page = await render(site, '/user/register');
 				const html = String(page['html'] ?? '');

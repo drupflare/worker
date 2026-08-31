@@ -316,7 +316,7 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'DECLARED on purpose. An executed delta ANSWERS TRUE in the gate lane and false on the edge -- measured, a 300,000-iteration loop moves `microtime()` here and does not out there -- so executing it would put a confident wrong answer about production into the contract. RULE 0: an absolute CPU or elapsed figure comes only from `cpuTime` on a deployed worker'
+			'DECLARED, never executed. An executed delta ANSWERS TRUE in the gate lane and false on the edge -- measured, a 300,000-iteration loop moves `microtime()` here and does not out there -- so executing it would put a confident wrong answer about production into the contract. RULE 0: an absolute CPU or elapsed figure comes only from `cpuTime` on a deployed worker'
 	},
 	// #endregion
 

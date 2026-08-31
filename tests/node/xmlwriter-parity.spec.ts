@@ -8,7 +8,7 @@ import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
 /**
  * The pure-PHP `XMLWriter` against the real extension, byte for byte.
  *
- * THE ORACLE IS THE POINT. A polyfill asserted against hand-written expectations only proves it
+ * THE ORACLE IS WHAT MAKES THIS WORK. A polyfill asserted against hand-written expectations only proves it
  * matches what its author imagined; libxml's actual output has behaviour nobody would guess -- an
  * element with TEXT keeps its end tag on the same line while an element with element CHILDREN does
  * not, and `writeElement($n, null)` collapses to `<n/>` where `writeElement($n, '')` does not. Both

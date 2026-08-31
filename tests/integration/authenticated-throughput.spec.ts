@@ -165,3 +165,51 @@ describe.skipIf(!MEASURING)('authenticated concurrency on one object', () => {
 		TIMEOUT
 	);
 });
+
+/**
+ * The round harness, over one small round and with no threshold on the clock.
+ *
+ * The stagger is a timing and stays off the gate for the reason the docblock above gives. What
+ * `round()` DOES is not a timing: it has to fire n requests at one object concurrently, drain every
+ * body, and report a round no shorter than its slowest member. A harness that answered n requests
+ * with an error page would report a beautifully flat curve, and nothing checked the responses.
+ */
+describe('the concurrency harness', () => {
+	it(
+		'fires a whole round at one object and reports a self-consistent shape',
+		async () => {
+			const stub = await provisioned();
+			const answered: number[] = [];
+			const out = await round(stub, 2, (i) => {
+				answered.push(i);
+				return new Request(
+					'https://do.local/__assemble?path=/user/login&bins=page,dynamic_page_cache&i=' +
+						i
+				);
+			});
+
+			expect(answered.length).toBe(2);
+			expect(out.n).toBe(2);
+			// the identity the round is read through; a total shorter than its slowest member would
+			// mean a request was not waited for
+			expect(out.totalMs).toBeGreaterThanOrEqual(out.slowestMs);
+			expect(out.slowestMs).toBeGreaterThanOrEqual(out.fastestMs);
+			expect(out.stagger).toBeGreaterThanOrEqual(1);
+			expect(Number.isFinite(out.stagger)).toBe(true);
+
+			// and the round's own request shape is served rather than refused, which no timing
+			// would have shown
+			const res = await stub.fetch(
+				new Request(
+					'https://do.local/__assemble?path=/user/login&bins=page,dynamic_page_cache&i=0'
+				)
+			);
+			expect(res.status).toBe(200);
+			// `/__assemble` answers with the fill's own report rather than the page, so the page is
+			// read off `bytes`
+			const body = (await res.json()) as { bytes?: number };
+			expect(Number(body.bytes ?? 0)).toBeGreaterThan(2000);
+		},
+		TIMEOUT
+	);
+});

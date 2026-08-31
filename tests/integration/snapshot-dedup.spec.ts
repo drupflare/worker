@@ -90,9 +90,12 @@ describe('two sites, snapshotted at wasm-page granularity', () => {
 
 			expect(bare.pagesB).toBeGreaterThan(0);
 			expect(provisioned.pagesB).toBeGreaterThan(0);
-			// the correction itself: a provisioned site carries a materially larger heap, so a
-			// fraction taken on the bare arm is a fraction of the wrong denominator
-			expect(provisioned.pagesB).toBeGreaterThan(bare.pagesB);
+			// THE DIRECTION INVERTED AND THE OLD ONE WAS MEASURING A DEFECT. A provisioned site used
+			// to carry the larger heap -- 1.53x -- and that was the packed `cache_container` row
+			// being keyed to a stale dependency hash, so the first boot rebuilt a 482 KB container.
+			// With the row readable a provisioned site READS it and a bare object, which has no
+			// database to read it from, is the one that builds: 159 pages against 363.
+			expect(bare.pagesB).toBeGreaterThan(provisioned.pagesB);
 
 			// A BAND, NOT A PIN, AND THE PIN WAS THE ERROR. This asserted `toBeCloseTo(0.3779, 4)`
 			// on the strength of three consecutive identical runs, read as "an exact property of the
@@ -100,9 +103,17 @@ describe('two sites, snapshotted at wasm-page granularity', () => {
 			// appeared once the suite ran it under load. Three identical readings are evidence of a
 			// mode, never of zero variance -- a tolerance of 0.00005 on a figure that moves three
 			// points is a guard that fails on the truth.
-			expect(provisioned.sharedFraction).toBeGreaterThan(0.3);
-			expect(provisioned.sharedFraction).toBeLessThan(0.45);
-			// and the BARE arm is deliberately NOT pinned: the same three runs read 0.3994, 0.3994
+			// the band moved with the container fix, from 0.3-0.45 to the high eighties: what two
+			// sites no longer fail to share is the separately-built container. n=5 read 0.8868 x3,
+			// 0.8742 and 0.7547, and the low one was taken under full-suite load -- so the width
+			// here is the load excursion, not a guess. A first band of 0.65-0.85 was set from the
+			// loaded reading alone and failed on the isolated one.
+			//
+			// What it guards is the REGIME: a regression to the packed container being unreadable
+			// sends this back to ~0.38, which any band separating those two catches.
+			expect(provisioned.sharedFraction).toBeGreaterThan(0.65);
+			expect(provisioned.sharedFraction).toBeLessThan(0.95);
+			// and the BARE arm is NOT pinned: the same three runs read 0.3994, 0.3994
 			// and 0.7603 on it. An object with no database has little structure to share, so the
 			// fraction swings on what little there is -- which is the reason a fleet figure is
 			// quoted from the provisioned arm and never from this one

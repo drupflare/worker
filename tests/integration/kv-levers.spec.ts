@@ -45,7 +45,11 @@ const PROBE: Record<KvOverridable, string> = {
 	SHELL_ASSEMBLY: '1',
 	OPCACHE_MODE: 'file',
 	ARGON2: '1',
-	SITE_LOCATION_HINT: 'weur'
+	SITE_LOCATION_HINT: 'weur',
+	REPLICA_COUNT: '3',
+	REPLICA_LAG_MS: '45000',
+	SITE_WARM: '0',
+	EDGE_PLAN: '0'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {

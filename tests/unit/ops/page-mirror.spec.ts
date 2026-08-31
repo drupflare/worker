@@ -207,7 +207,7 @@ describe('drainPageMirrors', () => {
 	});
 
 	it('mirrors the CURRENT bytes, not the bytes queued', async () => {
-		// the queue holds no copy on purpose: a page re-rendered between queue and drain must publish
+		// the queue holds no copy: a page re-rendered between queue and drain must publish
 		// what cfw_page says now
 		const sql = fakeSql();
 		queuePageMirror(sql, '/', 1, 1000);

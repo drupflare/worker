@@ -26,7 +26,7 @@ import { classify, QA_MODULES, type QaResult, type Verdict } from './modules.js'
  * So: a scratch `--persist-to`, a site name minted per run, and the directory removed on the way
  * out. It never touches `.wrangler/state/`, `vendor/` or `assets/drupal/site.sqlite`.
  *
- * WHAT IT MEASURES, and the distinction is the point of the pass:
+ * WHAT IT MEASURES, and the pass exists to keep the two apart:
  *
  *   - `/installable` is the ORACLE's answer, computed from Packagist metadata against the shipped
  *     lock. It is a claim about version constraints.

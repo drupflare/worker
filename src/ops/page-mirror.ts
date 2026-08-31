@@ -131,8 +131,8 @@ export function queuePageMirror(
  * The hit counts come from an in-memory map on the Durable Object, incremented on the fast serve
  * lane. That costs ZERO rows, which matters because rows written is the meter this lever exists to
  * protect; a `hits` column would spend the meter to decide how to save it. The counts are lost on
- * eviction, which is fine: the heuristic restarts warm rather than wrong, and a path that is
- * genuinely popular re-earns its place within one alarm cycle.
+ * eviction, which is fine: the heuristic restarts warm rather than wrong, and a popular path
+ * re-earns its place within one alarm cycle.
  *
  * A path with no recorded hits sorts last but is NOT dropped -- it was rendered, so something asked
  * for it, and the counter may simply be younger than the page.

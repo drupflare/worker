@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '../..');
 
 /**
- * Modules deliberately not on the edge, each with the reason it is allowed to be.
+ * Modules that are not on the edge, each with the reason it is allowed to be.
  *
  * This list may SHRINK without ceremony. Adding to it is the thing to think twice about: an entry
  * here is a promise that the module is reached some other way, not a way to silence the check.
@@ -29,6 +29,13 @@ const ALLOWED_OFF_EDGE = new Map<string, string>([
 	[
 		'src/ops/module-table.ts',
 		'the record of what each contrib run asserted; module-table.spec.ts and contrib-verify.spec.ts read it'
+	],
+	// the discovery half of the replica work, and it must NEVER reach the edge: it RECORDS effects
+	// where `src/ops/replica.ts` refuses them, so a replica running this would learn what a request
+	// does by letting it happen. effect-census.spec.ts drives it
+	[
+		'src/ops/mutation-oracle.ts',
+		'effect census; records rather than refuses, so it is a measurement instrument and not edge code'
 	],
 	// alias targets, reached through wrangler `alias` rather than through an import
 	['src/runtime/php-binary-jspi.ts', 'alias target for the JSPI probe configs'],
@@ -89,6 +96,7 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 		expect(dead).toEqual([
 			'src/ops/dormancy.ts',
 			'src/ops/module-table.ts',
+			'src/ops/mutation-oracle.ts',
 			'src/runtime/php-binary-jspi.ts',
 			'src/runtime/php-binary-o2.ts',
 			'src/runtime/php-binary-zstd.ts'

@@ -40,7 +40,7 @@ import { writeFileSync } from 'node:fs';
  *
  * That matters because prefill is the DEFAULT on free: a prefilled path is a HIT on its first
  * ever request, so whatever is in this file IS the page the visitor sees. Shipping HTML the site
- * cannot reproduce means the page changes the first time it is genuinely re-rendered, which is the
+ * cannot reproduce means the page changes the first time it is re-rendered, which is the
  * plausible-output-no-error failure this project keeps producing.
  *
  * Taking the bytes from the runtime removes the entire class by construction: prefilled output and
@@ -123,8 +123,8 @@ export async function liftPrefill(
 		const digest = createHash('sha1').update(bytes).digest('hex').slice(0, 12);
 		console.log(`  ${path}: ${bytes.length} bytes, sha1 ${digest}, "--2" ids: ${suffixed}`);
 		if (suffixed > 0) {
-			// the runtime is the authority, so a suffix here is real rather than an artifact -- but it
-			// is worth seeing, because it would mean the page genuinely contains a duplicate id
+			// the runtime is the authority, so a suffix here is real rather than an artifact, and it
+			// means the page contains a duplicate id
 			console.log(
 				`    note: ${suffixed} suffixed ids came from the RUNTIME, so they are real`
 			);

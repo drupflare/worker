@@ -119,3 +119,119 @@ describe('the cron wire, against a real interpreter', () => {
 		REQUEST_TIMEOUT
 	);
 });
+
+describe('the hook list the object schedules from', () => {
+	it(
+		'discovers it from the site rather than using the shipped fallback',
+		async () => {
+			// `cronHookList()` was exported, spec`d and called by NOTHING, so `cronUnits()` always
+			// fell back to KNOWN_CRON_HOOKS and a customer module`s hook_cron never ran
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const first = await (site as any).cronHooksForSite();
+				const second = await (site as any).cronHooksForSite();
+				return {
+					first,
+					second,
+					cached: (site as any).metaGet('cron_hooks')
+				};
+			});
+
+			// the first call boots the kernel and asks the site; the second reads the cache
+			expect(out.first.discovered).toBe(true);
+			expect(out.first.hooks.length).toBeGreaterThan(0);
+			expect(out.second.discovered).toBe(false);
+			expect(out.second.hooks).toEqual(out.first.hooks);
+
+			const cached = JSON.parse(String(out.cached)) as { at: string; hooks: string[] };
+			expect(cached.at).not.toBe('');
+			expect(cached.hooks).toEqual(out.first.hooks);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		're-discovers when the enabled module set moves',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const before = (site as any).enabledModulesFingerprint();
+				await (site as any).cronHooksForSite();
+				site.sql.exec(
+					"UPDATE config SET data = data || ? WHERE collection = '' AND name = 'core.extension'",
+					' '
+				);
+				const after = (site as any).enabledModulesFingerprint();
+				return { before, after, again: await (site as any).cronHooksForSite() };
+			});
+
+			expect(out.before).not.toBe('');
+			expect(out.after).not.toBe(out.before);
+			expect(out.again.discovered).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'the ALARM schedules from the discovered list, not just the helper',
+		async () => {
+			// the defect being closed is "exported, spec'd, called by nothing". A test that only
+			// drives the helper would pass against exactly that, which is how it survived
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				// the heap image owns a firing of its own, so the chain has to run on
+				const seen: string[][] = [];
+				for (let i = 0; i < 6 && seen.length < 2; i++) {
+					// open the 15-minute gate without reaching past it
+					await site.storage.put('cronLastRunMs', Date.now() - 60 * 60 * 1000);
+					await site.storage.setAlarm(Date.now() + 1);
+					await site.alarm();
+					const hooks = (site as any).lastCronHooks;
+					if (Array.isArray(hooks)) seen.push(hooks);
+				}
+				return { seen, cron: (site as any).lastCron };
+			});
+
+			expect(out.seen.length, 'the alarm never asked for a hook list').toBeGreaterThan(1);
+			expect(out.seen[0]!.length).toBeGreaterThan(0);
+			// one firing discovered and the next scheduled from the cache
+			expect(out.seen[1]).toEqual(out.seen[0]);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'a discovered module reaches the ring, which is the half the list exists for',
+		async () => {
+			// asserting only that the alarm ASKED for a list passes against an alarm that asks and
+			// then schedules from KNOWN_CRON_HOOKS anyway, which is the original defect exactly
+			const ran = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				(site as any).metaSet(
+					'cron_hooks',
+					JSON.stringify({
+						at: (site as any).enabledModulesFingerprint(),
+						hooks: ['system', 'a_contrib_module']
+					})
+				);
+				// one PHP unit per firing, so the second hook lands on a later one
+				const seen: string[] = [];
+				for (let i = 0; i < 8; i++) {
+					await site.storage.put('cronLastRunMs', Date.now() - 60 * 60 * 1000);
+					await site.storage.setAlarm(Date.now() + 1);
+					await site.alarm();
+					const last = (site as any).lastCron;
+					if (Array.isArray(last?.ran)) seen.push(...last.ran);
+				}
+				return seen;
+			});
+
+			expect(ran.length).toBeGreaterThan(0);
+			expect(
+				ran.some((unit) => unit === 'hook:a_contrib_module'),
+				`the ring ran ${JSON.stringify(ran)} and never reached the discovered module`
+			).toBe(true);
+		},
+		REQUEST_TIMEOUT
+	);
+});

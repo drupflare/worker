@@ -273,6 +273,41 @@ export const KNOWN_CRON_HOOKS = [
 	'drupflare'
 ];
 
+/** a discovered hook list and the enabled-module set it was discovered against */
+export type CronHookCache = { at: string; hooks: string[] };
+
+/**
+ * Module names out of a {@link cronHookList} payload.
+ *
+ * Null rather than an empty list when the run failed or reported nothing, so a caller keeps the
+ * list it already had instead of scheduling no hooks at all.
+ */
+export function cronHooksFromList(payload: unknown): string[] | null {
+	const body = payload as { ok?: unknown; shapes?: unknown } | null;
+	if (body === null || typeof body !== 'object' || body.ok !== true) return null;
+	const shapes = body.shapes;
+	if (shapes === null || typeof shapes !== 'object') return null;
+	const names = Object.keys(shapes as Record<string, unknown>).filter((name) => name !== '');
+	return names.length > 0 ? names.sort() : null;
+}
+
+/**
+ * The hooks to schedule, and whether the cache still describes this site.
+ *
+ * `KNOWN_CRON_HOOKS` is the list measured on the shipped install, so a customer-installed module's
+ * `hook_cron` was never scheduled on any site. Keyed on the enabled-module set rather than on the
+ * generation, which moves on every content save and would re-boot the kernel for each one.
+ */
+export function cronHooksFor(
+	cache: CronHookCache | null,
+	fingerprint: string
+): { hooks: string[]; stale: boolean } {
+	if (cache === null || !Array.isArray(cache.hooks) || cache.hooks.length === 0) {
+		return { hooks: [...KNOWN_CRON_HOOKS], stale: true };
+	}
+	return { hooks: cache.hooks, stale: cache.at !== fingerprint };
+}
+
 /** how many queue items one invocation may process */
 export function queueBatchSize(env?: CronEnv | null): number {
 	const n = Number(env?.CRON_QUEUE_BATCH_SIZE ?? 5);
@@ -345,16 +380,14 @@ export function warmIntervalMs(env?: CronEnv | null): number {
 /**
  * Whether this site re-arms fast enough to stay resident.
  *
- * ON BY DEFAULT on both plans, because ONE SITE is the case to price for and at one site it is
- * close to free. 10,800 alarms a day is 328,752 a month, against 1,000,000 included object requests
- * and 50,000,000 included rows on paid -- $0 marginal -- and 10.8% of free's two daily meters,
- * leaving ~89,000 requests a day to serve with. What it removes is the 1,398 ms cold boot from every
- * page that renders, which is the authenticated tier.
+ * On by default on both plans. One site is the case to price, and there warming costs 10.8% of
+ * free's two daily meters and $0 marginal on paid. What it removes is the 1,398 ms cold boot from
+ * every page that renders, which is the authenticated tier.
  *
- * THE FIGURE THAT ARGUED AGAINST IT WAS A FLEET FIGURE. $328/month is 1,000 warm sites, where rows
- * cross the 50M included; per site it is $0.33 and at one site it is nothing. Free's quotas are
- * ACCOUNT-WIDE though, so ten free sites warming is 108% of the meter -- which is what
- * {@link idleRearmMs}'s headroom argument is for, rather than a default nobody would find.
+ * The figure that argued against it was a fleet figure, and fleet arithmetic is the wrong lever for
+ * a default: past a hundred or so warm sites the answer is another account rather than a worse
+ * default for the one site anybody has. {@link idleRearmMs}'s headroom argument is what handles an
+ * account running out.
  */
 export function siteWarmEnabled(env?: CronEnv | null): boolean {
 	const set = env?.SITE_WARM;
@@ -392,7 +425,7 @@ function asText(value: unknown): string {
 /**
  * Reads one integer out of a PHP-serialized array, without unserializing it.
  *
- * Deliberately NOT a general unserializer. Drupal stores config as
+ * NOT a general unserializer. Drupal stores config as
  * `serialize($array)` and the only value read here is dblog.settings row_limit, so
  * the whole job is finding `s:9:"row_limit";i:<n>;`. The length prefix and the
  * requirement that the match follow a `;`, `{` or `}` are what stop a key name
@@ -550,7 +583,7 @@ export function gcWatchdog(sql: CronSql, options: CronOptions = {}): Ledger {
 }
 
 /**
- * Enforces a row cap on cache_data, then clears anything genuinely expired.
+ * Enforces a row cap on cache_data, then clears anything expired.
  *
  * The row cap is the only thing that works here, and it is measured: all 144
  * cache_data rows on the reference site have `expire = -1`, so an expire-based

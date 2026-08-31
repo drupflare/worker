@@ -81,16 +81,18 @@ describe('a HIT on a ready object takes the storage lane', () => {
 		expect(out.hit.gateQueued).toBe('0');
 	});
 
-	it('counts a storage-lane serve exactly once, in the durable counter', async () => {
+	it('counts a storage-lane serve exactly once', async () => {
 		const stub = await provisionedSite();
 		const out = await inObject(stub, async (site) => {
 			await serveDirect(site, '/');
 			seedPage(site, '/', '<title>cached</title>');
-			const before = Number(site.metaGet('serve_requests', '0'));
+			const before = site.serveRequests();
 			const hit = await serveDirect(site, '/', '&edge=0');
-			return { before, after: Number(site.metaGet('serve_requests', '0')), lane: hit.lane };
+			return { before, after: site.serveRequests(), lane: hit.lane };
 		});
 		expect(out.lane).toBe('storage');
+		// the count, not the row: one row pays for many serves, because the storage lane exists to
+		// answer without writing and a per-view row spent 15% of free's row budget contradicting that
 		expect(out.after).toBe(out.before + 1);
 	});
 

@@ -11,7 +11,7 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * decision anybody made. Core attaches `UserRequestSubscriber` to `KernelEvents::TERMINATE` and
  * throttles the access-timestamp write by `session_write_interval` (180 s by default), so on a
  * stock host the write is periodic rather than per-request. Here it does not happen at all: this
- * SAPI never dispatches terminate. Nothing records that, nothing depends on it deliberately, and a
+ * SAPI never dispatches terminate. Nothing records that, nothing depends on it, and a
  * change that started dispatching terminate would move every authenticated request to the primary
  * and collapse the replica hit rate to zero WITHOUT failing anything else.
  *
@@ -39,7 +39,7 @@ const PATHS = [
 ] as const;
 
 /**
- * Measured separately because it is the ONE exception and classifying it is the point.
+ * Measured separately because it is the ONE exception and has to be classified.
  *
  * The status report triggers the update-check machinery, which writes fetch-task rows. Those are a
  * QUEUE rather than user-facing state, so the interesting question is whether a replica can drop
@@ -196,7 +196,7 @@ describe('an authenticated GET has no authoritative side effects', () => {
 	 * - `watchdog` -- one dblog row for "Failed to retrieve security advisory data", which appears
 	 *   only because a cold object cannot reach the network synchronously. `cfwLog` has already
 	 *   mirrored the entry to `console.log`, which outlives the isolate where the row does not.
-	 * - **`state:system.private_key` -- genuinely authoritative, and the reason this path cannot be
+	 * - **`state:system.private_key` -- authoritative, and the reason this path cannot be
 	 *   waved through.** Drupal mints it lazily on first use and keys CSRF tokens and other HMACs on
 	 *   it. Two replicas each minting their own would issue tokens the others reject, so it must
 	 *   arrive by replication or at seeding and may never be generated on a replica.

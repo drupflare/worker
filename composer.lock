@@ -544,16 +544,16 @@
         },
         {
             "name": "drupflare/rom",
-            "version": "v0.2.0",
+            "version": "v0.2.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/rom.git",
-                "reference": "56e52828d12ac22b38bdf6458e535b8cec03f779"
+                "reference": "59126aa09f05f9bf89878e94f43f52ce325b06d0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/rom/zipball/56e52828d12ac22b38bdf6458e535b8cec03f779",
-                "reference": "56e52828d12ac22b38bdf6458e535b8cec03f779",
+                "url": "https://api.github.com/repos/drupflare/rom/zipball/59126aa09f05f9bf89878e94f43f52ce325b06d0",
+                "reference": "59126aa09f05f9bf89878e94f43f52ce325b06d0",
                 "shasum": ""
             },
             "require": {
@@ -621,7 +621,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-08-28T15:56:15+00:00"
+            "time": "2026-08-31T01:55:43+00:00"
         },
         {
             "name": "drupflare/stream-http",
@@ -5350,11 +5350,11 @@
     "packages-dev": [
         {
             "name": "phpstan/phpstan",
-            "version": "2.2.9",
+            "version": "2.2.13",
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/13d6b4f347bad222da436580c8304fa6f83e6bd0",
-                "reference": "13d6b4f347bad222da436580c8304fa6f83e6bd0",
+                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/9ba9ac76ee9c5cf5b56d58eb5deec6315b7a0260",
+                "reference": "9ba9ac76ee9c5cf5b56d58eb5deec6315b7a0260",
                 "shasum": ""
             },
             "require": {
@@ -5410,7 +5410,7 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-08-22T07:38:16+00:00"
+            "time": "2026-09-03T20:38:19+00:00"
         }
     ],
     "aliases": [],

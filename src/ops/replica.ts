@@ -47,6 +47,70 @@ export function isReplicaLocalTable(table: string): boolean {
 	return REPLICA_LOCAL_PREFIXES.some((prefix) => table.startsWith(prefix));
 }
 
+/**
+ * Expiry sweeps the HOST's own cron already performs, table by table and column by column.
+ *
+ * The pairs are `EXPIRED_ROW_RULES` in `cron.ts`, minus `queue`. Not imported from there because
+ * `cron.ts` pulls the cron PHP fragments in with it and this module is on the front worker's routing
+ * path; `tests/unit/ops/replica.spec.ts` drives both lists and fails when they disagree.
+ *
+ * `queue` is left out on purpose. Its rule carries a second `name LIKE` predicate and a queue item is
+ * pending WORK rather than an expired copy of something, so discarding a replica's delete of one is
+ * not the same trade as discarding a delete of a stale session.
+ */
+const EXPIRY_GC: ReadonlyArray<{ table: string; column: string }> = [
+	{ table: 'sessions', column: 'timestamp' },
+	{ table: 'flood', column: 'expiration' },
+	{ table: 'key_value_expire', column: 'expire' },
+	{ table: 'batch', column: 'timestamp' },
+	{ table: 'semaphore', column: 'expire' }
+];
+
+/**
+ * The table an expiry-GC delete sweeps, or `null` when the statement is not one.
+ *
+ * SAME TABLE, TWO EFFECTS, which is the `key_value` lesson pointed at `sessions`. Writing a session
+ * row is authoritative; deleting rows whose `timestamp` has passed is the primary's own cron rule
+ * executed by a different caller, so a replica running it loses nothing when its copy is discarded --
+ * both sides converge on the same set.
+ *
+ * Anchored at both ends, so a delete carrying any extra predicate does not match and stays
+ * authoritative. That is the direction to fail in: a shape this does not recognise is reported.
+ */
+export function expiryGcTable(sql: string): string | null {
+	const text = String(sql ?? '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	for (const rule of EXPIRY_GC) {
+		const pattern = new RegExp(
+			`^DELETE FROM ["'\`\\[]?${rule.table}["'\`\\]]? WHERE ["'\`\\[]?${rule.column}["'\`\\]]? *< *\\? *;?$`,
+			'i'
+		);
+		if (pattern.test(text)) return rule.table;
+	}
+	return null;
+}
+
+/**
+ * Whether every write statement a tally recorded against `table` was an expiry sweep of it.
+ *
+ * Reads the tally's `shapes`, which is a diagnostic with a cap and a truncation, so this fails
+ * CLOSED in three ways: no `shapes` at all, a shape that does not parse as a sweep, or a shape count
+ * that does not add up to the statements recorded. Any of them reports the table.
+ */
+function sweptOnly(
+	shapes: Record<string, number> | undefined,
+	table: string,
+	statements: number
+): boolean {
+	if (!shapes || statements <= 0) return false;
+	let swept = 0;
+	for (const [shape, count] of Object.entries(shapes)) {
+		if (expiryGcTable(shape) === table) swept += count;
+	}
+	return swept === statements;
+}
+
 /** one table a request wrote that a replica may not */
 export type AuthoritativeWrite = { table: string; rows: number; statements: number };
 
@@ -60,6 +124,7 @@ export type AuthoritativeWrite = { table: string; rows: number; statements: numb
 export function authoritativeWrites(tally: {
 	byTable: Record<string, number>;
 	statementsByTable: Record<string, number>;
+	shapes?: Record<string, number>;
 }): AuthoritativeWrite[] {
 	const tables = new Set([
 		...Object.keys(tally.byTable),
@@ -68,6 +133,7 @@ export function authoritativeWrites(tally: {
 	const out: AuthoritativeWrite[] = [];
 	for (const table of tables) {
 		if (isReplicaLocalTable(table)) continue;
+		if (sweptOnly(tally.shapes, table, tally.statementsByTable[table] ?? 0)) continue;
 		out.push({
 			table,
 			rows: tally.byTable[table] ?? 0,
@@ -109,6 +175,7 @@ export function isProvenRead(sql: string): boolean {
  */
 export function statementAllowedOnReplica(sql: string): boolean {
 	if (isProvenRead(sql)) return true;
+	if (expiryGcTable(sql) !== null) return true;
 	const target = writeTargetTable(sql);
 	return target !== null && isReplicaLocalTable(target);
 }
@@ -153,6 +220,8 @@ export class ReplicaRequiresPrimary extends Error {
  */
 export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwStats',
+	// a snapshot of this object's own counters; a replica reporting the primary's would be wrong
+	'cfwServeStats',
 	'cfwZlib',
 	'cfwLog',
 	// a pure URL builder over its arguments
@@ -162,6 +231,8 @@ export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwFileRead',
 	'cfwFileList',
 	'cfwFileStat',
+	// a configured string, identical on every lane
+	'cfwFilePublicBase',
 	// classified per statement rather than wholesale; see below
 	'cfwSqlExec',
 	'cfwSqlTxn'

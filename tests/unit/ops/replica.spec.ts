@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { emptyTally, tallyWrite, type WriteTally } from '../../../src/db/write-tally';
+import { EXPIRED_ROW_RULES } from '../../../src/ops/cron';
 import {
 	ReplicaRequiresPrimary,
 	authoritativeWrites,
 	classifyCapability,
 	enforceReadOnly,
+	expiryGcTable,
 	isProvenRead,
 	isReplicaLocalTable,
 	statementAllowedOnReplica
@@ -298,5 +301,72 @@ describe('the SQL capabilities are classified per call', () => {
 				JSON.stringify({ statements: [{ no: 1 }] })
 			)
 		).toThrow(/statement payload could not be read/);
+	});
+});
+
+/**
+ * The expiry sweep, which is one table carrying two effects.
+ *
+ * `tests/integration/session-gc.spec.ts` is where the mechanism is measured on the real interpreter:
+ * `session.gc_probability` is 1 in 100, so PHP sweeps `sessions` on ~1% of `session_start()` calls,
+ * and that is what `replica-invariant.spec.ts` had been reporting as an unattributed flake. Here is
+ * the classification on its own, with no interpreter in the way.
+ */
+describe('an expiry sweep is not an authoritative write', () => {
+	const SWEEP = 'DELETE FROM "sessions" WHERE "timestamp" < ?';
+
+	it('recognises the sweep and nothing that merely resembles it', () => {
+		expect(expiryGcTable(SWEEP)).toBe('sessions');
+		expect(expiryGcTable('delete from sessions where timestamp < ?')).toBe('sessions');
+		// anchored at both ends, so an extra predicate is a different statement
+		expect(expiryGcTable('DELETE FROM sessions WHERE timestamp < ? OR uid = ?')).toBeNull();
+		expect(expiryGcTable('DELETE FROM sessions WHERE sid = ?')).toBeNull();
+		expect(expiryGcTable('DELETE FROM users_field_data WHERE timestamp < ?')).toBeNull();
+		expect(expiryGcTable('INSERT INTO sessions (sid) VALUES (?)')).toBeNull();
+	});
+
+	it('lets a replica sweep but never write a session row', () => {
+		expect(statementAllowedOnReplica(SWEEP)).toBe(true);
+		expect(statementAllowedOnReplica('DELETE FROM sessions WHERE sid = ?')).toBe(false);
+		expect(statementAllowedOnReplica('INSERT INTO sessions (sid) VALUES (?)')).toBe(false);
+	});
+
+	it('absorbs a sweep-only tally and reports everything else', () => {
+		expect(authoritativeWrites(tallyWrite(emptyTally(), SWEEP, 0))).toEqual([]);
+		// rows do not decide it: the same statement on an object with stale sessions still sweeps
+		expect(authoritativeWrites(tallyWrite(emptyTally(), SWEEP, 12))).toEqual([]);
+
+		const row = tallyWrite(emptyTally(), 'INSERT INTO sessions (sid, uid) VALUES (?, ?)', 1);
+		expect(authoritativeWrites(row).map((entry) => entry.table)).toEqual(['sessions']);
+
+		// a sweep is absorbed only when it is ALL of the statements against that table
+		const mixed = tallyWrite(
+			tallyWrite(emptyTally(), SWEEP, 0),
+			'UPDATE sessions SET uid = ?',
+			1
+		);
+		expect(authoritativeWrites(mixed).map((entry) => entry.table)).toEqual(['sessions']);
+
+		// fail closed: `shapes` is a capped diagnostic, so its absence is no evidence at all
+		const blind: WriteTally = { ...tallyWrite(emptyTally(), SWEEP, 0) };
+		delete blind.shapes;
+		expect(authoritativeWrites(blind).map((entry) => entry.table)).toEqual(['sessions']);
+	});
+
+	/**
+	 * The pairs are a copy of the host's own cron rules, so this is what stops them drifting.
+	 *
+	 * `cron.ts` is not imported by `replica.ts` -- it drags the cron PHP fragments onto the front
+	 * worker's routing path for a five-entry list. `queue` is excluded deliberately and asserted as
+	 * excluded, so losing it by accident reads as a failure rather than as the intent.
+	 */
+	it('sweeps exactly the tables the host cron expires, less the queue', () => {
+		for (const rule of EXPIRED_ROW_RULES) {
+			const column = rule.where.split(' ')[0];
+			const statement = `DELETE FROM "${rule.table}" WHERE "${column}" < ?`;
+			expect(expiryGcTable(statement), statement).toBe(
+				rule.table === 'queue' ? null : rule.table
+			);
+		}
 	});
 });

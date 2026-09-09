@@ -11,7 +11,22 @@
  */
 
 /** one window's worth of observed contention on the primary */
-export type DemandWindow = { peakInflight: number; at: number };
+export type DemandWindow = {
+	peakInflight: number;
+	at: number;
+	/**
+	 * requests that WAITED for the gate in this window, and how long, when it was observed.
+	 *
+	 * Replicas remove QUEUEING, not service time -- that is the fact the replica work established
+	 * and the fact `peakInflight` is only a proxy for. A site with 100 req/s of cached traffic
+	 * queues nothing and needs no lane; a site with 20 req/s of authenticated renders may need
+	 * several. Optional because a window recorded before this existed is still a window, and
+	 * {@link laneTarget} falls back to the proxy rather than discarding it.
+	 */
+	queued?: number;
+	/** ms the queued requests waited, summed; a long single wait is not two short ones */
+	waitedMs?: number;
+};
 
 /** windows that must ALL be contended before a lane is provisioned */
 export const SUSTAIN_WINDOWS = 3;
@@ -82,6 +97,24 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 	if (ceiling === 0) return 0;
 	if (windows.length < SUSTAIN_WINDOWS) return 0;
 	const recent = windows.slice(-SUSTAIN_WINDOWS);
+
+	// QUEUEING FIRST, when the windows carry it. Inflight peak counts requests that were in the
+	// object at once, which on a cached site is concurrency a single object serves without anybody
+	// waiting -- so it provisions lanes for load that never queued. `queued` counts the requests
+	// that actually WAITED, which is the thing a lane removes.
+	const measured = recent.every((w) => typeof w?.queued === 'number');
+	if (measured) {
+		let sustainedQueue = Infinity;
+		for (const w of recent) {
+			const queued = Number(w.queued);
+			if (!Number.isFinite(queued)) return 0;
+			sustainedQueue = Math.min(sustainedQueue, queued);
+		}
+		// a lane per sustained waiter, because that is what each one removes. No `-1` here: unlike
+		// inflight, a queue depth of 1 already means somebody waited
+		return Math.max(0, Math.min(ceiling, Math.floor(sustainedQueue)));
+	}
+
 	let sustained = Infinity;
 	for (const w of recent) {
 		const peak = Number(w?.peakInflight);
@@ -90,6 +123,23 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 	}
 	// one request in flight is the uncontended case and needs no lane
 	return Math.max(0, Math.min(ceiling, Math.floor(sustained) - 1));
+}
+
+/**
+ * The mean wait a queued request saw, in ms, or null when nothing queued.
+ *
+ * Reported rather than acted on: a lane removes waiting, and how MUCH waiting it removes is what
+ * says whether the lane was worth its idle cost. Acting on it as well would be two policies for one
+ * decision.
+ */
+export function meanWaitMs(windows: readonly DemandWindow[]): number | null {
+	let queued = 0;
+	let waited = 0;
+	for (const w of windows) {
+		queued += Number(w?.queued ?? 0);
+		waited += Number(w?.waitedMs ?? 0);
+	}
+	return queued > 0 ? waited / queued : null;
 }
 
 /** keeps the history bounded, newest last */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drupalOp } from '../../src/drupal/site-php';
 import type { ProvisionOutcome } from '../../src/ops/replica-restore';
 import { replicaName } from '../../src/ops/replica-routing';
-import { driveAlarms, inObject, namedSite, type ServeDo } from '../helpers/serve-do';
+import { driveAlarms, freshSite, inObject, namedSite, type ServeDo } from '../helpers/serve-do';
 
 /**
  * Creating a lane and filling it, without anyone holding both stubs.
@@ -210,13 +210,50 @@ describe('what the driver refuses', () => {
 });
 
 describe('a contended site grows its own pool', () => {
-	/** contended alarm windows; `laneTarget()` wants `peak - 1` lanes once three of them are in */
+	/**
+	 * Contended alarm windows.
+	 *
+	 * SEEDS THE WAITING, not just the concurrency. `laneTarget()` used to want `peak - 1` lanes from
+	 * the inflight peak alone, and inflight is only a proxy: a site with 100 req/s of cached traffic
+	 * has requests in the object at once and nobody waiting, and provisioning lanes for that is
+	 * provisioning for load that never queued. It now prefers the sustained QUEUE depth, which
+	 * `laneTimings` was already recording and which nothing acted on -- so a spec that simulates
+	 * contention has to simulate a wait.
+	 */
 	async function contend(site: ServeDo, windows: number, peak = 4): Promise<void> {
 		for (let i = 0; i < windows; i++) {
 			(site as any).inflightPeak = peak;
+			(site as any).laneTimings = Array.from({ length: peak }, (_, k) => ({
+				ahead: k === 0 ? 0 : k,
+				queueMs: k === 0 ? 0 : 12,
+				serviceMs: 20
+			}));
 			await (site as any).autoScaleStep();
 		}
 	}
+
+	it(
+		'provisions NOTHING for concurrency that never queued',
+		async () => {
+			// the half the inflight proxy got wrong: eight cached hits in flight at once are eight
+			// requests one object serves without anybody waiting
+			const stub = freshSite();
+			const provisioned = await inObject(stub, async (site) => {
+				for (let i = 0; i < 4; i++) {
+					(site as any).inflightPeak = 8;
+					(site as any).laneTimings = Array.from({ length: 8 }, () => ({
+						ahead: 0,
+						queueMs: 0,
+						serviceMs: 3
+					}));
+					await (site as any).autoScaleStep();
+				}
+				return Number((site as any).metaGet('lanes_provisioned') ?? 0);
+			});
+			expect(provisioned).toBe(0);
+		},
+		TIMEOUT
+	);
 
 	it(
 		'provisions lane 1 off the alarm without anyone raising REPLICA_COUNT',

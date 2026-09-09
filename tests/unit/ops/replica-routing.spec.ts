@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
+	believedLanes,
 	chooseTarget,
+	LANES_TRUST_MS,
+	rememberLanes,
 	replicaCount,
 	replicaName,
 	replicaOf,
+	resetLaneBeliefs,
 	shouldFailover
 } from '../../../src/ops/replica-routing';
 import { encodeSiteId } from '../../../src/ops/site-id';
@@ -56,6 +60,63 @@ describe('how many lanes there are', () => {
 	it('reads a number and clamps it', () => {
 		expect(replicaCount({ REPLICA_COUNT: '3' })).toBe(3);
 		expect(replicaCount({ REPLICA_COUNT: '4096' })).toBe(32);
+	});
+});
+
+/**
+ * The half autoscaling was missing, and it was missing in the opposite direction to the one recorded.
+ *
+ * `replica-demand.ts` says "raising `REPLICA_COUNT` by hand only tells the ROUTER lanes exist.
+ * Nothing created them. This is the missing half." Creating them shipped; routing to them did not.
+ * The primary wrote `lanes_provisioned` into its own meta, `replicaCount()` read only `REPLICA_COUNT`
+ * from env, and the canonical `wrangler.jsonc` sets no such var -- so a contended site paid to copy
+ * its database into N objects and answered every request from one.
+ */
+describe('a lane count learned from the primary', () => {
+	beforeEach(() => resetLaneBeliefs());
+
+	const at = 5_000_000;
+
+	it('is unknown until a primary reports one', () => {
+		expect(believedLanes(SITE, at)).toBe(0);
+		rememberLanes(SITE, 3, at);
+		expect(believedLanes(SITE, at)).toBe(3);
+	});
+
+	it('expires, so a shrunk pool stops being routed to', () => {
+		rememberLanes(SITE, 3, at);
+		expect(believedLanes(SITE, at + LANES_TRUST_MS - 1)).toBe(3);
+		expect(believedLanes(SITE, at + LANES_TRUST_MS)).toBe(0);
+	});
+
+	it('refuses a value that is not a lane count, and clamps to what the router honours', () => {
+		for (const bad of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
+			rememberLanes(SITE, bad, at);
+			expect(believedLanes(SITE, at)).toBe(0);
+		}
+		rememberLanes(SITE, 4096, at);
+		expect(believedLanes(SITE, at)).toBe(32);
+	});
+
+	it('separates two sites', () => {
+		rememberLanes(SITE, 2, at);
+		expect(believedLanes('other.test', at)).toBe(0);
+	});
+
+	it('sends traffic to a lane that only the primary knew about', () => {
+		// with no belief and no var this is the primary on every affinity, which is the defect
+		const before = ['a', 'b', 'c', 'd'].map((k) => get(k, replicaCount()).target);
+		expect(new Set(before)).toEqual(new Set([SITE]));
+
+		rememberLanes(SITE, 3, at);
+		const after = ['a', 'b', 'c', 'd'].map(
+			(k) => get(k, Math.max(replicaCount(), believedLanes(SITE, at))).target
+		);
+		expect(after.some((t) => t !== SITE)).toBe(true);
+		for (const target of after) {
+			if (target === SITE) continue;
+			expect(replicaOf(target)?.lane).toBeLessThanOrEqual(3);
+		}
 	});
 });
 

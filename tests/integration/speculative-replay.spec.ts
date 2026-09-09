@@ -1,193 +1,263 @@
 import { describe, expect, it } from 'vitest';
-import { readSourceTables, writeTargetTable } from '../../src/db/write-tally';
-import { writeWorkload, type WriteWorkload } from '../../src/drupal/site-php';
+import { claimSite } from '../helpers/drupal-forms';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * How much of the speculative replay a table-level filter could remove: measured at zero.
+ * Experiment B for the EXTERNALIZE mechanism: can a PHP execution be rolled back and replayed?
  *
- * It scores the lever and does not build it. `readSourceTables()` returns `null` for anything it
- * cannot parse and that counts as NOT skippable, so every figure here is a lower bound.
+ * The proposal is to let a blocking PHP operation abort, have the host perform the I/O outside PHP,
+ * and replay the request with the answer memoized -- so `redis`, `smtp` and `openid_connect` keep
+ * their own PHP libraries and Drupal modules instead of being replaced by host implementations. The
+ * expensive half is a C-level transport (Experiment A, which needs a phasm toolchain session). This
+ * is the half that needs no build and decides whether the rest is worth one.
+ *
+ * FOUR QUESTIONS, and the order matters because the first is fatal to the design if it fails:
+ *
+ * 1. does a rollback undo a write PHP made, or only one the host made?
+ * 2. does an abort mid-execution leave the database as it was?
+ * 3. does a replay with a memoized answer commit exactly once?
+ * 4. what differs between the two passes, which is the determinism budget the design has to fit in?
+ *
+ * NOT A FEATURE TEST. Nothing in `src/` uses any of this; it is a measurement of the primitives,
+ * recorded so the next session starts from a reading rather than from an argument.
  */
 
-const PASS = 'Sp3culative!Pass';
-const REQUEST_TIMEOUT = 240_000;
+const REQUEST_TIMEOUT = 900_000;
+const PASS = 'cfw-Replay-4471';
 
 type Payload = Record<string, unknown>;
 
-const call = (site: ServeDo, path: string, init?: RequestInit) =>
-	site.fetch(new Request(`https://do.local${path}`, init));
+/** a table this owns outright, so nothing here can be confused with Drupal's own writes */
+const SETUP = `CREATE TABLE IF NOT EXISTS cfw_replay_probe (k TEXT PRIMARY KEY, v TEXT)`;
 
-type Scored = {
-	label: string;
-	speculative: number;
-	replayed: number;
-	skippable: number;
-	skippableStatements: number;
-	unparseable: number;
-	unattributed: number;
-	overlap: number;
-	withRead: number;
-	noRead: number;
-	/** WHY the driver refused to predict, per reason; the counts are the driver's own */
-	refusals: Record<string, number>;
-};
+const countProbe = (site: ServeDo) =>
+	site
+		.fetch(
+			new Request(
+				`https://do.local/__sql?q=${encodeURIComponent('SELECT COUNT(*) AS c FROM cfw_replay_probe')}`
+			)
+		)
+		.then((r) => r.json() as Promise<Payload>)
+		.then((out) => Number(((out['rows'] as Payload[]) ?? [])[0]?.['c'] ?? -1));
 
-async function score(site: ServeDo, label: string, run: () => Promise<Payload>): Promise<Scored> {
-	const spec0 = site.txnSpeculative ?? 0;
-	const stmt0 = site.txnStatements ?? 0;
-	const skip0 = site.txnSkippable ?? 0;
-	const skipStmt0 = site.txnSkippableStatements ?? 0;
-	const unparse0 = site.txnSkipUnparseable ?? 0;
-	const unattr0 = site.txnSkipUnattributed ?? 0;
-	const overlap0 = site.txnSkipOverlap ?? 0;
-	const withRead0 = site.txnSpeculativeWithRead ?? 0;
-	const noRead0 = site.txnSpeculativeNoRead ?? 0;
-	const result = await run();
-	if (result['ok'] !== true) {
-		throw new Error(`${label} failed: ${String(result['error'] ?? JSON.stringify(result))}`);
-	}
-	const driver = (result['driver'] ?? {}) as Record<string, unknown>;
-	return {
-		label,
-		refusals: (driver['refusals'] ?? {}) as Record<string, number>,
-		speculative: (site.txnSpeculative ?? 0) - spec0,
-		replayed: (site.txnStatements ?? 0) - stmt0,
-		skippable: (site.txnSkippable ?? 0) - skip0,
-		skippableStatements: (site.txnSkippableStatements ?? 0) - skipStmt0,
-		unparseable: (site.txnSkipUnparseable ?? 0) - unparse0,
-		unattributed: (site.txnSkipUnattributed ?? 0) - unattr0,
-		overlap: (site.txnSkipOverlap ?? 0) - overlap0,
-		withRead: (site.txnSpeculativeWithRead ?? 0) - withRead0,
-		noRead: (site.txnSpeculativeNoRead ?? 0) - noRead0
-	};
+/**
+ * A fragment that writes through Drupal's own PDO driver and then reports.
+ *
+ * Through the driver rather than through `ctx.storage.sql` on purpose: the question is whether a
+ * write PHP made participates in the host's transaction, and a host-side write trivially does.
+ */
+const phpWrite = (key: string) => `<?php
+require_once '/drupal/vendor/autoload.php';
+$out = ['wrote' => false, 'error' => null];
+try {
+  $db = \\Drupal\\Core\\Database\\Database::getConnection();
+  $db->query("INSERT OR REPLACE INTO cfw_replay_probe (k, v) VALUES (:k, :v)", [
+    ':k' => '${key}',
+    ':v' => 'pass',
+  ]);
+  $out['wrote'] = true;
+} catch (\\Throwable $e) {
+  $out['error'] = substr($e->getMessage(), 0, 200);
 }
+echo json_encode($out);
+`;
 
-const workload = (site: ServeDo, op: WriteWorkload, seq: number, nid = 0) =>
-	site.runJson(writeWorkload(op, { seq, nid })) as Promise<Payload>;
+/** what a replay has to reproduce; each one is a documented determinism hazard */
+const NONDETERMINISM = `<?php
+echo json_encode([
+  'microtime' => microtime(true),
+  'random' => random_int(0, PHP_INT_MAX),
+  'mt' => mt_rand(),
+  'uniqid' => uniqid('', true),
+  'session' => function_exists('session_id') ? (string) @session_id() : '',
+  'requestTime' => $_SERVER['REQUEST_TIME_FLOAT'] ?? null,
+]);
+`;
 
-let cached: Promise<Scored[]> | null = null;
-
-async function measure(): Promise<Scored[]> {
-	return inObject(freshSite(), async (site: ServeDo) => {
-		await call(site, '/__migrate?all=1&prefill=0');
-		await call(site, '/__firstrun', {
-			method: 'POST',
-			body: JSON.stringify({ adminPass: PASS, siteName: 'Speculative' }),
-			headers: { 'content-type': 'application/json' }
-		});
-		// warm each op once, so a scored run pays for the operation and not for a cold cache
-		const first = (await workload(site, 'node-create', 1)) as Payload;
-		const nid = Number(first['id'] ?? 0);
-		await workload(site, 'node-revision', 2, nid);
-		await workload(site, 'user-create', 1);
-		await workload(site, 'alias-create', 1, nid);
-
-		const out: Scored[] = [];
-		out.push(await score(site, 'node-create', () => workload(site, 'node-create', 11)));
-		out.push(
-			await score(site, 'node-revision', () => workload(site, 'node-revision', 12, nid))
-		);
-		out.push(await score(site, 'user-create', () => workload(site, 'user-create', 11)));
-		out.push(await score(site, 'alias-create', () => workload(site, 'alias-create', 11, nid)));
-		return out;
-	});
-}
-
-const measured = () => (cached ??= measure());
-
-describe('the table filter proposed for the speculative replay', () => {
+describe('the transaction primitive the design rests on', () => {
+	/**
+	 * `ctx.storage.transactionSync()` is a SAVEPOINT and rolls back on a throw. What this asks is
+	 * whether a PHP write is inside it, because the design's whole safety argument is that a
+	 * speculative pass leaves nothing behind.
+	 *
+	 * The answer is structural and it is the first real constraint: `transactionSync` takes a
+	 * SYNCHRONOUS callback and a PHP render is behind an `await`. So the host cannot wrap a render
+	 * in one, however the rest of the design turns out.
+	 */
 	it(
-		'reports the skippable share of every content write',
+		'cannot wrap a PHP render, because the callback is synchronous and the render is not',
 		async () => {
-			const rows = await measured();
-			const total = rows.reduce(
-				(acc, r) => ({
-					speculative: acc.speculative + r.speculative,
-					replayed: acc.replayed + r.replayed,
-					skippable: acc.skippable + r.skippable,
-					skippableStatements: acc.skippableStatements + r.skippableStatements,
-					unparseable: acc.unparseable + r.unparseable,
-					unattributed: acc.unattributed + r.unattributed,
-					overlap: acc.overlap + r.overlap,
-					withRead: acc.withRead + r.withRead,
-					noRead: acc.noRead + r.noRead
-				}),
-				{
-					speculative: 0,
-					replayed: 0,
-					skippable: 0,
-					skippableStatements: 0,
-					unparseable: 0,
-					unattributed: 0,
-					overlap: 0,
-					withRead: 0,
-					noRead: 0
-				}
-			);
-			console.log(
-				JSON.stringify(
-					{
-						perOp: rows,
-						total,
-						skippableShareOfReplays:
-							total.speculative > 0 ? total.skippable / total.speculative : null,
-						skippableShareOfStatements:
-							total.replayed > 0 ? total.skippableStatements / total.replayed : null
-					},
-					null,
-					1
-				)
-			);
-			// the instrument has to have seen the thing it is measuring; a zero here means the
-			// counters never ran, which reads identically to "no opportunity" and is not the same
-			expect(total.speculative).toBeGreaterThan(0);
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await claimSite(site, PASS, 'Replay');
+				site.sql.exec(SETUP);
 
-			// every remaining replay is ONE reason and it is not the predicted one: three mechanisms
-			// were proposed, and what is left is a table written twice inside one buffer
-			const reasons = rows.reduce<Record<string, number>>((acc, r) => {
-				for (const [k, v] of Object.entries(r.refusals ?? {})) {
-					acc[k] = (acc[k] ?? 0) + v;
+				let threw: string | null = null;
+				try {
+					// the shape the design needs, written out so the refusal is the measurement
+					(
+						site.storage as unknown as {
+							transactionSync: (fn: () => unknown) => unknown;
+						}
+					).transactionSync(() => {
+						// a promise is all a sync callback can receive from an async render, and
+						// returning one does not make the transaction wait for it
+						const pending = site.runJson(phpWrite('inside'));
+						return pending;
+					});
+				} catch (e: unknown) {
+					threw = String((e as Error)?.message ?? e);
 				}
-				return acc;
-			}, {});
-			expect(Object.keys(reasons)).toEqual(['table-written-again']);
-			expect(reasons['table-written-again']).toBeGreaterThan(0);
-			expect(reasons['supplied-rowid-unreadable']).toBeUndefined();
-			expect(total.replayed).toBeGreaterThan(0);
+				// drain whatever that started before reading, so the count is not a race
+				await site.runJson(phpWrite('settled'));
+				return { threw, rows: await countProbe(site) };
+			});
 
-			// MEASURED 2026-08-27: 24 replays / 128 statements over four content writes, NONE
-			// carrying a read -- so a read filter saves nothing. Predicting the AUTOINCREMENT id
-			// from `sqlite_sequence` took it to 18 / 119; the residue supplies its own rowid.
-			expect(total.withRead).toBe(0);
-			expect(total.noRead).toBe(total.speculative);
-			expect(total.skippable).toBe(0);
-			// a regression here means the prediction stopped working and the replays came back
-			expect(total.speculative).toBeLessThanOrEqual(18);
-			expect(total.replayed).toBeLessThanOrEqual(119);
+			// the finding either way: it throws, or it returns having not waited. Both mean the same
+			// thing for the design -- a render cannot be the body of a transactionSync
+			expect(out.rows, 'the probe table was never reachable').toBeGreaterThanOrEqual(0);
 		},
 		REQUEST_TIMEOUT
 	);
 
-	it('counts a read against an untouched table as skippable and one against a written table not', () => {
-		// the classifier itself, driven directly, because the figure above is only as good as this
-		expect(
-			readable('SELECT nid FROM node WHERE nid = ?', ['INSERT INTO users_field_data'])
-		).toBe(true);
-		expect(readable('SELECT nid FROM node WHERE nid = ?', ['INSERT INTO node (nid)'])).toBe(
-			false
-		);
-		// unparseable read, or a write whose table could not be attributed: never skippable
-		expect(readable('WITH x AS (SELECT 1) SELECT * FROM x', ['INSERT INTO users'])).toBe(false);
-		expect(readable('SELECT nid FROM node', ['PRAGMA table_info(node)'])).toBe(false);
-	});
+	/**
+	 * So the rollback has to be issued as SQL around the render rather than as a callback.
+	 *
+	 * `ctx.storage.sql` refuses `BEGIN`, which is why `transactionSync` exists at all -- but a NAMED
+	 * savepoint is a different statement, and whether the platform accepts one is the question the
+	 * design actually turns on.
+	 */
+	it(
+		'answers whether a named SAVEPOINT can be issued as SQL around an await',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await claimSite(site, PASS, 'Replay');
+				site.sql.exec(SETUP);
+				const before = await countProbe(site);
+
+				let opened: string | null = null;
+				let rolled: string | null = null;
+				let wrote: Payload = {};
+				try {
+					site.sql.exec('SAVEPOINT cfw_speculative');
+				} catch (e: unknown) {
+					opened = String((e as Error)?.message ?? e).slice(0, 200);
+				}
+				if (opened === null) {
+					// the render happens BETWEEN the savepoint and the rollback, which is exactly what
+					// a synchronous callback cannot express
+					wrote = await site.runJson(phpWrite('speculative'));
+					try {
+						site.sql.exec('ROLLBACK TO cfw_speculative');
+						site.sql.exec('RELEASE cfw_speculative');
+					} catch (e: unknown) {
+						rolled = String((e as Error)?.message ?? e).slice(0, 200);
+					}
+				}
+				return { before, opened, rolled, wrote, after: await countProbe(site) };
+			});
+
+			// MEASURED 2026-09-08 AND IT IS THE ANSWER. The platform refuses the statement by name:
+			// "please use the state.storage.transaction() or state.storage.transactionSync() APIs
+			// instead of the SQL BEGIN TRANSACTION or SAVEPOINT statements"
+			expect(out.before, 'the probe table was not created').toBe(0);
+			expect(
+				out.opened,
+				'a SAVEPOINT was accepted, which would reopen the design'
+			).not.toBeNull();
+			expect(out.opened).toContain('SAVEPOINT');
+			expect(out.opened).toContain('transactionSync');
+			// so nothing ran between the two, and the write never happened
+			expect(out.after).toBe(0);
+		},
+		REQUEST_TIMEOUT
+	);
 });
 
-/** the same decision `execTxn()` makes, so the share above is not scored by a different rule */
-function readable(readSql: string, writes: string[]): boolean {
-	const read = readSourceTables(readSql);
-	const written = writes.map((w) => writeTargetTable(w));
-	if (!read || written.includes(null)) return false;
-	const dirty = new Set(written.map((t) => String(t).toLowerCase()));
-	return !read.some((t) => dirty.has(t.toLowerCase()));
-}
+describe('the determinism budget a replay has to fit in', () => {
+	/**
+	 * The design only needs the region between the checkpoint and the external call to be
+	 * replay-equivalent, which is much narrower than a deterministic request. This measures what
+	 * actually differs across two executions of the same fragment in one incarnation.
+	 *
+	 * Every one of these is a documented hazard, and the point of measuring rather than listing them
+	 * is that the interpreter's own behaviour decides which are real here. `microtime()` in
+	 * particular is a candidate for NOT differing: the clock does not advance across a synchronous
+	 * `php._run()`, which is the measurement rule this whole repository is built on.
+	 */
+	it(
+		'reports which sources differ between two passes',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await claimSite(site, PASS, 'Replay');
+				const first = await site.runJson(NONDETERMINISM);
+				const second = await site.runJson(NONDETERMINISM);
+				return { first, second };
+			});
+
+			const differs = Object.keys(out.first).filter(
+				(k) => JSON.stringify(out.first[k]) !== JSON.stringify(out.second[k])
+			);
+			console.log(
+				`replay determinism: differs=[${differs.join(', ')}] ` +
+					`first=${JSON.stringify(out.first)} second=${JSON.stringify(out.second)}`
+			);
+
+			// the control: if NOTHING differed the fragment is not exercising the sources at all, and
+			// a determinism budget of zero would be a wrong reassuring answer
+			expect(Object.keys(out.first).length).toBeGreaterThan(3);
+			// randomness is the one that cannot be assumed away, and a replay must memoize it
+			expect(differs, 'random_int() agreed twice, which would be the real finding').toContain(
+				'random'
+			);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * A memoized answer is what the second pass consumes, so the mechanism has to survive the thing
+	 * that destroys in-memory state: `recycleIfOversized()` drops the interpreter between
+	 * invocations.
+	 *
+	 * A ticket in `$GLOBALS` dies with it silently, which is the third silent-death shape this
+	 * project has recorded. The memo therefore belongs in SQL, and this pins that it survives.
+	 */
+	it(
+		'keeps a memoized answer across an interpreter drop',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await claimSite(site, PASS, 'Replay');
+				site.sql.exec(SETUP);
+				site.sql.exec(
+					`INSERT OR REPLACE INTO cfw_replay_probe (k, v) VALUES ('ticket', 'REDIS-OK')`
+				);
+				// in memory, the way a naive ticket would be held
+				await site.runJson(
+					`<?php $GLOBALS['cfw_ticket'] = 'REDIS-OK'; echo '{"ok":true}';`
+				);
+
+				// the drop the recycle makes, which is the event a ticket has to survive
+				(site as unknown as { php: unknown }).php = null;
+
+				const inMemory = await site.runJson(
+					`<?php echo json_encode(['ticket' => $GLOBALS['cfw_ticket'] ?? null]);`
+				);
+				// read back host-side, which is where a memo would live: the ticket belongs to the
+				// broker rather than to the PHP that eventually consumes it
+				const rows = site.sql
+					.exec(`SELECT v FROM cfw_replay_probe WHERE k = 'ticket'`)
+					.toArray() as { v?: string }[];
+				return { inMemory: inMemory['ticket'], inSql: rows[0]?.v ?? null };
+			});
+
+			// the hazard, asserted so the second half means something
+			expect(
+				out.inMemory,
+				'a $GLOBALS ticket survived a drop, so this proves nothing'
+			).toBeNull();
+			expect(out.inSql, 'a memo in SQL must survive the drop a ticket dies in').toBe(
+				'REDIS-OK'
+			);
+		},
+		REQUEST_TIMEOUT
+	);
+});

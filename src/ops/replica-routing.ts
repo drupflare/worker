@@ -43,6 +43,46 @@ export function replicaCount(env?: { REPLICA_COUNT?: string | null }): number {
 	return Math.min(Math.floor(raw), 32);
 }
 
+/** the header a primary reports its provisioned lane count on */
+export const LANES_HEADER = 'x-cfw-lanes';
+
+/** how long an isolate routes to a lane count it learned, in ms */
+export const LANES_TRUST_MS = 60_000;
+
+/** what this isolate last heard a primary say about its pool, and when */
+const lanesSeen = new Map<string, { lanes: number; at: number }>();
+
+/**
+ * Records the lane count a primary reported.
+ *
+ * WITHOUT THIS, AUTOSCALING BUILT LANES NOTHING ROUTED TO. `autoScaleStep()` writes
+ * `lanes_provisioned` into the object's own meta and {@link replicaCount} reads only `REPLICA_COUNT`
+ * from env, which the canonical config does not set -- so a contended site paid to copy its database
+ * into N objects and kept answering every request from one.
+ *
+ * Read off the primary's OWN response, never off the request, for the same reason `rememberRoles()`
+ * is: a client cannot present a lane count. Routing to a lane that has finished copying but has not
+ * yet promoted is safe rather than merely tolerable -- a lane refuses until it is SERVING and hands
+ * the request back, which is why the router needs no readiness cache.
+ */
+export function rememberLanes(site: string, lanes: number, nowMs: number): void {
+	if (!Number.isFinite(lanes) || lanes < 1) return;
+	if (lanesSeen.size > 64) lanesSeen.clear();
+	lanesSeen.set(site, { lanes: Math.min(Math.floor(lanes), 32), at: nowMs });
+}
+
+/** the lane count this isolate may route against, or 0 when it has not learned one recently */
+export function believedLanes(site: string, nowMs: number): number {
+	const seen = lanesSeen.get(site);
+	if (!seen || nowMs - seen.at >= LANES_TRUST_MS) return 0;
+	return seen.lanes;
+}
+
+/** drops what this isolate believes about every pool; tests use it */
+export function resetLaneBeliefs(): void {
+	lanesSeen.clear();
+}
+
 /**
  * The stable per-visitor string a lane is chosen from.
  *

@@ -88,16 +88,19 @@ describe('moduleTable', () => {
 			'drupal/metatag_search_gov',
 			'drupal/migrate_plus',
 			'drupal/module_filter',
+			'drupal/openid_connect',
 			'drupal/paragraphs',
 			'drupal/pathauto',
 			'drupal/purge',
 			'drupal/queue_ui',
 			'drupal/recaptcha',
 			'drupal/redirect',
+			'drupal/redis',
 			'drupal/scheduler',
 			'drupal/search_api',
 			'drupal/search_api_solr',
 			'drupal/simple_sitemap',
+			'drupal/smtp',
 			'drupal/stage_file_proxy',
 			'drupal/svg_image',
 			'drupal/token',
@@ -273,14 +276,19 @@ describe('every verified module has a run behind it, not just a sentence', () =>
 		const verified = new Set(Object.keys(VERIFIED_BEHAVIOURS).map((n) => n.split('/')[1]));
 		const unclaimed = [...exercised()].filter((n) => !verified.has(n)).sort();
 		expect(unclaimed, 'a case runs for this module but the table makes no claim').toEqual([
-			'search_gov_results_api',
-			'smtp'
+			'search_gov_results_api'
 		]);
-		// each is absent for its own reason. `smtp` needs a socket inside the request that sends the
-		// mail, which the classifier refuses. `search_gov_results_api` is NOT refused: measured, the
-		// deferred tier carries its GET across two renders, so what it lacks is a Search.gov API key
-		// rather than a capability -- see `guzzle-handler.spec.ts`
-		expect(tierFor('drupal/smtp').tier).toBe('refused');
+		// `search_gov_results_api` is NOT refused: measured, the park carries its GET inside the
+		// render that asks, so what it lacks is a Search.gov API key rather than a capability
+		// AND `openid_connect` IS NO LONGER REFUSED, 2026-09-08: the park carries its own token
+		// exchange, so the module completes a login through its own client
+		expect(tierFor('drupal/openid_connect').tier).not.toBe('refused');
+		// AND `redis` IS NO LONGER ONE OF THEM, 2026-09-08: the park delivers its socket exchange
+		expect(tierFor('drupal/redis').tier).not.toBe('refused');
+		// AND SMTP IS NO LONGER ONE OF THEM, 2026-09-08. It was refused on `blocking-outbound`
+		// because PHPMailer opens a socket inside the send; the SITE never needed that answer
+		// in-render, so the need is `deferrable-outbound` and the host transport carries it
+		expect(tierFor('drupal/smtp').tier).not.toBe('refused');
 		expect(tierFor('drupal/search_gov_results_api').tier).not.toBe('refused');
 		expect(tierFor('drupal/simple_sitemap').tier).not.toBe('refused');
 		// the vector is still what decides it; only the vector's answer moved
@@ -309,5 +317,92 @@ describe('labelFor', () => {
 		expect(labelFor('drupal/admin_toolbar')).toBe('Admin Toolbar');
 		expect(labelFor('drupal/pathauto')).toBe('Pathauto');
 		expect(labelFor('drupal/entity_reference_revisions')).toBe('Entity Reference Revisions');
+	});
+});
+
+/**
+ * The published table against the classifier, in both directions.
+ *
+ * **`module-table.ts` CLAIMED THIS EXISTED AND IT DID NOT.** Its docblock said the spec "renders
+ * these rows and fails when README.md disagrees"; what the spec actually compared was
+ * `VERIFIED_BEHAVIOURS` against the spec FILES, so a claim needed a run behind it and the published
+ * table needed nothing at all. Three rows were then edited by hand trusting the guard described
+ * above -- which is the shape of every stale-claim defect in this repository, a rule cited as
+ * authority by the person who wrote it.
+ *
+ * Names rather than prose: the README's wording is a maintainer's to choose, and what has to agree
+ * is WHICH module is in WHICH state.
+ */
+describe('README.md agrees with the classifier about every module', () => {
+	const README = readFileSync(join(here, '..', '..', 'README.md'), 'utf8');
+
+	/** every machine name the classifier knows, so a backticked prose word is not read as one */
+	const known = new Set(moduleTable().map((r) => r.name.split('/')[1] as string));
+
+	/**
+	 * The backticked MODULE names inside one `###` section of the module chapter.
+	 *
+	 * Filtered against {@link known} rather than taken as they are: the sections carry ordinary
+	 * backticked prose, and the first run of this read `theme_installer` out of a sentence
+	 * explaining how the theme installs. A name the classifier has never heard of is not a claim
+	 * about a module.
+	 */
+	function named(heading: string): Set<string> {
+		const at = README.indexOf(`### ${heading}`);
+		expect(at, `README.md has no "### ${heading}" section`).toBeGreaterThan(-1);
+		const rest = README.slice(at + heading.length);
+		const end = rest.search(/\n#{2,3} /);
+		const body = end === -1 ? rest : rest.slice(0, end);
+		const out = new Set<string>();
+		for (const m of body.matchAll(/`([a-z][a-z0-9_]{2,})`/g)) {
+			const name = m[1] as string;
+			if (known.has(name)) out.add(name);
+		}
+		return out;
+	}
+
+	const machine = (state: string) =>
+		new Set(
+			moduleTable()
+				.filter((r) => r.state === state)
+				.map((r) => r.name.split('/')[1] as string)
+		);
+
+	it('lists every verified module, and nothing that is not one', () => {
+		const published = named('Verified');
+		const actual = machine('verified');
+		const missing = [...actual].filter((n) => !published.has(n)).sort();
+		expect(missing, 'verified by the classifier and absent from README.md').toEqual([]);
+		// the other direction: a name the README still advertises after its row moved
+		const extra = [...published].filter((n) => !actual.has(n)).sort();
+		expect(extra, 'listed as verified in README.md and not verified by the classifier').toEqual(
+			[]
+		);
+	});
+
+	/**
+	 * ONE DIRECTION HERE, and the reason is the section's content rather than laziness.
+	 *
+	 * The Blocked section names the modules that LEFT it as well as the ones still in it, because a
+	 * reader who saw the old table needs to be told what moved. So a name appearing there is not a
+	 * claim that it is blocked, and the reverse check would fail on the prose. What still has to
+	 * hold is that a blocked row is never silently absent.
+	 */
+	it('names every blocked module', () => {
+		const published = named('Blocked');
+		for (const name of machine('blocked')) {
+			expect(published.has(name), `${name} is blocked and README.md does not say so`).toBe(
+				true
+			);
+		}
+	});
+
+	it('lists every untested module', () => {
+		const published = named('Untested');
+		for (const name of machine('untested')) {
+			expect(published.has(name), `${name} is untested and README.md does not say so`).toBe(
+				true
+			);
+		}
 	});
 });

@@ -2,7 +2,7 @@ import { env } from 'cloudflare:test';
 import { afterAll, describe, expect, it, type TestContext } from 'vitest';
 import { BOOT_KERNEL } from '../../src/drupal/site-php';
 import { vectorFor } from '../../src/ops/capability-contract';
-import { SHIPPED_CAPABILITIES } from '../../src/ops/catalog';
+import { SHIPPED_CAPABILITIES, tierFor } from '../../src/ops/catalog';
 import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
 import { SUSPEND_PROBE } from '../helpers/drupal-probes';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
@@ -692,12 +692,74 @@ const CASES: readonly Case[] = [
 		types: ['search_api_index.entity_type', 'search_api_server.entity_type'],
 		routes: 25
 	},
+	/**
+	 * WAS `blocked` UNTIL 2026-09-08, on a refusal that was measuring the wrong thing.
+	 *
+	 * The row said "it needs an SMTP socket inside the request that sends the mail". PHPMailer does
+	 * open one; the SITE does not need it to answer inside the render, because `MailManager::mail()`
+	 * returns a bool and the send is deferrable by construction. `CfwMail` already hands
+	 * `smtp.settings` to the host transport, so the module's own configuration drives delivery.
+	 * The observable asserted here is the mail PLUGIN in the manager, which is the thing the module
+	 * exists to add.
+	 */
 	{
 		module: 'smtp',
-		observable: 'smtp.settings installs; the socket it exists to open still cannot be opened',
+		observable: 'its mail plugin in the mail manager, smtp.settings and its connection tester',
 		config: ['smtp.settings'],
-		routes: 1,
-		blocked: 'it needs an SMTP socket inside the request that sends the mail'
+		ask: {
+			services: ['smtp.config', 'smtp.connection_tester'],
+			plugins: [['plugin.manager.mail', 'SMTPMailSystem']]
+		},
+		routes: 1
+	},
+	/**
+	 * The one module the park exists for.
+	 *
+	 * It ships no config and creates no table, so the CONTAINER is the observable -- the same shape
+	 * as `facets`. What is asserted is the four backends it adds; whether a cache get reaches a real
+	 * Redis is a separate question, measured in `tests/integration/park-interpreter.spec.ts` against
+	 * the rig rather than here.
+	 */
+	{
+		module: 'redis',
+		observable: 'its cache, lock, flood and queue backends in the container',
+		ask: {
+			services: [
+				'cache.backend.redis',
+				'redis.factory',
+				'redis.lock.factory',
+				'redis.flood.factory',
+				'queue.redis'
+			]
+		},
+		routes: 1
+	},
+	/**
+	 * Enabled and asserted on what it owns, with the exchange still belonging to the host.
+	 *
+	 * WAS `blocked` UNTIL 2026-09-08, and its own client runs now.
+	 *
+	 * The refusal was real and is closed: the token POST goes through `ParkFetchHandler`, which
+	 * yields to the Zend park, and the park declined under the one internal frame Drupal's dispatch
+	 * puts in the chain. `park_flatten()` splices that frame out. What this case still asserts is the
+	 * plugin surface; the LOGIN is `park-oidc.spec.ts`, which drives a real authorization code from
+	 * the rig Keycloak through this module's own client and reads the `authmap` row back.
+	 */
+	{
+		module: 'openid_connect',
+		observable:
+			'its client plugin manager, the generic client plugin and its client entity type',
+		config: ['openid_connect.settings'],
+		types: ['openid_connect_client.entity_type'],
+		ask: {
+			services: [
+				'plugin.manager.openid_connect_client',
+				'openid_connect.claims',
+				'openid_connect.state_token'
+			],
+			plugins: [['plugin.manager.openid_connect_client', 'generic']]
+		},
+		routes: 13
 	},
 	{
 		module: 'stage_file_proxy',
@@ -789,10 +851,15 @@ const CASES: readonly Case[] = [
 		}
 	},
 	{
+		// ITS GET RUNS NOW, so this stopped being a `blocked` case on 2026-09-08. The park carries
+		// the request out of the form build and the real api.gsa.gov answered it -- `400 affiliate
+		// not found`, which is the rig's fake credentials rather than a refusal. The row stays
+		// `untested` for a reason that has nothing to do with the fetch: `processResults()` detaches
+		// each child from a `viewMultiple()` result while `buildMultiple` is a `#pre_render` on the
+		// parent, so a detached child renders as an empty shell on any Drupal 11 site.
 		module: 'search_gov_results_api',
-		observable: 'its two routes install; the GET to api.gsa.gov that fills them cannot run',
-		routes: 1,
-		blocked: 'its results page needs an outbound GET to answer inside the render that asked'
+		observable: 'its route installs, and its search page is the thing that needs a live key',
+		routes: 1
 	},
 	{
 		module: 'uswds_base',
@@ -831,9 +898,19 @@ function declared(one: Case): Array<[Surface, string]> {
 
 const added = (before: Set<string>, after: Set<string>) => [...after].filter((x) => !before.has(x));
 
-/** ownership: the definition names the module, either as its provider or in its class */
+/**
+ * Ownership: the definition names the module, either as its provider or in its class.
+ *
+ * **AN `ERR:` READING IS NOT AN OWNERSHIP READING**, and treating it as one broke both directions.
+ * When the manager service is absent the probe records the exception message, which CONTAINS the
+ * service id -- so `plugin.manager.openid_connect_client` not existing yet read as `openid_connect`
+ * owning the plugin, and the before reading that exists to catch a false positive was itself one.
+ * The after direction was worse: an `ERR:` naming the module would have passed as the module working.
+ */
 const owns = (value: unknown, module: string) =>
-	typeof value === 'string' && (value.split('|')[0] === module || value.includes(module));
+	typeof value === 'string' &&
+	!value.startsWith('ERR:') &&
+	(value.split('|')[0] === module || value.includes(module));
 
 describe('contrib modules, enabled against a real site', () => {
 	for (const one of CASES) {
@@ -997,11 +1074,15 @@ describe('contrib modules, enabled against a real site', () => {
 						suspend['hasVrznoEnv'],
 						`${one.module}: no vrzno_env, so this probe cannot see the flag`
 					).toBe(true);
+					// THE CLASSIFIER DECIDES IT, and it used to be `blockingOutbound` pinned against
+					// the suspend probe. That equality was an inference -- that a blocking outbound
+					// call needs a suspended wasm stack -- and the park refuted it: the interpreter
+					// still cannot suspend and `blockingOutbound` is true. A row must be refused by
+					// whatever IT declares, not by whichever flag this assertion was written against
 					expect(
-						suspend['canSuspend'],
-						`${one.module} is blocked on ${one.blocked}, and the interpreter now says it CAN suspend`
-					).toBe(false);
-					expect(SHIPPED_CAPABILITIES.blockingOutbound).toBe(suspend['canSuspend']);
+						tierFor(`drupal/${one.module}`).tier,
+						`${one.module} is a blocked case and the classifier does not refuse it`
+					).toBe('refused');
 				}
 
 				row.verdict = one.blocked ? 'blocked' : 'verified';
@@ -1011,23 +1092,40 @@ describe('contrib modules, enabled against a real site', () => {
 	}
 
 	/**
-	 * `search_gov_results_api` rendering real results, over two renders.
+	 * `search_gov_results_api` fetching its results INSIDE the render that asked for them.
 	 *
-	 * Its own case above asserts only that the routes install, because its results page GETs
-	 * `api.gsa.gov` while BUILDING the form. That reads as a refusal and is not one: the deferred
-	 * tier carries the call, so the first render rejects and queues and a later render answers.
+	 * Its own case above asserts only that the route installs, because its results page GETs
+	 * `api.gsa.gov` while BUILDING the form. That used to read as a refusal and be carried by the
+	 * deferred tier across two renders; the park carries it inside one, so what is asserted here is
+	 * the answer arriving in the same request and the deferred queue staying EMPTY.
 	 *
-	 * The network is the dependency, so the network is what gets stubbed -- the module's own request
-	 * building, JSON decode, node resolution and render array all run for real. The queued URL is
-	 * READ BACK rather than reconstructed here, so nothing in this test has to know how the module
-	 * spells its query string; getting that wrong would seed a row the module never looks for and
-	 * the test would pass by asserting a miss.
+	 * **THE PARK IS WHY THIS SPEC CHANGED SHAPE, and the earlier version is worth knowing.** It
+	 * queued the module's GET, seeded `cfw_http_cache` by hand, rendered again and asserted the
+	 * second render consumed the reply. It was red for a harness reason -- `/__serve` answers 503
+	 * `warming` and queues rather than rendering inline, so the body it read was the refusal and the
+	 * form was never built -- and by the time that was understood the tier it measured was no longer
+	 * the one the site uses. `deferred-post.spec.ts` still drives the deferred tier end to end.
+	 *
+	 * **A BLOCKING CALL IS NOT SERVED FROM A CACHE, on purpose.** `ParkFetchHandler` does not read
+	 * `cfw_http_cache` before parking, so a module that fetches on every render pays a round trip on
+	 * every render -- the same cost a VPS pays. Reading a cache first would be cheaper and wrong: a
+	 * replayed token-endpoint response is exactly the single-use-code hazard `openid_connect` exists
+	 * inside of.
+	 *
+	 * The network is the dependency, so the network is what gets stubbed, through the
+	 * `parkFetchDep` seam. Everything above it runs for real: the module's request building, the
+	 * park, the real classifier, the real outbound guard, the resume, the JSON decode and the render
+	 * array. The stub asserts the URL it was ASKED for rather than reconstructing it here, so
+	 * nothing in this test has to know how the module spells its query string.
 	 */
 	it(
-		'renders Search.gov results on the render after the one that asked',
+		'fetches its Search.gov results inside the render that asked, not on a later one',
 		async () => {
 			const packed = await packedContrib();
 			if (!packed.has('search_gov_results_api')) return;
+			// the park is what carries it; with the capability off this would measure the deferred
+			// tier, which is a different claim and has its own spec
+			expect(SHIPPED_CAPABILITIES.blockingOutbound).toBe(true);
 
 			const searchPath = '/search?search=benefits';
 			const out = await inObject(freshSite(), async (site) => {
@@ -1066,19 +1164,7 @@ describe('contrib modules, enabled against a real site', () => {
 				if (!nid)
 					throw new Error(`node not created: ${JSON.stringify(setup).slice(0, 400)}`);
 
-				// THE PRODUCTION RENDER PATH, not a hand-built request. Reconstructing one by hand needs
-				// a session, a render context and a base url before Drupal will render a node teaser,
-				// and getting any of them wrong measures the harness instead of the module
-				site.ensureHttpTables();
-				const serve = (p: string) =>
-					site.fetch(
-						new Request(`https://do.local/__serve?path=${encodeURIComponent(p)}&edge=0`)
-					);
-				const first = await serve(searchPath);
-				const queued = site.sql
-					.exec('SELECT key, url FROM cfw_http_queue')
-					.toArray() as unknown as { key: string; url: string }[];
-
+				const asked: string[] = [];
 				const reply = JSON.stringify({
 					web: {
 						total: 1,
@@ -1091,77 +1177,73 @@ describe('contrib modules, enabled against a real site', () => {
 						]
 					}
 				});
-				for (const row of queued) {
-					site.sql.exec('DELETE FROM cfw_http_queue WHERE key = ?', row.key);
-					site.sql.exec(
-						`INSERT INTO cfw_http_cache (key, url, status, headers, body, fetched_at, expires_at)
-					 VALUES (?, ?, 200, ?, ?, ?, ?)`,
-						row.key,
-						row.url,
-						JSON.stringify({ 'content-type': 'application/json' }),
-						reply,
-						site.nowMs(),
-						site.nowMs() + 3_600_000
-					);
-				}
-				// the stored page would answer the second request without rendering
-				site.sql.exec('DELETE FROM cfw_page');
-				const second = await serve(searchPath);
-				const requeued = site.sql
+				site.parkFetchDep = (async (input: RequestInfo | URL) => {
+					asked.push(String(input));
+					return new Response(reply, {
+						status: 200,
+						headers: { 'content-type': 'application/json' }
+					});
+				}) as unknown as typeof fetch;
+
+				// THE PRODUCTION RENDER PATH, not a hand-built request. Reconstructing one by hand needs
+				// a session, a render context and a base url before Drupal will render a node teaser,
+				// and getting any of them wrong measures the harness instead of the module
+				site.ensureHttpTables();
+				const served = await site.fetch(
+					new Request(
+						`https://do.local/__serve?path=${encodeURIComponent(searchPath)}&edge=0`
+					)
+				);
+				const serveHtml = await served.text();
+				// BOTH BODIES, because which one carries the page depends on whether the serve
+				// rendered inline or queued and answered `warming`. Asserting against only the fill
+				// read `{"filled":null,"remaining":0}` on a run where the serve had already rendered
+				const filled = await site.fetch(new Request('https://do.local/__fill'));
+				const fillHtml = await filled.text();
+				const queued = site.sql
 					.exec('SELECT url FROM cfw_http_queue')
 					.toArray() as unknown as { url: string }[];
-				const cached = site.sql
-					.exec('SELECT key, status, length(body) AS n FROM cfw_http_cache')
-					.toArray() as unknown as { key: string; status: number; n: number }[];
-
-				return {
-					requeued,
-					cached,
-					queued,
-					nid,
-					firstHtml: await first.text(),
-					secondHtml: await second.text()
-				};
+				return { asked, queued, nid, serveHtml, fillHtml, park: site.lastPark ?? null };
 			});
 
+			const asked = out.asked as string[];
 			const queued = out.queued as { url: string }[];
-			const firstHtml = String(out.firstHtml ?? '');
-			const secondHtml = String(out.secondHtml ?? '');
+			const bodies = [String(out.serveHtml ?? ''), String(out.fillHtml ?? '')];
+			const html = bodies.reduce((a, b) => (b.length > a.length ? b : a), '');
 			console.log(
 				`[search-gov] ${JSON.stringify({
+					asked,
+					bytes: bodies.map((b) => b.length),
 					queued: queued.map((q) => q.url),
-					secondBytes: secondHtml.length,
-					requeued: (out.requeued as unknown[]).length,
-					cached: (out.cached as { status: number }[]).map((c) => c.status)
+					park: out.park
 				})}`
 			);
 
-			// the module built its own request, against its own configured handle and key
-			expect(queued.length, 'the form build queued no outbound call').toBe(1);
-			const url = queued[0]?.url as string;
+			// THE CLAIM UNDER TEST: the module's own GET left the Worker during the render that
+			// needed it, built from its own configured handle and key
+			const mine = asked.filter((u) => u.includes('api.gsa.gov'));
+			expect(mine.length, 'the form build made no outbound call').toBeGreaterThanOrEqual(1);
+			const url = mine[0] as string;
 			expect(url).toContain('api.gsa.gov/technology/searchgov/v2/results/i14y');
 			expect(url).toContain('affiliate=cfw-test');
 			expect(url).toContain('access_key=cfw-test-key');
 			expect(url).toContain('query=benefits');
+			// and nothing was deferred, which is the half that says the answer arrived in time
+			expect(
+				queued.filter((q) => q.url.includes('api.gsa.gov')),
+				'the GET was queued for a later render as well as parked'
+			).toEqual([]);
 
-			// THE CLAIM UNDER TEST: the second render consumed the reply instead of asking again. An
-			// empty requeue with the cache row still present is the deferred tier having delivered it,
-			// which is what "a deferred exchange always misses" said could not happen
-			expect(out.requeued, 'the second render asked again, so nothing was delivered').toEqual(
-				[]
-			);
-			expect((out.cached as { status: number }[]).map((c) => c.status)).toEqual([200]);
-
-			// the module's form reaches a real page on both renders
-			expect(secondHtml).toContain('search-gov-results-api-search-page');
-			expect(secondHtml.length).toBeGreaterThan(10_000);
+			// the module's form reaches a real page
+			expect(html).toContain('search-gov-results-api-search-page');
+			expect(html.length).toBeGreaterThan(10_000);
 
 			// AND IT STILL RENDERS NOTHING, for a reason that is not this runtime's. `processResults()`
 			// pulls each entity's child array out of a `viewMultiple()` result and renders it on its own;
 			// `buildMultiple` is a `#pre_render` on the PARENT, so a detached child renders as an empty
 			// shell. That is why the row is `untested` rather than `verified`: the platform carries the
 			// module and the module does not produce the observable it owns
-			expect(secondHtml).not.toContain('Veterans Benefits');
+			expect(html).not.toContain('Veterans Benefits');
 		},
 		REQUEST_TIMEOUT
 	);

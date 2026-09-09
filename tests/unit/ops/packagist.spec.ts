@@ -158,8 +158,17 @@ describe('the refusal names the conflict', () => {
 	// build -- `tests/integration/loaded-extensions.spec.ts` measures that -- and the polyfill
 	// behind it has 86 measured divergences from the real extension, so "yes" was a claim nobody
 	// had checked
+	/**
+	 * `ext-iconv`, because `ext-mbstring` STOPPED BEING A POLYFILL on 2026-09-08.
+	 *
+	 * Both cases were written against mbstring, and when the build gained the real extension the
+	 * first turned red and the second went green for the wrong reason -- it asserts that a real
+	 * extension beats the polyfill note, and mbstring being native makes it assert nothing. iconv is
+	 * the remaining `POLYFILLED_PLATFORM` entry, so the pair tests the mechanism again rather than
+	 * today's extension list.
+	 */
 	it('degrades a requirement met only by a POLYFILL to unverifiable', () => {
-		const { conflicts, satisfied } = checkRequirements({ 'ext-mbstring': '*' }, INSTALLED);
+		const { conflicts, satisfied } = checkRequirements({ 'ext-iconv': '*' }, INSTALLED);
 		expect(satisfied).toEqual([]);
 		expect(conflicts).toHaveLength(1);
 		expect(conflicts[0]!.reason).toBe('polyfilled');
@@ -169,9 +178,16 @@ describe('the refusal names the conflict', () => {
 
 	it('lets a site that really HAS the extension win over the polyfill note', () => {
 		const { conflicts, satisfied } = checkRequirements(
-			{ 'ext-mbstring': '*' },
-			{ ...INSTALLED, 'ext-mbstring': '8.5.2' }
+			{ 'ext-iconv': '*' },
+			{ ...INSTALLED, 'ext-iconv': '8.5.2' }
 		);
+		expect(conflicts).toEqual([]);
+		expect(satisfied).toHaveLength(1);
+	});
+
+	/** and the extension that moved: a real one is satisfied outright, with no polyfill note */
+	it('satisfies ext-mbstring from the build rather than degrading it', () => {
+		const { conflicts, satisfied } = checkRequirements({ 'ext-mbstring': '*' }, INSTALLED);
 		expect(conflicts).toEqual([]);
 		expect(satisfied).toHaveLength(1);
 	});

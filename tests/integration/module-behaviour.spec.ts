@@ -295,17 +295,22 @@ describe('ctools', () => {
 });
 
 /**
- * The mechanism all four `blocked` rows rest on, measured instead of declared.
+ * Suspension and blocking I/O came apart, and this is where that is pinned.
  *
- * `SHIPPED_CAPABILITIES.blockingOutbound` is a hand-written `false`, and it is what refuses
- * search_api_solr, smtp, redis and openid_connect. Nothing compared it to the binary: an interpreter
- * that gained Asyncify or JSPI would leave four rows wrong with every test still green. This reads
- * the same flag `DrupflareServiceProvider::runtimeCanSuspend()` reads, which is what actually
- * decides whether a blocking outbound call is possible.
+ * This spec used to read "an interpreter that cannot suspend, which is why four rows are blocked",
+ * and it tied `SHIPPED_CAPABILITIES.blockingOutbound` to the suspend probe with an equality. Both
+ * halves were true and the equality was an inference: it assumed a blocking outbound call REQUIRES a
+ * suspended wasm stack. The Zend park needs no suspension at all -- it unwinds, and re-enters
+ * `execute_ex()` at the saved opline on a later invocation -- so the interpreter still cannot suspend
+ * and there are no blocked rows left.
+ *
+ * What is worth keeping is the probe itself: an interpreter that GAINED Asyncify or JSPI would change
+ * which transport `DrupflareServiceProvider::pickHandlerClass()` selects, and nothing else would say
+ * so.
  */
-describe('what the blocked rows are blocked on', () => {
+describe('suspension, and what it no longer decides', () => {
 	it(
-		'reports an interpreter that cannot suspend, which is why four rows are blocked',
+		'reports an interpreter that cannot suspend, while blocking outbound I/O works anyway',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
 				await migrate(site);
@@ -315,7 +320,7 @@ describe('what the blocked rows are blocked on', () => {
 
 			expect(out['ok'], JSON.stringify(out).slice(0, 400)).toBe(true);
 			// the host sets the flag on every build, so `null` here means the probe missed rather
-			// than that the build cannot suspend -- a distinction the table's four rows depend on
+			// than that the build cannot suspend, which is a different answer
 			expect(out['hasVrznoEnv'], 'no vrzno_env: this probe cannot see the flag').toBe(true);
 			expect(out['canSuspend']).toBe(false);
 			// **THE SYMBOL IS PRESENT AND MEANS NOTHING.** `function_exists('vrzno_await')` is TRUE
@@ -323,12 +328,14 @@ describe('what the blocked rows are blocked on', () => {
 			// the `Asyncify` the glue calls, so reaching it throws a ReferenceError PHP cannot
 			// catch. Pinned true so nobody re-derives suspendability from the symbol
 			expect(out['hasVrznoAwait']).toBe(true);
-			// and the table's input agrees with the binary
-			expect(SHIPPED_CAPABILITIES.blockingOutbound).toBe(out['canSuspend']);
+			// THE TWO ARE DIFFERENT NOW, and pinning them apart is the point: the park delivers a
+			// blocking outbound call on a build that cannot suspend, so an equality here would fail
+			// on the shipping runtime and read as a broken capability
+			expect(SHIPPED_CAPABILITIES.blockingOutbound).not.toBe(out['canSuspend']);
 			expect(
-				moduleTable().filter((r) => r.state === 'blocked').length,
-				'blocked rows exist only because the interpreter cannot suspend'
-			).toBeGreaterThan(0);
+				moduleTable().filter((r) => r.state === 'blocked'),
+				'a blocked row exists, so something still refuses on a capability'
+			).toEqual([]);
 		},
 		REQUEST_TIMEOUT
 	);

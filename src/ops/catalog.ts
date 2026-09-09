@@ -30,28 +30,42 @@ export type CatalogEntry = {
 	bytes?: number;
 };
 
+import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers.js';
+
 /**
- * A runtime capability a module may require, ordered by how hard it is to satisfy.
+ * What a module needs of the runtime, beyond a version constraint, hardest last.
  *
  * `deferrable-outbound` is NOT a refusal. Treating every outbound need as a wall classified
  * reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the queue already
  * solves; only a call whose answer must arrive inside the same render is blocked.
+ *
+ * **`blocking-outbound` AND `blocking-socket` ARE TWO CAPABILITIES, and they were one until
+ * 2026-09-08.** One flag covered "an outbound call that must answer inside one render" for both
+ * transports, and the Zend park serves exactly one of them: a trapped `stream_socket_client` /
+ * `fwrite` / `fgets` parks and is answered from JS, while `fopen('https://...')` cannot be -- the
+ * HTTPS wrapper is userland invoked from the INTERNAL `fopen`, so `park_refused()` counts that frame
+ * and declines, correctly, because `fopen`'s C locals cannot survive the `longjmp`.
+ *
+ * Collapsing them would have said the runtime can do a blocking HTTP call because it can do a
+ * blocking socket one. `drupal/redis` needs the socket flavour and `drupal/openid_connect` needs the
+ * HTTP flavour, so the difference is the difference between those two modules.
  */
-import { MODULE_TIER_NOTES, allKnownCapabilities } from './module-tiers.js';
-
-export type ModuleCapability = 'deferrable-outbound' | 'blocking-outbound' | 'cron';
+export type ModuleCapability =
+	'deferrable-outbound' | 'blocking-outbound' | 'blocking-socket' | 'cron';
 
 /**
  * What this runtime can do, so the planner refuses on capability as well as on version.
  *
- * `outbound` is false on the shipping binary and stays false until a build can suspend; `cron`
- * is true because the alarm exists, but a module needing it still has to be driven from there.
+ * `cron` is true because the alarm exists, but a module needing it still has to be driven from
+ * there. The two blocking flags are separate transports; see {@link ModuleCapability}.
  */
 export type RuntimeCapabilities = {
 	/** the queue/drain/cache tier exists, so an outbound call split across invocations works */
 	deferredOutbound: boolean;
-	/** an outbound call that must answer inside one `php._run()`; needs a suspending build */
+	/** an outbound HTTP call that must answer inside one `php._run()`; no park can serve this */
 	blockingOutbound: boolean;
+	/** a SOCKET exchange that must answer inside one `php._run()`; the Zend park serves this */
+	blockingSocket: boolean;
 	cron: boolean;
 };
 
@@ -59,7 +73,10 @@ export type RuntimeCapabilities = {
  * The shipping runtime.
  *
  * `deferredOutbound` is TRUE and always has been -- the queue, the alarm drain and the response
- * cache all exist and ship. What is false is `blockingOutbound`, which needs JSPI or Asyncify.
+ * cache all exist and ship. `blockingSocket` and `blockingOutbound` are both true on a build
+ * carrying `ext/cfwpark`, by different routes: a socket call is trapped where it stands, and an HTTP
+ * call needs its transport REPLACED, because `fopen` is an internal frame with real work left after
+ * its callback and a park under one of those is still refused.
  */
 /**
  * DERIVED FROM THE CAPABILITY CONTRACT rather than written twice.
@@ -76,13 +93,64 @@ export type RuntimeCapabilities = {
  */
 const SHIPPED_CRON = true;
 
+/**
+ * A socket exchange answered inside one render: park in this invocation, resume in a LATER one.
+ *
+ * A LITERAL for the same reason `cron` is one, and the parallel is exact. `socket.park.inline` is
+ * executed against the shipping interpreter, and it can only ever measure the SAME-invocation case:
+ * a contract probe is one PHP expression, so its run and its resumes all land in one `_run`, and a
+ * host able to answer inside one `_run` would not need a park at all. This flag is the
+ * cross-invocation case, which is the one a module needs, because the whole point of parking is for
+ * JavaScript to await in between.
+ *
+ * TRUE, measured 2026-09-08 on the long64 build carrying `ext/cfwpark`: PHP opens a socket, writes
+ * and reads twice, and receives `+OK|+PONG` from the rig's Redis -- five parks, each answered from
+ * JavaScript on a later `_run`. `park-interpreter.spec.ts` is the assertion, and it drives a real
+ * server rather than a stub.
+ *
+ * It was false until two defects in the extension were fixed, and both are worth knowing because
+ * each failed SILENTLY: `cfw_park_resume` did not re-arm, so every trip after the first ran the real
+ * function down the refusal path; and the safety predicate's floor was a frame belonging to the
+ * invocation that started the chain, so on a resume the walk went past the parked chain into reused
+ * VM stack memory -- reading first as a refusal, then as `memory access out of bounds`. A resumed
+ * chain now relinks its root to the resuming frame, which is what `zend_generator_resume` does.
+ */
+const SHIPPED_BLOCKING_SOCKET = true;
+
+/**
+ * An outbound HTTP call answered inside the render that asked for it.
+ *
+ * TRUE as of 2026-09-08, and it was FALSE earlier the same day on a correct measurement of a defect
+ * that has since been fixed. `Drupal\drupflare\Http\ParkFetchHandler` is the Guzzle transport on
+ * this build and yields through the Zend park; what refused it was one internal frame in Drupal's
+ * own dispatch, and the reason that frame existed is worth carrying:
+ *
+ * **AN UNQUALIFIED CALL INSIDE A NAMESPACE IS RESOLVED AT RUNTIME.** `call_user_func_array` normally
+ * leaves no frame at all -- `zend_compile_func_cufa` rewrites it to `ZEND_INIT_USER_CALL` -- but that
+ * rewrite needs the compiler to have resolved the name, and inside a namespace an unqualified call
+ * compiles to `ZEND_INIT_NS_FCALL_BY_NAME` instead. So the frame is real in every namespaced file,
+ * which is all of Drupal, and absent in the global namespace, which is where every harness that read
+ * this safe was written. Measured on native 8.5.7 as 3 frames against 2, and on this build through
+ * the shipping pack as one internal frame between `FormBuilder::retrieveForm` and its callback.
+ *
+ * `park_flatten()` in `ext/cfwpark` splices such a frame out of the chain rather than refusing it:
+ * the callee is relinked to the trampoline's caller and its `ZEND_CALL_TOP` cleared, so its return
+ * takes the path the VM already uses for a nested call. `array_map` and `usort` are still refused,
+ * which is the control that makes the change mean anything.
+ *
+ * The consequence is asserted end to end in `park-oidc.spec.ts`: a real authorization code from the
+ * rig Keycloak, exchanged by `drupal/openid_connect`'s own client inside the callback request.
+ */
+const SHIPPED_BLOCKING_HTTP = true;
+
 function vectorSatisfied(id: string): boolean {
 	return vectorFor(id)?.expected ?? false;
 }
 
 export const SHIPPED_CAPABILITIES: RuntimeCapabilities = {
 	deferredOutbound: vectorSatisfied('http.outbound.deferred'),
-	blockingOutbound: vectorSatisfied('http.outbound.blocking'),
+	blockingOutbound: SHIPPED_BLOCKING_HTTP,
+	blockingSocket: SHIPPED_BLOCKING_SOCKET,
 	cron: SHIPPED_CRON
 };
 
@@ -135,7 +203,10 @@ export function parseCatalog(raw: unknown): Catalog {
 			needs: Array.isArray(e.needs)
 				? (e.needs.filter(
 						(n: unknown) =>
-							n === 'deferrable-outbound' || n === 'blocking-outbound' || n === 'cron'
+							n === 'deferrable-outbound' ||
+							n === 'blocking-outbound' ||
+							n === 'blocking-socket' ||
+							n === 'cron'
 					) as ModuleCapability[])
 				: undefined,
 			requires: Array.isArray(e.requires)
@@ -230,9 +301,17 @@ export function planInstall(
 		}
 		if (need === 'blocking-outbound' && !capabilities.blockingOutbound) {
 			problems.push(
-				`${name} needs an outbound call to answer INSIDE one render, and this runtime cannot ` +
-					`suspend mid-run to wait for a socket (the shipping binary is ASYNCIFY=0). An ` +
-					`outbound call that can be split across invocations is supported; this one cannot be`
+				`${name} needs an outbound HTTP call to answer INSIDE one render, and this ` +
+					`interpreter cannot park a Zend continuation (ext/cfwpark is absent, or predates ` +
+					`park_flatten and so is refused under Drupal's own dispatch). An outbound call ` +
+					`that can be split across invocations is supported`
+			);
+		}
+		if (need === 'blocking-socket' && !capabilities.blockingSocket) {
+			problems.push(
+				`${name} needs a socket exchange to answer INSIDE one render, and this interpreter ` +
+					`cannot park a Zend continuation (ext/cfwpark is absent, or predates the ` +
+					`cfw_park_resume re-arm and so cannot complete a multi-trip exchange)`
 			);
 		}
 		if (need === 'cron' && !capabilities.cron) {
@@ -370,7 +449,13 @@ export function tierFor(
 	if (needs.includes('blocking-outbound') && !capabilities.blockingOutbound) {
 		return {
 			tier: 'refused',
-			reason: `${name} needs an outbound call to answer INSIDE one render, and this runtime cannot suspend mid-run to wait for a socket`
+			reason: `${name} needs an outbound HTTP call to answer INSIDE one render, and this interpreter cannot park a Zend continuation; a call that can be split across invocations is supported`
+		};
+	}
+	if (needs.includes('blocking-socket') && !capabilities.blockingSocket) {
+		return {
+			tier: 'refused',
+			reason: `${name} needs a socket exchange to answer INSIDE one render, and this interpreter cannot park a Zend continuation`
 		};
 	}
 	if (needs.includes('deferrable-outbound')) {

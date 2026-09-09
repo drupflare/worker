@@ -306,19 +306,27 @@ describe('the capability constraint, which a version check cannot express', () =
 	});
 
 	it('REFUSES an outbound call that must answer inside one render', () => {
-		// search_api_solr is the real refusal: a query per keystroke against a remote index cannot
-		// be split across invocations without changing what the user sees
+		// A SUPPLIED RUNTIME, not the shipped one, and that is the correction of 2026-09-08: this
+		// used to lean on `SHIPPED_CAPABILITIES` and went green because the shipping build refused
+		// the capability. The park satisfies it now, so a test of the REFUSAL path has to hand the
+		// planner a runtime that lacks it or it is testing nothing
 		const plan = planInstall(
 			withNeeds(['blocking-outbound'], 'drupal/search_api_solr'),
 			'drupal/search_api_solr',
 			'11.4.5',
-			'8.5.2'
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: true, blockingOutbound: false, blockingSocket: false, cron: true }
 		);
 		expect(plan.ok).toBe(false);
 		// the message names the MECHANISM, not the module, and distinguishes the two tiers so the
 		// reader learns which calls ARE supported
 		expect(plan.problems[0]).toContain('INSIDE one render');
-		expect(plan.problems[0]).toContain('ASYNCIFY=0');
+		// and it names what is missing rather than a mechanism that moved. It has read three
+		// different things: `the shipping binary is ASYNCIFY=0`, then the internal `fopen` frame
+		// under the HTTPS wrapper. Both were true when written and neither is the condition -- what
+		// decides it is whether this interpreter can park at all
+		expect(plan.problems[0]).toContain('cannot park');
 		expect(plan.problems[0]).toContain('split across invocations is supported');
 	});
 
@@ -329,7 +337,7 @@ describe('the capability constraint, which a version check cannot express', () =
 			'11.4.5',
 			'8.5.2',
 			new Set(),
-			{ deferredOutbound: true, blockingOutbound: true, cron: true }
+			{ deferredOutbound: true, blockingOutbound: true, blockingSocket: true, cron: true }
 		);
 		expect(plan.ok).toBe(true);
 	});
@@ -341,7 +349,7 @@ describe('the capability constraint, which a version check cannot express', () =
 			'11.4.5',
 			'8.5.2',
 			new Set(),
-			{ deferredOutbound: false, blockingOutbound: false, cron: true }
+			{ deferredOutbound: false, blockingOutbound: false, blockingSocket: false, cron: true }
 		);
 		expect(plan.ok).toBe(false);
 		expect(plan.problems[0]).toContain('deferred outbound tier');
@@ -359,7 +367,7 @@ describe('the capability constraint, which a version check cannot express', () =
 			'11.4.5',
 			'8.5.2',
 			new Set(),
-			{ deferredOutbound: true, blockingOutbound: false, cron: false }
+			{ deferredOutbound: true, blockingOutbound: false, blockingSocket: false, cron: false }
 		);
 		expect(plan.ok).toBe(false);
 		expect(plan.problems[0]).toContain('needs cron');
@@ -396,7 +404,9 @@ describe('the capability constraint, which a version check cannot express', () =
 			}),
 			'drupal/x',
 			'11.4.5',
-			'8.5.2'
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: true, blockingOutbound: false, blockingSocket: false, cron: true }
 		);
 		// the one it understands still refuses; the one it does not is ignored
 		expect(plan.problems).toHaveLength(1);
@@ -426,7 +436,9 @@ describe('the capability constraint, which a version check cannot express', () =
 			},
 			'drupal/parent',
 			'11.4.5',
-			'8.5.2'
+			'8.5.2',
+			new Set(),
+			{ deferredOutbound: true, blockingOutbound: false, blockingSocket: false, cron: true }
 		);
 		expect(plan.ok).toBe(false);
 		expect(plan.problems[0]).toContain('INSIDE one render');
@@ -446,14 +458,21 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 		expect(out.reason).toContain('alarm');
 	});
 
-	// Solr USED to be this assertion, and it moved on a measurement rather than on a tidy-up: the
-	// Solarium transport is interceptable above the adapter, so the deferred tier reaches it.
-	// `openid_connect` is the surviving refusal and it is a different mechanism -- a token exchange
-	// has no partial answer to render, so there is nothing to defer
-	it('classifies a token exchange as REFUSED, because a login has no partial answer', () => {
-		const out = tierFor('drupal/openid_connect');
-		expect(out.tier).toBe('refused');
-		expect(out.reason).toContain('INSIDE one render');
+	// **NOTHING IS REFUSED ANY MORE, and this assertion has been inverted twice.** Solr held it
+	// until the Solarium transport turned out to be interceptable above the adapter; then
+	// `openid_connect` held it, on the ground that a token exchange has no partial answer to defer.
+	// That is still true and no longer refuses it: the park answers the exchange inside the request.
+	// Both directions are asserted, so a runtime that LOSES the capability still refuses it
+	it('no longer refuses a token exchange, and would if the runtime could not park', () => {
+		expect(tierFor('drupal/openid_connect').tier).not.toBe('refused');
+		const without = tierFor('drupal/openid_connect', {
+			deferredOutbound: true,
+			blockingOutbound: false,
+			blockingSocket: false,
+			cron: true
+		});
+		expect(without.tier).toBe('refused');
+		expect(without.reason).toContain('INSIDE one render');
 	});
 
 	// **ITS TRANSPORT WAS NEVER THE BLOCKER.** This asserted `needs-deferred-tier` until 2026-08-24,
@@ -500,6 +519,7 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 			tierFor('drupal/openid_connect', {
 				deferredOutbound: true,
 				blockingOutbound: true,
+				blockingSocket: true,
 				cron: true
 			}).tier
 		).toBe('works-today');
@@ -510,6 +530,7 @@ describe('tierFor: will it RUN here, which is not the same question as can compo
 			tierFor('drupal/recaptcha', {
 				deferredOutbound: false,
 				blockingOutbound: false,
+				blockingSocket: false,
 				cron: true
 			}).tier
 		).toBe('refused');

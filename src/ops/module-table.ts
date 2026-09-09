@@ -5,8 +5,15 @@ import { MODULE_TIER_NOTES } from './module-tiers.js';
  * The module support table, EMITTED from the classifier rather than hand-written.
  *
  * A hand-maintained README table goes stale the first time a tier moves, and it goes stale silently
- * because nothing compares it to anything. `tests/node/module-table.spec.ts` renders these rows and
- * fails when README.md disagrees -- the same discipline as the driver-pack byte-for-byte check.
+ * because nothing compares it to anything. `tests/node/module-table.spec.ts` compares these rows
+ * against README.md's three lists in both directions -- the same discipline as the driver-pack
+ * byte-for-byte check.
+ *
+ * **THAT SENTENCE WAS FALSE FOR AS LONG AS IT HAD BEEN WRITTEN**, which is the reason it is worth
+ * pointing at. It claimed the spec "fails when README.md disagrees"; the spec compared this map
+ * against the SPEC FILES, so a `verified` row needed a run behind it and the published table needed
+ * nothing. Three rows were edited by hand on the strength of the guard described here. The
+ * comparison exists now.
  *
  * **THREE STATES, AND ONLY ONE OF THEM IS A SUPPORT CLAIM.**
  *
@@ -212,7 +219,20 @@ export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
 	'drupal/metatag_search_gov':
 		'enabled against a real site; the `search_gov` metatag group and the `searchgov_custom1` and `searchgov_custom3` tag plugins name this module afterwards and are absent before. It installs no config, creates no table and registers no route of its own, so the plugin definitions are the whole observable',
 	'drupal/uswds_base':
-		'installed against a real site through `theme_installer`, which is a different installer from every other row here: its asset libraries resolve afterwards and none before, and it lands in the `theme` key of `core.extension` rather than the `module` key. Its default library mode loads USWDS from a CDN, and a federal deployment picks the local mode instead'
+		'installed against a real site through `theme_installer`, which is a different installer from every other row here: its asset libraries resolve afterwards and none before, and it lands in the `theme` key of `core.extension` rather than the `module` key. Its default library mode loads USWDS from a CDN, and a federal deployment picks the local mode instead',
+	// #endregion
+
+	// #region driven 2026-09-08
+	//
+	// `blocking-outbound` had collapsed three different situations into one word. One module never
+	// needed a blocking call at all (smtp), one needs it over a socket (redis) and one over HTTP
+	// (openid_connect). The Zend park delivers both blocking flavours.
+	'drupal/redis':
+		'enabled against a real site; `cache.backend.redis`, `redis.factory`, `redis.lock.factory`, `redis.flood.factory` and `queue.redis` all resolve afterwards and none before. It ships no config and creates no table, so the container IS the observable -- the same shape as facets. Its socket is answered by the Zend park: `park-interpreter.spec.ts` drives PHP through an open, two writes and two reads against the rig Redis and gets `+OK|+PONG` back, five parks each performed in JavaScript on a later invocation. The Durable Object own SQLite is still the faster cache backend and the recommended one, because a parked get is a network round trip where SQLite is a local read',
+	'drupal/smtp':
+		'enabled against a real site; the `SMTPMailSystem` mail plugin is in `plugin.manager.mail` afterwards and absent before, `smtp.settings` is installed and `smtp.config` and `smtp.connection_tester` resolve. Its socket never runs: `CfwMail` passes `smtp.settings` to the host transport, so the module supplies the configuration and the relay is dialled from JS between invocations',
+	'drupal/openid_connect':
+		"enabled against a real site; `plugin.manager.openid_connect_client`, `openid_connect.claims` and `openid_connect.state_token` resolve, the `generic` client plugin and the `openid_connect_client` entity type are registered and thirteen of its routes are in the `router` table, none of it before. Its OWN client then completed a login: a real authorization code from the rig Keycloak, exchanged by `OpenIDConnectClientBase::retrieveTokens()` inside the callback request and followed by its userinfo GET, after which `externalauth` wrote `openid_connect.keycloak` into `authmap` against the id_token's `sub` and opened a session for the account it created. Both outbound calls went through the Zend park, so each was performed in JavaScript while PHP was frozen mid-call. The control is the same run on the interpreter before `park_flatten()`: the deferred transport answered `is not in the fetch cache`, no row and no account"
 	// #endregion
 };
 

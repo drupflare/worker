@@ -90,7 +90,7 @@ export type PlatformVersions = Record<string, string>;
  * The interpreter version this map reports.
  *
  * STALE AT 8.3.0 UNTIL NOW, and the failure was silent in the same direction as the metadata URL
- * above: the shipping binary is 8.5 -- `wrangler.jsonc` aliases `php-binary-85.ts` and a deployed
+ * above: the shipping binary is 8.5 -- `wrangler.jsonc` aliases `php-binary-raw.ts` and a deployed
  * site reports `8.5.2` from `/php` -- so anything requiring `>=8.4` was refused as unsatisfiable by
  * a platform that satisfies it. A refusal reads as a considered answer, which is why nothing looked
  * broken.
@@ -106,7 +106,9 @@ export const PLATFORM_PHP_VERSION = '8.5.2';
  * `tests/integration/loaded-extensions.spec.ts` drives `get_loaded_extensions()` through the
  * shipping binary and asserts this map both ways -- every name here is loaded, and no name in
  * {@link POLYFILLED_PLATFORM} is. Until that spec existed the list was a belief, and it was wrong:
- * `ext-mbstring` sat here while `mb-fix.ts` existed precisely because the build has no mbstring.
+ * `ext-mbstring` sat here while `mb-fix.ts` existed precisely because the build had no mbstring. It
+ * is back as of 2026-09-08 and this time the spec is what says so -- the build asks for
+ * `--enable-mbstring` and `get_loaded_extensions()` reports it.
  *
  * Function-name evidence cannot replace it. `curl_init`, `mysqli_stmt_init` and
  * `imagecreatetruecolor` all appear as strings in a binary that has none of those extensions,
@@ -122,19 +124,25 @@ export const NATIVE_PLATFORM: PlatformVersions = {
 	'ext-xml': PLATFORM_PHP_VERSION,
 	'ext-dom': PLATFORM_PHP_VERSION,
 	'ext-simplexml': PLATFORM_PHP_VERSION,
-	'ext-zlib': PLATFORM_PHP_VERSION
+	'ext-zlib': PLATFORM_PHP_VERSION,
+	// MOVED FROM POLYFILLED 2026-09-08: the long64 build carries the real extension
+	// (`--enable-mbstring --disable-mbregex`), so a module requiring `ext-mbstring` is
+	// `installable` rather than `unverifiable`. `mb_ereg*` is still absent -- that half needs
+	// oniguruma and Drupal core calls none of it
+	'ext-mbstring': PLATFORM_PHP_VERSION
 };
 
 /**
  * Extensions supplied by PHP code rather than by the build.
  *
- * A polyfill is not the extension. `bun run measure:mb-parity` drives 1,232 cases through the
- * shipping mbstring stack with the real extension as the oracle and reports **86** divergences, so
- * a module requiring `ext-mbstring` gets `unverifiable` here, never `installable` -- see
- * {@link checkRequirements}. `ext-iconv` rides the same stack through `iconv-fix.ts`.
+ * A polyfill is not the extension, so a module requiring one of these gets `unverifiable` here and
+ * never `installable` -- see {@link checkRequirements}. `ext-iconv` rides `iconv-fix.ts`.
+ *
+ * `ext-mbstring` WAS HERE and moved to {@link NATIVE_PLATFORM} on 2026-09-08, because the build now
+ * carries the real extension. That is the only way an entry leaves this list: a measurement that the
+ * build supplies it, not a parity run that finds fewer divergences.
  */
 export const POLYFILLED_PLATFORM: PlatformVersions = {
-	'ext-mbstring': PLATFORM_PHP_VERSION,
 	'ext-iconv': PLATFORM_PHP_VERSION
 };
 
@@ -196,9 +204,9 @@ export function newestVersion(
  * dropped, so the overall verdict degrades to `unverifiable` instead of quietly reading as installable.
  *
  * A requirement met only by {@link POLYFILLED_PLATFORM} degrades the same way, and that is the
- * point of the split: answering `installable` to `ext-mbstring` on the strength of a polyfill with
- * 86 measured divergences reads as a considered yes. `installed` still wins over both maps, so a
- * site that really has the extension is unaffected.
+ * point of the split: answering `installable` to `ext-mbstring` on the strength of a polyfill the
+ * parity instrument still finds divergences in reads as a considered yes. `installed` still wins
+ * over both maps, so a site that really has the extension is unaffected.
  */
 export function checkRequirements(
 	require: Record<string, string>,

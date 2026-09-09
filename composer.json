@@ -9,8 +9,24 @@
 			"email": "me@gmitch215.xyz"
 		}
 	],
+	"repositories": [
+		{
+			"type": "composer",
+			"url": "https://packages.drupal.org/8"
+		}
+	],
 	"require": {
 		"php": ">=8.3",
+		"composer/installers": "^2.3",
+		"drupal/admin_toolbar": "^3.6",
+		"drupal/core-composer-scaffold": "^11.4",
+		"drupal/core-project-message": "^11.4",
+		"drupal/core-recipe-unpack": "^11.4",
+		"drupal/core-recommended": "^11.4",
+		"drupal/core-vendor-hardening": "^11.4",
+		"drupal/ctools": "^4.1",
+		"drupal/pathauto": "^1.15",
+		"drupal/token": "^1.17",
 		"drupflare/drupflare": "0.*",
 		"drupflare/rom": "0.*"
 	},
@@ -18,7 +34,11 @@
 		"sort-packages": true,
 		"vendor-dir": ".composer-vendor",
 		"allow-plugins": {
+			"composer/installers": false,
 			"drupal/core-composer-scaffold": false,
+			"drupal/core-project-message": false,
+			"drupal/core-recipe-unpack": false,
+			"drupal/core-vendor-hardening": false,
 			"symfony/runtime": true
 		}
 	},

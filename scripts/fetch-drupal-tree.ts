@@ -15,10 +15,11 @@
  * The workflow calls this script rather than carrying its own `curl` line, so there is one mechanism
  * and one version. `tests/node/drupal-tree.spec.ts` fails if the workflow grows a second one.
  *
- * The version comes from `SHIPPED_CORE_VERSION`, which is generated from the tree's own
- * `composer.lock` by `bun run gen:lock` and guarded by `tests/node/shipped-lock.spec.ts`. Fetching
- * the version the repo says it ships is what makes the local tree the one every recorded figure was
- * taken against.
+ * The version comes from `SHIPPED_CORE_VERSION`, which `bun run gen:lock` generates from the ROOT
+ * `composer.lock` and `tests/node/shipped-lock.spec.ts` guards. The direction decides whether any of
+ * it means anything: it read the TREE's lock until 2026-09-09, and this script materialises the
+ * tree, so the tree's lock decided what version populated the tree and could only ever confirm
+ * itself. `composer update` at the root is the one place a version moves now.
  *
  * @see scripts/fetch-interpreter.ts for the other build input with no committed copy
  */

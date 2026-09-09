@@ -165,8 +165,16 @@ it where it is may be the only correct architecture.
 Where it fits this project, if anywhere, is the tier `src/ops/tcp.ts` already defines: a secondary,
 host-side, deferrable read against a database the operator owns, dispatched by scheme through
 `cfw_http_queue`, with the endpoint set by the operator and never by the caller. A search index, an
-analytics sink or an external content feed has that shape. The site's own database does not, for the
-same reason `drupal/redis` stays refused: the answer has to arrive inside the request that asked.
+analytics sink or an external content feed has that shape. The site's own database does not: the
+answer has to arrive inside the request that asked, and a deferred exchange always misses the first
+time.
+
+`drupal/redis` used to be cited here as refused for that reason. It is not refused any more, and the
+mechanism that changed is worth knowing before this is priced again: a trapped socket call now
+freezes PHP where it stands, the Worker performs the exchange, and the call returns with the answer
+in the same request. So "the answer must arrive inside the request" is no longer the same thing as
+"impossible" — for a socket protocol. What it costs is a network round trip per exchange where the
+Durable Object's own SQLite costs a local read, which is why SQLite is still the cache backend.
 
 It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
 rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer

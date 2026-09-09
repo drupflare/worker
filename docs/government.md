@@ -46,8 +46,15 @@ stored pages serve the crawler. All three are verified.
 The Results API route does not. `search_gov_results_api` renders results on the site's own page by
 calling `api.gsa.gov` while building the form, and the results are the page. This runtime performs an
 outbound call between invocations rather than inside one, so a deferred exchange returns nothing on
-the first request. The module is recorded blocked with that mechanism, alongside `drupal/redis`,
-which is refused for the same reason.
+the first request. The module is recorded untested with that mechanism: measured, the deferred tier
+does carry its GET across two renders, and what it lacks is a live Search.gov key.
+
+`drupal/redis` was named here as refused for the same reason and no longer is, which is worth
+separating rather than leaving as a pair. Redis speaks a socket protocol, and a trapped socket call
+freezes PHP while the Worker performs the exchange, so the answer does arrive inside the request. An
+HTTP call cannot take that route, because PHP reaches HTTPS through a wrapper the runtime invokes
+from inside a C frame that a suspended call cannot return through. So the two are refused by
+different mechanisms, and only one of them is still refused.
 
 ## The USWDS Theme
 

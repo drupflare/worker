@@ -25,6 +25,56 @@ that catch the most mistakes:
   cold or first invocations; as a general claim it is unverified, so re-observe it before designing
   around it.
 
+## There is a VPS arm now, and the headline ratio was an instrument error
+
+`docker/vps.yml` is nginx plus PHP 8.5 FPM with opcache and tracing JIT, against the SAME
+`drupal-src` tree and the SAME `assets/drupal/site.sqlite` this project serves. `bun run vps:up`,
+then `bun run measure:vps`. Bodies agree to 10 bytes, and the generator's own ceiling is 7,330 req/s
+so it constrains neither arm.
+
+**MOUNT `drupal-src` READ-ONLY, and this rig learned it the hard way.** The first version bind-mounted
+it read-write; the entrypoint wrote its own `settings.php` into
+`drupal-src/sites/default/settings.php`, which is the build input for the shipping pack, and
+`twig-bake.spec.ts` went red on a tree nobody had edited. That is the same silent-drift shape as the
+`cdn-manifest.json` restore overwriting a tracked artifact. The site directory is a separate writable
+volume now. Recovery, if it happens again: the installer's output survives at
+`drupal-src/sites/build/settings.php`, so copy it over and re-run `node scripts/patch-drupal.mjs
+drupal-src` to re-append the twig `php_storage` pin.
+
+Measured 2026-09-07, both arms on localhost: anonymous cached p50 **3 ms VPS against 2 ms drupflare**
+and p95 **49 against 4**; at 32 clients the VPS collapses to 122 req/s while drupflare holds 438; a
+re-render with Drupal's bins warm is **25 ms against 32**.
+
+**THE AUTHENTICATED ARM'S FIRST READING WAS MEASURING A TIER THAT COULD NOT RUN.** It read 9 ms VPS
+against 31 drupflare. The rig was discarding `x-cfw-plan`; capturing it showed `skip:set-cookie` on
+six consecutive authenticated GETs, because `planEligibility()` refused any response carrying
+`Set-Cookie` and PHP re-sends the session cookie on every `session_start()` when
+`session.cookie_lifetime` is non-zero, which Drupal ships at 2000000. The compiled-plan tier had
+never compiled a plan on any site, and 25 assertions covering it all passed a synthetic
+`setCookie: false`. **Capture the tier header before believing a latency number from this rig.**
+
+With that fixed, plus a `csrf` slot and a private key for a single-editor site, a session converges at
+request 4: `/` 11 ms VPS against **5 ms**, `/admin/content` 71 against **5**, `/user/1` 56 against
+**5**. Under concurrency drupflare wins every cell but one tie and holds ~312 req/s flat from c=4 to
+c=32 while the VPS declines. Use `--ceiling-path` for the generator control: the arms share no no-work
+endpoint, and `/robots.txt` is a deny-list 404 on drupflare that reads 109 req/s against the
+generator's real 1,231.
+
+**THE "225x" AN EXTERNAL REVIEW COMPUTED IS THIS PROJECT'S OWN SIGNATURE ERROR.** It divided the
+2,127 ms edge `cpuTime` for a BOTH-BINS-EMPTIED render by the 9.47 ms native WARM-KERNEL render: two
+workloads, two instruments, two machines. Same machine and same bins, a re-render is **1.28x**.
+
+Three things the rig cannot say, and each has bitten a comparison before:
+
+- **Localhost is the VPS's best case.** A VPS is one region; drupflare answers from the visitor's
+  colo. The network term is absent and must be added back before an end-to-end claim.
+- **`wrangler dev` is one local workerd**, so throughput there is a property of the laptop. Absolute
+  CPU still comes only from `cpuTime` on a deployed worker; what this gives is a same-machine RATIO.
+- **The authenticated arm ran with no replica lanes and no compiled plan.** A plan is 0 ms median and
+  max, n=57 deployed, and it needs two sessions in a role set to agree before it compiles, which one
+  benchmark client never gives. **A single-editor site therefore never gets one** -- correct as a
+  safety property, and a real coverage hole.
+
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
@@ -32,6 +82,17 @@ serving is bound by Worker requests at 100,000/day, regeneration by rows written
 windowed and 2,777 on the alarm chain -- so regeneration is the tighter one by 12x and 36x
 respectively. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
 either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
+
+**The 10 ms cap does not fail a request, measured 2026-09-07: a 1,882 ms `cpuTime` invocation
+SUCCEEDED on a deployed free worker.** Before refusing anything because "it will not fit in 10 ms",
+check whether that refusal was ever measured. This project has been wrong about it in both
+directions, and so is `@gmitch215/tinyimg`'s README, which tells its users a request either fits or
+fails.
+
+**A rows-saving feature can cost more rows than it saves, and one did.** Scoped invalidation's
+`tag -> paths` index as a `(tag, path)` TABLE took rows per fill from 9 to 39. Folded into the page
+INSERT as a column it costs 0. Price the index against the meter the feature exists to move, on the
+same instrument, before building the second half.
 
 A cache hit still costs one Worker request, and decomposition spends the DO quota it is trying to
 dodge. Rows-per-fill is 2 to 156 depending on what is already warm, not a flat number, and
@@ -43,12 +104,15 @@ the second is a decision about every other constraint X touches.
 
 ## Never touch `vendor/`
 
-It holds 14 hand-built php-wasm binaries, 198 MB, gitignored. They are not reproducible without a
-Docker toolchain session. Never delete, move, or overwrite anything under it.
+It holds **15** hand-built php-wasm arms under `vendor/static*/`, one `.wasm` and one `.mjs` each,
+plus four `php-wasm` npm copies at the top level: **34 files, 198 MB**, gitignored. The arms are not
+reproducible without a Docker toolchain session. Never delete, move, or overwrite anything under it.
 
-**It is no longer one-machine-only, and the prohibition stands anyway.** All 35 files are in the
-`drupflare-cdn` R2 bucket under the same paths, verified by size and by ETag-against-md5:
-`bun run backup:verify`. Restoring one is
+**It is no longer one-machine-only, and the prohibition stands anyway.** All **34 vendor files** are
+in the `drupflare-cdn` R2 bucket under the same paths, verified by size and by ETag-against-md5:
+`bun run backup:verify`. They are 34 of the manifest's 35 `keys`, the 35th being
+`assets/drupal/site.sqlite`; the `.DS_Store` sitting in `vendor/` is not one of the 34. Restoring one
+is
 `bunx wrangler r2 object get drupflare-cdn/<path> --remote --file=<path>`. A local delete is now
 recoverable rather than permanent; it is still a mistake nobody needs to make.
 
@@ -189,7 +253,306 @@ The general form is worth carrying: **the pack inherits Drupal's opinions about 
 not this one.** When something the architecture depends on is silently inert, check what the shipped
 config believes before checking the code.
 
-## The gate and production reach the SAME interpreter by two different routes
+**AND A SURGICAL EDIT TO A TRACKED ARTIFACT IS REVERTED BY `bun install`.** `assets/drupal/site.sqlite`
+is tracked AND has a `cdn-manifest.json` entry, and the entry named an older lineage, so
+`restore-artifacts.ts` overwrote the file on every install and turned `container-cid.spec.ts` red on a
+tree nobody had edited. The entry is now marked `tracked: true` and the restore verifies it and leaves
+it alone; `tests/node/cdn-manifest-agrees.spec.ts` fails if the two disagree again.
+
+**So prefer a BUILD STEP to a hand edit whenever the artifact is tracked.** BUG 4's watchdog trim was
+first made by hand and is now `dropBakeHistory()` inside `pack-sql.ts`, which is reproducible and
+survives a restore. A hand edit is correct only where nothing in the repository produces the file, and
+`site.sqlite`'s trim recipe is the one case of that.
+
+## A shared base has nowhere to live, and the read-through was never the hard half
+
+Measured 2026-09-08. The premise holds and is stronger than when it was written: three
+independently provisioned sites are byte-identical after `/migrate` except one `cfw_meta` row -- 20
+of 21 tables, 1,281 of 1,282 rows -- and `bun scripts/measure/per-site-census.ts` reads the same
+thing on workerd at `seedSharedFraction` 0.9992 and `warmSharedFraction` 0.9488. A fresh site is
+4,726,784 bytes of which ~96.6% is the pack.
+
+**THE QUERY LAYER IS NOT WHERE THIS DIES.** A read-through costs **1.35x** on the statement, measured
+against the real `site.sqlite` with the pack's own indexes over six statement shapes taken from a
+traced render, 2,000 iterations each, three runs (1.35/1.35/1.37, range 0.97-1.69), every row count
+agreeing including a JOIN whose two sides sit in different layers. The overlay resolves as
+`t_T UNION ALL base_T WHERE NOT EXISTS (...)`.
+
+**IT DIES ON WHERE THE BASE CAN PHYSICALLY BE, and all three exits are closed by measurement:**
+
+- **`ATTACH` is refused.** `ATTACH DATABASE ':memory:' AS base` answers `SQLITE_AUTH`, and so does
+  `PRAGMA database_list`. A second file cannot join the tenant's engine.
+- **`execSql()` cannot await.** `module.cfwSqlExec = (json) => withMask(() => ... JSON.stringify(...))`
+  in `@drupflare/durabledb/src/do-sqlite.ts` is synchronous by construction, so KV, R2, D1, another
+  Durable Object and `env.ASSETS.fetch()` are all unreachable from inside a read. That last one
+  matters most: the pack chunks themselves arrive by `env.ASSETS.fetch()` in `src/db/migrate-sql.ts`,
+  so even a lazy fill cannot reach its own source from a statement.
+- **The interpreter carries no SQLite.** PHP 8.5.2 reports `pdo_sqlite=no`, `sqlite3=no` and an empty
+  `PDO::getAvailableDrivers()`, verified on `.interp/php8.5.wasm` under node and through `/php` on
+  workerd. PHP cannot open `assets/drupal/site.sqlite` in process.
+
+What IS reachable is anything already resident: the 62 chunks parse in **4.5 ms (n=3)** and retain
+**3.79 MiB** indexed by table, which fits both the 1,000 ms startup budget and the 16 MiB between
+`recycleAboveBytes()` at 117,440,512 and the 128 MiB isolate. Resident rows are not a queryable base
+though, and that is the gap nothing closes.
+
+Two mechanisms follow from that and both are refused with a number:
+
+- **Lazy per-table materialisation** needs no engine, and saves **2.03% of base rows / 2.18% of base
+  bytes**. Driven over `/`, `/user/login`, `/node/1` and `/user/password`, 16 of 20 base tables are
+  read; the four that are not are `cache_file_parsing`, `cache_render`, `cfw_page` and `users`, and
+  `users` goes on the first authenticated request. Deleting `router`'s 419 rows takes `/user/login`
+  from 18,418 bytes to 57.
+- **A separate base Durable Object** needs the park, which resolves inside one invocation -- so the
+  meter is SUBREQUESTS, not requests. A cold first render issues **224** statements and a warm one
+  **31-48**, against free's 50. At even a 1 ms hop the warm path adds 31-48 ms to a serve the plan
+  tier answers in 5.
+
+**THE SURVIVING OBJECTIVE IS PER-TENANT STORAGE, and it is a hard cap rather than a bill.**
+`FREE_QUOTAS.storageBytes` is 5 GB account-wide, so 4,726,784 bytes per site is 1,057 sites and
+nothing else in the model says so. The one lever the measurement handed over needs no overlay at
+all: **the seed's eight cache bins are 1,549,471 bytes of its 2,933,572 row bytes, 32.8% of the
+4,726,784 the object stores**, and every one of them can be emptied with the front page still
+rendering byte-identical. `cache_container` must stay -- a rebuild is 1,024 ms against 86. The other
+seven are 1,067,229 bytes, **22.6% of the stored database**, for at most 44 extra statements on the
+first render.
+
+Sharing across tenants needs both layers in ONE object's SQLite, which means many tenants per object.
+That is a topology change and it is not the item as scoped; within one tenant's own object there is
+nothing to share and the overlay saves zero.
+
+## The interpreter has no fiber backend, and the executor is persistent
+
+Both measured 2026-09-07 on the shipping binary, and the second is the useful half.
+
+**`new Fiber(...)->start()` aborts the runtime**: `Aborted(missing function: getcontext)`. php-src's
+ucontext branch needs `getcontext`/`makecontext`/`swapcontext` and emscripten implements none of them;
+`vendor/static-jspisjlj` has the identical stub list, so **JSPI does not supply one either**, and
+`-sSUPPORT_LONGJMP=wasm` cannot -- it is one-way and `swapcontext` needs two. This project already knew:
+`FIBER_SHIM` / `PhpWasmSyncFiber` in `src/drupal/site-php.ts` exists because of it, and
+`scripts/patch-drupal.mjs` rewrites core's five `new \Fiber(` sites to it. Do not re-propose fibers,
+and do not propose writing a wasm `zend_fiber_switch_context()` -- that is strictly more work than
+JSPI for the same capability.
+
+**`pib_run` performs no `php_request_startup`/`shutdown` cycle.** `$GLOBALS` persist across `_run()`,
+a class declared in run 1 exists in run 2, and a `register_shutdown_function` from run 1 never fires.
+**A parked GENERATOR therefore survives a Worker invocation** -- suspended in `$GLOBALS`, resumed on a
+later invocation with a host-supplied value, completed on a third. Its limit is the coloring problem:
+`yield` suspends only its own frame, so it serves code written for it and cannot retrofit Predis,
+Guzzle or the renderer. And a parked continuation lives in linear memory, so `recycleIfOversized()`
+destroys one silently -- it needs a terminating OBSERVATION, like `/user/password`.
+
+The premise behind the fiber proposal, "Zend already manages the continuation", is true of generators
+and false of fibers: a generator copies `execute_data` and the VM stack to the HEAP, a fiber switches
+a real C stack.
+
+## The Zend park ships, and every instrument that measured it was wrong once
+
+`ext/cfwpark` in phasm freezes the continuation of a trapped blocking call, `longjmp`s out of
+`pib_run` and returns `PARKED`; `src/ops/park-drive.ts` reads what was asked for, performs it in JS,
+and resumes the chain, all inside ONE invocation. `src/ops/park.ts` reports whether the interpreter
+can do it at all. `drupal/redis` is what it exists for -- a cache get has to answer inside the
+request that asked, which is the one shape the deferred tier cannot serve.
+
+**IT WORKS, measured 2026-09-08 on the long64 build against the rig Redis.** PHP opens a socket,
+writes and reads twice, and receives `+OK|+PONG` -- five parks, each performed in JavaScript on a
+LATER invocation and resumed back into the same PHP chain. A real Drupal render with the traps armed
+reports `done` too, which is the check that matters before arming: the render goes through
+`cfw_park_run`, and that is `zend_eval_string` rather than a script.
+
+It took two extension fixes, and BOTH FAILED SILENTLY:
+
+- **`cfw_park_resume` did not re-arm.** `park_armed` was 0 for the whole resume, so every trip after
+  the first ran the real function. A fall-through is the refusal path, so it looked deliberate.
+- **The safety predicate's floor was a frame from the invocation that STARTED the chain.** On a
+  resume the walk went past the parked chain into reused VM stack memory -- reading first as a
+  refusal, then as `RuntimeError: memory access out of bounds`. A resumed chain now relinks its root
+  to the resuming frame, which is what `zend_generator_resume` does and what this never did.
+
+**AND A FOURTH, ON THE HTTP HALF: an UNQUALIFIED CALL INSIDE A NAMESPACE resolves at runtime, and
+that is why every harness read this safe while every render refused.** `call_user_func_array` leaves
+no frame at all -- `zend_compile_func_cufa` rewrites it to `ZEND_INIT_USER_CALL` -- but the rewrite
+needs the compiler to have resolved the name, and an unqualified call inside a namespace compiles to
+`ZEND_INIT_NS_FCALL_BY_NAME` instead. So the frame is REAL in every namespaced file, which is all of
+Drupal, and ABSENT in the global namespace, which is where every synthetic harness in this project
+was written. Measured on native 8.5.7: 3 frames through `Probe\Ns\viaUnqualified` against 2 through
+`\call_user_func_array`. Measured on the shipping interpreter through the real pack: one internal
+frame between `FormBuilder::retrieveForm` and the form callback it dispatched, with `array_map` at 1
+as the control and the same line inside an `eval` at 0.
+
+`ext/cfwpark`'s docblock had asserted the opposite and named the compiler as the reason, which is the
+half that was true. **A claim that holds in the global namespace is not a claim about Drupal.**
+
+**`park_flatten()` SPLICES SUCH A FRAME OUT rather than refusing it.** The frame's whole remaining
+job is to copy its callback's return value, and `zend_leave_helper`'s nested path already does that
+for an ordinary call -- so the callee is relinked to the trampoline's caller and its `ZEND_CALL_TOP`
+cleared, and the return lands at `opline + 1` of the `DO_FCALL` that entered it. `cfw_park_resume`
+needed no change at all. `call_user_func` and `call_user_func_array` are the whole list, and adding a
+name means asserting six invariants of php-src's implementation of it; `array_map`, `usort` and
+`iterator_to_array` all still refuse, which is the control that makes the change mean anything.
+
+**The splice has a NATIVE gate, which is legitimate here for one reason: it measures the predicate
+and the frame surgery rather than the resume.** `phasm/src/ext/cfwpark/tests-dispatch.php` against a
+`phpize` build -- `phpize && ./configure --enable-cfwpark && make`, then
+`php -n -d extension=modules/cfwpark.so tests-dispatch.php` -- is 20 assertions, and both halves are
+falsified: disable the splice and 5 fail with the chain silently truncating, count trampolines unsafe
+again and 7 fail with every park refused. `-n` matters, because Xdebug installs its own execute
+handler. The RESUME is still a wasm question, since homebrew is the HYBRID VM and this build is
+`ZEND_VM_KIND_CALL`, and `park-oidc.spec.ts` is where that one is answered.
+
+So `blockingOutbound` is TRUE and `drupal/openid_connect` completes a login through its OWN client:
+`park-oidc.spec.ts` drives a real authorization code from the rig Keycloak, and the token POST and
+the userinfo GET are both parked, after which `externalauth` writes `openid_connect.keycloak` into
+`authmap` against the id_token's `sub`. The control beside it is the same run on the previous
+interpreter, where the deferred transport answered `is not in the fetch cache` and no row was
+written. A refused park still falls back to the deferred transport rather than rejecting, because
+rejecting made it strictly worse than what it replaced: every Search.gov render answered 500 until
+the fallback existed. **A refused park must degrade, never fail.**
+
+**THE ARTIFACT IS THE THING TO CHECK, and `cdn-manifest.json` names the OLD binary.** A `bun install`
+downloads the published interpreter, which has no `park_flatten()`, so it silently replaces a build
+the capability depends on. `park-dispatch.spec.ts` pins the flag against the reading for that reason:
+on a reverted interpreter it fails and names the frame instead of leaving `SHIPPED_BLOCKING_HTTP`
+claiming something the binary cannot do.
+
+Two arming rules survive. Both classes stay gated on their capability, because arming one the park
+cannot serve routes every render through `cfw_park_run` for a yield that always falls back -- measured
+when `fetch` was armed unconditionally: `serve-chain` read a render estimate of -1. The `socket` class
+additionally waits for `REDIS_URL`, because its read/write traps divert every file write inside a
+parked run; `fetch` needs no endpoint, since the destination is whatever the module asks for and the
+SSRF guard is what bounds it. **That guard had its own defect**: `classifyParkOp` called
+`refuseOutbound()` directly while every other outbound path goes through `outboundGuardEnabled()`, so
+`OUTBOUND_GUARD=0` -- which exists for the rig -- turned the guard off everywhere except there.
+
+**THREE INSTRUMENTS MEASURED IT AND ALL THREE WERE WRONG, in both directions.** That is the part
+worth carrying, because the mechanism was declared working and then declared impossible before it was
+either:
+
+- **A flat native harness said it worked.** Run and resume from the same scope put the resume's frame
+  in the slot the run's just vacated, so the stale parent pointer and the live one were the same
+  ADDRESS and the walk terminated by coincidence. It printed `trips=3` and `DONE`, and that reading
+  carried the mechanism forward for a session; its remaining assertion, that each answer reached the
+  call that asked, was never reached because the test fataled on its own reporting line first.
+- **A native PHP said it was impossible.** Homebrew 8.5.7 runs the HYBRID VM and this build runs
+  `ZEND_VM_KIND_CALL`. Native reported a resumed chain never unwinding into its caller; the wasm build
+  unwinds it correctly. **Do not use a native PHP as the oracle for the park.**
+- **The capability vector could not express the capability.** A contract probe is one PHP expression,
+  so its run and its resumes all land in one `_run` -- and a host able to answer inside one `_run`
+  would not need a park at all. It answered true for something the product could not use. It is
+  `socket.park.inline` now, named for what it measures, and `blockingSocket` is a LITERAL beside
+  `SHIPPED_CRON` for the same reason that one is: the flag and the vector answer different questions.
+  `park-interpreter.spec.ts` is where the cross-invocation case is asserted, against a real server.
+
+**`function_exists('cfw_park_run')` IS THE WRONG PROBE, and it is the decorative kind.** The first
+built revision exported every symbol and did not re-arm inside `cfw_park_resume`, so a chain parked
+ONCE and then ran its next trapped call for real. A fall-through is the refusal path, so it looks
+deliberate and nothing reports it -- and every real exchange is multi-trip, so the capability was
+absent on a build the symbol check called complete. `socket.outbound.blocking` in
+`capability-contract.ts` takes two parks in one chain and requires the second, which is why it reads
+false on a build that carries every `cfw_park_*` symbol.
+
+**`blocking-outbound` AND `blocking-socket` ARE TWO CAPABILITIES, and both are TRUE now.** The park
+serves each by a different route, which is why one flag could not describe them: a trapped
+`stream_socket_client` / `fwrite` / `fgets` parks directly, while `fopen('https://...')` still
+cannot, because the HTTPS wrapper is userland invoked from the INTERNAL `fopen` and a park under one
+of those is refused -- correctly, since `fopen`'s C locals cannot survive the `longjmp`, and unlike a
+dispatch trampoline it has real work left to do afterwards. So HTTP is served by REPLACING the
+transport rather than by trapping it: `ParkFetchHandler` is plain userland and yields from there.
+Keeping the two separate is still right, because the mechanisms are different and either could
+regress alone.
+
+Four things the wiring had to get right, each of which was wrong first:
+
+- **`_run`'s return value is not the output.** php-wasm delivers printed text through an `output`
+  EVENT, so a probe reading the return value reports `absent` on every build. The seam is `runText`.
+- **The token a trapped open returns is minted in PHP, not in JS.** `cfw_park_resume` copies a zval
+  and JS cannot construct a PHP resource, but the resume fragment is PHP the host composes -- so it
+  opens a `php://memory` stream and hands that back. Predis calls `is_resource()` on the result, so
+  an integer handle fails as a connection error naming nothing.
+- **That token is opened `r`, and the read-only mode is the failure mode talking.** A refused park
+  falls through to the real function, which would write the RESP command into the token and read
+  nothing back -- a corrupted conversation rather than an error.
+- **A run that does not finish must be unwound before returning.** `cfw_park_run` throws when a chain
+  is already parked, so one refusal left in place makes every later render on that interpreter fail
+  with `cfw: a chain is already parked`: a permanent fault out of a transient one.
+
+**Traps are global for the duration of a parked run**, so a render that writes a file arrives at the
+loop on a handle the host never minted. It is performed rather than refused, in PHP, because `fputs`
+is a separate `zend_function` carrying its own copy of the handler pointer and so survives trapping
+`fwrite`. `fread` and `fgets` have no alias and are rebuilt from `stream_get_contents`; `fclose` is
+not trapped at all, because it has neither. Arming happens only when `REDIS_URL` is set, so a site
+that never asked for Redis is untouched.
+
+## Two defects that only a browser and a rig could find, and both were on every site
+
+Recorded because the shapes recur, and 4,451 gate tests were green through both.
+
+**A `settings.php` assignment naming a plugin of a module a site may not have is a 500.**
+`system.mail:interface.default` was forced to `cfw_mail` unconditionally. `cfw_mail` belongs to
+`drupflare`, the shipped `core.extension` does not carry it, and `MailManager` throws
+`PluginNotFoundException` on an id it cannot resolve, so **`/user/password` answered 500 on every
+site**. An assignment cannot know whether its provider is installed; `Config\MailInterfaceOverride`
+can only run when the module is there, and it yields to `smtp`. Assert both directions.
+
+**A path the fill chain proves it cannot store retries forever.** `/user/password` renders in 402 ms
+and Drupal marks it `private, no-store` for its CSRF token, correctly, so the fill renders it,
+declines to store it, deletes the queue row, and the next visitor gets 503 `warming` and re-queues.
+On an idle object that never converges. `noteStorable()`/`isUnstorable()` record the verdict and the
+cold inline refusal is lifted for a path the chain has PROVEN it cannot satisfy. A retry loop needs a
+terminating OBSERVATION, not just a bound.
+
+The third one is the instrument: `watchdog-show` threw on the first real log row it read, because
+`unserialize(allowed_classes: false)` yields `__PHP_Incomplete_Class` and casting one to string
+throws. It is the command that found the mail defect.
+
+## The compressed bundle limit is GONE, and it was shaping the architecture
+
+Cloudflare removed it on **2026-09-04**: the Worker size limit is now **64 MiB UNCOMPRESSED on both
+Free and Paid**, and their docs say "There is no compressed size limit. Only the uncompressed bundle
+size counts." The 3 MiB gzipped ceiling this project spent two sessions engineering around no longer
+exists.
+
+Measured 2026-09-08: **13,597,829 uncompressed bytes against 67,108,864, which is 20.3%.** Its gzip
+figure is 3,990.8 KiB, so this configuration was impossible three days ago. The figure moves with
+`src/`; `bun run release:check` prints the current one.
+
+**The interpreter therefore ships as a raw `CompiledWasm` import.** `src/runtime/php-binary-raw.ts`
+replaces the brotli seam: no `brotliDecompressSync`, no `new WebAssembly.Module`, and the
+`CompiledWasm` rule for `**/*.wasm` was already in `wrangler.jsonc`. Verified boot on
+`wrangler dev --local`: PHP **8.5.2** with the full extension list.
+
+**STARTUP MEASURED ON A DEPLOYED FREE WORKER: 3, 6, 6, 4 ms (n=4, median 5)**, against brotli's
+104/105/107/112 (median 106) and the zstd-through-wasm path's 233/234/246. **21x cheaper**, 0.5% of
+the 1,000 ms budget rather than 10.6%. The bigger module is the cheaper one, because the platform
+compiles it ahead of time and the work at startup is what cost. `cfw-startup-raw`, torn down, account
+back to 0 workers.
+
+Startup is NOT billed to a request (0-1 ms of request `cpuTime` across three cold isolates), so this
+is a limit-compliance figure rather than a latency one. It still matters: a Worker over the limit is
+refused at upload, and 10.6% of the budget spent on decompression was headroom nothing else could use.
+
+**What this reopens.** Anything previously refused for bundle size is now unrefused and needs
+re-scoring, not re-refusing: the asset aggregates that were held off by artifact size, additional
+baked modules, and any capability that lost to the meter rather than to a limit. What did NOT change
+is the 1,000 ms startup budget and the 128 MB isolate, and those are the real constraints now.
+
+**AND THE CHECK ITSELF WAS STALE, which is the part that would have bitten quietly.**
+`bun run release:check` scored the GZIPPED figure against 3,145,728 and therefore failed a bundle
+that deploys -- a gate enforcing a limit that no longer exists reads exactly like a real regression.
+`SIZE_CEILING` is 67,108,864 and the check reads wrangler's `Total Upload` line; the gzip figure is
+still printed because every historical measurement in the report is expressed in it, and is no longer
+compared against anything. **When a platform limit moves, grep for the constant before trusting any
+gate that mentions it.**
+
+## The gate and production reach the SAME interpreter, as of 2026-09-07
+
+The section below is the history, and the divergence lasted the whole
+life of the project. It is closed: a `CompiledWasm` import performs no codegen, so `vitest.config.ts`
+aliases `./runtime/php-binary.js` to `src/runtime/php-binary-raw.ts` exactly as `wrangler.jsonc`
+does, and both lanes now load the same module. The arm aliases repoint that seam's own two imports,
+so `DRUPFLARE_ABI` and `DRUPFLARE_GROWTH_STEP` still work.
+
+## How the gate and production USED to reach the interpreter by two different routes
 
 `wrangler.jsonc` aliases `./runtime/php-binary.js` to the compressed 8.5 seam. **Vite does not apply
 that alias**, so for the whole life of the project the test lane resolved the DEFAULT seam and ran PHP
@@ -308,7 +671,7 @@ wired to nothing".
 `bun run check:reachability` walks imports from the wrangler `main` and classifies every module as
 `edge` / `probe` / `script` / `dead`; `tests/node/reachability.spec.ts` fails on a new dead module
 **and** on a stale exemption. Probes are correct to be unreachable -- each is its own entrypoint --
-which is why the scan separates them rather than counting 45 problems to hide 5.
+which is why the scan separates them rather than counting 44 problems to hide 6.
 
 It also reports exports that only tests mention. That is usually the legitimate
 "exported for its unit test" pattern, but it is how `readHeapSnapshot` and `elideZeroPages` were
@@ -325,10 +688,150 @@ gets waved through.
 same drift the module table and the spec counts have shown. `bun run check:reachability` prints it.
 Every entry today is legitimately off the edge: `src/ops/dormancy.ts`, `src/ops/module-table.ts` and
 `src/ops/mutation-oracle.ts` are build-lane or discovery instruments driven by their own vitest
-specs, and `src/runtime/php-binary-{jspi,o2,zstd}.ts` are alias targets reached through a wrangler
+specs, and `src/runtime/php-binary-{jspi,o2,raw}.ts` are alias targets reached through a wrangler
 `alias` rather than through an import. The list may shrink without ceremony; **adding to it is the
 thing to think twice about**, because an entry is a promise the module is reached some other way
 rather than a way to silence the check.
+
+**`dead` MEANS "not imported from the wrangler `main`", NOT "unused", and the difference matters
+before anyone deletes one.** `php-binary-raw.ts` is on that list and it is the SHIPPING interpreter.
+`module-table.ts` renders the contrib table in the README and is pinned by 13 assertions. The o2 and
+jspi seams are named by six configs under `experiments/wrangler/`. Check what aliases a file before
+concluding nothing reaches it.
+
+**`php-binary-zstd.ts` WAS orphaned and is deleted, 2026-09-07.** No shipping config and no
+experiment config named it: the arms alias o2, jspi and 85, and the shipping alias is now the raw
+import. The zstd PACKER survives, because `pack:wasm` still frames the 8.3 binary and the experiment
+arms. That is the shape to look for -- a live producer says nothing about its consumer.
+
+## The heap image is a COST on both meters, so the producer is off by default
+
+Measured 2026-09-09 on two deployed free workers differing only in `HEAP_IMAGE` and `HEAP_SNAPSHOT`,
+`cpuTime` on the cold render, nothing asked of the object during the idle:
+
+| arm      | cpuTime (ms)                 |   n | median    |
+| -------- | ---------------------------- | --: | --------- |
+| imaged   | 2020, 1908, 1937, 1561, 1912 |   5 | **1,912** |
+| no image | 1277, 1343, 1113, 1251       |   4 | **1,264** |
+
+The ranges do not overlap: the imaged minimum 1,561 is above the unimaged maximum 1,343. **A restore
+costs about 648 ms MORE than booting from scratch**, and it also costs ~8 MB a site against an
+account-wide 5 GB cap. A cost on both meters and no benefit on either, so `HEAP_IMAGE` defaults off.
+
+It agrees in direction with the local `/bootphase` reading of 0.962 and separates far more cleanly.
+The likely mechanism is `digestBytes`, a per-byte JS loop over the restored bytes, which is why
+compressing the stored chunks cannot help: the digest is taken over HEAP bytes rather than stored
+ones, deliberately, so it catches a bad inflate as well as bad storage.
+
+**AND THE EARLIER RUN THAT MEASURED A SAVING WAS RIGHT ABOUT A DIFFERENT IMAGE.** It read a cold
+serve at 904 ms with an image against 1,218.5 without, a 314.5 ms saving, on a **9,699,328-byte**
+image. The 2026-09-09 arms restored **37,158,912** bytes. Both are in the report's storage table:
+9,699,328 over 148 pages for a configured-and-served object, 36,175,872 over 552 for a cold one.
+`snapshotStep()` fires on an alarm with no resident interpreter and requires neither configuration nor
+a prior serve, so on a fresh site it captures the COLD shape. The producer takes the expensive image on
+the path that matters, which is what closes it. Reconcile a contradicting measurement; do not
+overwrite it.
+
+**AND MY FIRST ATTEMPT AT THIS MEASURED NOTHING, because the instrument warmed what it read.** The
+driver polled `/heap` and `/serve-stats` before every sample to prove the arms were distinct.
+`/heap` reads linear memory and costs **808-1052 ms of cpuTime**, so the poll kept the object
+resident and every "cold" reading was warm: the arms came back flat and `restored: true` on both.
+Distinctness has to come from the CONFIG, established once, with nothing asked of the object between
+samples.
+
+**Do not optimise this mechanism; it is closed.** `HEAP_IMAGE=1` opts back in and the chunk codec
+survives behind it, so a workload that turns out to want an image does not have to rebuild one.
+
+## The cold-boot number to move is the FREQUENCY, not the milliseconds
+
+1,264 ms is the floor for an object `src/ops/thermal.ts` decided NOT to keep warm, which is what
+`SITE_WARM=0` forces. In production the hot-set policy already exists and already carries the
+asymmetry that matters: `AUTH_WARM_WINDOW_MS` keeps an object resident while a session is active,
+because the render rate is a property of ANONYMOUS traffic and an editor on a quiet site sits below
+the crossing while producing exactly the requests a cold boot hurts.
+
+So the metric worth reporting is the share of user-visible requests that meet a cold boot, not the
+cost of one. A proposal to make the boot faster has to be scored against that share first.
+
+**`PhpDumper` IS NOT A DRUPAL 11.4 FEATURE, checked 2026-09-09 against the shipping tree.** A
+compiled-PHP service container through OPcache is a credible-sounding lever and core does not offer
+it: `DrupalKernel::$phpArrayDumperClass` is `OptimizedPhpArrayDumper`, `getArray()` is what runs, and
+the result is cached as a PHP ARRAY in `cache_container` (`DrupalKernel.php:66,1046,1632`). There is
+no `Dumper/` directory under `Core/DependencyInjection/` and no `PhpDumper` reference in core;
+Symfony's own `PhpDumper.php` sits in vendor because it ships with `symfony/dependency-injection`.
+Overriding the property plus a `PhpStorage` write is real work, and "benefits from OPcache" needs
+OPcache on, which is loaded-and-disabled here by default.
+
+## A BUILT ARTIFACT IS NOT A PUBLISHED ONE, and `.assetsignore` denies by default
+
+`assets/.assetsignore` is a deny-by-default list: `/*` followed by the un-ignored set. So a new
+artifact under `assets/` uploads NOWHERE until a line names it, and nothing reports that.
+
+**`ASSET_AGGREGATES` was decorative for its whole life because of this.** `scripts/pack-aggregates.ts`
+wrote 785 files into `assets/agg/`, `substituteAggregates()` rewrote a stored page's asset tags to
+`/agg/<hash>.css`, and the asset layer did not publish that prefix -- so the Worker answered the URL
+as a Drupal path and the page rendered with **no CSS at all**. Measured on `wrangler dev`, 2026-09-09:
+`/agg/00c7beb25a6342ea.css` answered **503** with `x-cfw-cache: MISS` while
+`/core/themes/olivero/css/base/base.css` answered **200 with no `x-cfw-*` header at all**. Copying one
+identical file into each directory reproduced the split exactly.
+
+The guard is keyed on the substitution's OUTPUT rather than on a path literal: `assets-ignore.spec.ts`
+runs `substituteAggregates()` over the prefilled pages and resolves every `/agg/` URL it emits through
+the real `ASSETS` binding. Falsified by removing `!/agg/`, which turns it red naming the manifest.
+
+**THE PUBLISHING FIX WAS ONLY HALF OF IT, and the browser lane found the other half.**
+`scripts/pack-aggregates.ts` concatenated each library's CSS without rebasing `url()`. An aggregate is
+served from `/agg/`, so `url(../../fonts/metropolis/Metropolis-Regular.woff2)` written against
+`/core/themes/olivero/css/base/fonts.css` resolved to `/fonts/...`: **270 relative targets across 408
+CSS aggregates, every one broken.** Publishing the aggregates made the stylesheets load and every
+icon, spinner and webfont inside them 404.
+
+`rebaseCssUrls()` fixes it and the artifact now reads **408 CSS aggregates, 0 relative, 289
+absolute**. Of the targets that still do not resolve under `assets/`, counted independently: 22 are
+`demo_umami` (an install profile nobody installs), 49 are contrib modules that do not ship, and 1 is
+`/core/themes/misc`. **None is olivero, claro or a core module**, so nothing a default site's page
+loads is missing.
+
+An HTTP check could not have seen this: the page is 200 and the stylesheet is 200. What fails is a
+subresource the CSS asks for, which only a browser fetches.
+
+**And the roadmap's premise for that lever was wrong about the baseline.** It called build aggregates
+"the other zero-request path"; the individual files were already on it. Aggregation buys render time
+and stored page bytes, not Worker requests. Measured on `/` with the lever on: 13 aggregates replacing
+63 tags, 17,678 bytes of markup down to 12,211.
+
+## Workers Cache is dominated here, and a `ctx.exports` call is a BILLED invocation
+
+Measured 2026-09-09 on three deployed free workers, 60 worker requests and 240 static-asset requests
+each, invocations read from `workersInvocationsAdaptive`:
+
+| arm                                          | invocations |
+| -------------------------------------------- | ----------- |
+| no `cache` block at all                      | **120**     |
+| `exports.default` off, a named entrypoint on | **63**      |
+| top-level `cache.enabled = true`             | **5**       |
+
+Three things it settles:
+
+- **Per-entrypoint caching works with no top-level block**, which the docs allow and which is what
+  makes a gateway pattern expressible.
+- **A `ctx.exports.X.fetch()` is its own billed invocation.** The control's 120 is 60 requests times
+  two, gateway plus inner. So a gateway-and-inner split DOUBLES the request meter on every miss.
+- The 63 is 60 gateway plus 3 inner, for 3 distinct URLs: the cache absorbed 95% of the inner tier.
+  The 5 is the top-level arm caching the GATEWAY itself, which for this project is a disqualifier
+  rather than a win, since the gateway is what routes by hostname and resolves the plan.
+
+**So the L0 tier is refused, and the reason is that it is dominated by what already ships.** The front
+worker already runs a `caches.default` tier at a 300 s TTL before the Durable Object hop and reports
+it as `x-cfw-edge`. An L0 entrypoint's only advantage over that is not running the inner entrypoint on
+a hit, and on a hit that entrypoint is a cache read; against it stands a second billed invocation on
+every miss. The surviving objective is unchanged and belongs to off-worker serving: a hostname that is
+not routed to the Worker.
+
+**The static-asset billing question is UNANSWERED and the instrument is why.** 720 asset requests
+produced zero rows on all three arms, including the one the docs say is billed, so
+`workersInvocationsAdaptive` counts invocations and cannot see a billed non-invocation. Do not record
+the doc's sentence as a measurement.
 
 ## Commands
 
@@ -347,12 +850,17 @@ bun run check:reachability # which modules the edge imports; which are dead
 
 bun run hydrate         # a clean checkout -> deployable, from the release payload
 bun run release:payload # build that payload; needs vendor/ and the packs
-bun run release:check   # dry-run the canonical config and price it against the 3 MiB ceiling
+bun run release:check   # dry-run the canonical config and price it against the 64 MiB ceiling
 bun run build:wasm      # the interpreter into .interp/ (gh auth); no docker, the decoder is gone
-bun run backup:verify   # 40 CDN keys, no credentials
+bun run backup:verify   # 35 live + 6 archived CDN keys, no credentials
 
 bun run measure:abi-speed   # wasm32 vs long64 vs wasm64, interleaved, on node/V8
 bun run measure:abi-control # the same harness with one binary as two arms; read this first
+
+bun run vps:up             # the comparison arm: nginx + php-fpm 8.5 on the SAME tree and database
+bun run measure:bench-site # provision a site on a running `bun run dev` so it can be driven
+bun run measure:vps        # drive either arm; --workload=ceiling first, always
+bun run vps:down           # tear it down, including its volume
 ```
 
 **`backup:verify` fails on Gregory's home network and that is not a defect.** The bucket is fronted
@@ -385,6 +893,30 @@ is NOT part of `bun run test` -- the gate stays hermetic. Every spec fails on a 
 or an uncaught page error, which is the assertion that separates a working page from a 200 whose
 widget threw. `/user/register` and `/user/*/edit` were a white screen on every site and the e2e lane
 read both as healthy.
+
+**IT FOUND `Html::$isAjax`, and four of its own specs were red for it.** The flag is `Html::$seenIds`
+one static over; `AjaxResponseSubscriber` sets it true on a `_drupal_ajax` request and nothing sets it
+back, so `Html::getUniqueId()` took its `randomBytesBase64` branch for the rest of the incarnation and
+**every id on every later render differed on every request.** `content-type.pw.ts` adds a field through
+the field-UI modal, and `node-create.pw.ts` then could not find `form#node-page-form` because the page
+said `node-page-form--iGSVurTf0ZU`. Four specs failed in the full lane and passed in isolation, which
+reads as flake. `static-sweep.spec.ts`'s blind fingerprint could not have caught it: it diffs two
+objects and neither makes an ajax request.
+
+Three things had to be right before the regression test could fail, and each was wrong first:
+`_wrapper_format` is a different constant on a different subscriber (`_drupal_ajax` is the trigger);
+`BOUNDARY_STATE` reads the residue and the reset runs at the START of the next request, so the flag
+reads 1 with the fix in place; and without `COLD_BINS` a warm `dynamic_page_cache` replays the markup
+so the form is never rebuilt. **Run the control.**
+
+**The console guard is per-STATUS now.** Chromium logs its own console error for every non-2xx
+response whether or not the page handled it, so a spec asserting that a refusal renders correctly
+could never pass. `test.use({ refusals: [401] })` declares the ones a spec drives; an undeclared
+refusal still fails.
+
+**`tests/e2e/browser/surface-lifecycle.pw.ts` is the one spec that drives what this project ADDS.**
+The other thirteen of the fourteen drive stock Drupal pages, which is how the `/_cfw` surface reached
+production with no credential at all.
 
 PHP suites live in the siblings, and **they are the authority on their own module** -- what ships is
 `assets/driver.json`, packed from those same checkouts, and nothing tests the pack's PHP directly.
@@ -453,9 +985,14 @@ class stays in the module, where the knowledge of `update_project_data` belongs,
 invocation moved. **Check `hasImplementations()` before assuming a new hook runs**; the unit reports
 `ran: false` with a reason and nothing escalates it.
 
-**`cronHookList()` IS EXPORTED, SPEC'D AND CALLED BY NOTHING**, so the chain always uses the
-hardcoded list and a customer-installed module's `hook_cron` never runs. Its docblock says the
-opposite. Not fixed.
+**`cronHookList()` IS WIRED AND A CUSTOMER MODULE'S `hook_cron` RUNS.** This paragraph said the
+opposite -- exported, spec'd, called by nothing -- and it was a live citation pointing at a closed
+defect. `cronHooksForSite()` calls it, `alarm()` calls that, the result is cached in `cfw_meta` keyed
+on `enabledModulesFingerprint()`, and `tests/integration/cron-wire.spec.ts` drives the real
+`site.alarm()` and asserts a DISCOVERED contrib module reaches the ring. `KNOWN_CRON_HOOKS` is now the
+fallback for an unreadable `core.extension` rather than the list. The first contended alarm after the
+module set changes spends its PHP unit on discovery and schedules nothing; the next one schedules from
+what it found.
 
 **AND TURNING THEM ON QUARANTINED THE SITE.** A cold fetch cache plus cron tripped
 `bridge.asyncify_called` to three strikes and every page answered 503 -- so a newly provisioned site,
@@ -533,6 +1070,17 @@ gap and served at 48.5 ms median. So the object that pays a cold serve is one wh
 stopped, not every idle site. The figure that argued for off was a thousand-site fleet total, which
 is the wrong lever for a default -- see `no-per-site-pricing` in project memory.
 
+**The interval is decided by `src/ops/thermal.ts` now, not by a constant.** It prices
+P(render inside the hibernation threshold) x 1,398 ms against a firing, over a 64-entry in-memory ring
+of arrivals that costs no rows, and declines below the measured ~505 renders/day crossing. An explicit
+`SITE_WARM` still wins in both directions. Two things to keep straight: only RENDERS count toward the
+rate, because a cached page needs no warm object, and the rate divides by the WINDOW rather than by
+the observed span -- dividing by the span reads a ten-second burst as ten renders per second.
+
+**`WARM_FIRING_COST_MS` was invented at 130 and moved the crossing to 845 renders/day.** It is 79
+now, derived from the crossing rather than guessed, and the spec asserts the two agree. A constant in
+a policy comparison needs the same provenance as a published figure.
+
 ## A meter that is most of what it counts
 
 An idle warming tick charged **three** rows: the `setAlarm`, plus one each for `flushDailyRows()` and
@@ -569,6 +1117,39 @@ possible. No `sessions`, no `users_field_data.access`, no `flood`. Core throttle
 does not dispatch terminate. Nothing depends on that by design, so
 `tests/integration/replica-invariant.spec.ts` is its only guard.
 
+**AND A LOW-RATE INTERMITTENT IS A PROBABILITY BEFORE IT IS LOAD.** `replica-invariant.spec.ts`
+failed twice across sessions with `{ table: 'sessions', statements: 1, rows: 0 }`, passed alone, and
+was filed as suite contention. It is `session.gc_probability = 1 / gc_divisor = 100` from
+`core/core.services.yml`: PHP sweeps `sessions` on ~1% of `session_start()` calls, and a full gate
+gives the coin more throws. Forcing the sweep reproduces the signature byte for byte, so no repeated
+full run was needed. `expiryGcTable()` absorbs it -- the host already performs the identical delete
+from `EXPIRED_ROW_RULES`, so a replica running it converges on the same set the primary does, while a
+session ROW write stays authoritative.
+
+**`cacheTagsIn()` READ ONLY A POSITIONAL ARRAY, so it missed every invalidation after a tag's
+first.** `Connection::merge('cachetags')` compiles to a SELECT then an INSERT or an UPDATE. The
+INSERT binds positionally (`[1, 'node_list']`) and was recorded; once the row exists every later
+invalidation takes the UPDATE branch, which binds by NAME
+(`{':db_condition_placeholder_0': 'node_list'}`), and an object is not an array. Measured on a
+populated site: a node save moved `node_list` from 1 to 4 while the host recorded only `node:20`, so
+`/` and `/node` were never purged and the front-page listing stayed stale. Three menu-item saves
+moved `config:system.menu.main` and purged nothing, and a repeat term save recorded no tag at all,
+where `flushTagPurge()` returns early on an empty set and drops the invalidation rather than widening
+it. Reading the VALUES of a named map is the fix; the filters are what keep a placeholder name out.
+
+**And scoped invalidation's ~11x does not reproduce.** Measured per save kind on a populated site
+(30 nodes, two terms, three menu links, 34 filled paths), n=3: an ordinary node save invalidates
+**5** pages, a term save **2**, and a save the main menu references **34**, which is every cached
+page. The wholesale arm is 25 requeued against 34 invalidated, not the 55 the old arithmetic
+assumed. So the ratio is **5.0x for an ordinary node save, 12.5x for a term save and 1.0x for
+anything the main menu touches** -- scoping buys nothing on the shape an editor hits most. One ratio
+cannot describe a save; the surviving objective is cheaper regeneration for menu-touching saves.
+
+**A setup session is 32,641 rows, not 104,451.** Five installs plus two heap images on one site,
+`dailyRows()` per step: migrate 3,397, firstrun 7,886, then 3,364 / 1,140 / 3,551 / 5,364 / 7,642,
+and the two images **268 rows between them**. 32.6% of the daily quota and the site never leaves
+`normal`. Whatever produced 104% of quota was not this workload, so do not cite it as that.
+
 **Classify the EFFECT, never the route and never the table.** Both cheap classifications were measured
 wrong on the same page:
 
@@ -601,8 +1182,13 @@ module". That is an inference about the runtime, and it read to everyone else as
 module. Do not reintroduce it under another name: `tests/node/module-table.spec.ts` pins the state
 set and fails on a rendered table containing the word at all.
 
-**The table is 58 verified / 0 untested / 4 blocked -- count it, do not quote it.** `moduleTable()`
-is the census; every prose figure in this repo has been stale in both directions.
+**Count it, do not quote it.** `moduleTable()` is the census; every prose figure in this repo has
+been stale in both directions, and the figure that used to sit here said 62/1/3 while the table held
+64/1/1. `bun -e "import {moduleTable} from './src/ops/module-table.js'; ..."` prints it, and
+`tests/node/module-table.spec.ts` now compares the whole table against README.md's three lists in
+both directions -- which `module-table.ts` had CLAIMED for as long as the claim had existed, while
+what the spec actually compared was the verified map against the spec files. So the published table
+had no guard at all, and three rows were edited by hand trusting the one described in the source.
 
 **A note written from reading a module's source is not a classification.** `drupal/search_api_solr`
 sat untested behind a correct note about its Solarium transport being interceptable, and the
@@ -622,11 +1208,142 @@ this build satisfies. Leave it on. Do not set it in
 `drupal-src/composer.json`: that tree is gitignored and is the build input for the shipping pack, so
 a local change there is the silent-drift shape this file exists to prevent.
 
+## A boot verifies nothing about a module, and a null answer was reading as a pass
+
+`gitVerifyBoot()` gates every git pull and every uploaded revision. It passed a `.module` full of
+nonsense, the same file with the module ENABLED, and a malformed `.info.yml` -- three fixtures that
+should have failed, all green. Two holes, either one sufficient:
+
+- **`DrupalKernel::boot()` reads no module file.** The container comes out of `cache_container`, so a
+  boot discovers nothing and includes nothing. `ModuleHandler::loadAll()` is what includes an enabled
+  module's `.module` and it runs during `preHandle()`. `VERIFY_MODULES` in `src/drupal/site-php.ts`
+  is the added step.
+- **A NULL result took the success path**, and a null is exactly what a broken module produces:
+  `include` raises E_COMPILE_ERROR, no `try` catches it, and the run dies before printing a verdict.
+  So the failure the guard exists for was the one it could not see.
+
+The rollback now names the parse error, which is how the fix was confirmed rather than assumed.
+`tests/integration/modify-upload.spec.ts` falsifies it both ways.
+
+## `fetch()` ALREADY HOLDS THE GATE, and acquiring it again hangs forever
+
+`this.gate` is a FIFO promise chain and is not reentrant. The router runs inside `this.gate.run()`,
+so a route calling a helper that acquires it again awaits a release that only happens when the router
+returns. `/updb` hung past every timeout on a fresh object and read as a platform fault.
+
+**This hour was lost once before**; the comment recording it sits at the migrate path in
+`site-do.ts`. A helper written for `alarm()`, which is its own event, is not safe to call from a
+route without saying which one is holding what. `updbBeat(gated)` takes the flag for that reason.
+
+## The pack delivers only at provisioning, and reconciliation is the path for everything after
+
+`src/ops/reconcile.ts` is a declarative list of steps, each carrying an OBSERVATION of the site's end
+state rather than a script. The verdict is asked twice, before the apply and again after, so "the
+reconciliation ran" is never the success condition -- two Outstanding Bugs closed on that weaker
+assertion and neither site converged. A site provisioned after a fix answers `satisfied` and is marked
+done having done no work; a step that ran and left the site still owing it is recorded as failed with
+its attempt count and stops owning the chain after three.
+
+Four things the acceptance test caught that reading the code did not:
+
+- **A deferred step must not block the ones after it.** `bake-clock` defers until the site is claimed,
+  which on a site nobody claims is forever, so the first version returned on the first deferral and
+  every later step was unreachable by construction.
+- **`done` must report the version REACHED, not the version that ships.** Reporting `PACK_VERSION`
+  once a failed step had spent its attempts told a rollout the site was patched while the fix it was
+  waiting on had never landed.
+- **`config.data` is a BLOB.** A reader that accepted only `string` answered null on every real pack,
+  so the step deferred forever while passing against a fixture that wrote the column as TEXT.
+- **A step whose end state IS a recorded marker has to write that marker inside its own apply**, or
+  the verdict immediately afterwards reads the old value and files the successful run as a failure.
+
+A config or state step runs PHP through Drupal's own writers, never SQL. `ConfigFactory::save()`
+already clears `cache_config` and invalidates `config:<name>`; the copy a host re-deriving that list
+forgets is the one that made the `max_age` fix inert on every site. A unit test asserts no step's
+`sql()` writes `config` or `key_value`.
+
+**The container step is the general close for a hook added after the bake.**
+`DrupalKernel::getContainerCacheKey()` is composer's `VERSIONS_HASH` plus the PHP version and the OS,
+and none of those moves when `assets/driver.json` changes -- which is why `DeferredCron` has never run
+anywhere. `bun run assets:driver` now also writes `src/ops/driver-digest.ts`, and the step drops
+`cache_container` when a site's recorded digest disagrees, so the next boot rediscovers.
+
+Every applied step drops the SNAPSHOT, not just the image meta key. The generation is the pack plus
+the module set and neither moves here, so a restore would otherwise bring back the kernel the step
+exists to replace.
+
+**IT RUNS BEFORE THE IMAGE PRODUCER, and three specs had to learn that.** Imaging first pays a full
+heap read the next step throws away, so reconciliation settles first and the image is taken once
+there is nothing left to reconcile. `heap-image-producer.spec.ts` and `snapshot-delta.spec.ts` both
+imaged by hand while the alarm chain was still reconciling: the first read no image at all, and the
+second read `cfw_heap_chunk` empty on its warm arm. Driving reconciliation first is right for the
+producer spec, which is about the alarm chain; `RECONCILE=0` is right for the delta spec, which
+measures image size and read 37,158,912 bytes against an expected ~10.4 MB when a kernel was booted
+through reconciliation on the way.
+
+## `/modify` is the third delivery path, and the only one with history
+
+`/git` delivers from a host, `/install` from a registry, and neither could deliver a tree on a
+developer's disk. Neither kept history either: `gitRestore()` holds its snapshot in memory for ONE
+call, so a pull that succeeded left nothing to go back to.
+
+`src/ops/module-rev.ts` stores content-addressed blobs plus one manifest row per revision, so a
+second upload costs the files that changed and a blob already present costs no rows -- which is the
+only way history is affordable against the meter that binds regeneration. Five revisions per package;
+dropping one frees only the blobs no surviving manifest names.
+
+**Blobs are verified against the hash they were sent under.** A manifest names files by hash, so a
+client able to store chosen bytes under a chosen hash could make a later `activate` mount content
+nobody reviewed. One digest per blob removes the class.
+
+`commit` and `activate` go through the same apply, verify and restore path a git pull takes, so an
+uploaded tree and a git-delivered tree cannot diverge in how they land.
+
+**`planSync()` CANNOT COUNT AN UPLOAD AND THE FIRST VERSION ASKED IT TO.** It compares by SOURCE, so
+a declared file whose blob has not been sent yet has no source and had to be left out of its input --
+at which point `planSync` sees a stored path that is not incoming and calls it REMOVED. Every
+modified file in an upload reported as a removal, and the caller was told its edit would delete the
+file it had just edited. `planDeclared()` counts directly instead, and the missing source is not
+needed: bytes the site does not hold are new to it, so the path being stored is the whole question.
+
 ## Conventions
 
 - `bunx`, never `npx`.
+- **Never capture the return of `require_once`.** It answers `true` when the file is already
+  included, so `$GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php'` yields the boolean
+  rather than the ClassLoader, and the next `addPsr4()` fatals with
+  `Call to a member function addPsr4() on true`. **A heap restore reaches exactly that state**: it
+  brings back the included-files table and `__pw_site_booted` without every global beside them, so
+  the `!isset()` guard opens onto an already-included file. Use `require` and guard on the VALUE
+  (`!is_object(...)`); composer's `getLoader()` memoizes, so re-requiring costs nothing and
+  re-registers nothing. `tests/integration/heap-restore-autoload.spec.ts` is falsified against it.
+- **A backtick inside a comment in a `String.raw` block terminates the block**, and a comment is
+  where it is least expected. Writing ``// `require` rather than `require_once` `` inside a PHP
+  fragment broke the TypeScript, not the PHP. The apostrophe hazard is already recorded below; this
+  is the same shape one punctuation mark over.
+- **Never pass fflate's `{ out }` hint to `inflateSync`.** A preallocated buffer makes it TRUNCATE
+  to that length and return quietly, so a payload longer than the buffer inflates to exactly the
+  length a caller would compare against -- right length, wrong content, which is this repository's
+  signature failure. Measured: a 2,048-byte payload against `{ out: new Uint8Array(999) }` returned
+  999 bytes and threw nothing. Let fflate allocate and check the length afterwards. Same shape as
+  `node:sqlite` cutting a TEXT value at its first NUL, and as `length()` in SQL doing the same --
+  the seed's cache bins read 397,804 bytes that way against a true 1,072,666, because serialized PHP
+  carries NULs. `src/db/heap-store.ts`'s `unpackChunk()` is the only caller that wanted the hint;
+  `zlib-fix.ts` and `package-install.ts` never passed one.
+- **A constructed `Request` sets no `content-length`, and `bodyTooLarge()` reads exactly that
+  header.** So a spec posting an oversized body through the front worker does NOT trip the cap unless
+  it sets the header itself; it falls through to whatever gate comes next and passes for the wrong
+  reason. Measured: the same case read 401 without the header and 413 with it, and the docblock
+  written from the first reading explained an ordering that does not exist.
+- **`src/site-do.ts` is detected as BINARY by grep, so a plain `grep` over it silently returns
+  NOTHING.** Not an error, not a warning, no matches. Two sessions have concluded a function was
+  missing from it on that evidence. Use `/usr/bin/grep -a`, or `rg`, or the Grep tool.
 - Imports use a `.js` specifier even for `.ts` files (`from './site-do.js'`). This matches what bun
   resolves; `node` cannot resolve it, which is why some scripts must run under bun.
+- **Check `pragma_table_info` before an `ALTER TABLE`; never wrap one in `try`/`catch`.** A
+  caught-and-ignored `ALTER` inside `ensureServeTables()` still dirties `sqlite_master` on every call,
+  and that took the serve path into `migrate: starting` on 2 of 3 runs. The exception is not the cost;
+  attempting the statement is.
 - `src/probes/**` are frozen measurement instruments cited by figure in the report. Moving a file
   does not change what it measures; rewriting it might. Do not refactor them.
 - `src/drupal/*-php.ts` are mostly `String.raw` blocks holding PHP source. A backtick inside a PHP

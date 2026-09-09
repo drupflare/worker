@@ -96,6 +96,19 @@ Nothing in the metrics workflow may emit, archive or render a duration. `tests/n
 asserts that the collected document matches no `durationMs`/`elapsed`/`timestamp` key and that the
 rendered summary carries no millisecond figure, so a build enforces the ban.
 
+### The one wall clock that is allowed, and why
+
+A `Date.now()` delta **spanning I/O** is a different measurement and is usable. The clock updates on
+I/O completion, so a delta bracketing an HTTP call measures that call; what it cannot do is span a
+synchronous `php._run()`, where the clock does not advance at all.
+
+That is what `scripts/measure/vps-compare.ts` runs on. It executes under bun rather than inside a
+Worker, and every reading brackets a request from outside the thing serving it. It is still a Class C
+figure in one respect: it is a SAME-MACHINE RATIO between two arms, never an absolute, and the
+absolute for the drupflare side comes from Class D. The rig also measures its own ceiling first
+(`--workload=ceiling`), because the generator shares a machine with both arms and this project has
+produced three confidently wrong scaling curves from generator errors.
+
 ## Class D: Deployed CPU
 
 The only trustworthy absolute: `cpuTime` from `wrangler tail` on a deployed worker, with

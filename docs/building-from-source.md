@@ -87,8 +87,8 @@ own manifest rather than against a list.
 
 ### 1-2, The Interpreter
 
-The shipping seam `src/runtime/php-binary-85.ts` imports two files, and both have to exist before the
-bundle builds: the glue and the brotli frame.
+The shipping seam `src/runtime/php-binary-raw.ts` imports two files, and both have to exist before the
+bundle builds: the glue and the interpreter itself.
 
 `interpreter` restores the binary and its glue from the public CDN, verified by sha256 against
 `cdn-manifest.json`, needing no credential. `bun install` already did this as a postinstall, so on a
@@ -96,10 +96,15 @@ normal clone the step is a no-op. When the CDN cannot be reached the step falls 
 workflow artifacts over `gh`: a different host on a different domain, so it is a second source and
 never a retry.
 
-`frame` compresses the binary. Cloudflare measures the bundle after its own gzip and gzip cannot
-shrink bytes that are already compressed, so shipping a compressed frame is what puts PHP 8.5 under
-the 3 MiB free-plan ceiling with nothing dropped. It is brotli at quality 11 and window 22, packed by
-`node:zlib` and inflated on the edge by `node:zlib`, so producer and consumer are the same
+`frame` compresses the binary to `.interp/php8.5.wasm.br`, and **the shipping bundle no longer needs
+it.** Cloudflare removed the compressed size limit on 2026-09-04; the limit is 64 MiB uncompressed,
+the tree measures a fifth of that (`bun run release:check`), and the interpreter travels as a raw
+`CompiledWasm` import. Startup fell from 106 ms to 5 ms with the inflate, measured on a deployed free
+worker.
+
+The step stays because three configs under `experiments/wrangler/` still name the brotli seam, and it
+is the rollback path if the raw import ever has to be reverted. It is brotli at quality 11 and window
+22, packed by `node:zlib` and inflated by `node:zlib`, so producer and consumer are the same
 implementation. The frame is cached on mtime; pass `--force` to repack.
 
 There is no decoder step and no Docker requirement. A wasm zstd decoder used to ship in the bundle
@@ -165,7 +170,7 @@ Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:
 | `core.bin.gz` | 8,126,017  | 8,588,601    | +462,584 (+5.7%) |
 
 The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes. A
-source-built tree dry-runs at **2,830.85 KiB gzipped**, against the 3,145,728-byte free ceiling.
+source-built tree dry-runs at **2,830.85 KiB gzipped**, taken while the compressed ceiling still existed; the limit is 64 MiB uncompressed now.
 
 `twig` bakes the precompiled Twig cache and writes two records: `twig-bake.json`, which the gate
 reads, and `core.list.json`, **the file list both packers then read**.
@@ -190,6 +195,26 @@ never reaches the Worker. 4,028 files, 11,910,687 bytes on Drupal 11.4.5, with
 
 `sql` chunks the committed `site.sqlite` into the JSON the Durable Object replays in JavaScript. It
 reads a tracked file, so it is the one step that works on a clone with nothing else built.
+
+It also drops the BAKE's own history on the way through: `dropBakeHistory()` empties `watchdog` and
+removes `state:install_time`, both of which a site otherwise inherits. The bake's log dated a fresh
+site's first page weeks in the past, and `SystemRequirementsHooks` falls back to `install_time` when
+`system.cron_last` is absent, so a site provisioned today opened with a red Cron row reading the bake
+date. This is a build step rather than a hand edit because a hand edit to a tracked artifact is
+reverted by the next `bun install` restore.
+
+### Optional, `assets:agg`
+
+`bun run assets:agg` reads the `*.libraries.yml` definitions out of `drupal-src` and emits immutable
+per-library CSS and JS aggregates into `assets/agg/`, plus a file-to-library index. It is not part of
+the numbered sequence and its output is not committed: 808 aggregates over 6.57 MB for 725 libraries,
+where a given site uses a few dozen. The serving side is off unless `ASSET_AGGREGATES=1`, and with no
+manifest present it changes nothing rather than breaking a page.
+
+The output has to be published as well as built. `assets/.assetsignore` denies by default, and until
+2026-09-09 it did not carry `!/agg/`, so the aggregates uploaded nowhere and a page with the lever on
+had no CSS. The 6.57 MB is charged to the Workers Assets store, not to the 64 MiB bundle: a dry run
+of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB upload.
 
 ## Why The Order Is The Order
 
@@ -344,7 +369,7 @@ excluded from the measurement below only because it binds a port.
 | a from-scratch build, same steps plus `driver`    |  1  | 23 s                     |
 
 The six swaps alternated direction, because a downgrade and an upgrade are the same work: replace
-167 MB of tree, reinstall the build site, rebake 34 Twig templates, repack 11,457 files twice and
+167 MB of tree, reinstall the build site, rebake 23 Twig templates, repack 11,457 files twice and
 recopy 4,060 static assets.
 
 **Verified by artifact.** After the last swap the rebuilt `assets/core/misc/ajax.js` hashed
@@ -402,4 +427,4 @@ into the build database, from which the rows were then copied by hand into `site
 - `scripts/README.md` -- why each script is in the language it is in
 
 `bun run release:payload` builds the payload the fast route downloads and `bun run release:check`
-prices the canonical config against the 3 MiB ceiling.
+prices the canonical config against the 64 MiB ceiling.

@@ -11,13 +11,14 @@ Scope: the interpreter only. Drupal core, contrib and the packed database move o
 
 A running Worker cannot swap its PHP binary. The change unit is a redeploy.
 
-- **The interpreter is a bundle-time module.** `src/runtime/php-binary-85.ts` reaches it with
-  `import blob from '../../.interp/php8.5.wasm.br'`, and `wrangler.jsonc` maps `**/*.zst` and
-  `**/*.br` to module type `Data`. Wrangler resolves a module import when the bundle is built. No
-  runtime API adds a module to a deployed bundle.
-- **The compile happens at module scope.** The seam calls `new WebAssembly.Module(bytes)` during
-  top-level evaluation, after inflating the frame with `brotliDecompressSync` from `node:zlib`.
-  `workerd` permits codegen during startup and refuses it at request time.
+- **The interpreter is a bundle-time module.** `src/runtime/php-binary-raw.ts` reaches it with
+  `import wasmModule from '../../.interp/php8.5.wasm'`, and `wrangler.jsonc` maps `**/*.wasm` to
+  module type `CompiledWasm`. Wrangler resolves a module import when the bundle is built. No runtime
+  API adds a module to a deployed bundle.
+- **There is no compile step to pay.** A `CompiledWasm` import arrives already compiled, so the seam
+  performs no codegen at all. That matters because `workerd` permits codegen during startup and
+  refuses it at request time, which is what a compressed frame had to work around. Startup went from
+  ~106 ms to ~5 ms when the compressed seam was replaced on 2026-09-07.
 - **Startup cannot fetch.** Cloudflare refuses asynchronous I/O in global scope: "Disallowed
   operation called within global scope. Asynchronous I/O (ex: fetch() or connect()), setting a
   timeout, and generating random values are not allowed within global scope." `env` is importable at
@@ -93,16 +94,16 @@ a failed step ends the run: no payload is uploaded and no branch is pushed.
 There used to be a third. `assertDeclaredSize()` read the inflated length out of the zstd frame
 header and compared it to the file that was packed, which caught a frame compressed from a stream
 rather than a file: zstd omits the field there, and the symptom on the edge is an exit code with
-nothing else. The frame is brotli now and has no such field, so the check has no subject. What
-replaces it is `files[].sha256` in `interp.lock.json`, which content-addresses the frame.
+nothing else. Nothing is compressed now, so the check has no subject. What replaces it is
+`files[].sha256` in `interp.lock.json`, which content-addresses the binary.
 
 1. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch-interpreter.ts`
    reads the interpreter imports out of the seam `wrangler.jsonc` aliases and requires the fetched
    frame and glue to be among them. On a hydrated tree a fetch for the wrong PHP version otherwise
    builds cleanly, passes the size gate, and measures the incumbent.
-2. **The bundle fits the free ceiling.** `bun run release:check` dry-runs the canonical config,
-   parses the gzip figure wrangler prints with `parseWranglerGzipBytes()`, and throws above
-   3,145,728 bytes. The dry run also proves the entrypoint and the binary alias still resolve.
+2. **The bundle fits the Worker size limit.** `bun run release:check` dry-runs the canonical config,
+   parses the uncompressed `Total Upload` figure wrangler prints, and throws above 67,108,864 bytes.
+   The dry run also proves the entrypoint and the binary alias still resolve.
 
 `tests/node/interp-fetch.spec.ts` covers the first directly.
 `tests/node/release-payload.spec.ts` covers the KiB-to-bytes conversion and the ceiling arithmetic.
@@ -278,7 +279,12 @@ from wrangler.
 - **Deploying.** The pipeline ends at a pull request and an artifact. Promotion, canary and rollback
   are `wrangler` commands a human runs.
 - **Drupal.** `SHIPPED_LOCK_VERSIONS`, `assets/drupal/site.sqlite` and `assets/driver.json` are a
-  separate lane, and `site.sqlite` has no reproducible recipe.
+  separate lane, and `site.sqlite` has no reproducible recipe. That lane reaches an existing site
+  through `src/ops/reconcile.ts` rather than through a redeploy: a step observes the site's end state,
+  and `container-driver-digest` compares `src/ops/driver-digest.ts` against what the site recorded, so
+  a `#[Hook]` class added to a sibling after the bake is discovered on the next boot. A redeploy alone
+  does not move it, because `DrupalKernel::getContainerCacheKey()` is composer's `VERSIONS_HASH` plus
+  the PHP version and the OS.
 - **Attestation.** Covered in [Trust](#trust).
 - **PHP 8.5 on the edge.** The shipping seam is 8.5. A `cfw-*` deploy once returned 1101 with
   `ExitStatus: Program terminated with exit(-2)`; the cause was opcache, which reads

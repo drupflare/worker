@@ -205,16 +205,32 @@ says nothing about whether the auth is accepted or a hook ever fires.
 shipping-code change: `parseRemote()` discards the host for Bitbucket, `cloneUrl()` returns
 `https://bitbucket.org/...` unconditionally, and the add route never sets `remote.clone`.
 
-## Do not "regenerate the pack" to change the database
+## The database HAS a producer now, and four claims here were stale
 
-`assets/drupal/site.sqlite` (6.6 MB) is **hand-trimmed and nothing in this repo produces it.**
-`pack-sql.ts` only consumes it; `pack-perfile.ts` never touches sqlite. The build input
-`drupal-src/sites/default/files/.sqlite` is 14.4 MB, so a trim happened whose recipe is written down
-nowhere.
+`assets/drupal/site.sqlite` is **7,585,792 bytes** and `scripts/drupal/install-site-db.php` builds it
+from nothing. `docs/database.md` is the recipe; `bun run build:site-db` runs it and
+`node scripts/diff-site-db.ts` is the acceptance check. Measured 2026-09-09, a fresh build against
+the shipped file agrees on **41 modules of 41 and 175 config rows of 175**, with every remaining
+difference attributed.
 
-To add or change a row, be **surgical**: read it out of the build input and insert it into
-`site.sqlite`, then re-run `bun run assets:sql`. Running `bun run assets:pack` to do it would balloon
-the artifact toward 14.4 MB and silently discard the trim, against a 3 MB gzipped bundle ceiling.
+**This section said the opposite until 2026-09-09, and each correction is worth knowing:**
+
+- "6.6 MB" was the superseded R2-archived lineage `site.sqlite.trimmed-1618p-cc13` at 6,627,328
+  bytes, pinned in `scripts/backup-cdn.ts`. The shipped file has been 7,585,792 since 2026-08-14.
+- "nothing in this repo produces it" -- `install-site-db.php` had existed for two weeks and
+  `bake-pack.ts` already said so. What had no producer was three DELTAS: the `page_content_type`
+  recipe, enabling `drupflare`, and 16 cache index drops. All three are in the script now.
+- "the build input is 14.4 MB" named the **wrong file**. `drupal-src/sites/default/files/.sqlite` is
+  5,222,400 bytes; the ~14.4 MB one is the gitignored intermediate `assets/drupal-std/site.sqlite`.
+- the 3 MB gzipped ceiling it argued against **no longer exists** -- see the section on that below.
+
+**AND ONE TRIM THE SCRIPT WAS DOING HAD EXPIRED.** It forced `system.advisories:enabled` false for
+"no outbound socket". The stream wrapper and the park landed, `CRON_HOOKS` runs `system` and
+`update`, and the shipped pack has carried `enabled: true` in all six of its committed versions -- so
+the trim was wrong about the runtime AND about what it was reproducing. Same shape as the three
+`run: false` entries that outlived their reason.
+
+Prefer a rebuild to a surgical edit now. Where an edit is still right, the two rules below hold.
 
 When copying a cache row between databases, verify `expire = -1` and that **both** databases carry
 identical `cachetags` - a `checksum` that disagrees with the destination's tags means the row is
@@ -860,6 +876,9 @@ bun run measure:abi-control # the same harness with one binary as two arms; read
 bun run vps:up             # the comparison arm: nginx + php-fpm 8.5 on the SAME tree and database
 bun run measure:bench-site # provision a site on a running `bun run dev` so it can be driven
 bun run measure:vps        # drive either arm; --workload=ceiling first, always
+bun run measure:host       # drive BOTH and decide; exits 1 when the verdict is not viable
+bun run build:site-db      # the pack database, from nothing; docs/database.md is the recipe
+bun run check:site-db      # diff a built database against the shipped one
 bun run vps:down           # tear it down, including its volume
 ```
 
@@ -869,7 +888,8 @@ by `drupflare-cdn.gmitch215.dev`, and the network blocklists `*.dev`, so it answ
 not conclude anything about the bucket's contents from a failure with that error.
 
 `docs/building-from-source.md` is the release and build procedure; `docs/configuration.md` is every
-var and binding; `docs/repository-layout.md` says how every path arrives
+var and binding; `docs/database.md` is how `assets/drupal/site.sqlite` is built and what each of its
+non-default values is for; `docs/repository-layout.md` says how every path arrives
 on a clean clone. The gate's own limit is written down there too: a clean checkout cannot build
 `assets/drupal-pf`, `assets/drupal-sql` or `.interp/`, so the specs that assert them run in the
 release lane, which hydrates the payload first and sets `REQUIRE_ARTIFACTS=1`.
@@ -1234,6 +1254,59 @@ returns. `/updb` hung past every timeout on a fresh object and read as a platfor
 **This hour was lost once before**; the comment recording it sits at the migrate path in
 `site-do.ts`. A helper written for `alarm()`, which is its own event, is not safe to call from a
 route without saying which one is holding what. `updbBeat(gated)` takes the flag for that reason.
+
+## The lock is authoritative now, and the chain used to be a cycle
+
+`drupal-src/composer.lock` -> `gen:lock` -> `SHIPPED_CORE_VERSION` -> `fetch:drupal` -> `drupal-src`.
+The tree's own lock chose the version that populated the tree, so the only thing it could confirm was
+itself, and the ROOT lock sat outside the loop with nothing reading it. That is how a `composer
+update` moved `drupal/core` to 11.4.6 for phpstan while the pack stayed at 11.4.5.
+
+`composer.json` requires `drupal/core-recommended` and the four contrib modules directly now, and
+`gen-lock-versions.ts` reads the root lock: manifest -> root lock -> `src/ops/shipped-lock.ts` ->
+fetched tree. `tests/node/shipped-lock.spec.ts` asserts the DIRECTION rather than mere agreement.
+
+**It was also a correctness fix.** With no `core-recommended` the root resolved symfony 8.1 while the
+site runs 7.4, so static analysis was reading a different framework. Two things not to break:
+`allow-plugins` must carry `composer/installers: false` or `composer update` refuses to run, and the
+spec compares at MAJOR.MINOR because 19 transitive patch versions in the baked map are legitimately
+ahead of a tree resolved weeks earlier.
+
+**The root's phpstan is at 56 errors, always has been, and is gated nowhere** -- verified against the
+old manifest and lock, same count. Not caused by this.
+
+## The end-to-end host comparison exists, and it answers NO
+
+`bun run measure:host` drives BOTH hosts through one matched workload set in ONE process and decides
+against a predicate written before the numbers (`scripts/measure/verdict-math.ts`, 23 assertions in
+`tests/node/host-verdict.spec.ts`). Every earlier comparison was a human reading two JSON documents
+and dividing, which is where "225x" came from.
+
+Measured 2026-09-09 on localhost, traffic-weighted p50: **VPS 8.2 ms against 13.6 ms with no replica
+lanes, and 8.1 against 20.5 with three.** `auth-admin` is the standout the other way -- **17.0x at
+c=1** and 13.7x on throughput.
+
+Two mechanisms block a yes and neither is a tuning question:
+
+- **One Durable Object serializes.** `anon-cached` reads 2 ms against 7 at c=4 and 3 against 27 at
+  c=16, against `pm.max_children = 32`. That slice is 82% of the traffic weight, so it decides the
+  verdict alone.
+- **THE REPLICA POOL AND THE PLAN TIER FIGHT EACH OTHER.** At 0 lanes the paired session curve
+  reaches `PLAN:private` at request 4 and converges to 5 ms; at 3 lanes it reads `RENDER` for all
+  eight and converges to 66 ms. Lanes are the only difference, so the reading is a clean two-arm
+  control -- the MECHANISM, that lane affinity scatters the two sessions plan compilation must
+  co-locate, is an inference and needs its own experiment.
+
+**Localhost is the VPS's best case and that is why the claim direction is safe**: a VPS answers from
+one region and drupflare from the visitor's colo, so the missing network term can only move the
+result toward drupflare. `--rtt` prices it; the verdict is always taken at rtt=0.
+
+**`x-cfw-site` WAS DECORATIVE** -- present in three measurement scripts and in no file under `src/`,
+because site identity is the hostname. Every local `--site` ever passed drove one shared object. The
+tells were a never-used id answering `already migrated` and two random ids reporting the same
+generation and the same 428 rows. All three scripts send `Host: <site>.localhost` now, and that also
+turned a replica `schema mismatch` refusal from "provisioning is broken" into "the shared object was
+migrated against an older pack and the lane was right".
 
 ## The pack delivers only at provisioning, and reconciliation is the path for everything after
 

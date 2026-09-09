@@ -23,7 +23,14 @@
  * Raising absorption does not walk that towards "mirror everything" either -- at absorption 1, where
  * R2 reads cannot bind, the peak lands at 0.898 and is bound by ROWS instead.
  *
+ * ABSORPTION IS ZERO UNTIL AN OPERATOR ADDS A CACHE RULE, and that is measured rather than assumed.
+ * The drain writes `.html` keys with no `cache-control`; Cloudflare's CDN decides eligibility by
+ * EXTENSION before it consults the origin at all, and does not cache HTML by default, so an origin
+ * header cannot buy this back on its own. `scripts/measure/cdn-absorption.ts` reports it and derives
+ * what a rule would be worth.
+ *
  * @see scripts/measure/free-envelope.ts for the model this feeds
+ * @see scripts/measure/cdn-absorption.ts for where its `cdnAbsorption` comes from
  */
 
 import type { MirrorBucket } from '../db/file-store.js';
@@ -87,13 +94,18 @@ export function staleGenerationPrefix(site: string, generation: number): string 
 /** Creates the queue. Separate from the file mirror's queue: different keys, different lifecycle. */
 export function ensurePageMirrorTable(sql: PageMirrorSql): void {
 	sql.exec(
+		// WITHOUT ROWID, and it is one row per queued page rather than two. A `TEXT PRIMARY KEY` on a
+		// rowid table gets an automatic index, so every insert charges the row AND the index entry --
+		// against the meter this whole tier is scored on. The table had never held a row anywhere
+		// (the `FILES` binding it is gated behind was not declared until now), so there is nothing
+		// to migrate; a dev site created before this keeps the old shape and pays the extra row
 		`CREATE TABLE IF NOT EXISTS cfw_page_mirror_queue (
       path TEXT PRIMARY KEY,
       generation INTEGER NOT NULL,
       queued_at INTEGER NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
       last_error TEXT
-    )`
+    ) WITHOUT ROWID`
 	);
 }
 

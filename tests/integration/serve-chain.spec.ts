@@ -131,7 +131,18 @@ describe('a cold MISS costs no interpreter and no render', () => {
 		// THE ALARM IS WHAT MAKES IT DURABLE, and a serve arms one at +1 ms precisely so this
 		// window is a millisecond wide. Evicting without letting it fire measures the accumulator
 		// rather than the counter, and would have read as the count being lost
-		await driveAlarms(stub, (site) => Number(site.metaGet('serve_requests', '0')) > 0);
+		// 120 tries rather than the default 25. The alarm is armed at +1 ms, but under a loaded
+		// suite the runtime does not always get to it inside ~125 ms of ticking, and then the
+		// eviction below measures the accumulator instead of the counter and reads 0
+		await driveAlarms(stub, (site) => Number(site.metaGet('serve_requests', '0')) > 0, 120);
+		// driveAlarms gives up SILENTLY at its budget and returns a firing count nobody checks, so
+		// assert the precondition it was driving toward; without this the failure names the counter
+		// when the cause is the flush never having happened
+		const flushed = await inObject(stub, (site) => Number(site.metaGet('serve_requests', '0')));
+		expect(
+			flushed,
+			'the +1 ms alarm never flushed the accumulator before the eviction'
+		).toBeGreaterThan(0);
 		await evictDurableObject(stub);
 		const after = await inObject(stub, (site) => site.serveRequests());
 		expect(after).toBe(1);
@@ -246,11 +257,17 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 	 *
 	 * This asserted `> 60000` unconditionally and was written before warming existed, so it failed
 	 * on the shipped default reading 7,995 ms. The number was right and the assertion was old.
+	 *
+	 * AND `SITE_WARM` IS NOW STATED RATHER THAN LEFT UNSET. Unset means "let the predictor decide",
+	 * and on a site with one render in the window it correctly decides not to warm -- one render in
+	 * fifteen minutes extrapolates to 96/day against a measured crossing of 505. The operator's own
+	 * choice still wins in both directions, which is what this drives; the predictor's refusal has
+	 * its own case below.
 	 */
 	async function idleRearmMs(warm: boolean): Promise<number> {
 		const stub = await provisionedSite();
 		await inObject(stub, (site) => {
-			if (!warm) site.env.SITE_WARM = '0';
+			site.env.SITE_WARM = warm ? '1' : '0';
 			stubRender(site, ({ path }) => pageFor(path));
 			queuePath(site, '/');
 		});
@@ -271,6 +288,26 @@ describe('the alarm chain fills what a MISS queued, unattended', () => {
 
 	it('drops back to the keep-warm interval when warming is off', async () => {
 		expect(await idleRearmMs(false)).toBeGreaterThan(60_000);
+	});
+
+	it('refuses to warm a site whose traffic does not pay for it', async () => {
+		// SITE_WARM unset is the predictor's to decide, and one render in the window is 96/day
+		// against a measured crossing of 505 -- the bottom of the band, where the firings cost more
+		// than the boots they save
+		const stub = await provisionedSite();
+		await inObject(stub, (site) => {
+			delete (site.env as Record<string, unknown>).SITE_WARM;
+			stubRender(site, ({ path }) => pageFor(path));
+			queuePath(site, '/');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const out = await inObject(stub, async (site) => ({
+			alarmAt: await site.ctx.storage.getAlarm(),
+			now: Date.now(),
+			decision: (site as unknown as { lastWarmDecision?: { warm: boolean } }).lastWarmDecision
+		}));
+		expect(out.decision?.warm).toBe(false);
+		expect(Number(out.alarmAt) - out.now).toBeGreaterThan(60_000);
 	});
 });
 
@@ -575,14 +612,19 @@ describe('a path that can never render is retried and then dropped', () => {
 		expect(String(queued[0]?.last_error)).toContain('no route matched');
 	});
 
-	it('a failed inline render falls through to the placeholder rather than 500 at the visitor', async () => {
+	// INVERTED, and the old expectation was the bug. A render that THREW answered 503 with
+	// `Retry-After: 1`, the retry re-entered the same failing render, and the route never
+	// converged -- so it read as a boot loop rather than as an error, with nothing in any log.
+	// A `warming` 503 is right for a page that is queued and wrong for one that cannot render
+	it('answers 500 with the exception when the inline render threw', async () => {
 		const stub = await provisionedSite();
 		const failed = await inObject(stub, (site) => {
 			stubRender(site, () => ({ error: 'boom' }));
 			return serveDirect(site, '/broken');
 		});
-		expect(failed.status).toBe(503);
-		expect(failed.inline).toBe('failed');
+		expect(failed.status).toBe(500);
+		expect(failed.cache).toBe('ERROR');
+		expect(String(failed.body)).toContain('boom');
 		// counted against its three strikes already, so the row is still there for the chain
 		expect(failed.queueDepth).toBe(1);
 	});

@@ -145,7 +145,11 @@ describe('reads and writes, including everything it refuses to store', () => {
 	it('round-trips a page', async () => {
 		const kv = fakeKv();
 		expect(await writePage(paid(kv), 's', 7, '/', PAGE)).toBe(true);
-		expect(await readPage(paid(kv), 's', 7, '/')).toEqual(PAGE);
+		// `storedAt` is stamped by the write, and it is what bounds a STALE read by wall clock as
+		// well as by generation count
+		const back = await readPage(paid(kv), 's', 7, '/');
+		expect(back).toMatchObject(PAGE);
+		expect(typeof back?.storedAt).toBe('number');
 	});
 
 	it('misses on a different generation rather than serving a stale page', async () => {

@@ -16,7 +16,6 @@ describe('the profiles', () => {
 	it('gives free everything sized for a 10 ms cap, unchanged from the measured constants', () => {
 		expect(FREE_PROFILE).toEqual({
 			fillBatchSize: 5,
-			fillBatchWallMs: 5_000,
 			httpDrainLimit: 3,
 			mirrorLimit: 2,
 			inlineBudgetMs: 2_000,
@@ -40,9 +39,11 @@ describe('the profiles', () => {
 		// single thread, so at fillBatchSize 25 a deployed alarm cost 4,337-5,832 ms of cpuTime and
 		// every cache HIT racing it waited 5.0-6.8 s of wall. The alarm re-arms in 130-160 ms while
 		// the queue is non-empty, so a smaller batch costs no throughput
-		expect(PAID_PROFILE.fillBatchWallMs).toBeLessThan(FREE_PROFILE.fillBatchWallMs);
-		// 8 fills at a measured 81 ms median render is ~650 ms of worst-case occupancy
-		expect(PAID_PROFILE.fillBatchSize * 100).toBeLessThan(PAID_PROFILE.fillBatchWallMs * 2);
+		expect(PAID_PROFILE.fillBatchSize).toBeLessThan(FREE_PROFILE.fillBatchSize * 2);
+		// 8 fills at a measured 81 ms median render is ~650 ms of worst-case occupancy, and the batch
+		// SIZE is the only thing that bounds it: a wall-clock guard cannot, because the clock does not
+		// advance across a synchronous `php._run()`
+		expect(PAID_PROFILE.fillBatchSize * 100).toBeLessThan(1_500);
 	});
 
 	it('permits a cold boot on paid only, which is the one knob that changes an outcome', () => {
@@ -54,12 +55,16 @@ describe('the profiles', () => {
 		// a DO is single-threaded and a fill holds the gate, so an unbounded batch would block
 		// every request to the object for its duration
 		expect(PAID_PROFILE.fillBatchSize).toBeLessThanOrEqual(50);
-		expect(Number.isFinite(PAID_PROFILE.fillBatchWallMs)).toBe(true);
+		expect(Number.isFinite(PAID_PROFILE.fillBatchSize)).toBe(true);
 	});
 
 	it('never lets an occupancy bound be raised past what a HIT will tolerate', () => {
-		// paid also bills duration, so a long alarm is a GB-s cost as well as a latency one
-		expect(PAID_PROFILE.fillBatchWallMs).toBeLessThanOrEqual(5_000);
+		// paid also bills duration, so a long alarm is a GB-s cost as well as a latency one. There was
+		// a `fillBatchWallMs` beside this and it was DECORATIVE -- resolved per plan, on the KV
+		// allow-list, asserted through the plumbing, and read by nothing. Removed 2026-09-08, because
+		// the guard it configured cannot exist: the clock does not advance across a synchronous
+		// `php._run()`, so wall clock cannot bound a batch from inside one
+		expect(PAID_PROFILE.fillBatchSize).toBeLessThanOrEqual(FREE_PROFILE.fillBatchSize * 2);
 	});
 });
 

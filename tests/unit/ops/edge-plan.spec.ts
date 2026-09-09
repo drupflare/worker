@@ -6,14 +6,18 @@ import {
 	edgePlanKey,
 	edgePlanKvKey,
 	edgePlanStats,
+	forgetWitness,
 	GENERATION_TRUST_MS,
+	hasEdgePlan,
 	lookupEdgePlan,
 	noteEdgeRender,
 	PLAN_TTL_MS,
 	planEligibility,
+	privatePlanKey,
 	readEdgePlan,
 	rememberEdgeGeneration,
 	resetEdgePlans,
+	rotatesSession,
 	runEdgePlan,
 	SAMPLES_PER_COMPILE,
 	shouldCheckKv,
@@ -27,15 +31,19 @@ import { compilePlan, type RenderPlan } from '../../../src/ops/render-plan';
 /**
  * The front worker's compiled-plan tier.
  *
- * The load-bearing property is the KEY: a plan is reachable only by a request carrying the cookie
- * header it was rendered for, which is what makes serving an authenticated page from the edge safe
- * without the per-uid re-harvest the shell tier needs. Everything else here is a refusal.
+ * The key is the ROLE SET, and two properties replace what the cookie key used to give for free: a
+ * plan is compiled only from two DIFFERENT sessions of that role set, so anything constant for one
+ * user and different for another shows up as a region the compiler cannot name and the plan is
+ * refused; and it is served to a session only once that session's own render has agreed with it.
+ * Everything else here is a refusal.
  */
 
 const SITE = 'example.test';
 const PATH = '/admin/content';
-const COOKIE_A = 'SSESS0123456789abcdef0123456789ab=alpha-session-value';
-const COOKIE_B = 'SSESS0123456789abcdef0123456789ab=bravo-session-value';
+const ROLES = 'authenticated,editor';
+const SESSION_NAME = 'SSESS0123456789abcdef0123456789ab';
+const COOKIE_A = `${SESSION_NAME}=alpha-session-value`;
+const COOKIE_B = `${SESSION_NAME}=bravo-session-value`;
 
 /** a page with no per-request value at all, which is 48.4% of authenticated routes */
 const staticPage = (n = 1) => `<html><body>${'x'.repeat(200)}<p>page ${n}</p></body></html>`;
@@ -50,7 +58,7 @@ function accepted(overrides: Partial<Parameters<typeof planEligibility>[0]> = {}
 		status: 200,
 		doCache: 'RENDER',
 		contentType: 'text/html; charset=UTF-8',
-		setCookie: false,
+		setCookie: [],
 		personalised: true,
 		generation: 7,
 		cookie: COOKIE_A,
@@ -132,10 +140,39 @@ describe('eligibility', () => {
 		['a redirect', { status: 302 }, 'skip:302'],
 		['a warming placeholder', { doCache: 'MISS' }, 'skip:MISS'],
 		['a response with no generation', { generation: null }, 'skip:no-generation'],
-		['a rotated session', { setCookie: true }, 'skip:set-cookie'],
+		[
+			'a rotated session',
+			{ setCookie: [`${SESSION_NAME}=rotated-value; path=/`] },
+			'skip:set-cookie'
+		],
 		['a JSON response', { contentType: 'application/json' }, 'skip:not-html']
 	])('refuses %s', (_label, overrides, reason) => {
 		expect(accepted(overrides)).toEqual({ ok: false, reason });
+	});
+
+	/**
+	 * THE REFUSAL THAT REFUSED EVERYTHING.
+	 *
+	 * PHP re-emits the session cookie on every `session_start()` when `session.cookie_lifetime` is
+	 * non-zero, and Drupal ships 2000000. Asking whether the response carried `Set-Cookie` therefore
+	 * answered yes on every authenticated page on every site, and the tier never compiled anything.
+	 * Measured on a running site before the fix: `x-cfw-plan: skip:set-cookie`, six requests in a
+	 * row, the value byte-identical to the jar's each time.
+	 */
+	it('accepts the session cookie PHP re-sends unchanged on every request', () => {
+		const resent = `${SESSION_NAME}=alpha-session-value; expires=Wed, 30 Sep 2026 23:53:18 GMT; Max-Age=2000000; path=/; HttpOnly; SameSite=Lax`;
+		expect(rotatesSession(COOKIE_A, [resent])).toBe(false);
+		expect(accepted({ setCookie: [resent] })).toEqual({ ok: true });
+	});
+
+	it.each([
+		['a new session id', [`${SESSION_NAME}=rotated`], true],
+		['a logout that clears it', [`${SESSION_NAME}=deleted; Max-Age=0`], true],
+		['a cookie the request never held', ['Drupal.visitor.name=alice'], true],
+		['a malformed line', ['garbage'], true],
+		['no cookie at all', [], false]
+	])('treats %s as a rotation: %s', (_label, lines, rotated) => {
+		expect(rotatesSession(COOKIE_A, lines as string[])).toBe(rotated);
 	});
 });
 
@@ -159,11 +196,11 @@ describe('compiling from renders', () => {
 	beforeEach(() => resetEdgePlans());
 
 	it('needs three renders and discards the first', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		// the shape the asset-library warm-up produces: render 1 differs from every later one
-		expect(noteEdgeRender(key, PATH, staticPage(0))).toBeNull();
-		expect(noteEdgeRender(key, PATH, staticPage(1))).toBeNull();
-		const plan = noteEdgeRender(key, PATH, staticPage(1));
+		expect(noteEdgeRender(key, PATH, staticPage(0), Date.now(), COOKIE_A)).toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_A)).toBeNull();
+		const plan = noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_B);
 		expect(plan).not.toBeNull();
 		// compiled from renders 2 and 3, so it reproduces THOSE bytes; a compile that had used
 		// render 1 would have found an unnamed varying region and refused
@@ -172,41 +209,138 @@ describe('compiling from renders', () => {
 	});
 
 	it('refuses a page whose variation nothing recognises, and stops retrying', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
-			expect(noteEdgeRender(key, PATH, opaquePage(i))).toBeNull();
+			const who = i === SAMPLES_PER_COMPILE - 1 ? COOKIE_B : COOKIE_A;
+			expect(noteEdgeRender(key, PATH, opaquePage(i), Date.now(), who)).toBeNull();
 		}
 		expect(lookupEdgePlan(key)).toBeNull();
 		// a refusal is remembered: three more renders must not spend another compile
 		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
-			expect(noteEdgeRender(key, PATH, opaquePage(10 + i))).toBeNull();
+			const who = i === SAMPLES_PER_COMPILE - 1 ? COOKIE_B : COOKIE_A;
+			expect(noteEdgeRender(key, PATH, opaquePage(10 + i), Date.now(), who)).toBeNull();
 		}
 		expect(edgePlanStats().plans).toBe(0);
 	});
 
 	it('records nothing more once a plan is held', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
-		noteEdgeRender(key, PATH, staticPage(0));
-		noteEdgeRender(key, PATH, staticPage(1));
-		expect(noteEdgeRender(key, PATH, staticPage(1))).not.toBeNull();
-		expect(noteEdgeRender(key, PATH, staticPage(2))).toBeNull();
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		noteEdgeRender(key, PATH, staticPage(0), Date.now(), COOKIE_A);
+		noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_A);
+		expect(noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_B)).not.toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(2), Date.now(), COOKIE_A)).toBeNull();
 		expect(runEdgePlan(lookupEdgePlan(key) as RenderPlan)).toBe(staticPage(1));
 	});
 
 	it('consults the cold-isolate tier at most once per key', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		expect(shouldCheckKv(key)).toBe(true);
 		expect(shouldCheckKv(key)).toBe(false);
 	});
 
 	it('evicts the oldest key rather than growing without bound', () => {
 		const plan = compilePlan(staticPage(), staticPage(), PATH);
-		const first = edgePlanKey(SITE, 1, COOKIE_A, '/p0');
+		const first = edgePlanKey(SITE, 1, ROLES, '/p0');
 		for (let i = 0; i <= EDGE_PLAN_ENTRIES; i++) {
-			storeEdgePlan(edgePlanKey(SITE, 1, COOKIE_A, `/p${i}`), plan);
+			storeEdgePlan(edgePlanKey(SITE, 1, ROLES, `/p${i}`), plan);
 		}
 		expect(edgePlanStats().entries).toBeLessThanOrEqual(EDGE_PLAN_ENTRIES);
 		expect(lookupEdgePlan(first)).toBeNull();
+	});
+});
+
+/**
+ * The fallback for a site that can never produce a second witness.
+ *
+ * A shared plan needs two different sessions of a role set to agree. A site with one editor has one
+ * session, so the tier was absent exactly where the object hop is least amortised. The private key
+ * names the session, which is why dropping the two-witness requirement under it removes no proof --
+ * and every other refusal still runs.
+ */
+describe('the private fallback', () => {
+	beforeEach(() => resetEdgePlans());
+
+	const shared = edgePlanKey(SITE, 1, ROLES, PATH);
+	const mine = privatePlanKey(shared, COOKIE_A);
+
+	/** three renders from ONE session, which is all a single-editor site ever produces */
+	const soloRenders = (key: string, page = staticPage(1), owned = true) => {
+		noteEdgeRender(key, PATH, staticPage(0), Date.now(), COOKIE_A, owned);
+		noteEdgeRender(key, PATH, page, Date.now(), COOKIE_A, owned);
+		return noteEdgeRender(key, PATH, page, Date.now(), COOKIE_A, owned);
+	};
+
+	it('compiles from one session where the shared key refuses to', () => {
+		expect(soloRenders(shared, staticPage(1), false)).toBeNull();
+		expect(lookupEdgePlan(shared, Date.now(), COOKIE_A)).toBeNull();
+
+		expect(soloRenders(mine)).toBeNull();
+		const held = lookupEdgePlan(mine, Date.now(), COOKIE_A);
+		expect(held).not.toBeNull();
+		expect(runEdgePlan(held as RenderPlan)).toBe(staticPage(1));
+	});
+
+	it('is unreachable by any other session', () => {
+		soloRenders(mine);
+		// the key carries the cookie, so a second session cannot construct it; and the per-session
+		// agreement refuses it even when handed the key directly
+		expect(privatePlanKey(shared, COOKIE_B)).not.toBe(mine);
+		expect(lookupEdgePlan(mine, Date.now(), COOKIE_B)).toBeNull();
+	});
+
+	it('is never mirrored to KV', async () => {
+		const kv = fakeKv();
+		expect(soloRenders(mine)).toBeNull();
+		// `noteEdgeRender` returning null is what the caller keys the mirror off, so a private plan
+		// cannot reach a listable namespace even by mistake
+		expect(kv.map.size).toBe(0);
+		expect(await readEdgePlan(kv.env, SITE, 1, ROLES, PATH)).toBeNull();
+	});
+
+	it('keeps every refusal the shared key applies', () => {
+		// an unnamed varying region is the one the two-witness rule was NOT what caught
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
+			noteEdgeRender(mine, PATH, opaquePage(i), Date.now(), COOKIE_A, true);
+		}
+		expect(lookupEdgePlan(mine, Date.now(), COOKIE_A)).toBeNull();
+		expect(edgePlanStats().plans).toBe(0);
+	});
+
+	it('a write spends the session agreement so the next render carries the message', () => {
+		soloRenders(mine);
+		expect(lookupEdgePlan(mine, Date.now(), COOKIE_A)).not.toBeNull();
+		forgetWitness(COOKIE_A);
+		expect(lookupEdgePlan(mine, Date.now(), COOKIE_A)).toBeNull();
+	});
+
+	it('a write leaves a shared plan serving everybody else', () => {
+		noteEdgeRender(shared, PATH, staticPage(0), Date.now(), COOKIE_A);
+		noteEdgeRender(shared, PATH, staticPage(1), Date.now(), COOKIE_A);
+		expect(noteEdgeRender(shared, PATH, staticPage(1), Date.now(), COOKIE_B)).not.toBeNull();
+		forgetWitness(COOKIE_A);
+		expect(lookupEdgePlan(shared, Date.now(), COOKIE_A)).toBeNull();
+		expect(lookupEdgePlan(shared, Date.now(), COOKIE_B)).not.toBeNull();
+	});
+
+	it('gives up its entry before a shared plan does', () => {
+		const plan = compilePlan(staticPage(), staticPage(), PATH);
+		const keep = edgePlanKey(SITE, 1, ROLES, '/kept');
+		storeEdgePlan(keep, plan);
+		for (let i = 0; i <= EDGE_PLAN_ENTRIES; i++) {
+			storeEdgePlan(privatePlanKey(keep, `session-${i}`), plan, Date.now(), true);
+		}
+		expect(edgePlanStats().entries).toBeLessThanOrEqual(EDGE_PLAN_ENTRIES);
+		// insertion order alone would have dropped this first, and it is the one serving a role set
+		expect(lookupEdgePlan(keep)).not.toBeNull();
+	});
+
+	it('reports whether any plan is serving, which is what gates the private compile', () => {
+		expect(hasEdgePlan(shared)).toBe(false);
+		noteEdgeRender(shared, PATH, staticPage(0), Date.now(), COOKIE_A);
+		noteEdgeRender(shared, PATH, staticPage(1), Date.now(), COOKIE_A);
+		noteEdgeRender(shared, PATH, staticPage(1), Date.now(), COOKIE_B);
+		expect(hasEdgePlan(shared)).toBe(true);
+		expect(hasEdgePlan(shared, Date.now() + PLAN_TTL_MS + 1)).toBe(false);
 	});
 });
 
@@ -222,24 +356,24 @@ describe('the proof expires and is renewed against a live render', () => {
 
 	const at = 1_000_000;
 	const compiled = (key: string, page = staticPage(1), now = at) => {
-		noteEdgeRender(key, PATH, staticPage(0), now);
-		noteEdgeRender(key, PATH, page, now);
-		return noteEdgeRender(key, PATH, page, now);
+		noteEdgeRender(key, PATH, staticPage(0), now, COOKIE_A);
+		noteEdgeRender(key, PATH, page, now, COOKIE_A);
+		return noteEdgeRender(key, PATH, page, now, COOKIE_B);
 	};
 
 	it('stops serving a plan nothing has re-proved', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		expect(compiled(key)).not.toBeNull();
 		expect(lookupEdgePlan(key, at + PLAN_TTL_MS - 1)).not.toBeNull();
 		expect(lookupEdgePlan(key, at + PLAN_TTL_MS)).toBeNull();
 	});
 
 	it('renews on ONE render that agrees, rather than recompiling from three', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		compiled(key);
 		const later = at + PLAN_TTL_MS;
 		// the render the visitor paid for when the plan stopped serving
-		expect(noteEdgeRender(key, PATH, staticPage(1), later)).toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(1), later, COOKIE_A)).toBeNull();
 		expect(lookupEdgePlan(key, later)).not.toBeNull();
 		expect(lookupEdgePlan(key, later + PLAN_TTL_MS - 1)).not.toBeNull();
 	});
@@ -251,22 +385,24 @@ describe('the proof expires and is renewed against a live render', () => {
 	 * holds, so the re-diff finds a region it cannot name and the plan goes.
 	 */
 	it('drops a plan the live render no longer agrees with', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		compiled(key);
 		const later = at + PLAN_TTL_MS;
-		expect(noteEdgeRender(key, PATH, '<html><body>Log in</body></html>', later)).toBeNull();
+		expect(
+			noteEdgeRender(key, PATH, '<html><body>Log in</body></html>', later, COOKIE_A)
+		).toBeNull();
 		expect(lookupEdgePlan(key, later)).toBeNull();
 		expect(edgePlanStats().plans).toBe(0);
 		// and it starts sampling again rather than latching
-		noteEdgeRender(key, PATH, staticPage(2), later);
-		expect(noteEdgeRender(key, PATH, staticPage(2), later)).not.toBeNull();
+		noteEdgeRender(key, PATH, staticPage(2), later, COOKIE_A);
+		expect(noteEdgeRender(key, PATH, staticPage(2), later, COOKIE_B)).not.toBeNull();
 	});
 
 	it('spends nothing on a render that arrives while the proof still holds', () => {
-		const key = edgePlanKey(SITE, 1, COOKIE_A, PATH);
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		compiled(key);
 		// a render inside the window is not a re-proof and must not extend the window either
-		expect(noteEdgeRender(key, PATH, staticPage(1), at + 1)).toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(1), at + 1, COOKIE_A)).toBeNull();
 		expect(lookupEdgePlan(key, at + PLAN_TTL_MS)).toBeNull();
 	});
 });
@@ -277,9 +413,9 @@ describe('the cold-isolate tier', () => {
 	it('round trips a plan through KV under the hashed key', async () => {
 		const { env, map } = fakeKv();
 		const plan = compilePlan(staticPage(), staticPage(), PATH);
-		expect(await writeEdgePlan(env, SITE, 5, COOKIE_A, PATH, plan)).toBe(true);
+		expect(await writeEdgePlan(env, SITE, 5, ROLES, PATH, plan)).toBe(true);
 		expect(map.size).toBe(1);
-		const back = await readEdgePlan(env, SITE, 5, COOKIE_A, PATH);
+		const back = await readEdgePlan(env, SITE, 5, ROLES, PATH);
 		expect(back).not.toBeNull();
 		expect(runEdgePlan(back as RenderPlan)).toBe(staticPage());
 	});

@@ -36,6 +36,8 @@ export type PageStoreEnv = PlanEnv & {
 	PAGE_KV_ENABLED?: string | null;
 	/** seconds; a stored page is also generation-keyed, so this is a floor on garbage not a freshness knob */
 	PAGE_KV_TTL?: string | number | null;
+	/** extra path prefixes that may never be answered from a previous generation, comma separated */
+	NEVER_STALE?: string | null;
 };
 
 /** what a stored page carries; the status and content type travel with the body or a 200 is assumed */
@@ -43,6 +45,15 @@ export type StoredPage = {
 	status: number;
 	contentType: string;
 	html: string;
+	/**
+	 * when this was written, in ms.
+	 *
+	 * Only the stale reader uses it: the generation bound says how many content changes back a page
+	 * is, and this is what says how long ago. Optional because a record written before it existed is
+	 * still a valid page; {@link readStalePage} treats an absent value as unbounded age rather than
+	 * as zero, which would make every old record look fresh.
+	 */
+	storedAt?: number;
 };
 
 /** the default lifetime of a stored page, one day */
@@ -111,12 +122,99 @@ export async function readPage(
 				typeof parsed.contentType === 'string'
 					? parsed.contentType
 					: 'text/html; charset=utf-8',
-			html: parsed.html
+			html: parsed.html,
+			...(typeof parsed.storedAt === 'number' ? { storedAt: parsed.storedAt } : {})
 		};
 	} catch {
 		// unparseable or unavailable is a MISS, not an error: one tier down still answers
 		return null;
 	}
+}
+
+/**
+ * How many generations back a miss may look before it gives up.
+ *
+ * A generation counter is monotonic, so `N-1` is exactly one content change behind. Two is the
+ * whole budget: each step is another KV read in front of the object, and at three the read cost
+ * exceeds the hop it is trying to avoid.
+ */
+export const STALE_GENERATION_DEPTH = 2;
+
+/**
+ * The oldest a stale answer may be, in ms.
+ *
+ * The generation bound says how many changes behind; this says how long. Without it an abandoned
+ * site serves last month's page forever, because nothing ever bumps it past the depth above.
+ */
+export const STALE_MAX_AGE_MS = 86_400_000;
+
+/** paths that must never be answered from a previous generation, matched as prefixes */
+const NEVER_STALE = [
+	'/user/login',
+	'/user/logout',
+	'/user/password',
+	'/user/register',
+	'/admin/config',
+	'/admin/people',
+	'/admin/modules',
+	'/cart',
+	'/checkout'
+];
+
+/**
+ * Whether a path may be answered from a previous generation.
+ *
+ * A DENY-LIST rather than an allow-list, and the direction is the decision: serving a stale page is
+ * only ever a latency win, and the pages where it is wrong are the ones a visitor acts on. An
+ * operator-supplied list is added rather than replacing this one, so a site cannot make its own
+ * login page staleable by configuring badly.
+ */
+export function staleAllowed(path: string, extra: string | null | undefined = null): boolean {
+	const denied = [
+		...NEVER_STALE,
+		...String(extra ?? '')
+			.split(',')
+			.map((p) => p.trim())
+			.filter((p) => p !== '')
+	];
+	return !denied.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+}
+
+/**
+ * A page from a PREVIOUS generation, when the current one has none.
+ *
+ * The bytes are already there. `PAGE_KV_TTL`'s own comment calls itself "a floor on garbage, not a
+ * freshness knob" precisely because a stored page is generation-keyed, so bumping the generation
+ * does not delete the previous generation's entries -- they expire on their own TTL. The previous
+ * answer is sitting in KV on every deployed site, unread. This is a READ change and not a storage
+ * design.
+ *
+ * Returns the page and how many generations back it came from, so the caller can say so in a header
+ * and schedule the regeneration rather than rendering inline.
+ */
+export async function readStalePage(
+	env: PageStoreEnv | null | undefined,
+	site: string,
+	generation: number,
+	path: string,
+	opts: { depth?: number; nowMs?: number; neverStale?: string | null } = {}
+): Promise<{ page: StoredPage; behind: number } | null> {
+	if (!pageKvEnabled(env) || !env?.PAGE_KV) return null;
+	if (!staleAllowed(path, opts.neverStale)) return null;
+	const depth = Math.max(1, Math.min(opts.depth ?? STALE_GENERATION_DEPTH, 8));
+	const now = opts.nowMs ?? Date.now();
+	for (let behind = 1; behind <= depth; behind++) {
+		const previous = generation - behind;
+		if (previous < 0) return null;
+		const page = await readPage(env, site, previous, path);
+		if (page === null) continue;
+		// a wall-clock bound on top of the generation bound; see STALE_MAX_AGE_MS
+		if (typeof page.storedAt === 'number' && now - page.storedAt > STALE_MAX_AGE_MS) {
+			return null;
+		}
+		return { page, behind };
+	}
+	return null;
 }
 
 /**
@@ -137,9 +235,13 @@ export async function writePage(
 	// and storing that would pin "warming" into a global cache for a day
 	if (page.status !== 200 || page.html.length === 0) return false;
 	try {
-		await env.PAGE_KV.put(pageKvKey(site, generation, path), JSON.stringify(page), {
-			expirationTtl: pageKvTtlSeconds(env)
-		});
+		await env.PAGE_KV.put(
+			pageKvKey(site, generation, path),
+			// stamped on the way in rather than taken from the caller: the age bound on a stale read
+			// has to be the write's own clock, not one a caller could set
+			JSON.stringify({ ...page, storedAt: Date.now() }),
+			{ expirationTtl: pageKvTtlSeconds(env) }
+		);
 		return true;
 	} catch {
 		return false;

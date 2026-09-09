@@ -368,6 +368,21 @@ export function deleteFile(sql: FileSql, uri: string, nowMs: number): boolean {
  * the wrong thing. The 50-byte LIKE-pattern ceiling measured on this platform applies, so a longer
  * prefix is filtered in JS instead.
  */
+/**
+ * The exclusive upper bound of a prefix range, in SQLite's own ordering.
+ *
+ * Incrementing the last code unit is what turns `LIKE 'a/b/%'` into `>= 'a/b/' AND < 'a/b0'`. An
+ * empty prefix has no ceiling, and a prefix ending at the top code unit falls back to a scan rather
+ * than wrapping -- both are answered by returning a value the caller's own `startsWith` still
+ * filters behind.
+ */
+function prefixCeiling(prefix: string): string {
+	if (prefix === '') return '\uffff';
+	const last = prefix.charCodeAt(prefix.length - 1);
+	if (last >= 0xffff) return `${prefix}\uffff`;
+	return prefix.slice(0, -1) + String.fromCharCode(last + 1);
+}
+
 export function listFiles(sql: FileSql, prefix: string, limit = 1_000): FileStat[] {
 	ensureFileTables(sql);
 	const key = normaliseUri(prefix) ?? String(prefix ?? '');
@@ -383,12 +398,22 @@ export function listFiles(sql: FileSql, prefix: string, limit = 1_000): FileStat
 					pattern,
 					capped
 				)
-			: rows<FileRow>(
+			: // A LONG PREFIX STILL BOUNDS THE SCAN, and dropping the bound was the defect. The
+				// pattern cannot be pushed into SQL past 50 bytes, so the filter has to run here --
+				// but the earlier version also dropped the `LIMIT`, which turned every `url_stat()`
+				// miss into a full read of `cfw_file`. A derivative URI is exactly the long shape,
+				// so the unbounded path was the common one.
+				//
+				// The RANGE is what replaces the pattern: `uri >= key AND uri < key+1` selects the
+				// same rows a prefix LIKE would, is an index range rather than a scan, and carries
+				// no pattern at all so no length ceiling applies to it
+				rows<FileRow>(
 					sql,
-					'SELECT uri, size, modified, mime, chunks, mirrored FROM cfw_file ORDER BY uri'
-				)
-					.filter((r) => String(r.uri).startsWith(key))
-					.slice(0, capped);
+					'SELECT uri, size, modified, mime, chunks, mirrored FROM cfw_file WHERE uri >= ? AND uri < ? ORDER BY uri LIMIT ?',
+					key,
+					prefixCeiling(key),
+					capped
+				).filter((r) => String(r.uri).startsWith(key));
 	return matched.map(toStat);
 }
 

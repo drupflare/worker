@@ -433,7 +433,7 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		expect(res.status).not.toBe(404);
 	});
 
-	it.each(['/php', '/sql', '/savenode', '/nativefetch', '/migrate'])(
+	it.each(['/php', '/sql', '/savenode', '/nativefetch'])(
 		'404s %s when diagnostics are off',
 		async (route) => {
 			const res = await worker.fetch(
@@ -445,6 +445,32 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 			);
 			expect(res.status).toBe(404);
 			expect(await res.text()).toContain('not found');
+		}
+	);
+
+	/**
+	 * A route that is diagnostic AND owner refuses with 401 rather than 404, and still refuses.
+	 *
+	 * `/migrate` moved into `OWNER_ROUTES` on 2026-09-08 with `/armfill`, `/invalidate` and `/bump`,
+	 * because clearing a cache on your own site should not require a deployment-wide flag that also
+	 * exposes `/sql` and `/restore`. So the refusal changed shape: 404 hid the route entirely, and an
+	 * owner route answers 401 the way `/export` and `/git` already did.
+	 *
+	 * What has to stay true is that an UNCREDENTIALED caller gets neither the route's work nor a 200,
+	 * which is what is asserted here. The 404 cases above are the routes with no owner path at all.
+	 */
+	it.each(['/migrate', '/armfill', '/invalidate', '/bump'])(
+		'refuses %s without a credential, with diagnostics off',
+		async (route) => {
+			const res = await worker.fetch(
+				new Request(`https://cfw.local${route}?site=x&path=%2F`),
+				{
+					...env,
+					PW_DIAGNOSTICS: '0'
+				}
+			);
+			expect(res.status).toBe(401);
+			expect(res.status).not.toBe(200);
 		}
 	);
 
@@ -860,7 +886,8 @@ describe('the fleet inventory a security rollout scores against', () => {
 			coreVersion: '11.4.5',
 			workerVersion: 'v2',
 			plan: 'free',
-			lastSeenMs: Date.now()
+			lastSeenMs: Date.now(),
+			reconcileVersion: 0
 		});
 		await reportSite(db, {
 			site: 'b',
@@ -868,7 +895,8 @@ describe('the fleet inventory a security rollout scores against', () => {
 			coreVersion: '11.4.4',
 			workerVersion: 'v1',
 			plan: 'free',
-			lastSeenMs: Date.now()
+			lastSeenMs: Date.now(),
+			reconcileVersion: 0
 		});
 
 		const res = await worker.fetch(new Request('https://cfw.local/fleet?target=new'), {
@@ -1040,7 +1068,7 @@ describe('the compiled plan tier', () => {
 	beforeEach(() => resetEdgePlans());
 
 	/** a namespace that renders, reports a generation, and counts what reached it */
-	function objectSpy(generation = () => 42) {
+	function objectSpy(generation = () => 42, roles = () => 'authenticated,editor') {
 		const seen: URL[] = [];
 		let n = 0;
 		return {
@@ -1057,7 +1085,10 @@ describe('the compiled plan tier', () => {
 							headers: {
 								'content-type': 'text/html; charset=UTF-8',
 								'x-cfw-cache': 'RENDER',
-								'x-cfw-generation': String(generation())
+								'x-cfw-generation': String(generation()),
+								// the plan tier keys on this and skips entirely without it; only the
+								// object can report it, which is what makes it trustworthy
+								'x-cfw-roles': roles()
 							}
 						});
 					}
@@ -1089,7 +1120,15 @@ describe('the compiled plan tier', () => {
 		};
 	}
 
-	it('answers from this isolate after three renders, with no further hop', async () => {
+	/** the renders a compile needs: this session's samples plus one from a second session */
+	async function compileFor(namespace: unknown, path: string) {
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(namespace, path, COOKIE_A);
+		// the second witness. A plan compiled from one session's renders would bake anything
+		// constant for that user into a page every other user of the role set is served
+		await visit(namespace, path, COOKIE_B);
+	}
+
+	it('answers from this isolate once two sessions have agreed, with no further hop', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-basic';
 		const first = await visit(spy.namespace, path, COOKIE_A);
@@ -1101,7 +1140,8 @@ describe('the compiled plan tier', () => {
 		for (let i = 1; i < SAMPLES_PER_COMPILE; i++) {
 			expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('sampling');
 		}
-		expect(spy.seen).toHaveLength(SAMPLES_PER_COMPILE);
+		await visit(spy.namespace, path, COOKIE_B);
+		const hops = spy.seen.length;
 
 		const served = await visit(spy.namespace, path, COOKIE_A);
 		expect(served.tier).toBe('PLAN');
@@ -1110,14 +1150,14 @@ describe('the compiled plan tier', () => {
 		// per-user output: nothing between here and the browser may store it
 		expect(served.cacheControl).toBe('private, no-store');
 		// THE POINT OF THE TIER. A correct body that still cost a hop is the failure this catches
-		expect(spy.seen).toHaveLength(SAMPLES_PER_COMPILE);
+		expect(spy.seen).toHaveLength(hops);
 		expect(isCacheTier('PLAN')).toBe(true);
 	});
 
 	it('compiles from renders two and three, so the asset warm-up cannot corrupt a plan', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-warmup';
-		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		await compileFor(spy.namespace, path);
 		const served = await visit(spy.namespace, path, COOKIE_A);
 		// the first render's stylesheet list is absent, which it would not be from a plan compiled
 		// against it -- that compile finds an unnamed varying region and refuses instead
@@ -1126,17 +1166,175 @@ describe('the compiled plan tier', () => {
 		expect(served.body).not.toContain('stylesheet');
 	});
 
-	it('serves NOTHING to a second session, which is the whole safety argument', async () => {
+	/**
+	 * A session of ANOTHER role set can never reach this plan, and one of the SAME role set has to
+	 * agree with it first.
+	 *
+	 * The first half is the key; the second is `lookupEdgePlan()`'s per-session proof, which exists
+	 * because two sessions agreeing says nothing about a third whose shared region differs.
+	 */
+	it('refuses a third session until its own render has agreed', async () => {
 		const spy = objectSpy();
 		const path = '/plan-tier-sessions';
-		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		await compileFor(spy.namespace, path);
 		expect((await visit(spy.namespace, path, COOKIE_A)).tier).toBe('PLAN');
 
 		const hopsBefore = spy.seen.length;
-		const other = await visit(spy.namespace, path, COOKIE_B);
-		// a different cookie cannot construct the key the first session's page is under, so it pays
-		// the object the same as any other first visit
+		const carol = `${SESSION_COOKIE}=session-carol`;
+		const firstTry = await visit(spy.namespace, path, carol);
+		expect(firstTry.tier).not.toBe('PLAN');
+		expect(spy.seen).toHaveLength(hopsBefore + 1);
+		// that render agreed with the plan, so this session is now proven against it
+		expect((await visit(spy.namespace, path, carol)).tier).toBe('PLAN');
+	});
+
+	it('never serves a plan to a different role set', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-roles';
+		await compileFor(spy.namespace, path);
+		expect((await visit(spy.namespace, path, COOKIE_A)).tier).toBe('PLAN');
+
+		// a session the object reports as holding fewer roles keys somewhere else entirely
+		const lesser = objectSpy(
+			() => 42,
+			() => 'authenticated'
+		);
+		const hopsBefore = lesser.seen.length;
+		const other = await visit(lesser.namespace, path, `${SESSION_COOKIE}=session-dave`);
 		expect(other.tier).not.toBe('PLAN');
+		expect(lesser.seen).toHaveLength(hopsBefore + 1);
+	});
+
+	/**
+	 * The slot that made the shared tier reachable at all.
+	 *
+	 * Two sessions of one role set differ in exactly one value on an authenticated page -- the session
+	 * CSRF token in the logout link -- and with no slot kind for it the compiler named an unnameable
+	 * region and refused. It is substituted rather than generated, so each visitor gets their own.
+	 */
+	it('serves each session its own csrf token from one shared plan', async () => {
+		const path = '/plan-tier-csrf';
+		const token = (cookie: string) => `tok-${cookie.slice(-5)}`.padEnd(43, 'Z');
+		const body = (cookie: string) =>
+			`<html><body>\n${'<div>filler filler filler filler</div>\n'.repeat(8)}` +
+			`<a href="/user/logout?token=${token(cookie)}">Log out</a>\n</body></html>`;
+		const seen: string[] = [];
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					const cookie = r.headers.get('cookie') ?? '';
+					seen.push(cookie);
+					return new Response(body(cookie), {
+						status: 200,
+						headers: {
+							'content-type': 'text/html; charset=UTF-8',
+							'x-cfw-cache': 'RENDER',
+							'x-cfw-generation': '42',
+							'x-cfw-roles': 'authenticated,editor',
+							// what PHP re-sends on every `session_start()`; it must not refuse a compile
+							'set-cookie': `${cookie}; Max-Age=2000000; path=/`
+						}
+					});
+				}
+			})
+		};
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(namespace, path, COOKIE_A);
+		await visit(namespace, path, COOKIE_B);
+
+		const hops = seen.length;
+		const a = await visit(namespace, path, COOKIE_A);
+		const b = await visit(namespace, path, COOKIE_B);
+		expect([a.plan, b.plan]).toEqual(['mem', 'mem']);
+		// ONE entry answered both, and each carries its OWN token rather than the compiler's sample
+		expect(a.body).toBe(body(COOKIE_A));
+		expect(b.body).toBe(body(COOKIE_B));
+		expect(a.body).not.toContain(token(COOKIE_B));
+		expect(seen).toHaveLength(hops);
+	});
+
+	/**
+	 * The fallback that reaches a site with one editor.
+	 *
+	 * The shared tier needs two sessions of a role set to agree, so the site least able to amortise an
+	 * object hop is the one the tier never reached. A key naming the session cannot serve anybody else,
+	 * which is what the two-witness rule was there to stop.
+	 */
+	it('serves one session from a plan of its own, with no second witness anywhere', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-solo';
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
+			expect((await visit(spy.namespace, path, COOKIE_A)).tier).not.toBe('PLAN');
+		}
+		const hops = spy.seen.length;
+
+		const served = await visit(spy.namespace, path, COOKIE_A);
+		expect(served.tier).toBe('PLAN');
+		expect(served.plan).toBe('private');
+		expect(served.body).toBe(STEADY);
+		expect(served.cacheControl).toBe('private, no-store');
+		expect(spy.seen).toHaveLength(hops);
+	});
+
+	it('never answers another session from it', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-solo-isolation';
+		for (let i = 0; i <= SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('private');
+
+		const hopsBefore = spy.seen.length;
+		const other = await visit(spy.namespace, path, COOKIE_B);
+		expect(other.tier).not.toBe('PLAN');
+		expect(spy.seen).toHaveLength(hopsBefore + 1);
+	});
+
+	/**
+	 * The shared plan still compiles once a second session arrives.
+	 *
+	 * Consulted FIRST, the private plan answers the session that compiled it with no hop, so the shared
+	 * key never sees another sample and a 200-user site ends up holding 200 entries where one would
+	 * do. The second session has no private plan of its own, so it hops and supplies the witness.
+	 */
+	it('lets a second session promote the page to a shared plan', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-solo-promote';
+		for (let i = 0; i <= SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('private');
+
+		await visit(spy.namespace, path, COOKIE_B);
+		const hops = spy.seen.length;
+		// the shared plan now outranks the private one for both of them, off a single entry
+		expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('mem');
+		expect((await visit(spy.namespace, path, COOKIE_B)).plan).toBe('mem');
+		expect(spy.seen).toHaveLength(hops);
+	});
+
+	/**
+	 * A save queues a Drupal message for the next page, and a plan compiled from renders that carried
+	 * none would serve that page without it. The shared tier has the same exposure and rarely reaches a
+	 * post-save page; a single editor reaches one every time they save.
+	 */
+	it('renders again after a write, so a queued message is not dropped', async () => {
+		const spy = objectSpy();
+		const path = '/plan-tier-solo-message';
+		for (let i = 0; i <= SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		expect((await visit(spy.namespace, path, COOKIE_A)).plan).toBe('private');
+
+		const ctx = createExecutionContext();
+		await worker.fetch(
+			new Request(`https://cfw.local/node/1/edit`, {
+				method: 'POST',
+				body: 'title=x',
+				headers: { cookie: COOKIE_A, 'content-type': 'application/x-www-form-urlencoded' }
+			}),
+			{ ...env, SITE: spy.namespace } as unknown as typeof env,
+			ctx
+		);
+		await waitOnExecutionContext(ctx);
+
+		const hopsBefore = spy.seen.length;
+		expect((await visit(spy.namespace, path, COOKIE_A)).tier).not.toBe('PLAN');
 		expect(spy.seen).toHaveLength(hopsBefore + 1);
 	});
 
@@ -1151,7 +1349,7 @@ describe('the compiled plan tier', () => {
 		let generation = 42;
 		const spy = objectSpy(() => generation);
 		const path = '/plan-tier-bump';
-		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) await visit(spy.namespace, path, COOKIE_A);
+		await compileFor(spy.namespace, path);
 		expect((await visit(spy.namespace, path, COOKIE_A)).tier).toBe('PLAN');
 
 		generation = 43;

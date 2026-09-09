@@ -758,9 +758,18 @@ describe('the alarm drains it, with no diagnostic route poked', () => {
 	});
 
 	it('does not disturb a site with no bucket bound', async () => {
-		// the free-tier default has to be a quiet no-op, not an error on every firing
+		// the free-tier default has to be a quiet no-op, not an error on every firing.
+		//
+		// UNBOUND EXPLICITLY. This used to rely on `wrangler.jsonc` declaring no `FILES` bucket,
+		// which stopped being true the moment the binding was added -- and the whole R2 tier had
+		// been unreachable until then precisely because nobody had declared it. A spec about an
+		// ABSENT binding has to remove it rather than assume the config does
 		const stub = freshSite();
 		await inObject(stub, (site) => {
+			(site as unknown as { env: Record<string, unknown> }).env = {
+				...(site as unknown as { env: Record<string, unknown> }).env,
+				FILES: undefined
+			};
 			putFile(site.sql, 'public://quiet.bin', bytes(16), { nowMs: 1 });
 		});
 		await inObject(stub, (site) => site.ctx.storage.setAlarm(Date.now() - 1));

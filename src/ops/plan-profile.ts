@@ -29,7 +29,6 @@ export type PlanProfile = {
 	/** pages one alarm firing may fill before re-arming */
 	fillBatchSize: number;
 	/** wall-clock ms one alarm firing may occupy the object */
-	fillBatchWallMs: number;
 	/** queued outbound requests one alarm firing may fetch */
 	httpDrainLimit: number;
 	/** files one alarm firing may push to R2 */
@@ -53,7 +52,6 @@ export type PlanProfile = {
  */
 export const FREE_PROFILE: PlanProfile = {
 	fillBatchSize: 5,
-	fillBatchWallMs: 5_000,
 	httpDrainLimit: 3,
 	mirrorLimit: 2,
 	inlineBudgetMs: 2_000,
@@ -67,8 +65,9 @@ export const FREE_PROFILE: PlanProfile = {
  * is single-threaded and `php._run()` is synchronous, so a fill occupies the object for its whole
  * duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
  * deployed worker at `fillBatchSize: 25`: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every
- * `/__serve` racing them waited 5.0-6.8 s of wall (n=5). Nothing tripped -- it was well inside
- * `fillBatchWallMs` -- it just made paid visitors wait seconds on an object that was filling.
+ * `/__serve` racing them waited 5.0-6.8 s of wall (n=5). Nothing bounded it: a wall-clock guard
+ * cannot, because the clock does not advance across a synchronous `php._run()`. It simply made paid
+ * visitors wait seconds on an object that was filling.
  *
  * Throughput does not pay for that, because the alarm RE-ARMS IMMEDIATELY while the queue is
  * non-empty: measured, consecutive firings 130-160 ms apart. So on paid, where DO requests are not
@@ -82,7 +81,6 @@ export const FREE_PROFILE: PlanProfile = {
  */
 export const PAID_PROFILE: PlanProfile = {
 	fillBatchSize: 8,
-	fillBatchWallMs: 1_500,
 	httpDrainLimit: 15,
 	mirrorLimit: 10,
 	inlineBudgetMs: 10_000,
@@ -104,8 +102,7 @@ export function planProfile(env?: PlanEnv | null): PlanProfile {
  */
 export function resolvePlanNumber(
 	raw: string | number | null | undefined,
-	field:
-		'fillBatchSize' | 'fillBatchWallMs' | 'httpDrainLimit' | 'mirrorLimit' | 'inlineBudgetMs',
+	field: 'fillBatchSize' | 'httpDrainLimit' | 'mirrorLimit' | 'inlineBudgetMs',
 	max: number,
 	env?: PlanEnv | null
 ): number {

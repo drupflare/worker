@@ -22,8 +22,35 @@ if (!class_exists('PhpWasmSyncFiber', false)) {
 	{
 		private Fiber $fiber;
 
-		public function __construct(callable $callable)
+		/**
+		 * NO `callable` TYPE HINT, and that is not laziness.
+		 *
+		 * PHP checks a `callable` parameter in the scope of the function being CALLED, not the
+		 * caller. `AccessPolicyProcessor::processAccessPolicies()` passes
+		 * `[$this, 'doProcessAccessPolicies']` and that method is PROTECTED, so the array is callable
+		 * where it is written and not callable here -- the check failed at this boundary with
+		 * "must be of type callable, array given" and every authenticated request that reached the
+		 * fiber branch answered 500.
+		 *
+		 * Stock `Fiber` never sees the problem because core constructs it from inside the class.
+		 * Rebinding the array into a closure whose scope is the object's own class is what puts this
+		 * stub back in that position.
+		 */
+		public function __construct($callable)
 		{
+			if (
+				is_array($callable) &&
+				count($callable) === 2 &&
+				is_object($callable[0]) &&
+				is_string($callable[1])
+			) {
+				[$object, $method] = $callable;
+				$callable = Closure::bind(
+					fn(...$args) => $object->{$method}(...$args),
+					null,
+					$object,
+				);
+			}
 			$this->fiber = new Fiber($callable);
 		}
 

@@ -7,6 +7,7 @@ services:
     environment:
       VPS_FPM_PM: ${VPS_FPM_PM:-static}
       VPS_FPM_MAX_CHILDREN: ${VPS_FPM_MAX_CHILDREN:-32}
+      VPS_ADMIN_PASS: ${VPS_ADMIN_PASS:-}
     volumes:
       # READ-ONLY, and this is not caution. `drupal-src` is the build input for the shipping pack;
       # mounted read-write, the entrypoint's settings.php landed in it and turned `twig-bake.spec.ts`

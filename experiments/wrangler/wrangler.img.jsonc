@@ -1,0 +1,56 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	// The four deployed readings the roadmap's Open Measurements section still owes:
+	// boot amortisation over a fill batch, the cold-boot floor with and without a heap image,
+	// the re-drive's cost, and the stale-generation serve. Throwaway; deployed, measured, deleted.
+	//
+	// Identical to wrangler.jsonc except for a cfw-* name, PW_DIAGNOSTICS (so /sql and /serve-stats
+	// answer), a render budget large enough that a MISS renders INLINE, and no R2 binding -- R2 is
+	// not enabled on this account and `mirrorBucket()` answers null without it.
+	"name": "cfw-img-probe",
+	"main": "../../src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"workers_dev": true,
+	"vars": {
+		"PW_DIAGNOSTICS": "1",
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"RENDER_BUDGET_MS": "8000",
+		"GEN_BUCKET_MS": "5000",
+		"PLAN": "free",
+		"SITE_WARM": "0",
+		"HEAP_IMAGE": "1",
+		"HEAP_SNAPSHOT": "1"
+	},
+	"rules": [
+		{
+			"type": "CompiledWasm",
+			"globs": ["**/*.wasm"],
+			"fallthrough": true
+		},
+		{
+			"type": "Data",
+			"globs": ["**/*.zst", "**/*.br"],
+			"fallthrough": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"kv_namespaces": [
+		{ "binding": "CONFIG_KV", "id": "251ccdd49b714b11991cd559efccd693" }
+	],
+	"d1_databases": [{ "binding": "FLEET_DB", "database_name": "drupflare-fleet" }],
+	"version_metadata": { "binding": "CF_VERSION_METADATA" },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": {
+		"directory": "../../assets",
+		"binding": "ASSETS"
+	},
+	"observability": { "enabled": true },
+	"alias": {
+		"./runtime/php-binary.js": "../../src/runtime/php-binary-raw.ts"
+	}
+}

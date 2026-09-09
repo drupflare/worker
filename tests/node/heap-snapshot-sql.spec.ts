@@ -10,14 +10,27 @@ import {
 	elideZeroPages,
 	ensureHeapTables,
 	gcHeapSnapshots,
+	hasUnpackedChunks,
 	latestSnapshotMeta,
+	packChunk,
 	readHeapSnapshot,
 	snapshotPageIndex,
 	streamRestoreInto,
+	unpackChunk,
 	writeHeapSnapshot,
 	type HeapSql,
 	type StreamRecord
 } from '../../src/db/heap-store';
+
+/**
+ * Bytes that inflate cleanly to the wrong content, which is what a digest-mismatch spec needs.
+ *
+ * Overwriting a row with raw garbage tests the codec instead: it fails to inflate, and that is a
+ * different refusal with its own assertions further down.
+ */
+function corruptedChunkBytes(length: number): Uint8Array {
+	return packChunk(new Uint8Array(length).fill(9)).stored;
+}
 
 /**
  * The heap snapshot's storage path against a REAL SQLite engine.
@@ -122,13 +135,16 @@ describe('a heap survives a round trip through SQLite', () => {
 		});
 
 		const expected = chunkHeap(elideZeroPages(heap, pageBytes).bytes, chunkBytes);
+		// unpacked before comparing, because the rows are deflated now. The invariant is unchanged
+		// and is what `streamRestoreInto`'s `seq * chunkBytes` arithmetic depends on: the chunks
+		// must concatenate to exactly what elide-then-chunk produces
 		const stored = db
-			.prepare('SELECT seq, bytes FROM cfw_heap_chunk ORDER BY seq')
+			.prepare('SELECT seq, bytes, raw_bytes FROM cfw_heap_chunk ORDER BY seq')
 			.all()
-			.map((r) => ({
-				seq: (r as { seq: number }).seq,
-				bytes: (r as { bytes: Uint8Array }).bytes
-			}));
+			.map((r) => {
+				const row = r as { seq: number; bytes: Uint8Array; raw_bytes: number };
+				return { seq: row.seq, bytes: unpackChunk(row.bytes, Number(row.raw_bytes)) };
+			});
 
 		expect(stored.length).toBe(expected.length);
 		for (let i = 0; i < expected.length; i++) {
@@ -192,7 +208,7 @@ describe('a heap survives a round trip through SQLite', () => {
 			pageBytes: 64
 		});
 		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 0').run(
-			new Uint8Array(64).fill(9)
+			corruptedChunkBytes(64)
 		);
 		expect(() => readHeapSnapshot(sql)).toThrow(/digest mismatch/);
 	});
@@ -201,6 +217,129 @@ describe('a heap survives a round trip through SQLite', () => {
 		expect(readHeapSnapshot(sql)).toBeNull();
 		expect(latestSnapshotMeta(sql)).toBeNull();
 	});
+
+	// #region the stored chunks are deflated
+
+	it('stores fewer bytes than the heap it came from, which is the whole point', () => {
+		// an image is 71% of what a site occupies and free's 5 GB is a HARD CAP, so a codec that
+		// silently stopped packing would cost 2x the tenants with nothing failing
+		const heap = sparseHeap([1, 2, 3, 4, 5, 6, 7, 8], 4096);
+		const w = writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 4096,
+			pageBytes: 4096
+		});
+		expect(w.compressedBytes).toBeGreaterThan(0);
+		expect(w.compressedBytes).toBeLessThan(w.storedBytes);
+		const onDisk = Number(
+			(
+				db.prepare('SELECT SUM(LENGTH(bytes)) AS n FROM cfw_heap_chunk').get() as {
+					n: number;
+				}
+			).n
+		);
+		expect(onDisk).toBe(w.compressedBytes);
+		// and it still comes back
+		expect([...readHeapSnapshot(sql)!.heap]).toEqual([...heap]);
+	});
+
+	it('records the inflated length on every packed row, since the offsets are in heap bytes', () => {
+		const heap = sparseHeap([1, 2, 3], 4096);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 4096,
+			pageBytes: 4096
+		});
+		const rows = db
+			.prepare('SELECT seq, bytes, raw_bytes FROM cfw_heap_chunk ORDER BY seq')
+			.all() as Array<{ seq: number; bytes: Uint8Array; raw_bytes: number }>;
+		expect(rows.length).toBe(3);
+		for (const r of rows) {
+			expect(Number(r.raw_bytes)).toBe(4096);
+			expect(r.bytes.length).toBeLessThan(4096);
+		}
+	});
+
+	it('restores a row written before the codec existed', () => {
+		// `raw_bytes` defaults to 0 and every pre-codec row reads it, so the marker IS the
+		// migration; a deployed object holding an unpacked image must still boot from it
+		const heap = sparseHeap([3, null, 5], 64);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 64,
+			pageBytes: 64
+		});
+		// rewrite every chunk in the old shape: heap bytes verbatim, raw_bytes 0
+		const elided = elideZeroPages(heap, 64);
+		const legacy = chunkHeap(elided.bytes, 64);
+		db.prepare('DELETE FROM cfw_heap_chunk').run();
+		for (const c of legacy) {
+			db.prepare(
+				'INSERT INTO cfw_heap_chunk (snapshot_id, seq, bytes, digest, raw_bytes) VALUES (?, ?, ?, ?, 0)'
+			).run(latestSnapshotMeta(sql)!.id, c.seq, c.bytes, digestBytes(c.bytes));
+		}
+		expect([...readHeapSnapshot(sql)!.heap]).toEqual([...heap]);
+
+		const meta = latestSnapshotMeta(sql)!;
+		const target = new Uint8Array(heap.length);
+		streamRestoreInto(sql, target, {
+			meta,
+			pageIndex: snapshotPageIndex(sql, meta.id)!.pageIndex
+		});
+		expect([...target]).toEqual([...heap]);
+	});
+
+	it('reports an image written before the codec, so the alarm can reclaim it once', () => {
+		// a deployed site never re-images on its own -- the producer skips when the recorded
+		// generation matches -- so without this the change reaches new sites and no existing one
+		const heap = sparseHeap([3, null, 5], 64);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 64,
+			pageBytes: 64
+		});
+		expect(hasUnpackedChunks(sql)).toBe(false);
+
+		db.prepare('UPDATE cfw_heap_chunk SET raw_bytes = 0 WHERE seq = 0').run();
+		expect(hasUnpackedChunks(sql)).toBe(true);
+	});
+
+	it('has nothing to reclaim when no image is stored', () => {
+		expect(hasUnpackedChunks(sql)).toBe(false);
+	});
+
+	it('adds raw_bytes to a table created before the column existed', () => {
+		const old = new DatabaseSync(':memory:');
+		const oldSql = makeSql(old);
+		old.exec(
+			`CREATE TABLE cfw_heap_chunk (snapshot_id INTEGER NOT NULL, seq INTEGER NOT NULL,
+				bytes BLOB NOT NULL, digest TEXT NOT NULL, PRIMARY KEY (snapshot_id, seq))`
+		);
+		ensureHeapTables(oldSql);
+		const cols = old
+			.prepare("SELECT name FROM pragma_table_info('cfw_heap_chunk')")
+			.all()
+			.map((r) => (r as { name: string }).name);
+		expect(cols).toContain('raw_bytes');
+		// idempotent, and it must not ATTEMPT the ALTER a second time: a failing ALTER still
+		// dirties sqlite_master, and doing that on every boot took the serve path into
+		// `migrate: starting` on 2 of 3 runs elsewhere in this codebase
+		expect(() => ensureHeapTables(oldSql)).not.toThrow();
+	});
+
+	// #endregion
 
 	it('reads the NEWEST snapshot, and can filter by generation', () => {
 		const a = sparseHeap([1], 64);
@@ -351,7 +490,7 @@ describe('the restore streams, and that is a STRUCTURAL requirement not an optim
 		const meta = latestSnapshotMeta(sql)!;
 		const index = snapshotPageIndex(sql, meta.id)!;
 		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 0').run(
-			new Uint8Array(96).fill(9)
+			corruptedChunkBytes(96)
 		);
 		const target = new Uint8Array(heap.length);
 		expect(() => streamRestoreInto(sql, target, { meta, pageIndex: index.pageIndex })).toThrow(
@@ -376,7 +515,7 @@ describe('the restore streams, and that is a STRUCTURAL requirement not an optim
 		const meta = latestSnapshotMeta(sql)!;
 		const index = snapshotPageIndex(sql, meta.id)!;
 		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 0').run(
-			new Uint8Array(96).fill(9)
+			corruptedChunkBytes(96)
 		);
 		const target = new Uint8Array(heap.length);
 		try {
@@ -388,6 +527,53 @@ describe('the restore streams, and that is a STRUCTURAL requirement not an optim
 			expect((e as HeapChunkDigestError).bytesWritten).toBe(0);
 			expect((e as HeapChunkDigestError).chunksApplied).toBe(0);
 		}
+	});
+
+	it('treats a chunk that will not inflate as a corrupted chunk, with the same counters', () => {
+		// RAW garbage rather than inflatable garbage: the codec refuses before the digest can be
+		// computed, and a bare inflate error would carry neither `bytesWritten` nor
+		// `chunksApplied` -- the two numbers that decide whether the caller may keep using the heap
+		const heap = sparseHeap([1, 2, 3, 4], 64);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 96,
+			pageBytes: 64
+		});
+		const meta = latestSnapshotMeta(sql)!;
+		const index = snapshotPageIndex(sql, meta.id)!;
+		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 1').run(
+			new Uint8Array(96).fill(9)
+		);
+		const target = new Uint8Array(heap.length);
+		try {
+			streamRestoreInto(sql, target, { meta, pageIndex: index.pageIndex });
+			expect.unreachable('a chunk that will not inflate must refuse');
+		} catch (e) {
+			expect(e).toBeInstanceOf(HeapChunkDigestError);
+			expect((e as HeapChunkDigestError).seq).toBe(1);
+			expect((e as HeapChunkDigestError).chunksApplied).toBe(1);
+			expect((e as HeapChunkDigestError).bytesWritten).toBe(96);
+			expect((e as HeapChunkDigestError).actual).toMatch(/did not inflate/);
+		}
+	});
+
+	it('names the chunk when the non-streaming reader cannot inflate one', () => {
+		const heap = sparseHeap([1, 2], 64);
+		writeHeapSnapshot(sql, {
+			heap,
+			streams: [],
+			generation: 'g',
+			nowMs: 1,
+			chunkBytes: 64,
+			pageBytes: 64
+		});
+		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 1').run(
+			new Uint8Array(64).fill(9)
+		);
+		expect(() => readHeapSnapshot(sql)).toThrow(/chunk 1 did not inflate/);
 	});
 
 	it('reports the bytes it already applied when it refuses MID-sequence', () => {
@@ -406,7 +592,7 @@ describe('the restore streams, and that is a STRUCTURAL requirement not an optim
 		const meta = latestSnapshotMeta(sql)!;
 		const index = snapshotPageIndex(sql, meta.id)!;
 		db.prepare('UPDATE cfw_heap_chunk SET bytes = ? WHERE seq = 1').run(
-			new Uint8Array(96).fill(9)
+			corruptedChunkBytes(96)
 		);
 		const target = new Uint8Array(heap.length);
 		try {
@@ -653,5 +839,52 @@ describe('the default chunk size against the real record cap', () => {
 		expect(Math.ceil(39_911_590 / DEFAULT_CHUNK_BYTES)).toBe(200);
 		// and the image the DO actually snapshots, 8,126,464 elided bytes measured on the edge
 		expect(Math.ceil(8_126_464 / DEFAULT_CHUNK_BYTES)).toBe(41);
+	});
+});
+
+describe('the chunk codec, both directions', () => {
+	it('round-trips arbitrary bytes', () => {
+		const cases: Uint8Array[] = [
+			new Uint8Array(0),
+			new Uint8Array([0]),
+			new Uint8Array(1024).fill(7),
+			Uint8Array.from({ length: 4096 }, (_, i) => (i * 31) & 0xff)
+		];
+		for (const raw of cases) {
+			const { stored, rawBytes } = packChunk(raw);
+			expect([...unpackChunk(stored, rawBytes)]).toEqual([...raw]);
+		}
+	});
+
+	it('packs compressible bytes and leaves incompressible ones alone', () => {
+		const compressible = new Uint8Array(8192).fill(1);
+		const packed = packChunk(compressible);
+		expect(packed.rawBytes).toBe(8192);
+		expect(packed.stored.length).toBeLessThan(8192);
+
+		// deflating already-deflated bytes expands them; storing the larger form would cost
+		// storage AND inflate CPU for nothing, so the codec declines and marks the row unpacked
+		const incompressible = packChunk(
+			Uint8Array.from({ length: 4096 }, (_, i) => (i * 2654435761) & 0xff)
+		).stored;
+		const twice = packChunk(incompressible);
+		if (twice.rawBytes === 0) {
+			expect(twice.stored).toBe(incompressible);
+			expect([...unpackChunk(twice.stored, 0)]).toEqual([...incompressible]);
+		} else {
+			expect(twice.stored.length).toBeLessThan(incompressible.length);
+		}
+	});
+
+	it('refuses bytes that inflate to a length the row does not claim', () => {
+		// a chunk of the right length and the wrong content is this project's signature failure,
+		// so a disagreement refuses rather than landing in the heap
+		const { stored } = packChunk(new Uint8Array(2048).fill(3));
+		expect(() => unpackChunk(stored, 999)).toThrow();
+	});
+
+	it('hands back the same reference for an unpacked row, so a restore copies once', () => {
+		const raw = new Uint8Array([1, 2, 3]);
+		expect(unpackChunk(raw, 0)).toBe(raw);
 	});
 });

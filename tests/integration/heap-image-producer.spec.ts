@@ -1,5 +1,6 @@
 import { runDurableObjectAlarm } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { RECONCILE_STEPS } from '../../src/ops/reconcile';
 import { driveAlarms, freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -23,8 +24,27 @@ const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do
  */
 async function provisioned(): Promise<DurableObjectStub> {
 	const stub = freshSite();
+	// THE PRODUCER IS OFF BY DEFAULT SINCE 2026-09-09, so a spec about the producer turns it on. A
+	// deployed two-arm run put the imaged cold render at a median 1,912 ms of cpuTime against 1,264
+	// unimaged with no overlap, so restoring costs more than booting; `HEAP_IMAGE=1` is the opt-in and
+	// the default is pinned separately below
+	await inObject(stub, (site) => {
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+	});
 	await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 	await inObject(stub, (site) => (site as any).fillOne('/'));
+	// RECONCILED FIRST, because the alarm chain runs it before the image and a step that lands drops
+	// every snapshot. Imaging ahead of it would pay a full heap read the next firing throws away, so
+	// a real site reaches the producer's precondition with reconciliation already settled. Driven to
+	// completion here rather than left to the alarms this spec counts
+	await inObject(stub, async (site) => {
+		for (let i = 0; i < RECONCILE_STEPS.length + 2; i++) {
+			const res = await site.fetch(
+				new Request('https://do.local/__reconcile', { method: 'POST' })
+			);
+			if (((await res.json()) as { ran: unknown }).ran === null) break;
+		}
+	});
 	await inObject(stub, (site) => {
 		(site as any).php = null;
 	});
@@ -51,7 +71,14 @@ describe('the alarm produces this site one heap image', () => {
 
 			const status = await heapStatus(stub);
 			expect(status.latest, JSON.stringify(status.lastHeapImage)).not.toBe(null);
-			expect(status.imagedGeneration).toBe(status.packGeneration);
+			// the heap generation, not the PACK generation. An image keyed on the pack alone
+			// survives a module install that invalidated its kernel, class loader and container:
+			// four separate symptoms, one disagreement between a restored heap and a current
+			// database
+			expect(status.imagedGeneration).toBe(status.heapGeneration);
+			expect(String(status.heapGeneration).startsWith(String(status.packGeneration))).toBe(
+				true
+			);
 			expect(status.latest.keptPages).toBeGreaterThan(0);
 
 			// the point of all of it -- a cold boot now restores instead of refusing
@@ -127,7 +154,9 @@ describe('the alarm produces this site one heap image', () => {
 
 			const after = await heapStatus(stub);
 			expect(after.latest.id).toBe(mine);
-			expect(after.imageAttempts).toBe(0);
+			// the counter is per generation and is written as `<generation> <n>`; an image it did
+			// not have to take leaves it unwritten
+			expect(after.imageAttempts).toBe(null);
 		},
 		TIMEOUT
 	);
@@ -135,10 +164,16 @@ describe('the alarm produces this site one heap image', () => {
 	it(
 		'images a site that has never rendered, now that the packed container row is readable',
 		async () => {
-			// the size the removed `cache_container >= 2` guard existed for: a never-rendered site
-			// imaged at 36,634,624 bytes while the packed row was keyed to a stale dependency hash,
-			// and at 10,420,224 once the boot could read it
+			// The magnitude used to be asserted here as `storedBytes < 20_000_000`, guarding the
+			// stale-container defect that imaged a never-rendered site at 36,634,624 bytes. It is a
+			// PROPERTY now: elision is what makes the image smaller than the heap, and both sides come
+			// from the same run so the assertion survives a feature that grows either one.
+			// `container-cid.spec.ts` is what pins the stale-container regression, and the byte figure
+			// belongs in a measurement script rather than in a ceiling somebody has to keep editing.
 			const stub = freshSite();
+			await inObject(stub, (site) => {
+				(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+			});
 			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 			await inObject(stub, (site) => {
 				(site as any).php = null;
@@ -147,8 +182,13 @@ describe('the alarm produces this site one heap image', () => {
 				string,
 				any
 			> | null;
-			expect(out?.heapImage?.ok, JSON.stringify(out)).toBe(true);
-			expect(out?.heapImage?.storedBytes).toBeLessThan(20_000_000);
+			const image = out?.heapImage;
+			expect(image?.ok, JSON.stringify(out)).toBe(true);
+			expect(Number(image?.heapBytes)).toBeGreaterThan(0);
+			expect(Number(image?.storedBytes)).toBeLessThan(Number(image?.heapBytes));
+			expect(Number(image?.keptPages)).toBeLessThan(
+				Math.ceil(Number(image?.heapBytes) / 65_536)
+			);
 		},
 		TIMEOUT
 	);
@@ -175,6 +215,32 @@ describe('the alarm produces this site one heap image', () => {
 				return (site as any).snapshotStep();
 			});
 			expect(out).toBe(null);
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * The default is OFF, and this is the assertion that keeps it that way.
+	 *
+	 * Restoring an image costs more than booting: two deployed free workers differing only in
+	 * `HEAP_IMAGE`/`HEAP_SNAPSHOT` put the imaged cold render at a median 1,912 ms of cpuTime (n=5,
+	 * 1,561-2,020) against 1,264 unimaged (n=4, 1,113-1,343), ranges not overlapping. It costs storage
+	 * against an account-wide cap on top of that. Every other test in this file opts the producer IN,
+	 * so without this one nothing here would notice the default flipping back.
+	 */
+	it(
+		'produces nothing when nobody asked, because the default is off',
+		async () => {
+			const stub = freshSite();
+			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
+			await inObject(stub, (site) => (site as any).fillOne('/'));
+			await inObject(stub, (site) => {
+				(site as any).php = null;
+			});
+			// no `HEAP_IMAGE` assignment anywhere: this is the shipping configuration
+			const out = await inObject(stub, (site) => (site as any).snapshotStep());
+			expect(out).toBe(null);
+			expect((await heapStatus(stub)).latest).toBe(null);
 		},
 		TIMEOUT
 	);

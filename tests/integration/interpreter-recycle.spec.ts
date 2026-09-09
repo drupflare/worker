@@ -197,6 +197,65 @@ describe('the interpreter recycle', () => {
 		REQUEST_TIMEOUT
 	);
 
+	/**
+	 * A MIXED chain, in one incarnation, with nothing dropped between the steps.
+	 *
+	 * Every other case here drives one kind of work. The reset that opened this file was not one
+	 * workload's peak; it was the SUM of what an incarnation had done, and each single-workload
+	 * measurement looked safe on its own. So this drives the sequence a real first day produces --
+	 * provision, browse anonymously, sign in, work in admin, install a module, come back to an
+	 * authenticated page -- and reads the heap after every step.
+	 *
+	 * The assertion is the PEAK across the whole chain, not any one step. A step that sheds is
+	 * asserted to shed, because a shed that stops happening is how the peak returns.
+	 */
+	it(
+		'stays inside the isolate across a mixed chain with nothing dropped between steps',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const jar = await provision(site);
+				const ladder: Array<[string, number]> = [['provisioned', await heap(site)]];
+				const step = async (label: string, run: () => Promise<unknown>) => {
+					await run();
+					ladder.push([label, await heap(site)]);
+				};
+
+				for (const path of ['/', '/user/1', '/admin/content', '/admin/config']) {
+					await step(path, () =>
+						site.runJson(renderPage(path, [], false, { cookie: jar }))
+					);
+				}
+				await step('cron', () =>
+					driveCron(writeCursor({} as StoredCursor), deps(site), {}, DEFAULT_CRON_BUDGET)
+				);
+				await step('enable', () =>
+					site.fetch(new Request('https://do.local/__enable?module=ctools'))
+				);
+				await step('after-enable auth', () =>
+					site.runJson(renderPage('/admin/content', [], false, { cookie: jar }))
+				);
+				return { ladder };
+			});
+
+			const ladder = out.ladder as Array<[string, number]>;
+			// eslint-disable-next-line no-console
+			console.log(
+				`mixed chain: ${ladder.map(([k, v]) => `${k}=${(v / MIB).toFixed(2)}`).join(' ')}`
+			);
+
+			const peak = Math.max(...ladder.map(([, v]) => v));
+			expect(peak).toBeLessThan(ISOLATE_LIMIT);
+			expect(ISOLATE_LIMIT - peak).toBeGreaterThan(4 * MIB);
+
+			// an install drops the interpreter, so the reading straight after it is a booted one.
+			// Without that the install's residue is still resident when the next render starts, which
+			// is the shape that crossed the limit inside a single invocation
+			const afterEnable = ladder.find(([k]) => k === 'enable')?.[1] ?? 0;
+			expect(afterEnable).toBeLessThanOrEqual(BOOTED_IDLE);
+		},
+		REQUEST_TIMEOUT
+	);
+
 	it(
 		'does not fire on an object that is only serving',
 		async () => {
@@ -272,6 +331,75 @@ describe('the interpreter recycle', () => {
 			expect(series.length).toBe(16);
 			expect(Math.min(...series)).toBeGreaterThan(0);
 			expect(Math.max(...series)).toBe(Math.min(...series));
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * The mixed chain, which is the workload the isolate limit is actually charged for.
+ *
+ * `USE_ZEND_ALLOC=0` means PHP returns nothing between requests, so demand inside one incarnation is
+ * the SUM of what the object has done. Every figure in `TECHNICAL_REPORT.md`'s Memory section is a
+ * single-workload peak and each one is correct; none of them is what the isolate meters. The
+ * measured crossing was provisioning plus two authenticated renders -- 96.00 to 138.63 MiB, past the
+ * 128 MiB limit -- which is the first-run path of every new site.
+ *
+ * The renders half is covered above. This is the rest of what a real site does in one incarnation:
+ * an outbound HTTP drain, a file read, an image derivative and a module enable, with no drop between
+ * them.
+ */
+describe('one incarnation doing more than rendering', () => {
+	it(
+		'holds the ceiling across outbound, file and image work in the same interpreter',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				const jar = await provision(site);
+				const steps: { step: string; heap: number }[] = [];
+				const note = async (step: string) => {
+					steps.push({ step, heap: await heap(site) });
+				};
+
+				await note('provisioned');
+				await site.runJson(renderPage('/', [], false, {}));
+				await note('anonymous render');
+				await site.runJson(renderPage('/admin/content', [], false, { cookie: jar }));
+				await note('authenticated render');
+
+				// the outbound queue drain, which is the deferred-HTTP half of a cron round
+				await site.fetch(new Request('https://do.local/__httpdrain'));
+				await note('outbound drain');
+
+				// a file read through the object, which is what a private:// derivative does first
+				await site.fetch(
+					new Request('https://do.local/__files?action=list&limit=5').clone()
+				);
+				await note('file listing');
+
+				// a second authenticated page, because the crossing was the SECOND one
+				await site.runJson(renderPage('/admin/people', [], false, { cookie: jar }));
+				await note('second authenticated render');
+
+				return { steps, recycles: Number((await stats(site)).recycles ?? 0) };
+			});
+
+			// printed, because the shape of the curve is the finding and a single peak is not
+			console.log(
+				`mixed chain: ${out.steps
+					.map((s) => `${s.step}=${(s.heap / MIB).toFixed(2)}`)
+					.join(' ')} MiB, recycles=${out.recycles}`
+			);
+
+			// the control: every step has to have been reached, or a short chain reads as a low peak
+			expect(out.steps).toHaveLength(6);
+			for (const s of out.steps) expect(s.heap, s.step).toBeGreaterThan(0);
+
+			// THE ASSERTION. 128 MiB is the isolate limit and crossing it inside an invocation is a
+			// message-less exception with no stack, not an error anything can catch
+			const peak = Math.max(...out.steps.map((s) => s.heap));
+			expect(peak, `mixed chain peaked at ${(peak / MIB).toFixed(2)} MiB`).toBeLessThan(
+				128 * MIB
+			);
 		},
 		REQUEST_TIMEOUT
 	);

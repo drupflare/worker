@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SITE_STORAGE_BYTES } from '../../scripts/measure/free-envelope';
+import { unpackChunk } from '../../src/db/heap-store';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /** whether a site is a small mutation layer over a shared image, or 24 MB of its own */
@@ -7,11 +8,38 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 const PAGE = 65_536;
 const TIMEOUT = 900_000;
 
-type Row = { seq: number; digest: string; bytes: ArrayBuffer };
+type StoredRow = { seq: number; digest: string; bytes: ArrayBuffer; raw_bytes: number };
+type Row = { seq: number; digest: string; bytes: Uint8Array };
+
+/**
+ * A site with reconciliation off, which is what this file needs and not a workaround.
+ *
+ * A reconciliation step drops every snapshot when it lands, correctly, because a restored kernel
+ * predates whatever the step just changed. On a real site the alarm chain settles reconciliation
+ * before the image producer runs, so the two never overlap. A spec that images by hand races them:
+ * left on, `cfw_heap_chunk` read empty on the warm arm, and driving reconciliation first instead
+ * booted a kernel through it and read 37,158,912 bytes against an expected ~10.4 MB.
+ *
+ * What this file measures is the size and divergence of an image. `RECONCILE=0` removes the other
+ * mechanism rather than timing around it.
+ */
+async function unreconciledSite(): Promise<DurableObjectStub> {
+	const stub = freshSite();
+	// awaited, not fired: an unawaited set races the migrate that follows it
+	await inObject(stub, (site: ServeDo) => {
+		(site.env as Record<string, unknown>).RECONCILE = '0';
+	});
+	return stub;
+}
 
 /**
  * `fresh=1` re-boots the kernel from the pack, so that image reflects the CODE and carries almost
  * nothing a site has done; the live heap is the one that accumulates content.
+ *
+ * UNPACKED HERE, because every measurement below is about the HEAP: page-level dedup across two
+ * sites, and how well a page or an XOR of two pages compresses. The rows are deflated now, so
+ * reading `bytes` straight out would dedup on compressed pages and gzip already-gzipped bytes --
+ * assertions that only check `> 0` would still pass while measuring nothing.
  */
 async function snapshotPages(stub: DurableObjectStub, fresh = true): Promise<Row[]> {
 	const res = await stub.fetch(
@@ -19,11 +47,18 @@ async function snapshotPages(stub: DurableObjectStub, fresh = true): Promise<Row
 		{ headers: { 'x-cfw-owner': 'test' } }
 	);
 	expect(res.status, await res.text().catch(() => '')).toBe(200);
-	return inObject(stub, (site: ServeDo) =>
+	const stored = await inObject(stub, (site: ServeDo) =>
 		(site as unknown as { sql: SqlStorage }).sql
-			.exec<Row>('SELECT seq, digest, bytes FROM cfw_heap_chunk ORDER BY seq')
+			.exec<StoredRow>(
+				'SELECT seq, digest, bytes, raw_bytes FROM cfw_heap_chunk ORDER BY seq'
+			)
 			.toArray()
 	);
+	return stored.map((r) => ({
+		seq: Number(r.seq),
+		digest: String(r.digest),
+		bytes: unpackChunk(new Uint8Array(r.bytes), Number(r.raw_bytes ?? 0))
+	}));
 }
 
 /** gzip rather than zstd: workerd encodes gzip natively, so this is a FLOOR on what zstd would do */
@@ -45,7 +80,7 @@ async function gzipped(bytes: Uint8Array): Promise<number> {
 const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do.local${path}`));
 
 async function provisionedStub(): Promise<DurableObjectStub> {
-	const stub = freshSite();
+	const stub = await unreconciledSite();
 	await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 	return stub;
 }
@@ -114,11 +149,11 @@ describe('a site as a delta against another site image', () => {
 			// `cache_container` row was keyed to a stale dependency hash, so a cold site rebuilt a
 			// 482 KB container into its heap -- 552 pages against 148, and `kernelBootMs` 1,024
 			// against 28. With the row readable both arms land near 10 MB and the ratio is ~1.07.
-			const cold = freshSite();
+			const cold = await unreconciledSite();
 			await inObject(cold, (s: ServeDo) => call(s, '/__migrate?all=1&prefill=0'));
 			const coldPages = await snapshotPages(cold);
 
-			const warm = freshSite();
+			const warm = await unreconciledSite();
 			await inObject(warm, async (s: ServeDo) => {
 				await call(s, '/__migrate?all=1&prefill=0');
 				const r = await s.fetch(

@@ -1,3 +1,5 @@
+import { deflateSync, inflateSync } from 'fflate';
+
 /**
  * Storage layer for a wasm heap snapshot in the Durable Object's own SQLite.
  *
@@ -61,6 +63,7 @@ CREATE TABLE IF NOT EXISTS cfw_heap_chunk (
 	seq INTEGER NOT NULL,
 	bytes BLOB NOT NULL,
 	digest TEXT NOT NULL,
+	raw_bytes INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (snapshot_id, seq)
 );
 `.trim();
@@ -180,6 +183,58 @@ export function reassembleHeap(elided: ElidedHeap, pageBytes = WASM_PAGE_BYTES):
 		throw new Error(`page index consumed ${at} of ${elided.bytes.length} bytes`);
 	}
 	return full;
+}
+
+/**
+ * Deflates one chunk for storage, or hands it back unpacked when packing it gains nothing.
+ *
+ * A stored image is 69% of what a site occupies, and free's 5 GB is an account-wide HARD CAP that no
+ * rate meter reports -- so an account reaches it at ~315 sites with every other number healthy.
+ * Measured on a provisioned site's own image, 11,206,656 bytes in 57 chunks: **3.54x per chunk**,
+ * against 3.565x for one member over the whole image. Splitting the stream costs 0.7% of the ratio
+ * and is what keeps the restore able to hold one chunk at a time.
+ *
+ * PER CHUNK RATHER THAN PER IMAGE, and that is a requirement rather than a preference.
+ * {@link streamRestoreInto} never allocates more than one chunk because the isolate ceiling is
+ * non-monotone -- a 128 MiB allocation failed where 160 MiB succeeded -- so an image that must be
+ * inflated whole would pass every test and then fail in production. One member per chunk is
+ * addressable by `seq`; one member per image is not.
+ *
+ * `deflateSync` rather than `CompressionStream` so both sides stay synchronous and no call site
+ * changes. fflate is already in the shipping bundle through `src/drupal/zlib-fix.ts`.
+ *
+ * @returns the bytes to store, and `rawBytes` -- the inflated length, or 0 when the bytes are
+ *   stored as they came. Zero is also what every chunk written before this column existed reads,
+ *   so the marker doubles as the migration.
+ */
+export function packChunk(bytes: Uint8Array): { stored: Uint8Array; rawBytes: number } {
+	const packed = deflateSync(bytes);
+	// no chunk of a real image has expanded (worst measured 0.719), but already-compressed bytes
+	// would; storing the larger form would cost storage AND inflate CPU for nothing
+	if (packed.length >= bytes.length) return { stored: bytes, rawBytes: 0 };
+	return { stored: packed, rawBytes: bytes.length };
+}
+
+/**
+ * The inverse of {@link packChunk}: inflates a stored chunk back to the heap bytes.
+ *
+ * @param rawBytes the inflated length recorded with the row; 0 means the row holds heap bytes
+ *   already, which is every row written before the column existed.
+ * @throws when the inflated length disagrees with what was recorded. A chunk of the right length
+ *   and the wrong content is this project's signature failure, so a disagreement refuses here
+ *   rather than landing in the heap.
+ */
+export function unpackChunk(stored: Uint8Array, rawBytes: number): Uint8Array {
+	if (rawBytes <= 0) return stored;
+	// NO `{ out }` HINT. Passing a preallocated buffer makes fflate TRUNCATE to it and return
+	// quietly, so a row whose recorded length disagrees with its payload would inflate to exactly
+	// the length the check compares against -- right length, wrong content, which is the failure
+	// this whole file refuses. Same shape as `node:sqlite` cutting a TEXT value at its first NUL.
+	const out = inflateSync(stored);
+	if (out.length !== rawBytes) {
+		throw new Error(`chunk inflated to ${out.length} bytes, row recorded ${rawBytes}`);
+	}
+	return out;
 }
 
 /** one stored row */
@@ -651,19 +706,32 @@ export type SnapshotMeta = {
 	createdAt: number;
 };
 
+/** whether a table already carries a column, so an ALTER can be skipped rather than attempted */
+function hasColumn(sql: HeapSql, table: string, column: string): boolean {
+	return (
+		sql.exec(`SELECT name FROM pragma_table_info(?) WHERE name = ?`, table, column).toArray()
+			.length > 0
+	);
+}
+
 export function ensureHeapTables(sql: HeapSql): void {
 	for (const stmt of HEAP_SNAPSHOT_DDL.split(';')) {
 		const t = stmt.trim();
 		if (t) sql.exec(`${t};`);
 	}
-	// a table created before handle_table existed keeps its old columns under CREATE TABLE IF NOT
-	// EXISTS, and a deployed object carries one; the ALTER is the only thing that adds it
-	try {
+	// a table created before a column existed keeps its old shape under CREATE TABLE IF NOT EXISTS,
+	// and a deployed object carries one; the ALTER is the only thing that adds it.
+	//
+	// CHECKED, NOT ATTEMPTED AND CAUGHT. A failing ALTER still dirties `sqlite_master`, and doing
+	// that on every call took the serve path into `migrate: starting` on 2 of 3 runs elsewhere in
+	// this codebase -- the exception is not the cost, attempting the statement is.
+	if (!hasColumn(sql, 'cfw_heap_snapshot', 'handle_table')) {
 		sql.exec(
 			`ALTER TABLE cfw_heap_snapshot ADD COLUMN handle_table TEXT NOT NULL DEFAULT '[]';`
 		);
-	} catch {
-		/* already there */
+	}
+	if (!hasColumn(sql, 'cfw_heap_chunk', 'raw_bytes')) {
+		sql.exec(`ALTER TABLE cfw_heap_chunk ADD COLUMN raw_bytes INTEGER NOT NULL DEFAULT 0;`);
 	}
 }
 
@@ -689,7 +757,14 @@ export function writeHeapSnapshot(
 		chunkBytes?: number;
 		pageBytes?: number;
 	}
-): { id: number; rows: number; storedBytes: number; digest: string; keptPages: number } {
+): {
+	id: number;
+	rows: number;
+	storedBytes: number;
+	compressedBytes: number;
+	digest: string;
+	keptPages: number;
+} {
 	const pageBytes = opts.pageBytes ?? WASM_PAGE_BYTES;
 	const chunkBytes = opts.chunkBytes ?? DEFAULT_CHUNK_BYTES;
 	if (chunkBytes <= 0) throw new RangeError('chunkBytes must be positive');
@@ -744,21 +819,29 @@ export function writeHeapSnapshot(
 	const staging = new Uint8Array(chunkBytes);
 	let filled = 0;
 	let seq = 0;
+	let compressedBytes = 0;
 	const flush = () => {
 		if (filled === 0) return;
 		// sliced to its real length: the last chunk is short, and storing the whole staging
 		// buffer would pad the elided stream with zeroes a restore would then apply
 		const bytes = staging.slice(0, filled);
+		const { stored, rawBytes } = packChunk(bytes);
 		// a digest PER CHUNK, not just for the whole heap: a streaming restore applies bytes as it
 		// reads them, so a whole-image check can only tell you afterwards that the heap is already
-		// wrong. This one refuses the chunk before it lands
+		// wrong. This one refuses the chunk before it lands.
+		//
+		// Over the HEAP bytes rather than the stored ones, so it still means what it meant before
+		// the rows were packed: it catches a bad inflate as well as bad storage, and every row
+		// written before the codec existed verifies unchanged.
 		sql.exec(
-			'INSERT INTO cfw_heap_chunk (snapshot_id, seq, bytes, digest) VALUES (?, ?, ?, ?)',
+			'INSERT INTO cfw_heap_chunk (snapshot_id, seq, bytes, digest, raw_bytes) VALUES (?, ?, ?, ?, ?)',
 			id,
 			seq,
-			bytes,
-			digestBytes(bytes)
+			stored,
+			digestBytes(bytes),
+			rawBytes
 		);
+		compressedBytes += stored.length;
 		seq++;
 		filled = 0;
 	};
@@ -780,9 +863,40 @@ export function writeHeapSnapshot(
 		id,
 		rows: seq,
 		storedBytes: elided.bytesLength,
+		// what the rows actually occupy, which is the figure the storage cap is spent in.
+		// `storedBytes` is the ELIDED HEAP length and stays that, because the restore's offset
+		// arithmetic is in those coordinates
+		compressedBytes,
 		digest,
 		keptPages: elided.pageIndex.length
 	};
+}
+
+/**
+ * Whether the newest stored image predates the chunk codec, so re-imaging would shrink it.
+ *
+ * A SITE ALREADY DEPLOYED NEVER RE-IMAGES ON ITS OWN. The producer skips when the site's recorded
+ * generation matches the current one, so an unpacked image sits there costing 3.57x its packed size
+ * until the pack moves -- which is the shape of a change that reaches new sites and no existing one.
+ * This is the predicate the alarm reads to clear that recorded generation once.
+ *
+ * A zero `raw_bytes` on ANY chunk is enough: the codec writes it on every packed row, and the one
+ * legitimate zero is a chunk that could not be compressed, which does not happen on a heap image.
+ * Answering true for such a site costs one re-image and nothing else.
+ *
+ * @returns false when there is no image at all, since there is nothing to reclaim.
+ */
+export function hasUnpackedChunks(sql: HeapSql): boolean {
+	const meta = latestSnapshotMeta(sql);
+	if (meta === null) return false;
+	return (
+		sql
+			.exec(
+				'SELECT 1 AS unpacked FROM cfw_heap_chunk WHERE snapshot_id = ? AND raw_bytes <= 0 LIMIT 1',
+				meta.id
+			)
+			.toArray().length > 0
+	);
 }
 
 /** the newest snapshot's metadata, or null when there is none */
@@ -846,7 +960,10 @@ export function readHeapSnapshot(
 	if (!meta) return null;
 
 	const chunkRows = sql
-		.exec('SELECT seq, bytes FROM cfw_heap_chunk WHERE snapshot_id = ? ORDER BY seq', meta.id)
+		.exec(
+			'SELECT seq, bytes, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? ORDER BY seq',
+			meta.id
+		)
 		.toArray();
 	if (chunkRows.length === 0) throw new Error(`snapshot ${meta.id} has no chunks`);
 
@@ -857,10 +974,25 @@ export function readHeapSnapshot(
 	const streams = JSON.parse(String(fdRow?.fd_table ?? '[]')) as StreamRecord[];
 
 	const bytes = joinChunks(
-		chunkRows.map((r) => ({
-			seq: Number(r.seq),
-			bytes: toStorableBytes(r.bytes as ArrayBufferLike | Uint8Array)
-		}))
+		chunkRows.map((r) => {
+			const seq = Number(r.seq);
+			try {
+				return {
+					seq,
+					bytes: unpackChunk(
+						toStorableBytes(r.bytes as ArrayBufferLike | Uint8Array),
+						Number(r.raw_bytes ?? 0)
+					)
+				};
+			} catch (e) {
+				// this reader assembles before it applies, so nothing has landed; the digest
+				// vocabulary is kept anyway so both readers refuse in the same words
+				throw new Error(
+					`snapshot ${meta.id} chunk ${seq} did not inflate: ` +
+						String((e as Error)?.message ?? e)
+				);
+			}
+		})
 	);
 	const heap = reassembleHeap(
 		{
@@ -1015,7 +1147,7 @@ export function streamRestoreInto(
 	// ORDER BY seq and ITERATE. `.toArray()` here would materialise every chunk row, which is the
 	// allocation this whole function exists to avoid
 	const cursor = sql.exec(
-		'SELECT seq, bytes, digest FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq >= ? ORDER BY seq',
+		'SELECT seq, bytes, digest, raw_bytes FROM cfw_heap_chunk WHERE snapshot_id = ? AND seq >= ? ORDER BY seq',
 		meta.id,
 		from
 	);
@@ -1024,7 +1156,28 @@ export function streamRestoreInto(
 	for (const row of cursor) {
 		if (out.chunks >= limit) break;
 		const seq = Number(row.seq);
-		const bytes = toStorableBytes(row.bytes as ArrayBufferLike | Uint8Array);
+		// inflated one chunk at a time, which is what keeps the peak allocation bounded: a packed
+		// image is 3.54x smaller and an inflated chunk is still only `chunkBytes`.
+		//
+		// A CHUNK THAT WILL NOT INFLATE IS A CORRUPTED CHUNK, and it has to arrive as the same
+		// verdict a bad digest does. `bytesWritten` decides what the caller owes -- a refusal on
+		// chunk 0 costs one boot, a refusal at chunk N leaves a right-length wrong-bytes heap that
+		// must be thrown away -- and a bare inflate error carries neither number
+		let bytes: Uint8Array;
+		try {
+			bytes = unpackChunk(
+				toStorableBytes(row.bytes as ArrayBufferLike | Uint8Array),
+				Number(row.raw_bytes ?? 0)
+			);
+		} catch (e) {
+			throw new HeapChunkDigestError({
+				seq,
+				expected: String(row.digest ?? ''),
+				actual: `did not inflate: ${String((e as Error)?.message ?? e)}`,
+				bytesWritten: out.bytesWritten,
+				chunksApplied: out.chunks
+			});
+		}
 		const expected = String(row.digest ?? '');
 		const actual = digestBytes(bytes);
 		if (expected !== '' && actual !== expected) {
@@ -1091,6 +1244,46 @@ export function gcHeapSnapshots(sql: HeapSql, keep = 1): number {
 	if (keep < 1) throw new RangeError('keep must be at least 1');
 	const doomed = sql
 		.exec('SELECT id FROM cfw_heap_snapshot ORDER BY id DESC LIMIT -1 OFFSET ?', keep)
+		.toArray()
+		.map((r) => Number(r.id));
+	for (const id of doomed) {
+		sql.exec('DELETE FROM cfw_heap_chunk WHERE snapshot_id = ?', id);
+		sql.exec('DELETE FROM cfw_heap_snapshot WHERE id = ?', id);
+	}
+	return doomed.length;
+}
+
+/**
+ * Deletes every snapshot that is not for `generation`.
+ *
+ * A generation only moves forward, so an image for any other one can never be restored -- it is
+ * dead storage, and at ~10 MB an image that is worth reclaiming rather than waiting for the next
+ * write to garbage-collect.
+ */
+/**
+ * Deletes every snapshot, whatever generation it is for.
+ *
+ * The generation is the pack plus the enabled-module set, and neither moves when a reconciliation
+ * step rewrites configuration -- so a step that changed the site would otherwise leave an image the
+ * restore still considers valid, and the next boot would come back holding the kernel the step
+ * exists to replace. `dropStaleSnapshots()` cannot serve this: it keeps exactly the generation that
+ * is now wrong.
+ */
+export function dropAllSnapshots(sql: HeapSql): number {
+	const doomed = sql
+		.exec('SELECT id FROM cfw_heap_snapshot')
+		.toArray()
+		.map((r) => Number(r.id));
+	for (const id of doomed) {
+		sql.exec('DELETE FROM cfw_heap_chunk WHERE snapshot_id = ?', id);
+		sql.exec('DELETE FROM cfw_heap_snapshot WHERE id = ?', id);
+	}
+	return doomed.length;
+}
+
+export function dropStaleSnapshots(sql: HeapSql, generation: string): number {
+	const doomed = sql
+		.exec('SELECT id FROM cfw_heap_snapshot WHERE generation IS NOT ?', generation)
 		.toArray()
 		.map((r) => Number(r.id));
 	for (const id of doomed) {

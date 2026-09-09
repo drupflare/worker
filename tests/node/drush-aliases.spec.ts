@@ -26,7 +26,21 @@ function phpAliases(): Record<string, string> | null {
 	return out;
 }
 
+/** the operation names `OpsRegistry::operations()` declares, read from the same checkout */
+function registryOps(): string[] | null {
+	const source = resolve(import.meta.dirname, '../..', SIBLING, 'src/Ops/OpsRegistry.php');
+	if (!existsSync(source)) return null;
+	const php = readFileSync(source, 'utf8');
+	const block =
+		/public static function operations\(\): array\s*\{\s*return \[([\s\S]*?)\n\t\t\];/.exec(
+			php
+		)?.[1];
+	if (block === undefined) throw new Error('operations() not found in OpsRegistry.php');
+	return [...block.matchAll(/^\t{3}'([^']+)' => \[$/gm)].map((m) => m[1] as string);
+}
+
 const php = phpAliases();
+const registry = registryOps();
 
 describe('the Drush alias table', () => {
 	it.skipIf(php === null)('is the same in both copies', () => {
@@ -44,9 +58,13 @@ describe('the Drush alias table', () => {
 		}
 	});
 
-	it('names the eight operations the registry actually has', () => {
-		expect(new Set(Object.values(DRUSH_ALIASES))).toEqual(
-			new Set(['cr', 'updb', 'cex', 'cim', 'en', 'pmu', 'status', 'sql-dump'])
-		);
+	// READ FROM THE REGISTRY rather than a literal. The list used to be spelled out here and said
+	// eight; adding the one-invocation set made it a list that has to be maintained in three places
+	it.skipIf(registry === null)('names exactly the operations the registry has', () => {
+		expect(new Set(Object.values(DRUSH_ALIASES))).toEqual(new Set(registry));
+	});
+
+	it.skipIf(registry === null)('found a registry to compare against', () => {
+		expect((registry ?? []).length).toBeGreaterThan(8);
 	});
 });

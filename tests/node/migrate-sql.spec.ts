@@ -273,6 +273,15 @@ async function openSourceRewritten(): Promise<{ db: DatabaseSync; tmp: string }>
 	);
 	db.exec(`PRAGMA schema_version=${before + 1}`);
 	db.exec('PRAGMA writable_schema=OFF');
+	// MIRRORS `dropBakeHistory()` in `scripts/pack-sql.ts`, for the same reason this function
+	// already mirrors the collation rewrite: the comparison below is "the pack reproduces its input
+	// after the transformations the packer documents", and the packer drops the bake's own log and
+	// clock so a provisioned site does not open with 40 entries dated weeks before it existed.
+	// Without this the fidelity assertions read the drop as data loss
+	db.exec('DELETE FROM watchdog');
+	db.exec(
+		"DELETE FROM key_value WHERE collection = 'state' AND name IN ('install_time', 'system.cron_last')"
+	);
 	db.close();
 	return { db: new DatabaseSync(tmp, { readOnly: true }), tmp };
 }

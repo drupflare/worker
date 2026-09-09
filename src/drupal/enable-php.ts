@@ -7,12 +7,11 @@
  * module-install track is a plan rather than a measurement, and a plan priced from an unrun
  * operation is the exact shape of error this project keeps finding.
  *
- * The consequence is already visible: `drupflare` is mounted but NOT in
- * `core.extension`, so `DrupflareServiceProvider`, `logger.cfw`, `drupflare.http_deferred` and
- * `drupflare.request_resetter` are all **unreached**. Each reads as a wiring bug in isolation; none
- * of them is. Enabling the module is what makes them real, which is also what makes this probe
- * falsifiable: `Drupal::logger()` reaching `CfwLogger` is an outcome, where "the config row
- * changed" is not.
+ * This used to record `drupflare` as mounted but absent from `core.extension`, leaving
+ * `DrupflareServiceProvider`, `logger.cfw`, `drupflare.http_deferred` and
+ * `drupflare.request_resetter` unreached. The shipped `core.extension` lists it now, so that gap is
+ * closed. What the probe still makes falsifiable is the same thing: `Drupal::logger()` reaching
+ * `CfwLogger` is an outcome, where "the config row changed" is not.
  */
 export const ENABLE_MODULE = String.raw`<?php
 $out = ['ok' => false];

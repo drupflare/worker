@@ -127,8 +127,58 @@ async function openRewritten(path: string) {
 	);
 	db.exec(`PRAGMA schema_version=${Number(before) + 1}`);
 	db.exec('PRAGMA writable_schema=OFF');
+	const dropped = dropBakeHistory(db);
 	db.close();
-	return { db: new DatabaseSync(tmp, { readOnly: true }), tmp, collationsRewritten: affected };
+	return {
+		db: new DatabaseSync(tmp, { readOnly: true }),
+		tmp,
+		collationsRewritten: affected,
+		bakeRowsDropped: dropped
+	};
+}
+
+/**
+ * Drops the bake's own log and clock out of the COPY.
+ *
+ * A newly provisioned site opened with 40 log entries dated 7-9 August 2026 and a red Cron row
+ * reading the bake date: `watchdog` shipped populated, `key_value` shipped
+ * `state:install_time = 1786258127`, and `SystemRequirementsHooks` falls back to `install_time`
+ * when `system.cron_last` is not numeric, against a two-week error threshold.
+ *
+ * A BUILD STEP RATHER THAN A HAND EDIT, and the difference is what makes it stick. The same fix
+ * applied to `assets/drupal/site.sqlite` directly is reverted by the next `bun install`:
+ * `restore-artifacts` verifies that file against `cdn-manifest.json` and re-downloads it, so the
+ * edit lives only until someone installs. Applied here it survives a restore, needs no bucket
+ * upload, and is reproducible from a clean checkout.
+ *
+ * `install_time` is DROPPED rather than zeroed: `firstRunConfig()` stamps it at the claim, which is
+ * the first moment this site has a real birthday, and a zero would read as 1970 in the meantime.
+ */
+function dropBakeHistory(db: DatabaseSync): { watchdog: number; state: number } {
+	const count = (sql: string): number => {
+		try {
+			return Number((db.prepare(sql).get() as { n?: unknown })?.n ?? 0);
+		} catch {
+			return 0;
+		}
+	};
+	const watchdog = count('SELECT COUNT(*) AS n FROM watchdog');
+	const state = count(
+		"SELECT COUNT(*) AS n FROM key_value WHERE collection = 'state' AND name IN ('install_time', 'system.cron_last')"
+	);
+	try {
+		db.exec('DELETE FROM watchdog');
+	} catch {
+		// a pack without dblog has no such table, which is not a failure
+	}
+	try {
+		db.exec(
+			"DELETE FROM key_value WHERE collection = 'state' AND name IN ('install_time', 'system.cron_last')"
+		);
+	} catch {
+		// same
+	}
+	return { watchdog, state };
 }
 
 async function mkdtempish() {
@@ -240,7 +290,7 @@ function readRows(db: DatabaseSync, table: string, names: string[]) {
 
 // #endregion
 
-const { db, tmp, collationsRewritten } = await openRewritten(resolve(source));
+const { db, tmp, collationsRewritten, bakeRowsDropped } = await openRewritten(resolve(source));
 
 const master = db
 	.prepare(
@@ -519,6 +569,7 @@ const manifest = {
 	creates: [...tableDdl.map((s) => tableNameOf(s.s)).filter(Boolean)],
 	notes: {
 		collationsRewritten,
+		bakeRowsDropped,
 		sessionsSynthesised,
 		withoutRowidTables,
 		base64Values,
@@ -561,6 +612,9 @@ console.log(
 );
 console.log(
 	`encoding        ${base64Values} base64 values, ${bigintValues} wide integers, ${collationsRewritten} collations rewritten`
+);
+console.log(
+	`bake history    ${bakeRowsDropped.watchdog} watchdog rows and ${bakeRowsDropped.state} state keys dropped`
 );
 console.log(`generation      ${manifest.generation}`);
 console.log(`out             ${outAbs}`);

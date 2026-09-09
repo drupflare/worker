@@ -19,8 +19,26 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const SQLITE = resolve(ROOT, 'assets', 'drupal', 'site.sqlite');
 const INSTALLED = resolve(ROOT, 'drupal-src', 'vendor', 'drupal', 'DrupalInstalled.php');
+const COMPOSER = resolve(ROOT, 'drupal-src', 'composer.json');
 
-const have = existsSync(SQLITE) && existsSync(INSTALLED);
+/**
+ * Whether this checkout's `drupal-src` carries the contrib DEV dependencies.
+ *
+ * `VERSIONS_HASH` is a hash of every installed package, so `composer require --dev drupal/<module>`
+ * -- which is how the contrib lane gets its fixture, and what `contrib-verify.spec.ts` tells you to
+ * run -- moves it. The packed row is keyed to the SHIPPING dependency set, so on a fixture tree this
+ * assertion compares two different trees and fails without anything being wrong. It read as a stale
+ * pack for a whole session.
+ */
+function fixtureTree(): boolean {
+	if (!existsSync(COMPOSER)) return false;
+	const parsed = JSON.parse(readFileSync(COMPOSER, 'utf8')) as {
+		'require-dev'?: Record<string, string>;
+	};
+	return Object.keys(parsed['require-dev'] ?? {}).some((name) => name.startsWith('drupal/'));
+}
+
+const have = existsSync(SQLITE) && existsSync(INSTALLED) && !fixtureTree();
 
 describe.skipIf(!have)('the packed container row', () => {
 	it('is keyed to the dependency set this tree ships', () => {

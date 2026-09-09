@@ -54,6 +54,7 @@ export const CROSSING_NAMES = [
 	'cfwZlib',
 	'cfwLog',
 	'cfwStats',
+	'cfwServeStats',
 	'cfwFetch',
 	'cfwHttpCacheGet',
 	'cfwQueueFetch',
@@ -64,6 +65,7 @@ export const CROSSING_NAMES = [
 	'cfwFileDelete',
 	'cfwFileList',
 	'cfwFileStat',
+	'cfwFilePublicBase',
 	'cfwFileRename',
 	// both were installed on the module and absent here, which is the drift this list exists to
 	// prevent: the census under-reported the bridge by two capabilities, and both of them mutate
@@ -142,6 +144,8 @@ export const BATCHABLE: Record<CrossingName, boolean> = {
 	// fire and forget; a render could hand over an array of entries at the end
 	cfwLog: true,
 	cfwStats: false,
+	// one snapshot answers a whole page; nothing asks for a second in the same render
+	cfwServeStats: false,
 	cfwFetch: false,
 	cfwHttpCacheGet: false,
 	// already deferred by construction, so N queue entries could cross once
@@ -154,6 +158,8 @@ export const BATCHABLE: Record<CrossingName, boolean> = {
 	cfwFileDelete: true,
 	cfwFileList: false,
 	cfwFileStat: true,
+	// one configured string; a render asks once and the answer cannot change under it
+	cfwFilePublicBase: true,
 	cfwFileRename: false,
 	// one ticket, redeemed once; there is never a second call to coalesce with
 	cfwOidcClaims: false,

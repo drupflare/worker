@@ -25,7 +25,7 @@
  * object and not here.
  */
 
-interface Sample {
+export interface Sample {
 	ms: number;
 	status: number;
 	bytes: number;
@@ -33,7 +33,7 @@ interface Sample {
 	tier: string;
 }
 
-interface Summary {
+export interface Summary {
 	workload: string;
 	concurrency: number;
 	n: number;
@@ -48,7 +48,7 @@ interface Summary {
 }
 
 /** the six workloads, plus the generator's own control */
-const WORKLOADS: Record<string, { path: string; auth: boolean; note: string }> = {
+export const WORKLOADS: Record<string, { path: string; auth: boolean; note: string }> = {
 	// `--ceiling-path` because the two arms do not share a no-work endpoint: the VPS serves Drupal's
 	// `/robots.txt` and drupflare answers it 404 through the deny list, which is not no-work and read
 	// 109 req/s against the same generator's real 2,368
@@ -60,14 +60,26 @@ const WORKLOADS: Record<string, { path: string; auth: boolean; note: string }> =
 	'auth-account': { path: '/user', auth: true, note: 'authenticated, user-specific' }
 };
 
-function percentile(sorted: number[], p: number): number {
+/** extra request headers, which is how a drupflare arm names the site it is driving */
+let EXTRA: Record<string, string> = {};
+
+export function percentile(sorted: number[], p: number): number {
 	if (sorted.length === 0) return 0;
 	const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
 	return sorted[idx] as number;
 }
 
-async function login(base: string, user: string, pass: string): Promise<string | null> {
-	const page = await fetch(`${base}/user/login`, { redirect: 'manual' });
+/**
+ * Logs in, THROUGH THE ARM'S OWN HEADERS.
+ *
+ * It sent none until 2026-09-09, and that was invisible for as long as the site header was
+ * decorative: with `x-cfw-site` unread, a login without it reached the same object as a login with
+ * it. Once site identity became the real `Host`, this function was logging into whatever site
+ * `127.0.0.1` resolves to and then measuring a different one -- which surfaced as "could not log
+ * in", not as a wrong number, only because the two sites had different passwords.
+ */
+export async function login(base: string, user: string, pass: string): Promise<string | null> {
+	const page = await fetch(`${base}/user/login`, { redirect: 'manual', headers: EXTRA });
 	const html = await page.text();
 	const token = /name="form_build_id" value="([^"]+)"/.exec(html)?.[1];
 	const formId = /name="form_id" value="([^"]+)"/.exec(html)?.[1] ?? 'user_login_form';
@@ -86,6 +98,7 @@ async function login(base: string, user: string, pass: string): Promise<string |
 		redirect: 'manual',
 		headers: {
 			'content-type': 'application/x-www-form-urlencoded',
+			...EXTRA,
 			...(jar ? { cookie: jar } : {})
 		}
 	});
@@ -97,10 +110,18 @@ async function login(base: string, user: string, pass: string): Promise<string |
 	return session === '' ? null : session;
 }
 
-/** extra request headers, which is how a drupflare arm names the site it is driving */
-let EXTRA: Record<string, string> = {};
+/**
+ * Points the generator at a different arm.
+ *
+ * Module state rather than a parameter, and that is safe for exactly one reason: an orchestrator
+ * must drive the arms SEQUENTIALLY. Both live on this machine, so running them at once makes each
+ * one the other's noise and the ratio measures the laptop's scheduler.
+ */
+export function setExtraHeaders(headers: Record<string, string>): void {
+	EXTRA = headers;
+}
 
-async function one(url: string, cookie: string | null): Promise<Sample> {
+export async function one(url: string, cookie: string | null): Promise<Sample> {
 	const t0 = Date.now();
 	try {
 		const res = await fetch(url, {
@@ -129,7 +150,7 @@ async function one(url: string, cookie: string | null): Promise<Sample> {
  * client loops until the deadline, which is what keeps offered load proportional to the arm's own
  * speed rather than to the generator's patience.
  */
-async function run(
+export async function run(
 	base: string,
 	workload: string,
 	concurrency: number,
@@ -189,7 +210,11 @@ async function run(
  * produces and it is NOT the 2,127 ms "both bins emptied" figure in the report, which is a colder
  * thing measured on the edge. Do not subtract one from the other.
  */
-async function renderArm(base: string, kind: 'vps' | 'drupflare', n: number): Promise<number[]> {
+export async function renderArm(
+	base: string,
+	kind: 'vps' | 'drupflare',
+	n: number
+): Promise<number[]> {
 	const times: number[] = [];
 	for (let i = 0; i < n; i++) {
 		if (kind === 'vps') {
@@ -222,7 +247,7 @@ async function renderArm(base: string, kind: 'vps' | 'drupflare', n: number): Pr
  * this exists to measure would never appear. The VPS arm has nothing to bump and nothing to clear;
  * its opcache stays warm, which is its best case and is left that way on purpose.
  */
-async function sessionArm(
+export async function sessionArm(
 	base: string,
 	kind: 'vps' | 'drupflare',
 	path: string,
@@ -246,115 +271,136 @@ async function sessionArm(
 	return out;
 }
 
-function arg(name: string, fallback: string): string {
-	const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
-	return hit ? (hit.split('=').slice(1).join('=') as string) : fallback;
-}
+/**
+ * The CLI, guarded so the module can be IMPORTED.
+ *
+ * `host-verdict.ts` drives both arms through the functions above, and at module scope this block
+ * would run a benchmark as a side effect of the import.
+ */
+if (import.meta.main) {
+	function arg(name: string, fallback: string): string {
+		const hit = process.argv.find((a: string) => a.startsWith(`--${name}=`));
+		return hit ? (hit.split('=').slice(1).join('=') as string) : fallback;
+	}
 
-const base = arg('target', 'http://127.0.0.1:8099').replace(/\/$/, '');
-const label = arg('label', base);
-const site = arg('site', '');
-if (site !== '') EXTRA = { 'x-cfw-site': site };
-const seconds = Number(arg('seconds', '10'));
-const warmupSeconds = Number(arg('warmup', '3'));
-const levels = arg('concurrency', '1,2,4,8,16,32')
-	.split(',')
-	.map((n) => Number(n.trim()))
-	.filter((n) => Number.isFinite(n) && n >= 1);
-const wanted = arg('workload', 'ceiling,anon-cached,anon-miss').split(',');
-const ceilingPath = arg('ceiling-path', '');
-if (ceilingPath !== '') WORKLOADS.ceiling!.path = ceilingPath;
-const user = arg('user', 'admin');
-const pass = arg('pass', '');
+	const base = arg('target', 'http://127.0.0.1:8099').replace(/\/$/, '');
+	const label = arg('label', base);
+	const site = arg('site', '');
+	// `Host` rather than `x-cfw-site`: nothing under `src/` ever read that header, so it selected
+	// no site at all. Site identity is the hostname
+	if (site !== '') EXTRA = { host: `${site}.localhost` };
+	const seconds = Number(arg('seconds', '10'));
+	const warmupSeconds = Number(arg('warmup', '3'));
+	const levels = arg('concurrency', '1,2,4,8,16,32')
+		.split(',')
+		.map((n) => Number(n.trim()))
+		.filter((n) => Number.isFinite(n) && n >= 1);
+	const wanted = arg('workload', 'ceiling,anon-cached,anon-miss').split(',');
+	const ceilingPath = arg('ceiling-path', '');
+	if (ceilingPath !== '') WORKLOADS.ceiling!.path = ceilingPath;
+	const user = arg('user', 'admin');
+	const pass = arg('pass', '');
 
-let cookie: string | null = null;
-if (wanted.some((w) => WORKLOADS[w]?.auth)) {
-	if (pass === '') {
-		console.error('an authenticated workload needs --pass=<admin password>');
-		process.exit(2);
+	let cookie: string | null = null;
+	if (wanted.some((w) => WORKLOADS[w]?.auth)) {
+		if (pass === '') {
+			console.error('an authenticated workload needs --pass=<admin password>');
+			process.exit(2);
+		}
+		cookie = await login(base, user, pass);
+		if (cookie === null) {
+			console.error(`could not log in to ${base} as ${user}; is the password right?`);
+			process.exit(2);
+		}
+		console.error(`[vps-compare] authenticated as ${user}`);
 	}
-	cookie = await login(base, user, pass);
-	if (cookie === null) {
-		console.error(`could not log in to ${base} as ${user}; is the password right?`);
-		process.exit(2);
-	}
-	console.error(`[vps-compare] authenticated as ${user}`);
-}
 
-const sessionKind = arg('session', '');
-if (sessionKind !== '') {
-	if (sessionKind !== 'vps' && sessionKind !== 'drupflare') {
-		console.error('--session must be vps or drupflare');
-		process.exit(2);
-	}
-	if (pass === '') {
-		console.error('--session needs --pass=<admin password>');
-		process.exit(2);
-	}
-	const n = Number(arg('n', '10'));
-	const path = arg('path', '/');
-	const samples = await sessionArm(base, sessionKind, path, n, user, pass);
-	const ms = samples.map((s) => s.ms);
-	const total = ms.reduce((a, b) => a + b, 0);
-	const tail = ms.slice(1).sort((a, b) => a - b);
-	console.error(
-		`[${label}] session ${path} n=${n} first=${ms[0]}ms ` +
-			`rest p50=${percentile(tail, 50)}ms mean=${(total / n).toFixed(1)}ms ` +
-			`curve=[${ms.join(', ')}]`
-	);
-	for (const [i, s] of samples.entries()) {
-		console.error(`  #${String(i + 1).padStart(2)} ${String(s.ms).padStart(5)}ms ${s.tier}`);
-	}
-	console.log(
-		JSON.stringify(
-			{ target: base, label, kind: sessionKind, path, n, meanMs: total / n, samples },
-			null,
-			2
-		)
-	);
-	process.exit(0);
-}
-
-const renderKind = arg('render', '');
-if (renderKind !== '') {
-	if (renderKind !== 'vps' && renderKind !== 'drupflare') {
-		console.error('--render must be vps or drupflare');
-		process.exit(2);
-	}
-	const n = Number(arg('n', '9'));
-	// the first sample on either arm is a cold interpreter or a cold opcache and is reported
-	// separately rather than folded into a median, the way every other cold reading here is
-	const times = await renderArm(base, renderKind, n);
-	const cold = times[0] as number;
-	const warm = times.slice(1).sort((a, b) => a - b);
-	console.error(
-		`[${label}] render cold=${cold}ms warm n=${warm.length} ` +
-			`min=${warm[0]} p50=${percentile(warm, 50)} max=${warm[warm.length - 1]} ` +
-			`all=[${warm.join(', ')}]`
-	);
-	console.log(JSON.stringify({ target: base, label, kind: renderKind, cold, warm }, null, 2));
-	process.exit(0);
-}
-
-const rows: Summary[] = [];
-for (const workload of wanted) {
-	if (!WORKLOADS[workload]) {
-		console.error(`unknown workload ${workload}; known: ${Object.keys(WORKLOADS).join(', ')}`);
-		process.exit(2);
-	}
-	// warm the arm before the first level, so opcache, the container and any lazy mount are paid for
-	// outside the readings rather than folded into the first one
-	if (warmupSeconds > 0) await run(base, workload, 2, warmupSeconds, cookie);
-	for (const concurrency of levels) {
-		const summary = await run(base, workload, concurrency, seconds, cookie);
-		rows.push(summary);
-		console.error(
-			`[${label}] ${workload.padEnd(12)} c=${String(concurrency).padStart(3)} ` +
-				`rps=${summary.rps.toFixed(1).padStart(7)} p50=${String(summary.p50).padStart(5)}ms ` +
-				`p95=${String(summary.p95).padStart(5)}ms p99=${String(summary.p99).padStart(5)}ms ` +
-				`err=${summary.errors} bytes=${summary.bytes}`
+	const sessionKind = arg('session', '');
+	if (sessionKind !== '') {
+		if (sessionKind !== 'vps' && sessionKind !== 'drupflare') {
+			console.error('--session must be vps or drupflare');
+			process.exit(2);
+		}
+		if (pass === '') {
+			console.error('--session needs --pass=<admin password>');
+			process.exit(2);
+		}
+		const n = Number(arg('n', '10'));
+		const path = arg('path', '/');
+		const samples = await sessionArm(
+			base,
+			sessionKind as 'vps' | 'drupflare',
+			path,
+			n,
+			user,
+			pass
 		);
+		const ms = samples.map((s) => s.ms);
+		const total = ms.reduce((a, b) => a + b, 0);
+		const tail = ms.slice(1).sort((a, b) => a - b);
+		console.error(
+			`[${label}] session ${path} n=${n} first=${ms[0]}ms ` +
+				`rest p50=${percentile(tail, 50)}ms mean=${(total / n).toFixed(1)}ms ` +
+				`curve=[${ms.join(', ')}]`
+		);
+		for (const [i, s] of samples.entries()) {
+			console.error(
+				`  #${String(i + 1).padStart(2)} ${String(s.ms).padStart(5)}ms ${s.tier}`
+			);
+		}
+		console.log(
+			JSON.stringify(
+				{ target: base, label, kind: sessionKind, path, n, meanMs: total / n, samples },
+				null,
+				2
+			)
+		);
+		process.exit(0);
 	}
-}
 
-console.log(JSON.stringify({ target: base, label, seconds, rows }, null, 2));
+	const renderKind = arg('render', '');
+	if (renderKind !== '') {
+		if (renderKind !== 'vps' && renderKind !== 'drupflare') {
+			console.error('--render must be vps or drupflare');
+			process.exit(2);
+		}
+		const n = Number(arg('n', '9'));
+		// the first sample on either arm is a cold interpreter or a cold opcache and is reported
+		// separately rather than folded into a median, the way every other cold reading here is
+		const times = await renderArm(base, renderKind as 'vps' | 'drupflare', n);
+		const cold = times[0] as number;
+		const warm = times.slice(1).sort((a, b) => a - b);
+		console.error(
+			`[${label}] render cold=${cold}ms warm n=${warm.length} ` +
+				`min=${warm[0]} p50=${percentile(warm, 50)} max=${warm[warm.length - 1]} ` +
+				`all=[${warm.join(', ')}]`
+		);
+		console.log(JSON.stringify({ target: base, label, kind: renderKind, cold, warm }, null, 2));
+		process.exit(0);
+	}
+
+	const rows: Summary[] = [];
+	for (const workload of wanted) {
+		if (!WORKLOADS[workload]) {
+			console.error(
+				`unknown workload ${workload}; known: ${Object.keys(WORKLOADS).join(', ')}`
+			);
+			process.exit(2);
+		}
+		// warm the arm before the first level, so opcache, the container and any lazy mount are paid for
+		// outside the readings rather than folded into the first one
+		if (warmupSeconds > 0) await run(base, workload, 2, warmupSeconds, cookie);
+		for (const concurrency of levels) {
+			const summary = await run(base, workload, concurrency, seconds, cookie);
+			rows.push(summary);
+			console.error(
+				`[${label}] ${workload.padEnd(12)} c=${String(concurrency).padStart(3)} ` +
+					`rps=${summary.rps.toFixed(1).padStart(7)} p50=${String(summary.p50).padStart(5)}ms ` +
+					`p95=${String(summary.p95).padStart(5)}ms p99=${String(summary.p99).padStart(5)}ms ` +
+					`err=${summary.errors} bytes=${summary.bytes}`
+			);
+		}
+	}
+
+	console.log(JSON.stringify({ target: base, label, seconds, rows }, null, 2));
+}

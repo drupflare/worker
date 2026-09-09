@@ -21,7 +21,12 @@ const paths = (
 const call = (path: string, init?: RequestInit): Promise<Response> =>
 	fetch(`${base}${path}`, {
 		...init,
-		headers: { 'x-cfw-site': site, ...(init?.headers ?? {}) }
+		// `Host`, because THE WORKER NEVER READ `x-cfw-site`. That header appeared only in this
+		// script and two of its siblings and in no file under `src/`, so every `--site` here drove
+		// the one object `127.0.0.1` resolves to: a fresh id answered "already migrated" and two
+		// random ids reported the same generation, the same schema and the same 428 rows.
+		// `src/ops/site-id.ts`'s chain is KV, then `SITE_ID`, then the HOSTNAME.
+		headers: { host: `${site}.localhost`, ...(init?.headers ?? {}) }
 	});
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {

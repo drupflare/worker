@@ -104,7 +104,11 @@ const DERIVED_TABLES: ReadonlySet<string> = new Set([
 	// built from `menu_link_content`, and rebuilt by Drupal when that changes
 	'menu_tree',
 	// the packed module files; they arrive with the pack rather than from the primary
-	'cfw_module_file'
+	'cfw_module_file',
+	// one content address per fragment, computed from the plan, its dependency values and the
+	// generation. Every input is authoritative somewhere else, so a lost row costs a re-harvest
+	// rather than a fact -- unlike `cfw_module_blob`, whose bytes exist nowhere else
+	'cfw_fragment'
 ]);
 
 /** tables holding an outbound or externally visible effect */
@@ -153,6 +157,17 @@ const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	'cfw_migrate',
 	'cfw_updb_run',
 	'cfw_updb_unit',
+	/**
+	 * The uploaded module store, and it is AUTHORITATIVE where `cfw_module_file` is derived.
+	 *
+	 * The distinction is the whole reason the two are separate. `cfw_module_file` is the
+	 * materialised tree and a revision can rebuild it; the blob and the manifest are the only copy
+	 * of bytes that arrived from a developer's machine and exist nowhere else -- not in the pack, not
+	 * on a registry, not on a git host. Calling either derived would let a replica originate one and
+	 * would let a restore drop the module a site is running.
+	 */
+	'cfw_module_blob',
+	'cfw_module_rev',
 	'file_usage',
 	'inline_block_usage',
 	'taxonomy_index',

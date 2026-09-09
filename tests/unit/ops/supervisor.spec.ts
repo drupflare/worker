@@ -4,10 +4,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	BUDGET_PROJECTION_SAMPLES,
 	BUDGET_WARN_FRACTION,
-	CircuitBreaker,
 	type Finding,
 	HOST_TRIPWIRES,
-	LADDER,
 	LEDGER_MAX_ROWS,
 	MAX_CONTEXT_BYTES,
 	MEMORY_RISE_SAMPLES,
@@ -25,7 +23,6 @@ import {
 	ensureHealthTable,
 	fitTrend,
 	gcHealthLedger,
-	initialRung,
 	ledgerOversized,
 	memoryHighwaterRising,
 	memoryTrendRising,
@@ -131,7 +128,6 @@ describe('bridge.asyncify_called: the stub the glue falls back to', () => {
 	// cron round and every page answered 503
 	it('observes rather than escalating, so a handled fallback cannot quarantine a site', () => {
 		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })?.severity).toBe('warn');
-		expect(initialRung('warn')).toBe('observe');
 	});
 
 	it('does not fire at zero', () => {
@@ -469,57 +465,6 @@ describe('the registry runs every wire and stays O(1)', () => {
 		// neither threshold check should have fired on this observation
 		expect(codes).not.toContain('memory.highwater_rising');
 		expect(codes).not.toContain('budget.rows_written');
-	});
-});
-
-describe('the breaker escalates on repetition and decays on quiet', () => {
-	it('escalates one rung after the threshold, not on the first hit', () => {
-		const b = new CircuitBreaker(60_000, 3);
-		expect(b.record('x', 'warn', 1000)).toBe('observe');
-		expect(b.record('x', 'warn', 1100)).toBe('observe');
-		// third hit inside the window
-		expect(b.record('x', 'warn', 1200)).toBe('reset');
-	});
-
-	it('forgets hits that fall outside the window', () => {
-		const b = new CircuitBreaker(1000, 3);
-		b.record('x', 'warn', 0);
-		b.record('x', 'warn', 100);
-		// this one is 2000 ms later, so the first two have aged out
-		expect(b.record('x', 'warn', 2000)).toBe('observe');
-	});
-
-	it('decays a rung per clean interval and forgets the code at the bottom', () => {
-		const b = new CircuitBreaker(60_000, 1);
-		b.record('x', 'error', 0);
-		expect(b.rungOf('x')).toBe('reconstruct');
-		b.decay();
-		expect(b.rungOf('x')).toBe('reset');
-		b.decay();
-		expect(b.rungOf('x')).toBe('observe');
-		b.decay();
-		// dropped entirely, so the map cannot grow without bound
-		expect(b.rungOf('x')).toBeNull();
-	});
-
-	it('never escalates past the top of the ladder', () => {
-		const b = new CircuitBreaker(60_000, 1);
-		for (let i = 0; i < 20; i++) b.record('x', 'critical', i);
-		expect(b.rungOf('x')).toBe(LADDER[LADDER.length - 1]);
-	});
-
-	it('starts a critical finding high and a warning low', () => {
-		expect(initialRung('critical')).toBe('quarantine');
-		expect(initialRung('error')).toBe('reset');
-		expect(initialRung('warn')).toBe('observe');
-	});
-
-	it('keeps codes independent, so one noisy wire cannot escalate another', () => {
-		const b = new CircuitBreaker(60_000, 2);
-		b.record('a', 'warn', 0);
-		b.record('a', 'warn', 1);
-		expect(b.rungOf('a')).toBe('reset');
-		expect(b.rungOf('b')).toBeNull();
 	});
 });
 

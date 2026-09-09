@@ -154,8 +154,22 @@ describe('the shipped schema, and where the charge actually lands', () => {
 		expect(declared.filter((name) => name.startsWith('cache_'))).toEqual([]);
 		expect(declared).not.toContain('cfw_page');
 		expect(declared).not.toContain('cfw_fill_queue');
-		// and the host's own tables stay off it too, which is a choice this repo controls
-		expect(declared.filter((name) => name.startsWith('cfw_'))).toEqual(['cfw_health']);
+		/**
+		 * The host's own tables that declare it, named with the reason each is affordable.
+		 *
+		 * Both are written by host code on an operator action rather than by the fill: `cfw_health`
+		 * on a finding, `cfw_module_rev` once per uploaded revision. The extra charged row is the
+		 * `sqlite_sequence` rewrite measured above, and it lands off the path the regeneration
+		 * ceiling is computed from.
+		 *
+		 * `cfw_module_rev` wants monotonic ids specifically: `previousRevision()` finds the row
+		 * before the active one by `id`, and a plain `INTEGER PRIMARY KEY` frees the max rowid on a
+		 * delete, so a later commit could reuse it and sort where the dropped revision used to be.
+		 */
+		expect(declared.filter((name) => name.startsWith('cfw_'))).toEqual([
+			'cfw_health',
+			'cfw_module_rev'
+		]);
 	});
 });
 

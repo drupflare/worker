@@ -595,96 +595,17 @@ export function runHostTripwires(obs: Observation): Finding[] {
 	return found;
 }
 
-/** the repair ladder, lowest rung first */
-export const LADDER = [
-	'observe',
-	'reset',
-	'reconstruct',
-	'reconfigure',
-	'quarantine',
-	'rollback'
-] as const;
-
-export type Rung = (typeof LADDER)[number];
-
-/** what a finding's severity starts at on the ladder */
-export function initialRung(severity: Severity): Rung {
-	if (severity === 'critical') return 'quarantine';
-	if (severity === 'error') return 'reset';
-	if (severity === 'warn') return 'observe';
-	return 'observe';
-}
-
-export interface BreakerState {
-	/** failures seen inside the window, per code */
-	hits: number[];
-	rung: Rung;
-	/** consecutive clean intervals, which is what decays the rung */
-	clean: number;
-}
-
 /**
- * Circuit breaker with decay.
+ * The repair ladder, re-exported from where it lives.
  *
- * Escalates one rung when the same code fires N times inside a window, and decays one rung after a
- * clean interval. **Never a fixed retry loop**: the alarm chain already learned that the hard way,
- * where a failing step that re-armed at +1 ms spun the object forever and starved every gated
- * request, and the fix was `min(30 s, 1 s x failures)`.
+ * There used to be a SECOND copy here, byte-identical, alongside `initialRung()` and a
+ * `CircuitBreaker` state machine with decay. The escalation that actually runs is `recordOutcome()`
+ * in `repair.ts`, driven from `supervise()`; the copy here was reached only by its own spec and by a
+ * test using it as a lookup table, so it was a duplicate ladder free to drift from the live one.
  */
-export class CircuitBreaker {
-	windowMs: number;
-	threshold: number;
-	states: Map<string, BreakerState>;
-
-	constructor(windowMs = 60_000, threshold = 3) {
-		this.windowMs = windowMs;
-		this.threshold = threshold;
-		this.states = new Map();
-	}
-
-	/** records a firing and returns the rung the repair should act at */
-	record(code: string, severity: Severity, nowMs: number): Rung {
-		const state = this.states.get(code) ?? {
-			hits: [],
-			rung: initialRung(severity),
-			clean: 0
-		};
-		state.hits = state.hits.filter((t) => nowMs - t < this.windowMs);
-		state.hits.push(nowMs);
-		state.clean = 0;
-		if (state.hits.length >= this.threshold) {
-			state.rung = this.escalate(state.rung);
-			// the window restarts, so N more failures are needed for the next rung
-			state.hits = [];
-		}
-		this.states.set(code, state);
-		return state.rung;
-	}
-
-	/** a clean interval decays every code one rung */
-	decay(): void {
-		for (const [code, state] of this.states) {
-			state.clean++;
-			const at = LADDER.indexOf(state.rung);
-			if (at <= 0) {
-				this.states.delete(code);
-				continue;
-			}
-			const next = LADDER[at - 1];
-			if (next) state.rung = next;
-		}
-	}
-
-	rungOf(code: string): Rung | null {
-		return this.states.get(code)?.rung ?? null;
-	}
-
-	private escalate(rung: Rung): Rung {
-		const at = LADDER.indexOf(rung);
-		const next = LADDER[Math.min(at + 1, LADDER.length - 1)];
-		return next ?? rung;
-	}
-}
+export { RUNGS as LADDER } from './repair.js';
+export type { Rung };
+import type { Rung } from './repair.js';
 
 /**
  * Whether the object should stop serving rather than serve something wrong.

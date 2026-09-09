@@ -58,6 +58,7 @@ const row = (over: Partial<FleetRow> = {}): FleetRow => ({
 	workerVersion: 'v1',
 	plan: 'free',
 	lastSeenMs: 1_000,
+	reconcileVersion: 0,
 	...over
 });
 
@@ -178,6 +179,7 @@ describe('warmTargets', () => {
 		coreVersion: '11.0.0',
 		workerVersion: 'w1',
 		plan: 'free',
+		reconcileVersion: 0,
 		lastSeenMs: NOW - ageMs
 	});
 

@@ -21,6 +21,28 @@ export type FleetDb = {
 	};
 };
 
+/**
+ * Adds a column to a table that may predate it, without an unguarded `ALTER`.
+ *
+ * A caught-and-ignored `ALTER TABLE` still dirties `sqlite_master` on every call, and doing that on
+ * the serve path took two of three runs into `migrate: starting`. The cost is attempting the
+ * statement, not the exception, so the check comes first.
+ */
+async function addColumnIfMissing(
+	db: FleetDb,
+	table: string,
+	column: string,
+	definition: string
+): Promise<boolean> {
+	const { results } = await db
+		.prepare(`SELECT name FROM pragma_table_info('${table}')`)
+		.bind()
+		.all<{ name: string }>();
+	if (results.some((r) => String(r.name) === column)) return false;
+	await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).bind().run();
+	return true;
+}
+
 /** what one site reports about itself */
 export type FleetRow = {
 	site: string;
@@ -32,6 +54,14 @@ export type FleetRow = {
 	workerVersion: string;
 	plan: 'free' | 'paid';
 	lastSeenMs: number;
+	/**
+	 * how far this site has reconciled with the pack that ships today.
+	 *
+	 * The pack generation says which pack the site was PROVISIONED from; this says which fixes have
+	 * since reached it. Without it "every site is patched" is a claim about a set the inventory
+	 * cannot distinguish, because the pack generation of an old site never moves.
+	 */
+	reconcileVersion: number;
 };
 
 /** how long a site may go unreported before it reports again even with nothing changed */
@@ -43,7 +73,8 @@ export const FLEET_DDL = `CREATE TABLE IF NOT EXISTS cfw_fleet (
   core_version TEXT NOT NULL,
   worker_version TEXT NOT NULL,
   plan TEXT NOT NULL,
-  last_seen_ms INTEGER NOT NULL
+  last_seen_ms INTEGER NOT NULL,
+  reconcile_version INTEGER NOT NULL DEFAULT 0
 )`;
 
 /**
@@ -59,30 +90,33 @@ export function shouldReport(previous: FleetRow | null, current: FleetRow, nowMs
 		previous.packGeneration !== current.packGeneration ||
 		previous.coreVersion !== current.coreVersion ||
 		previous.workerVersion !== current.workerVersion ||
-		previous.plan !== current.plan
+		previous.plan !== current.plan ||
+		previous.reconcileVersion !== current.reconcileVersion
 	) {
 		return true;
 	}
 	return nowMs - previous.lastSeenMs >= FLEET_HEARTBEAT_MS;
 }
 
-/** Creates the table. Idempotent, so every caller may run it. */
+/** Creates the table, and adds the columns an inventory written before them is missing. */
 export async function ensureFleetTable(db: FleetDb): Promise<void> {
 	await db.prepare(FLEET_DDL).bind().run();
+	await addColumnIfMissing(db, 'cfw_fleet', 'reconcile_version', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /** Writes one site's row, replacing whatever was there. */
 export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO cfw_fleet (site, pack_generation, core_version, worker_version, plan, last_seen_ms)
-       VALUES (?, ?, ?, ?, ?, ?)
+			`INSERT INTO cfw_fleet (site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(site) DO UPDATE SET
          pack_generation = excluded.pack_generation,
          core_version = excluded.core_version,
          worker_version = excluded.worker_version,
          plan = excluded.plan,
-         last_seen_ms = excluded.last_seen_ms`
+         last_seen_ms = excluded.last_seen_ms,
+         reconcile_version = excluded.reconcile_version`
 		)
 		.bind(
 			row.site,
@@ -90,7 +124,8 @@ export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 			row.coreVersion,
 			row.workerVersion,
 			row.plan,
-			Math.floor(row.lastSeenMs)
+			Math.floor(row.lastSeenMs),
+			Math.floor(row.reconcileVersion)
 		)
 		.run();
 }
@@ -99,7 +134,7 @@ export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 	const { results } = await db
 		.prepare(
-			'SELECT site, pack_generation, core_version, worker_version, plan, last_seen_ms FROM cfw_fleet ORDER BY site'
+			'SELECT site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version FROM cfw_fleet ORDER BY site'
 		)
 		.bind()
 		.all<Record<string, unknown>>();
@@ -109,7 +144,8 @@ export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 		coreVersion: String(r.core_version),
 		workerVersion: String(r.worker_version),
 		plan: String(r.plan) === 'paid' ? 'paid' : 'free',
-		lastSeenMs: Number(r.last_seen_ms)
+		lastSeenMs: Number(r.last_seen_ms),
+		reconcileVersion: Number(r.reconcile_version ?? 0)
 	}));
 }
 

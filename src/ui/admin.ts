@@ -18,11 +18,11 @@ import {
  * A button that appears to deploy and does not is worse than no button, so the Deploy surface renders
  * the manifest a provisioner would need and refuses to pretend it has one.
  *
- * SECURITY, and this is not optional. These pages drive privileged machinery -- Commands proxies to
- * `/__ops`, which runs cache rebuilds and module installs. There is no administrator authentication
- * in this Worker, so every route that renders these MUST stay behind `PW_DIAGNOSTICS` until one
- * exists. An unauthenticated admin UI over `/__ops` is a remote shell, which is the exact defect
- * `src/site.ts` already had once and fixed.
+ * SECURITY. These pages drive privileged machinery -- Commands proxies to `/__ops`, which runs cache
+ * rebuilds and module installs -- so every one of them takes the site's owner token, exchanged for an
+ * `HttpOnly` cookie by {@link renderLogin}. `PW_DIAGNOSTICS` is NOT a way in: it used to be the only
+ * way in, which meant the surface was reachable by anybody who could reach the worker and each
+ * button's `window.prompt()` accepted any string.
  */
 
 /** escapes text for HTML text nodes and quoted attributes alike */
@@ -48,6 +48,10 @@ export type AdminPage = 'thresholds' | 'extend' | 'commands' | 'deploy' | 'git' 
  * this Worker claims has to be somewhere Drupal will not generate.
  */
 export const SURFACE_PREFIX = '/_cfw';
+
+/** where a browser exchanges the owner token for a session cookie, and gives it back */
+export const LOGIN_PATH = `${SURFACE_PREFIX}/login`;
+export const LOGOUT_PATH = `${SURFACE_PREFIX}/logout`;
 
 /** every page, with the path that renders it */
 export const ADMIN_PAGES: readonly { page: AdminPage; path: string; label: string }[] = [
@@ -82,24 +86,56 @@ button{padding:.5rem .9rem;border:1px solid var(--line);border-radius:4px;backgr
 button[disabled]{opacity:.5;cursor:not-allowed;background:var(--card);color:var(--dim)}
 ul{margin:.3rem 0 .8rem 1.2rem;padding:0}li{margin:.2rem 0}`;
 
+/** the head and body wrapper both the shell and the sign-in page use */
+function page(title: string, nav: string, body: string): string {
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>${STYLE}</style></head><body>
+<nav>${nav}</nav>
+<main>${body}</main></body></html>`;
+}
+
 /**
  * Wraps a page body in the shell.
  *
  * @param page which nav item is current
  * @param body already-escaped HTML
  */
-export function renderShell(page: AdminPage, body: string, env?: PlanEnv | null): string {
+export function renderShell(current: AdminPage, body: string, env?: PlanEnv | null): string {
 	const nav = ADMIN_PAGES.map(
 		(p) =>
-			`<a href="${escapeHtml(p.path)}"${p.page === page ? ' aria-current="page"' : ''}>${escapeHtml(p.label)}</a>`
+			`<a href="${escapeHtml(p.path)}"${p.page === current ? ' aria-current="page"' : ''}>${escapeHtml(p.label)}</a>`
 	).join('');
 	const plan = isPaid(env) ? 'paid' : 'free';
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(ADMIN_PAGES.find((p) => p.page === page)?.label ?? 'Admin')}</title>
-<style>${STYLE}</style></head><body>
-<nav>${nav}<a class="dim" style="margin-left:auto;border:0" href="${SURFACE_PREFIX}">plan: ${escapeHtml(plan)}</a></nav>
-<main>${body}</main></body></html>`;
+	return page(
+		ADMIN_PAGES.find((p) => p.page === current)?.label ?? 'Admin',
+		`${nav}<span class="dim" style="margin-left:auto;padding:.6rem .9rem">plan: ${escapeHtml(plan)}</span>
+<a href="${LOGOUT_PATH}" id="signout">Sign Out</a>`,
+		body
+	);
+}
+
+/**
+ * The sign-in page.
+ *
+ * A form POST rather than a header, because a browser cannot put one on its own navigation. What it
+ * takes is the owner token minted by `/firstrun`, which is the same credential `/export` already
+ * takes -- there is no second password to lose.
+ */
+export function renderLogin(next: string | null, error: string | null): string {
+	return page(
+		'Sign In',
+		`<span class="dim" style="padding:.6rem .9rem">drupflare</span>`,
+		`<h1>Sign In</h1>
+<p class="sub">These pages install code and run privileged operations, so they take the site's owner token. It was printed once by the first-run step that created this site.</p>
+${error ? `<div class="card bad"><span class="over">${escapeHtml(error)}</span></div>` : ''}
+<form method="POST" action="${LOGIN_PATH}">
+<input type="hidden" name="next" value="${escapeHtml(next ?? SURFACE_PREFIX)}">
+<input type="password" name="token" id="token" placeholder="owner token" autocomplete="current-password" autofocus>
+<button type="submit">Sign In</button></form>
+<p class="sub">Lost it? It cannot be read back. Re-run first-run with <code>?force=1</code> and the old token, which mints the site's credentials again.</p>`
+	);
 }
 
 const pill = (status: string) => {
@@ -201,14 +237,20 @@ export function renderExtend(
 					(e) =>
 						`<tr><td><code>${escapeHtml(e.name)}</code></td><td>${escapeHtml(e.version ?? '-')}</td>
 <td>${pill(e.verdict === 'installable' ? 'ok' : e.verdict === 'blocked' || e.verdict === 'not-found' ? 'over' : 'warn')} ${escapeHtml(e.verdict ?? 'unknown')}</td>
-<td><span class="dim">${escapeHtml(e.reason ?? '')}</span></td></tr>`
+<td><span class="dim">${escapeHtml(e.reason ?? '')}</span></td>
+<td>${
+							e.verdict === 'installable' || e.verdict === 'unverifiable'
+								? `<button data-install="${escapeHtml(e.name)}"${e.verdict === 'unverifiable' ? ' data-force="1"' : ''}>Install</button>
+<button data-enable="${escapeHtml(e.name)}" disabled>Enable</button>`
+								: '<span class="dim">-</span>'
+						}</td></tr>`
 				)
 				.join('')
-		: `<tr><td colspan="4" class="dim">Nothing checked yet.</td></tr>`;
+		: `<tr><td colspan="5" class="dim">Nothing checked yet.</td></tr>`;
 
 	const install = isPaid(env)
 		? ''
-		: `<div class="card warn"><p><strong>Installing spends the serving ceiling.</strong> A module install runs as a Workflow, and a Workflow invocation is billed against the same 100,000/day quota as a visitor request. On free that is 1,024 steps per instance, so one install is bounded rather than free.</p></div>`;
+		: `<div class="card warn"><p><strong>Installing spends the serving ceiling.</strong> An install is billed against the same 100,000/day quota as a visitor request, and it leaves the object near the isolate's memory limit, so the cache is cold for one visit afterwards.</p></div>`;
 
 	return `<h1>Extend</h1>
 <p class="sub">Check whether a module can be installed here before trying. Type a package name the way you would to Composer.</p>
@@ -217,9 +259,54 @@ export function renderExtend(
 <button type="submit">Check</button></form>
 ${note ? `<div class="card"><p>${escapeHtml(note)}</p></div>` : ''}
 ${install}
-<table><thead><tr><th>Package</th><th>Newest</th><th>Verdict</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table>
-<p class="sub"><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>, not <code>repo.packagist.org</code> -- the latter 404s for every Drupal package, which made this answer <em>not-found</em> for the whole ecosystem until it was fixed.</p>
-<p class="sub">A verdict of <em>unverifiable</em> means the requirement could not be read, not that the module is broken. It is reported separately from <em>blocked</em>.</p>`;
+<table><thead><tr><th>Package</th><th>Newest</th><th>Verdict</th><th>Why</th><th>Install</th></tr></thead><tbody>${rows}</tbody></table>
+<p class="sub"><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>; everything else resolves against <code>repo.packagist.org</code>.</p>
+<p class="sub">A verdict of <em>unverifiable</em> means the requirement could not be read, not that the module is broken. It is reported separately from <em>blocked</em>.</p>
+<p class="sub">Installing fetches the package and writes its files. Enabling is the separate step that turns the module on, and it reboots the interpreter.</p>
+<div id="installed"></div>
+<script>
+(function () {
+	const out = document.getElementById('installed');
+	// the module a composer package provides is its name after the vendor prefix, so drupal/pathauto
+	// enables as pathauto, which is what /enable takes
+	function machineName(pkg) { return String(pkg).split('/').pop().replace(/-/g, '_'); }
+	async function ask(url) {
+		const res = await fetch(url, { credentials: 'same-origin' });
+		const body = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(body.refused || body.error || 'HTTP ' + res.status);
+		return body;
+	}
+	async function install(name, force) {
+		out.textContent = 'Installing ' + name + '...';
+		try {
+			const body = await ask('/install?module=' + encodeURIComponent(name) + (force ? '&force=1' : ''));
+			out.textContent = 'Installed ' + name + ': ' + (body.stored || 0) + ' files. Now enable it.';
+			const b = document.querySelector('[data-enable="' + name + '"]');
+			if (b) b.disabled = false;
+		} catch (e) {
+			out.textContent = 'Refused: ' + e.message;
+		}
+	}
+	async function enable(name) {
+		const machine = machineName(name);
+		out.textContent = 'Enabling ' + machine + '...';
+		try {
+			const body = await ask('/enable?module=' + encodeURIComponent(machine));
+			out.textContent = body.enabled
+				? 'Enabled ' + machine + '.'
+				: 'Not enabled: ' + (body.reason || body.error || 'unknown');
+		} catch (e) {
+			out.textContent = 'Refused: ' + e.message;
+		}
+	}
+	for (const b of document.querySelectorAll('[data-install]')) {
+		b.addEventListener('click', () => install(b.dataset.install, b.dataset.force === '1'));
+	}
+	for (const b of document.querySelectorAll('[data-enable]')) {
+		b.addEventListener('click', () => enable(b.dataset.enable));
+	}
+})();
+</script>`;
 }
 // #endregion
 
@@ -282,7 +369,35 @@ export const DRUSH_ALIASES: Readonly<Record<string, string>> = {
 	'core-status': 'status',
 	st: 'status',
 	'sql-dump': 'sql-dump',
-	'sql:dump': 'sql-dump'
+	'sql:dump': 'sql-dump',
+	'core:requirements': 'requirements',
+	requirements: 'requirements',
+	'state:get': 'state-get',
+	'state-get': 'state-get',
+	sget: 'state-get',
+	'state:set': 'state-set',
+	'state-set': 'state-set',
+	sset: 'state-set',
+	'config:get': 'config-get',
+	'config-get': 'config-get',
+	cget: 'config-get',
+	'config:set': 'config-set',
+	'config-set': 'config-set',
+	cset: 'config-set',
+	'role:list': 'role-list',
+	'role-list': 'role-list',
+	rls: 'role-list',
+	'user:information': 'user-info',
+	'user-info': 'user-info',
+	uinf: 'user-info',
+	'watchdog:show': 'watchdog-show',
+	'watchdog-show': 'watchdog-show',
+	'wd-show': 'watchdog-show',
+	ws: 'watchdog-show',
+	'queue:list': 'queue-list',
+	'queue-list': 'queue-list',
+	'cache:clear-bin': 'cache-clear',
+	'cache-clear': 'cache-clear'
 };
 
 /**
@@ -410,8 +525,8 @@ export const PROVISION_STEPS: readonly ProvisionStep[] = [
 	},
 	{
 		id: 'admin-auth',
-		label: 'Set an administrator credential',
-		detail: 'these admin pages drive /__ops, so they cannot be public without one; today they are gated behind PW_DIAGNOSTICS instead',
+		label: 'Record the owner token',
+		detail: 'first run mints it once and it cannot be read back; it is what signs in to these pages and what /export takes',
 		automatable: false
 	}
 ];
@@ -452,12 +567,10 @@ document.getElementById('cfoauth').addEventListener('submit', async (e) => {
   const out = document.getElementById('cfoauth-out');
   const id = new FormData(e.target).get('client_id');
   if (!id) { out.textContent = 'Enter the client ID from your OAuth client.'; return; }
-  const token = window.prompt('Owner token for this site');
-  if (!token) return;
   out.textContent = 'Starting...';
   try {
     const res = await fetch('/setup/cf?action=connect&client_id=' + encodeURIComponent(id), {
-      headers: { authorization: 'Bearer ' + token }
+      credentials: 'same-origin'
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'refused');
@@ -622,12 +735,11 @@ ${r.previewOf ? `<button data-act="unpreview" data-id="${id}">Exit Preview</butt
 <script>
 const out = document.getElementById('git-out');
 const detail = document.getElementById('git-detail');
-function owner() { return window.prompt('Owner token for this site'); }
 function esc(s) { const d = document.createElement('span'); d.textContent = String(s == null ? '' : s); return d.innerHTML; }
-async function call(params, token) {
-  const res = await fetch('/git?' + new URLSearchParams(params), {
-    headers: { authorization: 'Bearer ' + token }
-  });
+// the session cookie rides on a same-origin fetch, so nothing here holds the token
+async function call(params) {
+  const res = await fetch('/git?' + new URLSearchParams(params), { credentials: 'same-origin' });
+  if (res.status === 401) { window.location.href = '${LOGIN_PATH}?next=' + encodeURIComponent(location.pathname); return; }
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || 'refused');
   return data;
@@ -665,10 +777,9 @@ function showPulls(data, id) {
     '<p class="sub">A preview installs that request\\'s head instead of the branch. Polling and pushes are held until you leave it.</p></div>';
   detail.querySelectorAll('button[data-preview]').forEach(function (b) {
     b.addEventListener('click', async function () {
-      const t = owner(); if (!t) return;
-      out.textContent = 'Previewing #' + b.dataset.preview + '...';
+            out.textContent = 'Previewing #' + b.dataset.preview + '...';
       try {
-        const res = await call({ action: 'preview', id: b.dataset.id, pr: b.dataset.preview }, t);
+        const res = await call({ action: 'preview', id: b.dataset.id, pr: b.dataset.preview });
         out.textContent = 'Previewing #' + b.dataset.preview + '.';
         showChanges(res);
       } catch (err) { out.textContent = 'Failed: ' + err.message; }
@@ -680,14 +791,13 @@ document.getElementById('git-add').addEventListener('submit', async (e) => {
   const f = new FormData(e.target);
   if (!f.get('repo')) { out.textContent = 'A repository is needed.'; return; }
   if (!f.get('token') && f.get('provider') !== 'generic') { out.textContent = 'That provider needs an access token.'; return; }
-  const t = owner(); if (!t) return;
-  out.textContent = 'Connecting...';
+    out.textContent = 'Connecting...';
   try {
     const data = await call({
       action: 'add', provider: f.get('provider'), repo: f.get('repo'),
       branch: f.get('branch') || '', token: f.get('token') || '', email: f.get('email') || '',
       username: f.get('username') || '', interval: f.get('interval') || '60'
-    }, t);
+    });
     out.textContent = 'Connected ' + data.repo + ' at ' + (data.head || 'unknown') + '.';
     window.location.reload();
   } catch (err) { out.textContent = 'Could not connect: ' + err.message; }
@@ -695,9 +805,8 @@ document.getElementById('git-add').addEventListener('submit', async (e) => {
 document.querySelectorAll('select[data-branch]').forEach((s) => {
   s.addEventListener('focus', async () => {
     if (s.dataset.loaded) return;
-    const t = owner(); if (!t) return;
-    try {
-      const data = await call({ action: 'branches', id: s.dataset.branch }, t);
+        try {
+      const data = await call({ action: 'branches', id: s.dataset.branch });
       s.dataset.loaded = '1';
       data.branches.forEach(function (b) {
         const o = document.createElement('option');
@@ -708,10 +817,9 @@ document.querySelectorAll('select[data-branch]').forEach((s) => {
   });
   s.addEventListener('change', async () => {
     if (!s.value) return;
-    const t = owner(); if (!t) return;
-    out.textContent = 'Switching to ' + s.value + '...';
+        out.textContent = 'Switching to ' + s.value + '...';
     try {
-      const data = await call({ action: 'switch', id: s.dataset.branch, branch: s.value }, t);
+      const data = await call({ action: 'switch', id: s.dataset.branch, branch: s.value });
       showChanges(data);
       window.location.reload();
     } catch (err) { out.textContent = 'Could not switch: ' + err.message; }
@@ -719,19 +827,18 @@ document.querySelectorAll('select[data-branch]').forEach((s) => {
 });
 document.querySelectorAll('input[data-interval]').forEach((i) => {
   i.addEventListener('change', async () => {
-    const t = owner(); if (!t) return;
-    try {
-      const data = await call({ action: 'interval', id: i.dataset.interval, minutes: i.value }, t);
+        try {
+      const data = await call({ action: 'interval', id: i.dataset.interval, minutes: i.value });
       out.textContent = data.message;
     } catch (err) { out.textContent = 'Failed: ' + err.message; }
   });
 });
 document.querySelectorAll('button[data-act]').forEach((b) => {
   b.addEventListener('click', async () => {
-    const t = owner(); if (!t) return;
+    if (b.dataset.act === 'remove' && !window.confirm('Disconnect ' + b.dataset.id + '? Its files stay installed.')) return;
     out.textContent = b.dataset.act + '...';
     try {
-      const data = await call({ action: b.dataset.act, id: b.dataset.id }, t);
+      const data = await call({ action: b.dataset.act, id: b.dataset.id });
       if (b.dataset.act === 'diff' || b.dataset.act === 'pull' || b.dataset.act === 'unpreview') {
         showChanges(data);
         out.textContent = data.applied === false && data.rolledBack ? data.error : 'done';
@@ -801,21 +908,63 @@ Client secret ${row.secretPresent ? `<span class="ok">present</span>` : `<span c
 <div class="card"><code>${escapeHtml(row.redirectUri)}</code></div>
 
 <h2>Configure</h2>
-<p class="sub">Submitting needs the owner token minted at first run; send it as <code>Authorization: Bearer</code>.</p>
-<form method="POST" action="/setup/oidc?action=save">
+<p class="sub">Saving fetches the issuer's discovery document, so a wrong issuer is reported here rather than at the first login.</p>
+<form id="oidc-form">
 <input type="text" name="issuer" placeholder="https://accounts.example.com" value="${escapeHtml(row.issuer)}" spellcheck="false">
 <input type="text" name="clientId" placeholder="client id" value="${escapeHtml(row.clientId)}" spellcheck="false">
-<button type="submit">Save</button></form>
+<button type="submit">Save</button>
+<button type="button" id="oidc-clear"${configured ? '' : ' disabled'}>Clear</button></form>
+<p id="oidc-out" class="sub"></p>
 ${row.error ? `<div class="card bad"><span class="over">${escapeHtml(row.error)}</span></div>` : ''}
-${
-	d
-		? `<div class="card${d.ok ? '' : ' bad'}"><strong>Discovery</strong><p class="sub" style="margin:.3rem 0 0">${
-				d.ok
-					? `authorization <code>${escapeHtml(d.authorization ?? '')}</code><br>token <code>${escapeHtml(d.token ?? '')}</code><br>jwks <code>${escapeHtml(d.jwks ?? '')}</code>`
-					: `<span class="over">${escapeHtml(d.error ?? 'discovery failed')}</span>`
-			}</p></div>`
-		: ''
-}
+<div id="oidc-discovery">${
+		d
+			? `<div class="card${d.ok ? '' : ' bad'}"><strong>Discovery</strong><p class="sub" style="margin:.3rem 0 0">${
+					d.ok
+						? `authorization <code>${escapeHtml(d.authorization ?? '')}</code><br>token <code>${escapeHtml(d.token ?? '')}</code><br>jwks <code>${escapeHtml(d.jwks ?? '')}</code>`
+						: `<span class="over">${escapeHtml(d.error ?? 'discovery failed')}</span>`
+				}</p></div>`
+			: ''
+	}</div>
+<script>
+(function () {
+  const out = document.getElementById('oidc-out');
+  const shown = document.getElementById('oidc-discovery');
+  function esc(s) { const e = document.createElement('span'); e.textContent = String(s == null ? '' : s); return e.innerHTML; }
+  async function send(url, init) {
+    const res = await fetch(url, Object.assign({ credentials: 'same-origin' }, init || {}));
+    if (res.status === 401) { window.location.href = '${LOGIN_PATH}?next=' + encodeURIComponent(location.pathname); return null; }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.ok === false) throw new Error(body.error || 'HTTP ' + res.status);
+    return body;
+  }
+  document.getElementById('oidc-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    out.textContent = 'Saving...';
+    try {
+      const body = await send('/setup/oidc?action=save', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(new FormData(e.target)).toString()
+      });
+      if (!body) return;
+      out.textContent = 'Saved.';
+      const dd = body.discovery;
+      shown.innerHTML = !dd ? '' : dd.ok
+        ? '<div class="card"><strong>Discovery</strong><p class="sub" style="margin:.3rem 0 0">authorization <code>' +
+          esc(dd.authorization) + '</code><br>token <code>' + esc(dd.token) + '</code><br>jwks <code>' + esc(dd.jwks) + '</code></p></div>'
+        : '<div class="card bad"><strong>Discovery</strong><p class="sub" style="margin:.3rem 0 0"><span class="over">' + esc(dd.error) + '</span></p></div>';
+      document.getElementById('oidc-clear').disabled = false;
+    } catch (err) { out.textContent = 'Refused: ' + err.message; }
+  });
+  document.getElementById('oidc-clear').addEventListener('click', async () => {
+    if (!window.confirm('Clear the issuer and client id? Single sign-on stops working.')) return;
+    out.textContent = 'Clearing...';
+    try {
+      if (await send('/setup/oidc?action=clear')) window.location.reload();
+    } catch (err) { out.textContent = 'Refused: ' + err.message; }
+  });
+})();
+</script>
 
 <h2>What a Login Refuses</h2>
 <ul>

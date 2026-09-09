@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import binary85Source from '../../../src/runtime/php-binary-85.ts?raw';
 import binaryO2Source from '../../../src/runtime/php-binary-o2.ts?raw';
-import binaryZstdSource from '../../../src/runtime/php-binary-zstd.ts?raw';
+import binaryRawSource from '../../../src/runtime/php-binary-raw.ts?raw';
 import siteDoSource from '../../../src/site-do.ts?raw';
 import siteSource from '../../../src/site.ts?raw';
 import wranglerSource from '../../../wrangler.jsonc?raw';
@@ -66,12 +66,21 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 	});
 
 	it('gates on membership of the public set rather than on the route table alone', () => {
-		// the exact shape matters: an unconditional `PW_DIAGNOSTICS !== '1'` return is the bug
+		// the exact shape matters: an unconditional `PW_DIAGNOSTICS !== '1'` return is the bug, and
+		// the flag has to be read from `env` rather than from a module-scope constant
 		expect(
-			/if\s*\(\s*!PUBLIC_ROUTES\.has\([^)]+\)\s*&&\s*env\?\.PW_DIAGNOSTICS\s*!==\s*'1'\s*\)/.test(
-				siteSource
-			)
+			/!PUBLIC_ROUTES\.has\([^)]+\)\s*&&\s*env\?\.PW_DIAGNOSTICS\s*!==\s*'1'/.test(siteSource)
 		).toBe(true);
+	});
+
+	it('does not let the diagnostic flag open the admin surface', () => {
+		// the surface installs code, so it is the one owner set the flag must not reach. Behavioural
+		// coverage is `tests/integration/admin-surface.spec.ts`; this pins the shape the gate needs,
+		// because an `||` that fell out of the condition reads as a harmless simplification
+		const at = siteSource.indexOf('const surface = SURFACE_ROUTES.has(');
+		const gate = at < 0 ? '' : siteSource.slice(at, siteSource.indexOf('const lane =', at));
+		expect(gate, 'the surface check is not in the gate').toContain('surface ||');
+		expect(gate).toContain('ownerCredential(');
 	});
 
 	it('still refuses an unknown path before either check', () => {
@@ -85,8 +94,10 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 /** every seam the alias is allowed to name, so a new one has to be registered here */
 const SEAM_SOURCES: Record<string, string> = {
 	'src/runtime/php-binary-o2.ts': binaryO2Source,
-	'src/runtime/php-binary-zstd.ts': binaryZstdSource,
-	'src/runtime/php-binary-85.ts': binary85Source
+	'src/runtime/php-binary-85.ts': binary85Source,
+	// the shipping seam since 2026-09-04, when Cloudflare removed the compressed bundle limit: the
+	// interpreter travels as a raw `CompiledWasm` import rather than a brotli frame
+	'src/runtime/php-binary-raw.ts': binaryRawSource
 };
 
 describe('the shipping config does not enable diagnostics', () => {

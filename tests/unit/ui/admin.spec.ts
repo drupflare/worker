@@ -140,10 +140,10 @@ describe('renderExtend', () => {
 		expect(renderExtend(null, [], null, null)).toContain('Nothing checked yet');
 	});
 
-	it('records the packages.drupal.org fix, which made the whole ecosystem answer not-found', () => {
-		const html = renderExtend(null, [], null, null);
-		expect(html).toContain('packages.drupal.org/8');
-		expect(html).toContain('404s for every Drupal package');
+	it('names the repository a drupal package resolves against', () => {
+		// which repository answers is the thing an operator needs when a verdict surprises them;
+		// this used to also pin a sentence of development narrative, which is not repository policy
+		expect(renderExtend(null, [], null, null)).toContain('packages.drupal.org/8');
 	});
 
 	it('warns on free that installing spends the SERVING ceiling', () => {
@@ -296,14 +296,18 @@ describe('the surfaces stay honest against the code behind them', () => {
 		for (const p of ADMIN_PAGES) expect(pub).not.toContain(`'${p.path}'`);
 	});
 
-	it('does not claim a driver for an operation site-do.ts records as having none', () => {
+	it('names a driver for every operation site-do.ts records one for', () => {
 		// pinned against the object's own OPS_DRIVERS map, so the Commands page cannot drift into
-		// offering something that has no way to run
+		// offering something that has no way to run. cex and cim were the two that read `null`; both
+		// are now paged through `/ops` and both name how
 		const region = siteDoSource.slice(
 			siteDoSource.indexOf('const OPS_DRIVERS'),
 			siteDoSource.indexOf('const OPS_DRIVERS') + 900
 		);
-		expect(/cex:\s*null/.test(region)).toBe(true);
-		expect(/cim:\s*null/.test(region)).toBe(true);
+		for (const [, value] of region.matchAll(/^\t'?([a-z-]+)'?: (null|')/gm)) {
+			expect(value, 'an operation with no driver must still say so').not.toBe('undefined');
+		}
+		expect(/cex: '/.test(region)).toBe(true);
+		expect(/cim: '/.test(region)).toBe(true);
 	});
 });

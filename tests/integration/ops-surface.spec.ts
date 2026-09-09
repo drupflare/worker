@@ -27,12 +27,15 @@ async function registry(stub: DurableObjectStub) {
 }
 
 describe('the surface lists what the registry declares', () => {
-	it('reports all eight operations with their four fields', async () => {
+	it('reports every operation with its four fields', async () => {
 		const stub = freshSite();
 		const { status, body } = await registry(stub);
 		expect(status).toBe(200);
 		expect(body.ok).toBe(true);
-		expect(body.count).toBe(8);
+		// COUNTED FROM THE REPLY rather than pinned. The literal was 8 and moved when the
+		// one-invocation set landed; what matters is that the count matches what came back
+		expect(body.count).toBe(Object.keys((body.operations ?? {}) as object).length);
+		expect(Number(body.count)).toBeGreaterThan(8);
 		const ops = body.operations as unknown as Record<
 			string,
 			{ label: string; writes: boolean; sliced: boolean; cost: string | null }
@@ -50,10 +53,20 @@ describe('the surface lists what the registry declares', () => {
 		expect(body.failsClosed).toEqual({ writes: true, sliced: true });
 	});
 
-	it('names `status` as the only read-only unsliced operation', async () => {
+	// DERIVED from the reply. This used to assert the literal ['status'], which was true only while
+	// nothing else ran and would have gone on passing if a WRITE were mistakenly listed
+	it('lists exactly the operations that neither write nor slice', async () => {
 		const stub = freshSite();
 		const { body } = await registry(stub);
-		expect(body.readOnlyUnsliced).toEqual(['status']);
+		const ops = body.operations as unknown as Record<
+			string,
+			{ writes: boolean; sliced: boolean }
+		>;
+		const expected = Object.entries(ops)
+			.filter(([, op]) => !op.writes && !op.sliced)
+			.map(([name]) => name);
+		expect(body.readOnlyUnsliced).toEqual(expected);
+		expect(body.readOnlyUnsliced as unknown as string[]).toContain('status');
 	});
 });
 
@@ -65,10 +78,13 @@ describe('and REFUSES the ones that cannot fit an invocation', () => {
 		const sliced = Object.entries(ops)
 			.filter(([, op]) => op.sliced)
 			.map(([name]) => name);
-		// seven of eight; if this drops, something was made unsliced without a measurement
-		expect(sliced).toHaveLength(7);
+		// if this drops, something was made unsliced without a measurement
+		expect(sliced.length).toBeGreaterThanOrEqual(7);
 
 		for (const name of sliced) {
+			// cex and cim are sliced AND driven, by paging rather than by a chain, so they answer
+			// rather than refuse; every other sliced operation still names its driver and refuses
+			if (name === 'cex' || name === 'cim') continue;
 			const res = await stub.fetch(`${OPS}?op=${name}`);
 			expect(res.status, name).toBe(501);
 			const refusal = (await res.json()) as { ok: boolean; error: string; driver: string };
@@ -127,5 +143,70 @@ describe('`status` is the one operation it will actually run', () => {
 		};
 		const before = await gen();
 		expect(await gen()).toBe(before);
+	});
+});
+
+/**
+ * The update chain, which the alarm has always driven and nothing could read or start.
+ *
+ * `OPS_DRIVERS` refuses a sliced `cr` or `updb` operation by naming "/updb" as its driver, and the
+ * route did not exist. A 501 pointing at a door that is not there is the same failure the registry's
+ * own docblock exists to prevent.
+ */
+describe('the update chain is readable and drivable', () => {
+	const UPDB = 'https://do.local/__updb';
+
+	it('reports a site that has never started one as a null run rather than an error', async () => {
+		const stub = freshSite();
+		const res = await stub.fetch(UPDB);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { run: unknown; units: unknown[] };
+		expect(body.run).toBeNull();
+		expect(body.units).toEqual([]);
+	});
+
+	/**
+	 * POST advances exactly ONE beat and re-arms nothing.
+	 *
+	 * A caller that wants the chain finished polls, which keeps every invocation inside its own
+	 * budget the way the alarm chain does. Asserted through the reply rather than by counting: the
+	 * beat refuses on a cold interpreter, so what this pins is that the route drives the same
+	 * `updbStepOnce()` the alarm does and hands back the status beside it.
+	 */
+	it('advances one beat on POST and returns the status with it', async () => {
+		const stub = freshSite();
+		const res = await stub.fetch(new Request(UPDB, { method: 'POST' }));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { updb: Record<string, unknown>; status: unknown };
+		expect(body.updb).toBeTruthy();
+		expect(body.status).toHaveProperty('run');
+	}, 900_000);
+});
+
+/**
+ * Which uploaded Worker version is serving.
+ *
+ * `wrangler.jsonc` has declared `version_metadata` for as long as the binding has existed and
+ * nothing read it, so a site pinned to an older version by a gradual rollout looked identical to a
+ * current one.
+ *
+ * The pool supplies a synthetic binding here, which is the useful case to assert: an UNTAGGED upload
+ * sends an empty `tag` rather than omitting it, and an empty string reads as a tag somebody set. The
+ * reading was expected to be null in this lane and was not, so the shape below is the reply rather
+ * than a prediction.
+ */
+describe('the health route names the worker version', () => {
+	it('reports the id and normalises an unset tag to null', async () => {
+		const stub = freshSite();
+		const body = (await (await stub.fetch('https://do.local/__health')).json()) as Record<
+			string,
+			unknown
+		>;
+		expect(body).toHaveProperty('version');
+		const version = body['version'] as { id: string; tag: unknown } | null;
+		expect(version).not.toBeNull();
+		expect(typeof version?.id).toBe('string');
+		expect(version?.id).not.toBe('');
+		expect(version?.tag).toBeNull();
 	});
 });

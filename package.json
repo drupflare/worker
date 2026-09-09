@@ -69,6 +69,7 @@
 		"measure:abi-control": "node scripts/measure/abi-speed.ts --abis=wasm32,wasm32 --n=25",
 		"measure:index-audit": "bun scripts/measure/index-audit.ts",
 		"measure:vps": "bun scripts/measure/vps-compare.ts",
+		"measure:host": "bun scripts/measure/host-verdict.ts",
 		"measure:bench-site": "bun scripts/measure/bench-site.ts",
 		"vps:up": "docker compose -f docker/vps.yml up -d --build",
 		"vps:down": "docker compose -f docker/vps.yml down -v",

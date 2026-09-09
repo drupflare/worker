@@ -34,7 +34,21 @@ export type PlanSlot =
 	 * `hook_views_pre_view()` may set it to anything, so any 64 hex characters are a legal value.
 	 */
 	| { kind: 'view_dom_id'; head: number }
+	/**
+	 * Drupal's session CSRF token, `Crypt::hmacBase64('user.logout', session_seed . private_key)`:
+	 * 43 base64url characters, constant for a session and different for every other one.
+	 *
+	 * MEASURED, and it is the whole reason a shared role-set plan could not compile an authenticated
+	 * page. Two sessions of one role set rendering `/` differ in exactly this value and nothing else --
+	 * 103,697 bytes each, one varying token in two places, every `data-contextual-token` identical.
+	 * Unlike the other kinds it cannot be generated, only substituted: the value belongs to the visitor
+	 * being served, so {@link fillSlots} takes it from the caller and refuses without one.
+	 */
+	| { kind: 'csrf'; head: number }
 	| { kind: 'unknown'; bytes: number };
+
+/** what a slot cannot be generated from and must be supplied per request */
+export type SlotValues = { csrf?: string | null };
 
 export type RenderPlan = {
 	path: string;
@@ -84,43 +98,67 @@ function randomDomId(): string {
 /** the two places Drupal core prints a view's dom id, minus the value itself */
 const DOM_ID_MARKERS = ['js-view-dom-id-', 'view_dom_id":"'];
 
+/** where Drupal core prints the session CSRF token; the logout link is on every authenticated page */
+const CSRF_MARKERS = ['user/logout?token='];
+
+/** the fixed-width per-request values, each recognised the same way and only by its own marker */
+const TOKEN_KINDS = [
+	{ kind: 'view_dom_id' as const, width: 64, charset: /^[0-9a-f]*$/, markers: DOM_ID_MARKERS },
+	{ kind: 'csrf' as const, width: 43, charset: /^[A-Za-z0-9_-]*$/, markers: CSRF_MARKERS }
+];
+
 /**
- * A varying region that is part of a view's dom id, or null.
+ * A varying region that is one of the fixed-width tokens above, or null.
  *
- * The region is not a whole id: the bracket around it ate whatever characters the two values
- * happened to share, and two random hex strings share a leading one AND a trailing one about one
- * time in sixteen each. Both borrowed pieces come back off the constants either side, so every
- * split of the missing count is tried rather than assuming it is all at the front.
+ * The region is not a whole value: the bracket around it ate whatever characters the two samples
+ * happened to share, and two random strings share a leading one AND a trailing one often enough to
+ * matter. Both borrowed pieces come back off the constants either side, so every split of the
+ * missing count is tried rather than assuming it is all at the front.
  *
- * The marker check is what separates this from any other pair of differing hex runs. A region that
- * fails it stays opaque rather than being filled with a plausible value.
+ * The marker check is what separates this from any other pair of differing runs in the same charset.
+ * A region that fails it stays opaque rather than being filled with a plausible value.
  */
-function recogniseDomId(
+function recogniseToken(
 	spanA: string,
 	spanB: string,
 	before: string,
 	after: string
 ): { slot: PlanSlot; sample: string; sampleB: string; consumed: number } | null {
 	if (spanA.length !== spanB.length || spanA === '' || spanA === spanB) return null;
-	if (!/^[0-9a-f]+$/.test(spanA) || !/^[0-9a-f]+$/.test(spanB)) return null;
-	const missing = 64 - spanA.length;
-	if (missing < 0) return null;
-	for (let head = missing; head >= 0; head--) {
-		const consumed = missing - head;
-		if (head > before.length || consumed > after.length) continue;
-		const prefix = head === 0 ? '' : before.slice(before.length - head);
-		const suffix = after.slice(0, consumed);
-		if (!/^[0-9a-f]*$/.test(prefix) || !/^[0-9a-f]*$/.test(suffix)) continue;
-		const marked = before.slice(0, before.length - head);
-		if (!DOM_ID_MARKERS.some((m) => marked.endsWith(m))) continue;
-		return {
-			slot: { kind: 'view_dom_id', head },
-			sample: spanA + suffix,
-			sampleB: spanB + suffix,
-			consumed
-		};
+	for (const { kind, width, charset, markers } of TOKEN_KINDS) {
+		if (!charset.test(spanA) || !charset.test(spanB)) continue;
+		const missing = width - spanA.length;
+		if (missing < 0) continue;
+		for (let head = missing; head >= 0; head--) {
+			const consumed = missing - head;
+			if (head > before.length || consumed > after.length) continue;
+			const prefix = head === 0 ? '' : before.slice(before.length - head);
+			const suffix = after.slice(0, consumed);
+			if (!charset.test(prefix) || !charset.test(suffix)) continue;
+			const marked = before.slice(0, before.length - head);
+			if (!markers.some((m) => marked.endsWith(m))) continue;
+			return {
+				slot: { kind, head },
+				sample: spanA + suffix,
+				sampleB: spanB + suffix,
+				consumed
+			};
+		}
 	}
 	return null;
+}
+
+/** one 43-character base64url run, the shape `Crypt::hmacBase64()` returns */
+const CSRF_VALUE = /user\/logout\?token=([A-Za-z0-9_-]{43})/;
+
+/**
+ * The session CSRF token in one render, or null.
+ *
+ * Read out of the RENDER rather than off the request, which is the same trust argument
+ * `rememberRoles()` makes: a client cannot present a token, it is told what its own is.
+ */
+export function sessionCsrf(html: string): string | null {
+	return CSRF_VALUE.exec(html)?.[1] ?? null;
 }
 
 /**
@@ -344,7 +382,7 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
 				? (regions[i + 1] as { text: string }).text
 				: '';
 
-		const dom = recogniseDomId(region.a, region.b, before, after);
+		const dom = recogniseToken(region.a, region.b, before, after);
 		const found = dom ? null : recogniseSpan(region.a, region.b, after);
 		if (dom && dom.consumed > 0) {
 			regions[i + 1] = { text: after.slice(dom.consumed) };
@@ -370,7 +408,11 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
 			const name = `slot${n++}`;
 			let slot = piece.slot;
 			let head = '';
-			if ((slot.kind === 'build_id' && slot.role === 'id') || slot.kind === 'view_dom_id') {
+			if (
+				(slot.kind === 'build_id' && slot.role === 'id') ||
+				slot.kind === 'view_dom_id' ||
+				slot.kind === 'csrf'
+			) {
 				head = reclaim(slot.head);
 				if (head.length === slot.head) slot = { ...slot, head: 0 };
 				else {
@@ -394,11 +436,22 @@ export function compilePlan(a: string, b: string, path = '/', chunkBytes = 0): R
  * Every `build_id` slot in one plan shares one token, because Drupal emits one `#build_id` per
  * form and renders it in both places.
  */
-export function fillSlots(plan: RenderPlan): Record<string, string> | null {
+export function fillSlots(
+	plan: RenderPlan,
+	supplied: SlotValues = {}
+): Record<string, string> | null {
 	const values: Record<string, string> = {};
 	let token: string | null = null;
 	let domId: string | null = null;
 	for (const [name, slot] of Object.entries(plan.slots)) {
+		if (slot.kind === 'csrf') {
+			// belongs to the visitor being served and cannot be minted here, so no value means no
+			// page: the caller falls through to the object rather than shipping a token that fails
+			const csrf = supplied.csrf;
+			if (typeof csrf !== 'string' || csrf.length !== 43) return null;
+			values[name] = csrf.slice(slot.head);
+			continue;
+		}
 		if (slot.kind === 'view_dom_id') {
 			// ONE id for every occurrence, because Drupal computes it once per view and prints it in
 			// the wrapper class and again in drupalSettings. A page carrying TWO views wants two, and
@@ -478,7 +531,9 @@ export function planExplainsBoth(plan: RenderPlan, a: string, b: string): boolea
  * wrong bytes moves a constant and the re-compile refuses it.
  */
 export function generatorAgrees(plan: RenderPlan): boolean {
-	const values = fillSlots(plan);
+	// a csrf slot is substituted rather than generated, so the proof supplies a token of the right
+	// shape and checks the SUBSTITUTION -- that the value lands where the compiler said it does
+	const values = fillSlots(plan, { csrf: randomBuildToken() });
 	if (!values) return false;
 	// a plan with no slots has no generator to disagree with; it serves fixed bytes
 	if (Object.keys(plan.slots).length === 0) return true;

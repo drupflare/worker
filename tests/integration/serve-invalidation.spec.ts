@@ -90,6 +90,12 @@ describe('one integer write invalidates every edge-cached URL for a site', () =>
 		expect(bump.body.droppedFromRequeue).toBe(0);
 		expect(bump.body.reason).toBe('test');
 
+		// DRIVEN, not raced. The bump arms an alarm at +1 ms and the assertion below wants the page
+		// back; whether the alarm or the inline render gets there first is a race, and it decided
+		// this spec's result -- it passed or failed depending on how long the object spent on
+		// unrelated work in the same invocation. Waiting for the queue to drain is what the two
+		// permitted outcomes below were already written for
+		await driveAlarms(namedSite(site), (obj) => obj.queueDepth() === 0, 12);
 		const after = await serveThroughWorker(site, '/');
 		expect(after.cache).not.toBe('EDGE');
 		expect(after.edge).toBe('MISS');

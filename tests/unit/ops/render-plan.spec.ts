@@ -8,6 +8,7 @@ import {
 	planRoundTrips,
 	randomBuildToken,
 	runPlan,
+	sessionCsrf,
 	unknownContext,
 	unservableSlots
 } from '../../../src/ops/render-plan.js';
@@ -31,6 +32,78 @@ const B = '<html><body><form><input value="BBBB"></form></body></html>';
 const form = (token: string) =>
 	`<html><body><form><input id="${htmlId('form-' + token)}" type="hidden" ` +
 	`name="form_build_id" value="form-${token}"></form></body></html>`;
+
+/**
+ * The session CSRF token, and the reason a shared role-set plan could not compile an authenticated
+ * page.
+ *
+ * MEASURED on a running site: two sessions of one role set rendering `/` produced 103,697 bytes
+ * each and differed in exactly this value, twice, with every `data-contextual-token` identical. With
+ * no slot kind for it the compiler named an unnameable region and refused, permanently.
+ *
+ * It is the one slot that is SUBSTITUTED rather than generated: the value belongs to the visitor
+ * being served, so a plan holding one refuses to run without a token for them.
+ */
+describe('the session csrf token', () => {
+	const TOKEN_A = 'ZfJiP3WwMX-B22o3NT9JKZkM6zbM-qFG9xx39L1J5H4';
+	const TOKEN_B = 'PsDMvoK05id0cuc2HyG_05lsLP4DcRPnvBQ6yIqrZVM';
+	/**
+	 * The two places it lands: the toolbar button and the account menu, as core renders them.
+	 *
+	 * The filler carries NEWLINES because that is what the real page has and what `splitSpan()`
+	 * anchors on. Bracketed between two occurrences with no line to align on, the whole span stays
+	 * one opaque region -- which is the shape the first version of this fixture had, and it failed.
+	 */
+	const filler = (c: string) =>
+		Array.from({ length: 8 }, (_, i) => `<div>${c.repeat(40)}${i}</div>`).join('\n');
+	const page = (token: string) =>
+		`<html>\n<body>\n${filler('x')}\n<a href="/user/logout?token=${token}" class="toolbar-button">` +
+		`Log out</a>\n${filler('y')}\n<a href="/user/logout?token=${token}">Log out</a>\n</body>\n</html>`;
+
+	it('names both occurrences and survives every proof', () => {
+		const plan = compilePlan(page(TOKEN_A), page(TOKEN_B), '/');
+		expect(Object.values(plan.slots).map((s) => s.kind)).toEqual(['csrf', 'csrf']);
+		expect(unservableSlots(plan)).toEqual([]);
+		expect(planExplainsBoth(plan, page(TOKEN_A), page(TOKEN_B))).toBe(true);
+		expect(generatorAgrees(plan)).toBe(true);
+	});
+
+	it('gives each visitor their own token, which is the whole point of the slot', () => {
+		const plan = compilePlan(page(TOKEN_A), page(TOKEN_B), '/');
+		for (const token of [TOKEN_A, TOKEN_B, randomBuildToken()]) {
+			const values = fillSlots(plan, { csrf: token });
+			expect(values).not.toBeNull();
+			expect(runPlan(plan, values as Record<string, string>)).toBe(page(token));
+		}
+	});
+
+	it('refuses to run without one rather than inventing a token Drupal would reject', () => {
+		const plan = compilePlan(page(TOKEN_A), page(TOKEN_B), '/');
+		expect(fillSlots(plan)).toBeNull();
+		expect(fillSlots(plan, { csrf: null })).toBeNull();
+		expect(fillSlots(plan, { csrf: 'too-short' })).toBeNull();
+	});
+
+	it('reads the token out of a render, which is the only place it may come from', () => {
+		expect(sessionCsrf(page(TOKEN_A))).toBe(TOKEN_A);
+		expect(sessionCsrf('<html><body>no session here</body></html>')).toBeNull();
+	});
+
+	it('leaves a base64url run with no logout marker opaque', () => {
+		// the marker is what separates a token from any other pair of differing base64url runs; a
+		// value filled from the wrong place would be the right shape and the wrong bytes
+		const other = (token: string) => `<html>${'x'.repeat(300)}<meta content="${token}">`;
+		const plan = compilePlan(other(TOKEN_A), other(TOKEN_B), '/');
+		expect(unservableSlots(plan)).toHaveLength(1);
+	});
+
+	it('stays a constant when both renders are the same session', () => {
+		// which is what makes a private plan work: one session's token is not a varying value
+		const plan = compilePlan(page(TOKEN_A), page(TOKEN_A), '/');
+		expect(plan.slots).toEqual({});
+		expect(runPlan(plan, {})).toBe(page(TOKEN_A));
+	});
+});
 
 describe('compilePlan finds the varying bytes by diffing two renders', () => {
 	it('emits constant, slot, constant and round-trips its own input', () => {
@@ -222,6 +295,32 @@ describe('cacheTagsIn reads the tag out of a cachetags merge', () => {
 	it('accepts a bare parameter and a missing one', () => {
 		expect(cacheTagsIn('node:7')).toEqual(['node:7']);
 		expect(cacheTagsIn(undefined)).toEqual([]);
+	});
+
+	/**
+	 * A NAMED BINDING MAP, which is the shape every invalidation after a tag's first arrives in.
+	 *
+	 * `Connection::merge('cachetags')` SELECTs, then INSERTs when the row is absent and UPDATEs when
+	 * it is there. The insert binds positionally and the update binds
+	 * `:db_condition_placeholder_0`, so reading arrays only sees a tag's first invalidation ever and
+	 * silently drops every later one. Measured on a real site: `config:system.menu.main` went 3 -> 4
+	 * -> 5 -> 6 across three menu-item saves while `pendingTags()` recorded nothing, so no page
+	 * carrying that tag was purged; a node save moved `node_list` the same way and left the front
+	 * page listing stale.
+	 */
+	it('reads a named binding map, not only a positional list', () => {
+		expect(cacheTagsIn({ ':db_condition_placeholder_0': 'config:system.menu.main' })).toEqual([
+			'config:system.menu.main'
+		]);
+		expect(
+			cacheTagsIn({
+				':db_update_placeholder_0': 'node_list',
+				':db_condition_placeholder_1': 'node_list'
+			})
+		).toEqual(['node_list', 'node_list']);
+		// and the same filtering, so a named map cannot smuggle a non-tag through
+		expect(cacheTagsIn({ ':db_insert_placeholder_0': 1 })).toEqual([]);
+		expect(cacheTagsIn({ ':a': 'has a space' })).toEqual([]);
 	});
 
 	it('stays inside the LIKE pattern limit the platform enforces', () => {

@@ -1,5 +1,6 @@
 import { runDurableObjectAlarm } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { dropAllSnapshots, ensureHeapTables } from '../../src/db/heap-store';
 import { RECONCILE_STEPS } from '../../src/ops/reconcile';
 import { driveAlarms, freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
@@ -28,8 +29,14 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// deployed two-arm run put the imaged cold render at a median 1,912 ms of cpuTime against 1,264
 	// unimaged with no overlap, so restoring costs more than booting; `HEAP_IMAGE=1` is the opt-in and
 	// the default is pinned separately below
+	// THE PRODUCER STAYS OFF WHILE THE SETUP RUNS, and it is armed at the end.
+	//
+	// It used to be enabled first, which made every setup step a candidate imaging pass. That was
+	// invisible until reconciliation grew a step that boots a kernel: the chain settles before the
+	// producer runs, so the last reconcile pass imaged and `latest` was already non-null before any
+	// test had armed an alarm. Establish the state, then arm the thing under test.
 	await inObject(stub, (site) => {
-		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0' };
 	});
 	await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 	await inObject(stub, (site) => (site as any).fillOne('/'));
@@ -38,13 +45,51 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// a real site reaches the producer's precondition with reconciliation already settled. Driven to
 	// completion here rather than left to the alarms this spec counts
 	await inObject(stub, async (site) => {
-		for (let i = 0; i < RECONCILE_STEPS.length + 2; i++) {
+		// `* 3 + 2` rather than `+ 2`: a step whose apply fails is retried up to STEP_ATTEMPT_LIMIT
+		// times and each attempt costs a pass, so a bound of one-pass-per-step leaves the chain
+		// unfinished and the alarm this spec counts spends its firing reconciling instead of imaging
+		for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
 			const res = await site.fetch(
 				new Request('https://do.local/__reconcile', { method: 'POST' })
 			);
 			if (((await res.json()) as { ran: unknown }).ran === null) break;
 		}
 	});
+	// THE PRECONDITION IS "NO IMAGE YET", AND RECONCILING ESTABLISHES THE OPPOSITE. The chain
+	// settles first and the producer runs once nothing is owed, so the last pass of the loop above
+	// is itself an imaging pass -- which left `latest` non-null before this spec had armed anything.
+	// Dropped explicitly, the same way `php` is nulled to establish "no resident interpreter": the
+	// subject here is the ALARM taking an image, so the state it starts from has to be stated.
+	// DRIVEN TO QUIESCENCE ON THE ALARM, not only through the route.
+	//
+	// The route applies one step per call; the alarm is what a real site runs, and reconciliation
+	// shares a firing with the producer. Left partly owed, the subject's own firing reconciles AND
+	// images, so it does not end after imaging and the interpreter is still resident -- which is the
+	// property one of these specs exists to assert. `HEAP_IMAGE` is still 0 here, so none of these
+	// firings can take an image.
+	await driveAlarms(stub, () => false, 6);
+	await inObject(stub, (site) => {
+		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
+	});
+	const dropped = await inObject(stub, (site) => {
+		ensureHeapTables((site as any).sql);
+		const n = dropAllSnapshots((site as any).sql);
+		(site as any).sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'heap_image_gen');
+		// the ATTEMPT counter as well, and it is a separate key. A spec asserting the producer did
+		// not have to take an image reads this rather than the image itself, so a count left over
+		// from the setup reads as an attempt the alarm made
+		(site as any).sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'heap_image_attempts');
+		return {
+			n,
+			left: Number(
+				(site as any).sql.exec('SELECT COUNT(*) AS n FROM cfw_heap_snapshot').toArray()[0]
+					?.n ?? 0
+			)
+		};
+	});
+	if (dropped.left !== 0) {
+		throw new Error(`setup left ${dropped.left} snapshots after dropping ${dropped.n}`);
+	}
 	await inObject(stub, (site) => {
 		(site as any).php = null;
 	});

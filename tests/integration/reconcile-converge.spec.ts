@@ -187,14 +187,34 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				const containers = () =>
 					Number(rows(site, 'SELECT COUNT(*) AS n FROM cache_container')[0]?.n ?? 0);
 				const before = containers();
-				await reconcileToDone(site);
+				// SAMPLED WHEN THE CONTAINER STEP ITSELF RAN, not after the chain. The router step
+				// runs later and boots a kernel to rebuild `router`, which recompiles the container
+				// the drop just removed -- so an `after` taken at the end of the chain reads 1 and
+				// says nothing about whether the drop happened
+				let atDrop: number | null = null;
+				for (let i = 0; i < 12; i++) {
+					const res = await site.fetch(
+						new Request(`${ORIGIN}/__reconcile`, { method: 'POST' })
+					);
+					const body = (await res.json()) as Payload;
+					const ran = body.ran as Payload | null;
+					const outcome = (ran?.reconcile ?? null) as Payload | null;
+					if (outcome?.id === 'container-driver-digest') atDrop = containers();
+					if (
+						outcome === null ||
+						outcome.done === true ||
+						outcome.waiting !== undefined
+					) {
+						break;
+					}
+				}
 				const after = containers();
 				// a real kernel boot, which is what has to compile the container it just lost. A
 				// `/__serve` would be answered off `cfw_page` on a warm path and boot nothing
 				const booted = await site.runJson(BOOT_KERNEL);
 				const rebuilt = containers();
 				const digest = rows(site, "SELECT v FROM cfw_meta WHERE k = 'driver_digest'")[0]?.v;
-				return { before, after, rebuilt, booted, digest: digest ?? null };
+				return { before, atDrop, after, rebuilt, booted, digest: digest ?? null };
 			});
 
 			// THE CONTROL: a pack with no container row makes the drop unobservable
@@ -202,9 +222,13 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				out.before,
 				'the pack shipped no container, so the drop proves nothing'
 			).toBeGreaterThan(0);
-			expect(out.after).toBe(0);
+			expect(out.atDrop, 'the container step never ran').toBe(0);
 			expect((out.booted as Payload)?.ok, JSON.stringify(out.booted)).toBe(true);
 			expect(out.rebuilt).toBeGreaterThan(0);
+			// the chain leaves a container behind, and that is the improvement rather than a leak:
+			// it is compiled from the CURRENT pack inside the reconciliation instead of on the next
+			// visitor's request
+			expect(out.after).toBeGreaterThan(0);
 			expect(out.digest).not.toBe('a-pack-from-before');
 		},
 		TIMEOUT

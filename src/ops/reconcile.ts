@@ -1,5 +1,9 @@
-import { reconcileClockPhp, reconcileConfigPhp } from '../drupal/reconcile-php.js';
-import { DRIVER_DIGEST } from './driver-digest.js';
+import {
+	reconcileClockPhp,
+	reconcileConfigPhp,
+	reconcileRouterPhp
+} from '../drupal/reconcile-php.js';
+import { DRIVER_DIGEST, DRIVER_ROUTES } from './driver-digest.js';
 
 /**
  * Reconciling an ALREADY-PROVISIONED site with the pack that ships today.
@@ -268,6 +272,51 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		sql(sql, host) {
 			sql.exec('DELETE FROM cache_container');
 			host.setMeta('driver_digest', DRIVER_DIGEST);
+		}
+	},
+	{
+		id: 'router-driver-routes',
+		since: 3,
+		describe: "a route table that predates the driver pack, so a module's own paths are 404",
+		/**
+		 * The other half of the baked-container problem, and it was live on every site.
+		 *
+		 * Measured 2026-09-09 by rebuilding the pack database with `install-site-db.php` and diffing
+		 * it against the shipped one: the rebuild carries four `drupflare.*` routes and three menu
+		 * links, and the shipped pack carries NONE of the seven while listing `drupflare` in
+		 * `core.extension`. So the Drupflare admin section, Runtime Status and the Operations
+		 * Terminal have answered 404 everywhere.
+		 *
+		 * The step above cannot reach it. `cache_container` is a cache and dropping it makes the next
+		 * boot rediscover hooks; `router` is a TABLE that only `RouteBuilder` writes.
+		 *
+		 * A REAL END-STATE QUESTION rather than a recorded marker, and the ordering is why. `sql()`
+		 * runs before `php()`, so a step that stamped a meta key in `sql()` would stamp it even when
+		 * the rebuild threw, and the verdict afterwards would read the marker and file the failure as
+		 * a success. Asking the router which of the pack's own routes it holds cannot lie that way.
+		 *
+		 * `DRIVER_ROUTES` is generated from the pack's own `*.routing.yml` files by
+		 * `bun run assets:driver`, so it cannot drift from what shipped beside it.
+		 */
+		verdict(sql) {
+			if (DRIVER_ROUTES.length === 0) return { state: 'satisfied' };
+			const rows = count(sql, 'SELECT COUNT(*) AS n FROM router');
+			if (rows === null) return { state: 'deferred', detail: 'no router table' };
+			const placeholders = DRIVER_ROUTES.map(() => '?').join(', ');
+			const have = count(
+				sql,
+				`SELECT COUNT(*) AS n FROM router WHERE name IN (${placeholders})`,
+				...DRIVER_ROUTES
+			);
+			if (have === null) return { state: 'deferred', detail: 'router not readable' };
+			if (have >= DRIVER_ROUTES.length) return { state: 'satisfied' };
+			return {
+				state: 'owed',
+				detail: `${have} of ${DRIVER_ROUTES.length} driver routes present in ${rows} rows`
+			};
+		},
+		php(host) {
+			return reconcileRouterPhp(host.origin());
 		}
 	}
 ];

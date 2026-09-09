@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DRIVER_ROUTES } from '../../../src/ops/driver-digest';
 import {
 	CLEAN_RECONCILE,
 	PACK_VERSION,
@@ -49,6 +50,16 @@ function fakeSql(tables: Record<string, Record<string, unknown>[]>): ReconcileSq
 			const rows = tables[from];
 			if (rows === undefined) throw new Error(`no such table: ${from}`);
 			if (/COUNT\(/i.test(sql)) {
+				// `name IN (?, ?, ...)` is the router step's shape; without it a COUNT would answer
+				// with the whole table and the step would read satisfied on a site missing every route
+				if (/name IN \(/i.test(sql)) {
+					const wanted = new Set(bindings.map(String));
+					return {
+						toArray: () => [
+							{ n: rows.filter((r) => wanted.has(String(r.name))).length }
+						]
+					};
+				}
 				const before = Number(bindings[0] ?? Infinity);
 				const n = /timestamp <\s*\?/.test(sql)
 					? rows.filter((r) => Number(r.timestamp) < before).length
@@ -192,6 +203,62 @@ describe('the container step, which is the general close for a hook added after 
 		step.sql?.(sql, host);
 		expect(sql.deleted).toContain('cache_container');
 		expect(step.verdict(sql, host).state).toBe('satisfied');
+	});
+});
+
+describe('the router step, which was 404 on every site', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'router-driver-routes') as ReconcileStep;
+	const host = fakeHost(1_000);
+
+	/**
+	 * The measurement this step exists for.
+	 *
+	 * Rebuilding the pack database from `install-site-db.php` on 2026-09-09 produced four
+	 * `drupflare.*` routes and three menu links; the shipped pack has `drupflare` in
+	 * `core.extension` and none of the seven. So the Drupflare admin section, Runtime Status and the
+	 * Operations Terminal answered 404 everywhere.
+	 */
+	it('owes a site whose router has none of the driver routes', () => {
+		const sql = fakeSql({ router: [{ name: 'system.admin' }, { name: 'user.login' }] });
+		const verdict = step.verdict(sql, host);
+		expect(verdict.state).toBe('owed');
+		if (verdict.state === 'owed')
+			expect(verdict.detail).toContain(`0 of ${DRIVER_ROUTES.length}`);
+	});
+
+	it('owes a site that has SOME of them, which a count of rows could not detect', () => {
+		const sql = fakeSql({
+			router: [{ name: 'user.login' }, { name: DRIVER_ROUTES[0] as string }]
+		});
+		expect(step.verdict(sql, host).state).toBe('owed');
+	});
+
+	it('is satisfied once every declared route is present', () => {
+		const sql = fakeSql({ router: DRIVER_ROUTES.map((name) => ({ name })) });
+		expect(step.verdict(sql, host).state).toBe('satisfied');
+	});
+
+	it('defers rather than failing on a pack with no router table at all', () => {
+		expect(step.verdict(fakeSql({}), host).state).toBe('deferred');
+	});
+
+	/**
+	 * NO `sql()`, and that is the correctness property rather than an omission.
+	 *
+	 * `applyReconcileStep` runs `sql()` before `php()`, so a step that stamped a marker in `sql()`
+	 * would stamp it even when the PHP rebuild threw, and the verdict immediately afterwards would
+	 * read the marker and file the failure as a success.
+	 */
+	it('records nothing itself, so a failed rebuild cannot read as done', () => {
+		expect(step.sql).toBeUndefined();
+		expect(step.php).toBeTypeOf('function');
+	});
+
+	it('rebuilds the router and the menu links in one fragment', () => {
+		const php = step.php?.(host) ?? '';
+		expect(php).toContain('router.builder');
+		expect(php).toContain('rebuildIfNeeded');
+		expect(php).toContain('plugin.manager.menu.link');
 	});
 });
 

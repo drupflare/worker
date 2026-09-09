@@ -77,3 +77,47 @@ ${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
 echo json_encode($out);
 `;
 }
+
+/**
+ * Rebuilds the route table, so a driver module's own routes exist on an already-provisioned site.
+ *
+ * THE SHIPPED PACK HAS `drupflare` IN `core.extension` AND NONE OF ITS ROUTES. Measured 2026-09-09
+ * by rebuilding the pack database from `install-site-db.php` and diffing: the rebuilt file carries
+ * `drupflare.admin`, `drupflare.status`, `drupflare.ops_terminal` and `drupflare.oidc_complete`
+ * plus three menu links, and the shipped one carries zero of the seven. The module was enabled into
+ * the pack before those routes existed and `router` was never rebuilt after, so the Drupflare admin
+ * section, Runtime Status and the Operations Terminal answer 404 on every site.
+ *
+ * The container step next to this one cannot fix it: dropping `cache_container` makes the next boot
+ * rediscover HOOKS, and `router` is a table `RouteBuilder` writes rather than a cache Drupal
+ * rebuilds on demand.
+ *
+ * `setRebuildNeeded()` then `rebuildIfNeeded()` rather than `rebuild()` directly, because the
+ * unconditional form does the work again on a site that is already current, and this runs inside an
+ * alarm with a CPU budget.
+ */
+export function reconcileRouterPhp(origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false];
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+  $before = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {router}')->fetchField();
+  $builder = \Drupal::service('router.builder');
+  $builder->setRebuildNeeded();
+  $builder->rebuildIfNeeded();
+  $after = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {router}')->fetchField();
+  // the menu links come from the same discovery and are the other half of what was missing
+  \Drupal::service('plugin.manager.menu.link')->rebuild();
+  $out['before'] = $before;
+  $out['after'] = $after;
+  $out['ok'] = $after > 0;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+echo json_encode($out);
+`;
+}

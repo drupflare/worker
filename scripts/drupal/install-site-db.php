@@ -32,6 +32,8 @@
  */
 
 use Drupal\Core\DrupalKernel;
+use Drupal\Core\Recipe\Recipe;
+use Drupal\Core\Recipe\RecipeRunner;
 use Drupal\Core\Site\Settings;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -94,6 +96,10 @@ if ($sitePath === 'sites/default') {
 	exit(2);
 }
 if (is_dir($absSite)) {
+	// the directory itself, before the walk. Drupal's installer hardens the site directory to 0555,
+	// and an entry cannot be removed FROM a directory with no write bit -- so the walk below chmod'd
+	// every file, failed every unlink under `@`, and the next run warned `mkdir(): File exists`
+	@chmod($absSite, 0775);
 	$it = new RecursiveIteratorIterator(
 		new RecursiveDirectoryIterator($absSite, FilesystemIterator::SKIP_DOTS),
 		RecursiveIteratorIterator::CHILD_FIRST,
@@ -110,11 +116,28 @@ copy($root . '/sites/default/default.settings.php', $absSite . '/settings.php');
 chmod($absSite . '/settings.php', 0664);
 
 define('MAINTENANCE_MODE', 'install');
-$classLoader = require_once $root . '/autoload.php';
+// `require`, never `require_once`, and guarded on the VALUE: the once form answers `true` when the
+// file is already included, and the next line calls a method on it. composer's getLoader()
+// memoizes, so re-requiring costs nothing
+$classLoader = require $root . '/autoload.php';
+if (!is_object($classLoader)) {
+	fwrite(STDERR, "autoload.php returned no ClassLoader\n");
+	exit(1);
+}
 // the packed tree aliases Fiber so the wasm runtime can find it; a native install must not trip
 // over the alias being absent
 if (!class_exists('PhpWasmSyncFiber', false)) {
 	class_alias(Fiber::class, 'PhpWasmSyncFiber');
+}
+// The library the driver layer extends, which composer did not install into this tree.
+//
+// `drupflare`'s HttpsStreamWrapper extends the packaged `Drupflare\StreamHttp\HttpsStreamWrapper`,
+// and Drupal registers a namespace per MODULE -- a `libraries/` directory is not one, so enabling
+// the module fatals on the parent class the moment ModuleHandler::load() includes its .module. On
+// the edge the same root is registered in both autoloader sites; here it is one addPsr4.
+$streamHttp = $root . '/libraries/drupflare-stream-http/src/';
+if (is_dir($streamHttp)) {
+	$classLoader->addPsr4('Drupflare\\StreamHttp\\', $streamHttp);
 }
 require_once $root . '/core/includes/install.core.inc';
 
@@ -172,7 +195,7 @@ $kernel->boot();
 $kernel->preHandle($request);
 
 $installer = Drupal::service('module_installer');
-$extra = array_filter(explode(',', (string) $opt('extra-modules', 'media')));
+$extra = array_filter(explode(',', (string) $opt('extra-modules', 'media,drupflare')));
 $installedExtra = [];
 foreach ($extra as $module) {
 	if (!Drupal::moduleHandler()->moduleExists($module)) {
@@ -181,9 +204,60 @@ foreach ($extra as $module) {
 	}
 }
 
-// the same two trims `scripts/drupal/trim-site-config.php` applies to a live tree, because this
-// runtime has no outbound socket: with advisories on, SystemHooks::cron() GETs updates.drupal.org
-Drupal::configFactory()->getEditable('system.advisories')->set('enabled', false)->save();
+// #region the recipe, which is where the `page` content type comes from
+// The shipping pack has one, and Drupal 11.4's `standard` profile ships NO node type at all --
+// `page` and `article` are recipes under `core/recipes/`. So a stock install produces a site with no
+// content type and the pack was assumed to differ for some other reason.
+$recipesApplied = [];
+foreach (array_filter(explode(',', (string) $opt('recipes', 'page_content_type'))) as $name) {
+	$dir = $root . '/core/recipes/' . $name;
+	if (!is_dir($dir)) {
+		fwrite(STDERR, "no recipe at $dir\n");
+		exit(1);
+	}
+	RecipeRunner::processRecipe(Recipe::createFromDirectory($dir));
+	$recipesApplied[] = $name;
+}
+// a recipe rebuilds the container and the entity definitions, so the kernel this script goes on to
+// use has to be the one the recipe left behind rather than the one that applied it
+$kernel = Drupal::service('kernel');
+// #endregion
+
+// #region the four config values the shipped pack disagrees with a stock install about
+// THROUGH ConfigFactory, NEVER SQL. `save()` clears `cache_config` and invalidates `config:<name>`;
+// a direct UPDATE leaves the serialized copy in the bin, Drupal reads the bin first, and the edit is
+// inert. That is not hypothetical -- commit 18b0aa85 shipped exactly that and the max_age fix did
+// nothing on any site until a later commit happened to move the cached row too.
+$configEdits = [
+	// 0 is the installer default and correct for a host that configures a reverse proxy separately.
+	// Here the reverse proxy IS the product: at 0 every render answers `private, no-store`,
+	// `fillOne()` declines the upsert, and the page table stays empty on every site ever created
+	'system.performance' => [
+		'cache.page.max_age' => 300,
+		// the aggregates are built at pack time and served from `/agg/`, so Drupal preprocessing
+		// them again at request time would produce a second set nothing publishes
+		'css.preprocess' => false,
+		'js.preprocess' => false,
+	],
+	// the host owns the schedule; Drupal firing its own on a request would run cron inside a serve
+	'automated_cron.settings' => ['interval' => 0],
+];
+$factory = Drupal::configFactory();
+foreach ($configEdits as $name => $values) {
+	$editable = $factory->getEditable($name);
+	foreach ($values as $key => $value) {
+		$editable->set($key, $value);
+	}
+	$editable->save();
+}
+
+// `system.advisories` IS LEFT ON, reversing what this script used to do. It forced `enabled` false
+// on the reasoning that SystemHooks::cron() GETs updates.drupal.org and this runtime has no outbound
+// socket. Both halves of that expired: the stream wrapper and the park landed, `CRON_HOOKS` runs
+// `system` and `update`, and advisory detection is the host's `cron:advisories`. The shipped pack has
+// carried `enabled: true` in all six of its committed versions, so the trim was also already wrong
+// about what it was reproducing.
+// #endregion
 
 $settingsFile = $absSite . '/settings.php';
 $source = file_get_contents($settingsFile);
@@ -206,15 +280,55 @@ if (Drupal::database()->schema()->tableExists('watchdog')) {
 	Drupal::database()->truncate('watchdog')->execute();
 }
 
-// WAL first, or the copy loses whatever the last transactions wrote: the installer leaves a -wal
-// and a -shm beside the database and copying the main file alone drops both.
-//
-// Through DRUPAL's connection, not a fresh PDO handle. VACUUM rebuilds every index, and the user
-// tables are declared `COLLATE NOCASE_UTF8` -- a collation the sqlite driver registers per
-// connection (Connection.php:151), so a raw `new PDO()` cannot rebuild them and fails with
-// "no such collation sequence". A plain sqlite3 client reading this file hits the same wall, which
-// is worth knowing before debugging one.
+// Through DRUPAL's connection everywhere below, not a fresh PDO handle. The user tables are
+// declared `COLLATE NOCASE_UTF8`, a collation the sqlite driver registers per connection
+// (Connection.php:151), so a raw `new PDO()` cannot rebuild an index over them and fails with
+// "no such collation sequence". A plain sqlite3 client reading this file hits the same wall.
 $db = Drupal::database();
+
+// #region the cache secondary indexes, dropped because this runtime charges a row for each of them
+// Every cache bin ships `<bin>_created` and `<bin>_expire`. On the edge nothing reads either:
+// `DatabaseBackend::getMultiple()` selects by cid, and `garbageCollection()` never runs because the
+// host sweeps expiry itself from `EXPIRED_ROW_RULES`. Each surviving index is a charged row on every
+// insert into the bin, and the fill path is what free's row budget binds.
+//
+// `cache_data` KEEPS both, and that exception is the whole reason this is a list rather than a
+// wildcard: `gcPass()` caps that bin with `ORDER BY created` and sweeps it with `expire < ?`, so
+// dropping them turns every alarm into a full scan. `tests/node/index-audit.spec.ts` asserts both
+// halves -- 13 bins at one charged row, `cache_data` at three.
+$keepIndexesOn = array_filter(explode(',', (string) $opt('keep-cache-indexes', 'cache_data')));
+$droppedIndexes = [];
+$bins = $db
+	->query(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'cache\\_%' ESCAPE '\\'",
+	)
+	->fetchCol();
+foreach ($bins as $bin) {
+	if (in_array($bin, $keepIndexesOn, true)) {
+		continue;
+	}
+	foreach (['created', 'expire'] as $column) {
+		$index = $bin . '_' . $column;
+		// asked of sqlite_master rather than wrapped in try/catch: a caught-and-ignored DROP still
+		// dirties sqlite_master, and that took the serve path into `migrate: starting` once already
+		$present = (int) $db
+			->query("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=:n", [
+				':n' => $index,
+			])
+			->fetchField();
+		if ($present === 0) {
+			continue;
+		}
+		$db->query('DROP INDEX ' . $index);
+		$droppedIndexes[] = $index;
+	}
+}
+// #endregion
+
+// WAL first, or the copy loses whatever the last transactions wrote: the installer leaves a -wal
+// and a -shm beside the database and copying the main file alone drops both. The VACUUM after it
+// reclaims what the dropped indexes and the truncate freed, so the artifact carries no free pages;
+// the shipped file has 739 of them because nothing ever vacuumed it after an edit.
 $db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 $db->query('VACUUM');
 
@@ -246,6 +360,10 @@ echo json_encode(
 		'routes' => $routes,
 		'installTasks' => $tasksRun,
 		'extraModulesInstalled' => $installedExtra,
+		'recipesApplied' => $recipesApplied,
+		'configEdited' => array_keys($configEdits),
+		'cacheIndexesDropped' => count($droppedIndexes),
+		'cacheIndexesKept' => $keepIndexesOn,
 		'watchdogRowsTruncated' => $truncated,
 		'siteName' => $siteName,
 		'buildSitePath' => $sitePath,

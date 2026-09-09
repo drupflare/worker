@@ -138,9 +138,11 @@ database it created. Nothing downstream reads that database as content; it exist
 has a kernel to boot. A release tarball ships `default.settings.php` and no `settings.php` at all, so
 without this step there is no site to boot.
 
-**This is not how `assets/drupal/site.sqlite` is produced.** That file is the database the edge
-executes, it is the one artifact under `assets/` that is committed, and the installer refuses to
-overwrite it without `--allow-shipping-pack`.
+**This step's database is a throwaway; the shipping one is built by the same script.** Both come from
+`scripts/drupal/install-site-db.php`, and it refuses to write `assets/drupal/site.sqlite` without
+`--allow-shipping-pack`, so the normal loop is build elsewhere and compare with
+`node scripts/diff-site-db.ts`. `docs/database.md` is the recipe and lists every value the shipped
+database disagrees with a stock install about.
 
 `patch` rewrites the tree for the wasm runtime, and is idempotent. Drupal 11 uses `new \Fiber()` in
 five places; PHP builds Fibers on ucontext, emscripten provides none, and the first Fiber aborts the
@@ -401,8 +403,8 @@ pack half of a rollout, with the static half counted separately.
 
 ### The Two Rows Nothing Regenerates
 
-`assets/drupal/site.sqlite` is hand-trimmed and no step produces it; `sql` reads it verbatim. Two of
-its prefilled rows embed the core version, both at `expire = -1`:
+`sql` reads `assets/drupal/site.sqlite` verbatim, and two of its prefilled rows embed the core
+version, both at `expire = -1`:
 
 | bin               | cid                    | bytes  |
 | ----------------- | ---------------------- | ------ |

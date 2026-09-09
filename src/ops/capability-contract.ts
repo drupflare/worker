@@ -65,11 +65,49 @@ export const VECTORS: readonly Vector[] = [
 		id: 'http.outbound.blocking',
 		group: 'HTTP',
 		kind: 'declared',
-		claim: 'an outbound call that must answer inside one render',
+		claim: 'an outbound HTTP call that must answer inside one render',
 		probe: "function_exists('vrzno_env') && vrzno_env('cfwSuspend') !== null",
 		expected: false,
 		blocker: 'platform',
-		evidence: 'PHP cannot await; needs a suspending build (JSPI or ASYNCIFY)'
+		evidence:
+			'THE PROBE IS STALE AS A CAPABILITY TEST and is kept because the flag it names is real: `cfwSuspend` asks for Asyncify or JSPI, which this build has neither of, and `FetchHandler` is the transport that needs them. What a module needs -- an HTTP call answered inside the render -- is served another way as of 2026-09-08: `ParkFetchHandler` yields through the Zend park and the Worker performs the fetch. `park-oidc.spec.ts` drives `drupal/openid_connect` through a real authorization-code exchange on it. So `RuntimeCapabilities.blockingOutbound` is TRUE while this vector is false, and the two are not in conflict: this asks whether the wasm stack can be suspended and that asks whether an answer can arrive before the render ends. It is a literal for the same reason `blockingSocket` is -- a single-expression probe runs inside ONE `_run`, and a host that could answer there would not need a park at all'
+	},
+	{
+		/**
+		 * EXECUTED, and it has to be: `function_exists('cfw_park_run')` was the obvious probe and it
+		 * is the decorative kind. The first built revision of the extension exported every symbol
+		 * and did not re-arm inside `cfw_park_resume`, so a chain parked ONCE and then ran its next
+		 * trapped call for real -- silently, because a fall-through is the refusal path. Every
+		 * multi-trip exchange, which is every real one, would have been broken on a build that
+		 * probe called capable.
+		 *
+		 * **AND THE FIRST VERSION OF THIS PROBE ANSWERED TRUE ON A MECHANISM THAT CANNOT WORK.** It
+		 * put both trapped calls directly in the eval body, which is the one frame `cfw_park_resume`
+		 * DOES re-enter -- so it measured the narrow case and reported the capability. Real code
+		 * parks inside a nested call: Predis reaches `fwrite` from `StreamConnection::write`, several
+		 * frames down. The calls live in a function here for that reason, and the probe additionally
+		 * requires the DELIVERED value rather than the state strings, because a chain can answer
+		 * `DONE` having lost everything above the frame it resumed.
+		 *
+		 * It cleans up after itself either way: a build with no re-arm has already finished the chain
+		 * by the time it answers, and one with the re-arm is resumed a second time here.
+		 */
+		id: 'socket.park.inline',
+		group: 'HTTP',
+		kind: 'executed',
+		claim: 'a trapped socket call parks and resumes inside ONE php invocation',
+		probe:
+			"(function () { if (!function_exists('cfw_park_run') || !function_exists('cfw_park_trap')) { return false; } " +
+			"if (!cfw_park_trap('stream_socket_client')) { return false; } " +
+			'$code = \'function cfwv() { $a = @stream_socket_client("tcp://a.invalid:6379", $e1, $m1, 1); $b = @stream_socket_client("tcp://b.invalid:6379", $e2, $m2, 1); return [$a, $b]; } $GLOBALS["CFW_PARK_VECTOR"] = cfwv();\'; ' +
+			"if (cfw_park_run($code) !== 'PARKED') { return false; } " +
+			"if (cfw_park_resume('one') !== 'PARKED') { return false; } " +
+			"if (cfw_park_resume('two') !== 'DONE') { return false; } " +
+			"return ($GLOBALS['CFW_PARK_VECTOR'] ?? null) === ['one', 'two']; })()",
+		expected: true,
+		blocker: null,
+		evidence:
+			'MEASURED TRUE on the long64 build: a trapped call several frames down parks, resumes with a host value, parks again and finishes, and the delivered result is correct. **IT IS NOT THE CAPABILITY A MODULE NEEDS**, and the gap is the whole point -- every call here happens inside one `_run`, and a host able to answer inside one `_run` would not need a park at all. The capability is a park in one invocation resumed in a LATER one, which no single-expression probe can express. `park-interpreter.spec.ts` measures that against the real interpreter; see `RuntimeCapabilities.blockingSocket` for what it says'
 	},
 	{
 		id: 'http.curl',
@@ -217,12 +255,12 @@ export const VECTORS: readonly Vector[] = [
 		id: 'runtime.mbstring',
 		group: 'RUNTIME',
 		kind: 'declared',
-		claim: 'the real mbstring extension, including `mb_ereg*`',
+		claim: 'the real mbstring extension',
 		probe: "extension_loaded('mbstring')",
-		expected: false,
-		blocker: 'permanent',
+		expected: true,
+		blocker: null,
 		evidence:
-			'supplied by polyfill; 12 of the 22 unpolyfilled functions are `mb_ereg*`, which is oniguruma. Registering a stub module entry segfaults'
+			'SHIPPED 2026-09-08 in the long64 build, `--enable-mbstring --disable-mbregex`. It was `false` with a permanent blocker and the polyfill note is kept because the reason it moved is instructive: the refusal rested on bundle size and startup, and the measured cost of the real extension is +2 ms of edge startup (n=4, interleaved cold compiles) against a 1,000 ms budget. `WITH_MBSTRING=static` had also been emitting `--with-mbstring`, which `ext/mbstring/config.m4` silently ignores, so several builds reported it absent while asking for it. `mb_ereg*` is still absent: those need oniguruma, and Drupal core calls none of them -- see `runtime.mbstring.core_parity` for the calls that are actually made'
 	},
 	{
 		id: 'runtime.mbstring.core_parity',

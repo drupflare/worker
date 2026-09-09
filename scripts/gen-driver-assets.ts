@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 
 /**
  * Packs the cfw_do_sqlite and drupflare modules into assets/driver.json so the Durable Object
@@ -197,28 +197,103 @@ export function driverDigest(body: string): string {
 export const DRIVER_ASSET_PATH = dest;
 export const DRIVER_DIGEST_PATH = join(repo, 'src/ops/driver-digest.ts');
 
+/**
+ * Every route name the packed modules declare.
+ *
+ * Read from the pack's own `*.routing.yml` entries rather than from a hand-kept list, because the
+ * point of it is to catch a route the pack declares and a site's `router` table does not have. A
+ * second copy of the names could only ever agree with itself.
+ *
+ * Top-level YAML keys, which is what a route name is: `RouteCollection` keys on exactly this. The
+ * parse is deliberately shallow -- a line at column zero ending in a colon -- because a full YAML
+ * reader would be a dependency for a question a regex answers, and a routing file that does not fit
+ * that shape is not valid Drupal routing.
+ */
+export function declaredRouteNames(files: Record<string, string>): string[] {
+	const names = new Set<string>();
+	for (const [path, body] of Object.entries(files)) {
+		if (!path.endsWith('.routing.yml')) continue;
+		for (const line of body.split('\n')) {
+			const m = /^([A-Za-z0-9_.]+):\s*$/.exec(line);
+			if (m?.[1] !== undefined) names.add(m[1]);
+		}
+	}
+	return [...names].sort();
+}
+
 /** the exact bytes that belong in src/ops/driver-digest.ts for a given pack */
-export function serialiseDriverDigest(digest: string): string {
+export function serialiseDriverDigest(digest: string, routes: readonly string[] = []): string {
 	return `/**
  * The packed driver's identity. GENERATED -- run \`bun run assets:driver\` after any change in a
  * sibling; \`tests/node/driver-pack.spec.ts\` fails on drift.
  */
 export const DRIVER_DIGEST = '${digest}';
+
+/**
+ * The route names the packed modules declare, so a site can be asked whether its router has them.
+ *
+ * The shipped pack listed drupflare in core.extension and carried NONE of its routes, because the
+ * module was enabled into the database before those routes existed and router is a table rather
+ * than a cache. The router step in RECONCILE_STEPS compares this list against a site's own rows.
+ */
+export const DRIVER_ROUTES: readonly string[] = [
+${routes.map((r) => `\t'${r}'`).join(',\n')}
+];
 `;
+}
+
+/**
+ * Writes the mounted tree to a real Drupal root, so a NATIVE install can enable these modules.
+ *
+ * The shipping pack has `drupflare` enabled in `core.extension`, and reproducing that needs the
+ * module present where Drupal's extension discovery looks. Nothing put it there: `drupal-src`
+ * carries 65 contrib modules and none of the siblings, so `install-site-db.php` could install a
+ * site and could not install the driver layer, which is one of the three deltas that had no
+ * producer.
+ *
+ * Through the same map the pack is built from rather than a second copy of the allow-list. A fourth
+ * copy of these modules is what created the drift `drupal/` was deleted for; the mount points and
+ * the `tests/` and `stubs/` exclusions have to be the packer's, not a paraphrase of them.
+ *
+ * @returns the paths written, relative to `root`.
+ */
+export async function writeDriverTree(root: string): Promise<string[]> {
+	const files = await buildDriverAssets();
+	const written: string[] = [];
+	for (const [rel, body] of Object.entries(files)) {
+		const target = join(root, rel);
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, body);
+		written.push(rel);
+	}
+	return written.sort();
 }
 
 // only write when run as a script, so importing this for the staleness check has no side effect
 if (import.meta.main) {
+	const to = process.argv.find((a: string) => a.startsWith('--to='))?.slice('--to='.length);
+	if (to !== undefined) {
+		const written = await writeDriverTree(to);
+		console.log(JSON.stringify({ root: to, files: written.length }, null, 2));
+		process.exit(0);
+	}
 	const files = await buildDriverAssets();
 	const body = serialiseDriverAssets(files);
 	await mkdir(join(repo, 'assets'), { recursive: true });
 	await writeFile(dest, body);
 	const digest = driverDigest(body);
-	await writeFile(DRIVER_DIGEST_PATH, serialiseDriverDigest(digest));
+	const routes = declaredRouteNames(files);
+	await writeFile(DRIVER_DIGEST_PATH, serialiseDriverDigest(digest, routes));
 	const bytes = Object.values(files).reduce((n, s) => n + s.length, 0);
 	console.log(
 		JSON.stringify(
-			{ files: Object.keys(files).length, sourceBytes: bytes, digest, dest },
+			{
+				files: Object.keys(files).length,
+				sourceBytes: bytes,
+				digest,
+				routes: routes.length,
+				dest
+			},
 			null,
 			2
 		)

@@ -5,12 +5,12 @@ import blob from '../../.interp/php8.5.wasm.br';
 /**
  * PHP 8.5, carrying every extension, reached through a brotli frame.
  *
- * 2,485,488 brotli bytes against the 3,145,728 free ceiling, with opcache, pdo, yaml, zlib, simplexml,
- * xml and the whole of lexbor and DOM intact. Nothing is dropped to make it fit; the recompression is
- * what makes it fit, and the extension-substitution programme it retired recovered only 22.5% of what
- * 8.5 costs over 8.3.
+ * NOT THE SHIPPING SEAM since 2026-09-04. Cloudflare removed the compressed size limit this frame
+ * existed to fit, so `php-binary-raw.ts` imports the binary uncompressed and startup fell from
+ * ~106 ms to ~5 ms. This is kept as an experiment arm, named by the configs under
+ * `experiments/wrangler/`.
  *
- * THE exit(-2) ABORT DESCRIBED HERE IS FIXED, and this seam is what ships. Deployed to a throwaway on
+ * THE exit(-2) ABORT DESCRIBED HERE IS FIXED. Deployed to a throwaway on
  * 2026-08-14 every request returned 1101 with `ExitStatus: Program terminated with exit(-2)` on both
  * the stateless and durableObject events, aborting during startup before any route logic. Size, the
  * recompression, the decoder and codegen were all ruled out.

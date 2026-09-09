@@ -11,10 +11,11 @@ declare module '*.wasm' {
 }
 
 /**
- * The zstd frame `src/runtime/php-binary-zstd.ts` imports.
+ * A zstd frame, produced by `scripts/pack-wasm-zstd.ts` for the 8.3 and experiment arms.
  *
- * wrangler's `Data` rule turns the file into a module whose default export is an `ArrayBuffer`, so
- * the bytes reach the bundle already compressed and Cloudflare's gzip cannot shrink them further.
+ * wrangler's `Data` rule turns the file into a module whose default export is an `ArrayBuffer`. It
+ * existed because the bundle meter measured COMPRESSED bytes; Cloudflare removed that limit on
+ * 2026-09-04, so the shipping seam imports a raw `.wasm` and no shipping path inflates anything.
  */
 declare module '*.zst' {
 	const bytes: ArrayBuffer;
@@ -22,10 +23,11 @@ declare module '*.zst' {
 }
 
 /**
- * The brotli frame `src/runtime/php-binary-85.ts` imports, which is what SHIPS.
+ * The brotli frame `src/runtime/php-binary-85.ts` imports.
  *
- * Same `Data` rule and same reason as `*.zst`; brotli is the better ratio on this binary and its
- * decoder is in `node:zlib`, so nothing has to be bundled to inflate it.
+ * Same `Data` rule and same reason as `*.zst`. NOT the shipping seam since 2026-09-04, when
+ * Cloudflare removed the compressed size limit the frame existed to fit: the interpreter travels as a
+ * raw `CompiledWasm` import now and nothing inflates anything at startup.
  */
 declare module '*.br' {
 	const bytes: ArrayBuffer;

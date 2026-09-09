@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -23,6 +23,9 @@ describe('module specifiers', () => {
 			// probes are frozen instruments cited by figure in the report, and each is its own
 			// entrypoint that the wrangler alias never routes through
 			if (f.startsWith('src/probes/')) continue;
+			// `git ls-files` reads the INDEX, so a file deleted but not yet committed is still
+			// listed and reading it throws ENOENT. A file that is not on disk has no imports
+			if (!existsSync(f)) continue;
 			readFileSync(f, 'utf8')
 				.split('\n')
 				.forEach((line, i) => {

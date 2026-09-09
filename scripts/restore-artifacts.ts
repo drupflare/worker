@@ -43,8 +43,9 @@ const RESTORE_ROOTS = ['.interp/', 'assets/drupal/site.sqlite'];
  * What a clean clone needs that it cannot build: the interpreter, and the site database.
  *
  * Taken from the manifest's `mirrors` field rather than hardcoded -- those entries already record
- * that `vendor/static-control85/php8.5*` in the bucket is the shipping binary saved under phasm's
- * variant name, and where it belongs on disk. Everything else in `vendor/` is the 18-arm measurement
+ * where each key belongs on disk. It used to name `vendor/static-control85/php8.5*` as the shipping
+ * binary; that stopped being true when the binary moved to `vendor/static-long64/php8.5*`, and the
+ * bytes under the old key are the wasm32 arm rather than either of the things its name suggests. Everything else in `vendor/` is the 18-arm measurement
  * fleet the frozen probes read, which is 198 MB and which no contributor needs to run tests.
  *
  * `assets/drupal/site.sqlite` IS THE OTHER ONE, and it is the reason `bun run build:local` could not
@@ -104,6 +105,20 @@ if (import.meta.main) {
 		const target = join(ROOT, entry.mirrors as string);
 		if (!force && current(target, entry.sha256, entry.bytes)) {
 			held++;
+			continue;
+		}
+		// A FILE THE REPOSITORY TRACKS IS NOT THE BUCKET'S TO REPLACE, and this is not a
+		// hypothetical: `assets/drupal/site.sqlite` is committed, its manifest entry named an older
+		// lineage, and every `bun install` quietly restored the older one -- undoing the
+		// container-cid repair and turning `tests/node/container-cid.spec.ts` red on a working tree
+		// nobody had edited. For an UNTRACKED artifact the bucket is the source of truth and the
+		// download is right; for a tracked one the commit is, so this reports and moves on
+		if (entry.tracked === true && existsSync(target)) {
+			held++;
+			console.warn(
+				`restore-artifacts: ${entry.mirrors} differs from the manifest and is tracked in git; ` +
+					'left alone. Update the manifest and the bucket, or the entry is stale.'
+			);
 			continue;
 		}
 		try {

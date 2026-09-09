@@ -13,13 +13,13 @@
 	"files": [
 		{
 			"path": ".interp/php8.5-worker.mjs",
-			"bytes": 865849,
-			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72"
+			"bytes": 876467,
+			"sha256": "e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae"
 		},
 		{
 			"path": ".interp/php8.5.wasm",
-			"bytes": 12234575,
-			"sha256": "94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458"
+			"bytes": 13401742,
+			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac"
 		},
 		{
 			"path": ".interp/php8.5.wasm.zst",

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,6 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
 	ARCHIVED,
 	BUCKET,
+	committedBytes,
 	driftBetween,
 	fetchFromCdn,
 	MANIFEST_PATH,
@@ -248,6 +250,49 @@ describe('the CDN mirror, tried when the documented origin cannot be reached', (
 			await expect(fetchFromCdn('k')).rejects.toThrow(/no CDN origin answered/);
 		} finally {
 			globalThis.fetch = original;
+		}
+	});
+});
+
+/**
+ * The one refusal an upload keeps, now that replacing bytes archives them first.
+ *
+ * An archive preserves what is being REPLACED and says nothing about what is going UP. For a tracked
+ * artifact git decides what is canonical, so a dirty working copy would put bytes in the bucket that
+ * no commit records -- and `assets/drupal/site.sqlite` is hand-trimmed with its recipe written down
+ * nowhere, which is the file where that is unrecoverable.
+ */
+describe('a tracked artifact may only be published from a commit', () => {
+	const repo = mkdtempSync(join(tmpdir(), 'cdn-git-'));
+	const git = (...args: string[]) =>
+		execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: 'pipe' });
+
+	afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+	it('reads a committed file as publishable and a dirty one as not', () => {
+		git('init', '-q');
+		git('config', 'user.email', 't@t');
+		git('config', 'user.name', 't');
+		writeFileSync(join(repo, 'artifact.bin'), 'one');
+		git('add', 'artifact.bin');
+		git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'add');
+		expect(committedBytes(repo, 'artifact.bin')).toBe(true);
+
+		writeFileSync(join(repo, 'artifact.bin'), 'two');
+		expect(committedBytes(repo, 'artifact.bin')).toBe(false);
+
+		// and an unrelated dirty file does not refuse this one, or every backup would stop
+		writeFileSync(join(repo, 'other.bin'), 'x');
+		git('-c', 'commit.gpgsign=false', 'commit', '-qam', 'commit the artifact');
+		expect(committedBytes(repo, 'artifact.bin')).toBe(true);
+	});
+
+	it('does not refuse where there is no git at all, since that is not evidence of an edit', () => {
+		const bare = mkdtempSync(join(tmpdir(), 'cdn-nogit-'));
+		try {
+			expect(committedBytes(bare, 'anything.bin')).toBe(true);
+		} finally {
+			rmSync(bare, { recursive: true, force: true });
 		}
 	});
 });

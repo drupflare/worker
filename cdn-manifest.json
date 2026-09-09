@@ -210,8 +210,9 @@
 		{
 			"key": "assets/drupal/site.sqlite",
 			"bytes": 7585792,
-			"sha256": "2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a",
-			"md5": "bb6d5813b0638d00835aaeaf522e2e52"
+			"sha256": "f97005b968897b0b16c5c7d1513253f6ca6399682ae970ec2d5c46bde50975e1",
+			"md5": "ea53ebfc02519dfa1bfba6d7220e71fd",
+			"tracked": true
 		}
 	],
 	"archived": [
@@ -242,22 +243,49 @@
 			"bytes": 7585792,
 			"sha256": "2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a",
 			"md5": "bb6d5813b0638d00835aaeaf522e2e52",
-			"mirrors": "assets/drupal/site.sqlite",
-			"note": "the canonical lineage at change counter 27, which carries the page max_age fix"
+			"note": "change counter 27, the FIRST page max_age fix; superseded by the committed f97005b9 lineage and kept because an archive is a snapshot"
 		},
 		{
-			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
+			"key": "snapshots/php8.5-worker.mjs.wasm.94d598fc403b",
 			"bytes": 12234575,
 			"sha256": "94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458",
 			"md5": "1488008fc46b3182f335beff4d29cad7",
+			"note": "the shipping 8.5 binary before ext/cfwpark gained park_flatten; archived by the upload that replaced it"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.6ec19188e65e",
+			"bytes": 865849,
+			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72",
+			"md5": "44123585c3daabf58e30978404d6bf2f",
+			"note": "its glue, same replacement"
+		},
+		{
+			"key": "vendor/static-control85/php8.5-worker.mjs.wasm",
+			"bytes": 12218393,
+			"sha256": "02244ae68d49a5b97116646447151c310b9d29d449ed33993d5ad99578539148",
+			"md5": "988a338279a50604fac00c565a42b6b4",
+			"note": "THE KEY NAME IS WRONG AND THE BYTES ARE WHAT MATTER: this is the wasm32 arm, byte-identical to .interp/php8.5-wasm32.wasm, and NOT phasm vendor/static-control85, which is a different 12,676,181-byte build. It was the shipping binary when it was uploaded and the name has meant nothing since; this sha appears nowhere else here, so it is the only off-machine copy of the arm and is pinned rather than deleted. No mirrors field: it is history, and `.interp/` is a build output that may legitimately be rebuilt"
+		},
+		{
+			"key": "vendor/static-control85/php8.5-worker.mjs",
+			"bytes": 863402,
+			"sha256": "016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb",
+			"md5": "36aa14c39812465961b522d4065daba8",
+			"note": "its glue; the same misnamed key, and the same reason for keeping it"
+		},
+		{
+			"key": "vendor/static-long64/php8.5-worker.mjs.wasm",
+			"bytes": 13401742,
+			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac",
+			"md5": "8512cebe6ca6795f400be8edc78d67d8",
 			"mirrors": ".interp/php8.5.wasm",
 			"note": "the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8"
 		},
 		{
 			"key": "vendor/static-long64/php8.5-worker.mjs",
-			"bytes": 865849,
-			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72",
-			"md5": "44123585c3daabf58e30978404d6bf2f",
+			"bytes": 876467,
+			"sha256": "e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae",
+			"md5": "9de83d79aad46b4c4bbada9204e8e69a",
 			"mirrors": ".interp/php8.5-worker.mjs",
 			"note": "its glue, which the seam imports as PHPFactory"
 		}

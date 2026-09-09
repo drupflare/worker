@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
@@ -69,7 +70,10 @@ const MODULE_PARTS = [
 	'.services.yml',
 	'.routing.yml',
 	'.permissions.yml',
-	'.links.menu.yml'
+	'.links.menu.yml',
+	// `help_topics` joined it when the module grew one. A topic Drupal cannot read is a help page
+	// that is absent on every deployed site and present in every checkout
+	'help_topics'
 ] as const;
 
 /**
@@ -114,7 +118,9 @@ async function walk(dir: string): Promise<string[]> {
 		// registered early enough -- ModuleHandler::loadAll() includes them from preHandle(), three
 		// lines before the kernel registers its own wrappers. Packing only .php/.yml meant the
 		// module-owned registration path shipped nowhere.
-		else if (/\.(php|yml|module|install)$/.test(entry.name)) out.push(full);
+		// `.twig` is here for `help_topics/`, whose topics are Twig with YAML front matter. Nothing
+		// else in these modules ships a template, so this does not widen the pack in practice
+		else if (/\.(php|yml|module|install|twig)$/.test(entry.name)) out.push(full);
 	}
 	return out;
 }
@@ -175,7 +181,31 @@ export function serialiseDriverAssets(files: Record<string, string>): string {
 	return JSON.stringify(files);
 }
 
+/**
+ * The identity of the packed driver, which nothing else in the runtime carries.
+ *
+ * `DrupalKernel::getContainerCacheKey()` is composer's `VERSIONS_HASH` plus the PHP version and the
+ * OS, and none of those moves when a sibling module changes. So a `#[Hook]` class added after the
+ * bake compiles into nothing and `hasImplementations()` answers false while the class loads fine.
+ * `RECONCILE_STEPS`' container step compares a site's recorded digest against this one and drops the
+ * compiled container when they disagree, which makes the next boot rediscover.
+ */
+export function driverDigest(body: string): string {
+	return createHash('sha256').update(body).digest('hex').slice(0, 16);
+}
+
 export const DRIVER_ASSET_PATH = dest;
+export const DRIVER_DIGEST_PATH = join(repo, 'src/ops/driver-digest.ts');
+
+/** the exact bytes that belong in src/ops/driver-digest.ts for a given pack */
+export function serialiseDriverDigest(digest: string): string {
+	return `/**
+ * The packed driver's identity. GENERATED -- run \`bun run assets:driver\` after any change in a
+ * sibling; \`tests/node/driver-pack.spec.ts\` fails on drift.
+ */
+export const DRIVER_DIGEST = '${digest}';
+`;
+}
 
 // only write when run as a script, so importing this for the staleness check has no side effect
 if (import.meta.main) {
@@ -183,8 +213,14 @@ if (import.meta.main) {
 	const body = serialiseDriverAssets(files);
 	await mkdir(join(repo, 'assets'), { recursive: true });
 	await writeFile(dest, body);
+	const digest = driverDigest(body);
+	await writeFile(DRIVER_DIGEST_PATH, serialiseDriverDigest(digest));
 	const bytes = Object.values(files).reduce((n, s) => n + s.length, 0);
 	console.log(
-		JSON.stringify({ files: Object.keys(files).length, sourceBytes: bytes, dest }, null, 2)
+		JSON.stringify(
+			{ files: Object.keys(files).length, sourceBytes: bytes, digest, dest },
+			null,
+			2
+		)
 	);
 }

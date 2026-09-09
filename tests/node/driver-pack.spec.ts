@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	DRIVER_ASSET_PATH,
 	buildDriverAssets,
-	serialiseDriverAssets
+	driverDigest,
+	serialiseDriverAssets,
+	serialiseDriverDigest
 } from '../../scripts/gen-driver-assets.ts';
+import { DRIVER_DIGEST } from '../../src/ops/driver-digest.ts';
 
 /**
  * `assets/driver.json` is the copy of the Drupal modules that ACTUALLY EXECUTES on the edge, and
@@ -47,8 +50,28 @@ describe.skipIf(skipPack)('the packed driver asset is current', () => {
 		const actual = await readFile(DRIVER_ASSET_PATH, 'utf8');
 		expect(
 			actual === expected,
-			'assets/driver.json is stale against drupal/. Run: bun run assets:driver'
+			'assets/driver.json is stale against the sibling checkouts. Run: bun run assets:driver'
 		).toBe(true);
+	});
+
+	/**
+	 * The digest is what the reconciliation step compares a site against, so a stale one means an
+	 * existing site never rebuilds its container and a hook class added to a sibling stays invisible
+	 * on it forever. That failure is silent: `hasImplementations()` answers false and the class loads
+	 * fine, which is exactly how `DeferredCron` came to have never run anywhere.
+	 */
+	it('carries a digest matching the pack it identifies', async () => {
+		const body = await readFile(DRIVER_ASSET_PATH, 'utf8');
+		expect(
+			DRIVER_DIGEST,
+			'src/ops/driver-digest.ts is stale against assets/driver.json. Run: bun run assets:driver'
+		).toBe(driverDigest(body));
+	});
+
+	it('writes the digest module in exactly the form the generator emits', () => {
+		const emitted = serialiseDriverDigest(DRIVER_DIGEST);
+		expect(emitted).toContain(`export const DRIVER_DIGEST = '${DRIVER_DIGEST}';`);
+		expect(DRIVER_DIGEST).toMatch(/^[0-9a-f]{16}$/);
 	});
 });
 
@@ -68,7 +91,7 @@ describe('what the pack contains, and what it must never contain', () => {
 		expect(paths.filter((p) => p.includes('/tests/'))).toEqual([]);
 	});
 
-	it('packs only PHP, YAML and the two PHP files Drupal names differently', async () => {
+	it('packs only PHP, YAML, the two PHP files Drupal names differently, and help topics', async () => {
 		// `.module` and `.install` ARE PHP; Drupal just gives them other extensions. This assertion
 		// used to read `/\.(php|yml)$/`, which silently excluded them from the pack -- and they are
 		// the ONLY place a stream wrapper can be registered early enough, because
@@ -77,7 +100,15 @@ describe('what the pack contains, and what it must never contain', () => {
 		// this test stayed green.
 		const paths = Object.keys(await buildDriverAssets());
 		expect(paths.length).toBeGreaterThan(0);
-		for (const p of paths) expect(/\.(php|yml|module|install)$/.test(p), p).toBe(true);
+		// `.twig` is `help_topics/`, whose topics are Twig with YAML front matter
+		for (const p of paths) expect(/\.(php|yml|module|install|twig)$/.test(p), p).toBe(true);
+	});
+
+	it('carries the help topic, so /admin/help is not empty on a deployed site', async () => {
+		const paths = Object.keys(await buildDriverAssets());
+		expect(paths).toContain(
+			'modules/custom/drupflare/help_topics/drupflare.running_on_workers.html.twig'
+		);
 	});
 
 	it('actually carries the module and install files, not just permits them', async () => {

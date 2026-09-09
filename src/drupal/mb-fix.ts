@@ -3,7 +3,15 @@ import { UNICODE_TABLES } from './unicode-tables.js';
 /**
  * Closes the mb_substr() content-loss bug in PHP, without a rebuild.
  *
- * The bug. In wasm there is no mbstring extension, so Symfony's polyfill provides
+ * **INERT ON THE SHIPPING BUILD AS OF 2026-09-08, and that is the intended end state rather than a
+ * fault.** The guard below is `!extension_loaded('mbstring')`, and the long64 build now carries the
+ * real extension (`--enable-mbstring --disable-mbregex`), so none of this declares anything on a
+ * shipping site -- native mb_* wins and the content-loss bug it exists for cannot occur. It stays
+ * because the guard is the whole contract: a build without mbstring still needs it, and
+ * `loaded-extensions.spec.ts` is what says which build is which. Do not debug this file on a site
+ * whose `get_loaded_extensions()` reports mbstring; nothing here is running.
+ *
+ * The bug. Without the mbstring extension, Symfony's polyfill provides
  * mb_*. Its mb_substr() is `return (string) iconv_substr(...)`, its mb_strlen()
  * is `if (false !== $len = @iconv_strlen(...))`, and Symfony's *iconv* polyfill
  * returns FALSE for any string that is not valid UTF-8. `(string) false` is `''`.

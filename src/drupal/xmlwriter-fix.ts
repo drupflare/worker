@@ -1,18 +1,25 @@
 /**
- * A pure-PHP `XMLWriter`, because the build has no `ext-xmlwriter` and one contrib module SUBCLASSES
+ * A pure-PHP `XMLWriter`, because the build has no `ext-xmlwriter` and TWO contrib modules SUBCLASS
  * the class rather than calling functions.
  *
  * WHY A CLASS AND NOT A SHIM SET. `simple_sitemap`'s `SitemapWriter extends \XMLWriter`, so a set of
  * `xmlwriter_*()` functions could not satisfy it -- the parent class has to exist at the moment the
  * subclass is compiled. That is also why this is declared as early as `MB_FIX`.
  *
- * THE SURFACE IS TEN METHODS, COUNTED RATHER THAN GUESSED. Inventoried against simple_sitemap 4.2.1:
- * `openMemory`, `setIndent`, `startDocument`, `writePI`, `writeComment`, `startElement`,
- * `writeAttribute`, `writeElement`, `endElement`, `endDocument`, `outputMemory`. `text()` is public
- * as well because it is the standard name for what `writeElement` does internally and costs nothing.
- * Nothing in the module calls `writeRaw`, `writeCdata`, `openUri`, `flush`, `startAttribute`,
- * `writeDtd` or the namespace variants, so none is here -- an unused surface is the
- * tested-but-never-called failure, and a partial one that LOOKS complete is worse.
+ * **THE SURFACE WAS COUNTED AGAINST ONE SUBCLASS AND THERE ARE TWO.** It was inventoried against
+ * simple_sitemap 4.2.1 and said in this docblock that nothing calls `openUri`, `writeRaw`,
+ * `writeCdata`, `startAttribute` or `writeDtd`. `xmlsitemap`'s `XmlSitemapWriter` calls the first
+ * two, in its CONSTRUCTOR and on every link it writes, so every sitemap generation on that module
+ * died on an undefined method -- while the module read `verified`, because an enable-and-assert run
+ * resolves its services and never writes a sitemap. Inventory against every subclass in the tree, not
+ * against the one that prompted the shim.
+ *
+ * `writeCdata`, `startAttribute`, `writeDtd` and the namespace variants have no caller in either and
+ * are still absent: an unused surface is the tested-but-never-called failure, and a partial one that
+ * LOOKS complete is worse.
+ *
+ * `openUri()` makes this a STREAMING writer, which changes what `flush()` returns -- bytes rather
+ * than the document. Getting that wrong is silent; see the method.
  *
  * `if (!class_exists(...))` rather than `eval()`, the `zlib-fix` pattern: a conditional class
  * declaration binds at runtime, so this compiles clean on a build that HAS the extension and the
@@ -40,10 +47,37 @@ if (!class_exists('XMLWriter', false)) {
 		private $cfwIndent = false;
 		private $cfwIndentString = ' ';
 
+		/** the stream openUri() opened, or null when this writer builds in memory */
+		private $cfwHandle = null;
+
 		public function openMemory(): bool {
-			$this->cfwBuf = '';
-			$this->cfwStack = [];
-			$this->cfwOpen = false;
+			$this->cfwReset();
+			return true;
+		}
+
+		public function openUri(string $uri): bool {
+			$this->cfwReset();
+			$handle = @fopen($uri, 'w');
+			if ($handle === false) {
+				return false;
+			}
+			$this->cfwHandle = $handle;
+			return true;
+		}
+
+		/**
+		 * Content written through verbatim, which is what separates this from text().
+		 *
+		 * It still counts as content: the enclosing element has been given something, so its end tag
+		 * stays on the same line the way it does after text().
+		 */
+		public function writeRaw(string $content): bool {
+			$this->cfwCloseStart();
+			$depth = count($this->cfwStack);
+			if ($depth > 0) {
+				$this->cfwStack[$depth - 1]['text'] = true;
+			}
+			$this->cfwBuf .= $content;
 			return true;
 		}
 
@@ -166,6 +200,12 @@ if (!class_exists('XMLWriter', false)) {
 			if ($this->cfwBuf !== '' && substr($this->cfwBuf, -1) !== "\n") {
 				$this->cfwBuf .= "\n";
 			}
+			// A URI WRITER HAS TO REACH ITS FILE HERE. xmlsitemap calls endDocument() and then
+			// file_get_contents() on the same uri to gzip it, so a buffer still held in memory
+			// produces an empty .gz beside a sitemap that looks fine
+			if ($this->cfwHandle !== null) {
+				$this->flush(true);
+			}
 			return true;
 		}
 
@@ -179,8 +219,44 @@ if (!class_exists('XMLWriter', false)) {
 			return $out;
 		}
 
-		public function flush(bool $empty = true): string {
-			return $this->outputMemory($empty);
+		/**
+		 * BYTES for a uri writer and the DOCUMENT for a memory one, which is libxml own split.
+		 *
+		 * Returning the string in both cases would read as working: xmlsitemap ignores the return of
+		 * its periodic flushes, so the file would simply stay empty until something read it.
+		 */
+		public function flush(bool $empty = true) {
+			if ($this->cfwHandle === null) {
+				return $this->outputMemory($empty);
+			}
+			$written = fwrite($this->cfwHandle, $this->cfwBuf);
+			if ($empty) {
+				$this->cfwBuf = '';
+			}
+			return $written === false ? 0 : $written;
+		}
+
+		public function __destruct() {
+			if ($this->cfwHandle === null) {
+				return;
+			}
+			if ($this->cfwBuf !== '') {
+				@fwrite($this->cfwHandle, $this->cfwBuf);
+				$this->cfwBuf = '';
+			}
+			@fclose($this->cfwHandle);
+			$this->cfwHandle = null;
+		}
+
+		/** shared by openMemory() and openUri(); a reopen abandons whatever was in flight */
+		private function cfwReset(): void {
+			$this->cfwBuf = '';
+			$this->cfwStack = [];
+			$this->cfwOpen = false;
+			if ($this->cfwHandle !== null) {
+				@fclose($this->cfwHandle);
+				$this->cfwHandle = null;
+			}
 		}
 
 		/** finishes an open start tag, which is what makes attributes order-sensitive */

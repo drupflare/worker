@@ -228,4 +228,81 @@ $late = %W%->writeAttribute('a', 'b') ? 'true' : 'false';
 $out = %W%->outputMemory() . '|' . $late;`);
 		expect(poly).toBe(real);
 	});
+
+	/**
+	 * `openUri()` and `writeRaw()`, added because the surface was counted against ONE subclass.
+	 *
+	 * `xmlsitemap`'s `XmlSitemapWriter` opens a uri in its constructor and writes a raw newline after
+	 * every link, so the whole module fataled on an undefined method while reading `verified` -- an
+	 * enable-and-assert run resolves its services and never generates a sitemap.
+	 *
+	 * The body is written once and each arm gets its own `tempnam()`, so the two implementations
+	 * cannot read each other's file and agree by accident.
+	 */
+	it('writes the same document to a file as it does to memory', () => {
+		if (!oracle) return;
+		const { real, poly } = bothWays(`
+$p = tempnam(sys_get_temp_dir(), 'cfwxw');
+%W%->openUri($p);
+%W%->setIndent(FALSE);
+%W%->startDocument('1.0', 'UTF-8');
+%W%->startElement('urlset');
+%W%->writeAttribute('xmlns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+%W%->writeRaw(PHP_EOL);
+%W%->startElement('url');
+%W%->writeElement('loc', 'https://example.com/node/1');
+%W%->endElement();
+%W%->writeRaw(PHP_EOL);
+%W%->endElement();
+%W%->endDocument();
+$out = file_get_contents($p);
+unlink($p);`);
+		expect(poly).toBe(real);
+		// and it reached the file rather than both arms reading an empty one
+		expect(real).toContain('<urlset');
+		expect(real).toContain('node/1');
+	});
+
+	/**
+	 * The periodic flush, which is how `xmlsitemap` keeps a large sitemap out of memory.
+	 *
+	 * `flush()` on a uri writer returns BYTES and on a memory writer returns the DOCUMENT. Returning
+	 * the string in both cases reads as working, because the module ignores the return of its
+	 * periodic flushes -- the file just stays empty until something reads it back.
+	 */
+	it('flushes to the file mid-document and reports bytes rather than the document', () => {
+		if (!oracle) return;
+		const { real, poly } = bothWays(`
+$p = tempnam(sys_get_temp_dir(), 'cfwxw');
+%W%->openUri($p);
+%W%->startElement('r');
+%W%->writeElement('a', '1');
+$mid = %W%->flush();
+$onDisk = file_get_contents($p);
+%W%->writeElement('b', '2');
+%W%->endElement();
+%W%->endDocument();
+$out = $onDisk . '|' . var_export(is_int($mid), true) . '|' . file_get_contents($p);
+unlink($p);`);
+		expect(poly).toBe(real);
+		expect(real).toContain('|true|');
+		expect(real).toContain('<b>2</b>');
+	});
+
+	/**
+	 * `writeRaw()` is verbatim, which is the whole reason it is not `text()`.
+	 */
+	it('passes raw content through unescaped where text escapes it', () => {
+		if (!oracle) return;
+		const { real, poly } = bothWays(`
+%W%->openMemory();
+%W%->startElement('r');
+%W%->writeRaw('<kept a="1"/>');
+%W%->text('<escaped>');
+%W%->endElement();
+$out = %W%->outputMemory();`);
+		expect(poly).toBe(real);
+		expect(real).toContain('<kept a="1"/>');
+		expect(real).toContain('&lt;escaped&gt;');
+	});
 });

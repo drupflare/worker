@@ -26,7 +26,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { FREE_CEILING } from './bundle-size';
+import { SIZE_CEILING } from './bundle-size';
 import {
 	isSkipped,
 	type BundleMetric,
@@ -55,9 +55,11 @@ export type Check =
 /**
  * Every gated metric, with the tolerance it earns.
  *
- * `bundle.gzippedBytes` carries two checks: the ceiling is the hard fail (over 3 MiB the
- * worker cannot be deployed at all, `code: 10027`), and the drift check catches a 200 KB creep that
- * still fits and would otherwise be noticed only on the release that stopped fitting.
+ * The bundle carries two checks on DIFFERENT figures, and that is deliberate. The ceiling is on
+ * `bundle.rawBytes`, because the 64 MiB Worker size limit is on the uncompressed total since
+ * 2026-09-04; scoring the gzipped figure against it could never fail. The drift check stays on
+ * `bundle.gzippedBytes`, because a creep shows there first and every historical figure in the report
+ * is expressed in it.
  *
  * `indexAudit.explicitIndexes` allows ZERO increase because an index is a write multiplier, not a
  * read optimisation: under this billing model every index on a hot table is another charged row per
@@ -66,10 +68,10 @@ export type Check =
  */
 export const CHECKS: readonly Check[] = [
 	{
-		path: 'bundle.gzippedBytes',
+		path: 'bundle.rawBytes',
 		kind: 'ceiling',
-		limit: FREE_CEILING,
-		why: 'over the free-plan ceiling the worker cannot be uploaded at all'
+		limit: SIZE_CEILING,
+		why: 'over the 64 MiB Worker size limit the worker cannot be uploaded at all'
 	},
 	{
 		path: 'bundle.gzippedBytes',
@@ -447,13 +449,17 @@ export function interpret(doc: MetricsDocument, comparison: Comparison): string[
 	const bundle = readPath(doc, 'bundle') as BundleMetric | undefined;
 	if (bundle) {
 		lines.push(
-			`**Bundle** ${bundle.gzippedBytes.toLocaleString()} gzipped bytes` +
+			// the LIMIT sentence quotes the raw figure, because that is what it is checked on; the
+			// gzipped one follows because a creep shows there first and the report speaks in it
+			`**Bundle** ${bundle.rawBytes.toLocaleString()} uncompressed bytes ` +
+				`(${bundle.gzippedBytes.toLocaleString()} gzipped` +
 				against(comparison, 'bundle.gzippedBytes') +
+				')' +
 				(bundle.fits
 					? `, leaving ${bundle.headroom.toLocaleString()} under the ` +
 						`${bundle.ceiling.toLocaleString()} ceiling.`
-					: `, which is ${(bundle.gzippedBytes - bundle.ceiling).toLocaleString()} OVER ` +
-						'the ceiling, so the worker cannot be uploaded at all (`code: 10027`).')
+					: `, which is ${(bundle.rawBytes - bundle.ceiling).toLocaleString()} OVER ` +
+						'the ceiling, so the worker cannot be uploaded at all.')
 		);
 	}
 

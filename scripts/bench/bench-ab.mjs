@@ -130,8 +130,9 @@ try {
 			{ o2: 'static-o2', mbonly: 'static-mbstring', freev1: 'static-free-v1' }[r.variant] ??
 			`static-${r.variant}`;
 		const gz = gzTotal(dir);
-		if (gz)
-			console.log(`${r.variant.padEnd(12)} gzipped total ${gz} bytes (free ceiling 3145728)`);
+		// gzip is reported for continuity with the historical arms; Cloudflare removed the
+		// compressed size limit on 2026-09-04 and it is no longer compared against anything
+		if (gz) console.log(`${r.variant.padEnd(12)} gzipped total ${gz} bytes`);
 	}
 } catch (e) {
 	console.error(`FAILED: ${e.message}`);

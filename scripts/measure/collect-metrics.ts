@@ -27,8 +27,8 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { ceilingVerdict, parseWranglerGzipBytes } from '../release-payload';
-import { FREE_CEILING } from './bundle-size';
+import { ceilingVerdict, parseWranglerGzipBytes, parseWranglerRawBytes } from '../release-payload';
+import { SIZE_CEILING } from './bundle-size';
 import { DEFAULT_MIX, envelope, scoreWorkload } from './free-envelope';
 import { auditSchema, loadPack } from './index-audit';
 
@@ -43,6 +43,12 @@ export function isSkipped(value: unknown): value is Skipped {
 }
 
 export type BundleMetric = {
+	/**
+	 * The UNCOMPRESSED total, which is what the 64 MiB Worker size limit is checked on since
+	 * 2026-09-04. `gzippedBytes` is still collected because every historical figure in the report is
+	 * expressed in it, and because a creep shows there first, but no limit is compared against it.
+	 */
+	rawBytes: number;
 	/** what `wrangler deploy --dry-run` printed, converted from KiB; the figure to quote */
 	gzippedBytes: number;
 	ceiling: number;
@@ -146,9 +152,19 @@ export function collectBundle(root: string): Metric<BundleMetric> {
 	}
 	const gzippedBytes = parseWranglerGzipBytes(printed);
 	if (gzippedBytes === undefined) return { skipped: 'wrangler printed no gzip figure' };
+	const rawBytes = parseWranglerRawBytes(printed);
+	if (rawBytes === undefined) return { skipped: 'wrangler printed no Total Upload figure' };
 
-	const { fits, headroom } = ceilingVerdict(gzippedBytes);
-	return { gzippedBytes, ceiling: FREE_CEILING, headroom, fits, wrangler: wranglerVersion(root) };
+	// on RAW, because that is the figure the limit is on; scoring gz against 64 MiB cannot fail
+	const { fits, headroom } = ceilingVerdict(rawBytes);
+	return {
+		rawBytes,
+		gzippedBytes,
+		ceiling: SIZE_CEILING,
+		headroom,
+		fits,
+		wrangler: wranglerVersion(root)
+	};
 }
 
 function wranglerVersion(root: string): string {

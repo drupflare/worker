@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { FREE_CEILING } from '../../scripts/measure/bundle-size';
+import { SIZE_CEILING } from '../../scripts/measure/bundle-size';
 import {
 	collect,
 	collectDriverPack,
@@ -50,9 +50,10 @@ function fixture(): MetricsDocument {
 		commit: 'a'.repeat(40),
 		metrics: {
 			bundle: {
+				rawBytes: 13_580_216,
 				gzippedBytes: 2_879_099,
-				ceiling: FREE_CEILING,
-				headroom: FREE_CEILING - 2_879_099,
+				ceiling: SIZE_CEILING,
+				headroom: SIZE_CEILING - 13_580_216,
 				fits: true,
 				wrangler: '4.120.0'
 			},
@@ -209,8 +210,8 @@ describe('the gate reads a document the way a reviewer would', () => {
 describe('the gate FAILS on a planted regression', () => {
 	it('fails hard when the bundle crosses the free ceiling', () => {
 		const doc = fixture();
-		const bundle = doc.metrics.bundle as { gzippedBytes: number };
-		bundle.gzippedBytes = FREE_CEILING + 1;
+		const bundle = doc.metrics.bundle as { rawBytes: number };
+		bundle.rawBytes = SIZE_CEILING + 1;
 		const result = compare(doc, fixtureBaseline());
 		expect(result.ok).toBe(false);
 		const ceiling = result.results.find((r) => r.kind === 'ceiling');
@@ -320,7 +321,7 @@ describe('the rendered summary', () => {
 		expect(markdown).toContain('| Metric | Baseline | Current | Delta | Rule | Verdict |');
 		expect(markdown).toContain('`packShape.rows`');
 		expect(markdown).toContain('assets/drupal-sql/manifest.json is absent');
-		expect(markdown).toContain('<= 3,145,728');
+		expect(markdown).toContain('<= 67,108,864');
 		// the step summary must never carry a timing FIGURE; the header names cpuTime,
 		// to say where the one trustworthy absolute comes from
 		expect(markdown).not.toMatch(/\d\s*(ms|s|ms\/|seconds)\b/);
@@ -328,7 +329,7 @@ describe('the rendered summary', () => {
 
 	it('says FAIL in the heading line when something failed', () => {
 		const doc = fixture();
-		(doc.metrics.bundle as { gzippedBytes: number }).gzippedBytes = FREE_CEILING + 1;
+		(doc.metrics.bundle as { rawBytes: number }).rawBytes = SIZE_CEILING + 1;
 		expect(renderMarkdown(doc, compare(doc, fixtureBaseline()))).toContain('**FAIL**');
 	});
 
@@ -342,7 +343,7 @@ describe('the reading a reviewer gets instead of a row', () => {
 	it('states the headroom, both ceilings, the index share and the suite counts', () => {
 		const doc = fixture();
 		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
-		expect(reading).toContain(`leaving ${(FREE_CEILING - 2_879_099).toLocaleString()} under`);
+		expect(reading).toContain(`leaving ${(SIZE_CEILING - 13_580_216).toLocaleString()} under`);
 		expect(reading).toContain('100,000 views/day bound by Worker requests');
 		expect(reading).toContain('1,052 regenerations/day bound by Durable Object requests');
 		expect(reading).toContain('10,869 windowed');
@@ -362,13 +363,18 @@ describe('the reading a reviewer gets instead of a row', () => {
 	it('names the deploy failure rather than a headroom of minus something', () => {
 		const doc = fixture();
 		Object.assign(doc.metrics.bundle as BundleMetric, {
-			gzippedBytes: FREE_CEILING + 1000,
+			rawBytes: SIZE_CEILING + 1000,
+			gzippedBytes: 2_879_099,
 			headroom: -1000,
 			fits: false
 		});
 		const reading = interpret(doc, compare(doc, fixtureBaseline())).join('\n');
 		expect(reading).toContain('1,000 OVER the ceiling');
-		expect(reading).toContain('code: 10027');
+		expect(reading).toContain('cannot be uploaded at all');
+		// `code: 10027` was the COMPRESSED limit's rejection and that limit no longer exists. What
+		// the API answers for the 64 MiB uncompressed one has not been observed, so the sentence
+		// names the consequence and does not guess a code
+		expect(reading).not.toContain('10027');
 	});
 
 	it('drops the line for a metric that was not collected, rather than reading a zero', () => {

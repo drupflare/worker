@@ -1,0 +1,54 @@
+name: drupflare-vps
+
+services:
+  vps-php:
+    build:
+      context: ./vps
+    environment:
+      VPS_FPM_PM: ${VPS_FPM_PM:-static}
+      VPS_FPM_MAX_CHILDREN: ${VPS_FPM_MAX_CHILDREN:-32}
+    volumes:
+      # READ-ONLY, and this is not caution. `drupal-src` is the build input for the shipping pack;
+      # mounted read-write, the entrypoint's settings.php landed in it and turned `twig-bake.spec.ts`
+      # red on a tree nobody had edited. The site directory is a separate writable volume so the
+      # container can hold its own settings.php and files without reaching the tree.
+      - ../drupal-src:/var/www/html:ro
+      - vps-site:/var/www/html/sites/default
+      - ../assets/drupal/site.sqlite:/seed/site.sqlite:ro
+      - vps-db:/var/www/db
+    deploy:
+      resources:
+        limits:
+          cpus: '${VPS_CPUS:-2}'
+          memory: ${VPS_MEMORY:-4g}
+    healthcheck:
+      test: ['CMD-SHELL', 'php -r "exit(0);"']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  vps-web:
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    depends_on:
+      vps-php:
+        condition: service_healthy
+    volumes:
+      - ../drupal-src:/var/www/html:ro
+      - vps-site:/var/www/html/sites/default
+      - ./vps/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - '127.0.0.1:${VPS_PORT:-8099}:80'
+    deploy:
+      resources:
+        limits:
+          cpus: '${VPS_WEB_CPUS:-1}'
+          memory: ${VPS_WEB_MEMORY:-512m}
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1/ >/dev/null 2>&1 || exit 1']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+volumes:
+  vps-db:
+  vps-site:

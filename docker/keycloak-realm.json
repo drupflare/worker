@@ -17,8 +17,13 @@
 			"implicitFlowEnabled": false,
 			"directAccessGrantsEnabled": false,
 			"serviceAccountsEnabled": false,
-			"redirectUris": ["http://127.0.0.1:8787/*", "http://localhost:8787/*"],
-			"webOrigins": ["+"],
+			"redirectUris": [
+				"http://127.0.0.1:8787/*",
+				"http://localhost:8787/*",
+				"http://127.0.0.1:8789/*",
+				"http://localhost:8789/*"
+			],
+			"webOrigins": ["+", "http://127.0.0.1:8789", "http://localhost:8789"],
 			"attributes": {
 				"pkce.code.challenge.method": "S256",
 				"post.logout.redirect.uris": "+"
@@ -33,8 +38,12 @@
 			"secret": "drupflare-other-secret",
 			"standardFlowEnabled": true,
 			"directAccessGrantsEnabled": true,
-			"redirectUris": ["http://127.0.0.1:8787/*"],
-			"webOrigins": ["+"]
+			"redirectUris": [
+				"http://127.0.0.1:8787/*",
+				"http://127.0.0.1:8789/*",
+				"http://localhost:8789/*"
+			],
+			"webOrigins": ["+", "http://127.0.0.1:8789", "http://localhost:8789"]
 		}
 	],
 	"users": [

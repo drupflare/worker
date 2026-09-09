@@ -2,13 +2,13 @@
 
 Four kinds of script live here, and the kind decides the language.
 
-| where              | what                                                   | language           |
-| ------------------ | ------------------------------------------------------ | ------------------ |
-| `scripts/*.ts`     | the live build and ops pipeline                        | TypeScript         |
-| `scripts/bench/`   | native-PHP price baselines, and build-variant A/B      | PHP, plus 2 `.mjs` |
-| `scripts/probe/`   | paired experiment harnesses                            | shell, plus 2 PHP  |
-| `scripts/drupal/`  | Drupal tree manipulation, run under native PHP         | PHP                |
-| `scripts/measure/` | instruments that produce a figure quoted in the report | `.mjs`             |
+| where              | what                                                   | language                  |
+| ------------------ | ------------------------------------------------------ | ------------------------- |
+| `scripts/*.ts`     | the live build and ops pipeline                        | TypeScript                |
+| `scripts/bench/`   | native-PHP price baselines, and build-variant A/B      | PHP, plus 2 `.mjs`        |
+| `scripts/probe/`   | paired experiment harnesses                            | shell, plus 2 PHP         |
+| `scripts/drupal/`  | Drupal tree manipulation, run under native PHP         | PHP                       |
+| `scripts/measure/` | instruments that produce a figure quoted in the report | TypeScript, plus 5 `.mjs` |
 
 ## The Build Pipeline
 

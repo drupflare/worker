@@ -56,10 +56,15 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 		// drupflare in the pack took 40 stale cache rows OUT -- rows keyed to the pre-install module
 		// list, which the runtime would have read as warm and wrong -- so the count falls while the
 		// ratio rises: a cache row is cheap in indexes and dropping it leaves the index-heavy tables
-		// a larger share. 3,883 -> 3,464 is the partial router_alias index
-		expect(audit.totals.dataRows).toBe(1316);
-		expect(audit.totals.chargedRows).toBe(3246);
-		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.5607, 3);
+		// a larger share. 3,883 -> 3,464 is the partial router_alias index.
+		//
+		// 1,316 -> 1,275 and 3,246 -> 3,044 is emptying `watchdog` and dropping the bake's
+		// `install_time`: 41 data rows, and watchdog carries four indexes, so it takes roughly five
+		// charged rows out with each one. The ratio falls with it, because those rows were
+		// index-heavy
+		expect(audit.totals.dataRows).toBe(1275);
+		expect(audit.totals.chargedRows).toBe(3044);
+		expect(audit.totals.indexRows / audit.totals.chargedRows).toBeCloseTo(0.5581, 3);
 	});
 
 	/**
@@ -73,7 +78,7 @@ describe.skipIf(SKIP)('the shipped schema, counted', () => {
 	it('under-reports the shipped total by exactly the rows a partial index does store', () => {
 		const aliased = ROUTES - 402;
 		expect(aliased).toBe(17);
-		expect(audit.totals.chargedRows + aliased).toBe(3263);
+		expect(audit.totals.chargedRows + aliased).toBe(3061);
 	});
 });
 

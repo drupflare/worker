@@ -1,37 +1,38 @@
 import { gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import {
-	FREE_CEILING,
-	PAID_CEILING,
-	formatBundle,
-	type BundleReport
-} from '../../scripts/measure/bundle-size';
+import { SIZE_CEILING, formatBundle, type BundleReport } from '../../scripts/measure/bundle-size';
 
 /**
  * The arithmetic only. `measureBundle()` reads a directory, so it belongs to the node project;
  * what is pinned here is the reasoning that has already been got wrong twice.
  */
 
-function report(gz: number, raw = gz * 3): BundleReport {
+/** the verdict is on RAW now; gz is carried because the report still prints it */
+function report(raw: number, gz = Math.round(raw / 3)): BundleReport {
 	return {
 		files: [{ name: 'site', raw, gz }],
 		raw,
 		gz,
-		freeHeadroom: FREE_CEILING - gz,
-		paidHeadroom: PAID_CEILING - gz,
-		fitsFree: gz <= FREE_CEILING
+		freeHeadroom: SIZE_CEILING - raw,
+		paidHeadroom: SIZE_CEILING - raw,
+		fitsFree: raw <= SIZE_CEILING
 	};
 }
 
-describe('the ceilings are the documented ones', () => {
-	it('uses 3 MiB for free and 10 MiB for paid', () => {
-		expect(FREE_CEILING).toBe(3 * 1024 * 1024);
-		expect(PAID_CEILING).toBe(10 * 1024 * 1024);
+describe('the ceiling is the documented one', () => {
+	it('uses 64 MiB uncompressed, the same on both plans', () => {
+		// Cloudflare removed the compressed limit on 2026-09-04. It was 3 MiB free and 10 MiB paid
+		// on the GZIPPED figure, and most of the interpreter work in the report is scored against it
+		expect(SIZE_CEILING).toBe(64 * 1024 * 1024);
 	});
 
-	it('treats the ceiling as inclusive, so exactly at the limit still fits', () => {
-		expect(report(FREE_CEILING).fitsFree).toBe(true);
-		expect(report(FREE_CEILING + 1).fitsFree).toBe(false);
+	it('scores RAW bytes, because scoring gz would pass anything', () => {
+		// the shipping bundle is 13,580,216 raw and about 4 MB gzipped; scoring the compressed
+		// figure against 64 MiB would make the check unable to fail
+		expect(report(SIZE_CEILING).fitsFree).toBe(true);
+		expect(report(SIZE_CEILING + 1).fitsFree).toBe(false);
+		// the old ceiling is now comfortably inside the limit, which is the whole change
+		expect(report(3_145_729).fitsFree).toBe(true);
 	});
 });
 
@@ -50,17 +51,19 @@ describe('one gzip stream, not a sum of gzips', () => {
 
 describe('the report says which side of the line it is on', () => {
 	it('says under when it fits', () => {
-		const text = formatBundle(report(2_989_814));
-		expect(text).toContain('155,914 under');
+		const text = formatBundle(report(13_580_216));
+		expect(text).toContain('53,528,648 under');
 		expect(text).not.toContain('OVER');
 	});
 
 	it('says OVER when it does not, because a negative headroom read as under once', () => {
-		const text = formatBundle(report(3_200_092));
+		const text = formatBundle(report(SIZE_CEILING + 54_364));
 		expect(text).toContain('54,364 OVER');
 	});
 
-	it('always reports paid as under, since 10 MiB has never been the binding meter here', () => {
-		expect(formatBundle(report(3_200_092))).toMatch(/vs paid 10,485,760: [\d,]+ under/);
+	it('labels which figure the limit is checked on, so the two are never confused', () => {
+		const text = formatBundle(report(13_580_216));
+		expect(text).toContain('the limit is checked on this');
+		expect(text).toContain('no longer limited');
 	});
 });

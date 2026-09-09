@@ -24,6 +24,36 @@ export const DEFAULT_POST_TTL_MS = 120_000;
 /** a GET result has no natural expiry; this is the cap so the table cannot grow without bound */
 export const DEFAULT_GET_TTL_MS = 3_600_000;
 
+/**
+ * GETs whose consumer runs on the cron chain, and how long their answer stays fresh.
+ *
+ * One hour was doing two jobs at once -- a garbage-collection bound AND a freshness contract -- and
+ * only the first is what it was chosen for. The consumers here are all `hook_cron`, and the observed
+ * cron period is hours rather than the configured 15 minutes, so at one hour the entry is expired at
+ * the exact moment anything asks: fetch, defer, throw, drain, expire, repeat. Measured gaps between
+ * `announcements_feed` rounds were 8,142 to 26,033 s, every one past the TTL.
+ *
+ * A day is chosen from the consumer rather than from the endpoint: `update` stores its own release
+ * data for 24 hours, so a fetch entry that outlives that is never the binding constraint.
+ */
+const CRON_FETCH_TTL_MS = 86_400_000;
+
+const CRON_FETCH_URLS = [
+	'://updates.drupal.org/release-history',
+	'://www.drupal.org/announcements.json',
+	'://updates.drupal.org/psa.json'
+];
+
+/**
+ * How long past `expiresAt` an entry may still be handed to a caller that would otherwise throw.
+ *
+ * Serving a stale answer while the drain refreshes it is strictly better than the exception the
+ * caller gets today, and it is the same reasoning as serving a previous generation of a page. It
+ * applies to idempotent methods ONLY: a stale POST result is a replay window, which is the whole
+ * reason `DEFAULT_POST_TTL_MS` is two minutes.
+ */
+export const STALE_SERVE_WINDOW_MS = 604_800_000;
+
 export class DeferredBodyTooLarge extends Error {
 	constructor(readonly bytes: number) {
 		super(
@@ -209,8 +239,35 @@ export function attemptBudget(method: string): number {
  * serving it anyway is a replay window. Two minutes matches the lifetime of the tokens this is
  * built for and is short enough that a leaked cache entry is not worth harvesting.
  */
-export function ttlFor(method: string): number {
-	return isIdempotent(method) ? DEFAULT_GET_TTL_MS : DEFAULT_POST_TTL_MS;
+export function ttlFor(method: string, url = ''): number {
+	if (!isIdempotent(method)) return DEFAULT_POST_TTL_MS;
+	return CRON_FETCH_URLS.some((u) => url.includes(u)) ? CRON_FETCH_TTL_MS : DEFAULT_GET_TTL_MS;
+}
+
+/**
+ * The oldest an entry may be and still be served to a caller whose only alternative is an exception.
+ *
+ * Zero for anything non-idempotent, so a POST result can never be replayed past its own TTL.
+ */
+export function staleWindowFor(method: string): number {
+	return isIdempotent(method) ? STALE_SERVE_WINDOW_MS : 0;
+}
+
+/**
+ * Whether an entry is stale but still worth serving.
+ *
+ * Never true for a fresh entry -- {@link isFresh} owns that case and a caller checks it first -- so
+ * the two together classify an entry as fresh, stale-servable or gone.
+ */
+export function isServableStale(
+	entry: Pick<CacheEntry, 'expiresAt'> | null,
+	nowMs: number,
+	method = 'GET'
+): boolean {
+	if (entry === null) return false;
+	if (!Number.isFinite(entry.expiresAt)) return false;
+	if (entry.expiresAt > nowMs) return false;
+	return entry.expiresAt + staleWindowFor(method) > nowMs;
 }
 
 export interface CacheEntry {

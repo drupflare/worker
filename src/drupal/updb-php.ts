@@ -62,8 +62,10 @@ class PhpWasmSyncFiber {
  *      includes) and correct after an eviction.
  */
 const UPDB_PREAMBLE = String.raw`
-if (!isset($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+// require rather than require_once: the latter returns TRUE on a second call, and a heap restore
+// reaches that state; see the note in site-php.ts
+if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
 }
 $autoloader = $GLOBALS['__pw_autoloader'];
 

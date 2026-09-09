@@ -77,6 +77,7 @@ describe('cronStep: one full round', () => {
 			'system',
 			'update',
 			'drupflare',
+			'unknown',
 			'unknown'
 		]);
 	});
@@ -253,7 +254,8 @@ describe('cronStep: recovering from a lost or stale cursor', () => {
 				hooks: ['file'],
 				includeQueue: false,
 				includeCronLast: false,
-				includeAdvisories: false
+				includeAdvisories: false,
+				includeFetchReopen: false
 			});
 		});
 		expect(step.unit).toBe('gc:watchdog');

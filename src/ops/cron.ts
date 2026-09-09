@@ -1,4 +1,10 @@
-import { cronHookList, runAdvisoryScan, runCronHook, runCronQueue } from '../drupal/cron-php.js';
+import {
+	cronHookList,
+	runAdvisoryScan,
+	runCronHook,
+	runCronQueue,
+	runFetchReopen
+} from '../drupal/cron-php.js';
 
 /**
  * Garbage collection and the decomposed cron chain.
@@ -89,6 +95,8 @@ export interface CronOptions {
 	includeQueue?: boolean;
 	/** the advisory scan unit; off only for a test that is measuring something else */
 	includeAdvisories?: boolean;
+	/** the update-fetch reopen unit; off only for a test that is measuring something else */
+	includeFetchReopen?: boolean;
 	includeCronLast?: boolean;
 	/**
 	 * the `scheme://host[:port]` a cron fragment boots Drupal against.
@@ -717,6 +725,13 @@ export function gcExpired(sql: CronSql, options: CronOptions = {}): Ledger {
  * absence from the pack is why AutomatedCron's elapsed check passed on the very
  * first request and ran drupal_cron() inline, which is the failure TECHNICAL_REPORT.md
  * records as killing every render with an Asyncify throw.
+ *
+ * **THE ROW ALONE WAS INERT, AND IT READ AS WORKING.** `State` extends `CacheCollector` over
+ * `cache.bootstrap` under the cid `state`, so `\Drupal::state()->get('system.cron_last')` answers
+ * from `cache_bootstrap` and never sees a write that only touched `key_value`. Measured on a site
+ * whose chain had fully drained with the `cron_last` unit among what ran: the status report still
+ * said "Cron has not run recently" and sat at Error. The delete is what makes the write visible;
+ * `tests/integration/module-converge.spec.ts` fails without it.
  */
 export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
 	const led = ledger('cron_last');
@@ -729,6 +744,9 @@ export function setCronLast(sql: CronSql, options: CronOptions = {}): Ledger {
      ON CONFLICT(collection, name) DO UPDATE SET value = excluded.value`,
 		[serializeInt(nowS)]
 	);
+	// the whole collector entry rather than one key: it is a single serialized array, so there is
+	// nothing narrower to remove, and the next state read rebuilds it from key_value
+	exec(sql, led, 'cache_bootstrap', `DELETE FROM cache_bootstrap WHERE cid = 'state'`, []);
 	led.cronLast = nowS;
 	return finish(led);
 }
@@ -832,6 +850,12 @@ export function cronUnits(options: CronOptions = {}): CronUnit[] {
 	// AFTER the hooks, because `update` is one of them and this reads what it computed. Its own unit
 	// rather than a module hook: the drupflare hook is not registered in the container the pack ships,
 	// so a site installed before the class existed would never run it
+	// BEFORE advisories and after the hooks, which is `DeferredCron`'s own `Order::Last` relative to
+	// `update_cron`. Its own unit for the same reason advisories is: the drupflare hook is not
+	// registered in the container the pack ships, so as a `#[Hook]` it has never fired anywhere
+	if (options.includeFetchReopen !== false) {
+		units.push({ id: 'fetch_reopen', kind: 'php' });
+	}
 	if (options.includeAdvisories !== false) {
 		units.push({ id: 'advisories', kind: 'php' });
 	}
@@ -933,7 +957,7 @@ export function advanceCursor(
  * `mayContinue` is the CPU constraint expressed as data. A `sql` unit costs
  * microseconds, so the caller may run another in the same invocation; a `php` unit
  * enters the interpreter and must be the last thing that invocation does. This is
- * the same trade fillBatchSize()/fillBatchWallMs() make in src/site-do.js -- batch
+ * the same trade fillBatchSize() makes in src/site-do.js -- batch
  * to amortise the setAlarm() row write, but never batch across a render.
  *
  * `result` is the unit's own ledger or reply and its shape depends on the unit, so it is
@@ -997,8 +1021,10 @@ export async function cronStep(
 		}
 	} else if (unit.id === 'advisories') {
 		result = await deps.runJson(runAdvisoryScan(options.origin));
+	} else if (unit.id === 'fetch_reopen') {
+		result = await deps.runJson(runFetchReopen(options.origin));
 	} else {
-		// the module-less php units are `queue` and `advisories`, both handled above
+		// the module-less php units are `queue`, `advisories` and `fetch_reopen`, all handled above
 		result = await deps.runJson(runCronHook(unit.module as string, options.origin));
 	}
 
@@ -1099,4 +1125,4 @@ export function cronAlarmDelayMs(
 	return options.idleMs ?? 240000;
 }
 
-export { cronHookList, runAdvisoryScan, runCronHook, runCronQueue };
+export { cronHookList, runAdvisoryScan, runCronHook, runCronQueue, runFetchReopen };

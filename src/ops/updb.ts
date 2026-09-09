@@ -753,7 +753,7 @@ export function buildPlanUnits(
 		}
 		if (!allowUnbounded) {
 			throw new Error(
-				'flushSplit: false calls drupal_flush_all_caches() in one unit, measured at 282.9 ms in wasm against a 10 ms free-plan invocation cap. Pass allowUnbounded: true to accept that this run needs a paid plan.'
+				'flushSplit: false calls drupal_flush_all_caches() in one unit, measured at 282.9 ms in wasm. Pass allowUnbounded: true to run it whole rather than as eleven steps.'
 			);
 		}
 		units.push({

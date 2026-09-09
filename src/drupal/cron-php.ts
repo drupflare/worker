@@ -20,7 +20,7 @@
  * own copy, so duplication is this repo's existing answer. The class_exists guard
  * makes a second installation a no-op, so whichever fragment runs first wins.
  */
-const FIBER_SHIM = String.raw`
+export const FIBER_SHIM = String.raw`
 if (!class_exists('PhpWasmSyncFiber', false)) { eval('
 class PhpWasmSyncFiber {
   private $callable;
@@ -55,7 +55,7 @@ class PhpWasmSyncFiber {
  *
  * @param origin - a `scheme://host[:port]`, already JSON-encoded as a PHP string literal
  */
-const kernelBoot = (origin: string) => String.raw`
+export const kernelBoot = (origin: string) => String.raw`
 $origin = json_decode(${origin});
 $__host = $origin === '' ? 'localhost' : (string) parse_url($origin, PHP_URL_HOST);
 $__port = $origin === '' ? 80 : (int) (parse_url($origin, PHP_URL_PORT) ?: (strncmp($origin, 'https:', 6) === 0 ? 443 : 80));
@@ -73,8 +73,10 @@ $_SERVER['REMOTE_ADDR'] = '127.0.0.1';
 $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
-if (!isset($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+// require rather than require_once: the latter returns TRUE on a second call, and a heap restore
+// reaches that state; see the note in site-php.ts
+if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
 }
 $autoloader = $GLOBALS['__pw_autoloader'];
 
@@ -384,6 +386,59 @@ ${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
   } else {
     $scan = new $class(\Drupal::state(), \Drupal::service('keyvalue'));
     $out['record'] = $scan->scan(time());
+    $out['ran'] = true;
+  }
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+$out['ms'] = round($clock() - $t0, 2);
+echo json_encode($out);
+`;
+}
+
+/**
+ * Reopens an update check that recorded a deferral as a failure.
+ *
+ * `DeferredCron` is the class that knows how to do this and it has never run anywhere: it is a
+ * `#[Hook('cron')]` implementation, hook implementations compile into the container, and the pack
+ * ships that container prebuilt -- so on every installed site `hasImplementations('cron',
+ * ['drupflare'])` answers false while the class itself loads fine. Same shape as
+ * {@link runAdvisoryScan}: the class stays where the knowledge of the update module's four records
+ * belongs, and only the invocation moves to the host.
+ */
+export function runFetchReopen(origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ran' => false];
+$clock = function () { return microtime(true) * 1000; };
+$t0 = $clock();
+
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+
+  $class = 'Drupal\\drupflare\\Hook\\DeferredCron';
+  if (!class_exists($class)) {
+    $out['reason'] = 'the drupflare module is not installed';
+  } else {
+    $releases = \Drupal::service('keyvalue.expirable')->get('update_available_releases');
+    $before = 0;
+    foreach ($releases->getAll() as $data) {
+      if (is_array($data) && ($data['project_status'] ?? null) === 'not-fetched') {
+        $before++;
+      }
+    }
+    $reopen = new $class(
+      \Drupal::state(),
+      \Drupal::configFactory(),
+      \Drupal::service('keyvalue'),
+      \Drupal::service('keyvalue.expirable'),
+    );
+    $reopen->cron();
+    $out['unanswered'] = $before;
+    $out['reopened'] = $before > 0;
     $out['ran'] = true;
   }
 } catch (\Throwable $e) {

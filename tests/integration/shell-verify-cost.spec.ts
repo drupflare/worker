@@ -74,14 +74,33 @@ describe('P92: the economics of proving a shell per visitor', () => {
 				};
 				const stored = await site.harvestShellFor('/', [jars.alice, jars.bob], ORIGIN);
 
+				/**
+				 * The window is NOT isolated from the object's own alarm.
+				 *
+				 * The meter flush lives in `alarmBody()`, not in `fetch()`, so an alarm firing
+				 * between op=on and the read charges its `setAlarm` and its meter rows to whatever
+				 * was being measured. That made the assembly arm read 1 in a full suite run and 0
+				 * alone, which presents as flake.
+				 *
+				 * So the arm reports CACHE-BIN rows as well as the total. The claim being pinned is
+				 * "an assembly touches no cache bin", and the object's own bookkeeping is not one --
+				 * the bins are what a render writes and an assembly is supposed to avoid.
+				 */
 				const meter = async (run: () => Promise<unknown>) => {
 					await site.fetch(new Request('https://do.local/__writes?op=off'));
 					await site.fetch(new Request('https://do.local/__writes?op=on'));
 					const value = await run();
 					const t = (await (
 						await site.fetch(new Request('https://do.local/__writes'))
-					).json()) as { rowsWritten: number };
-					return { rows: t.rowsWritten, value };
+					).json()) as {
+						rowsWritten: number;
+						ranked?: Array<{ table: string; rows: number }>;
+					};
+					const ranked = t.ranked ?? [];
+					const bins = ranked
+						.filter((r) => r.table.startsWith('cache_'))
+						.reduce((n, r) => n + r.rows, 0);
+					return { rows: t.rowsWritten, value, bins, ranked: JSON.stringify(ranked) };
 				};
 
 				const render = () =>
@@ -120,8 +139,13 @@ describe('P92: the economics of proving a shell per visitor', () => {
 					stored,
 					proofDdl,
 					render: renderCost.rows,
+					renderBins: renderCost.bins,
 					assembly: assemblyCost.rows,
+					assemblyBins: assemblyCost.bins,
+					assemblyAgainBins: assemblyAgain.bins,
 					assemblyAgain: assemblyAgain.rows,
+					assemblyRanked: assemblyCost.ranked,
+					assemblyAgainRanked: assemblyAgain.ranked,
 					assemblyOk: assemblyCost.value !== null,
 					verdict: (assemblyCost.value as { verified?: string } | null)?.verified ?? null,
 					verify: verifyCost.rows,
@@ -147,10 +171,13 @@ describe('P92: the economics of proving a shell per visitor', () => {
 			// the arm really is the assembly path and not a verification mislabelled
 			expect(seen.verdict).toBe('cached');
 
-			// THE PAYOFF: an assembly touches no cache bin, so it writes nothing at all
-			expect(seen.assembly).toBe(0);
-			expect(seen.assemblyAgain).toBe(0);
-			// and the render it stands in for does write, or there would be nothing to save
+			// THE PAYOFF: an assembly touches NO CACHE BIN. Asserted on the bins rather than on
+			// the total, because the total also carries the object's own bookkeeping when an alarm
+			// lands inside the window, and that is not what this claim is about
+			expect(seen.assemblyBins, `cache-bin rows: ${seen.assemblyRanked}`).toBe(0);
+			expect(seen.assemblyAgainBins, `cache-bin rows: ${seen.assemblyAgainRanked}`).toBe(0);
+			// and the render it stands in for DOES write bins, or there would be nothing to save
+			expect(seen.renderBins).toBeGreaterThan(0);
 			expect(seen.render).toBeGreaterThan(0);
 			// the toll is real and bounded; 40 rows and 4 requests on this arm, 52 and 13 on a
 			// warmer one, which is why the band is wide and the assertion is not a pin

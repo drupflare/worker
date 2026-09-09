@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createUser, renderPage, type RenderRequest } from '../../src/drupal/site-php';
+import { readTagList } from '../../src/ops/fragment-index';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -190,8 +191,22 @@ describe('P92: a shell is proven per visitor before it is assembled for them', (
 		REQUEST_TIMEOUT
 	);
 
+	/**
+	 * A shell must not survive an invalidation that reaches its own bytes.
+	 *
+	 * The intent is unchanged; the PATH moved. It used to be asserted against
+	 * `bumpGeneration('cachetags')`, which fires on the FIRST tag a save writes and therefore cannot
+	 * scope anything: a node save writes `node:3:revisions` before `node_list`. Dropping every shell
+	 * there was correct while nothing recorded what a shell depended on, and it is why assembly
+	 * stopped at the first content save on every live site and never restarted without a human.
+	 *
+	 * `purgeForTags()` runs once the set is whole, from `flushTagPurge()` at the end of the
+	 * invocation or from `drainPendingTags()` at boot if that invocation died, so the drop is
+	 * guaranteed either way. What it buys is that a save reaching one page no longer voids every
+	 * other page's shell.
+	 */
 	it(
-		'drops the shell on a generation bump, including a cachetags one',
+		'drops the shell when a completed tag set reaches it',
 		async () => {
 			const seen = await inObject(freshSite(), async (site: ServeDo) => {
 				const jars = await siteWithShell(site, ['alice', 'bob', 'carol']);
@@ -209,23 +224,27 @@ describe('P92: a shell is proven per visitor before it is assembled for them', (
 				await harvest();
 				await site.assembleFor('/', jars['carol'] as string, ORIGIN);
 				const before = counts();
-				// `cachetags` is the reason that SKIPS the dynamic-bin purge, so it is the one a
-				// shell would survive if it were treated like the dynamic bin
+				const shellTags = readTagList(
+					site.sql.exec('SELECT tags FROM cfw_shell').toArray()[0]?.['tags']
+				);
 				const bump = site.bumpGeneration('cachetags');
 				const after = counts();
-
 				const empty = site.bumpGeneration('cachetags');
-				return { before, bump, after, emptyBump: empty.purgedShells };
+				return { before, bump, after, shellTags, emptyBump: empty.purgedShells };
 			});
 
 			expect(seen.before.shells).toBe(1);
 			expect(seen.before.proofs).toBe(1);
-			// a shell caches the shared region and no cache tag reaches it, so a bump must drop it
+			// THE CONTROL: with no recorded tags the drop below happens for the fail-closed reason
+			// rather than the one under test, and would pass on a shell that scoped nothing
+			expect(seen.shellTags, 'the shell recorded no tags').not.toBeNull();
+			expect((seen.shellTags ?? []).length).toBeGreaterThan(0);
+
 			expect(seen.bump.purgedShells).toBe(1);
 			expect(seen.after.shells).toBe(0);
 			// the proofs go with it; they were taken against an artifact that no longer exists
 			expect(seen.after.proofs).toBe(0);
-			// and a bump with nothing to purge reports nothing rather than a fixed number
+			// and a bump with nothing left to purge reports nothing rather than a fixed number
 			expect(seen.emptyBump).toBe(0);
 		},
 		REQUEST_TIMEOUT

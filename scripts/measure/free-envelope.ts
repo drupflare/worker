@@ -36,6 +36,37 @@ export const FREE_QUOTAS = {
 	// one message costs THREE: a write, a read and a delete, each per 64 KB
 	queueOperationsPerDay: 10_000,
 	queueOperationsPerMessage: 3,
+	/**
+	 * WORKERS KV, AND ITS WRITE SIDE IS THE TIGHTEST METER IN THIS OBJECT.
+	 *
+	 * Reads are 100,000/day and writes are **1,000**, a hundred to one. The KV page tier, S2's
+	 * previous-generation reads and `edgePlanKvKey` all live here, and at the alarm chain's
+	 * 2,777 fills/day one KV write per fill is 2.8x over the write quota on its own.
+	 *
+	 * This model did not carry KV at all until 2026-09-07, so any proposal that writes an artifact
+	 * per save or per fill into KV was scoring clean against an envelope that could not see it.
+	 * Nothing is failing today only because `PAGE_KV` is not bound in the canonical config.
+	 *
+	 * THE RULE THAT FOLLOWS: mirror to KV on READ, never on write. A read-through mirror writes once
+	 * per distinct artifact actually requested, which is bounded by traffic; a write-through mirror
+	 * writes once per regeneration, which is bounded by the row meter and blows this one first.
+	 */
+	kvReadsPerDay: 100_000,
+	kvWritesPerDay: 1_000,
+	kvDeletesPerDay: 1_000,
+	kvListsPerDay: 1_000,
+	/**
+	 * The Workers Cache purge budget, which is ACCOUNT-WIDE and always metered at the free rate.
+	 *
+	 * 5 calls/minute against a token bucket of 25, at most 100 tags per call, whatever the plan the
+	 * account is on. That is 7,200 calls/day shared by every tenant on the Worker, so a scoped purge
+	 * driven per invalidated TAG starves the fleet while a purge driven per SAVE, batching up to 100
+	 * tags, fits. A rate-limited purge answers `success: false` rather than throwing, so exceeding
+	 * this is silent.
+	 */
+	cachePurgeCallsPerMinute: 5,
+	cachePurgeBurst: 25,
+	cachePurgeTagsPerCall: 100,
 	// per MONTH. Class B is a read (serving), Class A a write (regeneration); "assets are free"
 	// describes deploy-time uploads, which cannot hold a runtime-rendered page
 	r2ClassBPerMonth: 10_000_000,
@@ -77,11 +108,46 @@ export const SITE_STORAGE_BYTES = {
 	 * `cache_container` row was keyed to a stale dependency hash, so the first `$kernel->boot()`
 	 * on every site rebuilt a 482 KB container into the heap. With the row readable the same
 	 * snapshot is 10,420,224, so the model had been charging every site 26 MB it never stored.
+	 *
+	 * 11,206,656 AS OF 2026-09-09, re-measured on the shipping build by
+	 * `tests/integration/heap-image-storage.spec.ts`: 171 kept pages, identical on both runs. It
+	 * stood at 10,420,224, which is 159 pages, so the image had grown 12 pages and nothing said so.
+	 * No spec pins this value -- it moves with the packed module in whole wasm pages, so a
+	 * threshold here is a threshold on the pack. The spec prints what it measured instead.
 	 */
-	heapSnapshot: 10_420_224,
+	heapSnapshot: 11_206_656,
 	/** the same snapshot on a site that has been through `/firstrun` and served one page */
-	warmHeapSnapshot: 9_699_328
+	warmHeapSnapshot: 9_699_328,
+	/**
+	 * The same image with each stored chunk deflated, which is what {@link packChunk} writes.
+	 *
+	 * Measured on that image's own 57 chunks: 3,134,727 bytes, 3.575x. It bounds what an image
+	 * costs when one is stored, and an image is stored only when an operator asks for it.
+	 *
+	 * **THE IMAGE IS OFF BY DEFAULT, AND COMPRESSING IT WAS THE WRONG LAYER.** Deflation was built
+	 * to close the storage cap -- 315 tenants against 645 -- and then a deployed A/B on `cpuTime`
+	 * measured the restore costing MORE than the boot it replaces: median 1,912 ms over n=5 with
+	 * the image on against 1,264 ms over n=4 with it off, ranges not overlapping (imaged minimum
+	 * 1,561 above unimaged maximum 1,343). So the image costs storage AND CPU and buys neither.
+	 * Deflation cannot reach that: the likely term is `digestBytes()`, a per-byte JS loop over the
+	 * restored heap, and the digest is over HEAP bytes by design so it runs on inflated data.
+	 *
+	 * Kept rather than deleted because the codec is correct and cheap to carry. If a workload is
+	 * ever found where an image pays, this is what bounds its storage; nothing here argues that a
+	 * workload exists.
+	 */
+	packedHeapSnapshot: 3_134_727
 } as const;
+
+/**
+ * What deflating the stored chunks buys, as a ratio, so a caller can price an image it has measured
+ * rather than only the one recorded above.
+ *
+ * A ratio on ONE term of a site's storage. The seed does not compress and is charged in full, so
+ * the tenant count moves by less than this.
+ */
+export const HEAP_PACK_RATIO =
+	SITE_STORAGE_BYTES.heapSnapshot / SITE_STORAGE_BYTES.packedHeapSnapshot;
 
 /**
  * GB a Durable Object is billed for while it is alive, whatever it actually uses.
@@ -611,10 +677,15 @@ export function envelope(
 		 * Fraction of off-Worker reads that Cloudflare's CDN answers in front of the bucket, so they
 		 * never become an R2 Class B operation.
 		 *
-		 * EXPLICIT AND DEFAULTED TO ZERO, because it is the one number in this model nobody has
-		 * measured. At 0 the R2 ceiling is 333,333 views/day -- 3.33x the Worker ceiling -- and the
-		 * true figure is `3.33x / (1 - absorption)`. Passing a value here is a stated assumption, not
-		 * a measurement, and the report says so.
+		 * EXPLICIT AND DEFAULTED TO ZERO, and zero is a MEASUREMENT rather than the gap this used to
+		 * call it. `cdn-absorption.ts` drives the shipping drain and reads what it hands R2: `.html`
+		 * keys with no `cache-control`. Cloudflare's CDN caches by EXTENSION and does not cache HTML
+		 * by default, so a mirrored page answers `DYNAMIC` and reaches the bucket every time until a
+		 * Cache Rule makes the hostname eligible. At 0 the R2 ceiling is 333,333 views/day -- 3.33x
+		 * the Worker ceiling -- and the true figure is `3.33x / (1 - absorption)`.
+		 *
+		 * The RATIO on a site that has the rule still needs production traffic:
+		 * `1 - classB / hostnameRequests`, both counters from a deployed zone over one window.
 		 */
 		cdnAbsorption?: number;
 		/**
@@ -975,28 +1046,101 @@ export type StorageCeiling = {
 	/** how many sites the account-wide allowance holds */
 	sitesPerAccount: number;
 	heapSnapshot: boolean;
+	/** whether the stored chunks are deflated, which is what ships */
+	packed: boolean;
 };
 
 /**
  * How many sites fit, which is the question no rate meter asks.
  *
- * The two arms differ by 8.9x and the snapshot is the whole of it, so whether `HEAP_SNAPSHOT` is on
- * is a decision about how many customers an account holds rather than about boot latency alone.
+ * The image is 71% of what a site occupies, so whether it is stored -- and whether it is packed --
+ * decides how many customers an account holds rather than boot latency alone.
  *
  * @param heapSnapshot whether a stored heap is kept per site.
  * @param extraBytesPerSite content, uploads and rendered pages a real site accumulates.
+ * @param packed whether the chunks are deflated; true is what ships, and the default so a caller
+ *   asking the plain question gets the shipping answer.
  */
-export function storageCeiling(heapSnapshot: boolean, extraBytesPerSite = 0): StorageCeiling {
+export function storageCeiling(
+	heapSnapshot: boolean,
+	extraBytesPerSite = 0,
+	packed = true
+): StorageCeiling {
+	const image = packed ? SITE_STORAGE_BYTES.packedHeapSnapshot : SITE_STORAGE_BYTES.heapSnapshot;
 	const perSiteBytes =
-		SITE_STORAGE_BYTES.seed +
-		(heapSnapshot ? SITE_STORAGE_BYTES.heapSnapshot : 0) +
-		Math.max(0, extraBytesPerSite);
+		SITE_STORAGE_BYTES.seed + (heapSnapshot ? image : 0) + Math.max(0, extraBytesPerSite);
 	return {
 		perSiteBytes,
 		sitesPerAccount: Math.floor(FREE_QUOTAS.storageBytes / perSiteBytes),
-		heapSnapshot
+		heapSnapshot,
+		packed
 	};
 }
+
+export type StorageVerdict = {
+	sites: number;
+	perSiteBytes: number;
+	usedBytes: number;
+	/** fraction of the account-wide allowance the fleet occupies; over 1 means it does not fit */
+	share: number;
+	fits: boolean;
+	/** sites the allowance holds at this per-site cost */
+	sitesPerAccount: number;
+};
+
+/**
+ * Whether a FLEET of a given size fits, which is what a hard cap actually asks.
+ *
+ * `storageCeiling()` answers how many sites fit; this answers whether the ones an operator has
+ * planned for do. The two rate ceilings score one site's traffic, so neither can see this, and a
+ * fleet reaches the cap with every rate meter healthy.
+ *
+ * @param sites how many tenants the account holds.
+ * @param opts `heapSnapshot` and `packed` as in {@link storageCeiling}; `extraBytesPerSite` is the
+ *   content a real site accumulates on top of its seed.
+ */
+export function fleetStorage(
+	sites: number,
+	opts: { heapSnapshot?: boolean; packed?: boolean; extraBytesPerSite?: number } = {}
+): StorageVerdict {
+	const ceiling = storageCeiling(
+		opts.heapSnapshot ?? true,
+		opts.extraBytesPerSite ?? 0,
+		opts.packed ?? true
+	);
+	const n = Math.max(0, sites);
+	const usedBytes = n * ceiling.perSiteBytes;
+	return {
+		sites: n,
+		perSiteBytes: ceiling.perSiteBytes,
+		usedBytes,
+		share: usedBytes / FREE_QUOTAS.storageBytes,
+		fits: usedBytes <= FREE_QUOTAS.storageBytes,
+		sitesPerAccount: ceiling.sitesPerAccount
+	};
+}
+
+/**
+ * What the seed's rebuildable cache bins would save, and why they are not trimmed.
+ *
+ * REFUTED ON MEASUREMENT, `tests/integration/seed-cache-cost.spec.ts`, n=3 with zero spread. The
+ * seven bins excluding `cache_container` are 1,273,856 bytes of a 4,730,880-byte provisioned
+ * database, so dropping their INSERTs from the pack looks like a 27% saving. After ONE render the
+ * trimmed site is 5,685,248 bytes against the untrimmed 5,509,120: the site rebuilds the bins on
+ * its first render, larger than the copy it shipped, so the saving is transient and then negative.
+ *
+ * It also costs 227 charged rows on that render, 98 -> 325, on the meter that binds regeneration.
+ *
+ * Recorded so the mechanism is not re-proposed. The OBJECTIVE it was aimed at -- per-tenant storage
+ * against a hard cap -- is served by {@link SITE_STORAGE_BYTES.packedHeapSnapshot} instead, which is
+ * 6.3x the saving and does not expire on the first render.
+ */
+export const SEED_CACHE_TRIM = {
+	savedAtProvisioning: 1_273_856,
+	savedAfterOneRender: -176_128,
+	extraRowsOnFirstRender: 227,
+	refuted: true
+} as const;
 
 export type Verdict = {
 	targetVisitsPerMonth: number;
@@ -1038,10 +1182,15 @@ export function scoreWorkload(
 		 * Fraction of off-Worker reads that Cloudflare's CDN answers in front of the bucket, so they
 		 * never become an R2 Class B operation.
 		 *
-		 * EXPLICIT AND DEFAULTED TO ZERO, because it is the one number in this model nobody has
-		 * measured. At 0 the R2 ceiling is 333,333 views/day -- 3.33x the Worker ceiling -- and the
-		 * true figure is `3.33x / (1 - absorption)`. Passing a value here is a stated assumption, not
-		 * a measurement, and the report says so.
+		 * EXPLICIT AND DEFAULTED TO ZERO, and zero is a MEASUREMENT rather than the gap this used to
+		 * call it. `cdn-absorption.ts` drives the shipping drain and reads what it hands R2: `.html`
+		 * keys with no `cache-control`. Cloudflare's CDN caches by EXTENSION and does not cache HTML
+		 * by default, so a mirrored page answers `DYNAMIC` and reaches the bucket every time until a
+		 * Cache Rule makes the hostname eligible. At 0 the R2 ceiling is 333,333 views/day -- 3.33x
+		 * the Worker ceiling -- and the true figure is `3.33x / (1 - absorption)`.
+		 *
+		 * The RATIO on a site that has the rule still needs production traffic:
+		 * `1 - classB / hostnameRequests`, both counters from a deployed zone over one window.
 		 */
 		cdnAbsorption?: number;
 		/** objects held alive continuously; see `envelope()` */
@@ -1149,5 +1298,18 @@ if (import.meta.main) {
 			`${s.withoutSnapshot.sitesPerAccount} without ` +
 			`(${(s.withoutSnapshot.perSiteBytes / 1e6).toFixed(1)} MB each), ` +
 			`against ${(FREE_QUOTAS.storageBytes / 1e9).toFixed(0)} GB account-wide`
+	);
+	// the no-image arm is the DEFAULT arm, so it leads. An image is opt-in and costs both meters
+	console.log(
+		`heap image        OFF by default: the restore measured 1,912 ms of cpuTime (n=5) against ` +
+			`1,264 ms (n=4) booting from the pack, so it costs storage AND CPU. When one IS stored ` +
+			`the chunks are deflated (${HEAP_PACK_RATIO.toFixed(2)}x), which bounds the storage at ` +
+			`${(SITE_STORAGE_BYTES.packedHeapSnapshot / 1e6).toFixed(2)} MB rather than ` +
+			`${(SITE_STORAGE_BYTES.heapSnapshot / 1e6).toFixed(2)} MB`
+	);
+	console.log(
+		`seed cache trim   REFUTED: ${SEED_CACHE_TRIM.savedAtProvisioning.toLocaleString()} bytes at provisioning, ` +
+			`${SEED_CACHE_TRIM.savedAfterOneRender.toLocaleString()} after one render, ` +
+			`+${SEED_CACHE_TRIM.extraRowsOnFirstRender} rows on it`
 	);
 }

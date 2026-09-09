@@ -23,7 +23,11 @@ export const CACHE_TIERS = [
 	'STALE',
 	// a replica meeting work it may not do; the caller retries on the primary. Single word like every
 	// other tier -- the contract scanner matches [A-Z]+ and a hyphen is invisible to it
-	'REFUSED'
+	'REFUSED',
+	// a render that THREW, answered 500 with the exception. Distinct from MISS because a retry
+	// cannot fix it: the two used to be indistinguishable and the 503 invited the retry that
+	// re-entered the same failing render
+	'ERROR'
 ] as const;
 
 export type CacheTier = (typeof CACHE_TIERS)[number];

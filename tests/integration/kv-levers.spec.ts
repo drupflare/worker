@@ -21,7 +21,7 @@ const env = rawEnv as typeof rawEnv & {
  *
  * THE CONVENTION WAS DECORATIVE FOR SEVEN OF ITS ELEVEN NAMES. `withSettings()` is applied in
  * `src/site.ts` to the FRONT worker's env; the object receives its own copy of the bindings, so
- * `RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
+ * `RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
  * `LAZY_FS_BUDGET_BYTES` and `PREFILL` were knobs an operator could set and nothing would read.
  * Every one of them had a passing test of its RESOLVER, which is why nothing noticed: the resolvers
  * were always correct and were being handed an env the override never touched.
@@ -34,7 +34,6 @@ const env = rawEnv as typeof rawEnv & {
 const PROBE: Record<KvOverridable, string> = {
 	RENDER_BUDGET_MS: '4321',
 	FILL_BATCH_SIZE: '7',
-	FILL_BATCH_WALL_MS: '12345',
 	HTTP_DRAIN_LIMIT: '3',
 	MIRROR_LIMIT: '9',
 	LAZY_FS_BUDGET_BYTES: '1048576',
@@ -49,7 +48,8 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_COUNT: '3',
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
-	EDGE_PLAN: '0'
+	EDGE_PLAN: '0',
+	ASSET_AGGREGATES: '1'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {
@@ -96,7 +96,6 @@ describe('the KV lever seam inside the object', () => {
 			return {
 				render: e.RENDER_BUDGET_MS,
 				batch: e.FILL_BATCH_SIZE,
-				wall: e.FILL_BATCH_WALL_MS,
 				drain: e.HTTP_DRAIN_LIMIT,
 				mirror: e.MIRROR_LIMIT,
 				lazy: e.LAZY_FS_BUDGET_BYTES,
@@ -106,7 +105,6 @@ describe('the KV lever seam inside the object', () => {
 		expect(seen).toEqual({
 			render: '4321',
 			batch: '7',
-			wall: '12345',
 			drain: '3',
 			mirror: '9',
 			lazy: '1048576',
@@ -161,7 +159,7 @@ describe('the KV lever seam inside the object', () => {
 	/**
 	 * AN ALARM NEVER PASSES THROUGH `handle()`, and four of the seven are read on the fill chain.
 	 *
-	 * Adopting only in `handle()` would leave `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`,
+	 * Adopting only in `handle()` would leave `FILL_BATCH_SIZE`,
 	 * `HTTP_DRAIN_LIMIT` and `MIRROR_LIMIT` at their deployed vars however many times an operator
 	 * rewrote KV -- the exact defect this whole spec exists for, one entry point along.
 	 */
@@ -171,9 +169,9 @@ describe('the KV lever seam inside the object', () => {
 		const seen = await inObject(site, async (obj) => {
 			await obj.alarm();
 			const e = obj.env as Record<string, unknown>;
-			return { batch: e.FILL_BATCH_SIZE, wall: e.FILL_BATCH_WALL_MS, mirror: e.MIRROR_LIMIT };
+			return { batch: e.FILL_BATCH_SIZE, mirror: e.MIRROR_LIMIT };
 		});
-		expect(seen).toEqual({ batch: '7', wall: '12345', mirror: '9' });
+		expect(seen).toEqual({ batch: '7', mirror: '9' });
 	});
 
 	it('leaves the deployed vars in force when KV holds nothing', async () => {

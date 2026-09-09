@@ -147,7 +147,6 @@ export const SETTINGS_KV_KEY = 'settings';
 export const KV_OVERRIDABLE = [
 	'RENDER_BUDGET_MS',
 	'FILL_BATCH_SIZE',
-	'FILL_BATCH_WALL_MS',
 	'HTTP_DRAIN_LIMIT',
 	'MIRROR_LIMIT',
 	'LAZY_FS_BUDGET_BYTES',
@@ -155,7 +154,7 @@ export const KV_OVERRIDABLE = [
 	'GEN_BUCKET_MS',
 	'MAIL_TRANSPORT',
 	'MAIL_DRAIN_LIMIT',
-	// the shell assembly branch, default OFF. It qualifies for this list rather than for `vars` on the
+	// the shell assembly branch, default ON. It qualifies for this list rather than for `vars` on the
 	// list's own test -- its worst case is a slow site, because a shell that does not match refuses
 	// and the request falls through to an ordinary render
 	'SHELL_ASSEMBLY',
@@ -180,7 +179,11 @@ export const KV_OVERRIDABLE = [
 	'SITE_WARM',
 	// the front worker's compiled-plan tier. Same test as the rest: turning it off costs the object
 	// hop it always paid, which is a slow site and not a changed reachability
-	'EDGE_PLAN'
+	'EDGE_PLAN',
+	// the baked asset aggregates. It met this list's own test and was left off it, so `assets/agg/`
+	// shipped built and there was no way to turn it on without a redeploy -- an oversight rather
+	// than a decision. A wrong value is a fatter or slower page, never a changed reachability
+	'ASSET_AGGREGATES'
 ] as const;
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];

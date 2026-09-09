@@ -11,8 +11,10 @@ import {
 	envelope,
 	FILL_WINDOW_AMORTISATION,
 	fleetIdleGbS,
+	fleetStorage,
 	FREE_CPU_MS_CAP,
 	FREE_QUOTAS,
+	HEAP_PACK_RATIO,
 	IDLE_GB_S_PER_DAY,
 	INSTALL_CPU_MS,
 	KEEP_WARM_MS,
@@ -29,6 +31,7 @@ import {
 	scoreWorkload,
 	SECONDS_PER,
 	SECONDS_PER_DAY,
+	SEED_CACHE_TRIM,
 	SITE_STORAGE_BYTES,
 	STEADY_STATE_WARMTH,
 	storageCeiling,
@@ -977,20 +980,74 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		expect(SITE_STORAGE_BYTES.heapSnapshot).toBeGreaterThan(SITE_STORAGE_BYTES.seed * 2);
 	});
 
-	// the arms differ by ~3.3x, so HEAP_SNAPSHOT is a fleet-size decision and not only a latency one
-	it('costs about 3.3x the sites to keep a stored heap', () => {
+	// the arms differ by ~1.7x once the image is packed, so HEAP_SNAPSHOT is still a fleet-size
+	// decision and no longer a 3.3x one. THE DEFAULT IS PACKED, because packed is what ships
+	it('charges the packed image by default, since that is what a site stores', () => {
 		const on = storageCeiling(true);
 		const off = storageCeiling(false);
-		// 9x while the model priced the container defect into every site
-		expect(off.sitesPerAccount / on.sitesPerAccount).toBeGreaterThan(3);
+		expect(on.packed).toBe(true);
 		// NOT PINNED TO A COUNT. Both numbers are 5 GB / (seed + heap), so asserting them restates
-		// the arithmetic in the line above and breaks whenever the packed module grows a page --
-		// which it did, 122 -> 121, for five kilobytes of PHP that changed nothing about the model.
-		// The formula is what this guards
+		// the arithmetic and breaks whenever the packed module grows a page -- which it did,
+		// 122 -> 121, for five kilobytes of PHP that changed nothing about the model. The formula
+		// is what this guards
 		const expected = (heap: number) =>
 			Math.floor(FREE_QUOTAS.storageBytes / (SITE_STORAGE_BYTES.seed + heap));
-		expect(on.sitesPerAccount).toBe(expected(SITE_STORAGE_BYTES.heapSnapshot));
-		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount * 3);
+		expect(on.sitesPerAccount).toBe(expected(SITE_STORAGE_BYTES.packedHeapSnapshot));
+		expect(storageCeiling(true, 0, false).sitesPerAccount).toBe(
+			expected(SITE_STORAGE_BYTES.heapSnapshot)
+		);
+		expect(off.sitesPerAccount).toBeGreaterThan(on.sitesPerAccount);
+	});
+
+	// the codec bounds an OPT-IN cost. `HEAP_IMAGE` is off by default because a deployed A/B read
+	// the restore at 1,912 ms of cpuTime (n=5) against 1,264 booting from the pack (n=4), so the
+	// image costs storage and CPU and buys neither. This asserts the direction and no magnitude
+	it('holds more tenants when a stored image is packed than when it is not', () => {
+		const raw = storageCeiling(true, 0, false);
+		const packed = storageCeiling(true, 0, true);
+		expect(packed.sitesPerAccount).toBeGreaterThan(raw.sitesPerAccount);
+		// bounded by the image's SHARE of a site, so it can never reach the codec's own ratio --
+		// the seed does not compress and is charged in full either way
+		expect(packed.sitesPerAccount / raw.sitesPerAccount).toBeLessThan(HEAP_PACK_RATIO);
+	});
+
+	// the refuted alternative, recorded so it is not re-proposed as the lever
+	it('records the seed cache trim as refused, with the direction that refused it', () => {
+		expect(SEED_CACHE_TRIM.refuted).toBe(true);
+		// it saves at provisioning and gives more than all of it back on the first render, which is
+		// the whole refutation: a sign change rather than a size
+		expect(SEED_CACHE_TRIM.savedAtProvisioning).toBeGreaterThan(0);
+		expect(SEED_CACHE_TRIM.savedAfterOneRender).toBeLessThan(0);
+		expect(SEED_CACHE_TRIM.extraRowsOnFirstRender).toBeGreaterThan(0);
+	});
+
+	describe('a FLEET against the cap, which is what the hard limit actually asks', () => {
+		it('fits at the ceiling and not one site past it', () => {
+			const ceiling = storageCeiling(true).sitesPerAccount;
+			expect(fleetStorage(ceiling).fits).toBe(true);
+			expect(fleetStorage(ceiling + 1).fits).toBe(false);
+		});
+
+		it('reports the share so a fleet under the cap still shows how close it is', () => {
+			const half = Math.floor(storageCeiling(true).sitesPerAccount / 2);
+			const v = fleetStorage(half);
+			expect(v.share).toBeGreaterThan(0.4);
+			expect(v.share).toBeLessThan(0.6);
+			expect(v.usedBytes).toBe(half * v.perSiteBytes);
+		});
+
+		it('holds more sites without an image than with one', () => {
+			// DERIVED from the imaged ceiling rather than a chosen count: one site past it must not
+			// fit with an image and must fit without, whatever the pack currently measures
+			const past = storageCeiling(true).sitesPerAccount + 1;
+			expect(fleetStorage(past, { heapSnapshot: true }).fits).toBe(false);
+			expect(fleetStorage(past, { heapSnapshot: false }).fits).toBe(true);
+		});
+
+		it('charges nothing for zero sites and refuses to charge for negative ones', () => {
+			expect(fleetStorage(0).usedBytes).toBe(0);
+			expect(fleetStorage(-5).sites).toBe(0);
+		});
 	});
 
 	// a CONTROL against the figure this was mis-derived from: 23,724,032 came off an object that

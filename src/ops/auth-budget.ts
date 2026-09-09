@@ -334,6 +334,15 @@ export const AUTH_DAY_HEADER = 'x-cfw-auth-day';
 
 /** set by the Worker on the response it returns, so a measurement can see what happened */
 export const AUTH_MODE_HEADER = 'x-cfw-auth-mode';
+
+/**
+ * The role set a render was for, sorted and comma-joined.
+ *
+ * Object to front worker only. The front worker never reads it off an inbound request, which is
+ * what makes it trustworthy without a signature: a client can present a cookie and be told what
+ * that cookie is, it cannot present a role set.
+ */
+export const ROLES_HEADER = 'x-cfw-roles';
 export const AUTH_REASON_HEADER = 'x-cfw-auth-reason';
 
 /**

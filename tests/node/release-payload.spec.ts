@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { afterAll, describe, expect, it } from 'vitest';
 import { isSafePayloadPath, readManifest, verifyExtracted } from '../../scripts/hydrate.ts';
-import { FREE_CEILING } from '../../scripts/measure/bundle-size.ts';
+import { SIZE_CEILING } from '../../scripts/measure/bundle-size.ts';
 import {
 	ASSET_FILE_BYTES_LIMIT,
 	ASSET_FILE_LIMIT,
@@ -17,6 +17,7 @@ import {
 	measureAssetUpload,
 	negatedPaths,
 	parseWranglerGzipBytes,
+	parseWranglerRawBytes,
 	payloadName,
 	payloadPlan,
 	scanSeededCredentials,
@@ -75,6 +76,7 @@ function checkout(seam: string, ignore?: string): string {
 				'!/core/',
 				'!/modules/',
 				'!/themes/',
+				'!/agg/',
 				'!/drupal-pf/',
 				'/drupal-pf/*',
 				'!/drupal-pf/core.pf.json',
@@ -384,10 +386,23 @@ describe('wrangler prints KiB and the ceiling is bytes, which is a 1,024x mistak
 		expect(parseWranglerGzipBytes('--dry-run: exiting now.')).toBeUndefined();
 	});
 
-	it('scores against the 3 MiB free ceiling', () => {
-		expect(ceilingVerdict(2_876_078)).toEqual({ fits: true, headroom: 269_650 });
-		expect(ceilingVerdict(FREE_CEILING)).toEqual({ fits: true, headroom: 0 });
-		expect(ceilingVerdict(FREE_CEILING + 1)).toEqual({ fits: false, headroom: -1 });
+	it('reads the UNCOMPRESSED figure, which is the one the limit is on', () => {
+		// `Total Upload: 13261.93 KiB / gzip: 3985.48 KiB` -- the gzip half must not be picked up,
+		// because it would score a 13 MB bundle as 4 MB and pass anything
+		const line = 'Total Upload: 13261.93 KiB / gzip: 3985.48 KiB';
+		expect(parseWranglerRawBytes(line)).toBe(13_580_216);
+		expect(parseWranglerRawBytes('Total Upload: 2.5 MiB / gzip: 1.0 MiB')).toBe(2_621_440);
+		expect(parseWranglerRawBytes('--dry-run: exiting now.')).toBeUndefined();
+	});
+
+	it('scores against the 64 MiB uncompressed ceiling, not the compressed one that is gone', () => {
+		// Cloudflare removed the compressed limit on 2026-09-04. Scoring the gzipped figure against
+		// 3 MiB would now refuse a bundle that deploys, which is a stale gate rather than a finding
+		expect(ceilingVerdict(13_580_216)).toEqual({ fits: true, headroom: 53_528_648 });
+		expect(ceilingVerdict(SIZE_CEILING)).toEqual({ fits: true, headroom: 0 });
+		expect(ceilingVerdict(SIZE_CEILING + 1)).toEqual({ fits: false, headroom: -1 });
+		// the old ceiling is now well inside the limit, which is the whole change
+		expect(ceilingVerdict(3_145_729).fits).toBe(true);
 	});
 });
 

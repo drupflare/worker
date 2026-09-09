@@ -46,5 +46,11 @@
 !/drupal-pf/core.pf.json
 !/drupal-pf/core.pf.bin
 
+# the build's CSS and JS aggregates, which `ASSET_AGGREGATES=1` substitutes into a stored page.
+# Withheld, this lever could not work at any setting: the substitution rewrote every asset tag to an
+# /agg/ URL that the asset layer did not publish, so the Worker answered it as a Drupal path and the
+# page rendered with no CSS. `scripts/pack-aggregates.ts` writes them
+!/agg/
+
 # the migration chunks the JS engine replays: manifest.json plus NNNN.json
 !/drupal-sql/

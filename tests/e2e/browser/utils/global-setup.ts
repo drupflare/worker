@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test';
-import { ADMIN_PASS, ADMIN_USER, BASE_URL, SITE, SITE_NAME } from './fixtures.js';
+import { writeFileSync } from 'node:fs';
+import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } from './fixtures.js';
 
 /**
  * Brings the site the browser lane navigates to a state where a browser has something to look at.
@@ -9,8 +10,12 @@ import { ADMIN_PASS, ADMIN_USER, BASE_URL, SITE, SITE_NAME } from './fixtures.js
  * access-denied page rather than a form.
  */
 
-const call = async (path: string, init?: RequestInit): Promise<globalThis.Response> => {
-	const url = new URL(`${BASE_URL}${path}`);
+const call = async (
+	path: string,
+	init?: RequestInit,
+	base: string = BASE_URL
+): Promise<globalThis.Response> => {
+	const url = new URL(`${base}${path}`);
 	if (!url.searchParams.has('site')) url.searchParams.set('site', SITE);
 	return fetch(url, { signal: AbortSignal.timeout(180_000), ...init });
 };
@@ -20,14 +25,21 @@ const call = async (path: string, init?: RequestInit): Promise<globalThis.Respon
  *
  * `wrangler dev` answers an occasional `500 Error: Network connection lost.` on a warm object, and a
  * setup that aborts on one of those takes the whole lane down before a single spec runs.
+ *
+ * @param base which worker to ask; `aggregate-styling.pw.ts` provisions the second one.
  */
-async function callJson<T>(path: string, init?: RequestInit, tries = 3): Promise<T> {
+export async function callJson<T>(
+	path: string,
+	init?: RequestInit,
+	tries = 3,
+	base: string = BASE_URL
+): Promise<T> {
 	let last = '';
 	for (let i = 0; i < tries; i++) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 1000));
 		let text: string;
 		try {
-			text = await (await call(path, init)).text();
+			text = await (await call(path, init, base)).text();
 		} catch (e) {
 			last = String(e);
 			continue;
@@ -60,18 +72,24 @@ async function migrate(): Promise<void> {
  * `already configured` and every authenticated spec fails on a password nobody can recover.
  */
 async function firstRun(): Promise<void> {
-	const reply = await callJson<{ ok: boolean; error?: string }>('/firstrun?force=1', {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({
-			siteName: SITE_NAME,
-			adminName: ADMIN_USER,
-			adminMail: 'admin@example.invalid',
-			adminPass: ADMIN_PASS,
-			timezone: 'UTC'
-		})
-	});
+	const reply = await callJson<{ ok: boolean; error?: string; ownerToken?: string }>(
+		'/firstrun?force=1',
+		{
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({
+				siteName: SITE_NAME,
+				adminName: ADMIN_USER,
+				adminMail: 'admin@example.invalid',
+				adminPass: ADMIN_PASS,
+				timezone: 'UTC'
+			})
+		}
+	);
 	if (!reply.ok) throw new Error(`firstrun refused: ${reply.error ?? JSON.stringify(reply)}`);
+	// the credential the `/_cfw` surface takes, and the only run that ever shows it
+	if (!reply.ownerToken) throw new Error('firstrun returned no owner token');
+	writeFileSync(OWNER_TOKEN_FILE, reply.ownerToken, 'utf8');
 }
 
 const REGISTER_VISITORS = 's:8:"register";s:8:"visitors";';

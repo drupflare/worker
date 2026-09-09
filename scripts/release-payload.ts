@@ -33,7 +33,7 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { FREE_CEILING, measureBundle } from './measure/bundle-size';
+import { SIZE_CEILING, measureBundle } from './measure/bundle-size';
 import { decodeLatin1, readEntry, readPack } from './scrub-pack-secrets';
 
 /** the only two directories a payload may write into; `vendor/` is not one of them */
@@ -65,6 +65,10 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/core', dir: true },
 	{ path: 'assets/modules', dir: true },
 	{ path: 'assets/themes', dir: true, optional: true },
+	// the build's CSS and JS aggregates. Optional for the same reason `themes` is: `assets:agg` is
+	// not in the numbered build sequence, so a payload built without it carries no `agg/` at all and
+	// `ASSET_AGGREGATES` then matches no library rather than breaking a page
+	{ path: 'assets/agg', dir: true, optional: true },
 	{ path: 'assets/drupal-pf/core.pf.json' },
 	{ path: 'assets/drupal-pf/core.pf.bin' },
 	{ path: 'assets/drupal-sql', dir: true }
@@ -422,14 +426,33 @@ export function parseWranglerGzipBytes(stdout: string): number | undefined {
 }
 
 /**
- * How a measured bundle sits against the free ceiling.
+ * Reads the UNCOMPRESSED bundle size out of wrangler's own output.
+ *
+ * `Total Upload: 13261.93 KiB / gzip: 3985.48 KiB` -- the first figure is what the 64 MiB limit is
+ * checked against as of 2026-09-04, when Cloudflare removed the compressed limit entirely.
+ *
+ * @returns bytes, or `undefined` when the line is absent.
+ */
+export function parseWranglerRawBytes(stdout: string): number | undefined {
+	const kib = stdout.match(/Total Upload:\s*([\d.]+)\s*KiB/)?.[1];
+	if (kib !== undefined) return Math.round(parseFloat(kib) * 1024);
+	const mib = stdout.match(/Total Upload:\s*([\d.]+)\s*MiB/)?.[1];
+	if (mib !== undefined) return Math.round(parseFloat(mib) * 1024 * 1024);
+	return undefined;
+}
+
+/**
+ * How a measured bundle sits against the size ceiling.
  *
  * Same arithmetic `measureBundle()` does over an outdir, applied to the figure wrangler PRINTS --
  * which that instrument's own docblock names as the number to quote, because concatenation order and
  * the zlib version move the local one.
+ *
+ * TAKES UNCOMPRESSED BYTES NOW. It took gzipped ones until 2026-09-04 and would otherwise be
+ * enforcing a limit that no longer exists, which is how a stale gate refuses a build that is fine.
  */
 export function ceilingVerdict(bytes: number): { fits: boolean; headroom: number } {
-	return { fits: bytes <= FREE_CEILING, headroom: FREE_CEILING - bytes };
+	return { fits: bytes <= SIZE_CEILING, headroom: SIZE_CEILING - bytes };
 }
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -569,18 +592,19 @@ function checkBundle(root: string): number {
 		['wrangler', 'deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
 		{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] }
 	);
-	const bytes = parseWranglerGzipBytes(out);
+	const bytes = parseWranglerRawBytes(out);
 	if (bytes === undefined) {
-		throw new Error(`wrangler printed no gzip figure:\n${out}`);
+		throw new Error(`wrangler printed no Total Upload figure:\n${out}`);
 	}
+	const gz = parseWranglerGzipBytes(out);
 	const { fits, headroom } = ceilingVerdict(bytes);
 	const local = measureBundle(outdir);
 	console.log(
-		`bundle ${bytes} gzipped bytes against ${FREE_CEILING}: ` +
+		`bundle ${bytes} uncompressed bytes against ${SIZE_CEILING}: ` +
 			`${fits ? `fits, ${headroom} under` : `OVER by ${-headroom}`} ` +
-			`(local instrument reads ${local.gz})`
+			`(gzip ${gz ?? 'unreported'}, no longer limited; local instrument reads ${local.raw})`
 	);
-	if (!fits) throw new Error('the bundle does not fit the free plan ceiling');
+	if (!fits) throw new Error('the bundle does not fit the 64 MiB Worker size limit');
 	return bytes;
 }
 

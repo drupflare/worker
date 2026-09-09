@@ -37,6 +37,29 @@ somewhere deletable. It never touches `.wrangler/state/`, `vendor/` or `assets/d
 12,304 bytes. So "nothing in the other lanes ever executes PHP" (below) is a description of what
 `tests/helpers/serve-do.ts` chooses to stub, and no limit of the pool.
 
+## The browser lane's own rig
+
+`bun run test:browser` needs no container. `tests/e2e/browser/sso-journey.pw.ts` does:
+
+```bash
+docker compose -f docker/compose.yml up -d keycloak
+bun run test:browser -- sso-journey
+```
+
+With the container down those four specs SKIP, on the same asymmetry as the HTTP lane. Both
+directions are verified: container up gives `4 passed`, container stopped gives `4 skipped`.
+
+The realm fixture carries `http://127.0.0.1:8789/*` in the client's redirect URIs, which is the
+browser lane's port, and `playwright.config.ts` passes the client secret as a `--var`. That secret is
+in `docker/keycloak-realm.json` in the clear and belongs to a container that exists for this lane; a
+real deployment binds it as a secret.
+
+**What this lane covers that `oidc.spec.ts` cannot.** That spec drives the OBJECT with a hand-rolled
+cookie jar and asserts every protocol refusal, which is the right place for them. It cannot say
+whether a BROWSER completes the journey -- and the defect that opened the browser lane was exactly
+that shape: `/__oidc` is a Durable Object route the front worker refuses from outside, so the callback
+answered 404 to every browser while 25 assertions on the exchange passed.
+
 ## Why it is its own vitest project
 
 `bun run test` is the commit gate and must be hermetic. If these specs lived in the `node`

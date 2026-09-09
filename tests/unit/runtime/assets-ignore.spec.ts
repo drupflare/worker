@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import ignoreSource from '../../../assets/.assetsignore?raw';
 import lazyFsSource from '../../../node_modules/@drupflare/cartridge/src/lazy-fs.ts?raw';
+import { substituteAggregates, type AggregateIndex } from '../../../src/ops/aggregates';
 import wranglerSource from '../../../wrangler.jsonc?raw';
 
 /**
@@ -119,12 +120,47 @@ describe('the canonical config serves the static tree the browser reads', () => 
 		expect(rules).not.toContain('/core/*');
 	});
 
-	it('keeps the aggregator off, because an aggregate has no file to read', async () => {
+	it("keeps DRUPAL's aggregator off, because an aggregate has no file to read", async () => {
 		// with the raw tree served there is nothing for preprocessing to buy, and both its outcomes
 		// break: a hash mismatch 301s, and a match sends JsOptimizer at a file no pack carries
 		for (const page of await prefilledPages()) {
 			expect(page.html).not.toMatch(/\/files\/(css\/css_|js\/js_)/);
 		}
+	});
+
+	/**
+	 * The BUILD's aggregates, which are a different artifact from Drupal's and were withheld.
+	 *
+	 * `ASSET_AGGREGATES=1` rewrites a stored page's asset tags to `/agg/<hash>.css`, and this file
+	 * denied `/agg/`, so every rewritten URL fell through to the Worker as a Drupal path and answered
+	 * 503. The lever could not work at any setting, and the page it produced had no CSS at all --
+	 * which is the exact failure `src/ops/aggregates.ts` says its contiguity rule exists to avoid,
+	 * arriving from the other side.
+	 *
+	 * Keyed on what `substituteAggregates()` actually emits rather than on a hardcoded path, so an
+	 * aggregate naming change cannot pass this by leaving a stale literal green.
+	 */
+	it('serves every aggregate URL the substitution emits', async () => {
+		const res = await asset('/agg/manifest.json');
+		expect(
+			res.status,
+			'/agg/manifest.json is withheld, so aggregation is off by accident'
+		).toBe(200);
+		const index = (await res.json()) as AggregateIndex;
+
+		const emitted = new Set<string>();
+		for (const page of await prefilledPages()) {
+			const out = substituteAggregates(page.html, index);
+			for (const m of out.html.matchAll(/\/agg\/[A-Za-z0-9._-]+/g)) emitted.add(m[0]);
+		}
+		// THE CONTROL: a substitution that replaced nothing makes the loop below vacuous
+		expect(emitted.size, 'the substitution emitted no aggregate URL').toBeGreaterThan(0);
+
+		const missing: string[] = [];
+		for (const path of emitted) {
+			if ((await asset(path)).status !== 200) missing.push(path);
+		}
+		expect(missing).toEqual([]);
 	});
 
 	it('serves every core asset the prefilled pages reference', async () => {

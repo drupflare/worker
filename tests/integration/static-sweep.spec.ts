@@ -756,6 +756,66 @@ describe('the message queue', () => {
 	);
 });
 
+describe('the ajax flag, which turns every id on the site random', () => {
+	/**
+	 * `Html::$isAjax` is `Html::$seenIds` one static over, and no reset touched it.
+	 *
+	 * `AjaxResponseSubscriber::onRequest` sets it true when the request carries `_drupal_ajax`, and
+	 * nothing ever sets it back -- on a real SAPI the process dies instead. Left true,
+	 * `Html::getUniqueId()` takes its `Crypt::randomBytesBase64(8)` branch for every render on that
+	 * incarnation, so the same URL emits different ids on every request.
+	 *
+	 * FOUND BY THE BROWSER LANE AND BY NOTHING ELSE. `content-type.pw.ts` adds a field through the
+	 * field-UI modal, which is an ajax request, and `node-create.pw.ts` then could not find
+	 * `form#node-page-form` because the page had rendered `node-page-form--iGSVurTf0ZU`. The blind
+	 * fingerprint below could not have caught it: it compares two objects and neither of them makes
+	 * an ajax request, so the flag reads false on both.
+	 *
+	 * Byte-reproducibility is what it costs. `cfw_page` stores a render and replays it; an id that
+	 * differs per request means the stored copy and a fresh one disagree, and every
+	 * `aria-labelledby`, `for` and fragment anchor moves with it.
+	 */
+	it(
+		'is cleared at the boundary, so ids stay stable after an ajax request',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				// COLD BINS EVERY TIME, and without them this test cannot fail: a warm
+				// `dynamic_page_cache` replays the stored markup, so the form is never rebuilt and
+				// its id never passes through `getUniqueId()` at all
+				const before = html(await renderWith(site, '/user/login', COLD_BINS));
+				// `_drupal_ajax` is the parameter the subscriber reads and it is the WHOLE trigger;
+				// no ajax machinery is needed. `_wrapper_format` is a different constant on a
+				// different subscriber, and setting that one instead is how the first version of
+				// this test passed against the bug it was written for
+				const during = await renderWith(site, '/user/login?_drupal_ajax=1', COLD_BINS);
+				const flag = (await boundary(site))['isAjax'];
+				const after = html(await renderWith(site, '/user/login', COLD_BINS));
+				const again = html(await renderWith(site, '/user/login', COLD_BINS));
+				return { before, duringStatus: during['status'], flag, after, again };
+			});
+
+			const formId = (source: string) =>
+				/id="(user-login-form[^"]*)"/.exec(source)?.[1] ?? '';
+			expect(out.before, 'the control render has no form id to compare').toContain(
+				'user-login-form'
+			);
+			expect(out.duringStatus, 'the ajax request itself has to have been served').toBe(200);
+			// THE HAZARD IS REAL, and this is what makes the rest mean anything: the flag does cross
+			// the script boundary. It reads 1 with the fix in place too, because the reset runs at
+			// the START of the next request rather than at the end of this one -- the same reason
+			// `Html::seenIds` is on the blind half's allow-list
+			expect(out.flag, 'the flag does not survive, so this proves nothing').toBe(1);
+			// and these are what fail without the fix: a random suffix, differing on every render
+			expect(formId(out.after), 'the id moved after an ajax request').toBe(
+				formId(out.before)
+			);
+			expect(formId(out.again), 'and moved again on the next one').toBe(formId(out.before));
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
 describe('process globals that outlive the script', () => {
 	/**
 	 * PHP's output-buffer stack belongs to the interpreter, not to the script.
@@ -965,8 +1025,16 @@ describe('the blind half: every static property of every declared class', () => 
 				.filter((key) => key in right && left[key] !== right[key])
 				.filter((key) => !BENIGN.has(key));
 
-			// the instrument has to be looking at something, or an empty diff means nothing
-			expect(Number(cold['staticCount'])).toBeGreaterThan(90);
+			// the instrument has to be looking at something, or an empty diff means nothing. The
+			// figures are PRINTED because the floor is a measurement and drifts with the build:
+			// re-enabling mbstring moved the cold reading to 88 and the floor said 90, which fails
+			// as though a leak had been found. A floor lowered to fit is the trap here, so it sits
+			// below a real reading rather than at it, and the reading is on the record
+			console.log(
+				`[static-sweep] cold statics=${cold['staticCount']} classes=${cold['classCount']} ` +
+					`warm statics=${warm['staticCount']} classes=${warm['classCount']}`
+			);
+			expect(Number(cold['staticCount'])).toBeGreaterThan(80);
 			expect(Number(cold['classCount'])).toBeGreaterThan(1500);
 			expect(Number(warm['staticSkipped']), 'no class may be unreadable').toBe(0);
 
@@ -1042,12 +1110,14 @@ describe('the instrument itself', () => {
 			const log = out.reset as Payload;
 			const audit = out.audit as Record<string, string>;
 
-			// the three that really do reset, and the log must name them
-			expect(log['services']).toEqual([
-				'entity.memory_cache',
-				'cache.static',
-				'language_manager'
-			]);
+			// The ones that really do reset must be NAMED, rather than the list being enumerated.
+			// This asserted the exact three and broke the moment the seed grew by two: `state` and
+			// `cache_tags.invalidator.checksum` joined it because both carried request state across
+			// the boundary on this interpreter, and both have a `reset()`. An enumeration of a list
+			// that is expected to grow is a pin, and the property below is what the test is for.
+			for (const id of ['entity.memory_cache', 'cache.static', 'language_manager']) {
+				expect(log['services'], id).toContain(id);
+			}
 
 			// and every id the loop passed over must appear rather than vanish
 			const skipped = log['skipped'] as string[];

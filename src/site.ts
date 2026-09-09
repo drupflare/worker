@@ -1,5 +1,11 @@
 import type { SiteEnv } from './env.js';
 import {
+	adminCookieToken,
+	adminSessionCookie,
+	clearedAdminCookie,
+	secureOrigin
+} from './ops/admin-session.js';
+import {
 	AUTH_MODE_HEADER,
 	AUTH_REASON_HEADER,
 	AUTH_REQUEST_HEADER,
@@ -7,6 +13,7 @@ import {
 	decideAuthMode,
 	isAuthenticatedRequest,
 	parseAuthSpend,
+	ROLES_HEADER,
 	secondsUntilUtcReset,
 	sessionCookieValue,
 	utcDayKey,
@@ -16,14 +23,21 @@ import {
 import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit.js';
 import { isCacheTier } from './ops/cache-tiers.js';
 import {
+	believedCsrf,
 	believedGeneration,
+	believedRoles,
 	edgePlanEnabled,
 	edgePlanKey,
+	forgetWitness,
+	hasEdgePlan,
 	lookupEdgePlan,
 	noteEdgeRender,
 	planEligibility,
+	privatePlanKey,
 	readEdgePlan,
+	rememberCsrf,
 	rememberEdgeGeneration,
+	rememberRoles,
 	runEdgePlan,
 	shouldCheckKv,
 	storeEdgePlan,
@@ -40,22 +54,41 @@ import {
 	type FleetDb,
 	type FleetRow
 } from './ops/fleet.js';
+import { IMAGE_ROUTE_PREFIX, parseTransformPath, runImageTransform } from './ops/image-runtime.js';
 import { callbackUri } from './ops/oidc.js';
-import { pageKvEnabled, readPage, writePage, type PageKv } from './ops/page-store.js';
+import {
+	pageKvEnabled,
+	readPage,
+	readStalePage,
+	writePage,
+	type PageKv
+} from './ops/page-store.js';
 import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan.js';
-import { affinityKey, chooseTarget, replicaCount, shouldFailover } from './ops/replica-routing.js';
+import { sessionCsrf } from './ops/render-plan.js';
+import {
+	affinityKey,
+	believedLanes,
+	chooseTarget,
+	LANES_HEADER,
+	rememberLanes,
+	replicaCount,
+	shouldFailover
+} from './ops/replica-routing.js';
 import { resolveSite, siteStubOptions } from './ops/site-id.js';
 import { bearerToken } from './ops/site-secrets.js';
 import { writeForwardEnabled } from './ops/write-forwarding.js';
 import { SitePhpDurableObject } from './site-do.js';
 import {
 	ADMIN_PAGES,
+	LOGIN_PATH,
+	LOGOUT_PATH,
 	parseDrush,
 	renderAccess,
 	renderCommands,
 	renderDeploy,
 	renderExtend,
 	renderGit,
+	renderLogin,
 	renderShell,
 	renderThresholds,
 	SURFACE_PREFIX,
@@ -110,7 +143,17 @@ export { SitePhpDurableObject };
  * authenticates it, matched constant-time against the pending record in the object. `/oidc` is
  * public for the same reason, and a `__`-prefixed path could not have served it.
  */
-const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback', '/githook', '/oidc']);
+const PUBLIC_ROUTES = new Set([
+	'/serve',
+	'/firstrun',
+	'/setup/cf/callback',
+	'/githook',
+	'/oidc',
+	// the sign-in page cannot require the credential it exists to collect, and signing out cannot
+	// require the cookie it exists to remove
+	LOGIN_PATH,
+	LOGOUT_PATH
+]);
 
 /**
  * Routes that must never be reachable without PW_DIAGNOSTICS.
@@ -125,6 +168,8 @@ const PUBLIC_ROUTES = new Set(['/serve', '/firstrun', '/setup/cf/callback', '/gi
  * the page cache or re-run migration; `/nativefetch` reaches outbound.
  *
  * `/firstrun` used to be in this set and is now in {@link PUBLIC_ROUTES}; the reasoning is there.
+ * `/migrate`, `/bump`, `/invalidate` and `/armfill` are still here AND are owner routes now, which
+ * narrows nothing: an owner token is per site where this flag is per deployment.
  */
 const DIAGNOSTIC_ROUTES = new Set([
 	'/php',
@@ -160,18 +205,14 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/bootphase',
 	'/ops',
 	'/installable',
+	'/install',
 	'/writes',
 	'/replica',
 	'/files',
 	'/enable',
 	'/fleet',
 	'/health',
-	'/setup/oidc',
-	// the product surfaces, diagnostic-gated: `${SURFACE_PREFIX}/commands` proxies to /__ops, which
-	// runs cache rebuilds and module installs, and there is no administrator authentication in this
-	// Worker. Unauthenticated, that is a remote shell. They move to PUBLIC_ROUTES when an admin
-	// credential exists, not before
-	...ADMIN_PAGES.map((p) => p.path)
+	'/setup/oidc'
 ]);
 
 /**
@@ -183,8 +224,10 @@ const DIAGNOSTIC_ROUTES = new Set([
  * your own data out was to open a remote shell to the internet first, which is not a supported way
  * to do anything.
  *
- * These stay in `DIAGNOSTIC_ROUTES` as well, so `PW_DIAGNOSTICS=1` still reaches them and nothing
- * that worked stops working. The token is an ADDITIONAL way in, not a replacement.
+ * Most of these stay in `DIAGNOSTIC_ROUTES` as well, so `PW_DIAGNOSTICS=1` still reaches them and
+ * nothing that worked stops working. The token is an ADDITIONAL way in rather than a replacement.
+ * `/updb` and `/modify` are the exception and are owner-only: neither existed before, so there is no
+ * caller to keep working, and both change what the site runs.
  */
 const OWNER_ROUTES = new Set([
 	'/export',
@@ -192,8 +235,47 @@ const OWNER_ROUTES = new Set([
 	'/setup/cf',
 	'/setup/mail',
 	'/setup/oidc',
-	'/git'
+	'/git',
+	// EXTENSIBILITY, and it was half-delivered. `/git` could put a module's files on a site and
+	// `/installable` could say whether a package was installable, and there was no route that
+	// installed one and no route that turned one on -- `installPackage()` had no caller anywhere and
+	// `/enable` was diagnostic-only. Both take the owner token because both execute code the site
+	// did not ship with
+	'/installable',
+	'/install',
+	'/enable',
+	// SITE MAINTENANCE, which an owner could not perform on their own site. Clearing a cache,
+	// re-running a migration and forcing a fill were reachable only with `PW_DIAGNOSTICS=1`, so the
+	// supported way to purge your own page cache was to expose `/sql` to the internet first. An owner
+	// token is the narrower credential: it is per site, where the flag is per deployment
+	'/armfill',
+	'/invalidate',
+	'/bump',
+	'/migrate',
+	// the update chain the object already runs on its alarm, which nothing could drive or read.
+	// `site-do.ts` refused a sliced `updb` operation by naming "/updb" as its driver while no such
+	// route existed anywhere, which is a 501 pointing at a door that is not there
+	'/updb',
+	// FLEET RECONCILIATION. The pack delivers only at provisioning, so a fix that lands in it reaches
+	// new sites and no existing one. This reports what a site still owes and drives one step of it
+	'/reconcile',
+	// THE ADDRESSABLE SWEEP. Coverage was demand-driven, so nothing knew how much of a site was
+	// covered and nothing bounded what an indexer could make it spend
+	'/sweep',
+	// UPLOADED MODULE REVISIONS. `/git` delivers a tree from a git host and `/install` delivers one
+	// from a registry; there was no way to deliver a tree that is on a developer's disk, and no
+	// history behind either -- `gitRestore()` restores within the same call and then the previous
+	// state is gone
+	'/modify',
+	// THE PRODUCT SURFACES, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
+	// also reach. They used to sit in the diagnostic set alone, so the pages that install code were
+	// open to anybody who could reach a worker with the flag on, and each button's
+	// `window.prompt('Owner token')` was accepted without being checked against anything
+	...ADMIN_PAGES.map((p) => p.path)
 ]);
+
+/** an owner route that a browser reaches as a page, so a refusal is a redirect rather than a 401 */
+const SURFACE_ROUTES = new Set<string>(ADMIN_PAGES.map((p) => p.path));
 
 /**
  * Every path this Worker answers, and the reason `OWNER_ROUTES` is in the union.
@@ -242,22 +324,51 @@ async function siteFor(url: URL, env: SiteWorkerEnv): Promise<string> {
 }
 
 /**
- * Whether the caller proved ownership of this site.
+ * The owner token this request proved, or null.
  *
  * The token lives in the object's own `cfw_meta`, so the check costs one DO request -- which is why
- * it runs only after the route has been matched and only for a route that needs it.
+ * it runs only after the route has been matched and only for a route that needs it. A browser
+ * presents it as a cookie because a page cannot set a header on its own navigation; everything else
+ * presents it as a bearer.
  */
-async function ownerAuthorised(request: Request, env: SiteWorkerEnv, url: URL): Promise<boolean> {
-	const presented = bearerToken(request.headers.get('authorization'));
-	if (!presented) return false;
+async function ownerCredential(
+	request: Request,
+	env: SiteWorkerEnv,
+	url: URL
+): Promise<string | null> {
+	const presented =
+		bearerToken(request.headers.get('authorization')) ??
+		adminCookieToken(request.headers.get('cookie'));
+	if (!presented) return null;
 	const site = await siteFor(url, env);
 	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const inner = new URL(url);
 	inner.pathname = '/__ownercheck';
-	const res = await stub.fetch(
-		new Request(inner, { headers: { authorization: `Bearer ${presented}` } })
-	);
-	return res.status === 200;
+	try {
+		const res = await stub.fetch(
+			new Request(inner, { headers: { authorization: `Bearer ${presented}` } })
+		);
+		return res.status === 200 ? presented : null;
+	} catch {
+		// an object that cannot answer has not said yes, and a migrating or quarantined site must
+		// not become a site where the credential check is skipped
+		return null;
+	}
+}
+
+/**
+ * Restates a cookie-borne token as a header for the object.
+ *
+ * `/__git` and `/__firstrun?force=1` check the token again where the secret lives, which is correct
+ * -- a gate in front is a second place to get it right rather than the place it has to be right.
+ * They read a header, so a request that arrived with only a cookie needs one attached.
+ */
+function withOwnerHeader(request: Request, token: string): Request {
+	if (request.headers.has('authorization')) return request;
+	// an inbound request's headers are immutable; a constructed one's are not
+	const copy = new Request(request);
+	copy.headers.set('authorization', `Bearer ${token}`);
+	return copy;
 }
 
 const DO_ROUTE: Record<string, string> = {
@@ -265,6 +376,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/bootphase': '/__bootphase',
 	'/ops': '/__ops',
 	'/installable': '/__installable',
+	'/install': '/__install',
 	'/writes': '/__writes',
 	'/replica': '/__replica',
 	'/files': '/__files',
@@ -305,7 +417,11 @@ const DO_ROUTE: Record<string, string> = {
 	'/httpdrain': '/__httpdrain',
 	'/nativefetch': '/__nativefetch',
 	'/invalidate': '/__invalidate',
-	'/health': '/__health'
+	'/health': '/__health',
+	'/updb': '/__updb',
+	'/reconcile': '/__reconcile',
+	'/sweep': '/__sweep',
+	'/modify': '/__modify'
 };
 
 /** how long an edge-cached page stays fresh, in seconds */
@@ -688,6 +804,14 @@ export default {
 		// with a render rather than a refusal, which reads as "the route exists and something went
 		// wrong" instead of "there is no such route here"
 		const internal = url.pathname.startsWith('/__');
+		// IMAGE DERIVATIVES, ANSWERED HERE. In the front worker rather than in the object for two
+		// reasons: the wasm decoder never meets PHP's heap, and a derivative is a static byte range
+		// that has no reason to enter a single-threaded object at all. Before the `/serve` rewrite,
+		// because this path is its own route rather than a Drupal one
+		if (!internal && url.pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`) && ctx !== undefined) {
+			return serveImageTransform(request, url, env, ctx);
+		}
+
 		if (!internal && !ROUTES.has(url.pathname)) {
 			// `allowParam: false` because THIS query string is the visitor's. Without it,
 			// `https://customer-a.example/about?site=customer-b` resolves to customer B and serves
@@ -708,15 +832,27 @@ export default {
 		if (!ROUTES.has(url.pathname)) {
 			return new Response('not found\n', { status: 404 });
 		}
-		// a diagnostic fails closed; a public route does not, or the site cannot serve
-		if (!PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1') {
+		// THE ADMIN SURFACE IS NOT A DIAGNOSTIC, so the flag is not a way into it. Everywhere else
+		// `PW_DIAGNOSTICS=1` still opens what it always opened
+		const surface = SURFACE_ROUTES.has(url.pathname);
+		let ownerToken: string | null = null;
+		if (surface || (!PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1')) {
 			// AN OWNER ROUTE IS NOT A DIAGNOSTIC. `/export` sat in the diagnostic set beside `/sql`
 			// (arbitrary SQL) and `/restore` (a whole-database overwrite), all behind one boolean --
 			// so the supported way to get your own data out was to expose a remote shell to the
 			// internet first. Export is an owner operation and takes a credential instead of a mode.
 			if (OWNER_ROUTES.has(url.pathname)) {
-				const owner = await ownerAuthorised(request, env, url);
-				if (!owner) {
+				ownerToken = await ownerCredential(request, env, url);
+				if (ownerToken === null) {
+					if (surface) {
+						// a browser gets the sign-in page, not a 401 body it would render as text
+						const to = new URL(LOGIN_PATH, url.origin);
+						to.searchParams.set('next', url.pathname + url.search);
+						return new Response(null, {
+							status: 302,
+							headers: { location: to.toString(), 'cache-control': 'no-store' }
+						});
+					}
 					// 401 with a challenge rather than the 404 a diagnostic gets: this route EXISTS
 					// and the caller is entitled to it, they just have not proved who they are
 					return new Response('owner token required\n', {
@@ -727,6 +863,7 @@ export default {
 						}
 					});
 				}
+				request = withOwnerHeader(request, ownerToken);
 			} else {
 				return new Response('not found\n', { status: 404 });
 			}
@@ -743,7 +880,9 @@ export default {
 				address: request.headers.get('cf-connecting-ip'),
 				pathname: url.pathname
 			}),
-			replicas: replicaCount(env),
+			// an operator's REPLICA_COUNT is a floor and what the primary has actually built is the
+			// other half; autoscaling grew lanes nothing routed to until this read the second one
+			replicas: Math.max(replicaCount(env), believedLanes(site, t0)),
 			// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or owner
 			// route reads as itself; those pin to the primary
 			pathname: url.pathname,
@@ -782,7 +921,7 @@ export default {
 		// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
 		// including `scripts/security-update.mjs --fleet=`
 		if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
-			return await renderAdmin(url, env, stub);
+			return await renderAdmin(request, url, env, stub, ownerToken);
 		}
 
 		const path = url.searchParams.get('path') ?? '/';
@@ -866,10 +1005,17 @@ export default {
 		// #region compiled plans, answered from THIS isolate with no object hop
 		//
 		// The only tier that can answer an AUTHENTICATED page without one. `caches.default` and the KV
-		// page tier are both keyed without a user, so neither may ever hold one; this key carries the
-		// visitor's own cookie header, which makes a stored plan reachable only by the request that
-		// produced it. See `src/ops/edge-plan.ts` for the whole safety argument.
+		// page tier are both keyed without a user, so neither may ever hold one. The key carries the
+		// visitor's ROLE SET rather than their cookie; see `src/ops/edge-plan.ts` for what makes the
+		// narrower key safe and for the per-session agreement that is the other half of it.
 		const planCookie = request.headers.get('cookie') ?? '';
+		// what the OBJECT last said this cookie is, which is the only source for it. An isolate that
+		// has not learned one yet skips the tier and the hop below teaches it
+		const planRoles = planCookie === '' ? null : believedRoles(planCookie, t0);
+		// a write is the only thing that queues a Drupal message for the visitor's next page, and a
+		// plan compiled from renders that carried none would serve that page without it. Spending
+		// the session's agreement costs it one render and the message arrives on it
+		if (request.method !== 'GET' && request.method !== 'HEAD') forgetWitness(planCookie);
 		const planWanted =
 			serving && personalised && request.method === 'GET' && edgePlanEnabled(env);
 		let planTier: PlanTier = planWanted ? 'miss' : 'skip:not-wanted';
@@ -879,19 +1025,32 @@ export default {
 				// this isolate has not learned a generation recently enough to fence a plan against;
 				// the object's answer below teaches it one
 				planTier = 'skip:generation-unknown';
+			} else if (planRoles === null) {
+				planTier = 'skip:roles-unknown';
 			} else {
-				const planKey = edgePlanKey(site, planGeneration, planCookie, path);
-				let held = lookupEdgePlan(planKey);
+				const planKey = edgePlanKey(site, planGeneration, planRoles, path);
+				let held = lookupEdgePlan(planKey, Date.now(), planCookie);
 				let from: PlanTier = 'mem';
+				// the fallback, and it is consulted SECOND on purpose. A shared plan serves the
+				// whole role set off one entry and mirrors to KV; answering this session from its
+				// own instead would stop the shared key ever seeing a second witness
+				if (held === null) {
+					const own = privatePlanKey(planKey, planCookie);
+					held = lookupEdgePlan(own, Date.now(), planCookie);
+					if (held !== null) from = 'private';
+				}
 				// the tier for an isolate that knows the generation and has never seen this page,
 				// consulted at most once per key and never for longer than the hop it replaces --
 				// see COLD_READ_DEADLINE_MS, which exists because a key this colo has not seen costs
 				// 46-140 ms rather than the 5-6 a warm one does
 				if (held === null && shouldCheckKv(planKey)) {
-					const read = readEdgePlan(env, site, planGeneration, planCookie, path);
-					held = await withDeadline(read);
-					if (held !== null) {
-						storeEdgePlan(planKey, held);
+					const read = readEdgePlan(env, site, planGeneration, planRoles, path);
+					const arrived = await withDeadline(read);
+					if (arrived !== null) {
+						storeEdgePlan(planKey, arrived);
+						// a plan that arrived from another isolate has NOT been agreed with by this
+						// visitor, so it is stored for later and this request still hops. Serving it
+						// here would be the one thing the per-session proof exists to prevent
 						from = 'kv';
 					} else {
 						// a read that missed the deadline still warms this isolate for the next request
@@ -899,7 +1058,7 @@ export default {
 						defer(read.then((late) => late && storeEdgePlan(key, late)));
 					}
 				}
-				const html = held === null ? null : runEdgePlan(held);
+				const html = held === null ? null : runEdgePlan(held, believedCsrf(planCookie, t0));
 				if (html !== null) {
 					return new Response(html, {
 						status: 200,
@@ -959,6 +1118,38 @@ export default {
 						'x-cfw-cache': 'KV',
 						'x-cfw-edge': 'MISS',
 						'x-cfw-generation': String(generation),
+						'cache-control': 'public, max-age=0, must-revalidate',
+						'x-worker-ms': String(Date.now() - t0)
+					}
+				});
+			}
+			// THE PREVIOUS GENERATION, which is already in KV and was never read. A bump changes the
+			// key rather than deleting anything, so the last answer for this path is sitting there
+			// on its own TTL -- and the cold path it replaces is 802 ms at p50 against 4-5 ms warm.
+			// The regeneration goes to the object's own fill queue, so the visitor waits for
+			// neither
+			const stale = await readStalePage(env, site, generation, path, {
+				neverStale: env.NEVER_STALE ?? null
+			});
+			if (stale) {
+				defer(
+					stub
+						.fetch(
+							new Request(`https://do.local/__fill?path=${encodeURIComponent(path)}`)
+						)
+						.then(() => undefined)
+						.catch(() => undefined)
+				);
+				return new Response(stale.page.html, {
+					status: stale.page.status,
+					headers: {
+						'content-type': stale.page.contentType,
+						'x-cfw-cache': 'KV',
+						'x-cfw-edge': 'STALE',
+						'x-cfw-stale-behind': String(stale.behind),
+						'x-cfw-generation': String(generation),
+						// SHORT, and shorter than a fresh answer's: this body is known to be a
+						// content change behind, so it must not settle into anything downstream
 						'cache-control': 'public, max-age=0, must-revalidate',
 						'x-worker-ms': String(Date.now() - t0)
 					}
@@ -1087,6 +1278,12 @@ export default {
 		}
 		// the plan tier fences on the generation this isolate last learned, which is this one
 		if (doGeneration !== null) rememberEdgeGeneration(site, doGeneration, Date.now());
+		// and the pool the primary has actually built, so a lane autoscaling created receives
+		// traffic. Rides along on a response already paid for, like the two above
+		const reportedLanes = Number(res.headers.get(LANES_HEADER) ?? '');
+		if (Number.isFinite(reportedLanes) && reportedLanes > 0) {
+			rememberLanes(site, reportedLanes, Date.now());
+		}
 
 		// #region compiling a plan out of the render that just happened
 		//
@@ -1097,32 +1294,60 @@ export default {
 			status: res.status,
 			doCache,
 			contentType: res.headers.get('content-type'),
-			setCookie: res.headers.has('set-cookie'),
+			setCookie: res.headers.getSetCookie(),
 			personalised,
 			generation: doGeneration,
 			cookie: planCookie
 		});
+		// what the object says this cookie is. Recorded before the compile below, because the compile
+		// keys on it, and taken from the RESPONSE so a client cannot present a role set of its own
+		const reportedRoles = res.headers.get(ROLES_HEADER) ?? '';
+		if (planCookie !== '' && reportedRoles !== '') {
+			rememberRoles(planCookie, reportedRoles, Date.now());
+		}
 		if (planWanted && !eligible.ok) planTier = eligible.reason as PlanTier;
-		if (planWanted && eligible.ok && doGeneration !== null) {
-			// the key is rebuilt from the generation the OBJECT reported, which is the one this render
-			// belongs to; the belief above may have been a window behind it
-			const key = edgePlanKey(site, doGeneration, planCookie, path);
+		if (planWanted && eligible.ok && doGeneration !== null && reportedRoles !== '') {
+			// the key is rebuilt from the generation and the role set the OBJECT reported, which are
+			// the ones this render belongs to; the beliefs above may be a window behind them
+			const key = edgePlanKey(site, doGeneration, reportedRoles, path);
 			// cloned now, read later: the body below is returned to the caller and a clone taken after
 			// that has been consumed is empty
 			const copy = res.clone();
 			const generationForPlan = doGeneration;
+			const rolesForPlan = reportedRoles;
+			const witness = planCookie;
 			planTier = 'sampling';
 			defer(
 				copy
 					.text()
 					.then((html) => {
-						const compiled = noteEdgeRender(key, path, html);
-						if (compiled === null) return undefined;
+						// the one slot value the front worker cannot generate, taken from this
+						// session's own render so a shared plan can substitute it later
+						rememberCsrf(witness, sessionCsrf(html), Date.now());
+						// the cookie is the WITNESS rather than the key: the compile needs two
+						// different sessions to agree before it may store anything
+						const compiled = noteEdgeRender(key, path, html, Date.now(), witness);
+						if (compiled === null) {
+							// this session may be the only one this page ever sees, so give it a
+							// plan of its own. Skipped once a shared plan is serving: that one is
+							// cheaper and already covers the whole role set
+							if (!hasEdgePlan(key)) {
+								noteEdgeRender(
+									privatePlanKey(key, witness),
+									path,
+									html,
+									Date.now(),
+									witness,
+									true
+								);
+							}
+							return undefined;
+						}
 						return writeEdgePlan(
 							env,
 							site,
 							generationForPlan,
-							planCookie,
+							rolesForPlan,
 							path,
 							compiled
 						);
@@ -1250,6 +1475,19 @@ export default {
 };
 
 /**
+ * A `?next=` that can only send the browser back into this surface.
+ *
+ * Anything else is discarded rather than sanitised: a sign-in page that forwards to an attacker's
+ * origin after a successful login is the classic way to harvest what the operator types next.
+ */
+function safeNext(value: string | null): string | null {
+	if (value === null || !value.startsWith(SURFACE_PREFIX)) return null;
+	// `//evil.example` and `/\evil.example` are both origin-relative to a browser
+	if (value.startsWith('//') || value.includes('\\')) return null;
+	return value;
+}
+
+/**
  * Renders one product surface.
  *
  * Kept out of `fetch` because it is the only branch that returns HTML rather than proxying, and
@@ -1257,14 +1495,17 @@ export default {
  * which one does.
  */
 async function renderAdmin(
+	request: Request,
 	url: URL,
 	env: SiteWorkerEnv,
-	stub: { fetch: (input: RequestInfo | URL) => Promise<Response> }
+	stub: { fetch: (input: RequestInfo | URL) => Promise<Response> },
+	ownerToken: string | null
 ): Promise<Response> {
-	const html = (body: string) =>
+	const html = (body: string, extra?: Record<string, string>, status = 200) =>
 		new Response(body, {
-			status: 200,
+			status,
 			headers: {
+				...extra,
 				'content-type': 'text/html; charset=utf-8',
 				// an admin page is per-operator and drives privileged machinery; nothing may store it
 				'cache-control': 'private, no-store',
@@ -1277,6 +1518,58 @@ async function renderAdmin(
 			}
 		});
 
+	// #region sign in and out, the two surface paths that take no credential
+	const secure = secureOrigin(url);
+	/** the object's `/__ownercheck` is the only judge; nothing here compares a token itself */
+	if (url.pathname === LOGIN_PATH) {
+		const next = safeNext(url.searchParams.get('next'));
+		if (request.method !== 'POST') {
+			return html(renderLogin(next, null));
+		}
+		const form = new URLSearchParams(await request.text());
+		const presented = (form.get('token') ?? '').trim();
+		const wanted = safeNext(form.get('next')) ?? SURFACE_PREFIX;
+		if (presented === '') {
+			return html(renderLogin(wanted, 'Enter the owner token.'), {}, 400);
+		}
+		const inner = new URL(url);
+		inner.pathname = '/__ownercheck';
+		inner.search = '';
+		const checked = await stub.fetch(
+			new Request(inner, { headers: { authorization: `Bearer ${presented}` } })
+		);
+		if (checked.status !== 200) {
+			return html(renderLogin(wanted, 'That is not the owner token for this site.'), {}, 401);
+		}
+		return new Response(null, {
+			status: 303,
+			headers: {
+				location: wanted,
+				'set-cookie': adminSessionCookie(presented, secure),
+				'cache-control': 'no-store'
+			}
+		});
+	}
+
+	if (url.pathname === LOGOUT_PATH) {
+		return new Response(null, {
+			status: 303,
+			headers: {
+				location: LOGIN_PATH,
+				'set-cookie': clearedAdminCookie(secure),
+				'cache-control': 'no-store'
+			}
+		});
+	}
+	// #endregion
+
+	/** where the object should be asked as the owner; every surface page has a token by now */
+	const asOwner = (target: URL): Request =>
+		new Request(
+			target,
+			ownerToken === null ? undefined : { headers: { authorization: `Bearer ${ownerToken}` } }
+		);
+
 	if (url.pathname === `${SURFACE_PREFIX}/deploy`) {
 		return html(renderShell('deploy', renderDeploy(), env));
 	}
@@ -1288,7 +1581,9 @@ async function renderAdmin(
 		inner.search = '?action=list';
 		let remotes: RemoteRow[] = [];
 		try {
-			const reply = (await (await stub.fetch(inner)).json()) as { remotes?: RemoteRow[] };
+			const reply = (await (await stub.fetch(asOwner(inner))).json()) as {
+				remotes?: RemoteRow[];
+			};
 			remotes = Array.isArray(reply.remotes) ? reply.remotes : [];
 		} catch {
 			remotes = [];
@@ -1310,7 +1605,7 @@ async function renderAdmin(
 		try {
 			row = {
 				...row,
-				...((await (await stub.fetch(inner)).json()) as Partial<OidcSetupRow>)
+				...((await (await stub.fetch(asOwner(inner))).json()) as Partial<OidcSetupRow>)
 			};
 		} catch (e: unknown) {
 			row.error = `the object did not answer: ${String((e as Error)?.message ?? e).slice(0, 160)}`;
@@ -1325,22 +1620,25 @@ async function renderAdmin(
 		// oracle.ts already live, so this proxies rather than re-implementing the check
 		const inner = new URL(url);
 		inner.pathname = '/__installable';
-		inner.searchParams.set('name', q);
+		// `module`, which is what `/__installable` reads. This said `name` and the route has always
+		// read `module`, so every query ran against the empty string and every row came back
+		// `not-found`. `InstallVerdict` names the field `version`, not `newest`, for the same reason
+		inner.searchParams.set('module', q);
 		let entries: Parameters<typeof renderExtend>[1] = [];
 		let note: string | null = null;
 		try {
-			const res = await stub.fetch(new Request(inner));
+			const res = await stub.fetch(asOwner(inner));
 			const body = (await res.json()) as {
 				name?: string;
-				newest?: string | null;
+				version?: string | null;
 				verdict?: string | null;
 				reason?: string | null;
 				conflicts?: { reason?: string }[];
 			};
 			entries = [
 				{
-					name: body.name ?? q,
-					version: body.newest ?? null,
+					name: body.name || q,
+					version: body.version ?? null,
 					verdict: (body.verdict ?? null) as never,
 					reason:
 						body.reason ??
@@ -1368,7 +1666,7 @@ async function renderAdmin(
 			inner.pathname = '/__ops';
 			// the registry always answers, so the table renders even when the typed command goes
 			// somewhere else
-			const res = await stub.fetch(new Request(inner));
+			const res = await stub.fetch(asOwner(inner));
 			const body = (await res.json()) as {
 				operations?: {
 					op: string;
@@ -1390,7 +1688,7 @@ async function renderAdmin(
 				run.pathname = parsed.route;
 				run.searchParams.delete('op');
 				for (const [k, v] of Object.entries(parsed.params)) run.searchParams.set(k, v);
-				const ran = await stub.fetch(new Request(run));
+				const ran = await stub.fetch(asOwner(run));
 				result = (await ran.text()).slice(0, 4000);
 			}
 		} catch (e: unknown) {
@@ -1466,7 +1764,7 @@ async function renderAdmin(
 	// per image -- so it is counted from the database instead of projected. It is also the only hard
 	// cap here: past it images silently stop being transformed until the first of the month.
 	// which plan is in force AND where it came from, because "we think you are on free" is only
-	// actionable with the reason: a KV override, the deployed var, or nothing set at all
+	// useful with the reason: a KV override, the deployed var, or nothing set at all
 	const resolvedPlan = await resolvePlan(env, env.CONFIG_KV);
 
 	const used: Record<string, number> = {};
@@ -1490,6 +1788,75 @@ async function renderAdmin(
 		// distinguishes that from zero
 	}
 	return html(renderShell('thresholds', renderThresholds(used, plan, env, resolvedPlan), env));
+}
+
+/**
+ * One image derivative, produced here rather than bought from a delivery product.
+ *
+ * IN THE FRONT WORKER, and that placement is the decision. The decoder is a second wasm module; in
+ * the object it would share an isolate with PHP's 96 MiB linear memory against a 128 MiB cap, and a
+ * derivative is a static byte range that has no reason to enter a single-threaded object at all.
+ * Measured on the published module: 1 MiB initial linear memory, 4 MiB after 56 transforms, and a
+ * 64 MiB maximum that is a ceiling rather than a reservation.
+ *
+ * The source is read through the object because a `private://` file is session-scoped and neither
+ * Cloudflare mechanism carries one -- which is the case a wasm arm was always going to be needed
+ * for, and the reason this covers every other case from the same module.
+ */
+async function serveImageTransform(
+	request: Request,
+	url: URL,
+	env: SiteWorkerEnv,
+	ctx: ExecutionContext
+): Promise<Response> {
+	const parsed = parseTransformPath(url.pathname, url.search);
+	// a re-derived identity that does not match means the query was edited, which is a way to spend
+	// the site's CPU on work nobody asked for
+	if (parsed === null) return new Response('not found\n', { status: 404 });
+
+	const cache = caches.default;
+	const cached = await cache.match(new Request(url.toString(), { method: 'GET' }));
+	if (cached) {
+		const headers = new Headers(cached.headers);
+		headers.set('x-cfw-image', 'HIT');
+		return new Response(cached.body, { status: cached.status, headers });
+	}
+
+	const { site } = await resolveSite(url, env, { allowParam: false });
+	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+	const source = await stub.fetch(
+		new Request(
+			`https://do.local/__filebytes?uri=${encodeURIComponent(parsed.uri)}`,
+			// the visitor's cookie, because a `private://` file is theirs to read or not
+			{ headers: { cookie: request.headers.get('cookie') ?? '' } }
+		)
+	);
+	if (!source.ok) {
+		return new Response('not found\n', { status: source.status === 403 ? 403 : 404 });
+	}
+
+	try {
+		const bytes = new Uint8Array(await source.arrayBuffer());
+		const out = await runImageTransform(bytes, parsed.transform);
+		const headers = new Headers({
+			'content-type': out.contentType,
+			// IMMUTABLE, and the identity is what earns that: a style change mints a new path, so a
+			// stored derivative can never become the wrong answer for the URL it is under
+			'cache-control': 'public, max-age=31536000, immutable',
+			'x-cfw-image': 'RENDER',
+			'x-cfw-image-engine': 'tinyimg'
+		});
+		const response = new Response(out.bytes, { status: 200, headers });
+		ctx.waitUntil(cache.put(new Request(url.toString()), response.clone()));
+		return response;
+	} catch (e: unknown) {
+		// a source this decoder cannot read is a 415 rather than a 500: the request was well formed
+		// and the file is what it could not handle
+		return new Response(`cannot transform: ${String((e as Error)?.message ?? e)}\n`, {
+			status: 415,
+			headers: { 'content-type': 'text/plain; charset=utf-8' }
+		});
+	}
 }
 
 function genBucketMs(env: SiteEnv): number {

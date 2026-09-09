@@ -29,9 +29,17 @@ function codeOnly(source: string): string {
 }
 
 describe('the boot phases are cumulative, which is what makes the subtraction mean anything', () => {
+	/**
+	 * `require`, never `require_once`, and this assertion pins the difference.
+	 *
+	 * `require_once` returns `true` for an already-included file, so capturing its result yields the
+	 * boolean rather than the ClassLoader. A heap restore reaches that state, and this fragment then
+	 * fataled with `Call to a member function addPsr4() on true` on every imaged site.
+	 */
 	it('every phase includes the autoload that precedes it', () => {
 		for (const phase of BOOT_PHASES) {
-			expect(bootPhaseFragment(phase), phase).toContain(
+			expect(bootPhaseFragment(phase), phase).toContain("require '/drupal/autoload.php'");
+			expect(bootPhaseFragment(phase), phase).not.toContain(
 				"require_once '/drupal/autoload.php'"
 			);
 		}

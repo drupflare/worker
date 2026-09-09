@@ -91,12 +91,33 @@ const ARTIFACT_SPECS = [
 	'tests/integration/effect-census.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/fill-bins.spec.ts',
+	// the populated-site instruments: a real render per filled page, a real install per module,
+	// and a heap image needs a booted interpreter
+	'tests/integration/fills-per-save.spec.ts',
+	'tests/integration/module-converge.spec.ts',
+	'tests/integration/qa-session-rows.spec.ts',
 	'tests/integration/firstrun.spec.ts',
+	'tests/integration/fragment-index.spec.ts',
 	'tests/integration/git-remotes.spec.ts',
 	'tests/integration/guzzle-handler.spec.ts',
 	'tests/integration/heap-growth.spec.ts',
+	'tests/integration/heap-image-storage.spec.ts',
 	'tests/integration/host-bridges.spec.ts',
 	'tests/integration/image-toolkit.spec.ts',
+	// eight joined on 2026-09-08, found the same way: hide `assets/drupal-pf/core.pf.json` and run
+	// the gate. All eight reach the interpreter and several a real render. The park four and
+	// `mb-native` had landed EARLIER the same day without this reproduction being run, which is the
+	// six-days-red shape CLAUDE.md records -- every dev machine has the pack, so nothing local says so
+	'tests/integration/image-metadata.spec.ts',
+	'tests/integration/heap-restore-autoload.spec.ts',
+	'tests/integration/inherited-extensions.spec.ts',
+	'tests/integration/mb-native.spec.ts',
+	'tests/integration/modify-upload.spec.ts',
+	'tests/integration/park-dispatch.spec.ts',
+	'tests/integration/park-interpreter.spec.ts',
+	'tests/integration/park-oidc.spec.ts',
+	'tests/integration/seed-cache-cost.spec.ts',
+	'tests/integration/session-gc.spec.ts',
 	'tests/integration/interpreter-recycle.spec.ts',
 	'tests/integration/lazy-fs-budget.spec.ts',
 	'tests/integration/linear-memory.spec.ts',
@@ -112,6 +133,13 @@ const ARTIFACT_SPECS = [
 	'tests/integration/page-content-key.spec.ts',
 	'tests/integration/php-allocator.spec.ts',
 	'tests/integration/php-clock.spec.ts',
+	// the reconciliation acceptance test boots a kernel and writes config through Drupal's own
+	// factory, so it needs the pack the same way every render above does
+	'tests/integration/reconcile-converge.spec.ts',
+	// the sweep enumerates `router` and the entity tables, which arrive with the pack
+	'tests/integration/sweep-wire.spec.ts',
+	// the cold-encounter counter is read around a real interpreter entry
+	'tests/integration/cold-encounter-wire.spec.ts',
 	// wholly gated on DRUPFLARE_MEASURE until each grew an ungated gate-sized counterpart, which
 	// renders for real
 	'tests/integration/authenticated-throughput.spec.ts',
@@ -147,6 +175,23 @@ const ARTIFACT_SPECS = [
 	'tests/integration/without-rowid.spec.ts',
 	'tests/integration/workload-matrix.spec.ts',
 	'tests/integration/write-amplification.spec.ts',
+	// thirteen joined on 2026-09-07 the same way the twenty above did: hide
+	// `assets/drupal-pf/core.pf.json` locally and run the gate. Every one reaches a real render --
+	// a replica copies a rendered site, a heap image needs a booted interpreter, an advisory needs
+	// cron to have run -- and none of them was listed, so a clean checkout was red on all of them
+	'tests/integration/advisory-detect.spec.ts',
+	'tests/integration/generation-fence.spec.ts',
+	'tests/integration/heap-image-producer.spec.ts',
+	'tests/integration/heap-image-site-keyed.spec.ts',
+	'tests/integration/replica-catchup.spec.ts',
+	'tests/integration/replica-handoff.spec.ts',
+	'tests/integration/replica-provision.spec.ts',
+	'tests/integration/replica-readmit.spec.ts',
+	'tests/integration/replica-restore.spec.ts',
+	'tests/integration/replication-emit.spec.ts',
+	'tests/integration/shared-base-share.spec.ts',
+	'tests/integration/state-inventory.spec.ts',
+	'tests/integration/warm-alarm-cost.spec.ts',
 	'tests/unit/runtime/assets-ignore.spec.ts'
 ];
 
@@ -250,8 +295,37 @@ const seamAlias = (from: string, to: string) => ({
 	replacement: resolve(import.meta.dirname, to)
 });
 
+/**
+ * THE GATE NOW LOADS THE MODULE THAT SHIPS, which it could not do before 2026-09-07.
+ *
+ * `wrangler.jsonc` aliases `./runtime/php-binary.js` to a seam, vite does not apply that alias, and
+ * the seam that shipped inflated a brotli frame and called `new WebAssembly.Module` at module scope.
+ * That is legal at worker STARTUP and forbidden at request time, and a vitest spec is evaluated
+ * inside a fetch handler -- so the shipping seam could never be loaded here and the lane aliased
+ * around it. For the life of the project the gate ran PHP 8.3 from `vendor/` while production ran 8.5.
+ *
+ * Cloudflare removed the compressed bundle limit on 2026-09-04, so the interpreter now ships as a
+ * raw `CompiledWasm` import: pre-compiled by the platform, no inflate, no codegen anywhere. Both
+ * lanes can therefore resolve the same module, and this alias is the same one wrangler applies.
+ *
+ * The arm aliases still repoint the raw seam's OWN two imports, so `DRUPFLARE_ABI` and
+ * `DRUPFLARE_GROWTH_STEP` keep working; with no arm selected they resolve to the files the seam
+ * already names and the substitution is a no-op.
+ */
+const SHIPPING_SEAM = 'src/runtime/php-binary-raw.ts';
+const shippingSeamAlias = {
+	find: './runtime/php-binary.js',
+	replacement: resolve(import.meta.dirname, SHIPPING_SEAM)
+};
+
 const binaryAlias = haveShipping
-	? [seamAlias(`${DEFAULT_SEAM}.wasm`, activeWasm), seamAlias(DEFAULT_SEAM, activeGlue)]
+	? [
+			shippingSeamAlias,
+			seamAlias(SHIPPING_WASM, activeWasm),
+			seamAlias(TUNED_GLUE, activeGlue),
+			seamAlias(`${DEFAULT_SEAM}.wasm`, activeWasm),
+			seamAlias(DEFAULT_SEAM, activeGlue)
+		]
 	: haveBinary
 		? []
 		: [

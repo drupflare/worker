@@ -68,13 +68,18 @@
 		"measure:abi-speed": "node scripts/measure/abi-speed.ts --n=25",
 		"measure:abi-control": "node scripts/measure/abi-speed.ts --abis=wasm32,wasm32 --n=25",
 		"measure:index-audit": "bun scripts/measure/index-audit.ts",
+		"measure:vps": "bun scripts/measure/vps-compare.ts",
+		"measure:bench-site": "bun scripts/measure/bench-site.ts",
+		"vps:up": "docker compose -f docker/vps.yml up -d --build",
+		"vps:down": "docker compose -f docker/vps.yml down -v",
 		"measure:blake2b-parity": "bun scripts/measure/blake2b-parity.ts",
 		"measure:mb-parity": "bun scripts/measure/mb-parity.ts",
 		"measure:unicode": "bun scripts/measure/unicode-corpus.ts",
 		"metrics": "bun scripts/measure/collect-metrics.ts",
 		"metrics:gate": "bun scripts/measure/metrics-gate.ts",
 		"docs:build": "typedoc",
-		"docs:serve": "typedoc --watch"
+		"docs:serve": "typedoc --watch",
+		"assets:agg": "bun scripts/pack-aggregates.ts"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
@@ -98,6 +103,7 @@
 		"@drupflare/cartridge": "^0.2.0",
 		"@drupflare/durabledb": "^0.1.3",
 		"@drupflare/untarl": "^0.1.0",
+		"@gmitch215/tinyimg": "^1.0.0",
 		"@noble/ciphers": "^2.4.0",
 		"@noble/hashes": "^2.4.0",
 		"blakejs": "^1.2.1",

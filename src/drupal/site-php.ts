@@ -221,8 +221,8 @@ echo json_encode($out);
  * wrappers delegate to are loadable.
  */
 export const MB_CHECK = String.raw`<?php
-if (!isset($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
 }
 
 $cases = [
@@ -665,6 +665,17 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
     \\Drupal\\Component\\Utility\\Html::resetSeenIds();
   }
 
+  // AND Html::$isAjax IS THE SAME STATIC ONE CLASS OVER, which resetSeenIds() does not touch.
+  // AjaxResponseSubscriber sets it true on an ajax request and nothing sets it back, so on a
+  // persistent interpreter the FIRST ajax request makes getUniqueId() take its random branch --
+  // \\Crypt::randomBytesBase64(8) -- for every later render on that incarnation. Measured in the
+  // browser lane: add a field through the field-UI modal, and /node/add/page then renders
+  // node-page-form--iGSVurTf0ZU instead of node-page-form, differently on every request. A cached
+  // page stops being byte-reproducible and every id-based selector on the site moves.
+  if (method_exists("\\Drupal\\Component\\Utility\\Html", "setIsAjax")) {
+    \\Drupal\\Component\\Utility\\Html::setIsAjax(false);
+  }
+
   // PATH.MATCHER LEAKS ITS FRONT-PAGE VERDICT ACROSS RENDERS, and this fixes markup that was
   // being served wrong to real visitors. isFrontPage() memoises into $isCurrentFrontPage, and on a
   // persistent container the FIRST path rendered decides for every later one. Measured: render /
@@ -840,8 +851,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   $mark['alreadyBooted'] = isset($GLOBALS['__pw_site_booted']) ? 1 : 0;
@@ -866,6 +877,39 @@ try {
   $mark['hasDb'] = $container !== null && $container->has('database');
   $mark['totalMs'] = round($clock() - $t0, 2);
   echo json_encode($mark);
+} catch (\Throwable $e) {
+  echo json_encode(['ok' => false, 'error' => get_class($e) . ': ' . $e->getMessage()]);
+}
+`;
+
+/**
+ * Loads every enabled module's PHP, which is what a boot alone does not do.
+ *
+ * `DrupalKernel::boot()` builds the container, and the container comes out of `cache_container`, so
+ * a boot reads no module file at all. `ModuleHandler::loadAll()` is what includes each enabled
+ * module's `.module`, and it runs during `preHandle()` rather than during `boot()`.
+ *
+ * MEASURED, because the verification it belongs to was passing everything: a `.module` full of
+ * nonsense, the same file with the module enabled, and a malformed `.info.yml` all reported a clean
+ * boot. A guard that cannot reach the code it is guarding is a guard that cannot fire.
+ *
+ * A PARSE error is uncatchable -- `include` raises E_COMPILE_ERROR and `try` does not see it -- so
+ * this prints its verdict LAST and the caller treats a missing verdict as a failure. That is the
+ * half that matters: a fatal kills the run, and a caller reading only for a thrown exception sees
+ * nothing and calls it fine.
+ */
+export const VERIFY_MODULES = String.raw`<?php
+try {
+  $kernel = $GLOBALS['__pw_kernel'] ?? null;
+  if ($kernel === null || !\Drupal::hasContainer()) {
+    echo json_encode(['ok' => false, 'error' => 'no kernel to verify against']);
+  } else {
+    $handler = \Drupal::service('module_handler');
+    $handler->loadAll();
+    $modules = array_keys($handler->getModuleList());
+    sort($modules);
+    echo json_encode(['ok' => true, 'modules' => count($modules)]);
+  }
 } catch (\Throwable $e) {
   echo json_encode(['ok' => false, 'error' => get_class($e) . ': ' . $e->getMessage()]);
 }
@@ -941,7 +985,7 @@ try {
   // a warm object would make every phase past this one free, and a free phase reads as a cheap one
   $mark['alreadyBooted'] = isset($GLOBALS['__pw_site_booted']) ? 1 : 0;
 
-  $autoloader = require_once '/drupal/autoload.php';
+  $autoloader = require '/drupal/autoload.php';
   $mark['autoloadDone'] = true;
 ${
 	upto('kernel-new')
@@ -1066,6 +1110,88 @@ echo json_encode([
 ]);
 `;
 
+/**
+ * Runs one registry operation through `OpsRunner`, with a kernel.
+ *
+ * Unlike {@link OPS_REGISTRY} this DOES boot, because every operation here reaches a Drupal service.
+ * The registry stays boot-free so discovery is cheap; execution is not discovery.
+ *
+ * @param name - a registry operation
+ * @param args - positional arguments, already stripped of flags
+ * @param options - offset/limit for cex, payload for cim
+ */
+export function opsRun(
+	name: string,
+	args: readonly string[] = [],
+	options: { offset?: number; limit?: number; payload?: unknown } = {}
+): string {
+	const encoded = JSON.stringify(
+		JSON.stringify({
+			name: String(name),
+			args: args.map((a) => String(a)),
+			options: {
+				...(Number.isFinite(options.offset) ? { offset: Number(options.offset) } : {}),
+				...(Number.isFinite(options.limit) ? { limit: Number(options.limit) } : {}),
+				...(options.payload === undefined ? {} : { payload: options.payload })
+			}
+		})
+	);
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false];
+$clock = function () { return microtime(true) * 1000; };
+$t0 = $clock();
+$req = json_decode(${encoded}, true);
+
+try {
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+  // several operations reach a service that reads the current request; a fragment pushes none
+  if (\Drupal::hasContainer()) {
+    \Drupal::service('request_stack')->push(
+      \Symfony\Component\HttpFoundation\Request::create('/', 'GET')
+    );
+  }
+
+  $path = '/drupal/modules/custom/drupflare/src/Ops/OpsRunner.php';
+  if (!class_exists('Drupal\\drupflare\\Ops\\OpsRunner', false) && is_file($path)) {
+    require_once $path;
+  }
+  $cls = 'Drupal\\drupflare\\Ops\\OpsRunner';
+  if (!class_exists($cls)) {
+    $out['error'] = 'OpsRunner is not in the mount';
+  } else {
+    $out = $cls::run(
+      (string) ($req['name'] ?? ''),
+      (array) ($req['args'] ?? []),
+      (array) ($req['options'] ?? [])
+    );
+  }
+} catch (\Throwable $e) {
+  $out['ok'] = false;
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+$out['ms'] = round($clock() - $t0, 2);
+echo json_encode($out);
+`;
+}
+
 export function drupalRequest(
 	path = '/',
 	repeat = 1,
@@ -1110,8 +1236,8 @@ $t0 = $clock();
 try {
   // require_once returns true rather than the autoloader once the interpreter
   // has already loaded the file, and the interpreter persists between requests
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   $mark['autoloadMs'] = round($clock() - $t0, 2);
@@ -1360,8 +1486,8 @@ $clock = function () { return microtime(true) * 1000; };
 $t0 = $clock();
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
 
@@ -1465,6 +1591,15 @@ $out['reset'] = $GLOBALS['__pw_reset'] ?? null;
 try {
   $out['uid'] = (int) \Drupal::currentUser()->id();
 } catch (\Throwable $e) { $out['uid'] = null; }
+// THE ROLE SET, sorted, because the edge plan key is derived from it. A plan keyed on the raw
+// cookie is one plan per session per path, which maximises the cold-KV case it was built to avoid;
+// keyed on roles it is one per role set. Sorted so two accounts holding the same roles in a
+// different order produce one key rather than two
+try {
+  $__roles = array_values(\Drupal::currentUser()->getRoles());
+  sort($__roles);
+  $out['roles'] = $__roles;
+} catch (\Throwable $e) { $out['roles'] = null; }
 
 $out['renderMs'] = round($clock() - $t0, 2);
 echo json_encode($out);
@@ -1508,8 +1643,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -1551,8 +1686,14 @@ $ok = function ($label, $condition, $detail = null) use (&$out) {
   $out['checks'][] = ['label' => $label, 'ok' => (bool) $condition, 'detail' => $detail];
 };
 
-if (!isset($GLOBALS['__pw_autoloader'])) {
-  $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+// require, NEVER require_once, and the guard tests the VALUE rather than the key. require_once
+// returns TRUE when the file is already included, so capturing its result yields the boolean
+// instead of the ClassLoader -- and a heap restore reaches exactly that state, with autoload.php in
+// the included-files table and this global not restored beside it. Measured on an imaged site:
+// Call to a member function addPsr4() on true. Composer getLoader() memoizes, so a plain require
+// hands back the same loader and re-registers nothing
+if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+  $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
 }
 $autoloader = $GLOBALS['__pw_autoloader'];
 $autoloader->addPsr4('Drupal\\sqlite\\Driver\\Database\\sqlite\\', '/drupal/core/modules/sqlite/src/Driver/Database/sqlite/');
@@ -2045,8 +2186,8 @@ $opt = json_decode(${JSON.stringify(payload)}, true);
 $out = ['ok' => false, 'applied' => [], 'skipped' => []];
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
 
@@ -2133,6 +2274,18 @@ ${PACK_CONSISTENCY}
     $out['adminMail'] = $admin->getEmail();
   }
 
+  // THE CLOCK IN THE PACK IS THE ONE FROM THE BAKE, and the status report reads it. install_time
+  // shipped inside the packed database at the bake date, system.cron_last shipped absent, and
+  // SystemRequirementsHooks falls back to install_time when cron_last is not numeric -- so a site
+  // provisioned today opened with a red Cron row weeks old. Both are stamped at the claim, which is
+  // the first moment this site has a real birthday
+  if (!empty($opt['claimedAt'])) {
+    \Drupal::state()->set('install_time', (int) $opt['claimedAt']);
+    \Drupal::state()->set('system.cron_last', (int) $opt['claimedAt']);
+    $out['applied'][] = 'state.install_time';
+    $out['applied'][] = 'state.cron_last';
+  }
+
   // the salt is the HOST's now: src/ops/site-secrets.ts mints one per site at boot, persists it in
   // cfw_meta and appends the assignment to settings.php, so generating another here would replace a
   // live salt with one nothing stores and invalidate every session on the next remount
@@ -2201,8 +2354,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
 
@@ -2366,8 +2519,8 @@ $assert = function (string $label, bool $ok, $detail = null) use (&$checks) {
 };
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   // the pack does not enable this module, so nothing else registers its namespace
@@ -2583,8 +2736,8 @@ $assert = function (string $label, bool $ok, $detail = null) use (&$checks) {
 };
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   $autoloader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
@@ -2717,8 +2870,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
 
@@ -2881,6 +3034,14 @@ $out['seenIds'] = $ask(function () {
   $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'seenIds');
   $value = $property->getValue();
   return is_array($value) ? count($value) : -1;
+});
+
+// the carrier beside it, and the one the blind half could not have caught: it only moves on an
+// AJAX request and nothing in the sweep makes one. Left true it sends getUniqueId() down its
+// random branch, so every id on every later render differs on every request
+$out['isAjax'] = $ask(function () {
+  $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'isAjax');
+  return $property->getValue() ? 1 : 0;
 });
 
 // keyed by the Request OBJECT in a static SplObjectStorage, so every request ever served stays
@@ -3103,8 +3264,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3171,8 +3332,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3235,8 +3396,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3322,8 +3483,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3439,8 +3600,8 @@ $_SERVER['SERVER_SOFTWARE'] = 'workerd';
 $_SERVER['SERVER_PROTOCOL'] = 'HTTP/1.1';
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3630,8 +3791,8 @@ $out = ['ok' => false, 'path' => $path];
 $clock = function () { return microtime(true) * 1000; };
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3741,12 +3902,12 @@ $path = json_decode(${JSON.stringify(safePath)});
 $cookie = json_decode(${JSON.stringify(JSON.stringify(cookie))});
 $origin = json_decode(${JSON.stringify(JSON.stringify(origin))});
 $recipes = json_decode(${safeRecipes}, true);
-$out = ['ok' => false, 'path' => $path, 'fragments' => [], 'failed' => []];
+$out = ['ok' => false, 'path' => $path, 'fragments' => [], 'fragmentTags' => [], 'failed' => []];
 $clock = function () { return microtime(true) * 1000; };
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {
@@ -3815,6 +3976,12 @@ try {
     \Drupal\Component\Utility\Html::resetSeenIds();
   }
 
+  // and the ajax flag beside it, which resetSeenIds() does not clear; left true it sends
+  // getUniqueId() down its random branch for the rest of the incarnation
+  if (method_exists('\Drupal\Component\Utility\Html', 'setIsAjax')) {
+    \Drupal\Component\Utility\Html::setIsAjax(false);
+  }
+
   // THE ID IS SET EXPLICITLY, and skipping it is a session HANDOVER rather than a missing session.
   // session_write_close() leaves session_id() holding the previous visitor's id, and session_start()
   // prefers that id over $_COOKIE -- so without this, bob's cookie loaded admin's row and the
@@ -3869,6 +4036,9 @@ try {
       $elements = ['#markup' => $id, '#attached' => ['placeholders' => [$id => $recipe]]];
       $rendered = $renderer->renderPlaceholder($id, $elements);
       $out['fragments'][$id] = (string) ($rendered['#markup'] ?? '');
+      // renderPlaceholder() merges the placeholder bubbleable metadata into $elements, so this is
+      // the fragment own dependency set rather than the page one
+      $out['fragmentTags'][$id] = array_values($rendered['#cache']['tags'] ?? []);
     } catch (\Throwable $e) {
       $out['failed'][] = $id;
       $out['failure'][$id] = get_class($e) . ': ' . $e->getMessage();
@@ -3968,8 +4138,8 @@ $meta = [];
 $why = [];
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require_once '/drupal/autoload.php';
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
   }
   $autoloader = $GLOBALS['__pw_autoloader'];
   if (!isset($GLOBALS['__pw_kernel'])) {

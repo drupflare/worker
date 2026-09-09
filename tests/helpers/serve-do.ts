@@ -115,6 +115,12 @@ export type ServeDo = {
 	sql: Sql;
 	env: Record<string, unknown>;
 	php: unknown;
+	/** stub for a parked HTTP yield; see `parkFetchDep` on the object */
+	parkFetchDep?: typeof fetch;
+	/** how the last parked render went, which is how a spec tells a park from a fall-through */
+	lastPark?: { state: string; trips: number; why?: string };
+	/** the memoised park state; `stubRender` sets it so a stubbed interpreter is not driven */
+	parkInstall?: { state: 'installed' | 'ready' | 'absent' | 'failed'; armed: string[] };
 	runJson: (code: string) => Promise<Record<string, unknown>>;
 	fetch: (request: Request) => Promise<Response>;
 	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };
@@ -260,6 +266,17 @@ export type ServeDo = {
 	flushDailyRows: (nowMs?: number) => number;
 	dailyRows: (nowMs?: number) => number;
 	bumpGeneration: (reason?: string) => BumpResult;
+	/**
+	 * the scoped purge, which is the path with the COMPLETE tag set.
+	 *
+	 * `bumpGeneration('cachetags')` fires on the first tag a save writes and cannot scope anything, so
+	 * a spec asserting what a save reaches has to drive this instead.
+	 */
+	purgeForTags: (
+		tags: readonly string[],
+		reason?: string,
+		opts?: { bump?: boolean }
+	) => Record<string, unknown> & { shells: { dropped: number; kept: number; reasons: string[] } };
 	fillOne: (
 		targetPath?: string | null,
 		bins?: string[],
@@ -460,6 +477,15 @@ export function inObject<T>(
  * inline when `this.php` is null. It CANNOT cover anything whose failure is inside Drupal -- a
  * stub keyed on the path agrees with the JS half by construction.
  *
+ * **AND IT HAS TO SAY THE PARK IS NOT INSTALLED, or the stub is silently bypassed.**
+ * `runJsonMaybeParked()` calls `runJson` only when no trap class is armed; with one armed it drives
+ * `drivePark`, which goes through `run()` and reaches the REAL interpreter. Once `blockingOutbound`
+ * became true the `fetch` class armed on every site, so every `stubRender` spec started driving the
+ * real thing -- mostly invisibly, because a stub keyed on the path answers the same shape either
+ * way, and visibly in one place: `serve-chain` read a render estimate of -1 from a real interpreter
+ * running a fragment written for the stub. A stubbed interpreter genuinely cannot park, so the
+ * memoised state says so rather than production learning about the harness.
+ *
  * @returns the calls made, decoded out of the PHP fragment the module emitted
  */
 export function stubRender(
@@ -468,6 +494,7 @@ export function stubRender(
 ): RenderCall[] {
 	const calls: RenderCall[] = [];
 	site.php = { stubbed: true };
+	site.parkInstall = { state: 'ready', armed: [] };
 	site.runJson = async (code) => {
 		const call = decodeRenderCall(code);
 		calls.push(call);

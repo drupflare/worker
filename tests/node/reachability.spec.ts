@@ -40,7 +40,13 @@ const ALLOWED_OFF_EDGE = new Map<string, string>([
 	// alias targets, reached through wrangler `alias` rather than through an import
 	['src/runtime/php-binary-jspi.ts', 'alias target for the JSPI probe configs'],
 	['src/runtime/php-binary-o2.ts', 'alias target for the -O2 probe configs'],
-	['src/runtime/php-binary-zstd.ts', 'alias target for the zstd probe configs']
+	[
+		'src/runtime/php-binary-raw.ts',
+		'the SHIPPING alias target since 2026-09-04, when the compressed bundle limit went; reached through the wrangler alias, so the import scan cannot see it'
+	]
+	// `src/runtime/php-binary-zstd.ts` was here and is DELETED. Nothing aliased it: the experiment
+	// configs name the o2, jspi and 85 seams, and the shipping one is now the raw import. The zstd
+	// PACKER survives, because `pack:wasm` still frames the 8.3 binary and the experiment arms.
 	// `src/ops/tail-worker.ts` and `src/drupal/capabilities.ts` were listed here as KNOWN DEAD and
 	// have since been deleted. The stale-exemption check below is what caught the removal -- it
 	// failed with both names the moment the files went, which is the direction that is easy to get
@@ -99,7 +105,7 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 			'src/ops/mutation-oracle.ts',
 			'src/runtime/php-binary-jspi.ts',
 			'src/runtime/php-binary-o2.ts',
-			'src/runtime/php-binary-zstd.ts'
+			'src/runtime/php-binary-raw.ts'
 		]);
 	});
 });

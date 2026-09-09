@@ -9,6 +9,18 @@ import type { SendEmailLike } from './ops/mail.js';
  * restore, the R2 mirror drain and prefill are all worker concerns.
  */
 export interface SiteEnv extends BaseSiteEnv {
+	/**
+	 * Which uploaded Worker version is serving, supplied by the platform.
+	 *
+	 * `wrangler.jsonc` has declared `version_metadata` since the binding existed and NOTHING read
+	 * it, so "which code is answering for this site" had no answer at all -- a deploy that half
+	 * landed, or a site pinned to an older version by a gradual rollout, looked identical to a
+	 * current one. It rides `/health` because that is the route an operator already polls.
+	 *
+	 * Absent under `wrangler dev --local` and in the test lanes, so every reader treats it as
+	 * optional rather than asserting it.
+	 */
+	CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
 	HEAP_SNAPSHOT?: string;
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
@@ -24,6 +36,45 @@ export interface SiteEnv extends BaseSiteEnv {
 	SHELL_ASSEMBLY?: string;
 	/** the front worker's compiled-plan tier; ON unless explicitly set to `0` */
 	EDGE_PLAN?: string;
+	/**
+	 * which engine produces image derivatives: `tinyimg` (default) or `images`.
+	 *
+	 * Cloudflare Images needs a zone with transformations enabled, does not exist on
+	 * `*.workers.dev`, and caps at 5,000 transformations a month -- 1,250 images against the four
+	 * shipped styles. It is kept reachable because it is the only one of the two that encodes AVIF.
+	 */
+	IMAGE_ENGINE?: string;
+	/**
+	 * the origin public files are served from, when the `FILES` bucket has a custom domain.
+	 *
+	 * Empty by default, which serves every file through the Worker -- correct, and one Worker
+	 * request per file. Set to an R2 custom domain and a MIRRORED public file is linked there
+	 * instead, which costs no Worker request at all. A file that has not mirrored yet keeps the
+	 * Worker URL, because the alternative is a 404 on a file the site holds.
+	 */
+	FILES_PUBLIC_URL?: string;
+	/**
+	 * replace a stored page's asset tags with the build's aggregates; OFF unless `1`.
+	 *
+	 * Needs `bun run assets:agg` to have run, which writes `assets/agg/`. Off by default because the
+	 * artifact is 6.57 MB for 808 libraries and a given site uses a few dozen -- shipping the rest
+	 * would be paying for aggregates nothing reads.
+	 */
+	ASSET_AGGREGATES?: string;
+	/**
+	 * where release history is fetched from, when a site does not use drupal.org.
+	 *
+	 * Only the declared prefetch reads it; Drupal reads its own `update.settings:fetch.url`. Set
+	 * both or neither -- a warm against one server and a fetch against another warms nothing.
+	 */
+	UPDATE_FETCH_URL?: string;
+	/**
+	 * extra path prefixes that may never be answered from a PREVIOUS generation, comma separated.
+	 *
+	 * Added to the built-in deny-list rather than replacing it, so a site cannot make its own login
+	 * page staleable by configuring badly. See `staleAllowed()` in `src/ops/page-store.ts`.
+	 */
+	NEVER_STALE?: string;
 	/**
 	 * makes this object a read-only replica: every mutating host capability is refused.
 	 *
@@ -55,10 +106,26 @@ export interface SiteEnv extends BaseSiteEnv {
 	/**
 	 * takes a heap image once per pack generation, so a cold boot can restore instead of booting.
 	 *
-	 * ON unless `0`. `HEAP_SNAPSHOT` gates the restore; this gates the PRODUCER. One image costs
-	 * 10,420,224 bytes, which is 0.2% of free's 5 GB.
+	 * **OFF unless `1`, and it used to be on.** `HEAP_SNAPSHOT` gates the restore; this gates the
+	 * PRODUCER. Measured on two deployed free workers differing only in these two vars, `cpuTime` on
+	 * the cold render, no state polling between samples: **imaged 2020/1908/1937/1561/1912 (n=5,
+	 * median 1,912) against unimaged 1277/1343/1113/1251 (n=4, median 1,264)**. The ranges do not
+	 * overlap, so restoring an image costs about 648 ms MORE than booting from scratch. It also
+	 * costs 8,071,929 bytes a site against an account-wide 5 GB cap.
+	 *
+	 * A cost on both meters and no benefit on either, so the default is off. The likely mechanism is
+	 * `digestBytes`, a per-byte JS loop over the restored bytes, which is why compressing the stored
+	 * chunks does not help: the digest is taken over heap bytes rather than stored ones.
 	 */
 	HEAP_IMAGE?: string;
+	/**
+	 * brings an already-provisioned site up to the pack that ships today.
+	 *
+	 * ON unless `0`. The pack delivers only at provisioning, so without this a fix inside it reaches
+	 * new sites and no existing one. Off is for a site being debugged against a known state; leaving
+	 * it off means a security fix in the pack never arrives.
+	 */
+	RECONCILE?: string;
 	/**
 	 * the object's own namespace, so a replica lane can pull the log from its primary.
 	 *

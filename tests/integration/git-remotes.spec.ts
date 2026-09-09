@@ -512,6 +512,64 @@ describe('a pull against a git server', () => {
 		);
 	});
 
+	/**
+	 * Releasing a pin with the remote unreachable, which is the state an operator is healing.
+	 *
+	 * `unpreview` re-syncs to the branch head and so needs a ref advertisement. A remote that is down
+	 * or whose token has expired therefore holds its own pin in place, and a pinned site takes no
+	 * pushes and no polls -- so the one thing that would unstick it is the one thing that cannot run.
+	 *
+	 * `unpin` releases without a sync. The site keeps serving the request's files, which is what it
+	 * was already serving; what changes is that the poller owns the branch again. The assertion that
+	 * matters is the second half: a poll AFTER the release converges the site, so the degraded path
+	 * still terminates.
+	 */
+	it('releases a pin with the remote down, and the next poll converges', async () => {
+		const site = freshSite();
+		await connected(site);
+		const main = await fakeCommit(MODULE);
+		const pr = await fakeCommit({ ...MODULE, 'src/Proposed.php': '<?php\n// in review\n' });
+		serve({
+			refs: { 'refs/heads/main': main.sha, 'refs/pull/9/head': pr.sha },
+			packs: { [main.sha]: main.pack, [pr.sha]: pr.pack }
+		});
+		await api(site, { action: 'pull', id: 'generic:o/r@main' });
+		await api(site, { action: 'preview', id: 'generic:o/r@main', pr: '9' });
+		expect((await storedFiles(site)).map((f) => f.path)).toContain(
+			'modules/custom/mymodule/src/Proposed.php'
+		);
+
+		// the remote stops answering; `unpreview` cannot run at all from here
+		serve({ refs: {}, packs: {} });
+		const stuck = await api(site, { action: 'unpreview', id: 'generic:o/r@main' });
+		expect(stuck.body.ok).toBe(false);
+
+		const released = await api(site, { action: 'unpin', id: 'generic:o/r@main' });
+		expect(released.body).toMatchObject({ ok: true, previewOf: null, was: '9', synced: false });
+		// nothing was re-synced, so the request's files are still what the site serves
+		expect((await storedFiles(site)).map((f) => f.path)).toContain(
+			'modules/custom/mymodule/src/Proposed.php'
+		);
+
+		// and the poller owns the branch again: with the remote back, a pull converges
+		serve({
+			refs: { 'refs/heads/main': main.sha, 'refs/pull/9/head': pr.sha },
+			packs: { [main.sha]: main.pack, [pr.sha]: pr.pack }
+		});
+		await api(site, { action: 'pull', id: 'generic:o/r@main' });
+		expect((await storedFiles(site)).map((f) => f.path)).not.toContain(
+			'modules/custom/mymodule/src/Proposed.php'
+		);
+	});
+
+	/** releasing a pin nobody set is a state rather than an error */
+	it('answers for a remote with no preview pinned', async () => {
+		const site = freshSite();
+		await connected(site);
+		const released = await api(site, { action: 'unpin', id: 'generic:o/r@main' });
+		expect(released.body).toMatchObject({ ok: true, was: null, synced: false });
+	});
+
 	it('holds a preview against a push to the branch', async () => {
 		const site = freshSite();
 		await connected(site);

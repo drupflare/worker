@@ -163,11 +163,20 @@ suite('each filename agrees with the class inside it', () => {
 
 	it('carries no build-machine paths', () => {
 		// Twig bakes the source path into getSourceContext() for error reporting, and an
-		// unrewritten one both leaks the build host and proves the root rewrite was skipped
+		// unrewritten one leaks the build host.
+		//
+		// THE PROPERTY, NOT THE PRESENCE OF `/drupal/`. This required every template to carry an
+		// absolute path, and one does not: Drupal loads `block.html.twig` by its theme-hook short
+		// name, so Twig records `core/themes/olivero/.../block.html.twig` relative and there is
+		// nothing for the root rewrite to replace. A relative path leaks no host and resolves fine,
+		// so requiring the rewrite's OUTPUT failed on a template that never needed it. What has to
+		// hold is that no absolute path escapes rewriting.
 		for (const entry of packed) {
 			const src = body(entry);
-			expect(src).not.toMatch(/\/(?:Users|home)\//);
-			expect(src).toContain('/drupal/');
+			expect(src, entry.p).not.toMatch(/\/(?:Users|home)\//);
+			for (const [absolute] of src.matchAll(/"(\/[^"]*\.twig)"/g)) {
+				expect(absolute, entry.p).toMatch(/^"\/drupal\//);
+			}
 		}
 	});
 });

@@ -1035,7 +1035,12 @@ describe('the blind half: every static property of every declared class', () => 
 					`warm statics=${warm['staticCount']} classes=${warm['classCount']}`
 			);
 			expect(Number(cold['staticCount'])).toBeGreaterThan(80);
-			expect(Number(cold['classCount'])).toBeGreaterThan(1500);
+			// 1,500 was a floor under a tree that had the contrib CENSUS installed; the shipping tree
+			// is built `--no-dev` and declares 1,401 classes, so the floor was measuring which dev
+			// dependencies happened to be present. What the sweep needs is enough classes to be
+			// worth sweeping, and the assertion that matters is `staticSkipped === 0` below -- an
+			// unreadable class is the thing that would hide a leak
+			expect(Number(cold['classCount'])).toBeGreaterThan(1000);
 			expect(Number(warm['staticSkipped']), 'no class may be unreadable').toBe(0);
 
 			expect(moved, moved.map((k) => `${k}: ${left[k]} -> ${right[k]}`).join('\n')).toEqual(

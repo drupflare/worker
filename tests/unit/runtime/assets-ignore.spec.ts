@@ -57,15 +57,11 @@ const STATIC = [
 	['/core/themes/olivero/fonts/lora/lora-v14-latin-regular.woff2', 'a url() inside that CSS'],
 	// the contrib half, and it is a different subtree rather than a deeper path: `assets/core/`
 	// cannot answer `/modules/**`, so the first enabled module shipping its own css 404s
-	['/modules/contrib/token/css/token.css', 'a contrib module stylesheet'],
-	// the THIRD subtree, and it was missing for the whole life of the project. `assets:static`
-	// builds `assets/themes` and neither `.assetsignore` nor `PAYLOAD_ASSETS` carried it, so the
-	// bidirectional check between those two stayed green while both omitted it -- a guard between
-	// two lists cannot see what the packer writes to a third place
-	[
-		'/themes/contrib/uswds_base/starterkits/uswds_base_subtheme/css/uswds_base.css',
-		'a contrib theme stylesheet'
-	]
+	['/modules/contrib/token/css/token.css', 'a contrib module stylesheet']
+	// THE THIRD SUBTREE MOVED TO ITS OWN CHECK BELOW. It was `uswds_base`, a theme that arrives with
+	// the contrib CENSUS -- a dev dependency -- so a tree built with `--no-dev` publishes an empty
+	// `assets/themes` and this 404s with nothing wrong. What it was guarding is the `.assetsignore`
+	// rule, which is asserted directly instead of through a fixture that may not be installed.
 ] as const;
 
 /**
@@ -107,6 +103,27 @@ describe('the canonical config serves the static tree the browser reads', () => 
 		const res = await asset(path);
 		expect(res.status).toBe(200);
 		expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0);
+	});
+
+	/**
+	 * The themes subtree, asserted on the RULE rather than on a fixture.
+	 *
+	 * `assets:static` writes `assets/themes` and neither `.assetsignore` nor `PAYLOAD_ASSETS` carried
+	 * it for the whole life of the project -- a guard between two lists cannot see what the packer
+	 * writes to a third place. The fixture that caught it was `uswds_base`, which arrives with the
+	 * contrib census, so a `--no-dev` tree has an empty directory and the live fetch 404s honestly.
+	 *
+	 * The rule is what regresses; a theme being installed is not.
+	 */
+	it('un-ignores /themes/, which is the third subtree the packer writes', () => {
+		const rules = ignoreSource
+			.split('\n')
+			.map((l) => l.trim())
+			.filter((l) => l !== '' && !l.startsWith('#'));
+		expect(rules).toContain('!/themes/');
+		// the sibling subtrees, so a rewrite that drops one is caught by the same assertion
+		expect(rules).toContain('!/core/');
+		expect(rules).toContain('!/modules/');
 	});
 
 	it('negates /core/ without re-ignoring its contents', () => {

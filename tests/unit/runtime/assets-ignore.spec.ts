@@ -239,3 +239,43 @@ describe('the withheld set is only correct for the canonical vars', () => {
 		expect(ignoreSource).toContain(`!/${prefix}/`);
 	});
 });
+
+/**
+ * `robots.txt`, which was a 404 on every site.
+ *
+ * Nothing published it. It is not in `NEVER_DRUPAL`, so the request fell through the rewrite to
+ * `/serve`, cost a full Durable Object hop, and Drupal answered with no route -- a crawler's first
+ * request to every site paying for a miss. Core ships the file; the asset layer is the only thing
+ * that can serve it, exactly as with `/core/**` above.
+ */
+describe('the crawler contract is served, and by the asset layer', () => {
+	it('answers robots.txt without touching the Worker', async () => {
+		const res = await env.ASSETS.fetch(new Request('https://cfw.local/robots.txt'));
+		expect(res.status, 'robots.txt is not published').toBe(200);
+		const body = await res.text();
+		// core's own file, so a crawler gets Drupal's considered answer rather than an invention
+		expect(body).toContain('User-agent: *');
+		expect(body).toContain('Disallow: /admin/');
+	});
+
+	it('disallows the surfaces that are this host and not Drupal', async () => {
+		const res = await env.ASSETS.fetch(new Request('https://cfw.local/robots.txt'));
+		const body = await res.text();
+		// each costs a Durable Object hop to refuse, and `/_cfw` is the owner console; core's file
+		// predates all of them and names none
+		for (const path of ['/_cfw', '/serve', '/migrate', '/replica']) {
+			expect(body, `${path} is crawlable`).toContain(`Disallow: ${path}`);
+		}
+	});
+
+	it('allows the aggregates, which are stylesheets a crawler should see', async () => {
+		const res = await env.ASSETS.fetch(new Request('https://cfw.local/robots.txt'));
+		expect(await res.text()).toContain('Allow: /agg/');
+	});
+
+	it('is named by the ignore file, which is deny-by-default', () => {
+		// the mechanism: without the line the file exists on disk and uploads nowhere, which is how
+		// `/agg/` shipped unpublished for its whole life
+		expect(ignoreSource).toContain('!/robots.txt');
+	});
+});

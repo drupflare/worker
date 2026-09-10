@@ -27,6 +27,7 @@
 # the two disagree.
 /*
 
+!/robots.txt
 !/driver.json
 !/prefill.json
 

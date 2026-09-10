@@ -18,6 +18,7 @@ drupal-min-src
 
 assets/*
 !assets/.assetsignore
+!assets/robots.txt
 !assets/drupal/
 assets/drupal/*
 !assets/drupal/site.sqlite

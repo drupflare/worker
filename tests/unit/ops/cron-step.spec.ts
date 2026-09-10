@@ -55,6 +55,27 @@ describe('cronUnits: the chain and what it omits', () => {
 		expect(units.map((u) => u.id)).toContain('fetch_reopen');
 	});
 
+	it('reads what update computed, so both readers come after every hook', () => {
+		// `fetch_reopen` and `advisories` read state `hook:update` writes. That used to be carried by
+		// ordering `drupflare` after `update` inside the hook list, and THAT CLAIM IS DEAD:
+		// `cronHooksFromList()` returns `names.sort()`, so on any site that has discovered its hooks
+		// the list is alphabetical and `drupflare` precedes `update`. What actually holds the
+		// dependency is these two being pushed after the loop, and nothing asserted it.
+		const lastHook = ids.reduce((at, id, i) => (id.startsWith('hook:') ? i : at), -1);
+		expect(lastHook).toBeGreaterThan(-1);
+		expect(ids.indexOf('fetch_reopen')).toBeGreaterThan(lastHook);
+		expect(ids.indexOf('advisories')).toBeGreaterThan(lastHook);
+	});
+
+	it('holds that ordering whatever order the hooks arrive in', () => {
+		// the control: discovery sorts, so the hook list is not a fixed order and the assertion above
+		// must not depend on one
+		const reversed = cronUnits({ hooks: [...KNOWN_CRON_HOOKS].reverse() }).map((u) => u.id);
+		const lastHook = reversed.reduce((at, id, i) => (id.startsWith('hook:') ? i : at), -1);
+		expect(reversed.indexOf('fetch_reopen')).toBeGreaterThan(lastHook);
+		expect(reversed.indexOf('advisories')).toBeGreaterThan(lastHook);
+	});
+
 	it('never runs a hook for a module the site does not have', () => {
 		// `module` is optional on a unit, so the filter narrows it before the lookup
 		const named = units.map((u) => u.module).filter((m): m is string => typeof m === 'string');

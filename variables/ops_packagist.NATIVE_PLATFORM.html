@@ -16,14 +16,16 @@
 <p><code>tests/integration/loaded-extensions.spec.ts</code> drives <code>get_loaded_extensions()</code> through the
 shipping binary and asserts this map both ways -- every name here is loaded, and no name in
 <a href="ops_packagist.POLYFILLED_PLATFORM.html" class="tsd-kind-variable">POLYFILLED_PLATFORM</a> is. Until that spec existed the list was a belief, and it was wrong:
-<code>ext-mbstring</code> sat here while <code>mb-fix.ts</code> existed precisely because the build has no mbstring.</p>
+<code>ext-mbstring</code> sat here while <code>mb-fix.ts</code> existed precisely because the build had no mbstring. It
+is back as of 2026-09-08 and this time the spec is what says so -- the build asks for
+<code>--enable-mbstring</code> and <code>get_loaded_extensions()</code> reports it.</p>
 <p>Function-name evidence cannot replace it. <code>curl_init</code>, <code>mysqli_stmt_init</code> and
 <code>imagecreatetruecolor</code> all appear as strings in a binary that has none of those extensions,
 because opcache's optimizer carries a <code>func_info</code> table naming functions across every bundled
 extension.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/packagist.ts#L116">src/ops/packagist.ts:116</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/packagist.ts#L118">src/ops/packagist.ts:118</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

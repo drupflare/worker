@@ -11,14 +11,19 @@
 <li><a href="../modules/site-do.html">site-do</a></li>
 <li><a href="" aria-current="page">CFW_HEADER_VERSION</a></li></ul>
 <h1>Variable CFW_HEADER_VERSION<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">CFW_HEADER_VERSION</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;1&quot;</span><span class="tsd-signature-symbol"> = &#39;1&#39;</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">CFW_HEADER_VERSION</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;2&quot;</span><span class="tsd-signature-symbol"> = &#39;2&#39;</span></div>
 <div class="tsd-comment tsd-typography"><p>The <code>x-cfw-*</code> header contract version.</p>
 <p>Bumped when a header is RENAMED or REMOVED, not when one is added: a reader that knows version 1
 can ignore fields it does not recognise, but it cannot tell a rename from an absent worker
 without this.</p>
+<p><strong>2, 2026-09-08.</strong> <code>x-cfw-plan</code> had three writers and two meanings -- the front worker's edge-plan
+provenance and tier, and the object's Cloudflare account plan. The account reading moved to
+<code>x-cfw-account-plan</code> and <code>x-cfw-plan</code> now means the edge plan alone. A reader on version 1 that
+printed <code>x-cfw-plan</code> as the billing plan was printing a tier string like <code>skip:set-cookie</code>
+whenever the front worker answered, which reads as a plan nobody has.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/site-do.ts#L465">src/site-do.ts:465</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/site-do.ts#L574">src/site-do.ts:574</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

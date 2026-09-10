@@ -11,11 +11,16 @@
 <li><a href="../modules/ops_cron.html">ops/cron</a></li>
 <li><a href="" aria-current="page">KNOWN_CRON_HOOKS</a></li></ul>
 <h1>Variable KNOWN_CRON_HOOKS<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">KNOWN_CRON_HOOKS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-comment tsd-typography"><p>the cron hook modules this site has, measured, for when discovery has not run</p>
+<div class="tsd-signature"><span class="tsd-kind-variable">KNOWN_CRON_HOOKS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol"> = GENERATED_CRON_KNOWN</span></div>
+<div class="tsd-comment tsd-typography"><p>The cron hook modules this site has, measured, for when discovery has not run.</p>
+<p>THE ORDER CARRIES NOTHING. This list used to place <code>drupflare</code> after <code>update</code> &quot;whose deferral it
+corrects&quot;, and that was already dead: <code>cronHooksFromList()</code> sorts, so any site that has discovered
+its hooks runs them alphabetically with <code>drupflare</code> first. What holds the dependency is
+<code>fetch_reopen</code> and <code>advisories</code> being pushed after the whole loop in <a href="../functions/ops_cron.cronUnits.html" class="tsd-kind-function">cronUnits</a>, asserted
+in <code>cron-step.spec.ts</code> against a reversed list.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/cron.ts#L272">src/ops/cron.ts:272</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/cron.ts#L267">src/ops/cron.ts:267</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

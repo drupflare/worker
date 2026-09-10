@@ -11,9 +11,23 @@
 <li><a href="../modules/ops_catalog.html">ops/catalog</a></li>
 <li><a href="" aria-current="page">ModuleCapability</a></li></ul>
 <h1>Type Alias ModuleCapability</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">ModuleCapability</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;deferrable-outbound&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocking-outbound&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;cron&quot;</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-type-alias">ModuleCapability</span><span class="tsd-signature-symbol">:</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;deferrable-outbound&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocking-outbound&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocking-socket&quot;</span><br/>    <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;cron&quot;</span></div>
+<div class="tsd-comment tsd-typography"><p>What a module needs of the runtime, beyond a version constraint, hardest last.</p>
+<p><code>deferrable-outbound</code> is NOT a refusal. Treating every outbound need as a wall classified
+reCAPTCHA and Stage File Proxy as impossible when both are two-phase problems the queue already
+solves; only a call whose answer must arrive inside the same render is blocked.</p>
+<p><strong><code>blocking-outbound</code> AND <code>blocking-socket</code> ARE TWO CAPABILITIES, and they were one until
+2026-09-08.</strong> One flag covered &quot;an outbound call that must answer inside one render&quot; for both
+transports, and the Zend park serves exactly one of them: a trapped <code>stream_socket_client</code> /
+<code>fwrite</code> / <code>fgets</code> parks and is answered from JS, while <code>fopen('https://...')</code> cannot be -- the
+HTTPS wrapper is userland invoked from the INTERNAL <code>fopen</code>, so <code>park_refused()</code> counts that frame
+and declines, correctly, because <code>fopen</code>'s C locals cannot survive the <code>longjmp</code>.</p>
+<p>Collapsing them would have said the runtime can do a blocking HTTP call because it can do a
+blocking socket one. <code>drupal/redis</code> needs the socket flavour and <code>drupal/openid_connect</code> needs the
+HTTP flavour, so the difference is the difference between those two modules.</p>
+</div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/catalog.ts#L42">src/ops/catalog.ts:42</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/catalog.ts#L53">src/ops/catalog.ts:53</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

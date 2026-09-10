@@ -20,9 +20,9 @@
 <p>An <code>unknown</code> from the constraint checker becomes an <code>unverifiable</code> conflict rather than being
 dropped, so the overall verdict degrades to <code>unverifiable</code> instead of quietly reading as installable.</p>
 <p>A requirement met only by <a href="../variables/ops_packagist.POLYFILLED_PLATFORM.html" class="tsd-kind-variable">POLYFILLED_PLATFORM</a> degrades the same way, and that is the
-point of the split: answering <code>installable</code> to <code>ext-mbstring</code> on the strength of a polyfill with
-86 measured divergences reads as a considered yes. <code>installed</code> still wins over both maps, so a
-site that really has the extension is unaffected.</p>
+point of the split: answering <code>installable</code> to <code>ext-mbstring</code> on the strength of a polyfill the
+parity instrument still finds divergences in reads as a considered yes. <code>installed</code> still wins
+over both maps, so a site that really has the extension is unaffected.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -32,7 +32,7 @@ site that really has the extension is unaffected.</p>
 <li><span><span class="tsd-kind-parameter">platform</span>: <a href="../types/ops_packagist.PlatformVersions.html" class="tsd-signature-type tsd-kind-type-alias">PlatformVersions</a><span class="tsd-signature-symbol"> = DEFAULT_PLATFORM</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">conflicts</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_packagist.Conflict.html" class="tsd-signature-type tsd-kind-type-alias">Conflict</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">satisfied</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span> <span class="tsd-signature-symbol">}</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/packagist.ts#L203">src/ops/packagist.ts:203</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/packagist.ts#L211">src/ops/packagist.ts:211</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

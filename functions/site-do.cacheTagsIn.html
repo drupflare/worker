@@ -20,6 +20,18 @@
 <p><code>Connection::merge('cachetags')</code> binds the tag rather than inlining it, so the name is in
 <code>params</code> and never in the SQL text. Anything that does not look like a tag is dropped, and an
 empty result makes the caller fall back to purging everything.</p>
+<p><strong>IT READ ONLY A POSITIONAL ARRAY, AND SO IT MISSED EVERY INVALIDATION AFTER A TAG'S FIRST.</strong>
+<code>merge()</code> compiles to a SELECT then an INSERT or an UPDATE. The INSERT binds positionally
+(<code>[1, 'node_list']</code>) and was recorded; once the row exists every later invalidation takes the
+UPDATE branch, which binds by NAME (<code>{':db_condition_placeholder_0': 'node_list'}</code>), and an object
+is not an array so the tag was dropped. Measured on a populated site: a node save moved
+<code>node_list</code> from 1 to 4 while the host recorded only <code>node:20</code>, so <code>/</code> and <code>/node</code> were never
+purged and the front-page listing stayed stale. Three menu-item saves moved
+<code>config:system.menu.main</code> and purged nothing, and a repeat term save recorded no tag at all --
+where <code>flushTagPurge()</code> returns early on an empty set, so the invalidation is dropped rather than
+widened.</p>
+<p>Reading the VALUES of a named map is what fixes it. The filters below are unchanged and are what
+keeps a placeholder name or a checksum out of the result.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -27,7 +39,7 @@ empty result makes the caller fall back to purging everything.</p>
 <li><span><span class="tsd-kind-parameter">params</span>: <span class="tsd-signature-type">unknown</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/site-do.ts#L1200">src/site-do.ts:1200</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/site-do.ts#L1356">src/site-do.ts:1356</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

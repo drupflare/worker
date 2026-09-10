@@ -13,13 +13,14 @@
 <h1>Variable POLYFILLED_PLATFORM<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">POLYFILLED_PLATFORM</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_packagist.PlatformVersions.html" class="tsd-signature-type tsd-kind-type-alias">PlatformVersions</a><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>Extensions supplied by PHP code rather than by the build.</p>
-<p>A polyfill is not the extension. <code>bun run measure:mb-parity</code> drives 1,232 cases through the
-shipping mbstring stack with the real extension as the oracle and reports <strong>86</strong> divergences, so
-a module requiring <code>ext-mbstring</code> gets <code>unverifiable</code> here, never <code>installable</code> -- see
-<a href="../functions/ops_packagist.checkRequirements.html" class="tsd-kind-function">checkRequirements</a>. <code>ext-iconv</code> rides the same stack through <code>iconv-fix.ts</code>.</p>
+<p>A polyfill is not the extension, so a module requiring one of these gets <code>unverifiable</code> here and
+never <code>installable</code> -- see <a href="../functions/ops_packagist.checkRequirements.html" class="tsd-kind-function">checkRequirements</a>. <code>ext-iconv</code> rides <code>iconv-fix.ts</code>.</p>
+<p><code>ext-mbstring</code> WAS HERE and moved to <a href="ops_packagist.NATIVE_PLATFORM.html" class="tsd-kind-variable">NATIVE_PLATFORM</a> on 2026-09-08, because the build now
+carries the real extension. That is the only way an entry leaves this list: a measurement that the
+build supplies it, not a parity run that finds fewer divergences.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/packagist.ts#L136">src/ops/packagist.ts:136</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/packagist.ts#L145">src/ops/packagist.ts:145</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

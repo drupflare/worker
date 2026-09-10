@@ -21,6 +21,12 @@
 absence from the pack is why AutomatedCron's elapsed check passed on the very
 first request and ran drupal_cron() inline, which is the failure TECHNICAL_REPORT.md
 records as killing every render with an Asyncify throw.</p>
+<p><strong>THE ROW ALONE WAS INERT, AND IT READ AS WORKING.</strong> <code>State</code> extends <code>CacheCollector</code> over
+<code>cache.bootstrap</code> under the cid <code>state</code>, so <code>\Drupal::state()-&gt;get('system.cron_last')</code> answers
+from <code>cache_bootstrap</code> and never sees a write that only touched <code>key_value</code>. Measured on a site
+whose chain had fully drained with the <code>cron_last</code> unit among what ran: the status report still
+said &quot;Cron has not run recently&quot; and sat at Error. The delete is what makes the write visible;
+<code>tests/integration/module-converge.spec.ts</code> fails without it.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +35,7 @@ records as killing every render with an Asyncify throw.</p>
 <li><span><span class="tsd-kind-parameter">options</span>: <a href="../interfaces/ops_cron.CronOptions.html" class="tsd-signature-type tsd-kind-interface">CronOptions</a><span class="tsd-signature-symbol"> = {}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_cron.Ledger.html" class="tsd-signature-type tsd-kind-type-alias">Ledger</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/cron.ts#L721">src/ops/cron.ts:721</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/cron.ts#L714">src/ops/cron.ts:714</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

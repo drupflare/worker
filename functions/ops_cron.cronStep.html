@@ -24,7 +24,7 @@ makes the chain testable without a Durable Object at all.</p>
 <p><code>mayContinue</code> is the CPU constraint expressed as data. A <code>sql</code> unit costs
 microseconds, so the caller may run another in the same invocation; a <code>php</code> unit
 enters the interpreter and must be the last thing that invocation does. This is
-the same trade fillBatchSize()/fillBatchWallMs() make in src/site-do.js -- batch
+the same trade fillBatchSize() makes in src/site-do.js -- batch
 to amortise the setAlarm() row write, but never batch across a render.</p>
 <p><code>result</code> is the unit's own ledger or reply and its shape depends on the unit, so it is
 declared as an index signature rather than <code>object</code> -- a bare <code>object</code> makes every field
@@ -45,7 +45,7 @@ allowance: an evicted Durable Object comes back with nothing, and that case is t
 </div></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><a href="../interfaces/ops_cron.CronStep.html" class="tsd-signature-type tsd-kind-interface">CronStep</a><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/cron.ts#L948">src/ops/cron.ts:948</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/cron.ts#L950">src/ops/cron.ts:950</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

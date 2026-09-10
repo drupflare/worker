@@ -16,7 +16,7 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="ensurefleettable"><span class="tsd-kind-call-signature">ensureFleetTable</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">db</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_fleet.FleetDb.html" class="tsd-signature-type tsd-kind-type-alias">FleetDb</a><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span><a href="#ensurefleettable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Creates the table. Idempotent, so every caller may run it.</p>
+<div class="tsd-comment tsd-typography"><p>Creates the table, and adds the columns an inventory written before them is missing.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +24,7 @@
 <li><span><span class="tsd-kind-parameter">db</span>: <a href="../types/ops_fleet.FleetDb.html" class="tsd-signature-type tsd-kind-type-alias">FleetDb</a></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">Promise</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">void</span><span class="tsd-signature-symbol">&gt;</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/fleet.ts#L70">src/ops/fleet.ts:70</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/fleet.ts#L102">src/ops/fleet.ts:102</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

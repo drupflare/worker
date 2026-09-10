@@ -12,25 +12,30 @@
 <li><a href="" aria-current="page">XMLWRITER_FIX</a></li></ul>
 <h1>Variable XMLWRITER_FIX<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">XMLWRITER_FIX</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> = ...</span></div>
-<div class="tsd-comment tsd-typography"><p>A pure-PHP <code>XMLWriter</code>, because the build has no <code>ext-xmlwriter</code> and one contrib module SUBCLASSES
+<div class="tsd-comment tsd-typography"><p>A pure-PHP <code>XMLWriter</code>, because the build has no <code>ext-xmlwriter</code> and TWO contrib modules SUBCLASS
 the class rather than calling functions.</p>
 <p>WHY A CLASS AND NOT A SHIM SET. <code>simple_sitemap</code>'s <code>SitemapWriter extends \XMLWriter</code>, so a set of
 <code>xmlwriter_*()</code> functions could not satisfy it -- the parent class has to exist at the moment the
 subclass is compiled. That is also why this is declared as early as <code>MB_FIX</code>.</p>
-<p>THE SURFACE IS TEN METHODS, COUNTED RATHER THAN GUESSED. Inventoried against simple_sitemap 4.2.1:
-<code>openMemory</code>, <code>setIndent</code>, <code>startDocument</code>, <code>writePI</code>, <code>writeComment</code>, <code>startElement</code>,
-<code>writeAttribute</code>, <code>writeElement</code>, <code>endElement</code>, <code>endDocument</code>, <code>outputMemory</code>. <code>text()</code> is public
-as well because it is the standard name for what <code>writeElement</code> does internally and costs nothing.
-Nothing in the module calls <code>writeRaw</code>, <code>writeCdata</code>, <code>openUri</code>, <code>flush</code>, <code>startAttribute</code>,
-<code>writeDtd</code> or the namespace variants, so none is here -- an unused surface is the
-tested-but-never-called failure, and a partial one that LOOKS complete is worse.</p>
+<p><strong>THE SURFACE WAS COUNTED AGAINST ONE SUBCLASS AND THERE ARE TWO.</strong> It was inventoried against
+simple_sitemap 4.2.1 and said in this docblock that nothing calls <code>openUri</code>, <code>writeRaw</code>,
+<code>writeCdata</code>, <code>startAttribute</code> or <code>writeDtd</code>. <code>xmlsitemap</code>'s <code>XmlSitemapWriter</code> calls the first
+two, in its CONSTRUCTOR and on every link it writes, so every sitemap generation on that module
+died on an undefined method -- while the module read <code>verified</code>, because an enable-and-assert run
+resolves its services and never writes a sitemap. Inventory against every subclass in the tree, not
+against the one that prompted the shim.</p>
+<p><code>writeCdata</code>, <code>startAttribute</code>, <code>writeDtd</code> and the namespace variants have no caller in either and
+are still absent: an unused surface is the tested-but-never-called failure, and a partial one that
+LOOKS complete is worse.</p>
+<p><code>openUri()</code> makes this a STREAMING writer, which changes what <code>flush()</code> returns -- bytes rather
+than the document. Getting that wrong is silent; see the method.</p>
 <p><code>if (!class_exists(...))</code> rather than <code>eval()</code>, the <code>zlib-fix</code> pattern: a conditional class
 declaration binds at runtime, so this compiles clean on a build that HAS the extension and the
 branch simply never runs. That is what lets <code>tests/node/php-fragments.spec.ts</code> lint the body,
 which an <code>eval</code>'d string defeats.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/drupal/xmlwriter-fix.ts#L22">src/drupal/xmlwriter-fix.ts:22</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/drupal/xmlwriter-fix.ts#L29">src/drupal/xmlwriter-fix.ts:29</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

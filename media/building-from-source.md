@@ -75,20 +75,22 @@ own manifest rather than against a list.
 | 3   | `siblings`    | `.siblings/{drupflare,rom,stream-http}`            | `git`                 |
 | 4   | `driver`      | `assets/driver.json`                               | step 3                |
 | 5   | `tree`        | `drupal-src/`                                      | `composer`, `tar`     |
-| 6   | `site`        | `drupal-src/sites/default/settings.php`            | `php`, step 5         |
-| 7   | `patch`       | the wasm-runtime patches, in place                 | `node`, step 6        |
-| 8   | `bootstrap`   | a first `assets/drupal/core.json`, `core.bin.gz`   | `node`, step 5        |
-| 9   | `twig`        | `assets/drupal/twig-bake.json`, `core.list.json`   | `php`, steps 7 and 8  |
-| 10  | `core`        | the same two, repacked from the list               | `node`, step 9        |
-| 11  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 10               |
-| 12  | `static`      | `assets/core/`                                     | step 5                |
-| 13  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
-| 14  | `prefill`     | `assets/prefill.json`                              | a free port, 1-12     |
+| 6   | `mount`       | the driver modules, inside `drupal-src/`           | `bun`, step 5         |
+| 7   | `site`        | `drupal-src/sites/default/settings.php`            | `php`, step 6         |
+| 8   | `patch`       | the wasm-runtime patches, in place                 | `node`, step 7        |
+| 9   | `bootstrap`   | a first `assets/drupal/core.json`, `core.bin.gz`   | `node`, step 5        |
+| 10  | `twig`        | `assets/drupal/twig-bake.json`, `core.list.json`   | `php`, steps 8 and 9  |
+| 11  | `core`        | the same two, repacked from the list               | `node`, step 10       |
+| 12  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 11               |
+| 13  | `static`      | `assets/core/`                                     | step 5                |
+| 14  | `container`   | the packed `cache_container` row, rekeyed          | a free port, step 12  |
+| 15  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
+| 16  | `prefill`     | `assets/prefill.json`                              | a free port, 1-14     |
 
 ### 1-2, The Interpreter
 
-The shipping seam `src/runtime/php-binary-85.ts` imports two files, and both have to exist before the
-bundle builds: the glue and the brotli frame.
+The shipping seam `src/runtime/php-binary-raw.ts` imports two files, and both have to exist before the
+bundle builds: the glue and the interpreter itself.
 
 `interpreter` restores the binary and its glue from the public CDN, verified by sha256 against
 `cdn-manifest.json`, needing no credential. `bun install` already did this as a postinstall, so on a
@@ -96,10 +98,15 @@ normal clone the step is a no-op. When the CDN cannot be reached the step falls 
 workflow artifacts over `gh`: a different host on a different domain, so it is a second source and
 never a retry.
 
-`frame` compresses the binary. Cloudflare measures the bundle after its own gzip and gzip cannot
-shrink bytes that are already compressed, so shipping a compressed frame is what puts PHP 8.5 under
-the 3 MiB free-plan ceiling with nothing dropped. It is brotli at quality 11 and window 22, packed by
-`node:zlib` and inflated on the edge by `node:zlib`, so producer and consumer are the same
+`frame` compresses the binary to `.interp/php8.5.wasm.br`, and **the shipping bundle no longer needs
+it.** Cloudflare removed the compressed size limit on 2026-09-04; the limit is 64 MiB uncompressed,
+the tree measures a fifth of that (`bun run release:check`), and the interpreter travels as a raw
+`CompiledWasm` import. Startup fell from 106 ms to 5 ms with the inflate, measured on a deployed free
+worker.
+
+The step stays because three configs under `experiments/wrangler/` still name the brotli seam, and it
+is the rollback path if the raw import ever has to be reverted. It is brotli at quality 11 and window
+22, packed by `node:zlib` and inflated by `node:zlib`, so producer and consumer are the same
 implementation. The frame is cached on mtime; pass `--force` to repack.
 
 There is no decoder step and no Docker requirement. A wasm zstd decoder used to ship in the bundle
@@ -121,7 +128,7 @@ truth. `siblings` resolves each one in this order and clones only what is missin
 An explicit environment setting outranks an inference from the layout, and the developer layout
 outranks a private clone, so a checkout you are editing is never shadowed by a clone of master.
 
-### 5-7, The Drupal Tree
+### 5-8, The Drupal Tree
 
 `tree` downloads the pinned core tarball from ftp.drupal.org and completes it with the four
 contributed modules the tarball does not carry. It is ~180 MB. A tree already at the requested
@@ -133,9 +140,11 @@ database it created. Nothing downstream reads that database as content; it exist
 has a kernel to boot. A release tarball ships `default.settings.php` and no `settings.php` at all, so
 without this step there is no site to boot.
 
-**This is not how `assets/drupal/site.sqlite` is produced.** That file is the database the edge
-executes, it is the one artifact under `assets/` that is committed, and the installer refuses to
-overwrite it without `--allow-shipping-pack`.
+**This step's database is a throwaway; the shipping one is built by the same script.** Both come from
+`scripts/drupal/install-site-db.php`, and it refuses to write `assets/drupal/site.sqlite` without
+`--allow-shipping-pack`, so the normal loop is build elsewhere and compare with
+`node scripts/diff-site-db.ts`. `docs/database.md` is the recipe and lists every value the shipped
+database disagrees with a stock install about.
 
 `patch` rewrites the tree for the wasm runtime, and is idempotent. Drupal 11 uses `new \Fiber()` in
 five places; PHP builds Fibers on ucontext, emscripten provides none, and the first Fiber aborts the
@@ -144,7 +153,7 @@ runtime. The patch swaps the class for a synchronous stand-in with the same surf
 all: the default storage hashes the containing directory's mtime into the filename, and a mounted
 MEMFS directory's mtime is mount time.
 
-### 8-13, The Assets
+### 9-15, The Assets
 
 `bootstrap` exists because the packers and the bake read each other's output. `bake-twig.php` builds
 `core.list.json` as _the previous `core.json`, minus the compiled-Twig paths, plus the ones it just
@@ -165,7 +174,7 @@ Measured on Drupal 11.4.5, a clean clone against the shipping artifacts:
 | `core.bin.gz` | 8,126,017  | 8,588,601    | +462,584 (+5.7%) |
 
 The Worker bundle is unaffected; the packs are Workers assets and carry no bundle bytes. A
-source-built tree dry-runs at **2,830.85 KiB gzipped**, against the 3,145,728-byte free ceiling.
+source-built tree dry-runs at **2,830.85 KiB gzipped**, taken while the compressed ceiling still existed; the limit is 64 MiB uncompressed now.
 
 `twig` bakes the precompiled Twig cache and writes two records: `twig-bake.json`, which the gate
 reads, and `core.list.json`, **the file list both packers then read**.
@@ -191,6 +200,26 @@ never reaches the Worker. 4,028 files, 11,910,687 bytes on Drupal 11.4.5, with
 `sql` chunks the committed `site.sqlite` into the JSON the Durable Object replays in JavaScript. It
 reads a tracked file, so it is the one step that works on a clone with nothing else built.
 
+It also drops the BAKE's own history on the way through: `dropBakeHistory()` empties `watchdog` and
+removes `state:install_time`, both of which a site otherwise inherits. The bake's log dated a fresh
+site's first page weeks in the past, and `SystemRequirementsHooks` falls back to `install_time` when
+`system.cron_last` is absent, so a site provisioned today opened with a red Cron row reading the bake
+date. This is a build step rather than a hand edit because a hand edit to a tracked artifact is
+reverted by the next `bun install` restore.
+
+### Optional, `assets:agg`
+
+`bun run assets:agg` reads the `*.libraries.yml` definitions out of `drupal-src` and emits immutable
+per-library CSS and JS aggregates into `assets/agg/`, plus a file-to-library index. It is not part of
+the numbered sequence and its output is not committed: 808 aggregates over 6.57 MB for 725 libraries,
+where a given site uses a few dozen. The serving side is off unless `ASSET_AGGREGATES=1`, and with no
+manifest present it changes nothing rather than breaking a page.
+
+The output has to be published as well as built. `assets/.assetsignore` denies by default, and until
+2026-09-09 it did not carry `!/agg/`, so the aggregates uploaded nowhere and a page with the lever on
+had no CSS. The 6.57 MB is charged to the Workers Assets store, not to the 64 MiB bundle: a dry run
+of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB upload.
+
 ## Why The Order Is The Order
 
 Four of these orderings fail silently when reversed, which is why
@@ -207,8 +236,30 @@ Four of these orderings fail silently when reversed, which is why
   takes it verbatim, so on a tree with no list there is no file set at all.
 - **`core` before `pack`.** `pack-perfile.ts` reuses `core.json` and never re-globs, which keeps a
   repack a change of format and leaves the set of shipped files alone.
+- **`pack` before `container`.** The row is keyed to the hash the pack carries, so there has to be a
+  pack to read it from.
+- **`container` before `sql`.** `sql` chunks the database into the migration the Durable Object
+  replays, so a rekey after it would ship the old row.
 
-### 14, The Prefill
+### 14, The Container Row
+
+`container` rewrites one row of `assets/drupal/site.sqlite` and produces no file of its own.
+
+`DrupalKernel::getContainerCacheKey()` folds `DrupalInstalled::VERSIONS_HASH` into the cache id, and
+that hash covers every installed composer package. Any change in `drupal-src` moves it, including
+`composer require --dev drupal/<module>`, which is how the contrib lane gets its fixture. When the
+packed row and the pack disagree, the first `$kernel->boot()` on every site misses and rebuilds a
+482 KB container: `kernelBootMs` 1,024 against 86, and roughly 3.7x the heap image.
+
+The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
+built against, 27 occurrences of it in a row baked natively, so it has to come from a boot where the
+root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders one page
+and reads back the row that boot rebuilt.
+
+`tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
+disagree. Run the step on its own with `bun run assets:container`, which re-chunks afterwards.
+
+### 16, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
 prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a
@@ -344,7 +395,7 @@ excluded from the measurement below only because it binds a port.
 | a from-scratch build, same steps plus `driver`    |  1  | 23 s                     |
 
 The six swaps alternated direction, because a downgrade and an upgrade are the same work: replace
-167 MB of tree, reinstall the build site, rebake 34 Twig templates, repack 11,457 files twice and
+167 MB of tree, reinstall the build site, rebake 23 Twig templates, repack 11,457 files twice and
 recopy 4,060 static assets.
 
 **Verified by artifact.** After the last swap the rebuilt `assets/core/misc/ajax.js` hashed
@@ -376,8 +427,8 @@ pack half of a rollout, with the static half counted separately.
 
 ### The Two Rows Nothing Regenerates
 
-`assets/drupal/site.sqlite` is hand-trimmed and no step produces it; `sql` reads it verbatim. Two of
-its prefilled rows embed the core version, both at `expire = -1`:
+`sql` reads `assets/drupal/site.sqlite` verbatim, and two of its prefilled rows embed the core
+version, both at `expire = -1`:
 
 | bin               | cid                    | bytes  |
 | ----------------- | ---------------------- | ------ |
@@ -402,4 +453,4 @@ into the build database, from which the rows were then copied by hand into `site
 - `scripts/README.md` -- why each script is in the language it is in
 
 `bun run release:payload` builds the payload the fast route downloads and `bun run release:check`
-prices the canonical config against the 3 MiB ceiling.
+prices the canonical config against the 64 MiB ceiling.

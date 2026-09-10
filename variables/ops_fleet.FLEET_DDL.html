@@ -11,9 +11,9 @@
 <li><a href="../modules/ops_fleet.html">ops/fleet</a></li>
 <li><a href="" aria-current="page">FLEET_DDL</a></li></ul>
 <h1>Variable FLEET_DDL<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">FLEET_DDL</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;CREATE TABLE IF NOT EXISTS cfw_fleet (\n  site TEXT PRIMARY KEY,\n  pack_generation TEXT NOT NULL,\n  core_version TEXT NOT NULL,\n  worker_version TEXT NOT NULL,\n  plan TEXT NOT NULL,\n  last_seen_ms INTEGER NOT NULL\n)&quot;</span><span class="tsd-signature-symbol"> = ...</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-kind-variable">FLEET_DDL</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;CREATE TABLE IF NOT EXISTS cfw_fleet (\n  site TEXT PRIMARY KEY,\n  pack_generation TEXT NOT NULL,\n  core_version TEXT NOT NULL,\n  worker_version TEXT NOT NULL,\n  plan TEXT NOT NULL,\n  last_seen_ms INTEGER NOT NULL,\n  reconcile_version INTEGER NOT NULL DEFAULT 0\n)&quot;</span><span class="tsd-signature-symbol"> = ...</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/fleet.ts#L40">src/ops/fleet.ts:40</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/fleet.ts#L70">src/ops/fleet.ts:70</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

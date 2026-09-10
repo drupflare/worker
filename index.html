@@ -18,12 +18,11 @@
 <p><strong>Drupal 11 running on Cloudflare Workers.</strong> No VPS, no container, no origin server. PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
 the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit.</p>
-<p>The interpreter ships as a brotli frame inflated at module scope, which is what lets PHP 8.5 fit the
-free plan's bundle limit with every extension intact. Cold boot is 1,398 ms of <code>cpuTime</code> on a
-deployed worker, and a site no longer pays it: a Durable Object holds its interpreter across an
-8-second alarm re-arm, measured across 71 consecutive alarms. With that and shell assembly, an
-authenticated page is <strong>208 ms</strong> p50 measured from a client, against 3,525 ms of derived cost with
-neither. Rows written is the meter that binds. See <a href="#-free-vs-paid">Free vs Paid</a>.</p>
+<p>The interpreter ships as a raw WebAssembly module the platform compiles ahead of time, so startup
+costs a few milliseconds rather than the hundred a compressed frame did. A cold boot is expensive and
+a site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
+re-arm, measured across 71 consecutive alarms. Rows written is the meter that binds, not CPU. See
+<a href="#-free-vs-paid">Free vs Paid</a>.</p>
 <p>A site is one Durable Object by default and does not have to be. <code>REPLICA_COUNT</code> gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
 so an authenticated read workload scales past one thread. See
@@ -34,8 +33,92 @@ so an authenticated read workload scales past one thread. See
 hosting bill.</p>
 <p>Every Drupflare figure marked <strong>M</strong> is measured, on deployed Cloudflare infrastructure or on this
 machine, and the column says which. <strong>D</strong> is derived from measured inputs and is arithmetic rather
-than a reading. <strong>L</strong> is a vendor's published list price. <strong>—</strong> is not measured, and is stated as a
+than a reading. <strong>L</strong> is a vendor's published list price. <strong>n/m</strong> is not measured, and is stated as a
 range or omitted.</p>
+<h3 id="against-a-vps" class="tsd-anchor-link">Against a VPS<a href="#against-a-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>docker/vps.yml</code> runs nginx 1.29 and PHP 8.5 FPM with opcache and tracing JIT against the <strong>same
+Drupal tree and the same site database</strong> Drupflare serves, so the runtime is the only variable.
+<code>bun run measure:vps</code> drives both. The generator's own ceiling on the same machine is 8,308 req/s
+against nginx and 1,231 against the front worker, so it constrains neither arm.</p>
+<table>
+<thead>
+<tr>
+<th>workload</th>
+<th>VPS</th>
+<th>Drupflare</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Anonymous cached, p50</td>
+<td>3 ms</td>
+<td><strong>2 ms</strong></td>
+</tr>
+<tr>
+<td>Anonymous cached, p95</td>
+<td>49 ms</td>
+<td><strong>4 ms</strong></td>
+</tr>
+<tr>
+<td>Anonymous cached, 32 clients</td>
+<td>122 req/s, p50 10 ms</td>
+<td><strong>438 req/s</strong>, 62 ms</td>
+</tr>
+<tr>
+<td>Re-render, Drupal bins warm</td>
+<td><strong>25 ms</strong> (22-69, n=8)</td>
+<td>32 ms (29-37, n=8)</td>
+</tr>
+</tbody>
+</table>
+<p>An authenticated session is a curve rather than a median: the first three requests render and compile
+a plan, and everything after is answered in the isolate with no Durable Object hop. Converged p50 for
+one session driven sequentially, n=14 per path:</p>
+<table>
+<thead>
+<tr>
+<th>authenticated path</th>
+<th>VPS</th>
+<th>Drupflare</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>11 ms</td>
+<td><strong>5 ms</strong></td>
+</tr>
+<tr>
+<td><code>/admin/content</code></td>
+<td>71 ms</td>
+<td><strong>5 ms</strong></td>
+</tr>
+<tr>
+<td><code>/user/1</code></td>
+<td>56 ms</td>
+<td><strong>5 ms</strong></td>
+</tr>
+<tr>
+<td><code>/admin/structure/types</code></td>
+<td>18 ms</td>
+<td><strong>6 ms</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Under concurrency Drupflare holds ~312 req/s flat from 4 to 32 clients on both authenticated
+workloads. The VPS peaks at 204 req/s on the front page and 67 on admin, then declines.</p>
+<p>Read three things off these tables before drawing a conclusion from them.</p>
+<p><strong>Both arms are on localhost, which is the VPS's best case and not a real one.</strong> A VPS sits in one
+region; Drupflare answers from the visitor's own colo. The network term that a real user pays on
+every VPS request is absent here and has to be added back before any end-to-end claim.</p>
+<p><strong>A re-render is 1.28x, not two orders of magnitude.</strong> The larger ratios elsewhere in this file are
+a warm-kernel interpreter comparison and a both-bins-emptied edge render, which are different
+workloads on different instruments and do not divide into each other. The authenticated rows are not
+a runtime ratio either: they are a hop that does not happen.</p>
+<p><strong>The authenticated arm is one Durable Object with no replica lanes.</strong> A four-lane pool measured
+3.29x on real authenticated renders and none of it is in the numbers above. Bodies agree to within
+10 bytes on the anonymous arms; on the authenticated arms Drupflare serves the larger page
+(103,689 against 96,177 on the front page) and the difference is unexplained.</p>
 <table>
 <thead>
 <tr>
@@ -50,13 +133,13 @@ range or omitted.</p>
 <td><strong>Setup, from zero to a rendering site</strong></td>
 <td>one deploy, no server</td>
 <td>provision, webserver, PHP-FPM, MariaDB, TLS, cron, firewall, backups</td>
-<td>—</td>
+<td>n/m</td>
 </tr>
 <tr>
 <td><strong>Local toolchain you must learn first</strong></td>
 <td>none for deploy; <code>bun</code> to develop</td>
 <td>ddev or Lando, Composer, Drush, ssh, a database client</td>
-<td>—</td>
+<td>n/m</td>
 </tr>
 <tr>
 <td><strong>Monthly infrastructure</strong></td>
@@ -66,15 +149,15 @@ range or omitted.</p>
 </tr>
 <tr>
 <td><strong>What &quot;scaling up&quot; means</strong></td>
-<td>nothing to do — the edge absorbs it</td>
+<td>nothing to do; the edge absorbs it</td>
 <td>resize the box, tune PHP-FPM workers, add a cache layer</td>
-<td>—</td>
+<td>n/m</td>
 </tr>
 <tr>
 <td><strong>OS patching, PHP upgrades, kernel CVEs</strong></td>
 <td>none exist to patch</td>
 <td>yours, forever</td>
-<td>—</td>
+<td>n/m</td>
 </tr>
 <tr>
 <td><strong>Anonymous page served from</strong></td>
@@ -90,25 +173,25 @@ range or omitted.</p>
 </tr>
 <tr>
 <td><strong><code>dynamic_page_cache</code> hit</strong></td>
-<td><strong>26 ms</strong>, 6 statements</td>
-<td>—</td>
+<td>a handful of ms and 6 statements</td>
+<td>n/m</td>
 <td>M edge</td>
 </tr>
 <tr>
 <td><strong>Full uncached render</strong></td>
-<td><strong>2,127 ms</strong> of Durable Object CPU (n=10, 1,982-2,579), both bins emptied</td>
-<td><strong>9.47 ms</strong> native PHP, warm kernel</td>
+<td>seconds of Durable Object CPU with both cache bins emptied; the technical report carries the figure</td>
+<td>tens of ms native PHP, warm kernel</td>
 <td>M edge</td>
 </tr>
 <tr>
 <td><strong>Wasm penalty, warm kernel only</strong></td>
-<td><strong>3.57x</strong> warm / <strong>3.94x</strong> cold vs native PHP — a same-machine ratio, not the edge cost above</td>
+<td>a same-machine interpreter ratio, not the edge cost above; the technical report carries it</td>
 <td>1x by definition</td>
 <td>M local</td>
 </tr>
 <tr>
-<td><strong>Authenticated page, both levers on</strong></td>
-<td><strong>208 ms</strong> p50 end to end, measured from a client; the ~467 ms elsewhere in this file is derived and pessimistic</td>
+<td><strong>Authenticated page, plan hit</strong></td>
+<td>answered in the front worker with no Durable Object hop; see the curve above</td>
 <td>tens of ms on a warm PHP-FPM pool</td>
 <td>M edge</td>
 </tr>
@@ -120,7 +203,7 @@ range or omitted.</p>
 </tr>
 <tr>
 <td><strong>Cold start</strong></td>
-<td><strong>1,398 ms</strong> measured (n=3) — paid absorbs it, free amortises it off the request path</td>
+<td>over a second; paid absorbs it and free amortises it off the request path</td>
 <td>~0; the box is already running</td>
 <td>M edge</td>
 </tr>
@@ -132,19 +215,19 @@ range or omitted.</p>
 </tr>
 <tr>
 <td><strong>Worker bundle</strong></td>
-<td>fits the 3 MiB free-plan limit</td>
+<td>fits the 64 MiB Worker size limit</td>
 <td>n/a</td>
 <td>M local</td>
 </tr>
 <tr>
 <td><strong>First-run migration</strong></td>
-<td><strong>62 chunks</strong>, one per invocation on free, each sized to fit the 10 ms cap</td>
+<td>chunked, one per invocation on free, each sized to complete on its own</td>
 <td><code>drush si</code>, then hope</td>
 <td>M local</td>
 </tr>
 <tr>
 <td><strong>When something breaks at 3am</strong></td>
-<td>a self-repair ladder runs: L0 observe → L1 reset → L2 reconstruct → L3 reconfigure → L4 quarantine → L5 rollback, with a decaying circuit breaker</td>
+<td>a self-repair ladder runs: L0 observe, L1 reset, L2 reconstruct, L3 reconfigure, L4 quarantine, L5 rollback</td>
 <td>you, or someone you pay</td>
 <td>M built</td>
 </tr>
@@ -306,7 +389,7 @@ on regardless of plan.</p>
 </tr>
 <tr>
 <td>Isolate startup</td>
-<td><strong>112 ms</strong> of a 1,000 ms limit, not billed to the request</td>
+<td><strong>5 ms</strong> of a 1,000 ms limit, not billed to the request</td>
 <td>n/a; the box is running</td>
 <td>M edge</td>
 </tr>
@@ -340,28 +423,10 @@ it does not have is the concurrency answer: adding lanes is a config change and 
 not a resize.</p>
 <p>Write-heavy traffic goes the wrong way. Every authoritative write is one object and one thread, by
 construction, and no pool changes it.</p>
-<h3 id="where-a-vps-still-wins" class="tsd-anchor-link">Where a VPS Still Wins<a href="#where-a-vps-still-wins" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<ul>
-<li><strong>Write-heavy traffic.</strong> A lane runs a write and forwards the statements to the primary, so form
-processing and the response render spread across the pool. The commit does not: it lands on one
-object, and so does any write whose target originates a value a lane may not mint. A busy editorial
-workflow gets the expensive half spread and the ordering half serialised. <strong>Authenticated reads are
-no longer on this list at all</strong> -- see <a href="#-read-replicas">Read Replicas</a>.</li>
-<li><strong>Cold start on a site nobody visits.</strong> 1,398 ms of CPU, which no single free invocation can hold.
-A warm object does not pay it, and warming is on by default -- but a site quiet enough to be
-evicted entirely, or one that has spent its daily meter, pays it on the next visit. A VPS is
-already running.</li>
-<li><strong>Arbitrary contrib modules.</strong> Anything wanting <code>exec</code>, image libraries or sockets needs a shim or
-is refused by name. That is an engineering backlog, not a solved problem. <strong>Uploads are no longer
-on this list</strong> -- <code>public://</code> and <code>private://</code> are backed by the Durable Object's own SQL, so a
-file written through Drupal's file API survives an eviction. Before that they did not: the file
-system was MEMFS, so an upload lived as long as its isolate while the <code>file_managed</code> row
-describing it survived, and the site accumulated entities pointing at nothing.</li>
-<li><strong>A raw uncached render is ~3.6x slower</strong> than native PHP. The architecture wins by not rendering,
-not by rendering faster -- and where it must render for a logged-in visitor, shell assembly cuts
-the render rather than the boot. Both together put an authenticated page at roughly <strong>467 ms</strong>
-against 3,525 ms with neither, but a VPS with a warm PHP-FPM pool is still ahead of that.</li>
-</ul>
+<p>A raw uncached render is slower than native PHP, by a ratio the technical report keeps current. The
+architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor
+forces a render, shell assembly cuts the render rather than the boot. What remains slower is listed
+under <a href="#-limitations">Limitations</a>.</p>
 <hr>
 <h2 id="🧬-read-replicas" class="tsd-anchor-link">🧬 Read Replicas<a href="#🧬-read-replicas" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>A Durable Object is single-threaded. A site is not, because a namespace holds unlimited objects.
@@ -452,7 +517,7 @@ buy features, and free is not a demo -- both are viable Drupal hosts, or the pro
 <p>Free's limits are <strong>aggregate daily budgets</strong>, not the 10 ms per-invocation CPU cap. The cap
 constrains one execution unit; the architecture chooses what an execution unit is. Score any change
 with <code>bun scripts/measure/free-envelope.ts</code>, never against a millisecond figure.</p>
-<h3 id="what-one-site-actually-gets" class="tsd-anchor-link">What One Site Actually Gets<a href="#what-one-site-actually-gets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<h3 id="what-one-site-gets" class="tsd-anchor-link">What One Site Gets<a href="#what-one-site-gets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Both performance levers are <strong>on by default on both plans</strong>. A warm object spends 10.8% of free's two
 daily meters and $0 marginal on paid, so the numbers below are what a site gets rather than what it
 can be configured into.</p>
@@ -644,6 +709,8 @@ measured, zero rows of a fill go to <code>watchdog</code>. And past ~85% off-Wor
 becomes <strong>DO requests</strong>, not rows, so trimming rows per fill beyond that point moves the rows meter and
 does not move the ceiling at all -- a lever the binding meter does not respond to is not a lever.</p>
 <h3 id="the-image-transform-cap" class="tsd-anchor-link">The Image Transform Cap<a href="#the-image-transform-cap" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><strong>This applies to <code>IMAGE_ENGINE=images</code> only.</strong> The default engine encodes in the Worker and has no
+transform allowance; it spends CPU, which is not a meter this project is bound by.</p>
 <p>Cloudflare Images allows 5,000 unique transformations per month on free, and it fails as a <strong>hard
 cap rather than a bill</strong>. Every image style is a transformation, so ten styles over 2,000 images is
 20,000 -- 4x over. It is the only quota here measured per month rather than per day, so it does not
@@ -651,9 +718,9 @@ clear at midnight.</p>
 <p>It is <strong>projected rather than counted</strong>, because it is a function of the site's content and
 configuration and both are known in advance. The object multiplies its image styles by its managed
 images on every alarm and records <code>budget.image_transforms</code> in the health ledger at 80% of the
-allowance. A warning, never a repair: the remedies are dropping a style or cutting the image count,
-and both are decisions a human makes. <code>/health</code> shows it, and <code>/_cfw</code> shows the full projection with
-the largest style count that still fits.</p>
+allowance. A warning, never a repair: the remedies are dropping a style, cutting the image count, or
+switching to the default engine, and all three are decisions a human makes. <code>/health</code> shows it, and
+<code>/_cfw</code> shows the full projection with the largest style count that still fits.</p>
 <div class="tsd-alert tsd-alert-caution"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertCaution"></use></svg><span>Caution</span></div><p>
 Do not enable the Workers Caching feature. Its cache key does not include the host, and this
 product is multi-tenant by host; every site serves <code>/</code>, so one site's pages would be served to
@@ -716,7 +783,7 @@ The labour is the part that does not scale down.</p>
   └─ 3. PHP renders inside the Durable Object   ~1%, then fills the caches above
 </code><button type="button">Copy</button></pre>
 
-<p>Four things make it work, and each was the hard part in turn:</p>
+<p>Four things make it work:</p>
 <ol>
 <li><strong>A purpose-built PHP wasm binary.</strong> No published php-wasm build can do this. workerd
 forbids the runtime wasm codegen that emscripten's dynamic linker needs, so every
@@ -729,10 +796,10 @@ cannot connect the two.</li>
 <a href="https://github.com/drupflare/rom"><code>rom</code></a> sibling, is a Drupal 11 driver for Durable Object
 SQLite. Drupal's query builders, schema handling and condition compiler are used unchanged;
 what is replaced is everything that assumed PDO and a file on disk.</li>
-<li><strong>Divisibility.</strong> The free plan caps CPU <em>per invocation</em>, so work that does not fit is
-split; what language a step runs in decides whether it can be split at all. First-run
-migration moved from PHP to JavaScript, from one 3,467 ms invocation to <strong>62 chunks</strong>,
-each sized to fit the cap on its own.</li>
+<li><strong>Divisibility.</strong> A long invocation is a risk on free, and what language a step runs in decides
+whether it can be split at all. First-run migration moved from PHP to JavaScript and from one
+long invocation into chunks, each sized to complete on its own. <code>assets/drupal-sql/manifest.json</code>
+carries the current chunk count.</li>
 </ol>
 <h3 id="static-assets" class="tsd-anchor-link">Static Assets<a href="#static-assets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Drupal's stylesheets, scripts, fonts and images are served by Workers Assets from <code>assets/core/</code>,
@@ -741,11 +808,16 @@ never opens them, and nothing serves a file out of the in-memory filesystem over
 layer is the only thing that can answer them. <code>scripts/pack-static.ts</code> copies the tree; Workers Assets
 content-hashes, caches and compresses what it serves, and a hit never reaches the Worker, so it costs
 nothing against either free-tier ceiling.</p>
-<p><strong>CSS and JS aggregation is off</strong>, because an aggregate has no file to read: a hash mismatch 301s and
-a match sends Drupal's optimiser at a path no pack carries. With the raw tree served there is nothing
-for preprocessing to buy. <code>tests/unit/runtime/assets-ignore.spec.ts</code> asserts both halves: that no
-prefilled page references an aggregate, and that every <code>/core/**</code> URL those pages do reference
-answers 200.</p>
+<p><strong>Drupal's own CSS and JS aggregation is off</strong>, because an aggregate has no file to read: a hash
+mismatch 301s and a match sends Drupal's optimiser at a path no pack carries.</p>
+<p>The build produces its own aggregates instead. <code>bun run assets:agg</code> reads the library definitions
+where the source files do exist and emits one immutable file per library, and <code>ASSET_AGGREGATES=1</code>
+substitutes them into a page as it is stored. The substitution is all or nothing per library, so a
+partial match leaves that library's tags alone. It buys render time and a smaller stored page rather
+than Worker requests, since the individual files already cost none.</p>
+<p><code>tests/unit/runtime/assets-ignore.spec.ts</code> holds all three: that no prefilled page references a
+Drupal aggregate, that every <code>/core/**</code> URL those pages reference answers 200, and that every
+aggregate URL the substitution emits answers 200.</p>
 <hr>
 <h2 id="💰-what-it-costs" class="tsd-anchor-link">💰 What It Costs<a href="#💰-what-it-costs" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Measured on deployed infrastructure, per-invocation <code>cpuTime</code> read through the Workers
@@ -776,7 +848,7 @@ Observability API.</p>
 </tr>
 <tr>
 <td>Duration, rows read, storage</td>
-<td>—</td>
+<td>n/m</td>
 <td>not close</td>
 </tr>
 </tbody>
@@ -787,35 +859,35 @@ and every meter except Worker requests has roughly 5x headroom.</p>
 <thead>
 <tr>
 <th>artifact</th>
-<th>size</th>
+<th>what it is</th>
 <th>from</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Worker bundle</td>
-<td>fits the 3 MiB free-plan limit</td>
+<td>fits the 64 MiB Worker size limit</td>
 <td><code>bun run release:check</code></td>
 </tr>
 <tr>
 <td>PHP 8.5, nothing cut</td>
-<td><strong>2,485,488 bytes</strong> brotli, from 12,234,575 raw; this is what ships</td>
+<td>a raw wasm module the platform compiles ahead of time</td>
 <td><code>interp.lock.json</code></td>
 </tr>
 <tr>
 <td>First-run migration</td>
-<td><strong>62 chunks</strong>, 1,564 statements over 1,316 rows; one chunk per invocation on free</td>
+<td>one chunk per invocation on free, so a first boot spans several alarms</td>
 <td><code>assets/drupal-sql/manifest.json</code></td>
 </tr>
 <tr>
 <td>Static asset tree</td>
-<td><strong>4,028 files</strong> served by Workers Assets, never reaching the Worker</td>
+<td>served by Workers Assets, never reaching the Worker</td>
 <td><code>assets/core/</code></td>
 </tr>
 <tr>
 <td>Cold boot</td>
-<td><strong>1,398 ms</strong> measured; amortised off the request path rather than eliminated</td>
-<td>deployed <code>cpuTime</code>, n=3</td>
+<td>amortised off the request path rather than eliminated</td>
+<td>deployed <code>cpuTime</code></td>
 </tr>
 </tbody>
 </table>
@@ -906,8 +978,9 @@ log.</p>
 <h3 id="log-in" class="tsd-anchor-link">Log In<a href="#log-in" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Log in at <code>/user/login</code> as <code>admin</code> with the <code>adminPass</code> from the claim. That is the Drupal account,
 and it is the only credential that reaches the administrative UI.</p>
-<p><strong>The owner token is a different credential and is not a login.</strong> It is sent as
-<code>Authorization: Bearer &lt;ownerToken&gt;</code> and reaches four routes without turning on <code>PW_DIAGNOSTICS</code>:</p>
+<p><strong>The owner token is a different credential and is not a Drupal login.</strong> It signs in to the <code>/_cfw</code>
+pages at <code>/_cfw/login</code>, and it is sent as <code>Authorization: Bearer &lt;ownerToken&gt;</code> to reach these routes
+directly, without turning on <code>PW_DIAGNOSTICS</code>:</p>
 <table>
 <thead>
 <tr>
@@ -932,10 +1005,32 @@ and it is the only credential that reaches the administrative UI.</p>
 <td><code>/setup/mail</code></td>
 <td>onboard a sending domain onto a zone</td>
 </tr>
+<tr>
+<td><code>/setup/oidc</code></td>
+<td>set the OpenID Connect issuer and client id</td>
+</tr>
+<tr>
+<td><code>/installable</code></td>
+<td>whether a package can be installed here</td>
+</tr>
+<tr>
+<td><code>/install</code></td>
+<td>fetch a package from a registry and write its files</td>
+</tr>
+<tr>
+<td><code>/enable</code></td>
+<td>turn an installed module on</td>
+</tr>
+<tr>
+<td><code>/git</code></td>
+<td>remotes, branches, pull requests and the working-tree diff</td>
+</tr>
 </tbody>
 </table>
-<p>Without it those four answer 401 with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route
-answers 404 to the same caller.</p>
+<p>Without it they answer 401 with a <code>WWW-Authenticate: Bearer</code> challenge; a diagnostic route answers
+404 to the same caller.</p>
+<p>Signing in at <code>/_cfw/login</code> exchanges the token for a session cookie that page script cannot read and
+that no cross-site request carries. It expires after twelve hours, and <code>/_cfw/logout</code> ends it.</p>
 <p>A dump withholds the owner token, the Cloudflare OAuth tokens and the hash salt, and reports how many
 rows it held back. <code>?secrets=1</code> carries them: a faithful restore needs the salt, since it signs
 one-time login links and form tokens, and a backup kept anywhere else should not have it.</p>
@@ -957,8 +1052,34 @@ worker updates the checkout and then deploys it there.</p>
 <p><code>build</code>, <code>dev</code>, <code>deploy</code>, <code>update</code> and <code>migrate install</code> are the five commands that write; <code>status</code>,
 <code>doctor</code>, <code>health</code>, <code>config</code>, <code>cf</code>, <code>secrets</code>, <code>validate</code> and the rest of <code>migrate</code> read. Its README
 covers the migration commands in both directions.</p>
+<h3 id="keeping-an-existing-site-current" class="tsd-anchor-link">Keeping an Existing Site Current<a href="#keeping-an-existing-site-current" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
+its own. Reconciliation carries the same fix to sites that already exist. Each step is an observation
+of the site's end state rather than a script: it is checked before the step runs and again afterwards,
+so a site that already matches is marked done without doing any work, and a step that ran without
+converging is reported rather than assumed.</p>
+<p>The alarm chain drives one step per firing. <code>drangler reconcile</code> shows where a site stands and which
+step is stuck, and <code>--run</code> takes a step now instead of at the next firing.</p>
+<pre><code class="sh"><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">reconcile</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1">       </span><span class="hl-5"># version, every step, and its standing</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">reconcile</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1"> </span><span class="hl-3">--all</span><span class="hl-1"> </span><span class="hl-5"># drive steps until the version stops moving</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Steps that change configuration or state go through Drupal's own writers, so every cached copy of a
+value is invalidated by the code that owns it. A step that changes what the compiled container holds
+drops the container and any stored heap image, and the next boot rebuilds it.</p>
+<h3 id="covering-the-rest-of-the-site" class="tsd-anchor-link">Covering the Rest of the Site<a href="#covering-the-rest-of-the-site" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>A page is rendered when a visitor asks for it, and that visitor waits. The sweep enumerates the URLs
+a site actually has, from its router table and its entity tables, ranks them by observed views then
+recency then depth, and queues the top of the list for the same fill batch a visitor's request would
+use. It never renders, so it cannot compete with a request for the interpreter.</p>
+<p>It is off by default and bounded when on: it refuses below a remaining-budget floor, spends at most a
+declared share of the day's writes, and resumes the next day when that share is gone.</p>
+<pre><code class="sh"><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">sweep</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1">       </span><span class="hl-5"># coverage, and what bounded the last step</span><br/><span class="hl-0">drangler</span><span class="hl-1"> </span><span class="hl-2">sweep</span><span class="hl-1"> </span><span class="hl-2">my-site.example</span><span class="hl-1"> </span><span class="hl-3">--run</span><span class="hl-1"> </span><span class="hl-5"># take a step now</span>
+</code><button type="button">Copy</button></pre>
+
 <h3 id="the-admin-surfaces" class="tsd-anchor-link">The Admin Surfaces<a href="#the-admin-surfaces" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>Six pages under <code>/_cfw</code>, each one driving machinery that already exists rather than holding its own.</p>
+<p>Six pages under <code>/_cfw</code>, each one driving machinery that already exists rather than holding its own.
+They take the owner token: sign in at <code>/_cfw/login</code>, and any page reached without a session redirects
+there and comes back afterwards.</p>
 <table>
 <thead>
 <tr>
@@ -1012,10 +1133,46 @@ status              generation, migration state, queue depth
 
 <p>An operation with no driver is listed and disabled rather than hidden, because a refusal with no
 named alternative is a refusal that gets retried.</p>
+<p>Extend checks a package against the shipped lock, installs it, and enables it. Those are three
+separate steps and the page keeps them separate: a check writes nothing, an install fetches the
+package and writes its files, and enabling turns the module on and reboots the interpreter. The same
+three are <code>/installable</code>, <code>/install</code> and <code>/enable</code> for a script.</p>
+<h3 id="inside-drupals-own-admin" class="tsd-anchor-link">Inside Drupal's Own Admin<a href="#inside-drupals-own-admin" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p><code>/_cfw</code> is the host's surface and sits outside Drupal. The module adds a second one where a Drupal
+administrator looks first:</p>
+<table>
+<thead>
+<tr>
+<th>page</th>
+<th>path</th>
+<th>what it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Drupflare</strong></td>
+<td><code>/admin/config/drupflare</code></td>
+<td>the section, alongside Drupal's own configuration groups</td>
+</tr>
+<tr>
+<td><strong>Runtime Status</strong></td>
+<td><code>/admin/config/drupflare/runtime</code></td>
+<td>the replica pool, page tiers, warming, edge plan and write lanes</td>
+</tr>
+<tr>
+<td><strong>Help</strong></td>
+<td><code>/admin/help/topic/drupflare</code></td>
+<td>what runs where, and which Drupal assumptions do not hold here</td>
+</tr>
+</tbody>
+</table>
+<p>Runtime Status reads the same payload <code>/serve-stats</code> returns, so the admin page and the host report
+cannot disagree.</p>
 <h3 id="single-sign-on" class="tsd-anchor-link">Single Sign-On<a href="#single-sign-on" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>The Access page configures an OpenID Connect provider. The host performs the token exchange and
-verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot check
-an RS256 signature at all. An unverified <code>id_token</code> is an unauthenticated login.</p>
+verifies the <code>id_token</code> signature, because the exchange has to complete before the login response can
+be written and PHP has nowhere to wait for it. An unverified <code>id_token</code> is an unauthenticated login,
+so the verification is not optional and is not delegated.</p>
 <p>Single sign-on needs <code>drupal/externalauth</code>, which maps the verified identity onto an account. No
 contrib module ships in the packed tree, so install it from the Extend page before the first login.</p>
 <p>Set the issuer and client id on the page, and the client secret as the <code>OIDC_CLIENT_SECRET</code> binding.
@@ -1156,8 +1313,8 @@ to fail without failing the build.</p>
 <p>Every knob is a <code>vars</code> entry in <code>wrangler.jsonc</code>, and every one has a working default. Eleven of them
 can also be overridden at runtime through the <code>CONFIG_KV</code> namespace without a redeploy.
 <a href="media/configuration.md"><code>docs/configuration.md</code></a> is the full reference: every variable, its
-default, what reads it, and what breaks when it is wrong. Three vars are worth stating here, plus the
-two setup flows a new site runs once.</p>
+default, what reads it, and what breaks when it is wrong. Three vars are covered below, plus the two
+setup flows a new site runs once.</p>
 <h3 id="_" class="tsd-anchor-link"><code>SITE_ORIGIN</code><a href="#_" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>The <code>scheme://host[:port]</code> Drupal builds absolute URLs against: the canonical tag, a form action, a
 <code>Location:</code>, the link in a password-reset mail. Unset, the object <strong>pins the first non-local origin
@@ -1320,7 +1477,7 @@ signs, and a shared secret on GitLab installs older than 19.0. An unverifiable d
 <tr>
 <td>Bitbucket</td>
 <td>supported</td>
-<td>—</td>
+<td>n/m</td>
 </tr>
 </tbody>
 </table>
@@ -1334,6 +1491,58 @@ owned by another repository or by a <code>composer require</code> is reported as
 <p>Access tokens live in the site's own database, never in the KV namespace that carries runtime
 overrides. <a href="media/configuration.md#git-remotes"><code>docs/configuration.md</code></a> has the scopes each provider
 needs and the storage contract.</p>
+<hr>
+<h2 id="📦-module-revisions" class="tsd-anchor-link">📦 Module Revisions<a href="#📦-module-revisions" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>A module that lives on your machine rather than on a git host is uploaded through <code>/modify</code>, and
+every upload is a revision the site keeps.</p>
+<p>A revision is a manifest of files addressed by the hash of their contents. A second upload sends only
+the files that changed, and a file the site already holds costs nothing to keep. Five revisions per
+package are retained, and dropping one deletes only the file contents no surviving revision still
+names.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Plan</td>
+<td>splits the tree into what the site has and what it needs</td>
+</tr>
+<tr>
+<td>Upload</td>
+<td>sends the missing files and records a revision</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>reports what is live per package, with its size and age</td>
+</tr>
+<tr>
+<td>Revisions</td>
+<td>lists what is stored, newest first</td>
+</tr>
+<tr>
+<td>Activate</td>
+<td>makes a stored revision live again, with no bytes on the wire</td>
+</tr>
+<tr>
+<td>Rollback</td>
+<td>activates the revision before the active one</td>
+</tr>
+<tr>
+<td>Drop</td>
+<td>deletes a revision and the file contents nothing else references</td>
+</tr>
+</tbody>
+</table>
+<p>An upload lands the same way a git pull does: one transaction, then a Drupal kernel boot with every
+enabled module's PHP loaded, and a restore of the previous file set if that boot fails. A module
+whose PHP no longer parses is rolled back and the reply names the parse error. A path another package
+already owns is reported as a conflict rather than taken.</p>
+<p>File contents are verified against the hash they were sent under before they are stored, so a
+manifest cannot come to name content the site never received.</p>
 <hr>
 <h2 id="📁-project-structure" class="tsd-anchor-link">📁 Project Structure<a href="#📁-project-structure" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <pre><code class="txt">src/
@@ -1353,7 +1562,7 @@ assets/
   drupal/site.sqlite the installed database the chunks are cut from; the one tracked asset
 tests/               unit (in workerd), integration (live Durable Object), e2e
 scripts/             packers, benches, and the measurement instruments
-experiments/         44 wrangler probe configs, kept for reproduction
+experiments/         49 wrangler probe configs, kept for reproduction
 docs/                configuration, the source build, repository layout, measurement classes
 </code><button type="button">Copy</button></pre>
 
@@ -1573,15 +1782,46 @@ walking a checkout wholesale would pull <code>node_modules/</code> and <code>ven
 rebuilds the pack from the modules on disk and compares it to <code>assets/driver.json</code> byte for byte, so
 a stale pack fails the gate.</p>
 <h2 id="🧩-contrib-modules" class="tsd-anchor-link">🧩 Contrib Modules<a href="#🧩-contrib-modules" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>Installing a module works on a deployed site, measured at 6,810 ms of Durable Object CPU with
-the module present in <code>core.extension</code> afterwards on 6 of 6 attempts. The cache is cold for one
-visit while the pages the install invalidated are re-rendered.</p>
-<p><strong>62 modules are verified, 1 is untested and 3 are blocked.</strong> Verified means the gate enabled the
-module against a real site and asserted an observable the module owns. Nothing reaches that state by
-inspection.</p>
+<p>Installing a module works on a deployed site, with the module present in <code>core.extension</code> afterwards
+on 6 of 6 attempts. The cache is cold for one visit while the pages the install invalidated are
+re-rendered.</p>
+<p>A module is <strong>verified</strong> only when the gate enabled it against a real site and asserted an observable
+the module owns. Nothing reaches that state by inspection. The other two states are <strong>untested</strong> and
+<strong>blocked</strong>, and a blocked row says which capability is missing. <code>moduleTable()</code> in
+<code>src/ops/module-table.ts</code> is the census the lists below are rendered from.</p>
 <p>Contrib is a development dependency. The shipped pack carries four modules (<code>admin_toolbar</code>,
 <code>ctools</code>, <code>pathauto</code>, <code>token</code>); the rest are verified against a test build and installed by a site
 that asks for them, so a new site stays small.</p>
+<h3 id="installing-one" class="tsd-anchor-link">Installing One<a href="#installing-one" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Three owner-token routes, in the order a site uses them. Each takes <code>Authorization: Bearer &lt;owner token&gt;</code>, the token <code>/firstrun</code> mints when the site is claimed.</p>
+<table>
+<thead>
+<tr>
+<th>route</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/installable?module=X</code></td>
+<td>resolves the package and names any conflict with the shipped lock</td>
+</tr>
+<tr>
+<td><code>/install?module=X</code></td>
+<td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
+</tr>
+<tr>
+<td><code>/enable?module=X</code></td>
+<td>installs it through Drupal's own module installer</td>
+</tr>
+</tbody>
+</table>
+<p><code>drupal/*</code> resolves against <code>packages.drupal.org/8</code>; everything else against <code>repo.packagist.org</code>.
+Installing does not enable: they are separate steps because a package that lands is not yet a module
+Drupal knows about.</p>
+<p>A module you wrote yourself arrives through a <strong>git remote</strong> instead, which pulls one commit at depth
+one and boots the kernel against the new tree, rolling back if it fatals. See
+<a href="#-git-remotes">Git Remotes</a>. The same <code>/enable</code> step applies afterwards.</p>
 <h3 id="verified" class="tsd-anchor-link">Verified<a href="#verified" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p><code>address</code>, <code>admin_toolbar</code>, <code>backup_migrate</code>, <code>better_exposed_filters</code>, <code>captcha</code>, <code>coffee</code>,
 <code>colorbox</code>, <code>config_ignore</code>, <code>crop</code>, <code>csv_serialization</code>, <code>ctools</code>, <code>devel</code>, <code>easy_breadcrumb</code>,
@@ -1589,42 +1829,26 @@ that asks for them, so a new site stays small.</p>
 <code>facets</code>, <code>field_group</code>, <code>filefield_sources</code>, <code>focal_point</code>, <code>google_analytics</code>, <code>google_tag</code>,
 <code>honeypot</code>, <code>imageapi_optimize</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
 <code>jquery_ui_datepicker</code>, <code>jquery_ui_menu</code>, <code>json_field</code>, <code>key</code>, <code>libraries</code>, <code>linkit</code>, <code>mailsystem</code>,
-<code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>paragraphs</code>,
-<code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>scheduler</code>, <code>search_api</code>,
-<code>search_api_solr</code>, <code>simple_sitemap</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>, <code>twig_tweak</code>,
-<code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>, <code>views_bulk_operations</code>,
-<code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
+<code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>openid_connect</code>,
+<code>paragraphs</code>, <code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>redis</code>, <code>scheduler</code>,
+<code>search_api</code>, <code>search_api_solr</code>, <code>simple_sitemap</code>, <code>smtp</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>,
+<code>twig_tweak</code>, <code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>,
+<code>views_bulk_operations</code>, <code>views_data_export</code>, <code>webform</code>, <code>xmlsitemap</code>.</p>
 <p><code>uswds_base</code> is a theme and installs through <code>theme_installer</code> rather than the module installer.</p>
 <h3 id="blocked" class="tsd-anchor-link">Blocked<a href="#blocked" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<table>
-<thead>
-<tr>
-<th>Module</th>
-<th>Why</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>redis</code></td>
-<td>a cache read has to answer inside the request that asked, and outbound calls here resolve on a later one</td>
-</tr>
-<tr>
-<td><code>smtp</code></td>
-<td>needs a socket open during the request that sends the mail; <code>CfwMail</code> reads its settings and sends over the host transport instead</td>
-</tr>
-<tr>
-<td><code>openid_connect</code></td>
-<td>verifying an RS256 <code>id_token</code> needs OpenSSL, which this interpreter is built without; <code>/oidc</code> does the exchange in the Worker</td>
-</tr>
-</tbody>
-</table>
+<p>Nothing. <code>openid_connect</code>, <code>redis</code> and <code>smtp</code> were here.</p>
+<p><code>smtp</code> sends over the host transport from its own <code>smtp.settings</code>, and nothing in a render waits for
+delivery. <code>redis</code> and <code>openid_connect</code> both need an answer inside the request that asked: the PHP
+call is suspended, the Worker performs the socket read or the HTTP exchange, and the same call
+resumes with the answer. For <code>openid_connect</code> that is the authorization-code POST and the userinfo
+GET, so a login completes through the module's own client. For <code>redis</code> the Durable Object's own
+SQLite is still the faster cache backend and the recommended one.</p>
 <h3 id="untested" class="tsd-anchor-link">Untested<a href="#untested" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p><code>search_gov_results_api</code> renders results from an API call made while its form is building. The
-deferred tier carries that across two renders, so the first search for a term pays a retry. No run
-has exercised it against a live <a href="http://Search.gov">Search.gov</a> key.</p>
+<p><code>search_gov_results_api</code> renders results from an API call made while its form is building. That call
+now completes inside the render that makes it, so a search answers on the first request. No run has
+exercised it against a live <a href="http://Search.gov">Search.gov</a> key.</p>
 <h2 id="🧱-limitations" class="tsd-anchor-link">🧱 Limitations<a href="#🧱-limitations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>These are measured properties of the runtime. They belong in release notes, not in support
-tickets.</p>
+<p>Measured properties of the runtime, listed so they are known before they are hit.</p>
 <ul>
 <li><strong>Case-insensitive matching is ASCII-only.</strong> Durable Object SQLite has no user-defined
 collations, so Drupal's <code>NOCASE_UTF8</code> becomes builtin <code>NOCASE</code>. <code>Ünicode</code> does not match
@@ -1641,8 +1865,9 @@ host boundary comes back rounded. Cast it to a string first. The database path a
 ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
 tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see
 <code>OPCACHE_MODE</code> in the configuration reference. <code>mbstring</code> and <code>iconv</code> are supplied by Symfony's
-polyfills, which diverge from the real extensions on 37 of 1,232 measured cases and on none of the cases Drupal core reaches. There is no <code>gd</code> and no
-<code>pdo_sqlite</code>. <code>/php</code> reports the live list.</li>
+polyfills, which diverge from the real extensions on a small number of cases, of which the ones
+Drupal core reaches are all in <code>mb_convert_encoding</code>. There is no <code>gd</code> and no <code>pdo_sqlite</code>.
+<code>/php</code> reports the live list.</li>
 <li><strong><code>curl_*</code> works without <code>ext-curl</code>.</strong> The functions are supplied over the same deferred-HTTP
 queue as the rest of outbound traffic, so an SDK that bundles its own curl transport runs
 unmodified. <code>curl_version()</code> reports <code>0.0.0-drupflare-shim</code>, and an option the shim does not
@@ -1651,14 +1876,26 @@ understand is refused rather than ignored.</li>
 password service to argon2id at m=19456 KiB, t=2, p=1, computed on the host rather than in PHP.
 Existing bcrypt hashes keep working and are upgraded at each account's next login. Hashes are
 written in PHP's own encoded form, so they verify on any PHP with <code>ext-argon2</code>.</li>
-<li><strong>Image styles are applied at delivery, not by rewriting files.</strong> Without <code>gd</code> there is no image
-toolkit that produces derivatives, so Cloudflare Images resizes from the URL. A module that reads
-a derivative's own pixels sees the full-size image.</li>
-<li><strong>Outbound HTTP is answered from cache or refused.</strong> A Worker cannot open a socket synchronously,
-so <code>Drupal::httpClient()</code> and <code>file_get_contents('https://...')</code> return a previous fetch's
-response, or fail while queueing the request for the next background drain. The call after it
-succeeds. Request headers are carried across the queue and are part of the cache key, except
-<code>User-Agent</code>, which is sent but not keyed.</li>
+<li><strong>Image derivatives are produced in the Worker rather than by <code>gd</code>.</strong> The toolkit hands the work to
+<code>@gmitch215/tinyimg</code>, a wasm encoder that runs in the front worker and needs no zone, no binding and
+no monthly transform allowance. It covers scale, crop, rotate, desaturate and format conversion, and
+encodes JPEG, PNG and WebP. It does not encode AVIF: core asks the toolkit before applying an AVIF
+effect and falls through to the style's <code>webp</code> fallback. Cloudflare Images is reachable with
+<code>IMAGE_ENGINE=images</code> on a zone that wants AVIF. Styles at or below 480 px on the long edge are
+produced during the request; larger ones are produced on the alarm chain.</li>
+<li><strong>Outbound HTTP is answered from cache, warmed ahead, or re-driven once.</strong> A Worker cannot open a
+socket synchronously, so <code>Drupal::httpClient()</code> and <code>file_get_contents('https://...')</code> return a
+previous fetch's response rather than opening a connection. A URL the site can predict from its own
+installed projects is warmed on the alarm before Drupal asks for it. A URL it cannot predict is
+queued, and an idempotent request that deferred is drained and rendered once more inside the same
+visit, so the answer usually arrives on the first request rather than the second. Request headers
+are carried across the queue and are part of the cache key, except <code>User-Agent</code>, which is sent but
+not keyed. A non-idempotent request is never re-driven: a replayed POST is a different outcome.</li>
+<li><strong>A page that has been rendered before never waits for a re-render.</strong> After a content change, a
+request for a path with history is answered from the previous generation with <code>x-cfw-edge: STALE</code>
+while the current one regenerates on the alarm chain. It is bounded two generations and 24 hours
+deep, never applies to a session-carrying response, and refuses a deny-list that <code>NEVER_STALE</code>
+extends.</li>
 <li><strong>Outbound TCP is declared, not opened.</strong> Redis and syslog are reachable through
 <code>Drupal\drupflare\Network\CfwTcp</code>, which describes a whole exchange and reads the answer on a
 later request over the same queue. The endpoint and its credentials come from <code>REDIS_URL</code> and
@@ -1671,16 +1908,17 @@ under-counts emoji. Neither affects Drupal core.</li>
 authoritative write and hands it back, so every write is still one object and one thread. What a
 pool does scale is authenticated READS -- see <a href="#-read-replicas">Read Replicas</a> -- and it needs
 provisioning per lane rather than a number you raise.</li>
-<li><strong>A module install leaves the object with no room to do anything else.</strong> It costs 6,810 ms of CPU
-(the installer is 1,570 ms of that and the kernel boot 3,101 ms) and ends with the wasm heap at
-~110 MB of the isolate's 128 MB. <code>memory.grow</code> has no inverse, so the heap never shrinks; a
-further growth is served at a smaller step rather than refused. The install queues the pages it
-invalidated instead of re-rendering them, and the cache is cold for one visit.</li>
-<li><strong>A heap image costs storage on every site.</strong> <code>HEAP_IMAGE</code> takes one image per pack generation so
-a cold boot can restore instead of booting the kernel, and <code>HEAP_SNAPSHOT</code> gates the restore. Both
-are on; <code>0</code> opts out of either. An image is 10,420,224 bytes. The saving it buys is measured
-between 59 and 665.5 ms at the median across four paired runs on deployed workers, and the spread
-is wide enough that the figure is a range rather than a number.</li>
+<li><strong>A module install leaves the object with no room to do anything else.</strong> It is the most expensive
+thing a site can do, and it ends with the wasm heap near the isolate's 128 MB limit. <code>memory.grow</code>
+has no inverse, so the heap never shrinks; a further growth is served at a smaller step rather than
+refused. The install queues the pages it invalidated instead of re-rendering them, and the cache is
+cold for one visit.</li>
+<li><strong>A cold object rebuilds Drupal, and the heap image does not help.</strong> An evicted Durable Object has
+no interpreter, so the next request that needs one pays a boot. <code>HEAP_IMAGE</code> stores a heap so that
+boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the
+restore costs more than the boot it replaces, and it consumes storage on every site as well. <code>1</code>
+opts in. What keeps a cold boot off the visitor's path instead is the page cache, the compiled plan,
+the stale-generation serve, and a resident object while a session is active.</li>
 <li><strong>A freshly deployed site is claimable until it is provisioned.</strong> <code>/firstrun</code> answers without a
 credential while the site has never been configured, because the owner token that <code>/export</code> takes
 is minted by that route and nowhere else; gating it would mean the only way to get your data out
@@ -1707,7 +1945,7 @@ ratio rather than an edge absolute, it says so.</p>
 </blockquote>
 <hr>
 <h2 id="🤝-contributing" class="tsd-anchor-link">🤝 Contributing<a href="#🤝-contributing" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<pre><code class="sh"><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">typecheck</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test</span><span class="hl-1"> </span><span class="hl-5"># 2,474 across the workers and node lanes</span><br/><span class="hl-0">bunx</span><span class="hl-1"> </span><span class="hl-2">prettier</span><span class="hl-1"> </span><span class="hl-3">--check</span><span class="hl-1"> </span><span class="hl-2">.</span><br/><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:e2e</span><span class="hl-1"> </span><span class="hl-5"># excluded from the gate; needs a running server</span>
+<pre><code class="sh"><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">typecheck</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test</span><span class="hl-1"> </span><span class="hl-5"># the workers and node lanes</span><br/><span class="hl-0">bunx</span><span class="hl-1"> </span><span class="hl-2">prettier</span><span class="hl-1"> </span><span class="hl-3">--check</span><span class="hl-1"> </span><span class="hl-2">.</span><br/><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">test:e2e</span><span class="hl-1"> </span><span class="hl-5"># excluded from the gate; needs a running server</span>
 </code><button type="button">Copy</button></pre>
 
 <p>Run <code>bun run assets:driver</code> after any change in <code>../drupflare</code>, <code>../rom</code> or <code>../stream-http</code>.
@@ -1736,8 +1974,8 @@ and are the authority on their own module.</p>
 <li><a href="#⚖️-drupflare-vs-a-traditional-vps"><span>⚖️ <wbr/>Drupflare vs a <wbr/>Traditional <wbr/>VPS</span></a></li>
 <li>
 <ul>
-<li><a href="#the-cost-model"><span>The <wbr/>Cost <wbr/>Model</span></a></li>
-<li><a href="#where-a-vps-still-wins"><span>Where a <wbr/>VPS <wbr/>Still <wbr/>Wins</span></a></li></ul></li>
+<li><a href="#against-a-vps"><span>Against a <wbr/>VPS</span></a></li>
+<li><a href="#the-cost-model"><span>The <wbr/>Cost <wbr/>Model</span></a></li></ul></li>
 <li><a href="#🧬-read-replicas"><span>🧬 <wbr/>Read <wbr/>Replicas</span></a></li>
 <li>
 <ul>
@@ -1745,7 +1983,7 @@ and are the authority on their own module.</p>
 <li><a href="#🆓-free-vs-paid"><span>🆓 <wbr/>Free vs <wbr/>Paid</span></a></li>
 <li>
 <ul>
-<li><a href="#what-one-site-actually-gets"><span>What <wbr/>One <wbr/>Site <wbr/>Actually <wbr/>Gets</span></a></li>
+<li><a href="#what-one-site-gets"><span>What <wbr/>One <wbr/>Site <wbr/>Gets</span></a></li>
 <li><a href="#the-two-ceilings"><span>The <wbr/>Two <wbr/>Ceilings</span></a></li>
 <li><a href="#where-the-work-pays"><span>Where the <wbr/>Work <wbr/>Pays</span></a></li>
 <li><a href="#the-image-transform-cap"><span>The <wbr/>Image <wbr/>Transform <wbr/>Cap</span></a></li></ul></li>
@@ -1765,7 +2003,10 @@ and are the authority on their own module.</p>
 <li><a href="#claim-the-site"><span>Claim the <wbr/>Site</span></a></li>
 <li><a href="#log-in"><span>Log <wbr/>In</span></a></li>
 <li><a href="#manage-the-site"><span>Manage the <wbr/>Site</span></a></li>
+<li><a href="#keeping-an-existing-site-current"><span>Keeping an <wbr/>Existing <wbr/>Site <wbr/>Current</span></a></li>
+<li><a href="#covering-the-rest-of-the-site"><span>Covering the <wbr/>Rest of the <wbr/>Site</span></a></li>
 <li><a href="#the-admin-surfaces"><span>The <wbr/>Admin <wbr/>Surfaces</span></a></li>
+<li><a href="#inside-drupals-own-admin"><span>Inside <wbr/>Drupal&#39;s <wbr/>Own <wbr/>Admin</span></a></li>
 <li><a href="#single-sign-on"><span>Single <wbr/>Sign-<wbr/>On</span></a></li>
 <li><a href="#url-routing"><span>URL <wbr/>Routing</span></a></li>
 <li><a href="#scripts"><span>Scripts</span></a></li>
@@ -1787,6 +2028,7 @@ and are the authority on their own module.</p>
 <li><a href="#triggers"><span>Triggers</span></a></li>
 <li><a href="#provider-coverage"><span>Provider <wbr/>Coverage</span></a></li>
 <li><a href="#safety"><span>Safety</span></a></li></ul></li>
+<li><a href="#📦-module-revisions"><span>📦 <wbr/>Module <wbr/>Revisions</span></a></li>
 <li><a href="#📁-project-structure"><span>📁 <wbr/>Project <wbr/>Structure</span></a></li>
 <li><a href="#🧪-testing"><span>🧪 <wbr/>Testing</span></a></li>
 <li>
@@ -1803,6 +2045,7 @@ and are the authority on their own module.</p>
 <li><a href="#🧩-contrib-modules"><span>🧩 <wbr/>Contrib <wbr/>Modules</span></a></li>
 <li>
 <ul>
+<li><a href="#installing-one"><span>Installing <wbr/>One</span></a></li>
 <li><a href="#verified"><span>Verified</span></a></li>
 <li><a href="#blocked"><span>Blocked</span></a></li>
 <li><a href="#untested"><span>Untested</span></a></li></ul></li>

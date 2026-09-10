@@ -16,13 +16,6 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="listfiles"><span class="tsd-kind-call-signature">listFiles</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">sql</span><span class="tsd-signature-symbol">:</span> <a href="../types/db_file-store.FileSql.html" class="tsd-signature-type tsd-kind-type-alias">FileSql</a><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">prefix</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-kind-parameter">limit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/db_file-store.FileStat.html" class="tsd-signature-type tsd-kind-type-alias">FileStat</a><span class="tsd-signature-symbol">[]</span><a href="#listfiles" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>Lists stored files under a URI prefix.</p>
-<p>Escapes the LIKE metacharacters in the prefix. Drupal filenames legitimately contain <code>_</code>, which
-is a single-character wildcard in LIKE, so an unescaped prefix would match sibling directories --
-and a directory listing that returns another directory's files is how a delete-by-prefix removes
-the wrong thing. The 50-byte LIKE-pattern ceiling measured on this platform applies, so a longer
-prefix is filtered in JS instead.</p>
-</div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
@@ -31,7 +24,7 @@ prefix is filtered in JS instead.</p>
 <li><span><span class="tsd-kind-parameter">limit</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = 1_000</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/db_file-store.FileStat.html" class="tsd-signature-type tsd-kind-type-alias">FileStat</a><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/db/file-store.ts#L371">src/db/file-store.ts:371</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/db/file-store.ts#L386">src/db/file-store.ts:386</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

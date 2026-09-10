@@ -11,10 +11,14 @@
 <li><a href="../modules/ops_page-store.html">ops/page-store</a></li>
 <li><a href="" aria-current="page">PageStoreEnv</a></li></ul>
 <h1>Type Alias PageStoreEnv</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">PageStoreEnv</span><span class="tsd-signature-symbol">:</span> <a href="ops_plan.PlanEnv.html" class="tsd-signature-type tsd-kind-type-alias">PlanEnv</a> <span class="tsd-signature-symbol">&amp;</span> <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">PAGE_KV</span><span class="tsd-signature-symbol">?:</span> <a href="ops_page-store.PageKv.html" class="tsd-signature-type tsd-kind-type-alias">PageKv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">PAGE_KV_ENABLED</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">PAGE_KV_TTL</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">PageStoreEnv</span><span class="tsd-signature-symbol">:</span> <a href="ops_plan.PlanEnv.html" class="tsd-signature-type tsd-kind-type-alias">PlanEnv</a> <span class="tsd-signature-symbol">&amp;</span> <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">NEVER_STALE</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">PAGE_KV</span><span class="tsd-signature-symbol">?:</span> <a href="ops_page-store.PageKv.html" class="tsd-signature-type tsd-kind-type-alias">PageKv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">PAGE_KV_ENABLED</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">PAGE_KV_TTL</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
 <div class="tsd-type-declaration">
 <h4>Type Declaration</h4>
 <ul class="tsd-parameters">
+<li class="tsd-parameter">
+<h5><code class="tsd-tag">Optional</code><span class="tsd-kind-property">NEVER_STALE</span><span class="tsd-signature-symbol">?: </span><span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h5>
+<div class="tsd-comment tsd-typography"><p>extra path prefixes that may never be answered from a previous generation, comma separated</p>
+</div></li>
 <li class="tsd-parameter">
 <h5><code class="tsd-tag">Optional</code><span class="tsd-kind-property">PAGE_KV</span><span class="tsd-signature-symbol">?: </span><a href="ops_page-store.PageKv.html" class="tsd-signature-type tsd-kind-type-alias">PageKv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h5>
 <div class="tsd-comment tsd-typography"><p>optional: the tier is absent rather than broken when this is not bound</p>
@@ -28,7 +32,7 @@
 <div class="tsd-comment tsd-typography"><p>seconds; a stored page is also generation-keyed, so this is a floor on garbage not a freshness knob</p>
 </div></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/page-store.ts#L32">src/ops/page-store.ts:32</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/page-store.ts#L32">src/ops/page-store.ts:32</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

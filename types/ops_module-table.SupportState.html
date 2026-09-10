@@ -14,8 +14,14 @@
 <div class="tsd-signature"><span class="tsd-kind-type-alias">SupportState</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;verified&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;untested&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;blocked&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>The module support table, EMITTED from the classifier rather than hand-written.</p>
 <p>A hand-maintained README table goes stale the first time a tier moves, and it goes stale silently
-because nothing compares it to anything. <code>tests/node/module-table.spec.ts</code> renders these rows and
-fails when <a href="http://README.md">README.md</a> disagrees -- the same discipline as the driver-pack byte-for-byte check.</p>
+because nothing compares it to anything. <code>tests/node/module-table.spec.ts</code> compares these rows
+against <a href="http://README.md">README.md</a>'s three lists in both directions -- the same discipline as the driver-pack
+byte-for-byte check.</p>
+<p><strong>THAT SENTENCE WAS FALSE FOR AS LONG AS IT HAD BEEN WRITTEN</strong>, which is the reason it is worth
+pointing at. It claimed the spec &quot;fails when <a href="http://README.md">README.md</a> disagrees&quot;; the spec compared this map
+against the SPEC FILES, so a <code>verified</code> row needed a run behind it and the published table needed
+nothing. Three rows were edited by hand on the strength of the guard described here. The
+comparison exists now.</p>
 <p><strong>THREE STATES, AND ONLY ONE OF THEM IS A SUPPORT CLAIM.</strong></p>
 <ul>
 <li><code>verified</code>  the gate enabled it against a real site and asserted it FUNCTIONS. Not that the
@@ -33,7 +39,7 @@ run.</strong> There is no path in this file that promotes a module on analysis a
 would put the old problem back under a new name.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/module-table.ts#L28">src/ops/module-table.ts:28</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/module-table.ts#L40">src/ops/module-table.ts:40</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -17,8 +17,9 @@
 is single-threaded and <code>php._run()</code> is synchronous, so a fill occupies the object for its whole
 duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
 deployed worker at <code>fillBatchSize: 25</code>: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every
-<code>/__serve</code> racing them waited 5.0-6.8 s of wall (n=5). Nothing tripped -- it was well inside
-<code>fillBatchWallMs</code> -- it just made paid visitors wait seconds on an object that was filling.</p>
+<code>/__serve</code> racing them waited 5.0-6.8 s of wall (n=5). Nothing bounded it: a wall-clock guard
+cannot, because the clock does not advance across a synchronous <code>php._run()</code>. It simply made paid
+visitors wait seconds on an object that was filling.</p>
 <p>Throughput does not pay for that, because the alarm RE-ARMS IMMEDIATELY while the queue is
 non-empty: measured, consecutive firings 130-160 ms apart. So on paid, where DO requests are not
 the binding meter, many short alarms deliver the same fills per second as one long one and bound
@@ -29,7 +30,7 @@ against 50 on free, but a fill in the same firing has already spent several, and
 carries a whole file through memory.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/plan-profile.ts#L83">src/ops/plan-profile.ts:83</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/plan-profile.ts#L82">src/ops/plan-profile.ts:82</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

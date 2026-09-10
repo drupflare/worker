@@ -14,7 +14,7 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="noteedgerender"><span class="tsd-kind-call-signature">noteEdgeRender</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">html</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_render-plan.RenderPlan.html" class="tsd-signature-type tsd-kind-type-alias">RenderPlan</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><a href="#noteedgerender" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="noteedgerender"><span class="tsd-kind-call-signature">noteEdgeRender</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">key</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">html</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">witness</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span><br/>    <span class="tsd-kind-parameter">owned</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_render-plan.RenderPlan.html" class="tsd-signature-type tsd-kind-type-alias">RenderPlan</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><a href="#noteedgerender" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Records one render, and compiles or re-proves against it.</p>
 <p>The proofs are applied HERE rather than at serve time, so a plan that reaches the store is one
@@ -23,6 +23,9 @@ a compile that cannot succeed spends CPU on every later render of the same page;
 in the key, so a moved generation gives it another go.</p>
 <p>A plan past <a href="../variables/ops_edge-plan.PLAN_TTL_MS.html" class="tsd-kind-variable">PLAN_TTL_MS</a> is re-proved against this render instead of being recompiled,
 which is one render rather than three. One that no longer agrees is dropped and sampling restarts.</p>
+<p><code>owned</code> marks a key that names one session (<a href="ops_edge-plan.privatePlanKey.html" class="tsd-kind-function">privatePlanKey</a>). It drops the two-witness
+requirement and nothing else: a key nobody else is served from cannot leak one user's page to
+another, so the requirement has no work to do there.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -30,12 +33,15 @@ which is one render rather than three. One that no longer agrees is dropped and 
 <li><span><span class="tsd-kind-parameter">key</span>: <span class="tsd-signature-type">string</span></span></li>
 <li><span><span class="tsd-kind-parameter">path</span>: <span class="tsd-signature-type">string</span></span></li>
 <li><span><span class="tsd-kind-parameter">html</span>: <span class="tsd-signature-type">string</span></span></li>
-<li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = ...</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">nowMs</span>: <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol"> = ...</span></span></li>
+<li><span><span class="tsd-kind-parameter">witness</span>: <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol"> = &#39;&#39;</span></span></li>
+<li><span><span class="tsd-kind-parameter">owned</span>: <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol"> = false</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_render-plan.RenderPlan.html" class="tsd-signature-type tsd-kind-type-alias">RenderPlan</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h4><p>the plan when this render completed a COMPILE, so the caller can mirror it to KV; a
-re-proof returns null, because the record in KV is the one that was already written</p>
+re-proof returns null, because the record in KV is the one that was already written. A private
+plan returns null too, since it is never mirrored</p>
 <aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/86733e69f95cafb92d86f0260824b810c25d5cb4/src/ops/edge-plan.ts#L280">src/ops/edge-plan.ts:280</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/edge-plan.ts#L460">src/ops/edge-plan.ts:460</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -13,22 +13,28 @@ a deployed `cpuTime` reading are not interchangeable.
 ## 🧭 Executive Summary
 
 The bundle ships PHP 8.5 with every extension Drupal requires and nothing dropped. The interpreter
-travels as a zstd frame in a `Data` module and is inflated at module scope, so Cloudflare's own gzip
-measures bytes it cannot compress further.
+travels as a raw `CompiledWasm` import, which the platform compiles ahead of upload, so startup does
+no decompression and no runtime codegen. Cloudflare removed the compressed size limit on 2026-09-04
+and the ceiling is now 64 MiB uncompressed, which is what made that possible; the zstd frame this
+project shipped before it is gone from the path.
 
 | | measured | instrument |
 | --- | --- | --- |
-| Worker bundle, gzipped | under the 3,145,728-byte free ceiling | `bun run release:check` |
-| PHP 8.5, `long64` variant | **2,671,380** bytes as a zstd frame; 12,234,574 raw | `interp.lock.json` |
-| Isolate startup | **112 ms** median (n=5) of a 1,000 ms budget | Cloudflare `Worker Startup Time` |
+| Worker bundle, uncompressed | **14,824,387** of 67,108,864 (22.1%) | `wrangler deploy --dry-run` |
+| PHP 8.5, `long64` variant | **2,671,745** bytes as a zstd frame; 12,234,575 raw | `interp.lock.json` |
+| Isolate startup | **5 ms** median (n=4) of a 1,000 ms budget, was 106 | Cloudflare `Worker Startup Time` |
 | Startup billed to a request | **0-1 ms**; it is not billed | edge `cpuTime`, 3 cold isolates |
-| Cold boot | **1,398 ms** (n=3) | edge `cpuTime` |
+| Cold boot | **1,398 ms** (n=3); re-measured 2026-09-09 at **1,264** (n=4, 1,113-1,343) | edge `cpuTime` |
+| Cold boot from a stored heap image | **1,912 ms** (n=5, 1,561-2,020), so a restore COSTS ~648 ms | edge `cpuTime`, two deployed arms |
 | Cold boot, object held resident | **0 ms**; an 8 s alarm re-arm keeps one incarnation | 71 consecutive alarms, deployed |
+| Share of requests meeting a cold boot | **not yet read**; `src/ops/cold-encounter.ts` reports it | `/serve-stats`, per site |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Authenticated page, both levers on | **~467 ms** against 3,525 with neither | derived; see Warming |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
 | Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
+| Re-render against a real VPS, Drupal bins warm | **32 ms against 25 ms**, 1.28x | `docker/vps.yml`, same machine |
+| Anonymous cached against the same VPS | **2 ms p50 / 4 ms p95** against 3 / 49 | same rig |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
 
@@ -37,6 +43,11 @@ The bundle figure moves whenever `src/` does. Run the command rather than carryi
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation CPU cap. The cap constrains
 one execution unit and the architecture decides what an execution unit is: 20 Durable Object hops
 accumulate 142 ms with no single invocation over 10 ms.
+
+**And the cap does not fail a request either, measured directly.** A single invocation reading
+**1,882 ms of `cpuTime`** completed on a deployed free worker on 2026-09-07. Read the 10 ms figure as
+the amortised allowance it is; a proposal refused because "it will not fit in 10 ms" has been refused
+against a limit nobody measured.
 
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
@@ -67,11 +78,16 @@ over. It is projected rather than counted -- the object multiplies its styles by
 alarm and records `budget.image_transforms` at 80% -- because it is a function of content and
 configuration, both known in advance, and it is monthly so it does not clear at midnight.
 
+**This meter is now opt-in.** The default toolkit encodes in the front worker over
+`@gmitch215/tinyimg` and has no transform allowance at all; it spends CPU, which neither ceiling is
+bound by. Cloudflare Images stays reachable at `IMAGE_ENGINE=images`, because it is the only one of
+the two that encodes AVIF, and the meter above is what that choice costs.
+
 **Durable Object duration** is 13,000 GB-s/day on free, billed against the 128 MB an object is
 allocated regardless of use and on wall clock rather than CPU. At today's traffic it does not bind.
 The exposure is hibernation eligibility rather than arithmetic; see Hibernation below.
 
-### Where It Wins and Where It Does Not
+### Where It Wins
 
 The architecture wins by not rendering rather than by rendering faster. An uncached render costs
 **2,127 ms** of edge `cpuTime`, and one Durable Object is one thread that cannot be made bigger.
@@ -85,6 +101,49 @@ and authenticated reads scale with the pool. **Writes now spread too**, and this
 say they could not: a lane runs the write, discards its own effect and forwards the statements to
 the primary, which stays the sequencer. What still serialises there is the commit itself and any
 write whose target originates a value a lane may not mint.
+
+**THERE IS A VPS ARM AS OF 2026-09-07, and it moved the headline.** `docker/vps.yml` runs nginx and
+PHP 8.5 FPM with opcache and tracing JIT against the same Drupal tree and the same site database this
+project serves, so the runtime is the only variable. On one machine with Drupal's own bins warm on
+both sides, a re-render is **32 ms against 25 ms, 1.28x**, and drupflare's spread is tighter (29-37
+against 22-69). On the anonymous cached path drupflare wins outright: **2 ms p50 against 3, 4 ms p95
+against 49**, and at 32 concurrent clients it holds 438 req/s while the VPS falls to 122.
+
+**An external review divided 2,127 ms by 9.47 ms and published 225x.** That is the both-bins-emptied
+edge render over the native warm-kernel render: two workloads, two instruments, two machines. It is
+the same shape as the `34 ms` error below and it is worth recognising on sight, because the numerator
+and denominator were each correct.
+
+**The authenticated arm was measuring a tier that could not run, and that was the finding.** The first
+reading was 9 ms against 31 on a logged-in front page. Capturing `x-cfw-plan` on every sample -- which
+the rig had been discarding -- showed `skip:set-cookie` on six consecutive authenticated GETs.
+`planEligibility()` refused any render whose response carried `Set-Cookie`, and PHP re-sends the
+session cookie on every `session_start()` when `session.cookie_lifetime` is non-zero, which Drupal
+ships at 2000000. The compiled-plan tier had therefore never compiled a plan on any site, and its 25
+covering assertions all passed a synthetic `setCookie: false`.
+
+Two further refusals sat behind it: the tier needs two DISTINCT sessions of a role set to agree, so a
+single-editor site never produced one; and two sessions of one role set differ in exactly one value on
+an authenticated page -- the session CSRF token in the logout link -- for which `PlanSlot` had no kind.
+Measured: two renders of `/`, 103,697 bytes each, one varying token in two places, every
+`data-contextual-token` identical.
+
+With `rotatesSession()` comparing the response's cookies against the request's jar, a `csrf` slot that
+is substituted rather than generated, and a private key for a site that will never have a second
+witness, one session driven sequentially converges at request 4 and holds:
+
+| path                     | VPS converged p50 | drupflare converged p50 |
+| ------------------------ | ----------------: | ----------------------: |
+| `/` authenticated        |             11 ms |                **5 ms** |
+| `/admin/content`         |             71 ms |                **5 ms** |
+| `/user/1`                |             56 ms |                **5 ms** |
+| `/admin/structure/types` |             18 ms |                **6 ms** |
+
+Under concurrency drupflare wins every cell but one tie, and holds ~312 req/s flat from c=4 to c=32
+while the VPS declines from 204 to 144 on the front page and 67 to 62 on admin. The generator's own
+ceiling on the same machine is 8,308 req/s against nginx and 1,231 against the front worker, so
+neither arm is generator-bound. Still local, still one workerd, and the replica pool's 3.29x is not
+in any of it.
 
 **The 3.57x wasm penalty is not that number and must not be read as it.** It is a warm-kernel ratio
 between two interpreters on ONE machine, with the container already built; the edge figure is the
@@ -177,9 +236,10 @@ does not move it.
 A pre-built site is shipped and replayed rather than installed. `assets/drupal-sql/` holds the
 chunked SQL; `src/db/migrate-sql.ts` replays it as a JavaScript loop with a cursor in DO storage.
 
-The manifest records **79 chunks / 1,343 rows / 1,670 statements**, and a live migration drives
-exactly 79 of 79 at **max 3 ms of edge cpuTime per chunk, 0 chunks over the 10 ms cap**. In one
-invocation the same work was 3,467 ms.
+The manifest records **62 chunks / 1,275 rows / 1,523 statements** as of 2026-09-08; it moves with
+the packed database, so read `assets/drupal-sql/manifest.json` rather than this line. A live
+migration drove exactly 79 of the 79 a then-current manifest held, at **max 3 ms of edge cpuTime per
+chunk, 0 chunks over the 10 ms cap**. In one invocation the same work was 3,467 ms.
 
 **Divisibility, not speed, is what made it fit.** A JavaScript loop can be split at any statement
 where a synchronous `php._run()` cannot. There is also a smaller unit than a row: SQLite builds a
@@ -560,10 +620,22 @@ request.
 
 ### Bundle Size
 
-The free ceiling is **3,145,728 bytes measured after Cloudflare's own gzip**. gzip cannot compress
-what is already compressed, which is the entire mechanism behind shipping the interpreter as a
-compressed frame in a `Data` module: it saved 997,878 bytes in one change, more than four times what
-an entire extension-removal programme achieved.
+**THE CEILING IS 67,108,864 BYTES UNCOMPRESSED, THE SAME ON FREE AND PAID, AS OF 2026-09-04.**
+Cloudflare removed the compressed limit that day: "There is no compressed size limit. Only the
+uncompressed bundle size counts." The tree measures a fifth of that; `bun run release:check` prints
+the current figure, which moves whenever `src/` does.
+
+Everything below this paragraph is the history of a meter that no longer exists, and it is kept
+because most of the interpreter work in this report was scored against it. The free ceiling WAS
+**3,145,728 bytes measured after Cloudflare's own gzip**. gzip cannot compress what is already
+compressed, which is the entire mechanism behind shipping the interpreter as a compressed frame in a
+`Data` module: it saved 997,878 bytes in one change, more than four times what an entire
+extension-removal programme achieved. That frame is gone from the shipping path; the interpreter is a
+raw `CompiledWasm` import, and startup fell from 106 ms to 5 ms with it.
+
+`bun run release:check` and `scripts/measure/bundle-size.ts` were both still scoring the gzipped
+figure against 3,145,728 and therefore FAILED a bundle that deploys. A gate enforcing a dead limit
+reads exactly like a real regression; when a platform limit moves, grep for the constant.
 
 **The frame is BROTLI and the inflate is `node:zlib`, as of 2026-08-30.** Both halves are one change
 and the second is what made the first possible. `node:zlib` carries brotli and zstd, and workerd runs
@@ -727,12 +799,14 @@ Consequences for a size proposal:
   wrapper per wasm export -- 2,466 of them, 472,712 raw bytes -- and only `_main` is read back by the
   glue. One lazy binder installed inside `receiveInstance` replaces the rest; that is the first point
   the export table exists, which is why emscripten uses trampolines at all.
-- The largest untaken lever is the embedded PHP: 76 `String.raw` blocks across 18 files, 249,168
-  source bytes, of which 217,274 survive minification into the bundle. Both routes are measured on
-  `wrangler deploy --dry-run`: stripping comment lines at build time is **-26,501**, and moving the
-  source out to the asset layer is **-64,143** and supersedes it. Neither is taken -- the ceiling has
-  room and the stripper has a real hazard, since a `//` inside a PHP string is a URL and not a
-  comment, so it must be line-anchored and gated on `php -l`.
+- The largest untaken lever is the embedded PHP: the `String.raw` blocks in `src/drupal/*-php.ts` and
+  three of the probes. `rg -o 'String\.raw' src | wc -l` counts them and `rg -l 'String\.raw' src`
+  names the files; both move with the tree, so run them rather than reading a figure here. Two routes
+  were priced on `wrangler deploy --dry-run` in 2026-08 -- stripping comment lines at build time, and
+  moving the source out to the asset layer, which saved more and supersedes it. Both deltas were
+  measured against a tree that has since moved; re-run the dry-run before quoting either. Neither is
+  taken: the ceiling has room and the stripper has a hazard, since a `//` inside a PHP string is a
+  URL and not a comment, so it must be line-anchored and gated on `php -l`.
 - **Static assets are already carrying what they can, and executables cannot join them.** At request
   time `new WebAssembly.Module()` and `WebAssembly.compile()` both answer
   `Wasm code generation disallowed by embedder`; at module scope any async I/O answers
@@ -800,9 +874,289 @@ the DIVISION IS IN THE HOST: each unit is a separate `_run()` with its state in 
 boot has no such seam, because the thing being built IS the in-memory state.
 
 The two mechanisms that would add a seam are the two named above. JSPI compiles in real suspension
-points, and was researched and closed: zero of 62 surveyed modules needs one, and `WITH_OPENSSL=0`
-means it could not have fixed the module that motivated it. A warm object removes the need for a seam
-instead of adding one, which is why it is the answer that shipped.
+points, and was researched and closed: zero of 62 surveyed modules needs one. **One of its two
+refusals has since expired and is recorded here so it is not cited again.** The closure also said
+`WITH_OPENSSL=0` meant JSPI could not have fixed the module that motivated it, because PHP could not
+verify an RS256 `id_token` even if handed one synchronously. `src/drupal/openssl-fix.ts` now bridges
+`openssl_sign()`, `openssl_verify()` and `openssl_pkey_get_public()` over `node:crypto`, all
+synchronous, so PHP can take a JWKS entry and check a token. What survives is the rest: billed
+duration is wall clock, a suspension trips two hibernation disqualifiers, and one object per site
+means a suspended render stalls every other request to that site. A warm object removes the need for
+a seam instead of adding one, which is why it is the answer that shipped.
+
+**THE LAZY MOUNT WAS NAMED HERE AS THE DECISIVE BLOCKER AND IT IS THE WRONG FRAME.** This paragraph
+used to end "the lazy mount puts a JS frame under the PHP stack that JSPI cannot suspend across". Six
+call sites put a JS frame under that stack and the lazy mount is the least dangerous of them, because
+`materialise()` is a LEAF -- fflate and an assignment, nothing that re-enters wasm, so no suspension
+can originate beneath it. The frame that actually threw `SuspendError: trying to suspend JS frames`
+was emscripten's default SjLj rewriting every call out of a `setjmp`-containing function into an
+`invoke_*` JS trampoline, and `pib_run` opens a `zend_try` before entering the VM. Every `pib_run`
+died on a plain `-sJSPI` build, including `<?php echo PHP_VERSION;`. `-sSUPPORT_LONGJMP=wasm` routes
+longjmp through wasm exception handling and introduces no JS frame; `vendor/static-jspisjlj` is that
+build. The refcounted mask seam recorded as "designed and unbuilt" is `cartridge/src/mask.ts`, wired
+at six call sites and pinned by its own spec; what is unbuilt is `zend_wasm_slice_raise` alone, which
+costs latency rather than correctness.
+
+**ASYNCIFY IS REFUSED, AND NOT FOR THE REASON THAT EXPIRED.** The bundle argument died with the
+compressed size limit on 2026-09-04 -- the tree is 20.2% of a 64 MiB ceiling and could absorb the
+growth. The reason it stays refused is per-call cost. `-sJSPI` aliases to `ASYNCIFY=2`, native stack
+switching with no Binaryen instrumentation, and measures **-0.35%** on the bundle across phasm's own
+three arms. `ASYNCIFY=1` is the instrumented transform, published at roughly +50% size and speed on
+emscripten's benchmark suite with **SQLite the named 5x outlier because of its interpreter-like
+function** -- which is PHP's shape with a bigger interpreter. The flag that makes Asyncify cheap,
+`ASYNCIFY_IGNORE_INDIRECT`, is unsound here: this build is `ZEND_VM_KIND_CALL` with no global
+registers, so every opcode dispatches through `opline->handler` as an indirect call. The `~42%`
+figure this repository quoted in eight places was never measured on this configuration; no
+`ASYNCIFY=1` arm has ever been built here.
+
+So the surviving objective is unchanged -- a PHP request obtaining an answer that must arrive before
+it finishes -- and the mechanism to reach for is JSPI, not Asyncify. It stays closed on the four
+refusals above plus the reopening condition already recorded: a named site with a Tier C need.
+
+**ZEND FIBERS ARE NOT AN ALTERNATIVE, AND THE REASON IS ONE LEVEL BELOW WHERE IT WAS LOOKED FOR.**
+Proposed on the grounds that Zend already manages the continuation, so the wasm engine would not have
+to. Measured on the shipping 8.5 binary: the class exists and is fully declared, and `->start()`
+aborts the runtime with `Aborted(missing function: getcontext)`. php-src's ucontext branch calls
+`getcontext`, `makecontext` and `swapcontext`; **emscripten implements none of the three**, and the
+glue's abort-stub list is exactly those. `vendor/static-jspisjlj` carries the identical list, so a
+JSPI build does not supply one either, and `-sSUPPORT_LONGJMP=wasm` cannot: it unwinds one direction
+and `swapcontext` needs two. Emscripten's own `fiber.h` says a fiber build must link Asyncify, so
+implementing the backend means adopting the transform already refused above.
+
+The premise was true of the wrong primitive. A **generator** copies `execute_data` and the VM stack to
+the heap; a **fiber** switches a real C stack. This project had already found the difference the hard
+way -- `FIBER_SHIM` / `PhpWasmSyncFiber` exists in `src/drupal/site-php.ts` and
+`scripts/patch-drupal.mjs` rewrites Drupal core's five `new \Fiber(` sites onto it, so core's own
+fiber use is excised from the shipping tree.
+
+**A ZEND VM CONTINUATION IS THE FIRST MECHANISM TO SURVIVE ITS GATE.** Measured 2026-09-08 on local
+PHP 8.5.7 with `phpize`, a 200-line extension, **zero php-src changes and no wasm toolchain session.**
+
+Every mechanism above assumed the external operation must happen while the PHP computation is still
+ALIVE: JSPI preserves the wasm stack, Fibers a native C stack, speculative replay the request's
+effects. The park inverts it. Freeze `execute_data` and the VM stack, which are both already
+heap-backed, `longjmp` out of `pib_run`, return PENDING to the host, perform the I/O, then re-enter
+`execute_ex()` at the saved opline. The wasm stack is destroyed at the park and that is the point --
+the Zend state is the continuation.
+
+A four-deep PHP chain parked at an internal call resumed correctly after `longjmp` destroyed every C
+frame from `execute_ex` down **and crossed an open `zend_try`**, which is `pib_run`'s own shape. Every
+layer's locals were intact and the host was healthy afterwards. It works because this build is
+`ZEND_VM_KIND_CALL`: `ZEND_DO_FCALL`'s PHP-to-PHP branch takes `ZEND_VM_ENTER_EX()`, a tagged opline
+pointer consumed by the dispatch loop rather than a C recursion, so an arbitrarily deep pure-PHP chain
+is **one** C frame. `SAVE_OPLINE()` writes `EX(opline)` before the handler runs and `execute_ex` opens
+with `LOAD_OPLINE()`.
+
+**The failure boundary is narrow, and checkable before parking.** What cannot survive is the C locals
+of an internal function that called userland and is waiting to resume. Measured: a park under
+`array_map`, `usort` or `iterator_to_array` returns **`NULL` silently**, with no error and no
+exception. Nested plain PHP, a discarded result, `try`/`finally` and `foreach` over an `Iterator` all
+resume correctly. A predicate walking `prev_execute_data` and refusing when any frame between the park
+and the host's VM entry is `ZEND_INTERNAL_FUNCTION` converts that class into a refusal. The Fibers RFC
+names `array_map` as precisely why a general language feature needs a C stack; this needs three call
+sites rather than a general feature. `call_user_func_array` is not such a frame -- it compiles to
+`ZEND_INIT_USER_CALL` -- which covers Drupal's own dispatch.
+
+All three blocking call sites measure clean. PHPMailer's `stream_socket_client` sits at depth 7 with
+`internal_below_top` **0**; Guzzle's `curl_exec` at depth 15 through twelve middleware closures also
+reads **0**; Predis, installed into a scratch directory rather than the packed tree, reads **0** at
+every call site. The predicate refuses nothing the three libraries do. Guzzle's
+`CURLOPT_HEADERFUNCTION` and `CURLOPT_WRITEFUNCTION` callbacks are userland frames inside libcurl's C
+frame and DO read 1, so a park there throws instead of returning a wrong answer; the transport call
+site above them reads 0, so the refusal guards a site the design does not use.
+
+**THE COST IS MEASURED, and a park is not a network round trip.** Count-and-continue against the
+GreenMail and Keycloak containers pinned in `docker/compose.yml`: PHPMailer delivered a real message
+on 3025, Guzzle took a 200 carrying an `id_token` from Keycloak on 8081, and Predis drove the rig's
+Redis.
+
+| operation | parks | network trips |
+| --- | --- | --- |
+| redis MGET of 20, one command | 21 | **1** |
+| redis, a 9-bin render at one `getMultiple` per bin | 189 | **9** |
+| one PHPMailer `->send()` | 57 | **13** |
+| one authenticated OIDC login | 3 | **3** |
+
+Only the first read after a write batch waits for the wire. The reads after it come out of bytes the
+host already holds, so they cost a resume, and a transport that buffers need not park for them at all.
+The generic rule needs no protocol knowledge: a write is buffered and flushed with the next
+answer-requiring call, and only a read finding an empty buffer must park. That takes PHPMailer's 57
+trapped calls to 13 and `drupal/redis` to 9 per render, the same order as SMTP. A cache backend was
+the one expected to be per-request rather than per-operation, and at one `getMultiple` per bin it is
+not.
+
+**Two instrument errors produced a confident wrong reading first, and both were a number from an
+operation that never ran.** PHPMailer never connected, because its validator rejects
+`drupflare@localhost` for having no dot in the domain, and the table read 0 parks. The rig's Redis
+runs `--requirepass testpass`, so without the password every command answered `NOAUTH` and the table
+read one park per operation; a live `PING` is the control now. `fwrite` and `fread` also serve local
+streams, and Guzzle writes each response body to a `php://temp`, so the counter reads the stream's own
+`ops->label` and counts only `*socket*`.
+
+**THAT BUILD ORDER WAS DERIVED FROM THE TRIP COUNTS AND THE TRIP COUNTS DO NOT DECIDE IT.** It read
+`openid_connect` first at 3 trips, `smtp` second at 13, `redis` third at 9 per render -- ranking three
+modules by cost without asking whether the park reaches any of them. Two of the three it does not,
+and the order came out exactly backwards.
+
+- **`openid_connect` cannot be parked THROUGH GUZZLE'S OWN TRANSPORT**, which is a narrower claim
+  than the one first written here and it took two corrections to get to. The trip count came from a
+  NATIVE php with ext-curl; the shipping interpreter has no curl, so Guzzle picks its `StreamHandler`
+  and the call goes through a userland stream wrapper PHP invokes from inside the internal `fopen`.
+  A park under that frame is refused, correctly, because `fopen`'s C locals cannot survive the
+  `longjmp`. **The transport is what moved.** `Drupal\drupflare\Http\ParkFetchHandler` replaces it
+  and yields from plain userland, so the module's own exchange runs: measured 2026-09-08 against the
+  rig Keycloak at **2 parks per login**, the token POST and the userinfo GET, with `authmap` written
+  and a session opened. The `3` above was a native curl reading and is superseded.
+- **`smtp` never needed a park.** `MailManager::mail()` returns a bool and nothing in a render waits
+  for delivery, so the send is deferrable by construction; `CfwMail` hands `smtp.settings` to the
+  host transport and the module's socket never runs. Its 13 trips are real and they are spent by
+  JavaScript after the response.
+- **`redis` is the whole customer.** A cache get has to answer inside the request that asked, which
+  is the one shape no deferred tier serves, and Predis speaks RESP over `stream_socket_client` --
+  which a park does suspend under.
+
+So `blocking-outbound` and `blocking-socket` are two capabilities in `catalog.ts`, and the park
+satisfies the second only. One flag would have said the runtime can make a blocking HTTP call because
+it can make a blocking socket one.
+
+**AND IT NOW DELIVERS, measured 2026-09-08 on the long64 build against the rig's Redis.** PHP opens
+a socket, writes and reads twice, and receives `+OK|+PONG` -- five parks, each performed in
+JavaScript on a LATER invocation and resumed back into the same PHP chain. A real Drupal render with
+the traps armed reports `done`, which is the check that has to pass before arming anything: the
+render goes through `cfw_park_run`, and that is `zend_eval_string` rather than a script.
+
+It took two extension fixes and both had failed silently: `cfw_park_resume` did not re-arm, so every
+trip after the first ran the real function down the refusal path; and the safety predicate's floor
+was a frame belonging to the invocation that STARTED the chain, so on a resume the walk went past the
+parked chain into reused VM stack memory -- reading first as a refusal and then as
+`RuntimeError: memory access out of bounds`. A resumed chain now relinks its root to the resuming
+frame, which is what `zend_generator_resume` does.
+
+**THREE INSTRUMENTS MEASURED THIS AND ALL THREE WERE WRONG, in both directions.** The mechanism was
+declared working and then declared impossible before it was either:
+
+- **A flat native harness reported success.** Calling run and resume from the same scope puts the
+  resume's frame in the slot the run's just vacated, so a stale parent pointer and the live one are
+  the same ADDRESS and the walk terminates by coincidence. It printed `trips=3` and `DONE`; its
+  remaining assertion, that each answer reached the call that asked, was never reached, because the
+  test fataled on its own reporting line first.
+- **A native PHP reported impossibility.** Homebrew 8.5.7 runs the HYBRID VM and the wasm build runs
+  `ZEND_VM_KIND_CALL`. Native said a resumed chain never unwinds into its caller; the wasm build
+  unwinds it correctly.
+- **The capability vector could not express the capability.** A contract probe is one PHP expression,
+  so its run and its resumes all land in one `_run` -- and a host able to answer inside one `_run`
+  would not need a park at all. It is `socket.park.inline` now, named for what it measures, and
+  `blockingSocket` is a literal beside `SHIPPED_CRON` for the same reason that one is.
+
+**AND IT WORKS ON WASM, measured 2026-09-08 on a PHP built for it.** The gate above ran on a native
+interpreter, which left one question: whether `EG(vm_stack)`, `EG(current_execute_data)` and the
+opline behave the same when the longjmp is emscripten's rather than the platform's. They do, and the
+output is byte-identical.
+
+| check | native | wasm |
+| --- | --- | --- |
+| the C, D and E assertion set | 16 passed, 0 failed | **16 passed, 0 failed** |
+| gate frame walk | `depth=8 zend_call_top=2 internal_frames=2 internal_below_top=1` | identical |
+| gate result | `L1(10,L2(20,L3(30,conn-local-A\|ANSWER-FROM-HOST)))` | identical |
+| host after the park | `array_map: 3,6,9` / `closure+sort: 1,3,5,9` | identical |
+
+This needed no phasm session, which is the part worth carrying: `--disable-all` against a native
+arm64 emsdk builds a wasm PHP in about 45 minutes and 503 objects, where phasm compiles PHP and every
+dependency from source. php-src 8.5.11-dev, `ext/zendpark` linked statically, `bison >= 3.0` and
+`re2c` from brew because Apple's bison is 2.3.
+
+Five build defects, each of which presents as something else. `php_<ext>.h` must exist BEFORE
+configure, because `PHP_NEW_EXTENSION` emits its include only if it finds the header then, and
+without it the static link fails on an undeclared `phpext_zendpark_ptr`. The CLI link rule reads
+`EXTRA_LDFLAGS_PROGRAM`, not `EXTRA_LDFLAGS`, so a first attempt linked with no flags at all and read
+as the flags being ignored. `-sSUPPORT_LONGJMP=wasm` has to be set at compile time as well; at link
+only it asserts `invoke_ functions exported but exceptions and longjmp are both disabled`.
+`-sNODERAWFS=1` leaves `php://stdin` with no backing node, so `cli_register_file_handles` dies in
+`fstat` before any PHP runs. And emscripten marks `getcontext`/`makecontext`/`swapcontext`
+unsupported, which is a hard link error whatever `ERROR_ON_UNDEFINED_SYMBOLS` says -- **a second,
+independent confirmation of the fiber result, at link time from `Zend/zend_fibers.o` rather than at
+runtime from an abort stub.**
+
+What that arm does not carry: emsdk 6.0.6 against the shipping 3.1.68, wasm32 (`PHP_INT_SIZE=4`)
+against the shipping long64, emscripten's default SjLj rather than `-sSUPPORT_LONGJMP=wasm`, and the
+CLI SAPI rather than `pib_run`. The lowering is the one variable already controlled for, because the
+first probe measured both SjLj arms identical on the unwind and a park unwinds rather than suspending.
+
+**What is unsettled is the duration meter rather than the mechanism.** The four refusals that closed
+JSPI apply to a park unchanged: billed duration is wall clock, a park trips two hibernation
+disqualifiers, one object per site means a parked render stalls the site, and a parked continuation
+dies silently between 6 and 10 s idle.
+
+A park has two billing phases, and conflating them is what makes it look expensive. **While parked
+the request is IN FLIGHT**, so the object is not idle and the meter is the wall clock of the I/O,
+`trips x RTT`. **After the answer is delivered** the object goes idle and `idleBilledSeconds()`
+applies: a park that closed its socket leaves nothing open, so `hibernationEligible()` passes and the
+cost is **0**; a park that leaks one is refused on `outboundSocket` for `min(held, 900) + 70` seconds.
+So the `finally` discipline already asserted in `hibernation-lifecycle.spec.ts` is what decides this,
+and a leaked socket dwarfs every trip count measured above.
+
+`openid_connect` spends `2 x RTT` on one request per session over a stateless `fetch()`. `smtp`
+spends `13 x RTT` on an alarm rather than a visitor request, because Drupal's mail queue already
+defers it. `redis` spends `9 x RTT` on **every render that misses the page cache**, which is where
+RTT multiplies.
+
+**RTT IS MEASURED, 2026-09-08**, on a throwaway free worker whose Durable Object made N SEQUENTIAL
+`fetch()` calls. Sequential because a park cannot pipeline: the PHP chain is frozen until its answer
+arrives, so N trips are N round trips and a parallel reading would understate them. `Date.now()` is
+the right instrument here and only here, for the reason RULE 0 was narrowed -- the clock is frozen
+across synchronous PHP and does advance on I/O completion.
+
+| target | n | min | median | max |
+| --- | --- | --- | --- | --- |
+| Cloudflare's own edge, the floor a colo-local service approaches | 12 | 0 | **1 ms** | 1 |
+| a real IdP discovery document, the shape `openid_connect` fetches | 12 | 34 | **53 ms** | 65 |
+
+So `openid_connect` costs **106 ms** of billed wall clock against a real IdP, once per session,
+beside a login render that already spends 400-500 ms of CPU. `smtp` costs 689 ms on an alarm.
+**`redis` costs 9 ms per render against a same-region Redis and 477 ms per render against a distant
+one**, which makes it conditional on the customer's placement rather than affordable or refused
+outright. The park does not decide that and cannot; the condition is measurable per site.
+
+Two limits on the colo row, which is the flattering one: it is measured against Cloudflare's own edge
+rather than any real customer Redis, so it is a floor and not a prediction, and a 1 ms median sits at
+the meter's granularity, so it reads as "at or below 1 ms".
+
+**The 106 ms is the provider's latency rather than this project's overhead.** A VPS running the same
+module makes the same two trips to the same provider and pays the same 53 ms each, so
+`openid_connect` on nginx plus PHP-FPM is no faster at it. What a park adds per trip is a VM re-entry
+rather than an interpreter boot, because the executor persists across `_run()` and a resume re-enters
+`execute_ex()` at a saved opline; that is unmeasured as an absolute and bounded well below 53 ms.
+
+That figure is the MODULE's own client, which fetches neither a discovery document nor a JWKS: its
+endpoints are configured on the client entity and `OpenIDConnect::parseToken()` decodes the id_token
+without verifying it. The host's `/oidc` route does verify, and pays discovery plus JWKS on top --
+which is where the caching below applies and where the earlier 3-trip figure came from.
+
+For that route, only one of its three trips is per-login. Discovery and JWKS are per-provider and
+static, so caching both takes it to **1 trip, about 53 ms**. Discovery needs no new fetch at all: the
+Access page's Configure form already retrieves and renders the provider's discovery document at
+configure time, so persisting it there removes the trip from every later login -- the same shape as
+the compiled edge plan, doing the work once off the request that needs it. JWKS caches with a
+`kid`-miss refresh, so a key rotation costs one extra trip on one login rather than a trip on each.
+
+**One trip is the floor.** The authorization code is single-use and short-lived, so nothing can be
+precomputed; there is no partial answer to render, which is why this is the one module with no
+deferred fallback. A park also cannot parallelize -- the chain is frozen until its answer arrives --
+so trip count is the only lever. The module's second trip is its userinfo GET, which is per-subject
+and not cacheable either; `usesUserInfo()` is false for a client configured with no userinfo
+endpoint, which takes it to the floor at the cost of trusting the id_token's claims alone. Below 53 ms is the provider's
+placement: the same probe read 1 ms to Cloudflare's own edge, so a well-placed IdP lands far under
+the public-IdP figure with no change here.
+
+**What the same session measured and is new: the executor survives `_run()`.** `pib_run` performs no
+`php_request_startup`/`php_request_shutdown` cycle -- `$GLOBALS` persist, a class declared in run 1
+exists in run 2, and a `register_shutdown_function` registered in run 1 never fires. A generator
+parked in `$GLOBALS` was suspended across a `_run()` boundary, resumed on a later invocation with a
+host-supplied value, and run to completion on a third. That is a working suspension primitive in this
+interpreter today, bounded by the coloring problem: `yield` suspends only its own frame, so it serves
+code written for it and cannot retrofit Predis, Guzzle or Drupal's renderer. A parked continuation
+also lives in linear memory, so `recycleIfOversized()` destroys one silently; anything built on it
+needs a terminating observation rather than a bound, for the reason `/user/password` records.
 
 The phase ladder below is a **different workload from the 1,398 ms** and must not be subtracted from
 it. It is a first-ever fill on a fresh site, which builds and writes `cache_container`,
@@ -837,6 +1191,29 @@ missed and rebuilt a 482 KB container. Measured on deployed paid workers, a new 
 sample, n=8 paired: 32.4% of a first-ever boot in fast mode (4,269.5 -> 2,888 ms) and 36.3% in slow
 mode (9,210.5 -> 5,867.5 ms). The re-boot path the 1,398 ms measures is unaffected, because a warm
 site already held its own built row.
+
+**A second phase ladder, on the WARM-BIN path, bounds the two-level bootstrap at 45%.** The proposal
+is to restore generic Drupal execution state once and attach tenant state per site, and the question
+is what fraction of a cold path is generic. Measured on a deployed paid worker, `cfw-bootphase`,
+cumulative `cpuTime` per phase, n=3:
+
+| phase                 | cumulative cpuTime |
+| --------------------- | -----------------: |
+| autoload              |             451 ms |
+| kernel-new            |             466 ms |
+| container-read        |             510 ms |
+| container-unserialize |             477 ms |
+| kernel-boot           |             616 ms |
+| pre-handle            |             660 ms |
+| render                |           1,036 ms |
+
+Generic execution state is 466 of 1,036, so **tenant attach is 55% and is the majority**. A split
+recovers at most 45%, of a cost the previous-generation read already removes from the visitor. The
+mechanism closes; the objective is the cold path and the stale read owns it.
+
+**Read the phases from object invocations only.** The near-zero samples in the same tail are the front
+worker, and a median over both understates every phase. That mistake is what an unfiltered first pass
+produced.
 
 **Boot work is saturated FOR THE REGENERATION CEILING.** Once the fill window amortises the boot,
 that ceiling is bound by rows written, so a 20x reduction in boot cost per fill moves it about **1%**.
@@ -915,6 +1292,29 @@ The boot column is a measured subtraction. **The render column is derived across
 the softer half: a fragment render measured 4-5 ms of gate-lane wall clock against 20-21 ms for the
 render it replaces, and applying that ratio to an edge `cpuTime` figure assumes it transfers.
 
+**The interval is now priced per site instead of being flat.** A flat 8 s re-arm charges the same
+10,800 firings a day whether the site renders 50 pages or 50,000, and the band where warming is worth
+paying for is bounded at both ends: below ~505 renders/day the firings outnumber the boots they save,
+and above ~8,640 the site never idles 10 s and is already resident. `src/ops/thermal.ts` keeps a
+64-entry ring of recent arrivals in memory, so the decision itself costs no rows, and warms only while
+`P(render inside the hibernation threshold) x 1,398 ms` exceeds what a firing costs. An explicit
+`SITE_WARM` still wins in both directions.
+
+**The firing cost in that comparison was invented before it was derived, and it moved the policy.**
+At an assumed 130 ms the crossing landed at 845 renders/day against the measured 505. It is 79 ms now,
+derived from the crossing rather than guessed, and the spec asserts the two agree so a change to
+either constant moves the policy rather than silently keeping it.
+
+**Only renders count toward the rate.** A cached page answers off `ctx.storage.sql` without booting
+PHP, so counting cache hits would warm a site whose traffic warming cannot help. And the rate divides
+by the WINDOW rather than by the observed span: ten renders one second apart is a burst, and dividing
+by the span reads it as a sustained ten per second, which is how a predictor talks itself into warming
+a site that had one visitor.
+
+**Prewarming after a save targets a route FAMILY rather than a URL.** The page cache is keyed on the
+URL, so a visitor arriving on `/node/41` after a save meets a cold object even though `/node/40` is
+stored. Warming one member of the family warms the interpreter every member needs.
+
 ### Writes
 
 Deployed, the shipping config, n=8 per class, one object per class, each provisioned and warmed
@@ -985,6 +1385,27 @@ responds to.
 `fillOne()` used to empty `dynamic_page_cache` on itself, measured at 4 charged rows against 0 with
 the output byte-identical. Staleness was never the failure mode: tag invalidation reaches a warm
 entry through its checksum.
+
+**SCOPED INVALIDATION NEEDED AN INDEX, AND THE OBVIOUS INDEX COST MORE THAN THE FEATURE SAVED.** A
+content change used to bump the generation and purge every stored page, so a busy site spends most of
+its regeneration budget re-rendering pages the change did not touch. Purging only the paths whose tag
+set the write invalidated needs a `tag -> paths` mapping, and the natural implementation is a
+`(tag, path)` table written when a page is stored. Measured, that took rows per fill from **9 to 39**:
+thirty rows spent per fill to save fills, on the exact meter the feature exists to move. Carried
+instead as a `tags` column folded into the page INSERT, the same mapping costs **0** and rows per fill
+is 9 again.
+
+`pathsForTags()` returns **null**, not an empty set, when any stored page carries no recorded tags. A
+null falls back to the wholesale purge. A scoped purge that misses a page serves content a visitor can
+see is wrong, which is worse than an extra fill, so an incomplete index must purge widely rather than
+narrowly.
+
+**A COMMIT CHARGES NO ROWS OF ITS OWN**, which closes batching as a lever on this meter. Forty
+statements inside one `transactionSync` charged exactly what forty single-statement transactions
+charged, and doubling the statement count doubled the charge. The per-statement term is the only one
+that binds. The meter here is rows rather than a clock by necessity: `Date.now()` does not advance
+across synchronous work in a Worker, so a duration taken around a `transactionSync` reads 0 and would
+be a fabricated measurement.
 
 ### Duration Per Operation
 
@@ -1318,6 +1739,20 @@ are shared.
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |
 
+**WHICH OF THOSE TWO THE PRODUCER ACTUALLY WRITES IS NOT A CHOICE, and that is what closed the heap
+image.** `snapshotStep()` fires on an alarm that arrives with no resident interpreter, boots
+`BOOT_KERNEL` and images. It does not require the site to have been configured or served, so on a
+fresh site it captures the COLD shape. A deployed probe on 2026-09-09 read **37,158,912 restored
+bytes**, which is the 36,175,872 row above rather than the 9,699,328 one, and `linearMemoryBytes`
+read 113,770,496 before the cold pass.
+
+That reconciles a contradiction rather than overwriting one. An earlier deployed run measured the
+image SAVING 314.5 ms, and it measured the 9.7 MB configured-and-served shape. The 2026-09-09 arms
+measured 1,912 ms against 1,264 unimaged (n=5/4, ranges not overlapping) on the 36 MB cold shape, so
+the restore cost ~648 ms. Both readings are correct about the image they took; the producer takes the
+expensive one on the path that matters, which is a fresh site's first alarm. `HEAP_IMAGE` is off by
+default because of it.
+
 Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
 `tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;
 nothing guarded the figure, which is how it drifted.
@@ -1345,6 +1780,38 @@ Content-keying the page store saves 21.05% of bytes on a real nine-path corpus -
 byte-identical across paths, and that one class is the entire saving -- but costs **4 charged rows
 against 2** for a new body, because a `TEXT PRIMARY KEY` costs a table row plus an index row. Storage
 binds nothing here (30,880 bytes against a 5 GB allowance) and rows bind regeneration.
+
+### Image Derivatives
+
+The toolkit runs `@gmitch215/tinyimg` in the FRONT worker rather than in the object, so it never meets
+PHP's heap. The module has zero imports and one memory, so wrangler's existing `CompiledWasm` rule is
+the whole integration; the wasm header declares a 64 MiB maximum, which is a ceiling and not a
+reservation, and 56 transforms of a 768x512 JPEG settled linear memory at 4,194,304 bytes and left it
+there.
+
+Measured on a deployed FREE worker, `cpuTime` amortised over 10 transforms per invocation, median of
+12 invocations, with a source-only arm as the control at 0 ms. `victoria-sponge-umami.jpg`, 65,418
+bytes, 768x512, all four shipped styles as WebP:
+
+| style     |   px | laptop wall clock | edge cpuTime |
+| --------- | ---: | ----------------: | -----------: |
+| thumbnail |  100 |              3 ms |      36.3 ms |
+| medium    |  220 |              7 ms |      48.6 ms |
+| large     |  480 |             22 ms |      63.5 ms |
+| wide      | 1090 |             32 ms |     188.2 ms |
+
+**Laptop wall clock understated the edge by 6 to 12x**, and non-uniformly, so the local table could not
+have been scaled into a threshold. `INLINE_TRANSFORM_MAX_EDGE` is 480 from this reading: `large` at
+63.5 ms is produced during the request and `wide` at 188.2 ms goes to the fill queue.
+
+**The first instrument was wrong and read flat.** Building the source PNG in JS dominated every cell
+and gave ~130 ms across three styles that differ by 6x in real work. Caching the source and adding
+`?only=source` as a control is what separated the transform from its setup, and it is the same
+shared-instrument shape as every other one on this list.
+
+An image style is write-once-serve-many: Drupal generates a derivative on first request and serves the
+stored file afterwards. So the CPU is paid once per derivative rather than once per request, which is
+what makes a per-transform figure this size affordable.
 
 ### One Object Is Not a Site-Wide Throughput Ceiling
 
@@ -1540,7 +2007,7 @@ replica mode by the var has no stage lifecycle -- nothing drives it, so it sits 
 generation fence unreachable. `isPoolLane()` is the narrower question, and it is what the readiness
 check asks.
 
-### A Lane Drives Itself, and the Staleness Bound Was Measured Rather Than Reasoned About
+### A Lane Drives Itself, and the Staleness Bound Is Measured
 
 `action=provision` on the primary creates and fills a lane, a bounded number of rows per invocation
 with the cursor handed back rather than stored. It runs on the primary because that is the object a
@@ -1560,7 +2027,7 @@ rather than partial -- it withdrew on a position it could not trust or a record 
 So the lane clears its torn-copy markers, returns to `CREATED`, and asks the primary through
 `action=readmit`; the primary queues the lane number and its provisioning driver takes a repair
 before growth, dequeuing only on a copy that finished. The repair runs on a QUIET site, which is the
-part that is easy to get wrong: the load that made the lane withdraw goes to the primary the moment
+part to get right: the load that made the lane withdraw goes to the primary the moment
 it does, so waiting for contention to rebuild is waiting for the outage to continue.
 
 **A first attempt at the steady-state guard was a guard that could not fire, and its test passed with
@@ -1710,7 +2177,7 @@ and `cpuTime` from a tail, which is why the 1->2->4 curve is measured end-to-end
 durations are positive: `serviceMs > 0` would be asserting that the render did I/O, not that it took
 time, and would pass for the wrong reason.
 
-### What a Replica Actually Buys, and What One Costs
+### What a Replica Buys, and What One Costs
 
 **Replicas do not make a page faster. They raise how many pages run at once.**
 
@@ -1907,6 +2374,25 @@ resolution: `bun run measure:abi-control` loads one binary as two arms, so anyth
 there is the instrument. Arms must be interleaved; run in series, machine contention inverts the
 result.
 
+**Re-measured 2026-09-07, once the bundle ceiling stopped being the deciding meter.** Control 1.008x;
+long64 **1.001x** and wasm64 **1.027x**, reproducing the row above independently.
+
+- **long64 against wasm32 is unresolvable by this instrument, not a win.** The two cases outside the
+  control's range -- `floatmath` 0.956x and `packed` 1.088x -- are not mechanisms either ABI touches,
+  and the cases that would move if it mattered read 1.047x, 0.997x and 0.999x. Post-rebuild code
+  layout, the same artifact already recorded for `floatmath`.
+- **wasm64's 2.7% is real and sorts by mechanism**: compile +10.6% and boot +11.1% for a module
+  345,318 bytes larger, then `preg` +9.0%, `sort` +8.3%, `objects` +4.9%, `hashwrite` +4.6% -- the
+  pointer-and-hash-traffic cases, which is what a wider pointer would cost.
+
+Carry the TAILCALL precedent with either number: it measured **10.6% faster on this exact bench and
+0% on a Drupal render**, because a render is bound by pcre, the host bridge and container
+construction. So 2.7% is a ceiling on what wasm64 would cost a render, not a prediction. And the size
+spread across all three arms is **0.5% of the 64 MiB ceiling**, so size cannot decide this and no
+longer should be asked to. wasm64 stays closed on the 5.00 MiB of heap margin plus the measured CPU;
+wasm32 stays closed on `PHP_INT_SIZE`, which one dependency's `php-64bit` constraint has already taken
+a whole site down over.
+
 **What `PHP_INT_SIZE` 8 does not fix is the JSON bridge.** `PHP_INT_MAX` crosses back as
 `9223372036854776000`, because a JSON number is a double. PHP can now hold values the bridge mangles.
 `src/db/wide-integers.ts` solves the SQL half; anything else crossing a wide integer must cast to a
@@ -1961,12 +2447,77 @@ phase rather than removing it.
 hash, json, lexbor, libxml, pcre, pib, random, session, standard, tokenizer, uri, vrzno, xml, yaml,
 zlib.
 
-No mbstring, no iconv, no gd, no curl, no openssl. `DEFAULT_PLATFORM` is split into
-`NATIVE_PLATFORM` and `POLYFILLED_PLATFORM`, and a requirement met only by a polyfill answers
-`unverifiable` rather than `installable`.
+mbstring joined the list on 2026-09-08. There is still no iconv, gd, curl or openssl.
+`DEFAULT_PLATFORM` is split into `NATIVE_PLATFORM` and `POLYFILLED_PLATFORM`, and a requirement met
+only by a polyfill answers `unverifiable` rather than `installable`.
 
 Function-name evidence is actively misleading: opcache's `func_info` table names functions from
 extensions the build does not have.
+
+#### The Nine Inherited Absences, Scored
+
+`phasm/src/rc/control.rc` records that the zero-list was reconstructed from another binary's
+`CONFIGURE_COMMAND` string, so most entries carried no reason at all. Scored 2026-09-08 by counting
+unambiguous call sites across `drupal-src` -- core, vendor and 65 contrib modules -- with
+`symfony/polyfill-*` excluded, because a polyfill DEFINES the symbol precisely when the extension may
+be absent and counting it inverts the reading.
+
+| extension | call sites | verdict |
+| --- | --- | --- |
+| `bcmath` | 0 | refused |
+| `calendar` | 0 | refused |
+| `exif` | 0 | refused |
+| `phar` | 0 | refused |
+| `intl` | 0 | refused |
+| `tidy` | 2, both `webform`, one a Drush command and one its docs generator | refused |
+| `xmlreader` | 1 file, `migrate_plus`'s XML data parser | refused, recorded as a ceiling |
+| `zip` | core's `Archiver\Zip` unguarded; 3 contrib all `class_exists`-guarded | refused |
+| `xmlwriter` | 2 contrib modules SUBCLASS it | refused; the stand-in is the implementation |
+
+**`intl` reads zero, and the first run of the same census said 249 hits in 106 files.** That reading
+was `Normalizer` -- Symfony's SERIALIZER interface, which Drupal's serialization module is built out
+of -- plus a bare `Locale`. Against the unambiguous symbols it is zero, and core's
+`composer.json` names no `ext-intl` while shipping `polyfill-intl-grapheme`, `-idn` and
+`-normalizer`. The claim is bounded to the measured population: `drupal/commerce` requires `ext-intl`
+hard and is not in this tree.
+
+The composer channel agrees. Across those 65 modules the `ext-*` requirements are `ext-json` x4,
+`ext-xmlwriter` x2, and one each of `ext-soap`, `ext-simplexml`, `ext-relay`, `ext-redis` and
+`ext-dom`.
+
+**The census found a defect, and it was in a polyfill rather than in a missing extension.**
+`XMLWRITER_FIX` was inventoried against `simple_sitemap`, and its own docblock stated that nothing
+calls `openUri`, `writeRaw` or `flush`. `xmlsitemap`'s `XmlSitemapWriter` calls `openUri()` in its
+CONSTRUCTOR and `writeRaw()` on every link, so every sitemap generation on that module died on an
+undefined method -- while the module read `verified`, because an enable-and-assert run resolves its
+services and never writes a sitemap. Both methods are implemented now, `flush()` returns bytes for a
+uri writer and the document for a memory one as libxml does, and three new cases in
+`tests/node/xmlwriter-parity.spec.ts` compare against the real extension byte for byte.
+
+Inventory a stand-in against every subclass in the tree, not against the one that prompted it.
+
+#### gd, Refused on a Measurement
+
+`drupal/core` requires `ext-gd` hard, so the question was whether a correctness gap follows from not
+having it. It does not. `CfwImageToolkit::parseFile()` answers width, height and mime from
+`getimagesize()`, which lives in `ext/standard` rather than in gd -- true of php-src and silent about
+any given wasm build, so it was measured on the shipping binary with `gd` confirmed absent in the
+same reading:
+
+| file | reading |
+| --- | --- |
+| the shipped druplicon PNG | 88x100, `image/png` |
+| a WebP from the delivery path | 80x91, `image/webp`, `IMAGETYPE_WEBP` 18 |
+| a JPEG from the delivery path | 60x68, `image/jpeg` |
+| a text file | `false`, which is what `isValid()` rests on |
+
+So image fields store real dimensions, `max_resolution` validation runs, and a file that is not an
+image is refused. What gd would add is pixel work inside the 128 MiB isolate on the fill path,
+against a front-worker encoder that already produces WebP the isolate cannot. Zero of the 65 contrib
+modules requires `ext-gd`, and composer never runs on the edge.
+
+The ceiling that remains: contrib calling `imagecreatefrom*` directly gets `ShimRegistry`'s named
+refusal, which `hook_requirements` already reports.
 
 ### mbstring
 
@@ -1976,24 +2527,66 @@ sample.
 
 | measurement | before | after |
 | --- | --- | --- |
-| the 1,232-case corpus | 77 | 37 |
-| Drupal core's exposure within it | 33 | **0** |
+| the corpus, 1,302 cases as of 2026-09-07 | 77 | 47 |
+| Drupal core's exposure within it | 33 | **10** |
 | `mb_strtolower` over the full space | 95 | 0 |
 | `mb_convert_case` titlecase | 273 | 0 |
 | `mb_strwidth` | 9,733 | 0 |
+
+**Read those from the instrument, not from here.** The corpus grows, and this table said 1,232 / 37
+with a core exposure of **0** while `bun run measure:mb-parity` said 1,302 / 47 / 10; `packagist.ts`
+carried a third figure. A parity count is a property of the corpus on the day it ran.
 
 The tables are generated FROM mbstring and live on the asset layer (+1,034 gz there against +4,690
 inlined). Generate them through workerd, whose `toLowerCase` is byte-exact against native mbstring;
 node's ICU is 28 codepoints off. `tests/unit/drupal/unicode-workerd.spec.ts` runs the casing sweep
 inside workerd on every commit.
 
-The 37 remaining cases are all invalid-byte input to `mb_str_split`, `mb_lcfirst`, `mb_trim` and
-`mb_str_pad`, none reachable from core, and they are not closed by sanitising harder -- that
-regresses 19 cases that pass today. What closes them is reproducing mbstring's error-marker model.
+Most of the remainder is invalid-byte input to `mb_str_split`, `mb_lcfirst`, `mb_trim` and
+`mb_str_pad`, which is not closed by sanitising harder -- that regresses 19 cases that pass today.
+What closes those is reproducing mbstring's error-marker model.
 
-Compiling the extension is **+586,648 gz**, and faking it is worse: a stub module entry **segfaults,
-exit 139**, because both Symfony bootstraps branch on `extension_loaded('mbstring')` and the stub
-makes `iconv_strrpos()` and `mb_strrpos()` recurse into each other.
+**Ten are reachable from core and they are one function.** `mb_convert_encoding($s, 'EUC-JP')` returns
+`false` for every input including pure ASCII, where the extension returns bytes; GBK and
+Windows-1252 substitute differently. Core has three call sites. The polyfill also defines 22 fewer
+functions than the extension (`mb_strcut`, `mb_convert_kana`, `mb_parse_str`, the `mb_ereg_*` family),
+and calling one of those is a fatal rather than a wrong answer; no caller exists in core or vendor.
+
+Faking the extension is worse than either: a stub module entry **segfaults, exit 139**, because both
+Symfony bootstraps branch on `extension_loaded('mbstring')` and the stub makes `iconv_strrpos()` and
+`mb_strrpos()` recurse into each other.
+
+Compiling it was refused at **+586,648 gz** against ~222,000 bytes of headroom, and that ceiling no
+longer exists. Re-measured 2026-09-07 from a matched pair in `vendor/` differing only in this
+extension (`static-o2` against `static-mbstring`, both 8.3.11 wasm32, 22 against 23 extensions):
+**+1,097,508 raw bytes**, of which **+646,396 is data written into linear memory** across 3,601
+additional active segments, and `WebAssembly.compile` +0.9 ms locally.
+
+The speed case is close to absent, because the ASCII fast path already collected it. Three real
+renders make 101, 112 and 114 `mb_*` calls, of which `mb_check_encoding` is 55-65%; on that mix the
+shim costs ~120 us of a ~23 ms render, **about 0.5%**, and it is FASTER than the extension on long
+ASCII `mb_strtolower` because it calls `strtolower()`. What reopens the question is the ten core
+divergences, the 22 absent functions, and `ext-mbstring` moving from `POLYFILLED_PLATFORM` to
+`NATIVE_PLATFORM` so contrib requirements stop degrading to `unverifiable`.
+
+**Edge startup is measured, 2026-09-08: +2 ms, 0.2% of the 1,000 ms budget.** The same matched pair,
+each arm imported as `CompiledWasm` and INSTANTIATED at module scope on a throwaway free worker, n=4
+interleaved: `static-o2` 9 / 8 / 11 / 10 ms against `static-mbstring` 12 / 11 / 11 / 12. Instantiation
+is the step that matters, because a `CompiledWasm` import is compiled by the platform ahead of time
+and importing alone would price the code section, while the growth here is 3,601 additional active
+segments in the data section. Every reading reported 1,536 memory pages and 95 imports, so the
+segment copy ran in each.
+
+**A first pass read +8 ms and was measuring a cache.** Re-uploading identical bytes gave 18, 14, 10,
+11 -- a falling series that reads as noise and is better explained by a compile cached on content
+hash, which makes every reading after the first an under-report. Appending a unique wasm custom
+section per upload gives each one a distinct hash and a cold compile; a custom section is ignored by
+validation, so nothing else about the module changes.
+
+Two things a session doing it must not re-derive. `WITH_MBSTRING=static` emits `--with-mbstring`,
+which `ext/mbstring/config.m4` silently ignores; it has to go through `CONFIGURE_FLAGS` as
+`--enable-mbstring --disable-mbregex`. And the cost to watch is the isolate rather than the bundle:
++0.62 MiB against 19.50 MiB of headroom, with the extension's runtime buffers unmeasured on top.
 
 ### The Clock
 
@@ -2008,15 +2601,16 @@ fact: `nowMs()` is `Date.now()` and arms every alarm and every `expires_at`.
 
 ## Defect Classes
 
-Six shapes account for most of what has gone wrong here. Each has a guard that fails on the shape
-rather than on one instance.
+These shapes account for most of what has gone wrong here. Each has a guard that fails on the shape
+rather than on one instance. Count them off the list rather than quoting a total; this line said six
+against seven entries.
 
 **Built, tested, and read by nobody.** A module is imported by its unit test and by nothing under
 `src/`, so it is green on every commit and absent from every deployed site. `bun run check:reachability`
 walks imports from the wrangler `main` and classifies every module as `edge` / `probe` / `script` /
 `dead`; `tests/node/reachability.spec.ts` fails on a new dead module **and on a stale exemption**.
-Probes are correctly unreachable, which is why the scan separates them rather than counting 45
-problems to hide 5. The scan also reports exports only tests mention -- usually the legitimate
+Probes are correctly unreachable, which is why the scan separates them rather than counting 44
+problems to hide 6. The scan also reports exports only tests mention -- usually the legitimate
 "exported for its unit test" pattern, and sometimes a function whose writer stopped calling it.
 
 **An invariant enforced on one path and asserted on another.** Two serving lanes exist and guards
@@ -2053,6 +2647,68 @@ spec comparing the alias key to what `src/site-do.ts` imports.
 **A hand-written list of what the code emits.** An assertion enumerating tiers, headers or states
 goes stale in both directions -- naming values the source does not emit and omitting ones it does.
 Export the list from `src/` and hold the const in both directions.
+
+**A probabilistic write read as suite contention.** `replica-invariant.spec.ts` failed twice across
+sessions with `{ table: 'sessions', statements: 1, rows: 0 }`, passed alone, and was filed as
+contention because a slower object was the visible difference. It is
+`session.gc_probability = 1 / gc_divisor = 100`: PHP sweeps `sessions` on ~1% of `session_start()`
+calls, and a full gate gives the coin more throws than a solo run. Forcing the sweep reproduces the
+signature exactly, so no repeated full run was needed to attribute it. When a failure is intermittent
+at a low rate, look for a probability in the code before reaching for load.
+
+The resolution is a classification rather than a suppression: the host already performs the identical
+`DELETE FROM sessions WHERE timestamp < ?` from `EXPIRED_ROW_RULES`, so a replica running it
+converges on the same set the primary does. Writing a session row stays authoritative; sweeping
+expired ones does not. Same table, two effects, which is the `key_value` lesson aimed somewhere new.
+
+**A verification that cannot reach what it verifies.** `gitVerifyBoot()` was the gate on every git
+pull and every uploaded revision, and it passed a `.module` full of nonsense, the same file with the
+module enabled, and a malformed `.info.yml`. `DrupalKernel::boot()` builds the container out of
+`cache_container`, so a boot reads no module file at all; `ModuleHandler::loadAll()` is what includes
+them and it runs during `preHandle()`. It also read a NULL result as a pass, and a null is exactly
+what a parse error produces -- `include` raises E_COMPILE_ERROR, no `try` sees it, and the run dies
+before printing a verdict. Both halves are fixed and the rollback now names the parse error.
+
+**A non-reentrant gate acquired twice.** `fetch()` runs the whole router inside `this.gate.run()`, so
+a route calling a helper that acquires the gate again awaits a release that only happens when the
+router returns. `/updb` hung past every timeout on a fresh object and read as a platform fault. The
+same hour was lost once before and the comment recording it sits fifty lines away; a helper written
+for `alarm()`, which is its own event, is not safe to call from a route without saying which one is
+holding what.
+
+**A default naming something the deployment may not have.** `settings.php` assigned
+`system.mail:interface.default = cfw_mail` unconditionally. `cfw_mail` is a plugin of the `drupflare`
+module, the shipped `core.extension` does not carry it, and `MailManager` throws
+`PluginNotFoundException` on a plugin id it cannot resolve -- so `/user/password` answered 500 on every
+site. An assignment cannot know whether its provider is installed; a `ConfigFactoryOverride`
+registered BY the module can only run when the module is there, and it yields to `smtp` when a site
+has `smtp`. **Prefer the override to the assignment whenever the value names a plugin, a service or a
+theme**, and assert both directions: absent the module, the stock value survives.
+
+**A per-request static that no reset clears.** The interpreter does not die between requests, so every
+plain static is process state. `Html::$seenIds` was found and fixed; `Html::$isAjax` is one static
+over on the same class, `resetSeenIds()` does not touch it, and
+`AjaxResponseSubscriber::onRequest` sets it true on any `_drupal_ajax` request. Left true,
+`Html::getUniqueId()` takes its `Crypt::randomBytesBase64(8)` branch **for the rest of the
+incarnation**, so every id on every later render differs on every request and a stored page stops
+matching a fresh one. `BOUNDARY_STATE` names the carriers and `static-sweep.spec.ts` fingerprints every
+static of every declared class -- but the blind half compares two objects, so a carrier that only
+moves under an input neither object supplies reads clean on both. **When fixing one of these, check
+the neighbouring statics on the same class**; this one sat two lines from its sibling's fix.
+
+**A refusal that the test harness reads as a fault.** Chromium logs its own console error for every
+non-2xx response whether or not the page handled it, so the browser lane's console guard failed any
+spec asserting that a refusal renders correctly. The guard is right to have no general allow-list; the
+exemption is per-test and per-status, `test.use({ refusals: [401] })`, so an undeclared refusal still
+fails.
+
+**A path the chain proves it cannot satisfy, retried forever.** `/user/password` renders correctly and
+Drupal marks the response `private, no-store` because of its CSRF token, so the fill renders it,
+declines to store it, deletes the queue row, and the next visitor gets 503 `warming` and re-queues.
+On an idle object that never converges, and the symptom reads as a slow site rather than a broken
+page. Record the verdict: a path the chain has PROVEN unstorable is lifted out of the cold inline
+refusal rather than being asked again. The general form is that a retry loop needs a terminating
+observation, not just a bound.
 
 ---
 
@@ -2140,6 +2796,7 @@ wrong, not the system.
 | `src/runtime/` | the mount, the lazy FS, the interrupt mask, the gate, and the binary seam |
 | `src/db/` | codec bridge, chunked migration, export/import, durable files, heap store, write tally |
 | `src/ops/` | cron, sliced updates, plan and thresholds, health ladder, identity, mirrors, setup pages |
+| `src/ui/` | the `/_cfw` owner surface: thresholds, extend, commands, deploy manifest, git remotes |
 | `src/probes/` | frozen measurement instruments, each its own entrypoint |
 | `assets/drupal/` | the packed standard tree and `site.sqlite` |
 | `assets/drupal-pf/`, `assets/drupal-sql/` | the per-file pack the object mounts, and the migration chunks |
@@ -2177,9 +2834,9 @@ bun run test               # vitest: --project=workers --project=node
 bun run typecheck          # all three tsconfig projects; bare `tsc` covers one
 bunx prettier --check .
 bun run check:reachability # which modules the edge imports; which are dead
-bun run release:check      # the shipping bundle against the 3 MiB ceiling
+bun run release:check      # the shipping bundle against the 64 MiB uncompressed limit
 bun run assets:driver      # repack after any change in a sibling repo
-bun run backup:verify      # 40 CDN keys, no credentials
+bun run backup:verify      # 35 live + 6 archived CDN keys, no credentials
 ```
 
 Three vitest projects exist because workerd cannot do `node:child_process` or `node:fs`: `workers`

@@ -61,6 +61,8 @@ jobs:
         run: bun run prettier:check
       - name: Pack the Drupal Modules
         run: bun run assets:driver
+      - name: Check the Packed Modules Against the Published Versions
+        run: bun run check:driver-drift
       - name: Run Vitest Suites
         run: bun run test
 

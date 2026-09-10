@@ -108,6 +108,19 @@ function reachableFrom(entry: string): Set<string> {
 const EXPORTED =
 	/^export\s+(?:async\s+)?(?:function|const|let|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm;
 
+/**
+ * Source with comments blanked, so a name in prose does not count as a caller.
+ *
+ * Newlines are kept, which keeps line numbers usable in anything that reports against this. Crude by
+ * design: a `//` inside a string literal is stripped too, which can only ever REMOVE a match and so
+ * moves an export toward "unused" -- the direction that gets looked at rather than waved through.
+ */
+function stripComments(source: string): string {
+	return source
+		.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+		.replace(/(^|[^:])\/\/[^\n]*/g, (_m, lead: string) => lead);
+}
+
 function exportsOf(source: string): string[] {
 	return [...source.matchAll(EXPORTED)].map((m) => m[1] ?? '').filter(Boolean);
 }
@@ -155,7 +168,7 @@ function main(): void {
 
 	// one concatenated haystack of everything that SHIPS, so an export referenced only by its own
 	// spec file does not count as used
-	const edgeSource = [...edge].map((f) => readFileSync(f, 'utf8')).join('\n');
+	const edgeSource = [...edge].map((f) => stripComments(readFileSync(f, 'utf8'))).join('\n');
 
 	// what the tests reach. An export that only tests mention is GREEN IN CI AND DEAD IN PRODUCTION,
 	// which is the exact shape the health layer shipped in, so it is reported separately from an
@@ -165,11 +178,15 @@ function main(): void {
 		.join('\n');
 
 	const unusedExports: { file: string; name: string; testOnly: boolean }[] = [];
+	// counted over CODE only: a name mentioned in a docblock read as a caller, so an export whose
+	// only remaining reference was prose scored as reached
+
 	for (const file of edge) {
 		const rel = relative(ROOT, file);
 		if (rel === relative(ROOT, ENTRY)) continue;
-		const source = readFileSync(file, 'utf8');
-		for (const name of new Set(exportsOf(source))) {
+		const raw = readFileSync(file, 'utf8');
+		const source = stripComments(raw);
+		for (const name of new Set(exportsOf(raw))) {
 			// a word-boundary count is enough here: the codebase has no dynamic property access
 			// into these modules
 			const pattern = new RegExp(`\\b${name}\\b`, 'g');

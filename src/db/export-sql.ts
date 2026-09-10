@@ -84,8 +84,24 @@ export const SECRET_META_KEYS = new Set([
 	'owner_token',
 	'cf_oauth_token',
 	'cf_oauth_client_id',
-	'hash_salt'
+	'hash_salt',
+	// the SMTP password, in plaintext inside a JSON blob; see `mailEnvFromSite()`
+	'site_smtp_settings'
 ]);
+
+/**
+ * Key PREFIXES a dump withholds, for credentials whose key carries an id.
+ *
+ * AN EXACT LIST CANNOT COVER A KEY THAT IS COMPUTED. Three credentials arrived after the set above
+ * was written and none of them could ever have matched it: `git_token_<remoteId>` and
+ * `git_token_pending` hold a provider token with repository write scope, and
+ * `git_hooksecret_<remoteId>` holds the webhook signing secret. A dump is handed to migration
+ * tooling, to support and to backup storage, so each was a live credential leaving the site.
+ *
+ * A prefix rather than another enumeration, because the id is minted per remote and the next
+ * feature that keys a secret by id would repeat the same miss.
+ */
+export const SECRET_META_PREFIXES = ['git_token_', 'git_hooksecret_'] as const;
 
 /**
  * The same keys as SQLite's `hex()` renders them.
@@ -104,6 +120,14 @@ const SECRET_META_HEX = new Set(
 	)
 );
 
+/** the prefixes as hex, so a computed key can be matched without decoding every row */
+const SECRET_META_HEX_PREFIXES = SECRET_META_PREFIXES.map((p) =>
+	[...new TextEncoder().encode(p)]
+		.map((b) => b.toString(16).padStart(2, '0'))
+		.join('')
+		.toUpperCase()
+);
+
 /** whether this row is one of them; the key is column `k` of `cfw_meta` and nothing else */
 export function isSecretMetaRow(
 	table: string,
@@ -113,7 +137,10 @@ export function isSecretMetaRow(
 	if (table !== 'cfw_meta') return false;
 	const at = columns.indexOf('k');
 	if (at < 0) return false;
-	return SECRET_META_HEX.has(String(raw[`h${at}`] ?? '').toUpperCase());
+	const hex = String(raw[`h${at}`] ?? '').toUpperCase();
+	if (SECRET_META_HEX.has(hex)) return true;
+	// hex is two characters per byte, so a byte prefix is a string prefix and needs no decode
+	return SECRET_META_HEX_PREFIXES.some((p) => hex.startsWith(p));
 }
 
 export interface DumpOptions {

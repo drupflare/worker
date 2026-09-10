@@ -50,6 +50,15 @@ export type PlanEntry = {
 	readonly path: string;
 	readonly dir?: boolean;
 	readonly optional?: boolean;
+	/**
+	 * Checked into git rather than produced by a build step.
+	 *
+	 * A payload carries it like any other asset; what differs is that no `LOCAL_STEPS` entry
+	 * builds it, so `build-from-source.spec.ts` would otherwise read it as an artifact with no
+	 * producer. The exemption is earned rather than asserted: that spec requires the file to be
+	 * tracked, so this flag cannot hide a genuinely missing build step.
+	 */
+	readonly tracked?: boolean;
 };
 
 /**
@@ -60,6 +69,9 @@ export type PlanEntry = {
  * directions instead, so the two cannot drift without failing.
  */
 export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
+	// core's own crawler contract, published by the asset layer so it costs no Worker request.
+	// Tracked rather than generated, which is why no build step produces it
+	{ path: 'assets/robots.txt', tracked: true },
 	{ path: 'assets/driver.json' },
 	{ path: 'assets/prefill.json' },
 	{ path: 'assets/core', dir: true },

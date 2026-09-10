@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
 	existsSync,
 	mkdirSync,
@@ -441,14 +441,41 @@ describe('a source-built tree carries everything the payload does', () => {
 			// a checkout with no contrib theme, and demanding one there is what broke `build:local`
 			asset.optional
 				? false
-				: // a payload DIRECTORY entry is covered by a step producing anything inside it: `sql`
-					// names `drupal-sql/manifest.json`, because a directory that exists and is empty
-					// is not built
-					asset.dir
-					? !produced.some((p) => p.startsWith(`${asset.path}/`))
-					: !produced.includes(asset.path)
+				: // a TRACKED entry is in git, so a source build already has it. The exemption is
+					// checked below rather than trusted, because a flag that only has to be
+					// declared is a way to wave through a missing build step
+					asset.tracked
+					? false
+					: // a payload DIRECTORY entry is covered by a step producing anything inside it: `sql`
+						// names `drupal-sql/manifest.json`, because a directory that exists and is empty
+						// is not built
+						asset.dir
+						? !produced.some((p) => p.startsWith(`${asset.path}/`))
+						: !produced.includes(asset.path)
 		).map((a) => a.path);
 		expect(unproduced, 'the payload ships an artifact nothing here builds').toEqual([]);
+	});
+
+	it('only lets a TRACKED asset skip having a producer, and checks it is tracked', () => {
+		const tracked = PAYLOAD_ASSETS.filter((a) => a.tracked);
+		expect(tracked.length, 'nothing claims the exemption').toBeGreaterThan(0);
+		for (const asset of tracked) {
+			// it exists, and git is NOT excluding it. `ls-files` would be the stronger check and
+			// cannot be used: it answers no for a file that is staged for its first commit, so the
+			// gate would go red on the commit that introduces one. Not-ignored is the property
+			// that matters anyway -- the hazard is a flag on a path `.gitignore` withholds, which
+			// is how a payload would ship short while every list agreed
+			expect(existsSync(join(ROOT, asset.path)), `${asset.path} does not exist`).toBe(true);
+			// `check-ignore` exits 1 when the path is NOT ignored, so the STATUS is the answer and
+			// a thrower would report the passing case as a failure
+			const probe = spawnSync('git', ['check-ignore', '--no-index', asset.path], {
+				cwd: ROOT,
+				encoding: 'utf8'
+			});
+			expect(probe.status, `${asset.path} is gitignored, so no clone will carry it`).not.toBe(
+				0
+			);
+		}
 	});
 
 	it('marks only the port-binding step optional', () => {

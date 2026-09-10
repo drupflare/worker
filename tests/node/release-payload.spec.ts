@@ -71,6 +71,7 @@ function checkout(seam: string, ignore?: string): string {
 		ignore ??
 			[
 				'/*',
+				'!/robots.txt',
 				'!/driver.json',
 				'!/prefill.json',
 				'!/core/',
@@ -85,6 +86,7 @@ function checkout(seam: string, ignore?: string): string {
 			].join('\n')
 	);
 	writeFileSync(join(root, 'assets/drupal/twig-bake.json'), '{"prefix":"x"}');
+	writeFileSync(join(root, 'assets/robots.txt'), 'User-agent: *\n');
 	writeFileSync(join(root, 'assets/driver.json'), '{"a":"b"}');
 	writeFileSync(join(root, 'assets/prefill.json'), '{}');
 	writeFileSync(join(root, 'assets/core/misc/drupal.js'), 'window.Drupal = {};');

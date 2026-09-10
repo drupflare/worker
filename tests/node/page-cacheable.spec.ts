@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -82,9 +82,24 @@ describe('the shipped page cache configuration', () => {
 });
 
 describe('what a render has to NOT say for a page to be stored', () => {
-	// the literal `fillOne()` tests against; kept here so a change to either side is visible
+	/**
+	 * The predicate is READ OUT OF `fillOne()` rather than restated here.
+	 *
+	 * A copy of the literal with a comment asking the next reader to keep it in step is the
+	 * second-copy shape this repository is bitten by most, and it fails in the direction that reads
+	 * as working: the cases below would keep passing against a regex the shipping code no longer
+	 * carries. `refused` is not exported -- it is one line inside the Durable Object, which the node
+	 * lane cannot import -- so the source is the seam.
+	 */
+	const SOURCE = readFileSync(resolve(ROOT, 'src', 'site-do.ts'), 'utf8');
+	const literal = /const refused = \/(.+?)\/([a-z]*)\.test\(/.exec(SOURCE);
+
+	it('finds the refusal literal in fillOne, which is what makes the cases below mean anything', () => {
+		expect(literal, 'no `const refused = /.../.test(` in src/site-do.ts').not.toBeNull();
+	});
+
 	const refuses = (cacheControl: string) =>
-		/(^|,)\s*(no-store|private)\s*(,|$)/i.test(cacheControl);
+		new RegExp(literal?.[1] ?? '(?!)', literal?.[2] ?? '').test(cacheControl);
 
 	it('refuses exactly what Drupal emits at max_age 0', () => {
 		expect(refuses('private, no-store')).toBe(true);

@@ -113,12 +113,27 @@ test.describe('a visitor signs in through the identity provider', () => {
 		// and the nonce and state matched -- none of which a browser could have faked
 		await page.waitForURL(/cfw_oidc=/, { timeout: 60_000 });
 		const landed = new URL(page.url());
-		expect(landed.pathname, 'the callback did not return to where the login started').toBe(
-			'/user/login'
+		// THE ROUTE THAT REDEEMS THE TICKET, and this used to assert `/user/login`. `CfwOidc::complete`
+		// is the only thing that reads `?cfw_oidc`, so a ticket delivered anywhere else is spent
+		// nowhere -- which is exactly what shipped, because the callback redirected to `returnTo`
+		expect(landed.pathname, 'the ticket was not delivered to the route that redeems it').toBe(
+			'/drupflare/oidc/complete'
 		);
 		expect(landed.searchParams.get('cfw_oidc') ?? '').not.toBe('');
-		// and the page it landed on rendered, rather than being a JSON refusal the browser displayed
-		await expect(page.locator('form')).toBeVisible();
+		// and where the visitor asked to end up, carried for Drupal's own redirect subscriber
+		expect(landed.searchParams.get('destination')).toBe('/user/login');
+
+		// THE ASSERTION THIS FILE WAS MISSING. It checked that a `form` was visible, which is true
+		// of an anonymous login page -- so the whole journey could complete with the visitor never
+		// signed in, and it did. A session is the only thing that proves the ticket was redeemed
+		await page.waitForURL((u) => !u.searchParams.has('cfw_oidc'), { timeout: 60_000 });
+		const cookies = await page.context().cookies();
+		expect(
+			cookies.some((c) => c.name.startsWith('SESS') || c.name.startsWith('SSESS')),
+			'the journey finished with no session, so the ticket was never redeemed'
+		).toBe(true);
+		await page.goto('/user');
+		await expect(page.locator('body')).not.toContainText('Log in', { timeout: 30_000 });
 	});
 });
 

@@ -163,6 +163,16 @@ export interface PendingLogin {
 
 export const PENDING_TTL_MS = 10 * 60_000;
 
+/**
+ * The module route that redeems a ticket.
+ *
+ * `CfwOidc::complete` is bound to it and is the only thing that reads `?cfw_oidc`. The callback
+ * used to redirect to the visitor's `returnTo`, so the ticket landed on a page with no controller
+ * to spend it and the visitor stayed anonymous with no error. Kept beside `beginLogin()` because
+ * the two ends of the round trip have to agree and nothing else made them.
+ */
+export const OIDC_COMPLETE_PATH = '/drupflare/oidc/complete';
+
 export async function beginLogin(
 	returnTo = '/',
 	nowMs = 0

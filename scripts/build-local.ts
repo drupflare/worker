@@ -31,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { drupalVersion, installedVersion } from './fetch-drupal-tree';
+import { packVersionsHash } from './pack-hash.js';
 
 /** an external program a step shells out to, and how to get it */
 export type ToolId = 'bun' | 'node' | 'php' | 'composer' | 'docker' | 'zstd' | 'git' | 'tar';
@@ -54,6 +55,7 @@ export type StepId =
 	| 'siblings'
 	| 'driver'
 	| 'tree'
+	| 'mount'
 	| 'site'
 	| 'patch'
 	| 'bootstrap'
@@ -61,6 +63,7 @@ export type StepId =
 	| 'core'
 	| 'pack'
 	| 'static'
+	| 'container'
 	| 'sql'
 	| 'prefill';
 
@@ -222,6 +225,34 @@ function contains(path: string, needle: string): boolean {
 }
 
 /**
+ * Whether the packed `cache_container` row is keyed to the hash the pack carries.
+ *
+ * Presence is meaningless here -- the row is always there, it is just keyed to the wrong dependency
+ * set once composer moves.
+ *
+ * An absent artifact is UNSATISFIED, so a tree with nothing on disk runs this like every other step.
+ * What stops it failing there is the ordering: the pack is built at step 12 and the database is
+ * restored by `bun install`, so both exist by the time this runs, and the step declares them as
+ * `inputs` so the runner names whichever is missing rather than failing further in.
+ *
+ * A BYTE SCAN RATHER THAN A QUERY, and the reason is the lane rather than the cost. This module is
+ * imported by `tests/node/build-from-source.spec.ts`, which runs under node, so a `bun:sqlite`
+ * import fails the whole suite at load. The authoritative check is
+ * `tests/node/container-cid.spec.ts`, which reads the row through PDO and asserts its shape; this
+ * one only has to answer whether the step has work to do.
+ */
+function containerRowMatchesPack(root: string): boolean {
+	const sqlite = join(root, 'assets/drupal/site.sqlite');
+	if (!existsSync(sqlite)) return false;
+	try {
+		const needle = `service_container:prod:${packVersionsHash()}:`;
+		return readFileSync(sqlite).includes(Buffer.from(needle, 'utf8'));
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Whether `out` was written after `input`, which is what "already built" means for a REPACK.
  *
  * Presence alone is the wrong key for the two steps that rewrite an artifact an earlier step made:
@@ -321,10 +352,29 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 		note: '~180 MB: the pinned core tarball plus the four contrib modules it does not carry'
 	},
 	{
+		id: 'mount',
+		title: 'write the driver modules into the tree, so a kernel can enable them',
+		produces: ['drupal-src/modules/custom/drupflare/drupflare.info.yml'],
+		inputs: ['drupal-src/core/lib/Drupal.php'],
+		tools: ['bun'],
+		// THE `site` STEP NEEDS THIS NOW. `install-site-db.php` enables `drupflare`, because the
+		// shipped database has it in `core.extension`, and Drupal refuses an id its extension
+		// discovery cannot find: "Unable to install modules drupflare due to missing modules
+		// drupflare". `fetch:drupal --force` deletes the tree whole, so a re-fetch loses the mount.
+		//
+		// Through the packer's own map rather than a copy of the allow-list; a fourth copy of these
+		// modules is what created the drift `drupal/` was deleted for.
+		commands: () => [['bun', 'run', 'assets:driver', '--', '--to=drupal-src']],
+		note: 'the same bytes assets/driver.json carries, written where extension discovery looks'
+	},
+	{
 		id: 'site',
 		title: 'install a Drupal site so a kernel can boot against the tree',
 		produces: ['drupal-src/sites/default/settings.php'],
-		inputs: ['drupal-src/core/lib/Drupal.php'],
+		inputs: [
+			'drupal-src/core/lib/Drupal.php',
+			'drupal-src/modules/custom/drupflare/drupflare.info.yml'
+		],
 		tools: ['php'],
 		// into sites/build, never sites/default: the installer refuses a site that already exists and
 		// sites/default holds the baked Twig cache. The copy is what makes the default site boot
@@ -454,6 +504,23 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 			'every pack SKIPs these extensions because PHP never opens them, and nothing serves a ' +
 			'file out of the MEMFS over HTTP -- so without this step every stylesheet, script and ' +
 			'font 404s'
+	},
+	{
+		id: 'container',
+		title: 'rekey the packed container row to the dependency set the pack carries',
+		produces: [],
+		inputs: ['assets/drupal-pf/core.pf.bin', 'assets/drupal/site.sqlite'],
+		tools: ['bun'],
+		// `getContainerCacheKey()` folds VERSIONS_HASH in, so any composer change in the tree moves it
+		// and the shipped row stops matching. A boot then rebuilds a 482 KB container: 1,024 ms
+		// against 86. The row has to come from the RUNTIME -- a natively baked one embeds this
+		// machine's absolute root -- so this drives `wrangler dev --local` and reads back what the
+		// boot built
+		satisfied: (root) => containerRowMatchesPack(root),
+		commands: () => [['bun', 'run', 'assets:container']],
+		note:
+			'boots the worker, so it needs the interpreter and the pack in place; ' +
+			'tests/node/container-cid.spec.ts fails when this has not run'
 	},
 	{
 		id: 'sql',

@@ -75,15 +75,17 @@ own manifest rather than against a list.
 | 3   | `siblings`    | `.siblings/{drupflare,rom,stream-http}`            | `git`                 |
 | 4   | `driver`      | `assets/driver.json`                               | step 3                |
 | 5   | `tree`        | `drupal-src/`                                      | `composer`, `tar`     |
-| 6   | `site`        | `drupal-src/sites/default/settings.php`            | `php`, step 5         |
-| 7   | `patch`       | the wasm-runtime patches, in place                 | `node`, step 6        |
-| 8   | `bootstrap`   | a first `assets/drupal/core.json`, `core.bin.gz`   | `node`, step 5        |
-| 9   | `twig`        | `assets/drupal/twig-bake.json`, `core.list.json`   | `php`, steps 7 and 8  |
-| 10  | `core`        | the same two, repacked from the list               | `node`, step 9        |
-| 11  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 10               |
-| 12  | `static`      | `assets/core/`                                     | step 5                |
-| 13  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
-| 14  | `prefill`     | `assets/prefill.json`                              | a free port, 1-12     |
+| 6   | `mount`       | the driver modules, inside `drupal-src/`           | `bun`, step 5         |
+| 7   | `site`        | `drupal-src/sites/default/settings.php`            | `php`, step 6         |
+| 8   | `patch`       | the wasm-runtime patches, in place                 | `node`, step 7        |
+| 9   | `bootstrap`   | a first `assets/drupal/core.json`, `core.bin.gz`   | `node`, step 5        |
+| 10  | `twig`        | `assets/drupal/twig-bake.json`, `core.list.json`   | `php`, steps 8 and 9  |
+| 11  | `core`        | the same two, repacked from the list               | `node`, step 10       |
+| 12  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 11               |
+| 13  | `static`      | `assets/core/`                                     | step 5                |
+| 14  | `container`   | the packed `cache_container` row, rekeyed          | a free port, step 12  |
+| 15  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
+| 16  | `prefill`     | `assets/prefill.json`                              | a free port, 1-14     |
 
 ### 1-2, The Interpreter
 
@@ -126,7 +128,7 @@ truth. `siblings` resolves each one in this order and clones only what is missin
 An explicit environment setting outranks an inference from the layout, and the developer layout
 outranks a private clone, so a checkout you are editing is never shadowed by a clone of master.
 
-### 5-7, The Drupal Tree
+### 5-8, The Drupal Tree
 
 `tree` downloads the pinned core tarball from ftp.drupal.org and completes it with the four
 contributed modules the tarball does not carry. It is ~180 MB. A tree already at the requested
@@ -151,7 +153,7 @@ runtime. The patch swaps the class for a synchronous stand-in with the same surf
 all: the default storage hashes the containing directory's mtime into the filename, and a mounted
 MEMFS directory's mtime is mount time.
 
-### 8-13, The Assets
+### 9-15, The Assets
 
 `bootstrap` exists because the packers and the bake read each other's output. `bake-twig.php` builds
 `core.list.json` as _the previous `core.json`, minus the compiled-Twig paths, plus the ones it just
@@ -234,8 +236,30 @@ Four of these orderings fail silently when reversed, which is why
   takes it verbatim, so on a tree with no list there is no file set at all.
 - **`core` before `pack`.** `pack-perfile.ts` reuses `core.json` and never re-globs, which keeps a
   repack a change of format and leaves the set of shipped files alone.
+- **`pack` before `container`.** The row is keyed to the hash the pack carries, so there has to be a
+  pack to read it from.
+- **`container` before `sql`.** `sql` chunks the database into the migration the Durable Object
+  replays, so a rekey after it would ship the old row.
 
-### 14, The Prefill
+### 14, The Container Row
+
+`container` rewrites one row of `assets/drupal/site.sqlite` and produces no file of its own.
+
+`DrupalKernel::getContainerCacheKey()` folds `DrupalInstalled::VERSIONS_HASH` into the cache id, and
+that hash covers every installed composer package. Any change in `drupal-src` moves it, including
+`composer require --dev drupal/<module>`, which is how the contrib lane gets its fixture. When the
+packed row and the pack disagree, the first `$kernel->boot()` on every site misses and rebuilds a
+482 KB container: `kernelBootMs` 1,024 against 86, and roughly 3.7x the heap image.
+
+The row cannot be retargeted by editing its key. A compiled container embeds the absolute root it was
+built against, 27 occurrences of it in a row baked natively, so it has to come from a boot where the
+root is `/drupal`. The step runs `wrangler dev --local`, migrates a throwaway site, renders one page
+and reads back the row that boot rebuilt.
+
+`tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
+disagree. Run the step on its own with `bun run assets:container`, which re-chunks afterwards.
+
+### 16, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
 prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a

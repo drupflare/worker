@@ -134,7 +134,17 @@ describe('the seed cache bins, priced against the storage cap', () => {
 			// The trim RETAINS bytes, and the spec pins the retention rather than a direction, because
 			// a direction is what was wrong last time.
 			const retained = full.afterRender.bytes - trimmed.afterRender.bytes;
-			expect(retained).toBe(SEED_CACHE_TRIM.savedAfterOneRenderFromSourcePack);
+			// WITHIN A PAGE, because `databaseSize` counts whole pages and this is a subtraction of
+			// two rounded numbers: either arm crossing a boundary moves it 4,096 at once. Pinned
+			// exactly, it read 573,440 five times alone and 569,344 in a full suite run and failed
+			// on a tree nobody had touched. The tolerance is the meter's resolution, not a band
+			// widened until the test stopped complaining
+			expect(
+				Math.abs(retained - SEED_CACHE_TRIM.savedAfterOneRenderFromSourcePack)
+			).toBeLessThanOrEqual(SEED_CACHE_TRIM.pageBytes);
+			// and it is a large positive retention rather than the give-it-all-back the traced-list
+			// pack measured, which is the claim the file exists for
+			expect(retained).toBeGreaterThan(0);
 			expect(SEED_CACHE_TRIM.refuted).toBe(false);
 			// the provisioning saving is real on both packs, and was never what was in dispute
 			expect(full.afterMigrate.bytes).toBeGreaterThan(trimmed.afterMigrate.bytes);

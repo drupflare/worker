@@ -1114,8 +1114,18 @@ export const SEED_CACHE_TRIM = {
 	savedAfterOneRender: -176_128,
 	extraRowsOnFirstRender: 227,
 	refuted: false,
-	/** the 11.4.6 from-source pack: bytes retained after one render, n=2 with zero spread */
+	/**
+	 * The 11.4.6 from-source pack: bytes retained after one render.
+	 *
+	 * PAGE-QUANTISED, and recorded as such after "n=2 with zero spread" turned out to be two draws
+	 * from a step function. `databaseSize` counts whole SQLite pages, so this is a subtraction of
+	 * two rounded numbers and moves a full page whenever either arm crosses a boundary. Read
+	 * 573,440 five times in isolation and 569,344 inside a full suite run -- one page apart, which
+	 * is the meter's resolution rather than a change in what the trim retains.
+	 */
 	savedAfterOneRenderFromSourcePack: 573_440,
+	/** the quantum that figure is expressed in; SQLite's default page */
+	pageBytes: 4_096,
 	/** what those bytes buy against the 5 GB account cap */
 	extraTenantsFromSourcePack: 80,
 	/** and what they cost, once, on the meter that binds regeneration */

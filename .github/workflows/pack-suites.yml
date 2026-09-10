@@ -1,0 +1,155 @@
+name: Pack Suites
+
+on:
+  push:
+    branches: [master, ver/*, feat/*]
+  pull_request:
+    branches: [master, ver/*, feat/*]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  STREAM_HTTP_SRC: .siblings/stream-http/src
+  DRUPFLARE_SRC: .siblings/drupflare
+  ROM_SRC: .siblings/rom
+
+jobs:
+  pack-suites:
+    name: The Suites a Pack Unlocks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Out drupflare/stream-http
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/stream-http
+          path: .siblings/stream-http
+      - name: Check Out drupflare/drupflare
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/drupflare
+          path: .siblings/drupflare
+      - name: Check Out drupflare/rom
+        uses: actions/checkout@v7
+        with:
+          repository: drupflare/rom
+          path: .siblings/rom
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
+      - name: Cache the Restored Interpreter
+        uses: actions/cache@v6
+        with:
+          path: .interp
+          key: interp-${{ hashFiles('cdn-manifest.json') }}
+
+      - name: Resolve Drupal Version
+        id: drupalver
+        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Drupal Tree
+        uses: actions/cache@v6
+        with:
+          path: drupal-src
+          key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Cache the Built Pack
+        uses: actions/cache@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Build the Pack From Source
+        run: bun run build:local
+      - name: Pack the Drupal Modules
+        run: bun run assets:driver
+
+      - name: Run the Gate With the Pack Asserted
+        env:
+          REQUIRE_ARTIFACTS: '1'
+        run: bun run test
+
+      - name: Start the Rig
+        run: |
+          docker compose -f docker/compose.yml up -d greenmail redis syslog gitea
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3300/api/v1/version >/dev/null; then
+              echo "gitea reachable"
+              break
+            fi
+            sleep 3
+          done
+
+      - name: Start a Worker for the e2e Lane
+        run: |
+          bun run dev > /tmp/dev.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:8787/stats?site=e2e" >/dev/null 2>&1; then
+              echo "worker reachable"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "the worker never answered on 8787"
+          tail -50 /tmp/dev.log
+          exit 1
+
+      - name: Populate the e2e Site
+        run: |
+          curl -sf "http://127.0.0.1:8787/migrate?site=e2e&all=1" > /dev/null
+          curl -sf "http://127.0.0.1:8787/fill?site=e2e&path=/" > /dev/null
+
+      - name: Run the e2e Lane
+        env:
+          CFW_E2E_SITE: e2e
+        run: bun run test:e2e
+
+      - name: Worker Log on Failure
+        if: ${{ failure() }}
+        run: tail -200 /tmp/dev.log || true
+
+      - name: Stop the Rig
+        if: ${{ always() }}
+        run: docker compose -f docker/compose.yml down -v || true
+
+      - name: Pack Suites to Job Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## Pack suites"
+            echo
+            echo "Two lanes that had never run on any commit."
+            echo
+            echo "- \`REQUIRE_ARTIFACTS=1 bun run test\`: without a pack the gate EXCLUDES the specs"
+            echo "  in \`tests/artifact-specs.ts\` and prints what it dropped, so they were invisible"
+            echo "  on every push. Only the release lane set the flag, and that lane needs a"
+            echo "  published release."
+            echo "- \`bun run test:e2e\`: the vitest \`e2e\` project is excluded from \`bun run test\`"
+            echo "  by design, and no workflow ran it. Its gate throws rather than skips when \`CI\`"
+            echo "  is set, so an unreachable worker fails here instead of passing quietly."
+          } >> "$GITHUB_STEP_SUMMARY"

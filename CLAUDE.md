@@ -849,6 +849,45 @@ produced zero rows on all three arms, including the one the docs say is billed, 
 `workersInvocationsAdaptive` counts invocations and cannot see a billed non-invocation. Do not record
 the doc's sentence as a measurement.
 
+## `config/` is the declaration and `src/ops/generated/` is what the edge reads
+
+`config/modules.yml` holds the contrib census and the cron hook policy. It names NO versions --
+`composer.lock` stays authoritative for those -- and stores no labels, because `labelFor()` derives
+them. Adding a module is one entry there and nothing else: `tests/node/config-generated.spec.ts`
+asserts every declared module reaches `moduleTable()`, which README.md is compared against.
+
+A Worker has no filesystem, so the YAML cannot be read at runtime. `bun run gen:config` compiles it to
+`src/ops/generated/modules.ts` and `module-tiers.ts`, `module-table.ts` and `cron.ts` import from
+there -- the same generated-TS pattern as `shipped-lock.ts` and `driver-digest.ts`. That makes a
+second copy, so `bun run gen:config:check` and the spec fail when the two disagree. `src/ops/generated/`
+is prettier-ignored, or the formatter and the generator rewrite each other forever.
+
+**The round trip was verified lossless before the old maps were deleted**: 66 table rows deep-equal to
+the pre-refactor values with the array order unchanged, and only the tier map's iteration order moved.
+Do that check before replacing a hand-maintained map with a generated one.
+
+## The container row is keyed to the PACK, and the guard that missed it compared the wrong tree
+
+`DrupalKernel::getContainerCacheKey()` folds `DrupalInstalled::VERSIONS_HASH` in, so any composer
+change moves it. When `assets/drupal/site.sqlite` and `assets/drupal-pf` disagree, every first
+`$kernel->boot()` rebuilds a 482 KB container: 1,024 ms against 86, and ~3.7x the heap image.
+
+**IT RECURRED ON 2026-09-09 AND `container-cid.spec.ts` WAS SKIPPING.** It compared the database
+against `drupal-src`, which is not what boots, and therefore needed a `fixtureTree()` escape hatch --
+which fires on any tree carrying `composer require --dev drupal/<module>`, the documented way to get
+the contrib fixture. So the check was off on every machine able to run that lane, and the three heap
+specs caught the drift instead, by magnitude, naming nothing. Pack against database needs no hatch.
+
+**The cid cannot be retargeted by editing it.** A compiled container embeds the absolute root it was
+built against; a natively baked row carries 27 build-machine paths. The row has to come from a boot
+where the root IS `/drupal`, which is why `bun run assets:container` drives `wrangler dev --local`
+rather than baking one with `php`. Two traps in that capture: `/fill` on an empty queue returns in
+milliseconds having booted nothing, so a serve must queue the path first; and `hex(data)` on a 482 KB
+row drops the connection, so it is read in 64 KiB slices.
+
+Use the canonical `wrangler.jsonc`, not `wrangler.bench.jsonc` -- bench aliases the brotli seam and
+`.interp/php8.5.wasm.br` lags the glue, which aborts the boot with `ASM_CONSTS[e] is not a function`.
+
 ## Commands
 
 **VITEST 4'S DEFAULT REPORTER HIDES CONSOLE OUTPUT FROM PASSING TESTS, and every `DRUPFLARE_MEASURE`
@@ -861,6 +900,9 @@ bun run test      # vitest: --project=workers --project=node
 bun run typecheck # tsc --noEmit
 bunx prettier --check .
 bun run assets:driver      # repack after ANY change in a sibling
+bun run gen:config         # config/modules.yml -> src/ops/generated/modules.ts
+bun run gen:config:check   # fail if the generated copy is stale
+bun run assets:container   # rekey the packed cache_container row, then re-chunk
 bun run test:health        # the sibling's health suite
 bun run check:reachability # which modules the edge imports; which are dead
 

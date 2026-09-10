@@ -206,6 +206,79 @@ test.describe('the surface acts on the site', () => {
 		await page.goto(`${SURFACE}?images=2000&styles=10`);
 		await expect(page.locator('body')).toContainText('20,000');
 	});
+
+	test('Deploy refuses an empty client id rather than starting a flow', async ({ page }) => {
+		// the ONE action this page has, and it was covered only by "the page opens". The handler is
+		// inline, so a CSP that blocked it would leave a button that submits the form and navigates
+		await page.goto(`${SURFACE}/deploy`);
+		await page.locator('#cfoauth button[type="submit"]').click();
+		await expect(page.locator('#cfoauth-out')).toContainText('Enter the client ID');
+		// still on the page: the listener called preventDefault, so the form did not navigate
+		expect(new URL(page.url()).pathname).toBe(`${SURFACE}/deploy`);
+	});
+
+	test('Deploy hands off to Cloudflare with the callback this origin answers', async ({
+		page
+	}) => {
+		// THE HANDOFF IS INTERCEPTED, NOT FOLLOWED. `/setup/cf?action=connect` does not validate the
+		// client id -- Cloudflare does -- so submitting one really navigates to dash.cloudflare.com.
+		// A test that let it would depend on their service and log their console errors as ours.
+		let authorize: URL | null = null;
+		await page.route('https://dash.cloudflare.com/**', async (route) => {
+			authorize = new URL(route.request().url());
+			await route.abort();
+		});
+
+		await page.goto(`${SURFACE}/deploy`);
+		await page.locator('#cfoauth input[name="client_id"]').fill('probe-client-id');
+		await page.locator('#cfoauth button[type="submit"]').click();
+		await expect.poll(() => authorize !== null).toBe(true);
+
+		const url = authorize as unknown as URL;
+		expect(url.pathname).toBe('/oauth2/auth');
+		expect(url.searchParams.get('client_id')).toBe('probe-client-id');
+		expect(url.searchParams.get('response_type')).toBe('code');
+		// the redirect_uri has to be THIS origin's callback, which is the half a route test cannot
+		// see: the page composes it from where it is served rather than from a constant
+		const redirect = new URL(url.searchParams.get('redirect_uri') ?? '');
+		expect(redirect.origin).toBe(new URL(BASE_URL).origin);
+		expect(redirect.pathname).toBe('/setup/cf/callback');
+	});
+
+	test('Deploy offers no control that appears to provision', async ({ page }) => {
+		// the page's own contract: "a button that appeared to work would be worse than no button".
+		// Nothing asserted it, so a provisioning button added later would ship unchallenged
+		await page.goto(`${SURFACE}/deploy`);
+		const buttons = page.locator('button, input[type="submit"]');
+		const labels: string[] = [];
+		for (let i = 0; i < (await buttons.count()); i++) {
+			labels.push(((await buttons.nth(i).textContent()) ?? '').trim());
+		}
+		// the OAuth connect is the only one, and it starts a consent flow rather than provisioning
+		expect(labels).toEqual(['Connect With Cloudflare']);
+		await expect(page.locator('body')).toContainText('will not pretend otherwise');
+	});
+
+	test('Deploy lists every provisioning step, so the manifest cannot quietly shrink', async ({
+		page
+	}) => {
+		// the checklist IS the deliverable of this page; a step dropped from PROVISION_STEPS would
+		// otherwise still render a table and still pass "the page opens"
+		await page.goto(`${SURFACE}/deploy`);
+		for (const label of [
+			'Upload the Worker',
+			'Create the Durable Object namespace',
+			'Upload the packed site',
+			'Register the warm-window cron trigger',
+			'Obtain an API token',
+			'Record the owner token'
+		]) {
+			await expect(page.locator('table'), label).toContainText(label);
+		}
+		// both verdicts appear, or the "needs a human" rows have silently become scriptable
+		await expect(page.locator('table')).toContainText('scriptable');
+		await expect(page.locator('table')).toContainText('needs a human');
+	});
 });
 
 /**

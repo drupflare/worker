@@ -72,6 +72,54 @@ export type LogStore = {
 	txn(fn: () => void): void;
 };
 
+/**
+ * A statement's bindings as `ctx.storage.sql` can take them: positional, and nothing else.
+ *
+ * DRUPAL BINDS BY NAME AND THE LOG CARRIED IT THROUGH. `Connection::merge()` compiles to a SELECT
+ * then an INSERT or an UPDATE, and only the INSERT binds positionally -- the UPDATE branch binds
+ * `{':db_condition_placeholder_0': 'node_list'}`, which is an OBJECT. `SqlStorage.exec()` takes
+ * `...bindings`, so applying one threw `Spread syntax requires ...iterable[Symbol.iterator] to be a
+ * function` and killed the catch-up. Every cache-tag invalidation takes that branch once the row
+ * exists, so any pool broke on the first repeat invalidation of any tag -- a node save.
+ *
+ * Rewritten rather than refused, because the statement is legitimate and the primary has already
+ * committed it. Tokens are read from the SQL IN ORDER, so the result does not depend on key order
+ * in the map, and a token with no value throws rather than binding a silent `undefined`: a wrong
+ * value replicated into a replica is worse than a refused record, which the fence can describe.
+ */
+export function positionalBindings(
+	sql: string,
+	params: unknown
+): { sql: string; params: readonly unknown[] } {
+	if (Array.isArray(params)) return { sql, params };
+	if (params === null || params === undefined) return { sql, params: [] };
+	if (typeof params !== 'object') return { sql, params: [params] };
+
+	const map = params as Record<string, unknown>;
+	const out: unknown[] = [];
+	// `::` is a cast and `:=` is not a token; a name is what SQLite accepts after a single colon
+	const rewritten = sql.replace(/(?<![:\w]):([A-Za-z_][A-Za-z0-9_]*)/g, (whole, name: string) => {
+		const key = `:${name}`;
+		if (key in map) {
+			out.push(map[key]);
+			return '?';
+		}
+		if (name in map) {
+			out.push(map[name]);
+			return '?';
+		}
+		// left alone rather than guessed at; the length check below turns it into a refusal
+		return whole;
+	});
+	const supplied = Object.keys(map).length;
+	if (out.length !== supplied) {
+		throw new Error(
+			`named bindings do not match the statement: ${out.length} of ${supplied} placed`
+		);
+	}
+	return { sql: rewritten, params: out };
+}
+
 const APPLIED_KEY = 'repl_applied';
 const INFLIGHT_KEY = 'repl_inflight';
 
@@ -260,7 +308,10 @@ export function applyRecord(
 		const batch = statements.slice(i, i + size);
 		const last = i + size >= statements.length;
 		store.txn(() => {
-			for (const s of batch) store.exec(s.sql, s.params ?? []);
+			for (const s of batch) {
+				const bound = positionalBindings(s.sql, s.params);
+				store.exec(bound.sql, bound.params);
+			}
 			if (last) {
 				store.write(APPLIED_KEY, String(record.generation));
 				if (chunked) store.write(INFLIGHT_KEY, '');

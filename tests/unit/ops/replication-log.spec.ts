@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	applyRecord,
 	planApply,
+	positionalBindings,
 	positionTrust,
 	readPosition,
 	type LogRecord,
@@ -355,5 +356,98 @@ describe('an unreadable position is not a zero', () => {
 		const store = seeded(5);
 		store.kv.set('repl_inflight', 'garbage');
 		expect(positionTrust(readPosition(store)).trusted).toBe(false);
+	});
+});
+
+/**
+ * Named bindings, which broke every pool the first time a cache tag was invalidated twice.
+ *
+ * `SqlStorage.exec()` takes `...bindings`, and `logStore()` in `site-do.ts` spreads what the log
+ * hands it. Drupal's `Connection::merge()` compiles to a SELECT then an INSERT or an UPDATE: the
+ * INSERT binds positionally and the UPDATE binds `{':db_condition_placeholder_0': 'node_list'}`.
+ * So the FIRST invalidation of a tag replicated and every later one threw
+ * `Spread syntax requires ...iterable[Symbol.iterator] to be a function`, which killed the lane's
+ * catch-up and surfaced as a 500 on whatever request happened to be driving it.
+ *
+ * `?? []` was no defence: an object is not null.
+ */
+describe('bindings a replica can actually execute', () => {
+	it('rewrites the statement Drupal emits on a repeat cache-tag invalidation', () => {
+		const out = positionalBindings(
+			'UPDATE "cachetags" SET invalidations = invalidations + 1 WHERE tag = :db_condition_placeholder_0',
+			{ ':db_condition_placeholder_0': 'node_list' }
+		);
+		expect(out.sql).toContain('tag = ?');
+		expect(out.sql).not.toContain(':db_condition_placeholder_0');
+		expect(out.params).toEqual(['node_list']);
+	});
+
+	it('orders by the SQL and not by the key order of the map', () => {
+		// an object's keys are insertion-ordered, and the log is JSON that has been round-tripped;
+		// binding in key order would put the values in the wrong columns without erroring
+		const out = positionalBindings('UPDATE t SET a = :second WHERE b = :first', {
+			':first': 'B',
+			':second': 'A'
+		});
+		expect(out.sql).toBe('UPDATE t SET a = ? WHERE b = ?');
+		expect(out.params).toEqual(['A', 'B']);
+	});
+
+	it('leaves a positional statement exactly as it was', () => {
+		const out = positionalBindings('INSERT INTO t (a, b) VALUES (?, ?)', [1, 2]);
+		expect(out.sql).toBe('INSERT INTO t (a, b) VALUES (?, ?)');
+		expect(out.params).toEqual([1, 2]);
+	});
+
+	it('treats an absent binding list as none', () => {
+		expect(positionalBindings('DELETE FROM t', undefined).params).toEqual([]);
+		expect(positionalBindings('DELETE FROM t', null).params).toEqual([]);
+	});
+
+	it('refuses a map it cannot place, rather than binding undefined', () => {
+		// a silent `undefined` would replicate a wrong VALUE, which no fence can describe; a throw
+		// leaves the replica below the generation, which is a state the fence already handles
+		expect(() => positionalBindings('UPDATE t SET a = :known', { ':other': 1 })).toThrow(
+			/named bindings do not match/
+		);
+	});
+
+	it('does not mistake a cast or a bare colon for a placeholder', () => {
+		const out = positionalBindings("SELECT 'a:b' , x::text FROM t WHERE y = :v", { ':v': 9 });
+		expect(out.params).toEqual([9]);
+		expect(out.sql).toContain('x::text');
+	});
+
+	it('survives an apply through a store that spreads, which is what the object does', () => {
+		// the fake store above takes `params` as an array and never spreads it, so it could not have
+		// caught this; `logStore()` does `this.sql.exec(sql, ...params)`
+		const executed: { sql: string; params: unknown[] }[] = [];
+		const kv = new Map<string, string>();
+		const spreading: LogStore = {
+			read: (k) => kv.get(k) ?? null,
+			write: (k, v) => kv.set(k, v),
+			exec: (sql, params) => {
+				const spread = (q: string, ...p: unknown[]) => executed.push({ sql: q, params: p });
+				spread(sql, ...params);
+			},
+			txn: (fn) => fn()
+		};
+		const record: LogRecord = {
+			generation: 1,
+			parent: 0,
+			schemaVersion: '',
+			fingerprint: 'abc123',
+			overflowed: false,
+			statements: [
+				{
+					sql: 'UPDATE "cachetags" SET invalidations = invalidations + 1 WHERE tag = :db_condition_placeholder_0',
+					params: { ':db_condition_placeholder_0': 'node_list' } as unknown as unknown[]
+				}
+			]
+		};
+		expect(() => applyRecord(spreading, record, { localSchema: '' })).not.toThrow();
+		expect(executed).toHaveLength(1);
+		expect(executed[0]?.params).toEqual(['node_list']);
+		expect(readPosition(spreading).applied).toBe(1);
 	});
 });

@@ -21,6 +21,7 @@ import {
 	requestHeaders,
 	ttlFor
 } from './ops/deferred-post.js';
+import { DRIVER_DIGEST } from './ops/driver-digest.js';
 import { fanoutDecision } from './ops/fanout.js';
 import { ensureFragmentTables, indexFragments } from './ops/fragment-index.js';
 import {
@@ -33,6 +34,7 @@ import {
 } from './ops/image-transform.js';
 import {
 	DEFAULT_SCOPES,
+	OIDC_COMPLETE_PATH,
 	beginLogin,
 	callbackUri,
 	completeLogin,
@@ -52,6 +54,7 @@ import {
 } from './ops/oidc.js';
 import { declaredFetches, pendingDeclared } from './ops/prefetch.js';
 import {
+	DRIVER_DIGEST_KEY,
 	PACK_VERSION,
 	parseReconcileState,
 	planReconcile,
@@ -469,6 +472,7 @@ import {
 	landPosition,
 	markInflight,
 	positionTrust,
+	positionalBindings,
 	readPosition,
 	type LogRecord,
 	type LogStore
@@ -8938,6 +8942,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// Its own gate.run() rather than the one above: a second sequential acquire on a FIFO
 			// chain is fine, where nesting inside the first would deadlock.
 			if (out.done) {
+				// THE PACKED CONTAINER IS CURRENT BY CONSTRUCTION, so say so. `bun run
+				// assets:driver` writes `src/ops/driver-digest.ts` and the pack in the same step,
+				// and this site's container came from that pack. Without the stamp the
+				// `container-driver-digest` reconcile step reads `owed` on EVERY fresh site and
+				// runs `DELETE FROM cache_container`, discarding the 482 KB row `bun run
+				// assets:container` exists to bake -- so the first boot rebuilt it at 1,024 ms
+				// against 86. The step's own comment had caught that a fresh site reads as owed and
+				// removed the recompile; the DELETE is where the cost actually landed
+				this.metaSet(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
 				const prefill = await this.gate.run(
 					() => this.prefillServingTable(),
 					'alarm-prefill'
@@ -10575,8 +10588,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 					const ticket = mintTicket(completed.claims, discovered.provider, this.nowMs());
 					this.metaSet(OIDC_TICKET_KEY, JSON.stringify(ticket));
-					const back = new URL(pending!.returnTo, this.canonicalOrigin(url.origin));
+					// TO THE ROUTE THAT REDEEMS THE TICKET, and it used to go to `returnTo` --
+					// which defaults to `/`. `CfwOidc::complete` is the only thing that reads
+					// `?cfw_oidc`, so the visitor landed on an ordinary page still anonymous, with
+					// a single-use ticket left in their URL and in every proxy log. Nothing in the
+					// worker, the module or the docs ever pointed `?return=` at this path, and the
+					// browser lane passed `/user/login` and asserted a form was visible rather
+					// than that anyone was signed in.
+					const back = new URL(OIDC_COMPLETE_PATH, this.canonicalOrigin(url.origin));
 					back.searchParams.set('cfw_oidc', ticket.ticket);
+					// where the visitor actually wanted to be; Drupal's own redirect subscriber
+					// honours it, so the module needs no second parameter of its own
+					back.searchParams.set('destination', pending!.returnTo);
 					return Response.redirect(back.toString(), 302);
 				}
 
@@ -11316,13 +11339,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 								{ status: plan.action === 'conflict' ? 409 : 422 }
 							);
 						}
+						// NAMED BINDINGS ARRIVE HERE TOO, and `?? []` does not help against them: an
+						// object is not null, so the spread threw. Drupal's `merge()` binds by name
+						// on its UPDATE branch, which is the branch every repeat write takes
+						const bound = batch.statements.map((s) =>
+							positionalBindings(s.sql, s.params)
+						);
 						this.storage.transactionSync(() => {
-							for (const s of batch.statements) {
-								this.sql.exec(s.sql, ...(s.params ?? []));
-							}
+							for (const s of bound) this.sql.exec(s.sql, ...s.params);
 						});
-						for (const s of batch.statements) {
-							this.bufferForReplication(s.sql, (s.params ?? []) as SqlBindings);
+						for (const s of bound) {
+							this.bufferForReplication(s.sql, s.params as SqlBindings);
 						}
 						const generation = this.advanceCommit();
 						await this.sealGeneration();

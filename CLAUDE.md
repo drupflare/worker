@@ -24,6 +24,17 @@ that catch the most mistakes:
   attributable, one queued behind a 5,907 ms alarm and one a 4,284 ms render. It may be a property of
   cold or first invocations; as a general claim it is unverified, so re-observe it before designing
   around it.
+- **CHECK `.wrangler/state` BEFORE DIAGNOSING A SLOW OR TIMING-OUT RIG.** `wrangler.jsonc` sets
+  `observability: { enabled: true }` and miniflare honours it LOCALLY, writing every request into
+  one sqlite file that nothing prunes: measured at **20.75 GB** on 2026-09-10, inside a 22 GB
+  `.wrangler/state`, having grown since 10 August. A night of `measure:host` runs timed out against
+  it and the generator ceiling decayed 871 -> 600 req/s; parking the trace store and the accumulated
+  DO state took the tree to 1.0 GB and the ceiling back to ~1,010. It is derived state and safe to
+  delete, and none of that was the host.
+- **A BENCH SITE CAN EXHAUST ITS OWN DAILY ROW QUOTA, and it does not look like a quota.** A site
+  driven all night read **103.8%** and went read-only, so every login answered 503 and the rig
+  reported a wrong password. Provision a fresh site rather than debugging the login; `/serve-stats`
+  reports `limits.hitAny`.
 
 ## There is a VPS arm now, and the headline ratio was an instrument error
 
@@ -1324,20 +1335,41 @@ against a predicate written before the numbers (`scripts/measure/verdict-math.ts
 `tests/node/host-verdict.spec.ts`). Every earlier comparison was a human reading two JSON documents
 and dividing, which is where "225x" came from.
 
-Measured 2026-09-09 on localhost, traffic-weighted p50: **VPS 8.2 ms against 13.6 ms with no replica
-lanes, and 8.1 against 20.5 with three.** `auth-admin` is the standout the other way -- **17.0x at
-c=1** and 13.7x on throughput.
+**EVERY EARLIER "WITH LANES" READING DROVE 100% OF TRAFFIC TO THE PRIMARY, so re-measure before
+citing one.** `/replica?action=provision` copied a lane, promoted it to SERVING and reported it
+ready without ever writing `lanes_provisioned` -- and that key is the only thing that puts
+`x-cfw-lanes` on a response, while `replicaCount()` reads only `REPLICA_COUNT`, which the canonical
+config does not set. So the router never learned a pool existed. Two more defects sat behind it and
+neither was reachable until traffic first met a lane: `affinityKey()` was handed `url.pathname`
+AFTER the rewrite, which is the constant `/serve`, and `retryOnPrimary` was `innerRequest.clone()`
+under a comment asserting only GET and HEAD could arrive -- an unread tee branch never releases, so
+a forwarded POST hung past 240 s. `x-cfw-replica` now names the object that answered; capture it
+before believing anything about lanes.
 
-Two mechanisms block a yes and neither is a tuning question:
+Measured 2026-09-10 on localhost with three lanes genuinely receiving traffic, traffic-weighted p50
+**VPS 9.0 ms against 13.4 ms**. `auth-admin` is the standout the other way: **5 ms against 66 at
+c=1, 41 against 243 at c=16**, and 361 req/s against 64. Cold path **55 ms against 138**.
 
-- **One Durable Object serializes.** `anon-cached` reads 2 ms against 7 at c=4 and 3 against 27 at
-  c=16, against `pm.max_children = 32`. That slice is 82% of the traffic weight, so it decides the
-  verdict alone.
-- **THE REPLICA POOL AND THE PLAN TIER FIGHT EACH OTHER.** At 0 lanes the paired session curve
-  reaches `PLAN:private` at request 4 and converges to 5 ms; at 3 lanes it reads `RENDER` for all
-  eight and converges to 66 ms. Lanes are the only difference, so the reading is a clean two-arm
-  control -- the MECHANISM, that lane affinity scatters the two sessions plan compilation must
-  co-locate, is an inference and needs its own experiment.
+One mechanism blocks a yes, and one that used to be listed here is refuted:
+
+- **One Durable Object serializes.** `anon-cached` reads 2/2 ms at c=1 but 6 against 3 at c=4 and 25
+  against 4 at c=16, against `pm.max_children = 32`. That slice is 82% of the traffic weight, so it
+  decides the verdict alone.
+- **REFUTED: "the replica pool and the plan tier fight each other".** The reading behind it -- 0
+  lanes reaching `PLAN:private` at request 4 and 3 lanes reading `RENDER` for all eight -- was taken
+  on a rig where no request reached a lane, so lanes were not the variable it named. With them
+  routed to, the paired curve is `RENDER ERROR PLAN:private x10` and converges at **7 ms against the
+  VPS's 69**. The arm reported "NO CELL WAS ANSWERED BY THE COMPILED-PLAN TIER" because it drove 8
+  requests and convergence lands at 7, so one ERROR cost a witness; it drives 12 now. Compilation
+  does NOT need lane co-location either -- the compile runs in the FRONT WORKER's isolate, and 2 of
+  5 trials whose sessions split across two objects still compiled.
+- **Still losing `auth-account` (`/user`), and it is ERRORS not latency.** A lane raises
+  `RuntimeException: Failed to start the session.` on roughly one authenticated request in ten.
+  `fetch()` converts a `ReplicaRequiresPrimary` into the 421 the router retries only when the throw
+  unwinds out, and Drupal catches the failed session write first -- so `replicaRefusals`, the field
+  that records "this request needed the primary", had three readers and all three were stats lines.
+  The wrapper hands off now. **The intermittent did not reproduce under control** (0 in 40 either
+  way), so the spec asserts the mechanism and not the rate.
 
 **Localhost is the VPS's best case and that is why the claim direction is safe**: a VPS answers from
 one region and drupflare from the visitor's colo, so the missing network term can only move the

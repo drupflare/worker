@@ -95,13 +95,14 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 		// the whole finding as one list: everything off the edge now has a reason, and the two
 		// modules that did not (tail-worker, capabilities) were deleted rather than exempted.
 		// dormancy reads as `dead` rather than `script` because a vitest spec drives it, not a bun
-		// entrypoint -- which is accurate, and why it carries a reason above. `module-table.ts` is
-		// back here for the same reason: it held the README generator's entrypoint until that was
-		// deleted, and what it carries now is the verified-behaviour record two specs read
+		// entrypoint -- which is accurate, and why it carries a reason above.
+		//
+		// `module-table.ts` LEFT this list by gaining a producer. `scripts/install-census.ts` reads
+		// it to install the census into `drupal-src`, so a bun entrypoint reaches it and the scan
+		// classifies it `script`. That is the direction this list is meant to move in.
 		const dead = scan().dead.map((r) => r.file);
 		expect(dead).toEqual([
 			'src/ops/dormancy.ts',
-			'src/ops/module-table.ts',
 			'src/ops/mutation-oracle.ts',
 			'src/runtime/php-binary-jspi.ts',
 			'src/runtime/php-binary-o2.ts',

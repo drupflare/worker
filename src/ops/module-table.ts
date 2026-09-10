@@ -1,4 +1,9 @@
 import { KNOWN_MODULE_CAPABILITIES, SHIPPED_CAPABILITIES, tierFor } from './catalog.js';
+import {
+	GENERATED_CAPABILITY_EVIDENCE,
+	GENERATED_SHIPPING_CONTRIB,
+	GENERATED_VERIFIED
+} from './generated/modules.js';
 import { MODULE_TIER_NOTES } from './module-tiers.js';
 
 /**
@@ -55,12 +60,7 @@ export const MODULE_STATES: readonly SupportState[] = ['verified', 'untested', '
  * `tests/node/module-table.spec.ts` reads the pack index and fails if this list and the artifact
  * disagree in either direction.
  */
-export const SHIPPING_PACK_CONTRIB: readonly string[] = [
-	'drupal/admin_toolbar',
-	'drupal/ctools',
-	'drupal/pathauto',
-	'drupal/token'
-];
+export const SHIPPING_PACK_CONTRIB: readonly string[] = GENERATED_SHIPPING_CONTRIB;
 
 /**
  * The clause every fixture-verified row carries, so the reader is not left to infer it.
@@ -90,167 +90,12 @@ export const FIXTURE_CLAUSE =
  * The distinction worth keeping: absent CONFIGURATION is a fixture gap a test can fill, absent CODE
  * is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CONTRIB}.
  */
-export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = {
-	'drupal/filefield_sources':
-		'enabled against a real site; `plugin.manager.filefield_sources`, its field access check and its own service all resolve. Ships no stable release, so this is the 2.0 development branch and the row says so',
-	'drupal/imageapi_optimize':
-		'enabled against a real site; its processor plugin manager resolves, `imageapi_optimize.settings` is installed and the pipeline config entity type is registered. The BINARY pipelines shell out and cannot run here; the pipeline plugin point is what was verified',
-	'drupal/coffee':
-		'enabled against a real site; `coffee.url_generator` resolves and `coffee.configuration` is installed, which is the config its command palette reads',
-	'drupal/devel':
-		'enabled against a real site; `devel.dumper` and `plugin.manager.devel_dumper` resolve, its route and error subscribers are in the container, and it installs its own menu',
-	'drupal/facets':
-		'enabled against a real site; all five of its plugin managers resolve. It creates no table and ships no config, so the container IS the observable',
-	'drupal/google_analytics':
-		'enabled against a real site; `google_analytics.visibility`, `.accounts` and `.javascript_cache` resolve and `google_analytics.settings` is installed. The tag it emits is client-side, so nothing outbound is involved',
-	'drupal/json_field':
-		"enabled against a real site; it registers the `json` field type with core's field-type manager and its `json_field.views` service resolves. Its normalizer is a TAGGED service, which the compiler folds into the serializer and removes from the public map, so asking the container for it by id fails on a module that installed correctly",
-	'drupal/key':
-		'enabled against a real site; its repository and three plugin managers resolve and the `key` config entity type is registered. A key PROVIDER that reads a file or an external service is a separate question',
-	'drupal/linkit':
-		'enabled against a real site; its matcher and substitution managers resolve alongside the suggestion manager, and `linkit_profile` is registered',
-	'drupal/purge':
-		'enabled against a real site; `purge.queue`, `purge.processors`, `purge.purgers` and the invalidation factory all resolve. What it would PURGE is this host, which already invalidates from cache tags',
-	'drupal/twig_tweak':
-		'enabled against a real site; its twig extension and four view builders resolve, which is the whole of what it adds',
-	'drupal/webform':
-		'enabled against a real site; four of its plugin managers resolve, the `webform` table exists and its shipped option sets are installed. Submissions are ordinary form POSTs',
-	'drupal/xmlsitemap':
-		'enabled against a real site; `xmlsitemap_generator` and `xmlsitemap.link_storage` resolve, the `xmlsitemap` table exists and its settings are installed',
-	'drupal/field_group':
-		'enabled against a real site; it creates no table and ships no settings, so what was asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`, `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with a core service as the control',
-	'drupal/honeypot':
-		'enabled against a real site; its schema hook created `honeypot_user`. The recommended default over any captcha here, because a hidden field and a submission timer are entirely local and cost no outbound round trip',
-	'drupal/redirect':
-		'enabled against a real site; the `redirect` table exists and 11 of its routes are in the `router` table, so both halves of a route subscriber over its own table are present',
-	'drupal/search_api':
-		'enabled against a real site; it created `search_api_item` and `search_api_task`, which is where the database backend writes, and its index routes are in the `router` table',
-	'drupal/stage_file_proxy':
-		'enabled against a real site; `stage_file_proxy.settings` is installed, which is what its fetch path reads',
-	'drupal/captcha':
-		'enabled against a real site; its schema hook created `captcha_sessions` and 8 routes appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix match finds none of them',
-	'drupal/metatag':
-		'enabled against a real site; it installed 8 config objects of its own, so it has defaults to apply rather than enabling inert the way pathauto does',
-	'drupal/migrate_plus':
-		'enabled against a real site; both config entity types it exists to provide are installed -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a `migrate_plus.%` config probe finds nothing and would read as inert',
-	'drupal/paragraphs':
-		'enabled against a real site; it created its entity type as four tables -- `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`, `paragraphs_item_revision_field_data`',
-	'drupal/queue_ui':
-		'enabled against a real site; its admin routes are in the `router` table, and routes are the whole module',
-	'drupal/recaptcha':
-		'enabled against a real site; captcha came with it, so dependency resolution ran, and it installed its own configuration',
-	'drupal/scheduler':
-		'enabled against a real site; it installed its own configuration and its routes are in the `router` table',
-	'drupal/admin_toolbar':
-		'enabled against a real site in the workers lane; its own routes appear in the `router` table after the install-triggered rebuild',
-	'drupal/ctools':
-		'enabled against a real site in the workers lane; `core.extension` grew and the site still saved content afterwards. A library module with no user-visible behaviour of its own, so this is the strongest observable it has',
-	'drupal/pathauto':
-		'enabled against a real site, given the pattern the shipped database does not carry; a node saved as "Pathauto Probe Title" produced the `path_alias` row `/node/1 -> /probe/pathauto-probe-title`. Pointed at `canonical_entities:user` the same run writes no row, so the assertion tracks this pattern rather than an ambient alias',
-	'drupal/token':
-		"enabled against a real site; `[random:hash:md5]` resolves to 32 hex digits, and it is declared by `token.tokens.inc` and by nothing in core -- with `ctools` enabled in its place the same call returns the literal. Controls both ways: `[nosuchtype:nosuchtoken]` comes back untouched, and core's `[site:name]` still answers",
-
-	// #region driven 2026-08-20 in the fixture lane, each asserted absent before the enable
-	'drupal/address':
-		'enabled against a real site; the `address`, `address_country` and `address_zone` field types are registered and `address.country_repository`, `address.address_format_repository` and `address.subdivision_repository` resolve. None of the three is in the container beforehand',
-	'drupal/backup_migrate':
-		'enabled against a real site; it installed four config entity types and six default source and destination entities -- `default_db`, `entire_site`, the two file destinations and a daily schedule -- and 24 routes',
-	'drupal/better_exposed_filters':
-		'enabled against a real site; its three widget plugin managers and `better_exposed_filters.bef_helper` are in the container afterwards and absent before',
-	'drupal/colorbox':
-		'enabled against a real site; `colorbox.settings` is installed and its admin route is in the `router` table',
-	'drupal/config_ignore':
-		'enabled against a real site; `config_ignore.settings` is installed and its admin route is in the `router` table',
-	'drupal/crop':
-		'enabled against a real site; it created the crop entity type as four tables -- `crop`, `crop_field_data`, `crop_revision`, `crop_field_revision` -- and installed `crop_type` as a config entity type',
-	'drupal/csv_serialization':
-		"enabled against a real site; `serializer->supportsEncoding('csv')` is true afterwards and false before, with `json` true throughout as the control that the serializer is answering at all",
-	'drupal/easy_breadcrumb':
-		'enabled against a real site; `easy_breadcrumb.settings` is installed and its admin route is in the `router` table',
-	'drupal/editor_advanced_link':
-		'enabled against a real site; the `editor_advanced_link_link` CKEditor 5 plugin is registered and its two asset libraries resolve. Library discovery needs `common.inc` loaded first -- `JS_LIBRARY` and `CSS_COMPONENT` are defined there, not by the autoloader',
-	'drupal/entity':
-		'enabled against a real site; `entity.bundle_plugin_installer`, `entity.bundle_entity_duplicator` and `access_checker.entity_revision` resolve afterwards and are absent before. A substring match on its name is NOT evidence here: most of what matches `entity` in the container is core',
-	'drupal/entity_browser':
-		'enabled against a real site; the `entity_browser` config entity type is installed and six of its routes are in the `router` table',
-	'drupal/entity_reference_revisions':
-		'enabled against a real site; the `entity_reference_revisions` field type and its `entity_reference_revisions_entity_view` formatter are registered, and `entity_reference_revisions.orphan_purger` is in the container',
-	'drupal/externalauth':
-		'enabled against a real site; its schema hook created `authmap`, which is the table the identity mapping lives in',
-	'drupal/focal_point':
-		'enabled against a real site; `focal_point.settings` is installed and it created the `crop.type.focal_point` crop type inside the dependency it pulled in',
-	'drupal/google_tag':
-		'enabled against a real site; the `google_tag_container` config entity type and `google_tag.settings` are installed, with eight routes. Nothing outbound happens in PHP -- the snippet it injects is called by the browser',
-	'drupal/imce':
-		'enabled against a real site; the `imce_profile` config entity type and both shipped profiles -- `admin` and `member` -- are installed, with nine routes',
-	'drupal/jquery_ui':
-		'enabled against a real site; 24 asset libraries resolve for it afterwards and none before, `core` and `widget` among them',
-	'drupal/jquery_ui_autocomplete':
-		'enabled against a real site; the `autocomplete` library resolves for it afterwards and none before. It ships no code of its own -- jquery_ui declares the library on its behalf, so the library existing IS the module working',
-	'drupal/jquery_ui_datepicker':
-		'enabled against a real site; the `datepicker` library resolves for it afterwards and none before. Four files on disk and no PHP, so its library is the only observable it has',
-	'drupal/jquery_ui_menu':
-		'enabled against a real site; the `menu` library resolves for it afterwards and none before',
-	'drupal/libraries':
-		'enabled against a real site; `libraries.settings` is installed, which is where its external library definitions are read from',
-	'drupal/mailsystem':
-		'enabled against a real site; `mailsystem.settings` is installed and its admin route is in the `router` table. It is how a site selects `cfw_mail`, so it is the module a site drops smtp in favour of',
-	'drupal/menu_block':
-		"enabled against a real site; `menu_block:main` and `menu_block:footer` are block plugin derivatives it provides. `access_check.admin_menu_block_page` reads as its service and is CORE's -- the before reading is what said so",
-	'drupal/module_filter':
-		'enabled against a real site; `module_filter.settings` is installed and its admin route is in the `router` table',
-	'drupal/simple_sitemap':
-		"enabled against a real site; `simple_sitemap.generator`, `simple_sitemap.queue_worker` and `simple_sitemap.sitemap_writer` resolve, both `simple_sitemap` and `simple_sitemap_type` are registered entity types and `simple_sitemap.settings` is installed, none of it before. It was refused outright until the host supplied a pure-PHP `XMLWriter` and cleared its one install block through `hook_requirements_alter()` -- `extension_loaded('xmlwriter')` is a built-in and cannot be shimmed",
-	'drupal/svg_image':
-		"enabled against a real site; the `image` field formatter is `Drupal\\svg_image\\...\\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and the `image_image` widget moves the same way. It takes core's plugin ids over rather than adding its own",
-	'drupal/video_embed_field':
-		'enabled against a real site; the `video_embed_field` field type, its `video_embed_field_video` formatter and `video_embed_field.provider_manager` are all present afterwards and absent before',
-	'drupal/views_bulk_operations':
-		'enabled against a real site; `views_bulk_operations.processor`, `views_bulk_operations.data` and its action plugin manager resolve, the `views_bulk_operations_delete_entity` action is registered, and four of its routes are in the `router` table',
-	'drupal/views_data_export':
-		'enabled against a real site; the `data_export` views display and style plugins are registered, which is the whole module',
-	// #endregion
-
-	// #region driven 2026-08-27, the US federal track
-	'drupal/search_api_solr':
-		"enabled against a real site with composer's platform check ON; `plugin.manager.search_api_solr.connector` and `solarium.query_helper` resolve and all four solr config entity types -- `solr_cache`, `solr_field_type`, `solr_request_handler`, `solr_request_dispatcher` -- are registered, none of them before. The `php-64bit` constraint that used to abort every request before Drupal booted is satisfied by the long64 build. A Solr SERVER is still an outbound dependency reached through the deferred tier, so what was asserted is the module installing rather than a query answering",
-	'drupal/usfedgov_google_analytics':
-		'enabled against a real site; its three hook services resolve, `usfedgov_google_analytics.settings` is installed, its admin route is in the `router` table and seven asset libraries resolve for it afterwards and none before. The DAP tag is fetched by the BROWSER from dap.digitalgov.gov, so nothing outbound happens in PHP',
-	'drupal/metatag_search_gov':
-		'enabled against a real site; the `search_gov` metatag group and the `searchgov_custom1` and `searchgov_custom3` tag plugins name this module afterwards and are absent before. It installs no config, creates no table and registers no route of its own, so the plugin definitions are the whole observable',
-	'drupal/uswds_base':
-		'installed against a real site through `theme_installer`, which is a different installer from every other row here: its asset libraries resolve afterwards and none before, and it lands in the `theme` key of `core.extension` rather than the `module` key. Its default library mode loads USWDS from a CDN, and a federal deployment picks the local mode instead',
-	// #endregion
-
-	// #region driven 2026-09-08
-	//
-	// `blocking-outbound` had collapsed three different situations into one word. One module never
-	// needed a blocking call at all (smtp), one needs it over a socket (redis) and one over HTTP
-	// (openid_connect). The Zend park delivers both blocking flavours.
-	'drupal/redis':
-		'enabled against a real site; `cache.backend.redis`, `redis.factory`, `redis.lock.factory`, `redis.flood.factory` and `queue.redis` all resolve afterwards and none before. It ships no config and creates no table, so the container IS the observable -- the same shape as facets. Its socket is answered by the Zend park: `park-interpreter.spec.ts` drives PHP through an open, two writes and two reads against the rig Redis and gets `+OK|+PONG` back, five parks each performed in JavaScript on a later invocation. The Durable Object own SQLite is still the faster cache backend and the recommended one, because a parked get is a network round trip where SQLite is a local read',
-	'drupal/smtp':
-		'enabled against a real site; the `SMTPMailSystem` mail plugin is in `plugin.manager.mail` afterwards and absent before, `smtp.settings` is installed and `smtp.config` and `smtp.connection_tester` resolve. Its socket never runs: `CfwMail` passes `smtp.settings` to the host transport, so the module supplies the configuration and the relay is dialled from JS between invocations',
-	'drupal/openid_connect':
-		"enabled against a real site; `plugin.manager.openid_connect_client`, `openid_connect.claims` and `openid_connect.state_token` resolve, the `generic` client plugin and the `openid_connect_client` entity type are registered and thirteen of its routes are in the `router` table, none of it before. Its OWN client then completed a login: a real authorization code from the rig Keycloak, exchanged by `OpenIDConnectClientBase::retrieveTokens()` inside the callback request and followed by its userinfo GET, after which `externalauth` wrote `openid_connect.keycloak` into `authmap` against the id_token's `sub` and opened a session for the account it created. Both outbound calls went through the Zend park, so each was performed in JavaScript while PHP was frozen mid-call. The control is the same run on the interpreter before `park_flatten()`: the deferred transport answered `is not in the fetch cache`, no row and no account"
-	// #endregion
-};
+export const VERIFIED_BEHAVIOURS: Readonly<Record<string, string>> = GENERATED_VERIFIED;
 
 /**
  * Modules whose CAPABILITY the gate exercised end to end, while the module itself is absent.
  */
-export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = {
-	'drupal/captcha':
-		'the deferred POST it needs is measured end to end in `deferred-post.spec.ts` -- body intact, two submissions to one endpoint kept apart, answered from the queue with no second visitor. The module is not in the pack, so the module itself is unexercised',
-	'drupal/recaptcha':
-		'siteverify is a POST inside form validation, and that exact shape is measured in `deferred-post.spec.ts` against a mocked endpoint. The tier keys on method + url + body, which is what keeps two submissions to one endpoint apart. The module is not in the pack',
-	'drupal/scheduler':
-		"its work is `hook_cron` and nothing else; `cron-wire.spec.ts` invokes Drupal's cron handlers across several firings, inside the 6-unit / 500-row budget, and a second sweep runs again rather than latching. The module is not in the pack",
-	'drupal/queue_ui':
-		'a UI over queues that only move when cron runs them, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack',
-	'drupal/search_api':
-		'indexing runs on cron with the database backend, and the cron wire is measured in `cron-wire.spec.ts`. The module is not in the pack'
-};
+export const CAPABILITY_EVIDENCE: Readonly<Record<string, string>> = GENERATED_CAPABILITY_EVIDENCE;
 
 export interface TableRow {
 	/** composer name */

@@ -5,6 +5,7 @@ import {
 	runCronQueue,
 	runFetchReopen
 } from '../drupal/cron-php.js';
+import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules.js';
 
 /**
  * Garbage collection and the decomposed cron chain.
@@ -242,29 +243,7 @@ export const EXPIRED_ROW_RULES = [
  * site rather than merely unverified, and nothing reports it. Three of these entries outlived the
  * limit that justified them. Before adding one, check the limit still holds.
  */
-export const CRON_HOOKS: Record<string, CronHookPolicy> = {
-	// all three of these were `run: false` for "outbound HTTPS; there is no socket", which was true
-	// when it was written and stopped being true once the stream wrapper and CachedFetchHandler's
-	// defer-and-answer-next-drain landed. Nothing re-read the reason, so `hook_cron` for `update`
-	// never fired on any site: the fetch queue was only ever drained by a human clicking Check
-	// manually, and `system` being off is why security advisories were never wired at all
-	update: { run: true },
-	announcements_feed: { run: true },
-	system: { run: true },
-	// DblogHooks::cron() is one SELECT and one DELETE against watchdog; gc:watchdog
-	// is the same two statements for no kernel boot
-	dblog: { run: false, reason: 'superseded by the gc:watchdog SQL pass' },
-	file: { run: true },
-	layout_builder: { run: true },
-	// A HOOK CLASS ADDED AFTER THE PACK WAS BAKED IS NOT IN THE CONTAINER, so this unit reports
-	// `no cron implementation` on every installed site and `DeferredCron` has never run anywhere.
-	// Measured: `hasImplementations('cron', ['drupflare'])` answers false while the class loads.
-	// Left ON rather than switched off, because a site whose container IS current does run it and a
-	// `run: false` would be absent from every site instead. The advisory scan it was meant to carry
-	// is its own unit for that reason; the fetch reopen still needs a container rebuild to reach an
-	// existing site
-	drupflare: { run: true }
-};
+export const CRON_HOOKS: Record<string, CronHookPolicy> = GENERATED_CRON_POLICY;
 
 /** The four knobs the GC passes and the chain read from env; all arrive as strings. */
 export interface CronEnv {
@@ -276,17 +255,16 @@ export interface CronEnv {
 	SITE_WARM?: string | number;
 }
 
-/** the cron hook modules this site has, measured, for when discovery has not run */
-export const KNOWN_CRON_HOOKS = [
-	'announcements_feed',
-	'dblog',
-	'file',
-	'layout_builder',
-	'system',
-	'update',
-	// after `update`, whose deferral it corrects
-	'drupflare'
-];
+/**
+ * The cron hook modules this site has, measured, for when discovery has not run.
+ *
+ * THE ORDER CARRIES NOTHING. This list used to place `drupflare` after `update` "whose deferral it
+ * corrects", and that was already dead: `cronHooksFromList()` sorts, so any site that has discovered
+ * its hooks runs them alphabetically with `drupflare` first. What holds the dependency is
+ * `fetch_reopen` and `advisories` being pushed after the whole loop in {@link cronUnits}, asserted
+ * in `cron-step.spec.ts` against a reversed list.
+ */
+export const KNOWN_CRON_HOOKS: readonly string[] = GENERATED_CRON_KNOWN;
 
 /** a discovered hook list and the enabled-module set it was discovered against */
 export type CronHookCache = { at: string; hooks: string[] };

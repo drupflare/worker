@@ -1,0 +1,710 @@
+cron:
+  known:
+    - announcements_feed
+    - dblog
+    - file
+    - layout_builder
+    - system
+    - update
+    - drupflare
+  policy:
+    update:
+      run: true
+    announcements_feed:
+      run: true
+    system:
+      run: true
+    dblog:
+      run: false
+      reason: superseded by the gc:watchdog SQL pass
+    file:
+      run: true
+    layout_builder:
+      run: true
+    drupflare:
+      run: true
+modules:
+  drupal/address:
+    needs: []
+    why:
+      a field type over commerceguys/addressing, whose address formats ship as JSON in the package --
+      so the country repository is a file read rather than a service call
+    verified: enabled against a real site; the `address`, `address_country` and `address_zone` field
+      types are registered and `address.country_repository`, `address.address_format_repository` and
+      `address.subdivision_repository` resolve. None of the three is in the container beforehand
+  drupal/admin_toolbar:
+    needs: []
+    why: menu rendering only
+    verified: enabled against a real site in the workers lane; its own routes appear in the `router`
+      table after the install-triggered rebuild
+    shipping: true
+  drupal/backup_migrate:
+    needs:
+      - cron
+    why: schedules are drained by cron, and a backup is a read of the database plus a write to a
+      destination. A remote destination is outbound per destination, not per module
+    lift:
+      'none for the schedules; the alarm drains them. Sizing is the open question rather than the
+      capability: a full backup as one record meets the 2,199,995-byte ceiling, so a destination
+      here has to chunk'
+    verified:
+      enabled against a real site; it installed four config entity types and six default source
+      and destination entities -- `default_db`, `entire_site`, the two file destinations and a daily
+      schedule -- and 24 routes
+  drupal/better_exposed_filters:
+    needs: []
+    why: views exposed-filter widgets; three plugin managers over local view data
+    verified: enabled against a real site; its three widget plugin managers and
+      `better_exposed_filters.bef_helper` are in the container afterwards and absent before
+  drupal/captcha:
+    needs:
+      - deferrable-outbound
+    why:
+      the base module is local; it is the reCAPTCHA-style providers under it that verify against a
+      remote endpoint inside form validation
+    lift:
+      '`src/ops/deferred-post.ts` plus a provider shim that queues on the first submit and reads the
+      cached result on the automatic re-submit'
+    verified: enabled against a real site; its schema hook created `captcha_sessions` and 8 routes
+      appear in the `router` table. Its routes are named with underscores, so a dotted module-prefix
+      match finds none of them
+    capabilityEvidence:
+      the deferred POST it needs is measured end to end in `deferred-post.spec.ts` --
+      body intact, two submissions to one endpoint kept apart, answered from the queue with no
+      second visitor. The module is not in the pack, so the module itself is unexercised
+  drupal/coffee:
+    verified:
+      enabled against a real site; `coffee.url_generator` resolves and `coffee.configuration` is
+      installed, which is the config its command palette reads
+  drupal/colorbox:
+    needs: []
+    why: a lightbox; a library and a field formatter
+    verified:
+      enabled against a real site; `colorbox.settings` is installed and its admin route is in
+      the `router` table
+  drupal/config_ignore:
+    needs: []
+    why: a config storage filter applied during import; no runtime I/O
+    verified:
+      enabled against a real site; `config_ignore.settings` is installed and its admin route is
+      in the `router` table
+  drupal/crop:
+    needs: []
+    why: an entity type storing crop geometry; no I/O of its own
+    verified: enabled against a real site; it created the crop entity type as four tables -- `crop`,
+      `crop_field_data`, `crop_revision`, `crop_field_revision` -- and installed `crop_type` as a
+      config entity type
+  drupal/csv_serialization:
+    needs: []
+    why: a serializer encoder over league/csv
+    verified:
+      enabled against a real site; `serializer->supportsEncoding('csv')` is true afterwards and
+      false before, with `json` true throughout as the control that the serializer is answering at
+      all
+  drupal/ctools:
+    needs: []
+    why: plugin and form helpers
+    verified:
+      enabled against a real site in the workers lane; `core.extension` grew and the site still
+      saved content afterwards. A library module with no user-visible behaviour of its own, so this
+      is the strongest observable it has
+    shipping: true
+  drupal/devel:
+    needs: []
+    why:
+      'local introspection. Worth a warning rather than a capability: it dumps debug output INTO the
+      page, and this runtime stores anonymous output in `cfw_page` and serves it to everyone'
+    verified:
+      enabled against a real site; `devel.dumper` and `plugin.manager.devel_dumper` resolve, its
+      route and error subscribers are in the container, and it installs its own menu
+  drupal/easy_breadcrumb:
+    needs: []
+    why: a breadcrumb builder over the current route
+    verified:
+      enabled against a real site; `easy_breadcrumb.settings` is installed and its admin route
+      is in the `router` table
+  drupal/editor_advanced_link:
+    needs: []
+    why: a CKEditor 5 plugin, entirely client side
+    verified: enabled against a real site; the `editor_advanced_link_link` CKEditor 5 plugin is
+      registered and its two asset libraries resolve. Library discovery needs `common.inc` loaded
+      first -- `JS_LIBRARY` and `CSS_COMPONENT` are defined there, not by the autoloader
+  drupal/entity:
+    needs: []
+    why: entity API helpers; bundle plugins and a duplicator
+    verified: 'enabled against a real site; `entity.bundle_plugin_installer`,
+      `entity.bundle_entity_duplicator` and `access_checker.entity_revision` resolve afterwards and
+      are absent before. A substring match on its name is NOT evidence here: most of what matches
+      `entity` in the container is core'
+  drupal/entity_browser:
+    needs: []
+    why: entity selection over local entities; iframes and modals around a view
+    verified:
+      enabled against a real site; the `entity_browser` config entity type is installed and six
+      of its routes are in the `router` table
+  drupal/entity_reference_revisions:
+    needs: []
+    why: a field type
+    verified: enabled against a real site; the `entity_reference_revisions` field type and its
+      `entity_reference_revisions_entity_view` formatter are registered, and
+      `entity_reference_revisions.orphan_purger` is in the container
+  drupal/externalauth:
+    needs: []
+    why: maps an external identity to a local account in its own `authmap` table. The outbound half
+      belongs to whichever provider module sits on top -- openid_connect is the one that is blocked,
+      not this
+    verified: enabled against a real site; its schema hook created `authmap`, which is the table the
+      identity mapping lives in
+  drupal/facets:
+    needs: []
+    why:
+      'facets themselves are local: they read from whatever Search API backend is configured. With
+      the DATABASE backend this needs nothing, which is why it is not refused'
+    lift: none required with the database backend; it inherits the backend tier
+    verified:
+      enabled against a real site; all five of its plugin managers resolve. It creates no table
+      and ships no config, so the container IS the observable
+  drupal/field_group:
+    needs: []
+    why: display configuration; no runtime I/O
+    verified: enabled against a real site; it creates no table and ships no settings, so what was
+      asserted is what it adds to the CONTAINER -- `plugin.manager.field_group.formatters`,
+      `field_group.subscriber` and `field_group.param_converter` all resolve after the install, with
+      a core service as the control
+  drupal/filefield_sources:
+    needs: []
+    why: the local sources (upload, reference, clipboard) need nothing. Only the "remote URL" source
+      calls out, and it is one source among several
+    verified:
+      enabled against a real site; `plugin.manager.filefield_sources`, its field access check
+      and its own service all resolve. Ships no stable release, so this is the 2.0 development
+      branch and the row says so
+  drupal/focal_point:
+    needs: []
+    why: an image effect over crop. The CROP GEOMETRY is what it stores and that needs nothing. The
+      transform is GD, which this build does NOT have -- `get_loaded_extensions()` on the shipping
+      binary reports 25 extensions and gd is not among them, and `CfwImageToolkit` says so outright
+      -- so the effect is applied by Cloudflare Images at delivery. That toolkit reports full-size
+      dimensions to contrib reading derivative pixels, which is exactly what focal_point does
+    lift:
+      none for the stored focal point. The preview widget and any effect chained AFTER the crop are
+      the parts that would need a real toolkit
+    verified: enabled against a real site; `focal_point.settings` is installed and it created the
+      `crop.type.focal_point` crop type inside the dependency it pulled in
+  drupal/google_analytics:
+    verified: enabled against a real site; `google_analytics.visibility`, `.accounts` and
+      `.javascript_cache` resolve and `google_analytics.settings` is installed. The tag it emits is
+      client-side, so nothing outbound is involved
+  drupal/google_tag:
+    needs: []
+    why: it injects a snippet the BROWSER calls Google with. Nothing leaves PHP, which is why an
+      integration that reads as outbound is not
+    verified: enabled against a real site; the `google_tag_container` config entity type and
+      `google_tag.settings` are installed, with eight routes. Nothing outbound happens in PHP -- the
+      snippet it injects is called by the browser
+  drupal/honeypot:
+    needs: []
+    why:
+      'a hidden field and a submission timer, entirely local. Still the recommended default over any
+      captcha here: zero outbound beats two round trips on every submit'
+    verified: enabled against a real site; its schema hook created `honeypot_user`. The recommended
+      default over any captcha here, because a hidden field and a submission timer are entirely
+      local and cost no outbound round trip
+  drupal/imageapi_optimize:
+    needs:
+      - cron
+    why: batch optimisation over managed files. The BINARY pipelines shell out and cannot work; the
+      pure-PHP and remote-service pipelines are the ones in scope
+    lift: 'a pipeline that is neither a subprocess nor a blocking call; the batch itself is already
+      driven. Large: most shipped pipelines are subprocess-based, so this needs a pipeline written
+      for the platform. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on
+      by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15
+      minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands
+      within a quarter hour rather than immediately'
+    verified: enabled against a real site; its processor plugin manager resolves,
+      `imageapi_optimize.settings` is installed and the pipeline config entity type is registered.
+      The BINARY pipelines shell out and cannot run here; the pipeline plugin point is what was
+      verified
+  drupal/imce:
+    needs: []
+    why: a file manager over the stream wrappers this runtime already provides
+    verified: enabled against a real site; the `imce_profile` config entity type and both shipped
+      profiles -- `admin` and `member` -- are installed, with nine routes
+  drupal/jquery_ui:
+    needs: []
+    why:
+      asset libraries only. It also declares the libraries of its four sub-modules from a JSON file,
+      through a procedural hook_library_info_alter
+    verified:
+      enabled against a real site; 24 asset libraries resolve for it afterwards and none before,
+      `core` and `widget` among them
+  drupal/jquery_ui_autocomplete:
+    needs: []
+    why: one asset library, declared by jquery_ui
+    verified: enabled against a real site; the `autocomplete` library resolves for it afterwards and
+      none before. It ships no code of its own -- jquery_ui declares the library on its behalf, so
+      the library existing IS the module working
+  drupal/jquery_ui_datepicker:
+    needs: []
+    why: one asset library, declared by jquery_ui
+    verified:
+      enabled against a real site; the `datepicker` library resolves for it afterwards and none
+      before. Four files on disk and no PHP, so its library is the only observable it has
+  drupal/jquery_ui_menu:
+    needs: []
+    why: one asset library, declared by jquery_ui
+    verified: enabled against a real site; the `menu` library resolves for it afterwards and none before
+  drupal/json_field:
+    needs: []
+    why: a field type storing JSON in its own column; no I/O
+    verified: enabled against a real site; it registers the `json` field type with core's field-type
+      manager and its `json_field.views` service resolves. Its normalizer is a TAGGED service, which
+      the compiler folds into the serializer and removes from the public map, so asking the
+      container for it by id fails on a module that installed correctly
+  drupal/key:
+    needs: []
+    why:
+      key management over local config and file storage. The providers that fetch from a remote vault
+      are per-provider, not per-module
+    verified: enabled against a real site; its repository and three plugin managers resolve and the
+      `key` config entity type is registered. A key PROVIDER that reads a file or an external
+      service is a separate question
+  drupal/libraries:
+    needs: []
+    why: a registry of external libraries on the local file system; it reads, it does not fetch
+    verified: enabled against a real site; `libraries.settings` is installed, which is where its
+      external library definitions are read from
+  drupal/linkit:
+    needs: []
+    why: autocomplete over local entities
+    verified:
+      enabled against a real site; its matcher and substitution managers resolve alongside the
+      suggestion manager, and `linkit_profile` is registered
+  drupal/mailsystem:
+    needs: []
+    why: selects which mail plugin sends. No I/O of its own, and it is how a site points itself at
+      `cfw_mail` instead of `php_mail`
+    verified:
+      enabled against a real site; `mailsystem.settings` is installed and its admin route is in
+      the `router` table. It is how a site selects `cfw_mail`, so it is the module a site drops smtp
+      in favour of
+  drupal/menu_block:
+    needs: []
+    why: a block derivative per menu; menu rendering only
+    verified:
+      enabled against a real site; `menu_block:main` and `menu_block:footer` are block plugin
+      derivatives it provides. `access_check.admin_menu_block_page` reads as its service and is
+      CORE's -- the before reading is what said so
+  drupal/metatag:
+    needs: []
+    why: renders meta tags from entity data
+    verified:
+      enabled against a real site; it installed 8 config objects of its own, so it has defaults
+      to apply rather than enabling inert the way pathauto does
+  drupal/metatag_search_gov:
+    needs: []
+    why: 'three metatag plugins over local entity data. This is the half of Search.gov that fits by
+      construction: Search.gov CRAWLS the site, so participation is markup in a response rather than
+      a call out of one'
+    verified:
+      enabled against a real site; the `search_gov` metatag group and the `searchgov_custom1`
+      and `searchgov_custom3` tag plugins name this module afterwards and are absent before. It
+      installs no config, creates no table and registers no route of its own, so the plugin
+      definitions are the whole observable
+  drupal/migrate_plus:
+    needs:
+      - cron
+    why:
+      migrations run as batches. A local source (JSON on disk, another table) needs only the batch
+      driver; a remote source is deferrable outbound on top
+    lift:
+      'none for the local-source case; the alarm drives the batch. Remote sources additionally need
+      the deferred tier and a fetcher written against it. Cron is DRIVEN: `alarm()` calls
+      `driveCron()` and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains
+      is the cadence -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500
+      rows / 500 ms per firing -- so work lands within a quarter hour rather than immediately'
+    verified:
+      enabled against a real site; both config entity types it exists to provide are installed
+      -- `migration.entity_type` and `migration_group.entity_type`. It ships no config OBJECTS, so a
+      `migrate_plus.%` config probe finds nothing and would read as inert
+  drupal/module_filter:
+    needs: []
+    why: filters the Extend page; a form alter and a library
+    verified:
+      enabled against a real site; `module_filter.settings` is installed and its admin route is
+      in the `router` table
+  drupal/openid_connect:
+    needs:
+      - blocking-outbound
+    why:
+      'the authorization-code exchange POSTs to the identity provider token endpoint and must have
+      the answer before it can finish the login response. Unlike a search query there is no partial
+      answer to render, and unlike a Redis get it cannot be retried later: the code is single use,
+      so the deferred tier delivers the answer to a request that can no longer use it. That is the
+      whole reason `blocking-outbound` and `blocking-socket` are two capabilities rather than one'
+    lift: >-
+      THE MODULE'S OWN CLIENT RUNS, measured 2026-09-08 against the rig Keycloak: a real
+      authorization code, exchanged by `OpenIDConnectClientBase::retrieveTokens()` inside the
+      callback request, followed by its userinfo GET -- two parked HTTP calls in one render, each
+      performed in JavaScript while PHP was frozen mid-call. `externalauth` then wrote
+      `openid_connect.keycloak` into `authmap` against the `sub` of the id_token and opened a
+      session. `park-oidc.spec.ts` is the assertion and the control beside it is the pre-fix
+      reading: the deferred transport answered `is not in the fetch cache; queued for the next
+      drain`, no row, no account.
+
+
+      WHAT WAS IN THE WAY WAS ONE FRAME, and the reason it existed is worth carrying because three
+      separate diagnoses missed it. `call_user_func_array` normally leaves no frame at all --
+      `zend_compile_func_cufa` rewrites it to `ZEND_INIT_USER_CALL` -- but that needs the compiler
+      to have resolved the name, and an unqualified call inside a NAMESPACE compiles to
+      `ZEND_INIT_NS_FCALL_BY_NAME` and resolves at runtime instead. So the frame is real in every
+      namespaced file, which is all of Drupal, and absent in the global namespace, which is where
+      every harness that read it safe was written. `park_flatten()` in `ext/cfwpark` splices such a
+      frame out of the parked chain; `array_map` and `usort` stay refused, which is the control.
+
+
+      The host's own `/oidc` route still exists and still works, so a site gets provider login
+      whether or not this module is enabled. It is a FALLBACK for a site that configured nothing
+      rather than a substitute for one that configured this.
+    verified: "enabled against a real site; `plugin.manager.openid_connect_client`,
+      `openid_connect.claims` and `openid_connect.state_token` resolve, the `generic` client plugin
+      and the `openid_connect_client` entity type are registered and thirteen of its routes are in
+      the `router` table, none of it before. Its OWN client then completed a login: a real
+      authorization code from the rig Keycloak, exchanged by
+      `OpenIDConnectClientBase::retrieveTokens()` inside the callback request and followed by its
+      userinfo GET, after which `externalauth` wrote `openid_connect.keycloak` into `authmap`
+      against the id_token's `sub` and opened a session for the account it created. Both outbound
+      calls went through the Zend park, so each was performed in JavaScript while PHP was frozen
+      mid-call. The control is the same run on the interpreter before `park_flatten()`: the deferred
+      transport answered `is not in the fetch cache`, no row and no account"
+  drupal/paragraphs:
+    needs: []
+    why: entity composition, all local
+    verified: enabled against a real site; it created its entity type as four tables --
+      `paragraphs_item`, `paragraphs_item_field_data`, `paragraphs_item_revision`,
+      `paragraphs_item_revision_field_data`
+  drupal/pathauto:
+    needs: []
+    why: token replacement over local entity data on save
+    verified:
+      enabled against a real site, given the pattern the shipped database does not carry; a node
+      saved as "Pathauto Probe Title" produced the `path_alias` row `/node/1 ->
+      /probe/pathauto-probe-title`. Pointed at `canonical_entities:user` the same run writes no row,
+      so the assertion tracks this pattern rather than an ambient alias
+    shipping: true
+  drupal/purge:
+    needs:
+      - deferrable-outbound
+      - cron
+    why:
+      invalidation is a queue drained by cron, and each purger POSTs or PURGEs to a CDN. Both halves
+      are deferrable; neither has to answer inside a render
+    lift:
+      the POST tier; the cron half is already driven. This runtime already invalidates its OWN edge
+      by bumping the generation, so purge is only needed for a CDN in front of it
+    verified:
+      enabled against a real site; `purge.queue`, `purge.processors`, `purge.purgers` and the
+      invalidation factory all resolve. What it would PURGE is this host, which already invalidates
+      from cache tags
+  drupal/queue_ui:
+    needs:
+      - cron
+    why: a UI over Drupal queues; the queues themselves only move when cron runs them
+    lift:
+      'none. It also becomes the natural operator view of `cronStep()` queue units, which today have
+      no surface at all. Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on
+      by default, off with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15
+      minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands
+      within a quarter hour rather than immediately'
+    verified:
+      enabled against a real site; its admin routes are in the `router` table, and routes are
+      the whole module
+    capabilityEvidence: a UI over queues that only move when cron runs them, and the cron wire is
+      measured in `cron-wire.spec.ts`. The module is not in the pack
+  drupal/recaptcha:
+    needs:
+      - deferrable-outbound
+    why:
+      siteverify is a POST to Google inside form validation. It does NOT have to happen inside the
+      render, which is what makes it deferrable rather than impossible
+    lift: the POST tier plus the re-submit shim. The token must be re-posted unchanged or the second
+      attempt misses the cache forever
+    verified:
+      enabled against a real site; captcha came with it, so dependency resolution ran, and it
+      installed its own configuration
+    capabilityEvidence:
+      siteverify is a POST inside form validation, and that exact shape is measured in
+      `deferred-post.spec.ts` against a mocked endpoint. The tier keys on method + url + body, which
+      is what keeps two submissions to one endpoint apart. The module is not in the pack
+  drupal/redirect:
+    needs: []
+    why: a route subscriber over its own table
+    verified:
+      enabled against a real site; the `redirect` table exists and 11 of its routes are in the
+      `router` table, so both halves of a route subscriber over its own table are present
+  drupal/redis:
+    needs:
+      - blocking-socket
+    why:
+      'an external cache backend reached over a socket on every cache get. The deferred TCP tier does
+      NOT lift this: a cache get has to answer inside the request that asked, and a deferred
+      exchange always misses the first time. What `cfwTcp` reaches is the deferrable half -- a
+      publish, a counter, a write nobody blocks on. This is the ONE module the Zend park was built
+      for, and it is `blocking-socket` rather than `blocking-outbound` because Predis speaks RESP
+      over `stream_socket_client`, which a park CAN suspend under'
+    lift:
+      "THE PARK SERVES IT, measured 2026-09-08 on the long64 build against the rig Redis: PHP opens
+      a socket, writes and reads twice and receives `+OK|+PONG` -- five parks, each performed in
+      JavaScript on a LATER invocation and resumed into the same PHP chain. `ext/cfwpark` freezes
+      the continuation at the trapped call and `src/ops/park-drive.ts` answers it. It took two
+      extension fixes and both had failed silently: `cfw_park_resume` did not re-arm, so every trip
+      after the first ran the real function down the refusal path; and the safety predicate floor
+      was a frame belonging to the invocation that STARTED the chain, so on a resume the walk went
+      past the parked chain into reused VM stack memory, reading first as a refusal and then as
+      `memory access out of bounds`. A resumed chain now relinks its root to the resuming frame,
+      which is what `zend_generator_resume` does. **Do not use a native PHP as the oracle** --
+      homebrew 8.5.7 is the HYBRID VM and this build is `ZEND_VM_KIND_CALL`; a native harness
+      reported a chain failing to unwind that the wasm build unwinds correctly. Two things stay
+      true: the Durable Object's own SQLite is the FASTER backend and the recommended one, since a
+      parked get is a network round trip where SQLite is a local read, and
+      `Drupal\\drupflare\\Network\\CfwTcp` still covers the deferrable half. The endpoint is the
+      operator's `REDIS_URL` and never the caller's, so the traps arm only on a site that configured
+      one"
+    verified: 'enabled against a real site; `cache.backend.redis`, `redis.factory`,
+      `redis.lock.factory`, `redis.flood.factory` and `queue.redis` all resolve afterwards and none
+      before. It ships no config and creates no table, so the container IS the observable -- the
+      same shape as facets. Its socket is answered by the Zend park: `park-interpreter.spec.ts`
+      drives PHP through an open, two writes and two reads against the rig Redis and gets
+      `+OK|+PONG` back, five parks each performed in JavaScript on a later invocation. The Durable
+      Object own SQLite is still the faster cache backend and the recommended one, because a parked
+      get is a network round trip where SQLite is a local read'
+  drupal/scheduler:
+    needs:
+      - cron
+    why: publishes and unpublishes on cron; the work is a bounded query per run
+    lift:
+      'none. `driveCron()` is imported and called by `src/site-do.ts`, so scheduler publishes on the
+      alarm. This entry said the driver was unimported for as long as it had been wired, which is
+      what shipping a lift text nobody re-reads costs. Cron is DRIVEN: `alarm()` calls `driveCron()`
+      and has since it shipped, on by default, off with `DRUPAL_CRON=0`. What remains is the cadence
+      -- interval-gated at 15 minutes (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per
+      firing -- so work lands within a quarter hour rather than immediately'
+    verified:
+      enabled against a real site; it installed its own configuration and its routes are in the
+      `router` table
+    capabilityEvidence:
+      its work is `hook_cron` and nothing else; `cron-wire.spec.ts` invokes Drupal's
+      cron handlers across several firings, inside the 6-unit / 500-row budget, and a second sweep
+      runs again rather than latching. The module is not in the pack
+  drupal/search_api:
+    needs:
+      - cron
+    why: indexing runs on cron. The DATABASE backend needs nothing else and is the supported shape here
+    lift:
+      'none for the database backend. A remote backend is a different module and a different tier.
+      Cron is DRIVEN: `alarm()` calls `driveCron()` and has since it shipped, on by default, off
+      with `DRUPAL_CRON=0`. What remains is the cadence -- interval-gated at 15 minutes
+      (`cronDue()`) and budgeted at 6 units / 500 rows / 500 ms per firing -- so work lands within a
+      quarter hour rather than immediately'
+    verified:
+      enabled against a real site; it created `search_api_item` and `search_api_task`, which is
+      where the database backend writes, and its index routes are in the `router` table
+    capabilityEvidence:
+      indexing runs on cron with the database backend, and the cron wire is measured
+      in `cron-wire.spec.ts`. The module is not in the pack
+  drupal/search_api_solr:
+    needs:
+      - deferrable-outbound
+    why: "Its transport is not the blocker. Measured 2026-08-24 by installing it: it pulls
+      `maennchen/zipstream-php`, which declares `php-64bit`, so composer emits a
+      `platform_check.php` asserting `PHP_INT_SIZE === 8`. That check used to abort every request
+      before Drupal booted, taking all 56 other contrib cases with it; the shipping build is 64-bit
+      as of 2026-08-25 and it now passes. With `platform-check: false` the module installs clean and
+      57/57 pass: `plugin.manager.search_api_solr.connector`, `solarium.query_helper` and its four
+      solr config entity types all resolve, none of them before. The transport was measured
+      separately against solarium 6.4.2 and is interceptable: the default connector picks
+      `extension_loaded('curl') ? new Curl() : new Http()`, this build has no curl, so it lands on
+      the stream adapter, and `SolariumTransport` short-circuits that through Solarium's own
+      `PreExecuteRequest` with no module change"
+    lift: "`PHP_INT_SIZE` 8, from wasm64 (measured to fit at 123.00 MiB) or from
+      `ZEND_ENABLE_ZVAL_LONG64` on wasm32. Disabling composer's platform check is the cheap route
+      and is a product decision: the guard is right that a 64-bit path exists, since zipstream is
+      there for ZIP64 offsets in the configset download, so turning it off ships an unexercised path
+      site-wide to unlock one module. `SolariumTransport` is already shipped with 17 assertions in
+      the sibling module's `tests/solarium-transport.php`; a file-upload extract needs a streaming
+      body and is declared rather than sent empty"
+    vectors:
+      - runtime.int64
+    verified: enabled against a real site with composer's platform check ON;
+      `plugin.manager.search_api_solr.connector` and `solarium.query_helper` resolve and all four
+      solr config entity types -- `solr_cache`, `solr_field_type`, `solr_request_handler`,
+      `solr_request_dispatcher` -- are registered, none of them before. The `php-64bit` constraint
+      that used to abort every request before Drupal booted is satisfied by the long64 build. A Solr
+      SERVER is still an outbound dependency reached through the deferred tier, so what was asserted
+      is the module installing rather than a query answering
+  drupal/search_gov_results_api:
+    needs: []
+    why: '`SearchPageForm` GETs `https://api.gsa.gov/technology/searchgov/v2/results/i14y` through
+      `http_client` while building the form for `/search`, and the results ARE the page. That reads
+      as a refusal and is not one. Driven through the real serve path with the upstream stubbed,
+      2026-09-08: the module builds its own request (`affiliate`, `access_key`, `query`, `limit`,
+      `offset`), the park carries it out of the form build, and the answer arrives inside the SAME
+      render -- one trip, nothing left in the deferred queue, its form inside a full 17 KB page. It
+      used to take two renders across the deferred tier and no longer does. The live upstream
+      confirms the request leaves the Worker: with the rig`s fake credentials `api.gsa.gov` answered
+      `400 affiliate not found` from inside the render. **It is `untested` because the module does
+      not render what it fetched**: `processResults()` pulls each entity out of a `viewMultiple()`
+      result and renders the child on its own, and `buildMultiple` is a `#pre_render` on the PARENT,
+      so a detached child renders as an empty shell. That is an upstream defect on any Drupal 11
+      site, not a property of this runtime -- the project has no tagged release and its results path
+      carries several TODOs'
+  drupal/simple_sitemap:
+    needs:
+      - cron
+    why:
+      generation is a queue drained by cron, plus a filesystem write per chunk. It refused to install
+      because its `hook_requirements()` calls `extension_loaded('xmlwriter')`, which is a built-in
+      and cannot be shimmed -- so the fix is Drupal's own `hook_requirements_alter()`, host-side,
+      module unmodified
+    lift:
+      'shipped: `XMLWRITER_FIX` supplies the eleven methods 4.2.1 calls, byte-identical to libxml
+      across eight documents including both sitemap shapes, escaping, indentation depth and the
+      flush semantics a chunked generator depends on. `Requirements::requirementsAlter()` clears the
+      install block only when the class is present AND round-trips a document, so a build without
+      the polyfill keeps the honest error'
+    vectors:
+      - runtime.xmlwriter
+    verified:
+      enabled against a real site; `simple_sitemap.generator`, `simple_sitemap.queue_worker` and
+      `simple_sitemap.sitemap_writer` resolve, both `simple_sitemap` and `simple_sitemap_type` are
+      registered entity types and `simple_sitemap.settings` is installed, none of it before. It was
+      refused outright until the host supplied a pure-PHP `XMLWriter` and cleared its one install
+      block through `hook_requirements_alter()` -- `extension_loaded('xmlwriter')` is a built-in and
+      cannot be shimmed
+  drupal/smtp:
+    needs:
+      - deferrable-outbound
+    why:
+      "IT NEVER NEEDED A BLOCKING CALL, and it was classified `blocking-outbound` until 2026-09-08 on
+      the strength of PHPMailer's implementation rather than of what the site needs.
+      `MailManager::mail()` returns a bool and nothing in a render waits on delivery, so the send is
+      deferrable by construction -- which is the tier that ships. Measured 2026-08-20: it installs
+      cleanly and `smtp.settings` lands. Measured 2026-09-08: the `SMTPMailSystem` plugin is in the
+      mail manager afterwards and absent before, so the module is now `verified` on what it owns"
+    lift:
+      "the replacement ships and IS now selected: `MailInterfaceOverride` claims `system.mail` for
+      `cfw_mail` from the module, so a site that drops smtp gets a working mailer rather than
+      `php_mail`, which this runtime cannot run. IT IS AN OVERRIDE RATHER THAN A `settings.php`
+      ASSIGNMENT, 2026-09-07, because the assignment named a plugin of a module that a site may not
+      have enabled and every `/user/password` answered 500 with `PluginNotFoundException`; an
+      override only claims the key when `drupflare` is installed, and it yields to smtp when smtp
+      is. AND ITS CONFIGURATION IS NOW READ, 2026-08-24: the module installs here and its socket
+      never runs, so a site that filled in its relay and saved had a complete SMTP configuration
+      nothing looked at, and its operator had to type the same host, port and password again as
+      Worker vars. `CfwMail` passes `smtp.settings` to `cfwMail`, `mailEnvFromSite()` maps it onto
+      the transport vars and the deployment's own vars still win. The settings are persisted to
+      `cfw_meta` because the ALARM re-resolves the transport and never sees the message. So the
+      module stays blocked -- the socket is what refuses it -- while both the capability and now the
+      configuration are covered"
+    verified:
+      'enabled against a real site; the `SMTPMailSystem` mail plugin is in `plugin.manager.mail`
+      afterwards and absent before, `smtp.settings` is installed and `smtp.config` and
+      `smtp.connection_tester` resolve. Its socket never runs: `CfwMail` passes `smtp.settings` to
+      the host transport, so the module supplies the configuration and the relay is dialled from JS
+      between invocations'
+  drupal/stage_file_proxy:
+    needs:
+      - deferrable-outbound
+    why:
+      fetches a missing file from an upstream site on the request that missed it. A cache fill, so a
+      placeholder or a 202 on the first miss is honest
+    lift: the existing GET tier already covers it; what is missing is the Drupal-side shim that
+      tolerates a miss instead of blocking
+    verified:
+      enabled against a real site; `stage_file_proxy.settings` is installed, which is what its
+      fetch path reads
+  drupal/svg_image:
+    needs: []
+    why:
+      it takes over core's `image` formatter and `image_image` widget to pass SVGs through, sanitised
+      by enshrined/svg-sanitize. Pure PHP, and it needs no image toolkit for the SVG path
+    verified: enabled against a real site; the `image` field formatter is
+      `Drupal\svg_image\...\SvgImageFormatter` afterwards and core's `ImageFormatter` before, and
+      the `image_image` widget moves the same way. It takes core's plugin ids over rather than
+      adding its own
+  drupal/token:
+    needs: []
+    why: a token vocabulary; no I/O of its own
+    verified: "enabled against a real site; `[random:hash:md5]` resolves to 32 hex digits, and it is
+      declared by `token.tokens.inc` and by nothing in core -- with `ctools` enabled in its place
+      the same call returns the literal. Controls both ways: `[nosuchtype:nosuchtoken]` comes back
+      untouched, and core's `[site:name]` still answers"
+    shipping: true
+  drupal/twig_tweak:
+    needs: []
+    why: Twig functions over local services
+    verified:
+      enabled against a real site; its twig extension and four view builders resolve, which is
+      the whole of what it adds
+  drupal/usfedgov_google_analytics:
+    needs: []
+    why: the DAP tag is a `<script src>` the BROWSER fetches from dap.digitalgov.gov, so nothing
+      outbound happens in PHP. The module builds a query string from config and attaches one asset
+      library; the local library variants ship the same file out of the module directory, which the
+      static asset layer already serves
+    verified: enabled against a real site; its three hook services resolve,
+      `usfedgov_google_analytics.settings` is installed, its admin route is in the `router` table
+      and seven asset libraries resolve for it afterwards and none before. The DAP tag is fetched by
+      the BROWSER from dap.digitalgov.gov, so nothing outbound happens in PHP
+  drupal/uswds_base:
+    needs: []
+    why: 'Twig templates, theme settings and an asset library; no PHP classes and no I/O. It was
+      unverifiable for three gate-side reasons and none of them was the runtime: composer installs
+      it to `themes/contrib`, `pack-drupal.ts` swept no theme tree, and `/__enable` drove
+      `module_installer` against `extension.list.module`, which does not list themes. All three are
+      wired now and the theme installs through `theme_installer`. Its default library mode loads
+      USWDS from a CDN, which OMB M-23-22 forbids for static third-party assets, so a federal
+      deployment picks the local mode'
+    verified:
+      'installed against a real site through `theme_installer`, which is a different installer
+      from every other row here: its asset libraries resolve afterwards and none before, and it
+      lands in the `theme` key of `core.extension` rather than the `module` key. Its default library
+      mode loads USWDS from a CDN, and a federal deployment picks the local mode instead'
+  drupal/video_embed_field:
+    needs:
+      - deferrable-outbound
+    why: the field stores a URL and renders an iframe, which needs nothing. The THUMBNAIL is a fetch
+      from the provider on save, and that is the one call it makes
+    lift:
+      the existing GET tier covers the thumbnail; what is missing is tolerating a miss on the first
+      save instead of blocking. Without it the field still works and the thumbnail is empty
+    verified: enabled against a real site; the `video_embed_field` field type, its
+      `video_embed_field_video` formatter and `video_embed_field.provider_manager` are all present
+      afterwards and absent before
+  drupal/views_bulk_operations:
+    needs: []
+    why:
+      actions over view results, run through the batch API -- many requests rather than one long one,
+      which is the shape this runtime wants
+    verified: enabled against a real site; `views_bulk_operations.processor`,
+      `views_bulk_operations.data` and its action plugin manager resolve, the
+      `views_bulk_operations_delete_entity` action is registered, and four of its routes are in the
+      `router` table
+  drupal/views_data_export:
+    needs: []
+    why:
+      a views display that serialises rows. The batched export is many requests, and the encoders are
+      pure PHP
+    verified: enabled against a real site; the `data_export` views display and style plugins are
+      registered, which is the whole module
+  drupal/webform:
+    needs: []
+    why:
+      form building and submission storage are local. Handlers that POST to a remote endpoint are the
+      deferrable case and are per-handler, not per-module
+    verified: enabled against a real site; four of its plugin managers resolve, the `webform` table
+      exists and its shipped option sets are installed. Submissions are ordinary form POSTs
+  drupal/xmlsitemap:
+    verified:
+      enabled against a real site; `xmlsitemap_generator` and `xmlsitemap.link_storage` resolve,
+      the `xmlsitemap` table exists and its settings are installed

@@ -1152,16 +1152,16 @@
         },
         {
             "name": "drupflare/drupflare",
-            "version": "v0.2.1",
+            "version": "v0.3.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/drupflare.git",
-                "reference": "6772ea9848e4321eceade26765bea0efa61d5275"
+                "reference": "d3bc557d2ca6a8518c732f76a5b1b00a709937cf"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/6772ea9848e4321eceade26765bea0efa61d5275",
-                "reference": "6772ea9848e4321eceade26765bea0efa61d5275",
+                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/d3bc557d2ca6a8518c732f76a5b1b00a709937cf",
+                "reference": "d3bc557d2ca6a8518c732f76a5b1b00a709937cf",
                 "shasum": ""
             },
             "require": {
@@ -1231,20 +1231,20 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-08-29T07:12:23+00:00"
+            "time": "2026-09-09T07:40:00+00:00"
         },
         {
             "name": "drupflare/rom",
-            "version": "v0.2.0",
+            "version": "v0.2.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/rom.git",
-                "reference": "56e52828d12ac22b38bdf6458e535b8cec03f779"
+                "reference": "59126aa09f05f9bf89878e94f43f52ce325b06d0"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/rom/zipball/56e52828d12ac22b38bdf6458e535b8cec03f779",
-                "reference": "56e52828d12ac22b38bdf6458e535b8cec03f779",
+                "url": "https://api.github.com/repos/drupflare/rom/zipball/59126aa09f05f9bf89878e94f43f52ce325b06d0",
+                "reference": "59126aa09f05f9bf89878e94f43f52ce325b06d0",
                 "shasum": ""
             },
             "require": {
@@ -1312,20 +1312,20 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-08-28T15:56:15+00:00"
+            "time": "2026-08-31T01:55:43+00:00"
         },
         {
             "name": "drupflare/stream-http",
-            "version": "v0.1.2",
+            "version": "v0.1.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/stream-http.git",
-                "reference": "4da33c8452abad863f21f5a308d838df96ac6042"
+                "reference": "1d69773f61e65d004553491e38d4061d8fbe8b44"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/stream-http/zipball/4da33c8452abad863f21f5a308d838df96ac6042",
-                "reference": "4da33c8452abad863f21f5a308d838df96ac6042",
+                "url": "https://api.github.com/repos/drupflare/stream-http/zipball/1d69773f61e65d004553491e38d4061d8fbe8b44",
+                "reference": "1d69773f61e65d004553491e38d4061d8fbe8b44",
                 "shasum": ""
             },
             "require": {
@@ -1334,7 +1334,7 @@
             "require-dev": {
                 "drupal/coder": "^9.0",
                 "phpdocumentor/shim": "^3.10",
-                "phpunit/php-code-coverage": "^11.0 || ^12.0"
+                "phpunit/php-code-coverage": "^11.0 || ^12.0 || ^14.0"
             },
             "type": "library",
             "autoload": {
@@ -1380,7 +1380,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-08-21T19:43:17+00:00"
+            "time": "2026-09-10T05:37:13+00:00"
         },
         {
             "name": "egulias/email-validator",

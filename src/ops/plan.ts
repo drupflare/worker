@@ -121,7 +121,8 @@ export function withPlan<T extends PlanEnv>(env: T, resolved: ResolvedPlan): T {
  * The KV key holding runtime lever overrides, as one JSON object.
  *
  * One key rather than one per lever: a single read is atomic, costs one of the 100,000 daily KV
- * reads instead of seven, and gives an operator one place to see every override in force.
+ * reads instead of one per lever, and gives an operator one place to see every override in
+ * force. Counted nowhere in prose: this docblock said seven while the list held eighteen.
  */
 export const SETTINGS_KV_KEY = 'settings';
 
@@ -234,7 +235,7 @@ export async function resolveSettings(
  * TWO CALLERS, and there have to be two. This one runs in `src/site.ts` against the FRONT worker's
  * env, which is where `GEN_BUCKET_MS` and `SITE_LOCATION_HINT` are read. The Durable Object receives
  * its own copy of the bindings and cannot see this, so it overlays its own in `adoptSettings()` --
- * for the whole life of the convention it did not, and the seven levers read only inside the object
+ * for the whole life of the convention it did not, and the levers read only inside the object
  * were knobs that configured nothing.
  */
 export function withSettings<T extends object>(

@@ -10,7 +10,7 @@ serving path, and a typo must not take a site down.
 Three layers decide what a value is, most specific first:
 
 1. **A request parameter**, where the route exposes one (`?prefill=`, `?all=1`).
-2. **The `CONFIG_KV` namespace**, for the plan and the eleven levers on
+2. **The `CONFIG_KV` namespace**, for the plan and the runtime levers on
    [Runtime Overrides](#runtime-overrides). No redeploy needed.
 3. **The `vars` entry**, then the per-plan default in `src/ops/plan-profile.ts`, then the constant.
 
@@ -1408,8 +1408,8 @@ declines. `GET /sweep?run=1` forces a step off its interval.
 ## Runtime Overrides
 
 Eleven names can be overridden from the `CONFIG_KV` namespace under the key `settings`, as one JSON
-object. One key covers all eleven: a single read is atomic, costs one of the 100,000 daily KV reads
-instead of eleven, and gives an operator one place to see every override in force.
+object. One key covers them all: a single read is atomic, costs one of the 100,000 daily KV reads
+instead of one per lever, and gives an operator one place to see every override in force.
 
 ```json
 { "RENDER_BUDGET_MS": 4000, "FILL_BATCH_SIZE": 8, "PREFILL": "0" }
@@ -1419,12 +1419,12 @@ instead of eleven, and gives an operator one place to see every override in forc
 `LAZY_FS_BUDGET_BYTES`, `PREFILL`, `GEN_BUCKET_MS`, `SITE_LOCATION_HINT`, `MAIL_TRANSPORT`,
 `MAIL_DRAIN_LIMIT`.
 
-**All eleven reach a reader inside the Durable Object, and for a while only two did.**
+**Every one of them reaches a reader inside the Durable Object, and for a while only two did.**
 `withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
-own copy of the bindings, so seven of the eleven were knobs nothing read: `RENDER_BUDGET_MS`,
+own copy of the bindings, so most of them were knobs nothing read: `RENDER_BUDGET_MS`,
 `FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`
 and `PREFILL` are read in `src/site-do.ts` and only there. `adoptSettings()` now overlays every name
-on the allow-list, and is called from `alarm()` as well as `handle()`, because four of the seven are
+on the allow-list, and is called from `alarm()` as well as `handle()`, because several of them are
 read on the fill chain and an alarm never passes through `handle()`. The fast storage lane adopts
 nothing and must not: it is await-free by construction and reads no lever.
 

@@ -28,7 +28,6 @@ import { isPaid, type PlanEnv } from './plan.js';
 export type PlanProfile = {
 	/** pages one alarm firing may fill before re-arming */
 	fillBatchSize: number;
-	/** wall-clock ms one alarm firing may occupy the object */
 	/** queued outbound requests one alarm firing may fetch */
 	httpDrainLimit: number;
 	/** files one alarm firing may push to R2 */

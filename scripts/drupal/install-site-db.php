@@ -305,6 +305,102 @@ if (Drupal::database()->schema()->tableExists('watchdog')) {
 // "no such collation sequence". A plain sqlite3 client reading this file hits the same wall.
 $db = Drupal::database();
 
+// #region uid 1 ships with no usable password
+// The installer needs an admin password to complete, and the artifact must not carry it: this
+// database is published, so a hash here is a credential every deployment would share and the
+// build's own `--password` would open every site built from it. The shipped file has always had an
+// empty `pass`, and a rebuild reintroduced a `$2y$12$...` hash that `pack-secrets.spec.ts` caught in
+// `assets/drupal-sql/0061.json`.
+//
+// Empty rather than deleted, because the ROW is what makes uid 1 exist. Drupal's password checker
+// refuses an empty hash, so the account cannot be logged into; `/firstrun` is what sets a real one,
+// and `site.unclaimed` is what reports a site where nobody has.
+$scrubbedPass = $db
+	->update('users_field_data')
+	->fields(['pass' => ''])
+	->condition('uid', 1)
+	->execute();
+$stillHashed = (int) $db
+	->select('users_field_data', 'u')
+	->condition('u.pass', '', '<>')
+	->countQuery()
+	->execute()
+	->fetchField();
+if ($stillHashed !== 0) {
+	fwrite(STDERR, "a password hash survived the scrub in {$stillHashed} row(s)\n");
+	exit(1);
+}
+// #endregion
+
+// #region router_alias, rebuilt partial
+// `CfwMatcherDumper::ensurePartialAliasIndex()` makes this index partial on the edge, and a NATIVE
+// install cannot reach that code: core's own dumper runs here and writes a full index. The shipped
+// database has always carried `WHERE "alias" IS NOT NULL` and a rebuild silently dropped it, which
+// `index-audit.spec.ts` caught.
+//
+// `alias` is NULL on about 96% of routes, so a full index charges a row per route on every rebuild
+// for entries no lookup reads. Same reasoning as the cache indexes below, one table over.
+$db->query('DROP INDEX IF EXISTS router_alias');
+$db->query('CREATE INDEX router_alias ON router (alias) WHERE alias IS NOT NULL');
+$aliasIndexSql = (string) $db
+	->query("SELECT sql FROM sqlite_master WHERE type='index' AND name='router_alias'")
+	->fetchField();
+if (!str_contains($aliasIndexSql, 'WHERE')) {
+	fwrite(STDERR, "router_alias was not rebuilt partial: {$aliasIndexSql}\n");
+	exit(1);
+}
+// #endregion
+
+// #region the cache bins a render would have created
+// Drupal creates a bin's table on its FIRST WRITE, and this script never renders, so a fresh build
+// carries nine bins where the shipped database carries fifteen. The six missing ones are the render
+// path's: they would be created on the edge instead, at first use, WITH the `_created` and `_expire`
+// indexes the pass below exists to drop -- so every later insert into them charges rows forever.
+//
+// Touched rather than rendered: `set()` is what runs `ensureTableExists()`, and the row is deleted
+// straight afterwards so the bin ships empty. `index-audit.spec.ts` counts the bins and their
+// charged rows, which is what caught the gap.
+$lazyBins = ['access_policy', 'data', 'dynamic_page_cache', 'entity', 'page', 'render'];
+$createdBins = [];
+foreach ($lazyBins as $bin) {
+	if ($db->schema()->tableExists("cache_{$bin}")) {
+		continue;
+	}
+	$backend = Drupal::cache($bin);
+	$backend->set('__cfw_build_touch', 1);
+	$backend->delete('__cfw_build_touch');
+	if (!$db->schema()->tableExists("cache_{$bin}")) {
+		fwrite(STDERR, "cache_{$bin} was not created by touching its backend\n");
+		exit(1);
+	}
+	$createdBins[] = "cache_{$bin}";
+}
+// #endregion
+
+// #region the RouteProvider collection, warmed
+// `RouteProvider` caches a serialized RouteCollection into `cache_data` on its first lookup. The
+// shipped database carries that row and a fresh build does not, so the first request on every new
+// site rebuilds the collection.
+//
+// It is also the only row in the pack with embedded NUL bytes, which makes it the subject of
+// `migrate-sql.spec.ts`'s codec regression test -- `node:sqlite` truncates a TEXT read at the first
+// NUL, and both sides of an equality check read 117 bytes and agreed. Without the row that guard
+// cannot fire, so losing it costs a warm start AND a check.
+$routeProvider = Drupal::service('router.route_provider');
+$warmRequest = Symfony\Component\HttpFoundation\Request::create('/');
+$routeProvider->getRouteCollectionForRequest($warmRequest);
+$routeCacheRows = (int) $db
+	->select('cache_data', 'c')
+	->condition('c.cid', 'route:%', 'LIKE')
+	->countQuery()
+	->execute()
+	->fetchField();
+if ($routeCacheRows === 0) {
+	fwrite(STDERR, "the RouteProvider lookup cached no collection into cache_data\n");
+	exit(1);
+}
+// #endregion
+
 // #region the cache secondary indexes, dropped because this runtime charges a row for each of them
 // Every cache bin ships `<bin>_created` and `<bin>_expire`. On the edge nothing reads either:
 // `DatabaseBackend::getMultiple()` selects by cid, and `garbageCollection()` never runs because the
@@ -385,10 +481,11 @@ echo json_encode(
 		'cacheIndexesDropped' => count($droppedIndexes),
 		'cacheIndexesKept' => $keepIndexesOn,
 		'watchdogRowsTruncated' => $truncated,
+		'passwordRowsScrubbed' => $scrubbedPass,
+		'lazyBinsCreated' => $createdBins,
 		'siteName' => $siteName,
 		'buildSitePath' => $sitePath,
-		'notReproducibleByBytes' =>
-			'hash salt, config UUIDs, admin hash and timestamps differ per run',
+		'notReproducibleByBytes' => 'hash salt, config UUIDs and timestamps differ per run',
 		'next' => 'bun scripts/diff-site-db.ts assets/drupal/site.sqlite ' . $out,
 	],
 	JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,

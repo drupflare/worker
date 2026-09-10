@@ -6,6 +6,15 @@ import {
 import { DRIVER_DIGEST, DRIVER_ROUTES } from './driver-digest.js';
 
 /**
+ * The `cfw_meta` key recording which driver pack a site's compiled container was built against.
+ *
+ * Named here rather than written as a literal at each use, because provisioning stamps it too: the
+ * packed container comes from the same build as {@link DRIVER_DIGEST}, so a fresh site is current
+ * and must not be made to prove it by throwing the row away.
+ */
+export const DRIVER_DIGEST_KEY = 'driver_digest';
+
+/**
  * Reconciling an ALREADY-PROVISIONED site with the pack that ships today.
  *
  * The pack is the delivery mechanism and it delivers only at provisioning. Every fix that lands
@@ -264,14 +273,14 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		 * anywhere. Dropping the row makes the next boot rebuild and discover.
 		 */
 		verdict(sql, host) {
-			if (host.meta('driver_digest') === DRIVER_DIGEST) return { state: 'satisfied' };
+			if (host.meta(DRIVER_DIGEST_KEY) === DRIVER_DIGEST) return { state: 'satisfied' };
 			const rows = count(sql, 'SELECT COUNT(*) AS n FROM cache_container');
 			if (rows === null) return { state: 'deferred', detail: 'no cache_container table' };
 			return { state: 'owed', detail: `driver digest moved; ${rows} container rows to drop` };
 		},
 		sql(sql, host) {
 			sql.exec('DELETE FROM cache_container');
-			host.setMeta('driver_digest', DRIVER_DIGEST);
+			host.setMeta(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
 		}
 		// NO `php()` HERE, AND ADDING ONE WAS A MISTAKE WORTH RECORDING. Recompiling the container
 		// inside this step looks like an improvement -- the next visitor stops paying the compile --

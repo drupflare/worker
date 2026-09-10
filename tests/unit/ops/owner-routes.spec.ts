@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { routeTable } from '../../../src/site';
+import { SURFACE_PREFIX } from '../../../src/ui/admin';
 
 /**
  * Which routes an owner reaches with a per-site token rather than a deployment-wide boolean.
@@ -45,5 +46,62 @@ describe('site maintenance is reachable with an owner token', () => {
 	/** none of them is public, which is the assertion that makes the rest mean something */
 	it.each([...MOVED, ...OWNER_ONLY])('%s is not public', (path) => {
 		expect(routeTable().public.has(path)).toBe(false);
+	});
+});
+
+/**
+ * Every route reaches something, asserted over the WHOLE table rather than over a named list.
+ *
+ * The dispatcher ends `inner.pathname = DO_ROUTE[url.pathname] as string`, and a route with no entry
+ * therefore sends the literal `undefined` to the object. That has shipped twice: `/setup/cf` and
+ * `/setup/mail` were documented as live and were rewritten to `/serve`, and `/fleet` answered 404 to
+ * every caller including `scripts/security-update.mjs --fleet=`. Both were found by a human using
+ * the route, because every assertion covering this names the routes it checks -- so a route added
+ * tomorrow is covered by none of them.
+ */
+const WORKER_ANSWERED = new Set(['/fillwindow', '/fleet']);
+
+describe('the route table forwards everything it claims to own', () => {
+	it('gives every route either a DO_ROUTE entry or a Worker-side answer', () => {
+		const table = routeTable();
+		const unreachable = [...table.all].filter(
+			(p) =>
+				typeof table.doRoute[p] !== 'string' &&
+				!WORKER_ANSWERED.has(p) &&
+				!p.startsWith(SURFACE_PREFIX)
+		);
+		expect(
+			unreachable,
+			'these routes rewrite to `undefined` at the object; add a DO_ROUTE entry or answer them ' +
+				'in the Worker'
+		).toEqual([]);
+	});
+
+	it('names no DO_ROUTE target that is not a route, so the table cannot rot the other way', () => {
+		const table = routeTable();
+		const orphans = Object.keys(table.doRoute).filter((p) => !table.all.has(p));
+		expect(orphans, 'a DO_ROUTE entry for a path `ROUTES` does not carry is dead').toEqual([]);
+	});
+
+	it('routes every entry to a `__`-prefixed inner path', () => {
+		// the object refuses an inner path that is not double-underscored, so a typo here is a 404
+		// that reads as a missing feature
+		const bad = Object.entries(routeTable().doRoute).filter(
+			([, inner]) => !inner.startsWith('/__')
+		);
+		expect(bad).toEqual([]);
+	});
+
+	it('keeps the Worker-answered set honest, so an entry cannot hide a missing route', () => {
+		// the control: each exemption above is a claim that the Worker answers the path itself, and
+		// a stale one is how an exemption list becomes a way to silence this check
+		const table = routeTable();
+		for (const path of WORKER_ANSWERED) {
+			expect(table.all.has(path), `${path} is exempted but is not a route`).toBe(true);
+			expect(
+				table.doRoute[path],
+				`${path} has a DO_ROUTE entry now; drop the exemption`
+			).toBeUndefined();
+		}
 	});
 });

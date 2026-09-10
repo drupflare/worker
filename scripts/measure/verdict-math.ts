@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parse } from 'yaml';
 import type { Summary } from './vps-compare';
 
 /**
@@ -13,17 +16,28 @@ import type { Summary } from './vps-compare';
  * without the numbers beside it, so it cannot be quietly fitted to a result.
  */
 
-/** what the verdict weighs each workload by, and where the weights come from */
-export const TRAFFIC_MIX: Record<string, { weight: number; why: string }> = {
-	// a content site's requests are overwhelmingly anonymous reads of a page that already exists.
-	// The authenticated share is the shape `optional-auth-is-the-hidden-tier` measured on mantle2:
-	// 8.5% of requests carry a session, and a small tail of the anonymous remainder is uncached
-	'anon-cached': { weight: 0.82, why: 'anonymous read of a page that already exists' },
-	'anon-miss': { weight: 0.095, why: 'the uncached tail; a first visit or a purged path' },
-	'auth-front': { weight: 0.03, why: 'a signed-in reader on an ordinary page' },
-	'auth-admin': { weight: 0.03, why: 'an editor in the admin interface' },
-	'auth-account': { weight: 0.025, why: 'a signed-in user on their own page' }
-};
+/**
+ * What the verdict weighs each workload by, from `config/traffic.yml`.
+ *
+ * Read rather than generated: this is a build-lane instrument and never reaches a Worker, so it can
+ * open the file the edge cannot. The weights sum to 1 and the reader refuses if they do not, since a
+ * mix that does not is a weighted mean of nothing.
+ */
+export const TRAFFIC_MIX: Record<string, { weight: number; why: string }> = readTrafficMix();
+
+function readTrafficMix(): Record<string, { weight: number; why: string }> {
+	const path = resolve(import.meta.dirname, '..', '..', 'config', 'traffic.yml');
+	const doc = parse(readFileSync(path, 'utf8')) as {
+		mix?: Record<string, { weight: number; why: string }>;
+	};
+	const mix = doc?.mix;
+	if (!mix || Object.keys(mix).length === 0) throw new Error(`${path} declares no mix`);
+	const total = Object.values(mix).reduce((n, e) => n + e.weight, 0);
+	if (Math.abs(total - 1) > 1e-9) {
+		throw new Error(`config/traffic.yml weights sum to ${total}, not 1`);
+	}
+	return mix;
+}
 
 /** one workload at one concurrency, measured on both arms */
 export interface Cell {

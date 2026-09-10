@@ -1,0 +1,16 @@
+mix:
+  anon-cached:
+    weight: 0.82
+    why: anonymous read of a page that already exists
+  anon-miss:
+    weight: 0.095
+    why: the uncached tail; a first visit or a purged path
+  auth-front:
+    weight: 0.03
+    why: a signed-in reader on an ordinary page
+  auth-admin:
+    weight: 0.03
+    why: an editor in the admin interface
+  auth-account:
+    weight: 0.025
+    why: a signed-in user on their own page

@@ -12,79 +12,15 @@
  * The measurements behind each figure are in `TECHNICAL_REPORT.md`.
  */
 
-/** Documented free-plan daily quotas. Sources are in the report's PLATFORM LIMITS table. */
-export const FREE_QUOTAS = {
-	/** account-wide, resets midnight UTC, Error 1027 */
-	workerRequestsPerDay: 100_000,
-	/** explicitly "includes ... alarm invocations", which is what makes slicing cost something */
-	doRequestsPerDay: 100_000,
-	rowsWrittenPerDay: 100_000,
-	/** 50x the write allowance and a SEPARATE meter; a render reads nowhere near 50 per write */
-	rowsReadPerDay: 5_000_000,
-	/**
-	 * What ONE idle warming tick charges, measured.
-	 *
-	 * It charged THREE until the daily meters were rate-limited: the `setAlarm`, plus one row each
-	 * for `flushDailyRows()` and `flushDailyDoRequests()`. On an idle tick the only writes those two
-	 * had to record were their own, so the meter sustained itself and cost 32.4% of free's daily row
-	 * budget to count almost nothing. `shouldFlushMeters()` now gates them and a tick charges the
-	 * `setAlarm` alone; `tests/integration/warm-alarm-cost.spec.ts` pins it at 1.
-	 */
-	rowsPerAlarmArm: 1,
-	/** the two daily-meter rows, charged once per {@link METER_FLUSH_SECONDS} rather than per tick */
-	rowsPerMeterFlush: 2,
-	// one message costs THREE: a write, a read and a delete, each per 64 KB
-	queueOperationsPerDay: 10_000,
-	queueOperationsPerMessage: 3,
-	/**
-	 * WORKERS KV, AND ITS WRITE SIDE IS THE TIGHTEST METER IN THIS OBJECT.
-	 *
-	 * Reads are 100,000/day and writes are **1,000**, a hundred to one. The KV page tier, S2's
-	 * previous-generation reads and `edgePlanKvKey` all live here, and at the alarm chain's
-	 * 2,777 fills/day one KV write per fill is 2.8x over the write quota on its own.
-	 *
-	 * This model did not carry KV at all until 2026-09-07, so any proposal that writes an artifact
-	 * per save or per fill into KV was scoring clean against an envelope that could not see it.
-	 * Nothing is failing today only because `PAGE_KV` is not bound in the canonical config.
-	 *
-	 * THE RULE THAT FOLLOWS: mirror to KV on READ, never on write. A read-through mirror writes once
-	 * per distinct artifact actually requested, which is bounded by traffic; a write-through mirror
-	 * writes once per regeneration, which is bounded by the row meter and blows this one first.
-	 */
-	kvReadsPerDay: 100_000,
-	kvWritesPerDay: 1_000,
-	kvDeletesPerDay: 1_000,
-	kvListsPerDay: 1_000,
-	/**
-	 * The Workers Cache purge budget, which is ACCOUNT-WIDE and always metered at the free rate.
-	 *
-	 * 5 calls/minute against a token bucket of 25, at most 100 tags per call, whatever the plan the
-	 * account is on. That is 7,200 calls/day shared by every tenant on the Worker, so a scoped purge
-	 * driven per invalidated TAG starves the fleet while a purge driven per SAVE, batching up to 100
-	 * tags, fits. A rate-limited purge answers `success: false` rather than throwing, so exceeding
-	 * this is silent.
-	 */
-	cachePurgeCallsPerMinute: 5,
-	cachePurgeBurst: 25,
-	cachePurgeTagsPerCall: 100,
-	// per MONTH. Class B is a read (serving), Class A a write (regeneration); "assets are free"
-	// describes deploy-time uploads, which cannot hold a runtime-rendered page
-	r2ClassBPerMonth: 10_000_000,
-	r2ClassAPerMonth: 1_000_000,
-	// a third meter neither ceiling sees, per MONTH, and a HARD CAP rather than a bill: an image
-	// style is a transformation, so 10 styles over 2,000 images is 4x over
-	imageTransformsPerMonth: 5_000,
-	// a fourth meter. The "25,000 separately-budgeted steps" figure is the PAID per-instance one
-	workflowStepsPerDay: 3_000,
-	/** steps in ONE workflow instance on free; paid defaults to 10,000 and configures to 25,000 */
-	workflowStepsPerInstance: 1_024,
-	// a FIFTH meter, billed on WALL CLOCK against the 128 MB an object holds whatever it uses, so
-	// every cpuTime-derived figure here understates it and its slack is an upper bound
-	durationGbSPerDay: 13_000,
-	// a SIXTH meter, and the only one that is not a daily rate: it caps how many SITES an account
-	// holds at all, which no other line here could have caught
-	storageBytes: 5 * 1000 * 1000 * 1000
-} as const;
+import { GENERATED_FREE_QUOTAS } from '../generated/quotas.js';
+
+/**
+ * Documented free-plan daily quotas, declared in `config/quotas.yml`.
+ *
+ * Each entry carries its reason there rather than in a comment here, so a figure and the measurement
+ * behind it move together. Sources are in the report's PLATFORM LIMITS table.
+ */
+export const FREE_QUOTAS = GENERATED_FREE_QUOTAS;
 
 /**
  * What one site occupies, in bytes of Durable Object SQLite.

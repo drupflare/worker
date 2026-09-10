@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parse } from 'yaml';
 
 /**
  * Builds `assets/prefill.json` from the RUNTIME's own renders, not from native PHP.
@@ -54,8 +56,24 @@ const arg = (name: string, fallback: string): string => {
 	return hit ? hit.slice(name.length + 3) : fallback;
 };
 
-/** the five paths the shipped `assets/prefill.json` carries, so a rebuild produces the same set */
-export const PREFILL_PATHS = ['/', '/node', '/user/login', '/user/password', '/filter/tips'];
+/**
+ * The paths the shipped `assets/prefill.json` carries, from `config/prefill.yml`.
+ *
+ * Declared rather than inlined so a rebuild produces the same set and adding one is an edit to
+ * config rather than to a script. Build-lane only, so it reads the file directly.
+ */
+export const PREFILL_PATHS: readonly string[] = readPrefillPaths();
+
+function readPrefillPaths(): readonly string[] {
+	const path = resolve(import.meta.dirname, '..', 'config', 'prefill.yml');
+	const doc = parse(readFileSync(path, 'utf8')) as { paths?: string[] };
+	const paths = doc?.paths;
+	if (!Array.isArray(paths) || paths.length === 0) throw new Error(`${path} declares no paths`);
+	const bad = paths.filter((p) => typeof p !== 'string' || !p.startsWith('/'));
+	if (bad.length > 0)
+		throw new Error(`config/prefill.yml has non-path entries: ${bad.join(', ')}`);
+	return paths;
+}
 
 /** one prefilled page, in the shape `prefill.json` stores and `/__migrate` reads back */
 export type PrefilledPage = {

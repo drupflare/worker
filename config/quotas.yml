@@ -1,0 +1,77 @@
+free:
+  workerRequestsPerDay:
+    value: 100000
+    why: account-wide, resets midnight UTC, Error 1027
+  doRequestsPerDay:
+    value: 100000
+    why: the docs say it "includes ... alarm invocations", which is what makes slicing cost something
+  rowsWrittenPerDay:
+    value: 100000
+    why: the regeneration meter, and the tighter of the two ceilings
+  rowsReadPerDay:
+    value: 5000000
+    why: 50x the write allowance and a SEPARATE meter
+  rowsPerAlarmArm:
+    value: 1
+    why: what ONE idle warming tick charges, measured. It charged three until the daily meters were
+      rate-limited, which was 32.4% of the row budget to count almost nothing;
+      warm-alarm-cost.spec.ts pins it at 1
+  rowsPerMeterFlush:
+    value: 2
+    why: the two daily-meter rows, charged once per METER_FLUSH_SECONDS rather than per tick
+  queueOperationsPerDay:
+    value: 10000
+    why: 'one message costs three: a write, a read and a delete, each per 64 KB'
+  queueOperationsPerMessage:
+    value: 3
+    why: the write, the read and the delete
+  kvReadsPerDay:
+    value: 100000
+    why: the read side, a hundred times the write side
+  kvWritesPerDay:
+    value: 1000
+    why:
+      THE TIGHTEST METER IN THIS OBJECT. At the alarm chain 2,777 fills/day, one KV write per fill is
+      2.8x over on its own
+  kvDeletesPerDay:
+    value: 1000
+    why: same bucket as writes
+  kvListsPerDay:
+    value: 1000
+    why: same bucket as writes
+  cachePurgeCallsPerMinute:
+    value: 5
+    why: ACCOUNT-WIDE and always metered at the free rate, whatever plan the account is on. A
+      rate-limited purge answers success:false rather than throwing, so exceeding it is silent
+  cachePurgeBurst:
+    value: 25
+    why: the token bucket the per-minute rate refills
+  cachePurgeTagsPerCall:
+    value: 100
+    why: why a purge driven per SAVE fits and one driven per invalidated TAG starves the fleet
+  r2ClassBPerMonth:
+    value: 10000000
+    why: per MONTH; a read, so this is the serving side
+  r2ClassAPerMonth:
+    value: 1000000
+    why: per MONTH; a write, so this is the regeneration side
+  imageTransformsPerMonth:
+    value: 5000
+    why:
+      'per MONTH, and a HARD CAP rather than a bill: an image style is a transformation, so 10 styles
+      over 2,000 images is 4x over'
+  workflowStepsPerDay:
+    value: 3000
+    why:
+      the free per-day figure; the "25,000 separately-budgeted steps" number is the PAID per-instance
+      one
+  workflowStepsPerInstance:
+    value: 1024
+    why: steps in ONE instance on free; paid defaults to 10,000
+  durationGbSPerDay:
+    value: 13000
+    why: billed on WALL CLOCK against the 128 MB an object holds whatever it uses, so every
+      cpuTime-derived figure understates it
+  storageBytes:
+    value: 5000000000
+    why: 'the only line here that is not a daily rate: it caps how many SITES an account holds at all'

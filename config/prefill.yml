@@ -1,0 +1,6 @@
+paths:
+  - /
+  - /node
+  - /user/login
+  - /user/password
+  - /filter/tips

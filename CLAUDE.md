@@ -539,20 +539,25 @@ Free and Paid**, and their docs say "There is no compressed size limit. Only the
 size counts." The 3 MiB gzipped ceiling this project spent two sessions engineering around no longer
 exists.
 
-Measured 2026-09-08: **13,597,829 uncompressed bytes against 67,108,864, which is 20.3%.** Its gzip
-figure is 3,990.8 KiB, so this configuration was impossible three days ago. The figure moves with
-`src/`; `bun run release:check` prints the current one.
+Measured 2026-09-10 on the canonical config: **14,481.28 KiB uncompressed against 65,536 KiB, which
+is 22.1%.** Its gzip figure is 4,621.13 KiB, so this configuration was impossible six days ago. The
+figure moves with `src/`; `bun run release:check` prints the current one.
 
 **The interpreter therefore ships as a raw `CompiledWasm` import.** `src/runtime/php-binary-raw.ts`
 replaces the brotli seam: no `brotliDecompressSync`, no `new WebAssembly.Module`, and the
 `CompiledWasm` rule for `**/*.wasm` was already in `wrangler.jsonc`. Verified boot on
 `wrangler dev --local`: PHP **8.5.2** with the full extension list.
 
-**STARTUP MEASURED ON A DEPLOYED FREE WORKER: 3, 6, 6, 4 ms (n=4, median 5)**, against brotli's
-104/105/107/112 (median 106) and the zstd-through-wasm path's 233/234/246. **21x cheaper**, 0.5% of
-the 1,000 ms budget rather than 10.6%. The bigger module is the cheaper one, because the platform
-compiles it ahead of time and the work at startup is what cost. `cfw-startup-raw`, torn down, account
-back to 0 workers.
+**STARTUP MEASURED ON A DEPLOYED FREE WORKER: 4, 5, 5, 6, 7 ms (n=5, median 5)**, re-measured
+2026-09-10 on a worker importing the seam and nothing else, against brotli's 104/105/107/112
+(median 106) and the zstd-through-wasm path's 233/234/246. **21x cheaper**, 0.5% of the 1,000 ms
+budget rather than 10.6%. The bigger module is the cheaper one, because the platform compiles it
+ahead of time and the work at startup is what cost.
+
+**THE WHOLE WORKER IS 33 ms, and the seam is 5 of it.** Same account, same session, the canonical
+config at 14,481.28 KiB against the seam-only 13,584.15 -- so the front worker's own module scope is
+~28 ms, still 3.3% of the budget. Quote whichever answers the question being asked; the 5 ms is a
+statement about the interpreter and not about a deployment.
 
 Startup is NOT billed to a request (0-1 ms of request `cpuTime` across three cold isolates), so this
 is a limit-compliance figure rather than a latency one. It still matters: a Worker over the limit is
@@ -1513,9 +1518,34 @@ needed: bytes the site does not hold are new to it, so the path being stored is 
 ## Deploying, when authorized
 
 The account has **real production workers**. Use a `cfw-*` name, tear down immediately, and verify
-the worker list returns to exactly its prior baseline. A DO-namespace deploy needs ~60 s propagation
-before `stub.fetch()` stops returning "Worker not found" - wait, do not debug it. Uploading the full
-48 MB `assets/` tree fails; stage only what is needed.
+the worker list returns to exactly its prior baseline -- workers AND
+`workers/durable_objects/namespaces`, because a DO deploy leaves one behind and the worker list
+alone will not show it.
+
+**THE FREE ACCOUNT IS A SEPARATE ONE**: `FREE_CLOUDFLARE_ACCOUNT_ID` / `FREE_CLOUDFLARE_API_TOKEN`
+in the shell profile, exported as `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`. Its baseline is
+0 workers, so anything listed there is something a run left behind.
+
+A DO-namespace deploy needs ~60 s propagation before `stub.fetch()` stops returning "Worker not
+found" - wait, do not debug it.
+
+**THE 50 MB ASSET SUBSET UPLOADS FINE, and this file said it fails.** That was true of the whole
+tree before `.assetsignore`; the deny-by-default list is what made the canonical config deployable,
+and the published set measured 50 MB and uploaded in **32.93 s** on 2026-09-10. What still does not
+deploy unmodified is the config's other bindings -- `CONFIG_KV`, the `drupflare-files` R2 bucket and
+the `drupflare-fleet` D1 database do not exist on the free account, so a measurement deploy strips
+them and keeps `durable_objects`, `assets`, `migrations`, `alias` and `rules`.
+
+**`cpuTime` COMES FROM `workersInvocationsAdaptive`, AND `scriptName` ONLY WORKS AS A FILTER.** As a
+DIMENSION it answers `__unknown__` on this account, so a per-worker breakdown taken that way
+attributes nothing; pass `scriptName` inside `filter` and query one worker at a time. The dataset is
+in MICROSECONDS and lags a few minutes, so mark the window before driving and re-query until the
+request count stops rising -- a first read gave 9 of 20 requests and a p50 two thirds higher than
+the settled one.
+
+Measured 2026-09-10 on a deployed free worker, `/` served from `cfw_page` with every request
+reaching the object: **cpuTime p50 4.14 ms, p90 7.50 ms, p99 9.15 ms (n=14, 0 errors)**, wallTime
+p50 57.4 ms.
 
 `wrangler deploy --dry-run --outdir=<tmp>` does not deploy and is the only cheap way to prove an
 entrypoint and its binary alias still resolve.

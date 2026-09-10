@@ -455,13 +455,7 @@ import {
 	type ProvisionOutcome,
 	type RestoreChunk
 } from './ops/replica-restore.js';
-import {
-	LANES_HEADER,
-	replicaCount,
-	replicaLagMs,
-	replicaName,
-	replicaOf
-} from './ops/replica-routing.js';
+import { LANES_HEADER, replicaLagMs, replicaName, replicaOf } from './ops/replica-routing.js';
 import {
 	ReplicaRequiresPrimary,
 	enforceReadOnly,
@@ -526,6 +520,7 @@ import {
 	type UpdbDeps
 } from './ops/updb.js';
 import {
+	ID_PARTITION_LANES,
 	LANE_HIGH_PREFIX,
 	laneHighWater,
 	partitionedTables,
@@ -6783,20 +6778,27 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/**
 	 * Which slice of the rowid space this object's driver mints from.
 	 *
-	 * Zero on a site with no forwarding pool, which leaves the unpartitioned arithmetic alone.
-	 * `nextLaneId()` is the shared definition of what a slice means.
+	 * Zero on anything that is not a forwarding lane, which leaves the unpartitioned arithmetic
+	 * alone. `nextLaneId()` is the shared definition of what a slice means.
 	 *
-	 * **THE PRIMARY TAKES SLICE 0 RATHER THAN NO SLICE, and it has to.** An unstrided primary appends
-	 * into whatever residue is next, including a lane's, so between catch-ups a lane could still mint
-	 * an id the primary had already taken -- the high-water mark closes lane-against-itself and this
-	 * closes primary-against-lane. Disjointness is only a property of the whole set of writers.
+	 * **THE COUNT IS {@link ID_PARTITION_LANES} AND NOT THE POOL SIZE.** It used to be
+	 * `replicaCount(this.env)`, which reads `REPLICA_COUNT`, which the canonical config does not
+	 * set -- so every real lane was configured `lanes = 0` and strided on nothing, and the
+	 * disjointness the conflict retry rests on was absent on every deployed pool while the unit
+	 * tests passed on a hand-set count. A lane could not have been told the real number anyway:
+	 * `cfw_meta` is replica-local by design, so the primary's `lanes_provisioned` never reaches it.
+	 *
+	 * **The primary is unpartitioned, and the docblock here used to say the opposite.**
+	 * `Connection::__construct()` strides only when `$lane >= 1`, so lane 0 is stride 1 -- every id
+	 * is in its class. The claim that the primary "takes slice 0" described an arithmetic the driver
+	 * does not implement. What actually keeps a lane's id safe is that the primary is the authority
+	 * and validates the batch; see `planForward()`.
 	 */
 	idPartition(): { lane: number; lanes: number } {
 		if (!writeForwardEnabled(this.env)) return { lane: 0, lanes: 0 };
-		const lanes = replicaCount(this.env);
-		if (lanes < 1) return { lane: 0, lanes: 0 };
-		if (!this.isPoolLane()) return { lane: 0, lanes };
-		return { lane: replicaOf(this.ctx.id.name ?? '')?.lane ?? 0, lanes };
+		if (!this.isPoolLane()) return { lane: 0, lanes: 0 };
+		const lane = replicaOf(this.ctx.id.name ?? '')?.lane ?? 0;
+		return lane < 1 ? { lane: 0, lanes: 0 } : { lane, lanes: ID_PARTITION_LANES };
 	}
 
 	/**

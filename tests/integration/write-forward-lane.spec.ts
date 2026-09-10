@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { replicaName } from '../../src/ops/replica-routing';
-import { idStride, nextLaneId } from '../../src/ops/write-forwarding';
+import { ID_PARTITION_LANES, idStride, nextLaneId } from '../../src/ops/write-forwarding';
 import { inObject, markProvisioned, namedSite, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -286,50 +286,80 @@ describe('the lane identity the driver mints from', () => {
 	}
 
 	it(
-		'gives a forwarding lane its own number and the pool size',
+		'gives a forwarding lane a class WITHOUT being told the pool size',
 		async () => {
-			const out = await partition(replicaName('fwid.pooled', 2), {
-				WRITE_FORWARD: '1',
-				REPLICA_COUNT: '3'
-			});
-			expect(out).toEqual({ lane: 2, lanes: 3 });
-			// the same partition `planForward()` judges a lane-originated id against
-			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 2, stride: 4 });
+			// THE DEFECT. This read `replicaCount(env)`, and the canonical `wrangler.jsonc` sets no
+			// `REPLICA_COUNT` -- so a real lane came back `lanes: 0`, the driver's
+			// `$lane >= 1 && $lanes >= 1` was false, and it strided on nothing. Every deployed pool
+			// ran with no partition at all, which is the property a conflict retry rests on, while
+			// the cases below passed on a count set by hand
+			const out = await partition(replicaName('fwid.unset', 2), { WRITE_FORWARD: '1' });
+			expect(out).toEqual({ lane: 2, lanes: ID_PARTITION_LANES });
+			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 2, stride: 33 });
 		},
 		TIMEOUT
 	);
 
 	it(
-		'gives the primary slice 0 of a pool, rather than no slice at all',
+		'ignores REPLICA_COUNT entirely, so two writers cannot disagree about it',
 		async () => {
-			// an unstrided primary appends into whatever residue is next, INCLUDING a lane's, so a
-			// lane could still mint an id the primary had taken. Disjointness is a property of the
-			// whole set of writers, and the primary is one of them
+			const lane = replicaName('fwid.told', 2);
+			const said3 = await partition(lane, { WRITE_FORWARD: '1', REPLICA_COUNT: '3' });
+			const said0 = await partition(lane, { WRITE_FORWARD: '1', REPLICA_COUNT: '0' });
+			// the count was a fact two parties had to agree on and they did not; a constant needs no
+			// agreement, and a lane cannot read the primary's `lanes_provisioned` anyway because
+			// `cfw_meta` is replica-local by design
+			expect(said3).toEqual(said0);
+			expect(said3.lanes).toBe(ID_PARTITION_LANES);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'leaves the primary unpartitioned, which is what the driver implements',
+		async () => {
+			// THIS USED TO ASSERT `{ lane: 0, lanes: 3 }` under a comment saying the primary "takes
+			// slice 0 rather than no slice". `Connection::__construct()` strides only when
+			// `$lane >= 1`, so lane 0 is stride 1 and every id is in its class -- the comment
+			// described arithmetic the driver does not implement. What keeps a lane's id safe is
+			// that the primary validates the batch, not that it holds a slice
 			const out = await partition('fwid.primary', { WRITE_FORWARD: '1', REPLICA_COUNT: '3' });
-			expect(out).toEqual({ lane: 0, lanes: 3 });
-			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 0, stride: 4 });
+			expect(out).toEqual({ lane: 0, lanes: 0 });
+			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 0, stride: 1 });
 		},
 		TIMEOUT
 	);
 
 	it(
-		'gives every writer in a pool a residue class no other writer can mint',
+		'gives every LANE in a pool a residue class no other lane can mint',
 		async () => {
-			// the property the whole partition exists for, asserted over the SET rather than pairwise
-			const env = { WRITE_FORWARD: '1', REPLICA_COUNT: '3' };
-			const writers = [
-				await partition('fwid.set', env),
+			const env = { WRITE_FORWARD: '1' };
+			const lanes = [
 				await partition(replicaName('fwid.set', 1), env),
 				await partition(replicaName('fwid.set', 2), env),
 				await partition(replicaName('fwid.set', 3), env)
 			];
-			const offsets = writers.map((w) => idStride(w.lane, w.lanes).offset);
-			expect(new Set(offsets).size, `two writers share a residue: ${offsets}`).toBe(4);
-			for (const w of writers) expect(idStride(w.lane, w.lanes).stride).toBe(4);
+			const offsets = lanes.map((w) => idStride(w.lane, w.lanes).offset);
+			expect(new Set(offsets).size, `two lanes share a residue: ${offsets}`).toBe(3);
+			// and none of them is the unpartitioned class, so a lane never mints where an
+			// unstrided writer would land first
+			expect(offsets).not.toContain(0);
+			for (const w of lanes) expect(idStride(w.lane, w.lanes).stride).toBe(33);
 
-			// and the ids they would mint from one shared base are all different
-			const minted = writers.map((w) => nextLaneId(5, w.lane, w.lanes));
-			expect(new Set(minted).size, `two writers mint the same id: ${minted}`).toBe(4);
+			const minted = lanes.map((w) => nextLaneId(5, w.lane, w.lanes));
+			expect(new Set(minted).size, `two lanes mint the same id: ${minted}`).toBe(3);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'holds at the top of the range, where a modulus would wrap onto the primary',
+		async () => {
+			// `replicaCount()` and `rememberLanes()` both clamp at 32, so lane 32 is reachable. With
+			// a stride of 32 it would land on offset 0; the stride is 33 for exactly this reason
+			const top = await partition(replicaName('fwid.top', 32), { WRITE_FORWARD: '1' });
+			expect(idStride(top.lane, top.lanes).offset).toBe(32);
+			expect(idStride(top.lane, top.lanes).offset).not.toBe(0);
 		},
 		TIMEOUT
 	);
@@ -351,16 +381,15 @@ describe('the lane identity the driver mints from', () => {
 			// included, against a generation the primary has moved to. That is safe ONLY because the
 			// residue classes are disjoint across every writer -- otherwise whatever committed in
 			// between could have taken one of these ids. The property was an argument until here
-			const env = { WRITE_FORWARD: '1', REPLICA_COUNT: '3' };
+			const env = { WRITE_FORWARD: '1' };
 			const writers = await Promise.all([
-				partition('retry.pool', env),
 				partition(replicaName('retry.pool', 1), env),
 				partition(replicaName('retry.pool', 2), env),
 				partition(replicaName('retry.pool', 3), env)
 			]);
 
 			// every OTHER writer, minting from the same base the retrying lane read at
-			const lane = writers[1]!;
+			const lane = writers[0]!;
 			const mine = nextLaneId(5, lane.lane, lane.lanes);
 			const theirs = writers
 				.filter((w) => w.lane !== lane.lane)
@@ -412,16 +441,17 @@ describe('the lane identity the driver mints from', () => {
 	);
 
 	it(
-		'gives a lane nothing when no pool size is configured',
+		'still gives a lane its class when REPLICA_COUNT is the empty string',
 		async () => {
-			// stride 1 is every id, which is what an unpartitioned connection already does; saying
-			// so here rather than in the driver keeps one definition of the partition
+			// THIS CASE ASSERTED THE DEFECT. It pinned `{ lane: 0, lanes: 0 }` for a real lane whose
+			// count was unset, which is the state the canonical config ships -- so the spec agreed
+			// with the bug and went green on every commit while `/user` answered 500 from a lane
 			const out = await partition(replicaName('fwid.unsized', 1), {
 				WRITE_FORWARD: '1',
 				REPLICA_COUNT: ''
 			});
-			expect(out).toEqual({ lane: 0, lanes: 0 });
-			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 0, stride: 1 });
+			expect(out).toEqual({ lane: 1, lanes: ID_PARTITION_LANES });
+			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 1, stride: 33 });
 		},
 		TIMEOUT
 	);

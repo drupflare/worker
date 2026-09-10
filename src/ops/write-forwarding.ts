@@ -84,6 +84,23 @@ export function idStride(lane: number, lanes: number): { offset: number; stride:
 	return { offset, stride };
 }
 
+/**
+ * The lane count every residue class is computed against.
+ *
+ * A CONSTANT, NOT THE POOL SIZE, because no lane could learn the pool size and the partition was
+ * therefore absent on every deployed pool. `idPartition()` read `REPLICA_COUNT` from env, which the
+ * canonical `wrangler.jsonc` does not set, so a real lane was configured `lanes = 0`; the driver
+ * takes `$lane >= 1 && $lanes >= 1` as false and strides on nothing. The whole disjointness
+ * property -- the thing that makes a forwarded id safe to re-send on a conflict retry -- was
+ * unreachable in production while its unit tests passed on a hand-set `REPLICA_COUNT`.
+ *
+ * Fixed at {@link replicaCount}'s own ceiling, so the stride is 33 and lanes 1..32 hold distinct
+ * non-zero residues however many exist. Nothing has to be told the count, which is the point: a
+ * lane cannot read the primary's `lanes_provisioned` at all, because `cfw_meta` is replica-local by
+ * design and is deliberately not copied.
+ */
+export const ID_PARTITION_LANES = 32;
+
 /** the next id this lane may mint at or above `after`, honouring its stride */
 export function nextLaneId(after: number, lane: number, lanes: number): number {
 	const { offset, stride } = idStride(lane, lanes);

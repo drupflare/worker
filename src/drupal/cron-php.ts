@@ -449,3 +449,75 @@ $out['ms'] = round($clock() - $t0, 2);
 echo json_encode($out);
 `;
 }
+
+/**
+ * Runs the PHP health layer over an observation the host already holds.
+ *
+ * WHY THIS EXISTS AT ALL. `src/Health/` is twelve files and nothing reached any of them:
+ * `HealthLedger`, `BootSelfTest`, `TripwireRegistry` and `CircuitBreaker` were referenced by no
+ * file outside their own directory, and the one write path they share was gated on a `cfwHealth`
+ * capability the host never installed. Green in the module's own suite, absent from every site.
+ *
+ * A HOST-DRIVEN UNIT RATHER THAN A HOOK, for the reason this project already recorded: hook
+ * implementations compile into the container and the pack ships it prebuilt, so a `#[Hook]` class
+ * added after the bake answers `hasImplementations()` false on every installed site. The advisory
+ * scan moved to this shape for the same reason; this follows it.
+ *
+ * NO KERNEL BOOT. `BootSelfTest::run()` reads only host-visible facts -- the bridge, the missing
+ * capability list, the sqlite version, the migration cursor, the updb phase and the two
+ * generations -- so the observation is supplied rather than discovered, and this costs one PHP run
+ * with no Drupal behind it. The tripwires that DO need Drupal's own state are the render-scoped
+ * ones, and they are fed by the caller that has a render in hand rather than by this.
+ *
+ * @param observation - the host's own view, as JSON; keys are `BootSelfTest`'s contract.
+ */
+export function runHealthSelfTest(observation: unknown): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ran' => false, 'findings' => [], 'recorded' => 0, 'mayServe' => true];
+$clock = function () { return microtime(true) * 1000; };
+$t0 = $clock();
+
+try {
+  $autoload = '/drupal/autoload.php';
+  if (!is_object($GLOBALS['__pw_autoloader'] ?? null)) {
+    // require, never require_once: a second include answers TRUE rather than the ClassLoader,
+    // and a heap restore lands in exactly that state
+    $GLOBALS['__pw_autoloader'] = require $autoload;
+  }
+  $loader = $GLOBALS['__pw_autoloader'];
+  if (is_object($loader)) {
+    $loader->addPsr4('Drupal\\drupflare\\', '/drupal/modules/custom/drupflare/src/');
+  }
+
+  $boot = 'Drupal\\drupflare\\Health\\BootSelfTest';
+  $registry = 'Drupal\\drupflare\\Health\\TripwireRegistry';
+  $ledger = 'Drupal\\drupflare\\Health\\HealthLedger';
+  if (!class_exists($boot)) {
+    $out['reason'] = 'the drupflare module is not installed';
+  } else {
+    $observation = json_decode(${JSON.stringify(JSON.stringify(observation ?? {}))}, true);
+    if (!is_array($observation)) {
+      $observation = [];
+    }
+    $findings = $boot::run($observation);
+    // the tripwires take the same bag; the ones needing a render simply find nothing in it
+    $findings = array_merge($findings, (new $registry())->run($observation));
+
+    $out['mayServe'] = $boot::mayServe($findings);
+    $out['recorded'] = $ledger::recordAll($findings);
+    foreach ($findings as $finding) {
+      $out['findings'][] = $finding->toArray();
+    }
+    $out['ran'] = true;
+  }
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+
+$out['ms'] = round($clock() - $t0, 2);
+echo json_encode($out);
+`;
+}

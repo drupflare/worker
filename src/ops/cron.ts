@@ -3,7 +3,8 @@ import {
 	runAdvisoryScan,
 	runCronHook,
 	runCronQueue,
-	runFetchReopen
+	runFetchReopen,
+	runHealthSelfTest
 } from '../drupal/cron-php.js';
 import { GENERATED_CRON_KNOWN, GENERATED_CRON_POLICY } from './generated/modules.js';
 
@@ -96,6 +97,15 @@ export interface CronOptions {
 	includeQueue?: boolean;
 	/** the advisory scan unit; off only for a test that is measuring something else */
 	includeAdvisories?: boolean;
+	/** the PHP health unit; off only for a test that is measuring something else */
+	includeHealth?: boolean;
+	/**
+	 * What the host already knows about itself, handed to `BootSelfTest`.
+	 *
+	 * Supplied rather than discovered: every key it reads is a host fact, so passing them in is
+	 * what lets the unit run with no Drupal kernel behind it.
+	 */
+	healthObservation?: Record<string, unknown>;
 	/** the update-fetch reopen unit; off only for a test that is measuring something else */
 	includeFetchReopen?: boolean;
 	includeCronLast?: boolean;
@@ -837,6 +847,18 @@ export function cronUnits(options: CronOptions = {}): CronUnit[] {
 	if (options.includeAdvisories !== false) {
 		units.push({ id: 'advisories', kind: 'php' });
 	}
+	// THE PHP HEALTH LAYER, which had no caller of any kind. `src/Health/` is twelve files whose
+	// output all goes through `HealthLedger::record()`, and that opens by asking for a `cfwHealth`
+	// capability the host did not install -- so the tripwires, the boot self test and the circuit
+	// breaker were green in the module's own suite and absent from every site. Its own unit rather
+	// than a `#[Hook]` for the same reason advisories is one: a hook class added after the bake is
+	// not in the container the pack ships and `hasImplementations()` answers false forever.
+	//
+	// BEFORE the queue, which is what closes the round: `queue` holds the cursor and repeats while
+	// it is making progress, so a unit placed after it waits out every repeat before running
+	if (options.includeHealth !== false) {
+		units.push({ id: 'health', kind: 'php' });
+	}
 	if (options.includeQueue !== false) {
 		units.push({ id: 'queue', kind: 'php' });
 	}
@@ -999,6 +1021,11 @@ export async function cronStep(
 		}
 	} else if (unit.id === 'advisories') {
 		result = await deps.runJson(runAdvisoryScan(options.origin));
+	} else if (unit.id === 'health') {
+		// the observation is the HOST's, because `BootSelfTest` reads only facts the host holds --
+		// the bridge, the absent capabilities, the migration cursor, the two generations. Supplying
+		// it rather than discovering it is what keeps this unit free of a kernel boot
+		result = await deps.runJson(runHealthSelfTest(options.healthObservation ?? {}));
 	} else if (unit.id === 'fetch_reopen') {
 		result = await deps.runJson(runFetchReopen(options.origin));
 	} else {
@@ -1103,4 +1130,11 @@ export function cronAlarmDelayMs(
 	return options.idleMs ?? 240000;
 }
 
-export { cronHookList, runAdvisoryScan, runCronHook, runCronQueue, runFetchReopen };
+export {
+	cronHookList,
+	runAdvisoryScan,
+	runCronHook,
+	runCronQueue,
+	runFetchReopen,
+	runHealthSelfTest
+};

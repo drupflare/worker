@@ -78,6 +78,9 @@ describe('cronStep: one full round', () => {
 			'update',
 			'drupflare',
 			'unknown',
+			'unknown',
+			// the health self test, which carries no module for the same reason and runs before
+			// the queue, since the queue holds the cursor and repeats while it makes progress
 			'unknown'
 		]);
 	});
@@ -255,7 +258,8 @@ describe('cronStep: recovering from a lost or stale cursor', () => {
 				includeQueue: false,
 				includeCronLast: false,
 				includeAdvisories: false,
-				includeFetchReopen: false
+				includeFetchReopen: false,
+				includeHealth: false
 			});
 		});
 		expect(step.unit).toBe('gc:watchdog');

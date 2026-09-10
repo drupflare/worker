@@ -290,6 +290,8 @@ export type ServeDo = {
 	pinnedHandles?: Set<object>;
 	/** the host bridge, so a spec can call a capability the way PHP does */
 	installCapabilities: (binary: Record<string, (json: string) => string>) => void;
+	/** the host's own view, handed to the PHP health layer; see `runHealthSelfTest()` */
+	healthObservation: () => Record<string, unknown>;
 	/** the crossing tally; `calls` is the per-statement census log, armed by assigning `[]` */
 	crossings?: import('../../src/ops/crossings').CrossingTally;
 	/** the per-table write tally, armed by assigning `emptyTally()` and read back in place */

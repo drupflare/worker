@@ -511,7 +511,9 @@ import {
 	recordFinding,
 	runHostTripwires,
 	type Finding,
-	type Observation
+	type Observation,
+	type Rung,
+	type Severity
 } from './ops/supervisor.js';
 import { projectImageTransforms } from './ops/thresholds.js';
 import {
@@ -2174,6 +2176,45 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (phpLogPasses(entry, phpLogCeiling(this.env?.PHP_LOG_LEVEL))) {
 				console.log(JSON.stringify({ cfw: 'php', ...entry }));
 			}
+			return reply({ ok: true });
+		};
+
+		/**
+		 * The PHP half of the health ledger, which had no host end at all.
+		 *
+		 * `HealthLedger::record()` opens with `if (!Host::has('cfwHealth')) return false;` and
+		 * nothing installed it, so every finding the PHP tripwires produced was dropped on the
+		 * floor -- and `src/Health/` is 12 files whose entire output goes through this one call.
+		 * One table, two writers, exactly as both docblocks say; this is the second writer.
+		 *
+		 * PHP sends the severity ORDINAL because `Finding` declares it as an int constant, and the
+		 * host keys `SEVERITY` by name. Mapping here rather than changing either side keeps each
+		 * one idiomatic, and an unknown ordinal reads as `error` rather than being dropped: a
+		 * finding nobody can classify is still a finding.
+		 */
+		binary.cfwHealth = (json: string) => {
+			const f = parse(json);
+			const ordinal = Number(f.severity ?? SEVERITY.error);
+			const severity =
+				(Object.keys(SEVERITY) as Severity[]).find((k) => SEVERITY[k] === ordinal) ??
+				'error';
+			const code = String(f.code ?? '').trim();
+			if (code === '') return reply({ ok: false, error: 'a finding needs a code' });
+			this.ensureServeTables();
+			recordFinding(
+				this.sql,
+				{
+					code,
+					severity,
+					scope: String(f.scope ?? ''),
+					context: String(f.context ?? '')
+				},
+				this.nowMs(),
+				// the ladder rung, when the PHP side acted before reporting
+				(String(f.action ?? '') || '') as Rung | '',
+				String(f.outcome ?? ''),
+				Number(f.attempt ?? 0) || 0
+			);
 			return reply({ ok: true });
 		};
 
@@ -6288,6 +6329,37 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * What the host knows about itself, in the shape `BootSelfTest` reads.
+	 *
+	 * Every key here is a HOST fact, which is the whole reason the PHP health unit needs no Drupal
+	 * kernel: the bridge, the capabilities that are absent, the sqlite version, where migration
+	 * got to, whether an update run is halted, and whether the pack the database was built from is
+	 * the pack that is mounted. `BootSelfTest` names them and could never see any of them itself.
+	 *
+	 * `missing_capabilities` is derived from the module's own installed list rather than a literal,
+	 * for the reason `src/ops/replica.ts` walks the installed set: two capabilities had already
+	 * drifted out of a hand-maintained name list without anything noticing.
+	 */
+	healthObservation(): Record<string, unknown> {
+		const installed = new Set(Object.keys(this.installCapabilities({} as SiteBinary)));
+		// ONLY WHAT THIS METHOD OWNS. `cfwStats` and `cfwServeStats` are installed on the
+		// interpreter elsewhere and the SQL bridge comes from `@drupflare/durabledb`, so probing an
+		// empty object cannot see any of them -- naming one here would report a permanent absence
+		// that is not one, which is the decorative-signal failure this whole layer exists to avoid
+		const wanted = ['cfwLog', 'cfwHealth', 'cfwFetch', 'cfwMail'];
+		const cursor = readMigrateCursor(this.sql);
+		return {
+			bridge_installed: installed.size > 0 ? 1 : 0,
+			missing_capabilities: wanted.filter((name) => !installed.has(name)),
+			migrate_chunk: cursor?.chunk ?? null,
+			migrate_chunks: cursor?.chunks ?? null,
+			updb_phase: this.updbActive() ? 'running' : null,
+			pack_generation: this.packGeneration(),
+			db_generation: this.metaGet('pack_generation')
+		};
+	}
+
+	/**
 	 * The rolling median body size for one path, over PREVIOUS renders only.
 	 *
 	 * Reading `cfw_page` instead would compare the render against the row it just wrote -- a ratio
@@ -9402,7 +9474,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// the origin is the site's, read from the pin rather than from a request:
 						// cron has none, and a mail link built against the default points the
 						// recipient at their own machine
-						{ ...cronOptions(this.env), origin: this.canonicalOrigin(null), hooks },
+						{
+							...cronOptions(this.env),
+							origin: this.canonicalOrigin(null),
+							hooks,
+							healthObservation: this.healthObservation()
+						},
 						cronBudget(this.env)
 					);
 					await this.storage.put('cronCursor', writeCursor(driven.cursor));
@@ -10039,16 +10116,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 *
 	 * `withSettings()` is applied in `src/site.ts`, to the FRONT worker's env, and the Durable Object
 	 * receives its own copy of the bindings -- so for the whole life of the convention no KV lever
-	 * reached a reader inside this class. Seven of the eleven are read here and only here
-	 * (`RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `FILL_BATCH_WALL_MS`, `HTTP_DRAIN_LIMIT`,
-	 * `MIRROR_LIMIT`, `LAZY_FS_BUDGET_BYTES`, `PREFILL`), which made them knobs that configured
-	 * nothing. This used to overlay only the two mail names and say so.
+	 * reached a reader inside this class. Several are read here and only here --
+	 * `RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
+	 * `LAZY_FS_BUDGET_BYTES` and `PREFILL` -- which made them knobs that configured nothing. This
+	 * used to overlay only the two mail names and say so.
+	 *
+	 * NO COUNT, deliberately. This said "seven of the eleven" while the list held eighteen, and it
+	 * named a lever that had been deleted for being unreadable by construction. Four places
+	 * carried a number and all four were wrong, so `tests/node/kv-levers-read.spec.ts` asserts the
+	 * property a count was standing in for: every name on the list reaches a reader, and no file
+	 * cites a lever that no longer exists.
 	 *
 	 * Awaited HERE and never in `fetch()`: the fast storage lane must stay await-free. That is safe
 	 * because the fast lane reads no lever at all -- it is one indexed `cfw_page` read -- so there is
 	 * nothing on it for an override to change.
 	 *
-	 * Called from `alarm()` as well, which is not optional: the fill chain is where four of the seven
+	 * Called from `alarm()` as well, which is not optional: the fill chain is where several of them
 	 * are read, and an alarm never passes through `handle()`.
 	 */
 	async adoptSettings(): Promise<void> {

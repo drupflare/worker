@@ -46,6 +46,16 @@ export function replicaCount(env?: { REPLICA_COUNT?: string | null }): number {
 /** the header a primary reports its provisioned lane count on */
 export const LANES_HEADER = 'x-cfw-lanes';
 
+/**
+ * The header the front worker reports which object answered on; `primary` or `r<lane>`.
+ *
+ * Nothing reported this and a whole class of measurement was taken without it. A driven copy left
+ * `lanes_provisioned` unwritten, so the router never learned the pool existed: every arm labelled
+ * `3 lanes` served from the primary while the rig printed the lanes ready. `x-cfw-lane` is a
+ * different question -- it names the SERVING TIER (storage, php-gate, plan), not the object.
+ */
+export const REPLICA_HEADER = 'x-cfw-replica';
+
 /** how long an isolate routes to a lane count it learned, in ms */
 export const LANES_TRUST_MS = 60_000;
 
@@ -84,10 +94,22 @@ export function resetLaneBeliefs(): void {
 }
 
 /**
- * The stable per-visitor string a lane is chosen from.
+ * The stable string a lane is chosen from.
  *
- * Session, then client address, then path. The path fallback exists so requests carrying neither
+ * Anonymous requests spread by client address, then by path when they carry no address, so they
  * still spread rather than piling onto whichever lane the empty string hashes to.
+ *
+ * A SESSION-CARRYING REQUEST IS KEYED ON THE PATH, so a page's readers share a lane. Measured over
+ * eight paths a run, two fresh sessions each, three lanes and the primary: keyed on the session the
+ * plan tier compiled on 5/8 and 4/8 paths, keyed on the path 6/8 -- and the trials that failed under
+ * the session key are the ones whose two sessions landed on different objects. It is a rate rather
+ * than a rule, because a split pair still compiles sometimes: the compile runs in the FRONT WORKER's
+ * isolate, so it sees both renders wherever they came from, and what a split costs it is agreement
+ * on the generation the two samples were taken at.
+ *
+ * The trade is per-page concurrency for authenticated readers, and it is the right way round: the
+ * anonymous slice is the bulk of the traffic and keeps spreading by address, while a plan HIT
+ * answers without rendering at all, which beats sharing a page's renders across lanes.
  */
 export function affinityKey(input: {
 	session: string | null;
@@ -95,7 +117,7 @@ export function affinityKey(input: {
 	pathname: string;
 }): string {
 	const session = (input.session ?? '').trim();
-	if (session !== '') return `s:${session}`;
+	if (session !== '') return `p:${input.pathname}`;
 	const address = (input.address ?? '').trim();
 	if (address !== '') return `a:${address}`;
 	return `p:${input.pathname}`;

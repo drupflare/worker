@@ -7,6 +7,7 @@ import { imageEngine } from '../../src/ops/image-transform';
 import { mailDrainLimit, resolveMailTransport, type MailEnv } from '../../src/ops/mail';
 import { KV_OVERRIDABLE } from '../../src/ops/plan';
 import {
+	affinityKey,
 	chooseTarget,
 	DEFAULT_REPLICA_LAG_MS,
 	replicaCount,
@@ -534,25 +535,33 @@ describe('REPLICA_COUNT and WRITE_FORWARD move which object answers', () => {
 	const SITE = 'cfw.local';
 
 	/** a session value whose affinity hashes off the primary at this pool size */
-	function sessionOffPrimary(replicas: number): string {
+	/**
+	 * A visitor path that routes off the primary, which is what decides the lane for a session.
+	 *
+	 * THIS USED TO SEARCH SESSION VALUES against a hand-built `s:` key. `affinityKey()` keys a
+	 * session-carrying request on the PATH now, so a session chosen that way tells the router
+	 * nothing -- it kept its own copy of a rule instead of asking the function that owns it.
+	 */
+	function pathOffPrimary(replicas: number): string {
 		for (let i = 0; i < 64; i++) {
-			const value = `lane-probe-${i}`;
+			const pathname = `/lane-probe-${i}`;
 			const at = chooseTarget({
 				site: SITE,
 				method: 'GET',
-				affinity: `s:${value}`,
+				affinity: affinityKey({ session: 'a-session', address: null, pathname }),
 				replicas,
 				pathname: '/serve'
 			});
-			if (at.lane !== 0) return value;
+			if (at.lane !== 0) return pathname;
 		}
-		throw new Error('no session value routed off the primary');
+		throw new Error('no path routed off the primary');
 	}
 
 	it('addresses the site itself by default and a lane when a pool is configured', async () => {
-		const cookie = { headers: { cookie: `${SESSION_COOKIE}=${sessionOffPrimary(4)}` } };
-		const fallback = await through('/lever-replicas', {}, cookie);
-		const set = await through('/lever-replicas', { REPLICA_COUNT: '4' }, cookie);
+		const cookie = { headers: { cookie: `${SESSION_COOKIE}=a-session` } };
+		const path = pathOffPrimary(4);
+		const fallback = await through(path, {}, cookie);
+		const set = await through(path, { REPLICA_COUNT: '4' }, cookie);
 		expect(fallback.names[0]).toBe(SITE);
 		expect(set.names[0]).toMatch(/^cfw\.local#r[1-4]$/);
 		expect(set.names[0]).not.toBe(fallback.names[0]);
@@ -565,16 +574,13 @@ describe('REPLICA_COUNT and WRITE_FORWARD move which object answers', () => {
 			method: 'POST',
 			body: 'title=x',
 			headers: {
-				cookie: `${SESSION_COOKIE}=${sessionOffPrimary(4)}`,
+				cookie: `${SESSION_COOKIE}=a-session`,
 				'content-type': 'application/x-www-form-urlencoded'
 			}
 		};
-		const fallback = await through('/lever-forward', { REPLICA_COUNT: '4' }, post);
-		const off = await through(
-			'/lever-forward',
-			{ REPLICA_COUNT: '4', WRITE_FORWARD: '0' },
-			post
-		);
+		const path = pathOffPrimary(4);
+		const fallback = await through(path, { REPLICA_COUNT: '4' }, post);
+		const off = await through(path, { REPLICA_COUNT: '4', WRITE_FORWARD: '0' }, post);
 		expect(fallback.names[0]).toMatch(/^cfw\.local#r[1-4]$/);
 		expect(off.names[0]).toBe(SITE);
 		expect(writeForwardEnabled({})).toBe(true);

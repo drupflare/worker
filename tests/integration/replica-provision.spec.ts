@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { drupalOp } from '../../src/drupal/site-php';
 import type { ProvisionOutcome } from '../../src/ops/replica-restore';
 import { replicaName } from '../../src/ops/replica-routing';
-import { driveAlarms, freshSite, inObject, namedSite, type ServeDo } from '../helpers/serve-do';
+import {
+	driveAlarms,
+	freshSite,
+	inObject,
+	namedSite,
+	seedPage,
+	type ServeDo
+} from '../helpers/serve-do';
 
 /**
  * Creating a lane and filling it, without anyone holding both stubs.
@@ -325,6 +332,118 @@ describe('a contended site grows its own pool', () => {
 				return (site as any).metaGet('lanes_provisioned');
 			});
 			expect(out).toBe(null);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * Whether anything can FIND a lane once it has been built.
+ *
+ * A copy that leaves no trace is a lane nothing addresses. `lanes_provisioned` is the only thing the
+ * primary reports `x-cfw-lanes` from, and `replicaCount()` reads only `REPLICA_COUNT`, which the
+ * canonical config does not set -- so with the key unwritten the router keeps serving every request
+ * from the primary. Only `autoScaleStep()` wrote it, and every measurement this project took of a
+ * pool drove `action=provision` by hand instead: the lanes were copied, promoted to SERVING and
+ * reported ready, and never received a request.
+ */
+describe('a driven copy is discoverable afterwards', () => {
+	it(
+		'records the lane, so the primary can advertise the pool',
+		async () => {
+			const primary = await installed('provision.advertised');
+			const before = await inObject(namedSite(primary), (site) =>
+				(site as any).metaGet('lanes_provisioned')
+			);
+			expect(before, 'nothing is provisioned before the copy').toBe(null);
+
+			await provision(primary, 1);
+			await provision(primary, 2);
+
+			const after = await inObject(namedSite(primary), (site) =>
+				(site as any).metaGet('lanes_provisioned')
+			);
+			// the HIGH-WATER MARK rather than a count, which is what `nextLaneToProvision()` reads
+			expect(after).toBe('2');
+		},
+		TIMEOUT
+	);
+
+	it(
+		'puts the count on a response, which is how the router learns it',
+		async () => {
+			const primary = await installed('provision.reported');
+			await provision(primary, 1);
+
+			const header = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const res = await site.fetch(new Request('https://do.local/__serve-stats'));
+				return res.headers.get('x-cfw-lanes');
+			});
+			expect(header).toBe('1');
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The pool, advertised from the lane that answers most of the traffic.
+ *
+ * `x-cfw-lanes` was set only inside `this.gate.run()`. A cached page never enters the gate -- that
+ * is the point of the storage fast lane -- so a site answering mostly hits stopped telling the
+ * router its pool existed, `believedLanes()` expired after `LANES_TRUST_MS`, and anonymous cached
+ * traffic went back to the primary alone. That is the exact workload the lanes are for.
+ */
+describe('a cached page advertises the pool too', () => {
+	it(
+		'carries the lane count on a storage-lane HIT',
+		async () => {
+			const primary = await installed('provision.fastlane');
+			await provision(primary, 1);
+
+			const seen = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				seedPage(site, '/fast-advertise', '<html><body>hit</body></html>');
+				const res = await site.fetch(
+					new Request(
+						`https://do.local/__serve?path=${encodeURIComponent('/fast-advertise')}`
+					)
+				);
+				return {
+					lane: res.headers.get('x-cfw-lane'),
+					lanes: res.headers.get('x-cfw-lanes'),
+					cache: res.headers.get('x-cfw-cache')
+				};
+			});
+
+			// the control: this only means something if the FAST lane answered it
+			expect(seen.lane, 'the gated lane answered, so this measures nothing').toBe('storage');
+			expect(seen.cache).toBe('HIT');
+			expect(seen.lanes, 'a cached hit did not advertise the pool').toBe('1');
+		},
+		TIMEOUT
+	);
+
+	it(
+		'says nothing about a pool that does not exist',
+		async () => {
+			const primary = await installed('provision.fastlane.none');
+			const seen = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				seedPage(site, '/fast-quiet', '<html><body>hit</body></html>');
+				const res = await site.fetch(
+					new Request(
+						`https://do.local/__serve?path=${encodeURIComponent('/fast-quiet')}`
+					)
+				);
+				return {
+					lane: res.headers.get('x-cfw-lane'),
+					lanes: res.headers.get('x-cfw-lanes')
+				};
+			});
+			expect(seen.lane).toBe('storage');
+			// absent rather than `0`, so `rememberLanes()` is never handed a pool of nothing
+			expect(seen.lanes).toBe(null);
 		},
 		TIMEOUT
 	);

@@ -2693,7 +2693,6 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 		if (out.done) {
 			this.metaSet(LANE_CURSOR_KEY, '');
-			this.metaSet(LANES_PROVISIONED_KEY, String(Math.max(provisioned, lane)));
 			// dequeued only on a COMPLETED copy: a repair that refused or ran out of budget is still
 			// owed, and dropping it here is how a lane withdraws permanently a second time
 			if (repairing) this.dequeueLaneRepair(lane);
@@ -6677,11 +6676,51 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					? { generation, index: at.index + 1, offset: 0 }
 					: { generation, index: at.index, offset: at.offset + page.rows.length };
 			if (last) {
+				this.noteLaneServing(lane);
 				return { ok: true, reason: '', done: true, copied, stage: outcome.stage };
 			}
 		}
 
-		return { ok: true, reason: '', done: at.index >= tables.length, cursor: at, copied };
+		const done = at.index >= tables.length;
+		if (done) this.noteLaneServing(lane);
+		return { ok: true, reason: '', done, cursor: at, copied };
+	}
+
+	/**
+	 * Records that a lane finished copying, which is the only thing that makes the router address it.
+	 *
+	 * WITHOUT THIS A DRIVEN COPY BUILT A LANE NOTHING ROUTED TO. `autoScaleStep()` wrote the key and
+	 * `action=provision` did not, and the key is what puts `x-cfw-lanes` on a response -- so a rig
+	 * that drove the copy by hand paid to copy the database into N objects and then served every
+	 * request from the primary, while reporting the lanes ready. Recorded here rather than in either
+	 * caller, because two writers is what let them diverge.
+	 */
+	private noteLaneServing(lane: number): void {
+		const provisioned = this.lanesProvisioned();
+		if (lane > provisioned) {
+			this.metaSet(LANES_PROVISIONED_KEY, String(lane));
+			this.lanesMemo = lane;
+		}
+	}
+
+	/** the pool size read once per incarnation; `noteLaneServing()` is the only thing that moves it */
+	private lanesMemo: number | null = null;
+
+	/**
+	 * How many lanes this primary has built.
+	 *
+	 * Memoised because the STORAGE FAST LANE reads it. That lane answers a cached page with one
+	 * indexed `cfw_page` read and no await, and it is the path that most needs the pool advertised:
+	 * only the gated path used to set `x-cfw-lanes`, so a site serving mostly cache hits stopped
+	 * refreshing the router's belief and `believedLanes()` expired it after {@link LANES_TRUST_MS}.
+	 * Anonymous cached traffic then went back to the primary alone, which is the exact workload the
+	 * lanes exist for.
+	 */
+	private lanesProvisioned(): number {
+		if (this.lanesMemo === null) {
+			this.lanesMemo = Number(this.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
+		}
+		return this.lanesMemo;
 	}
 
 	/** whether this object holds a table at all; the restore's own precondition */
@@ -9697,8 +9736,31 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// queue. Peak rather than count: the alarm reads it once a window and resets it
 		this.inflight = (this.inflight ?? 0) + 1;
 		if (this.inflight > (this.inflightPeak ?? 0)) this.inflightPeak = this.inflight;
+		const refusalsBefore = this.replicaRefusals.length;
+		const forwardBefore = this.lastForward;
 		try {
-			return await this.route(request);
+			const res = await this.route(request);
+			// A REFUSAL PHP CAUGHT IS STILL A REFUSAL, and it used to reach the visitor as a 500.
+			// The catch below only fires when the guard's throw unwinds all the way out; Drupal's
+			// session handler catches a failed write and raises its own
+			// `RuntimeException: Failed to start the session.`, so `/user` answered 500 on roughly
+			// one authenticated request in ten against a lane while `replicaRefusals` -- the signal
+			// that says this request needed the primary -- was recorded and read by nothing but a
+			// stats line.
+			//
+			// Only when NOTHING WAS FORWARDED. A forwarded batch has already committed on the
+			// primary, so retrying the whole request there would apply it twice; that case keeps
+			// the error rather than risking a double write.
+			const refusal = this.replicaRefusals.at(-1);
+			if (
+				res.status >= 500 &&
+				this.replicaRefusals.length > refusalsBefore &&
+				this.lastForward === forwardBefore &&
+				refusal !== undefined
+			) {
+				return this.replicaHandoff(refusal);
+			}
+			return res;
 		} catch (e) {
 			// a replica meeting work it may not do is not a fault; it is the guard working, and the
 			// caller needs to be told to go to the primary rather than shown a 500
@@ -9828,7 +9890,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// one. Reported here rather than fetched: the response is already paid for, the same way
 		// the generation and the role set ride along
 		if (!this.isPoolLane()) {
-			const lanes = Number(this.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
+			const lanes = this.lanesProvisioned();
 			if (lanes > 0) headers.set(LANES_HEADER, String(lanes));
 		}
 		return new Response(response.body, {
@@ -9938,8 +10000,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// PHP, and warming cannot make one faster by any amount
 		this.arrivals = recordArrival(this.arrivals ?? [], { at: this.nowMs(), rendered: false });
 		const gate = this.gate.stats();
+		// THE POOL, ADVERTISED FROM THE FAST LANE TOO. `x-cfw-lanes` was set only inside
+		// `this.gate.run()`, so a site answering mostly cache hits never refreshed what the router
+		// believes and `believedLanes()` dropped the pool 60 s after the last gated response --
+		// sending anonymous cached traffic, the workload lanes exist for, back to the primary alone.
+		// Memoised, so this stays one indexed read and no await
+		const lanes = this.isPoolLane() ? 0 : this.lanesProvisioned();
 		return this.pageResponse(row, 'HIT', Date.now() - t0, {
 			'x-cfw-lane': 'storage',
+			...(lanes > 0 ? { [LANES_HEADER]: String(lanes) } : {}),
 			// Proof of overlap with no timing involved: `active` counts callbacks
 			// currently inside the PHP lane, so a 1 here means this HIT was answered
 			// while a render was in flight. That is the entire claim of the split, and

@@ -71,6 +71,7 @@ import {
 	chooseTarget,
 	LANES_HEADER,
 	rememberLanes,
+	REPLICA_HEADER,
 	replicaCount,
 	shouldFailover
 } from './ops/replica-routing.js';
@@ -872,13 +873,19 @@ export default {
 		// one object per site; the name is the site identity, and a replica lane is that name plus a
 		// suffix. With no replicas configured `chooseTarget()` always answers the site itself
 		const site = await siteFor(url, env);
+		// THE VISITOR'S OWN PATH, which `url.pathname` no longer holds: the rewrite above moved it
+		// into `?path=` and made every serving request read `/serve`. So the path fallback in
+		// `affinityKey()` -- what a request with no session and no `cf-connecting-ip` spreads on --
+		// was one constant string, and every such request piled onto whichever lane it hashes to.
+		// The query is dropped so a page is one key however a visitor arrived at it
+		const visitorPath = (url.searchParams.get('path') ?? url.pathname).split('?')[0] as string;
 		const lane = chooseTarget({
 			site,
 			method: request.method,
 			affinity: affinityKey({
 				session: sessionCookieValue(request.headers.get('cookie')),
 				address: request.headers.get('cf-connecting-ip'),
-				pathname: url.pathname
+				pathname: visitorPath
 			}),
 			// an operator's REPLICA_COUNT is a floor and what the primary has actually built is the
 			// other half; autoscaling grew lanes nothing routed to until this read the second one
@@ -1217,10 +1224,25 @@ export default {
 			// this branch exists because it has run out
 			innerRequest.headers.delete('cookie');
 		}
-		// cloned BEFORE the send, because a replica that refuses has already consumed the request.
-		// Only ever a GET or HEAD -- `chooseTarget()` sends a write straight to the primary -- so the
-		// clone carries no body and the retry cannot double-apply anything
-		const retryOnPrimary = lane.role === 'replica' ? innerRequest.clone() : null;
+		// Built BEFORE the send, because a replica that refuses has already consumed the request.
+		//
+		// A BODY IS REBUILT FROM `buffered`, NEVER CLONED. This was `innerRequest.clone()` under a
+		// comment asserting only GET and HEAD could arrive, which `chooseTarget()` guaranteed until
+		// write forwarding let a POST reach a lane -- and nothing revisited it. `clone()` tees the
+		// body, the retry branch is read only on a failover, and an unread tee never releases: the
+		// login POST hung forever the first time traffic actually met a lane. The bytes are already
+		// in hand a few lines up, so the retry costs a second `Request` and no stream at all
+		const retryOnPrimary =
+			lane.role !== 'replica'
+				? null
+				: buffered === undefined
+					? innerRequest.clone()
+					: new Request(innerRequest.url, {
+							method: innerRequest.method,
+							headers: innerRequest.headers,
+							body: buffered,
+							redirect: 'manual'
+						});
 		let res = await stub.fetch(innerRequest);
 		if (retryOnPrimary !== null && shouldFailover(res)) {
 			// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
@@ -1273,7 +1295,21 @@ export default {
 
 		// the generation rides along on a response we already paid for, so learning
 		// it -- including learning that a bump happened -- costs nothing extra
-		if (doGeneration !== null && doGeneration !== generation) {
+		//
+		// FORWARD ONLY, AND `!==` HERE EMPTIED THE EDGE TIER WHENEVER LANES EXISTED. The generation is
+		// per OBJECT and a lane converges on the primary's value only by applying the replication log,
+		// bounded by `DEFAULT_REPLICA_LAG_MS`. The front worker's pointer is per SITE and single
+		// valued, so with `!==` a primary response set it to G, pages were stored under
+		// `pageKey(..., G, ...)`, and the next response from a lane still at G-1 rewrote it backwards
+		// -- after which every `cache.match` asked for a key nothing had ever been stored under, and
+		// every anonymous request fell through to a Durable Object hop. Then a primary response
+		// flipped it forward again and orphaned the pages written under G-1. It oscillated for as
+		// long as the lag lasted, which is why adding lanes made the anonymous arm WORSE.
+		//
+		// Monotonic within the bucket rather than forever: `bucket` is in the key, so a genuine
+		// backwards move (a restore) is picked up at the next `GEN_BUCKET_MS` boundary instead of
+		// being pinned out. That bounds the cost of being wrong to one bucket.
+		if (doGeneration !== null && (generation === null || doGeneration > generation)) {
 			defer(writeGeneration(cache, origin, site, bucket, doGeneration));
 		}
 		// the plan tier fences on the generation this isolate last learned, which is this one
@@ -1425,6 +1461,11 @@ export default {
 			headers.set('cache-control', 'private, no-store');
 		}
 		headers.set('x-worker-ms', String(Date.now() - t0));
+		// WHICH OBJECT ANSWERED, because nothing reported it and a whole class of measurement was
+		// taken without it. A driven copy left `lanes_provisioned` unwritten, so the router never
+		// learned the pool existed and every "with lanes" arm served from the primary while the rig
+		// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object
+		headers.set(REPLICA_HEADER, lane.lane === 0 ? 'primary' : `r${lane.lane}`);
 		if (armedFill !== 'n/a') headers.set('x-cfw-arm-fill', armedFill);
 		return new Response(res.body, { status: res.status, headers });
 	},

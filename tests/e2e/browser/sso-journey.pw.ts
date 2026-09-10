@@ -52,8 +52,25 @@ async function configureProvider(): Promise<{ ok: boolean; discovery: unknown }>
 
 let reachable = false;
 
+/**
+ * Whether an unreachable provider is a FAILURE rather than a skip.
+ *
+ * The skip below is right on a laptop with no rig, and it is how this file ran in CI for its whole
+ * life without executing: the browser lane started no services, so every describe skipped and the
+ * lane reported green having exercised none of the OIDC path the park exists for. The workflow
+ * starts keycloak and sets this, so a provider that fails to come up now fails the lane instead of
+ * quietly emptying it. Same asymmetry as `REQUIRE_ARTIFACTS` in the node lane.
+ */
+const REQUIRED = process.env.CFW_BROWSER_REQUIRE_OIDC === '1';
+
 test.beforeAll(async () => {
 	reachable = await providerReachable();
+	if (REQUIRED && !reachable) {
+		throw new Error(
+			`CFW_BROWSER_REQUIRE_OIDC=1 but ${ISSUER} did not answer its discovery document. ` +
+				'The lane declared it has an identity provider, so this is a failure rather than a skip.'
+		);
+	}
 	if (reachable) {
 		const setup = await configureProvider();
 		expect(

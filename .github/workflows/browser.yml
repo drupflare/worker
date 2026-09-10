@@ -135,8 +135,28 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps chromium
 
+      - name: Start the Identity Provider
+        run: |
+          docker compose -f docker/compose.yml up -d keycloak
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8081/realms/drupflare/.well-known/openid-configuration >/dev/null; then
+              echo "keycloak realm reachable"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "keycloak did not import its realm within 180s"
+          docker compose -f docker/compose.yml logs keycloak | tail -50
+          exit 1
+
       - name: Run the Browser Lane
         run: bun run test:browser
+        env:
+          CFW_BROWSER_REQUIRE_OIDC: '1'
+
+      - name: Stop the Identity Provider
+        if: ${{ always() }}
+        run: docker compose -f docker/compose.yml down -v keycloak
 
       - name: Upload the Playwright Report
         if: ${{ failure() }}

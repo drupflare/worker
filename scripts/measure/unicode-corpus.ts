@@ -48,6 +48,14 @@ export interface Corpus {
 		mbstring: string | null;
 		oniguruma: string | null;
 		icuUnicode: number[] | null;
+		/**
+		 * `\pL`'s vintage on the machine that swept, which is what decides `titleExtra`.
+		 *
+		 * Optional because artifacts written before this field existed do not carry it, and the
+		 * point of recording it is to attribute a future drift rather than to invalidate the file.
+		 */
+		pcreUnicode?: string | null;
+		pcre?: string | null;
 		scalars: number;
 	};
 	case: { lower: Packed; upper: Packed; title: Packed; fold: Packed };

@@ -62,9 +62,23 @@ describeIfPhp('the Unicode corpus artifact', () => {
 	 * What matters is that the tables agree with a real mbstring. If two mbstring releases ever DO
 	 * disagree about a codepoint, that shows up here as a data difference, which is the finding.
 	 */
+	/**
+	 * `titleExtra` IS NOT THIS MACHINE'S TO ANSWER, and comparing it here nearly shipped a wrong
+	 * table.
+	 *
+	 * It is the set mbstring titlecases that `\pL` does not call a letter -- a property of the PAIR,
+	 * and the PCRE that matters is the one inside the interpreter that runs the polyfill, not the
+	 * one this build machine links. Homebrew's pcre2 went to 10.48 on 2026-08-31, U+A7CF and
+	 * Medefaidrin became letters here, and a regeneration duly deleted both ranges. Measured on the
+	 * shipping wasm interpreter: `preg_match('/\pL/u', ...)` answers 0 for BOTH, so the deployed
+	 * product still needs them and the regeneration would have broken titlecasing for them.
+	 *
+	 * Every other table is mbstring alone and is compared. `unicode-runtime.spec.ts` is where
+	 * `titleExtra` is asserted, against the engine that uses it.
+	 */
 	it('matches what a fresh sweep of the real extension produces', () => {
 		const strip = (c: ReturnType<typeof readArtifact>) => {
-			const { provenance: _provenance, ...data } = c;
+			const { provenance: _provenance, titleExtra: _titleExtra, ...data } = c;
 			return JSON.stringify(data);
 		};
 		expect(strip(nativeCorpus())).toBe(strip(readArtifact()));

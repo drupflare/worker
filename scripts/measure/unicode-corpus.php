@@ -288,6 +288,22 @@ namespace {
 
 	// #endregion
 
+	// read from `phpinfo()` because no constant exposes either; the module block prints both
+	$pcre = (function (): array {
+		ob_start();
+		phpinfo(INFO_MODULES);
+		$info = (string) ob_get_clean();
+		$grab = function (string $label) use ($info): ?string {
+			return preg_match('/' . preg_quote($label, '/') . '\s*=>\s*([^\n<]+)/', $info, $m) === 1
+				? trim($m[1])
+				: null;
+		};
+		return [
+			'library' => $grab('PCRE Library Version'),
+			'unicode' => $grab('PCRE Unicode Version'),
+		];
+	})();
+
 	$doc = [
 		'provenance' => [
 			'php' => PHP_VERSION,
@@ -297,6 +313,13 @@ namespace {
 			// regex engine. ext-intl's answer is recorded beside it when the build has one
 			'oniguruma' => defined('MB_ONIGURUMA_VERSION') ? MB_ONIGURUMA_VERSION : null,
 			'icuUnicode' => class_exists('IntlChar') ? IntlChar::getUnicodeVersion() : null,
+			// PCRE DECIDES `titleExtra` AND WAS THE ONE ORACLE NOT RECORDED. That table is the set
+			// mbstring titlecases and `\pL` does not call a letter, so it is a property of the
+			// PAIR. Homebrew's pcre2 went to 10.48 on 2026-08-31, U+A7CF and Medefaidrin became
+			// letters, two ranges left the table, and the artifact failed with a 200 KB string diff
+			// naming nothing. `--with-external-pcre` means this moves without PHP moving
+			'pcreUnicode' => $pcre['unicode'],
+			'pcre' => $pcre['library'],
 			'scalars' => 0x110000 - (SURROGATE_HI - SURROGATE_LO + 1),
 		],
 		'case' => [

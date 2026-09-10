@@ -30,7 +30,14 @@ export const FREE_QUOTAS = GENERATED_FREE_QUOTAS;
  */
 export const SITE_STORAGE_BYTES = {
 	/** the seeded database alone, `databaseSize` after `/migrate?all=1` */
-	seed: 4_616_192,
+	/**
+	 * 4,616,192 on the traced-list pack; 5,550,080 on the 11.4.6 from-source one, which is what
+	 * ships. `seed-cache-cost.spec.ts` reads it as the untrimmed arm's `afterMigrate`, n=2 with zero
+	 * spread. The file on disk is SMALLER than before (5,349,376 against 7,585,792) and the migrated
+	 * database is larger, because a rebuild drops free pages the file carried and the bins it now
+	 * creates at build time land as real rows.
+	 */
+	seed: 5_550_080,
 	/**
 	 * On a MIGRATED but COLD object, 3.7x the warm case (1,247 ms / 552 pages against 33 ms / 148,
 	 * both `ok`). The model keeps the cold figure so a storage ceiling is not optimistic.
@@ -483,7 +490,13 @@ export const ROWS_PER_FILL = {
 	// 105 -> 107 with the provisioning drop: this fill now pays the interpreter boot that
 	// `/__migrate` and `/__firstrun` used to leave resident, and a boot writes 2. Paid once per
 	// object, against an install whose whole heap it removes from the serving incarnation
-	firstFillOnFreshObject: 107
+	//
+	// 107 -> 88 AT DRUPAL 11.4.6, and the saving is the pack rather than the release.
+	// `install-site-db.php` now creates the six lazily-made cache bins and warms the RouteProvider
+	// collection at BUILD time, so the first fill no longer writes what it used to discover. The
+	// remaining charge attributes to `cache_data` (12) and `key_value` (4), measured by
+	// `rows-per-fill-audit.spec.ts`, which reports every class beside its constant
+	firstFillOnFreshObject: 88
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
@@ -1070,12 +1083,43 @@ export function fleetStorage(
  * Recorded so the mechanism is not re-proposed. The OBJECTIVE it was aimed at -- per-tenant storage
  * against a hard cap -- is served by {@link SITE_STORAGE_BYTES.packedHeapSnapshot} instead, which is
  * 6.3x the saving and does not expire on the first render.
+ *
+ * **THE REFUTATION IS REVERSED ON THE 11.4.6 FROM-SOURCE PACK, and the reading above is kept rather
+ * than replaced.** Both are correct about different artifacts. The refuted measurement was taken on
+ * the traced-list pack, whose bins ship POPULATED from a traced run; this pack's bins are built by
+ * `install-site-db.php`, so what a trim removes is smaller and what the render rebuilds no longer
+ * exceeds it.
+ *
+ * Measured on that pack, n=2 with zero spread between runs:
+ *
+ * | arm       | after migrate | after render | render rows |
+ * | --------- | ------------: | -----------: | ----------: |
+ * | untrimmed |     5,550,080 |    6,275,072 |         114 |
+ * | trimmed   |     3,469,312 |    5,701,632 |         319 |
+ *
+ * So the trim RETAINS 573,440 bytes per site and costs 205 charged rows once, on the first render.
+ *
+ * **IT PAYS, AND THE TWO METERS ARE NOT COMPARABLE, WHICH IS WHY.** Storage is a hard cap: 5 GB
+ * account-wide over 6,275,072 bytes is 796 tenants, and over 5,701,632 it is 876 -- 80 more sites
+ * that otherwise cannot exist at all. Rows are a daily rate that resets, and 205 of them is 0.63% of
+ * the 32,641-row setup session a site already spends being provisioned. A one-time 0.63% against a
+ * permanent 10.1% more tenants is not a close call.
+ *
+ * `refuted` is FALSE for this pack. Enabling the trim is a separate build change with its own
+ * rebuild; what is settled here is the measurement and the verdict, not the shipping default.
  */
 export const SEED_CACHE_TRIM = {
 	savedAtProvisioning: 1_273_856,
+	/** the traced-list pack, where the rebuild exceeded the shipped copy */
 	savedAfterOneRender: -176_128,
 	extraRowsOnFirstRender: 227,
-	refuted: true
+	refuted: false,
+	/** the 11.4.6 from-source pack: bytes retained after one render, n=2 with zero spread */
+	savedAfterOneRenderFromSourcePack: 573_440,
+	/** what those bytes buy against the 5 GB account cap */
+	extraTenantsFromSourcePack: 80,
+	/** and what they cost, once, on the meter that binds regeneration */
+	extraRowsOnFirstRenderFromSourcePack: 205
 } as const;
 
 export type Verdict = {

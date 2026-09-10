@@ -125,8 +125,19 @@ describe('the seed cache bins, priced against the storage cap', () => {
 		'gives the whole saving back on the first render',
 		async () => {
 			const { full, trimmed } = await measured();
-			expect(trimmed.afterRender.bytes).toBeGreaterThanOrEqual(full.afterRender.bytes);
-			expect(SEED_CACHE_TRIM.refuted).toBe(true);
+
+			// THIS ASSERTED `trimmed >= full` AND THE REVERSE IS TRUE ON THIS PACK. The refutation was
+			// measured on the traced-list pack, whose bins ship populated from a traced run; here they
+			// are built by `install-site-db.php`, so what a trim removes is smaller and the rebuild no
+			// longer exceeds it. Both readings are kept in `SEED_CACHE_TRIM`.
+			//
+			// The trim RETAINS bytes, and the spec pins the retention rather than a direction, because
+			// a direction is what was wrong last time.
+			const retained = full.afterRender.bytes - trimmed.afterRender.bytes;
+			expect(retained).toBe(SEED_CACHE_TRIM.savedAfterOneRenderFromSourcePack);
+			expect(SEED_CACHE_TRIM.refuted).toBe(false);
+			// the provisioning saving is real on both packs, and was never what was in dispute
+			expect(full.afterMigrate.bytes).toBeGreaterThan(trimmed.afterMigrate.bytes);
 		},
 		TIMEOUT
 	);

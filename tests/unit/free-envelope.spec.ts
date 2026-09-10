@@ -1011,14 +1011,29 @@ describe('stored bytes, the meter that counts CUSTOMERS rather than traffic', ()
 		expect(packed.sitesPerAccount / raw.sitesPerAccount).toBeLessThan(HEAP_PACK_RATIO);
 	});
 
-	// the refuted alternative, recorded so it is not re-proposed as the lever
-	it('records the seed cache trim as refused, with the direction that refused it', () => {
-		expect(SEED_CACHE_TRIM.refuted).toBe(true);
-		// it saves at provisioning and gives more than all of it back on the first render, which is
-		// the whole refutation: a sign change rather than a size
+	/**
+	 * The trim, and it carries TWO readings because it was measured on two different packs.
+	 *
+	 * On the traced-list pack the bins ship populated from a traced run, the render rebuilds them
+	 * larger than the copy that was dropped, and the saving goes negative -- a sign change rather
+	 * than a size, which is what refuted it. On the 11.4.6 from-source pack the bins are built by
+	 * `install-site-db.php`, so what a trim removes is smaller and the sign does not change.
+	 *
+	 * Both stay on the record. Asserting only the live verdict would erase the measurement that
+	 * closed the mechanism, and asserting only the old one would pin a reading this pack contradicts.
+	 */
+	it('records both packs the seed cache trim was measured on', () => {
+		// the traced-list pack: saves at provisioning, gives more than all of it back on the render
 		expect(SEED_CACHE_TRIM.savedAtProvisioning).toBeGreaterThan(0);
 		expect(SEED_CACHE_TRIM.savedAfterOneRender).toBeLessThan(0);
 		expect(SEED_CACHE_TRIM.extraRowsOnFirstRender).toBeGreaterThan(0);
+
+		// the from-source pack: the sign does not change, and the verdict follows the sign
+		expect(SEED_CACHE_TRIM.savedAfterOneRenderFromSourcePack).toBeGreaterThan(0);
+		expect(SEED_CACHE_TRIM.refuted).toBe(false);
+		// and it is priced on BOTH meters, because storage is a cap and rows are a rate
+		expect(SEED_CACHE_TRIM.extraTenantsFromSourcePack).toBeGreaterThan(0);
+		expect(SEED_CACHE_TRIM.extraRowsOnFirstRenderFromSourcePack).toBeGreaterThan(0);
 	});
 
 	describe('a FLEET against the cap, which is what the hard limit actually asks', () => {

@@ -727,14 +727,27 @@ describe('ASSET_AGGREGATES rewrites what is stored', () => {
 		});
 	};
 
-	it('stores the page as rendered by default and aggregated when the lever is on', async () => {
-		const fallback = await store({});
+	// THE LEVER IS ON IN `wrangler.jsonc` NOW, so this asserts what the lever DOES rather than what
+	// the ambient default is. Both aggregators used to be off -- the pack forces
+	// `css.preprocess`/`js.preprocess` false on the reasoning that `/agg/` handles it, and nothing
+	// set `ASSET_AGGREGATES` -- so every page of every site shipped 64 asset tags against the
+	// measured 13. A test pinned to the default would have to move every time the default does; a
+	// test pinned to the difference does not.
+	it('rewrites a stored page to the aggregates only when the lever is on', async () => {
+		const off = await store({ ASSET_AGGREGATES: '0' });
 		const on = await store({ ASSET_AGGREGATES: '1' });
-		expect(fallback).toBe(PAGE);
-		expect(fallback).toContain('/modules/lever-a.js');
+		expect(off).toBe(PAGE);
+		expect(off).toContain('/modules/lever-a.js');
 		expect(on).toContain('/agg/lever-aggregate.js');
 		expect(on).not.toContain('/modules/lever-a.js');
-		expect(on.length).toBeLessThan(fallback.length);
+		expect(on.length).toBeLessThan(off.length);
+	});
+
+	it('is ON in the canonical config, which is what a visitor gets', async () => {
+		// the default is the whole point of the change and is not observable from the arms above:
+		// `store({})` inherits the pool's env, which carries the shipping vars
+		const shipped = await store({});
+		expect(shipped).toContain('/agg/lever-aggregate.js');
 	});
 });
 

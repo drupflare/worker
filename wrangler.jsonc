@@ -9,7 +9,8 @@
 		"LAZY_MOUNT": "1",
 		"LAZY_FS_BUDGET_BYTES": "4194304",
 		"GEN_BUCKET_MS": "5000",
-		"PLAN": "free"
+		"PLAN": "free",
+		"ASSET_AGGREGATES": "1"
 	},
 	"rules": [
 		{

@@ -30,6 +30,21 @@ const SQLITE = resolve(ROOT, 'assets', 'drupal', 'site.sqlite');
 const PORT = Number(process.env.CONTAINER_BAKE_PORT ?? 8799);
 const SITE = 'container-bake';
 
+/**
+ * Whether a cid came from the RUNTIME rather than from a native bake.
+ *
+ * THE HASH ALONE IS NOT ENOUGH, and checking only the hash shipped a broken row. `install-site-db.php`
+ * bakes on the build machine, so the database it produces already carries a `cache_container` row
+ * with the right `VERSIONS_HASH` and the wrong everything else -- `Darwin` and an absolute
+ * `sites/build/services.yml`. The early exit below read the hash, matched, and left it in place.
+ *
+ * `getContainerCacheKey()` folds the OS and the services.yml paths in beside the hash, so both are
+ * readable from the cid and neither needs the row opened.
+ */
+function runtimeShaped(cid: string): boolean {
+	return cid.includes(':Linux:') && cid.includes('/drupal/sites/default/services.yml');
+}
+
 function currentCid(): string | null {
 	const db = new Database(SQLITE);
 	const row = db.query('SELECT cid FROM cache_container').get() as { cid: string } | null;
@@ -156,7 +171,7 @@ async function main(): Promise<void> {
 
 	const wanted = packVersionsHash();
 	const before = currentCid();
-	if (before?.includes(wanted)) {
+	if (before !== null && runtimeShaped(before) && before.includes(wanted)) {
 		console.log(`container row already keyed to ${wanted}; nothing to do`);
 		return;
 	}

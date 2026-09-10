@@ -245,7 +245,12 @@ function containerRowMatchesPack(root: string): boolean {
 	const sqlite = join(root, 'assets/drupal/site.sqlite');
 	if (!existsSync(sqlite)) return false;
 	try {
-		const needle = `service_container:prod:${packVersionsHash()}:`;
+		// the WHOLE cid, not just the hash: `install-site-db.php` bakes natively, so a fresh database
+		// already carries the right hash against `Darwin` and an absolute `sites/build` path. Matching
+		// on the hash alone left that row in place and shipped a container the runtime cannot read
+		const needle =
+			`service_container:prod:${packVersionsHash()}::Linux:` +
+			'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}';
 		return readFileSync(sqlite).includes(Buffer.from(needle, 'utf8'));
 	} catch {
 		return false;

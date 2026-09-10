@@ -103,9 +103,12 @@ function satisfiedTree(): string {
 	// above cannot write it. A complete tree has it, and the `container` step is satisfied by the
 	// container key inside it rather than by its presence
 	write('assets/drupal/site.sqlite');
+	// the RUNTIME shape, not just the hash: the container step is satisfied by a row a site can read,
+	// and a natively baked one carries the right hash against `Darwin` and a build-machine path
 	writeFileSync(
 		join(root, 'assets/drupal/site.sqlite'),
-		`service_container:prod:${packVersionsHash()}:`
+		`service_container:prod:${packVersionsHash()}::Linux:` +
+			'a:1:{i:0;s:34:"/drupal/sites/default/services.yml";}'
 	);
 	const renderer = join(root, 'drupal-src/core/lib/Drupal/Core/Render/Renderer.php');
 	mkdirSync(dirname(renderer), { recursive: true });
@@ -233,6 +236,23 @@ describe('the tracked inputs a from-source build depends on', () => {
 		// the whole source route rests on this: it is the one asset under assets/ that is committed,
 		// and `sql` and `twig` both read it. If it stopped being tracked, a clean clone could not build
 		expect(tracked().has('assets/drupal/site.sqlite')).toBe(true);
+	});
+
+	it('runs the container step against a natively baked row, hash or no hash', () => {
+		// THE HASH ALONE MATCHED AND THE ROW WAS STILL WRONG. `install-site-db.php` bakes on the build
+		// machine, so a freshly built database carries the right VERSIONS_HASH against `Darwin` and an
+		// absolute `sites/build` path. The predicate compared the hash, matched, and skipped -- which
+		// is how the 11.4.6 refresh produced a container the runtime cannot read.
+		const root = satisfiedTree();
+		const sqlite = join(root, 'assets/drupal/site.sqlite');
+		const native =
+			`service_container:prod:${packVersionsHash()}::Darwin:` +
+			'a:1:{i:0;s:75:"/Users/someone/worker/drupal-src/sites/build/services.yml";}';
+		writeFileSync(sqlite, native);
+		expect(
+			planLocalBuild(root).find((p) => p.step.id === 'container')?.run,
+			'a natively baked row must not satisfy the container step'
+		).toBe(true);
 	});
 
 	it('reads it from the three steps that need it and from no others', () => {

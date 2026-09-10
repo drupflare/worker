@@ -259,6 +259,25 @@ foreach ($configEdits as $name => $values) {
 // about what it was reproducing.
 // #endregion
 
+// #region the twig cache prefix, which the pack cannot be baked without
+// `TwigEnvironment::__construct()` mints it lazily and stores `{twig_extension_hash,
+// twig_cache_prefix}` in State, and only when the twig service is actually constructed. A kernel
+// that never renders never asks for it, so a fresh database carried no prefix and
+// `bake-twig.php` refused with "no twig_cache_prefix: pass --prefix= or fix ...". That is the
+// chicken-and-egg the recipe was missing: the bake READS the prefix and cannot invent one, because
+// a prefix that disagrees with the container's hash makes the runtime mint a fresh uniqid() and
+// orphan every baked template with nothing looking wrong.
+//
+// Asking Drupal for the service is what keeps the two consistent: it hashes the container this
+// install just built rather than a value this script chose.
+Drupal::service('twig');
+$twigPrefix = Drupal::state()->get('twig_extension_hash_prefix', []);
+if (!is_array($twigPrefix) || ($twigPrefix['twig_cache_prefix'] ?? '') === '') {
+	fwrite(STDERR, "the twig service minted no cache prefix; the pack could not be baked\n");
+	exit(1);
+}
+// #endregion
+
 $settingsFile = $absSite . '/settings.php';
 $source = file_get_contents($settingsFile);
 if (!preg_match('/^\s*\$settings\[.auto_create_htaccess.\]/m', $source)) {
@@ -362,6 +381,7 @@ echo json_encode(
 		'extraModulesInstalled' => $installedExtra,
 		'recipesApplied' => $recipesApplied,
 		'configEdited' => array_keys($configEdits),
+		'twigCachePrefix' => $twigPrefix['twig_cache_prefix'],
 		'cacheIndexesDropped' => count($droppedIndexes),
 		'cacheIndexesKept' => $keepIndexesOn,
 		'watchdogRowsTruncated' => $truncated,

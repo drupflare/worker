@@ -168,6 +168,29 @@ describe('a replica may write the tables it is allowed to own', () => {
 		).toBe(false);
 		expect(statementAllowedOnReplica('VACUUM')).toBe(false);
 	});
+
+	/**
+	 * BOTH ALLOW-LISTS READ THE LEADING KEYWORD, so a compound slipped an authoritative write past
+	 * whichever one classified its first statement. `sql.exec()` runs the whole string, and this
+	 * project delivers customer modules through `/git`, `/install` and `/modify` -- so the SQL a
+	 * lane sees is not only the SQL core generates.
+	 */
+	it('refuses a compound statement, whichever half would have classified it', () => {
+		expect(statementAllowedOnReplica('SELECT 1; DELETE FROM users')).toBe(false);
+		expect(
+			statementAllowedOnReplica(
+				'INSERT INTO cache_render (cid) VALUES (?); UPDATE users SET name = ?'
+			)
+		).toBe(false);
+		expect(statementAllowedOnReplica('PRAGMA table_info(node); DROP TABLE users')).toBe(false);
+	});
+
+	/** the control: a single statement keeps working, with or without its terminator */
+	it('does not refuse a lone statement that merely ends in a semicolon', () => {
+		expect(statementAllowedOnReplica('SELECT * FROM node;')).toBe(true);
+		expect(statementAllowedOnReplica('INSERT INTO cache_render (cid) VALUES (?); ')).toBe(true);
+		expect(statementAllowedOnReplica('DELETE FROM sessions WHERE timestamp < ?;')).toBe(true);
+	});
 });
 
 describe('the guard walks what is installed, not a list', () => {

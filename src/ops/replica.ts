@@ -155,11 +155,30 @@ export function authoritativeWrites(tally: {
  */
 export function isProvenRead(sql: string): boolean {
 	const text = sql.trim();
+	// a compound is not a proven read whatever it starts with, and this is exported: the admission
+	// path guards it too, but a future caller reaching the leaf directly would reopen the hole
+	if (compound(text)) return false;
 	if (/^SELECT\b/i.test(text)) return true;
 	if (/^EXPLAIN\b/i.test(text)) return true;
 	// the introspection forms Drupal's schema handler uses; `PRAGMA x = y` sets and is refused
 	if (/^PRAGMA\s+[A-Za-z_]+\s*\(/i.test(text)) return true;
 	return false;
+}
+
+/**
+ * Whether the text carries more than one statement.
+ *
+ * `sql.exec()` runs every statement in the string it is handed, and every classifier below reads the
+ * LEADING keyword -- so a compound describes only its first statement. `SELECT 1; DELETE FROM users`
+ * is a proven read and `INSERT INTO cache_render (...); DELETE FROM users` attributes to a
+ * replica-local table, and both then mutate authoritative state on a lane. Refused rather than
+ * parsed, which is the call {@link isProvenRead} already makes about a CTE.
+ *
+ * One trailing separator is not a second statement; Drupal binds values rather than inlining them,
+ * so a literal `;` inside the text is rare and costs a hop to the primary rather than a wrong answer.
+ */
+function compound(text: string): boolean {
+	return text.replace(/;\s*$/, '').includes(';');
 }
 
 /**
@@ -174,6 +193,7 @@ export function isProvenRead(sql: string): boolean {
  * parse, and a null answer refuses.
  */
 export function statementAllowedOnReplica(sql: string): boolean {
+	if (compound(String(sql ?? '').trim())) return false;
 	if (isProvenRead(sql)) return true;
 	if (expiryGcTable(sql) !== null) return true;
 	const target = writeTargetTable(sql);

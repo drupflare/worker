@@ -223,12 +223,16 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				'the pack shipped no container, so the drop proves nothing'
 			).toBeGreaterThan(0);
 			expect(out.atDrop, 'the container step never ran').toBe(0);
+			// THE DROP IS THE WHOLE FIX, and this file used to assert a container survived the chain.
+			// That was INCIDENTAL: a later step booted a kernel for its own reasons and left one
+			// behind, and once the 11.4.6 pack stopped owing those steps work it read 0 with the drop
+			// still perfectly correct.
+			//
+			// Recompiling inside the step was tried and reverted: a fresh site has no recorded digest,
+			// so it reads as owed and would pay a kernel boot on every provision -- which is what the
+			// migration chain is deliberately free of. `serve-migration.spec.ts` is what caught that.
 			expect((out.booted as Payload)?.ok, JSON.stringify(out.booted)).toBe(true);
 			expect(out.rebuilt).toBeGreaterThan(0);
-			// the chain leaves a container behind, and that is the improvement rather than a leak:
-			// it is compiled from the CURRENT pack inside the reconciliation instead of on the next
-			// visitor's request
-			expect(out.after).toBeGreaterThan(0);
 			expect(out.digest).not.toBe('a-pack-from-before');
 		},
 		TIMEOUT

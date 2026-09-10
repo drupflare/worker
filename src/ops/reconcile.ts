@@ -273,6 +273,13 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			sql.exec('DELETE FROM cache_container');
 			host.setMeta('driver_digest', DRIVER_DIGEST);
 		}
+		// NO `php()` HERE, AND ADDING ONE WAS A MISTAKE WORTH RECORDING. Recompiling the container
+		// inside this step looks like an improvement -- the next visitor stops paying the compile --
+		// and it costs a kernel boot on EVERY FRESH SITE, because a fresh site has no recorded
+		// digest and so reads as owed. `serve-migration.spec.ts` caught it: the migration chain is
+		// deliberately free of interpreter boots, which is also why provisioning drops the
+		// interpreter at all. The docblock above already stated the design: the drop is the fix, and
+		// the next boot rebuilds and discovers.
 	},
 	{
 		id: 'router-driver-routes',

@@ -36,6 +36,13 @@ function summary(p50: number, p95 = p50, over: Partial<Summary> = {}): Summary {
 		p99: p95,
 		min: p50,
 		max: p95,
+		// the MEAN defaults to p50 here rather than being omitted: the verdict does not read it, and a
+		// fixture that left it undefined would make every cell look like a tight distribution
+		mean: p50,
+		tiers: {},
+		workerMs: null,
+		clientMs: null,
+		gateAhead: null,
 		bytes: 12_000,
 		...over
 	};

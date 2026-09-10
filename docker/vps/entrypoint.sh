@@ -17,6 +17,21 @@ if [ ! -f "$DB_DIR/site.sqlite" ]; then
 	php -r '$d=new PDO("sqlite:'"$DB_DIR"'/site.sqlite"); $d->exec("PRAGMA journal_mode=WAL"); $d->exec("PRAGMA synchronous=NORMAL");'
 fi
 
+# CLAIM THE SITE, because the shipped artifact deliberately ships uid 1 with no usable password.
+# That is correct for a published database -- a hash there is a credential every deployment would
+# share -- and it left this arm unable to log in at all, so the authenticated half of
+# `measure:host` compared an anonymous VPS against an authenticated edge. The edge claims itself
+# through `/firstrun`; this is the same step for the arm that has no such route.
+#
+# Written into the WRITABLE copy, never the read-only seed. `--password` is the harness's own value.
+VPS_ADMIN_PASS="${VPS_ADMIN_PASS:-cfw-Bench-9143-pass}"
+php -r '
+$db = new PDO("sqlite:'"$DB_DIR"'/site.sqlite");
+$hash = password_hash(getenv("VPS_ADMIN_PASS"), PASSWORD_BCRYPT, ["cost" => 12]);
+$s = $db->prepare("UPDATE users_field_data SET pass = ?, status = 1 WHERE uid = 1");
+$s->execute([$hash]);
+' 2> /dev/null || echo "vps-entrypoint: could not set the admin password" >&2
+
 chown -R www-data:www-data "$DB_DIR" "$SITE_DIR/files" 2> /dev/null || true
 chmod -R 0777 "$DB_DIR" "$SITE_DIR/files" 2> /dev/null || true
 

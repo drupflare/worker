@@ -31,6 +31,33 @@ export interface Sample {
 	bytes: number;
 	/** which tier answered, when the arm reports one; empty on the VPS, which has no tiers */
 	tier: string;
+	/**
+	 * The front worker's own round trip, from `x-worker-ms`; null on the VPS.
+	 *
+	 * `ms - workerMs` IS THE CLIENT'S CONTRIBUTION, and capturing it is what separates this rig from
+	 * the host it is measuring. A closed loop obeys X = C / mean(R), so every millisecond the
+	 * generator adds to R subtracts from measured throughput proportionally -- at any rate, not only
+	 * near the generator's ceiling. Comparing against a no-work ceiling cannot see that, which is why
+	 * the 1.00/2.05/3.16/5.72 curve could report a shortfall no server-side mechanism accounts for.
+	 */
+	workerMs: number | null;
+	/**
+	 * How many requests the object was already handling when this one arrived, from
+	 * `x-cfw-gate-ahead`; null when the response never entered the gate.
+	 *
+	 * A COUNT TAKEN INSIDE THE OBJECT WITH NO CLOCK IN IT, which is the property that makes it
+	 * uncontaminated by the client. If queueing is on the server this rises with the pool; if it is
+	 * in the generator's event loop this stays flat while `ms` climbs.
+	 */
+	gateAhead: number | null;
+}
+
+/** a header that is absent or unparseable is null, never 0 -- 0 is a real reading */
+function numberHeader(res: Response, name: string): number | null {
+	const raw = res.headers.get(name);
+	if (raw === null) return null;
+	const n = Number(raw);
+	return Number.isFinite(n) ? n : null;
 }
 
 export interface Summary {
@@ -42,6 +69,22 @@ export interface Summary {
 	p50: number;
 	p95: number;
 	p99: number;
+	/**
+	 * The MEAN, and its absence is why a shortfall went unattributed for a session.
+	 *
+	 * A closed loop obeys X = C / mean(R), not C / p50. Re-deriving the 1/2/4/8 sweep with the mean
+	 * closes Little's Law at every point; the "gap at 4 and 8" was the substitution. p50 rose 15 ms
+	 * across that sweep while the mean rose 209, so the body was flat and the tail was everything.
+	 */
+	mean: number;
+	/** which tiers answered and how often; empty on the VPS. Discarding this hid the anon question */
+	tiers: Record<string, number>;
+	/** mean `x-worker-ms`, or null when the arm stamps none */
+	workerMs: number | null;
+	/** mean client-side residue, `ms - workerMs`: what the GENERATOR contributed */
+	clientMs: number | null;
+	/** mean `x-cfw-gate-ahead`: queueing measured inside the object, with no clock in it */
+	gateAhead: number | null;
 	min: number;
 	max: number;
 	bytes: number;
@@ -135,10 +178,19 @@ export async function one(url: string, cookie: string | null): Promise<Sample> {
 			ms: Date.now() - t0,
 			status: res.status,
 			bytes: buf.byteLength,
-			tier: cache === 'PLAN' && plan !== '' ? `PLAN:${plan}` : cache
+			tier: cache === 'PLAN' && plan !== '' ? `PLAN:${plan}` : cache,
+			workerMs: numberHeader(res, 'x-worker-ms'),
+			gateAhead: numberHeader(res, 'x-cfw-gate-ahead')
 		};
 	} catch {
-		return { ms: Date.now() - t0, status: 0, bytes: 0, tier: '' };
+		return {
+			ms: Date.now() - t0,
+			status: 0,
+			bytes: 0,
+			tier: '',
+			workerMs: null,
+			gateAhead: null
+		};
 	}
 }
 
@@ -190,8 +242,23 @@ export async function run(
 		p99: percentile(times, 99),
 		min: times[0] ?? 0,
 		max: times[times.length - 1] ?? 0,
+		mean: times.length === 0 ? 0 : times.reduce((n, t) => n + t, 0) / times.length,
+		tiers: ok.reduce<Record<string, number>>((acc, s) => {
+			if (s.tier !== '') acc[s.tier] = (acc[s.tier] ?? 0) + 1;
+			return acc;
+		}, {}),
+		workerMs: meanOf(ok.map((s) => s.workerMs)),
+		clientMs: meanOf(ok.map((s) => (s.workerMs === null ? null : s.ms - s.workerMs))),
+		gateAhead: meanOf(ok.map((s) => s.gateAhead)),
 		bytes: ok.length === 0 ? 0 : Math.round(ok.reduce((n, s) => n + s.bytes, 0) / ok.length)
 	};
+}
+
+/** the mean of the readings that exist, or null when none does; 0 would read as a measurement */
+function meanOf(values: readonly (number | null)[]): number | null {
+	const present = values.filter((v): v is number => v !== null);
+	if (present.length === 0) return null;
+	return present.reduce((n, v) => n + v, 0) / present.length;
 }
 
 /**

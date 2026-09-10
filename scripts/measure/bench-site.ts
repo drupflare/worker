@@ -76,8 +76,19 @@ for (const path of paths) {
 		if (drained.filled === undefined) break;
 		if ((drained.remaining ?? 0) === 0) break;
 	}
-	const res = await call(`/serve?path=${encodeURIComponent(path)}`);
-	if (res.status >= 400) throw new Error(`${path} answered ${res.status} after its fill`);
+	// RETRIED, because the drain and the store are not the same instant. The first serve after a
+	// fill can answer 503 `warming` and the next one 200 -- observed here, and it aborted a
+	// provisioning run on a site that was working. A bounded retry is right where an unbounded one
+	// would not be: `/fill` above has already reported the queue empty, so the page either lands
+	// shortly or something is actually wrong, and the throw still names the last status.
+	let res = await call(`/serve?path=${encodeURIComponent(path)}`);
+	for (let i = 0; i < 10 && res.status >= 400; i++) {
+		await new Promise((r) => setTimeout(r, 500));
+		res = await call(`/serve?path=${encodeURIComponent(path)}`);
+	}
+	if (res.status >= 400) {
+		throw new Error(`${path} answered ${res.status} after its fill and 10 retries`);
+	}
 	console.error(`[bench-site] warm ${path}`);
 }
 

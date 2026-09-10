@@ -433,7 +433,11 @@ for (const [kind, base, a, b] of [
 	['edge', EDGE, edgeCookie, edgeSecond]
 ] as const) {
 	setExtraHeaders(kind === 'edge' ? HEADERS.edge : HEADERS.vps);
-	const samples = await pairedSessionArm(base, kind, '/admin/content', 8, a, b);
+	// 12 RATHER THAN 8, because 8 sat ON the convergence point and so measured the bound. Driven by
+	// hand against the same site, the pair reaches `PLAN:private` at request 7 -- and a single ERROR
+	// in the sequence costs a witness and pushes it further, which is how this arm kept reporting
+	// that no cell ever reached the plan tier while the tier was working
+	const samples = await pairedSessionArm(base, kind, '/admin/content', 12, a, b);
 	const tail = samples
 		.slice(3)
 		.map((s) => s.ms)

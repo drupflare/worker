@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -26,6 +26,7 @@ import {
 	resolveBaseline,
 	type BaselineValues
 } from '../../scripts/measure/metrics-gate';
+import { ARTIFACT_SPECS } from '../artifact-specs';
 
 /**
  * The Class A metrics pipeline: collect, compare, fail.
@@ -499,5 +500,33 @@ describe('the gate CLI', () => {
 		const thin = runGate(fixture(), { master: null });
 		expect(thin.status, thin.output).toBe(0);
 		expect(thin.output).toContain('Baseline: nothing;');
+	});
+});
+
+/**
+ * `ARTIFACT_SPECS` is an allow-list, and an allow-list nobody prunes is how a dead entry hides.
+ *
+ * The list decides which spec files the gate DROPS on a checkout without the pack, so an entry
+ * naming a file that no longer exists is a silent no-op, and a spec that needs the pack but is
+ * MISSING from the list turns master red on a clean checkout. `tests/node/reachability.spec.ts`
+ * already guards its module exemptions in both directions; this is the same discipline for the
+ * bigger list. It was added after the list was found naming
+ * `tests/integration/shell-derivation.spec.ts`, which had been deleted.
+ */
+describe('the artifact exclusion list', () => {
+	it('names only spec files that exist', () => {
+		const missing = ARTIFACT_SPECS.filter((rel) => !existsSync(resolve(ROOT, rel)));
+		expect(missing, 'listed in tests/artifact-specs.ts and not on disk').toEqual([]);
+	});
+
+	it('names each file once, so a duplicate cannot hide a typo', () => {
+		const seen = new Set<string>();
+		const duplicated = ARTIFACT_SPECS.filter((rel) => !seen.add(rel));
+		expect(duplicated).toEqual([]);
+	});
+
+	it('names spec files, not directories or globs', () => {
+		const odd = ARTIFACT_SPECS.filter((rel) => !rel.endsWith('.spec.ts'));
+		expect(odd, 'the exclusion is matched against spec paths').toEqual([]);
 	});
 });

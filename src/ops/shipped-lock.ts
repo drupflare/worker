@@ -8,18 +8,18 @@ export const SHIPPED_LOCK_VERSIONS: Record<string, string> = {
 	'composer/semver': '3.4.4',
 	'doctrine/lexer': '3.0.1',
 	'drupal/admin_toolbar': '3.6.3',
-	'drupal/core': '11.4.5',
-	'drupal/core-composer-scaffold': '11.4.5',
-	'drupal/core-project-message': '11.4.5',
-	'drupal/core-recipe-unpack': '11.4.5',
-	'drupal/core-recommended': '11.4.5',
-	'drupal/core-vendor-hardening': '11.4.5',
+	'drupal/core': '11.4.6',
+	'drupal/core-composer-scaffold': '11.4.6',
+	'drupal/core-project-message': '11.4.6',
+	'drupal/core-recipe-unpack': '11.4.6',
+	'drupal/core-recommended': '11.4.6',
+	'drupal/core-vendor-hardening': '11.4.6',
 	'drupal/ctools': '4.1.1',
 	'drupal/pathauto': '1.15.0',
 	'drupal/token': '1.17.0',
-	'drupflare/drupflare': 'v0.2.1',
-	'drupflare/rom': 'v0.2.0',
-	'drupflare/stream-http': 'v0.1.2',
+	'drupflare/drupflare': 'v0.3.0',
+	'drupflare/rom': 'v0.2.1',
+	'drupflare/stream-http': 'v0.1.3',
 	'egulias/email-validator': '4.0.4',
 	'guzzlehttp/guzzle': '7.15.5',
 	'guzzlehttp/promises': '2.5.3',
@@ -82,4 +82,4 @@ export const SHIPPED_LOCK_VERSIONS: Record<string, string> = {
 };
 
 /** the Drupal core version these packages were locked against */
-export const SHIPPED_CORE_VERSION = '11.4.5';
+export const SHIPPED_CORE_VERSION = '11.4.6';

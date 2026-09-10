@@ -67,3 +67,4 @@ dist/
 # place; `bun scripts/contrib-fixture.ts --restore` puts it back and deletes this
 .contrib-fixture/
 .cdn-archive/
+.refresh/

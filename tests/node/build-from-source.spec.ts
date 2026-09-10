@@ -27,6 +27,7 @@ import {
 } from '../../scripts/build-local.ts';
 import { resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
+import { packVersionsHash } from '../../scripts/pack-hash.js';
 import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
 import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
 
@@ -97,6 +98,14 @@ function satisfiedTree(): string {
 	writeFileSync(
 		join(root, 'drupal-src/core/lib/Drupal.php'),
 		`<?php\nclass Drupal { const VERSION = '${SHIPPED_CORE_VERSION}'; }\n`
+	);
+	// `assets/drupal/site.sqlite` is RESTORED rather than produced, so no step names it and the loop
+	// above cannot write it. A complete tree has it, and the `container` step is satisfied by the
+	// container key inside it rather than by its presence
+	write('assets/drupal/site.sqlite');
+	writeFileSync(
+		join(root, 'assets/drupal/site.sqlite'),
+		`service_container:prod:${packVersionsHash()}:`
 	);
 	const renderer = join(root, 'drupal-src/core/lib/Drupal/Core/Render/Renderer.php');
 	mkdirSync(dirname(renderer), { recursive: true });
@@ -226,11 +235,13 @@ describe('the tracked inputs a from-source build depends on', () => {
 		expect(tracked().has('assets/drupal/site.sqlite')).toBe(true);
 	});
 
-	it('reads it from the two steps that need it and from no others', () => {
+	it('reads it from the three steps that need it and from no others', () => {
+		// `container` joined `twig` and `sql` on 2026-09-09: it rekeys the packed `cache_container`
+		// row to the hash the pack carries, so it reads the database and writes it back
 		const readers = LOCAL_STEPS.filter((s) =>
 			(s.inputs ?? []).includes('assets/drupal/site.sqlite')
 		).map((s) => s.id);
-		expect(readers).toEqual(['twig', 'sql']);
+		expect(readers).toEqual(['twig', 'container', 'sql']);
 	});
 });
 
@@ -501,6 +512,44 @@ describe('hydrate picks between the payload and the source route', () => {
 		const source = await resolvePayloadSource(scratch(), 'v9.9.9', undefined, no);
 		expect(source.kind).toBe('none');
 		expect(source).toMatchObject({ reason: expect.stringContaining('v9.9.9') });
+	});
+});
+
+describe('refresh rebuilds everything downstream of the database', () => {
+	/**
+	 * `assertKnownSteps` refuses an id that does not exist, so a TYPO in the list is loud. A step
+	 * left OUT is silent, and the one that matters most is the one that was: a core bump repacks,
+	 * which moves `VERSIONS_HASH`, and without `container` the packed `cache_container` row is left
+	 * keyed to the old dependency set for every site the release then provisions.
+	 */
+	const onlyList = (): StepId[] => {
+		const src = readFileSync(join(ROOT, 'scripts/refresh.ts'), 'utf8');
+		const match = /--only=([a-z,]+)/.exec(src);
+		expect(match, 'scripts/refresh.ts no longer passes --only').toBeTruthy();
+		return (match?.[1] ?? '').split(',') as StepId[];
+	};
+
+	it('names only real steps, in pipeline order', () => {
+		const only = onlyList();
+		expect(() => assertKnownSteps(only)).not.toThrow();
+		const at = (id: StepId) => LOCAL_STEPS.findIndex((s) => s.id === id);
+		const positions = only.map(at);
+		expect(positions, `${only.join(',')} is not in pipeline order`).toEqual(
+			[...positions].sort((a, b) => a - b)
+		);
+	});
+
+	it('includes every step after the pack, which is what a repack invalidates', () => {
+		const only = new Set(onlyList());
+		const packAt = LOCAL_STEPS.findIndex((s) => s.id === 'pack');
+		const after = LOCAL_STEPS.slice(packAt + 1)
+			.map((s) => s.id)
+			// the prefill boots the whole worker and refresh leaves it to a later build
+			.filter((id) => id !== 'prefill');
+		const missing = after.filter((id) => !only.has(id));
+		expect(missing, 'a repack invalidates these and refresh would not rebuild them').toEqual(
+			[]
+		);
 	});
 });
 

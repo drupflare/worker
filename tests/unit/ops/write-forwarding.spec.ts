@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { maxLanes } from '../../../src/ops/replica-demand';
+import { replicaCount } from '../../../src/ops/replica-routing';
 import {
 	hazardClass,
+	ID_PARTITION_LANES,
 	idStride,
 	laneHighWater,
 	nextLaneId,
@@ -232,5 +235,47 @@ describe('the ids a forwarded batch spent', () => {
 			{ sql: 'INSERT INTO node ("nid") VALUES (7, ?)' }
 		]);
 		expect(out.size).toBe(0);
+	});
+});
+
+/**
+ * The lane ceiling, which is defined in five places and linked in none.
+ *
+ * `replicaCount()` and `rememberLanes()` clamp at 32, `DEFAULT_MAX_LANES` is 32, `maxLanes()`
+ * clamps at 32, and `ID_PARTITION_LANES` is 32. Two of those carry docblocks saying they are
+ * DERIVED from the router's clamp and neither imports it. Raise the clamp to 48 -- which
+ * `replica-demand.ts` cites a measurement at -- and lanes 33 to 48 fall outside the residue
+ * partition, which is the disjointness the forwarded-id conflict retry rests on. Nothing compared
+ * them, so the drift would have been silent and the failure would have been two lanes minting the
+ * same id.
+ */
+describe('the partition covers every lane the router can address', () => {
+	it('gives the highest addressable lane a residue of its own', () => {
+		const ceiling = replicaCount({ REPLICA_COUNT: '999' });
+		expect(ceiling).toBeGreaterThan(0);
+		// the partition has to reach at least as far as the router does
+		expect(
+			ID_PARTITION_LANES,
+			'a lane the router can address falls outside the id partition'
+		).toBeGreaterThanOrEqual(ceiling);
+	});
+
+	it('keeps every one of those lanes off the unpartitioned residue', () => {
+		const ceiling = replicaCount({ REPLICA_COUNT: '999' });
+		const offsets = new Set<number>();
+		for (let lane = 1; lane <= ceiling; lane++) {
+			const { offset, stride } = idStride(lane, ID_PARTITION_LANES);
+			// 0 is where an unstrided writer lands first, so a lane must never hold it
+			expect(offset, `lane ${lane} shares the unpartitioned residue`).not.toBe(0);
+			expect(stride).toBe(ID_PARTITION_LANES + 1);
+			offsets.add(offset);
+		}
+		expect(offsets.size, 'two lanes share a residue class').toBe(ceiling);
+	});
+
+	it('agrees with what autoscaling is allowed to build', () => {
+		// `maxLanes()` bounds the pool the primary grows on its own, so it is the other end of the
+		// same question: a lane it can create must be one the partition covers
+		expect(ID_PARTITION_LANES).toBeGreaterThanOrEqual(maxLanes({ REPLICA_MAX_LANES: '999' }));
 	});
 });

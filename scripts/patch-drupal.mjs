@@ -114,4 +114,46 @@ $settings['php_storage']['twig']['class'] = 'Drupal\\\\Component\\\\PhpStorage\\
 }
 // #endregion
 
+// #region the driver library's autoload root
+const PSR4_MARKER = 'Drupflare\\\\StreamHttp\\\\';
+const PSR4_PATCH = `
+// --- appended by scripts/patch-drupal.mjs: the driver library's autoload root ---
+// The shipped database has \`drupflare\` in core.extension, and its HttpsStreamWrapper extends the
+// packaged Drupflare\\StreamHttp\\HttpsStreamWrapper. Drupal registers a namespace per MODULE and a
+// libraries/ directory is not one, so every native kernel booted against this tree fatals on that
+// parent class the moment ModuleHandler::loadAll() includes the .module -- bake-twig.php,
+// bake-collectors.php and lift-container.ts all did. settings.php is the one place every bootstrap
+// reads, which is the same reason the edge registers this root in its own settings override.
+// PHP_SAPI === 'cli' GATES THIS TO NATIVE BUILDS, and the gate is the point. This file is PACKED
+// and the Durable Object reads it, where the same root is already registered by SETTINGS_OVERRIDE --
+// so an unguarded block makes every edge request pay for a workaround only the bake scripts need.
+// Every native consumer here is a CLI script; the runtime is not.
+if (PHP_SAPI === 'cli') {
+	$library = __DIR__ . '/../../libraries/drupflare-stream-http/src/';
+	if (is_dir($library)) {
+		$loader = require DRUPAL_ROOT . '/autoload.php';
+		if (is_object($loader)) {
+			$loader->addPsr4('Drupflare\\\\StreamHttp\\\\', $library);
+		}
+	}
+}
+`;
+
+{
+	const path = join(root, SETTINGS);
+	try {
+		const src = await readFile(path, 'utf8');
+		if (src.includes(PSR4_MARKER)) {
+			skipped.push(`${SETTINGS} (stream-http psr4 already registered)`);
+		} else {
+			await chmod(path, 0o644);
+			await writeFile(path, src + PSR4_PATCH);
+			applied.push(`${SETTINGS} (stream-http psr4 root)`);
+		}
+	} catch {
+		skipped.push(`${SETTINGS} (not present, psr4)`);
+	}
+}
+// #endregion
+
 console.log(JSON.stringify({ applied, skipped }, null, 2));

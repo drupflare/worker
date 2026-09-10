@@ -33,8 +33,10 @@ that catch the most mistakes:
   delete, and none of that was the host.
 - **A BENCH SITE CAN EXHAUST ITS OWN DAILY ROW QUOTA, and it does not look like a quota.** A site
   driven all night read **103.8%** and went read-only, so every login answered 503 and the rig
-  reported a wrong password. Provision a fresh site rather than debugging the login; `/serve-stats`
-  reports `limits.hitAny`.
+  reported a wrong password. The field is `rowsToday` in `/serve-stats`, NOT `limits.hitAny` --
+  that one is the platform-limit tally and stays false while the site is read-only. For a
+  measurement rig, `wrangler dev --var PLAN:paid` lifts the budget so a harness is not fighting the
+  degrade it did not come to measure.
 
 ## There is a VPS arm now, and the headline ratio was an instrument error
 

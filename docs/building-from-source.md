@@ -379,11 +379,11 @@ to be set on both commands or neither.
 chmod -R u+w drupal-src
 DRUPAL_VERSION=11.4.5 bun scripts/fetch-drupal-tree.ts --force
 DRUPAL_VERSION=11.4.5 bun run build:local -- --force \
-  --skip=interpreter,frame,decoder,siblings,driver,prefill
+  --skip=interpreter,frame,siblings,driver,prefill
 ```
 
-Five of the six skipped steps do not depend on the core version: three are the interpreter, one is
-the sibling checkouts and one is the driver pack. The sixth, `prefill`, does; drop it from that list
+Four of the five skipped steps do not depend on the core version: two are the interpreter, one is
+the sibling checkouts and one is the driver pack. The fifth, `prefill`, does; drop it from that list
 on a real upgrade, since it re-renders the prefilled pages and a core patch can change them. It is
 excluded from the measurement below only because it binds a port.
 

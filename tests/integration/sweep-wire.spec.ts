@@ -35,20 +35,37 @@ async function sweepReport(site: ServeDo, run: boolean): Promise<Payload> {
 
 describe('the addressable sweep, wired', () => {
 	it(
-		'is off by default and reports nothing rather than erroring',
+		'runs unasked, and an explicit SWEEP=0 reports off rather than erroring',
 		async () => {
-			const out = await inObject(freshSite(), async (site: ServeDo) => {
+			// two objects rather than two calls: `sweep` reports `lastSweep`, so an arm that ran
+			// leaves a report the next arm would read as its own answer
+			const unasked = (await inObject(freshSite(), async (site: ServeDo) => {
 				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				delete (site.env as Record<string, unknown>).SWEEP;
 				return await sweepReport(site, true);
-			});
-			// off is a report of nothing, never an error: an operator who has not opted in must not
-			// see a failure on a surface they did not enable
-			expect(out.sweep).toBeNull();
+			})) as Payload;
+
+			const off = (await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				(site.env as Record<string, unknown>).SWEEP = '0';
+				return await sweepReport(site, true);
+			})) as Payload;
+
+			// an unset SWEEP is an opted-IN default now: a visitor's first request to an addressable
+			// path is the expensive one, and the only way to spend that cost off the visitor's clock
+			// is to have taken it already
+			expect(unasked.enabled).toBe(true);
+			expect(unasked.ran).toBe(true);
+			expect(unasked.sweep).not.toBeNull();
+
+			// off is a report of nothing, never an error: an operator who opted OUT must not see a
+			// failure on a surface they disabled
+			expect(off.sweep).toBeNull();
 			// and it has to SAY it is off. Without this a switched-off sweep and one that found
 			// nothing are the same response
-			expect(out.ran).toBe(false);
-			expect(out.enabled).toBe(false);
-			expect(out.skipped).toBe('SWEEP is off');
+			expect(off.ran).toBe(false);
+			expect(off.enabled).toBe(false);
+			expect(off.skipped).toBe('SWEEP is off');
 		},
 		TIMEOUT
 	);

@@ -46,15 +46,36 @@ export type PlanProfile = {
 /**
  * Free: sized for a 10 ms per-invocation cap.
  *
- * These are the measured constants the project ran on, unchanged. A batch of 5 and a 2 s budget are
- * not conservative guesses; they are what fits.
+ * These are the measured constants the project ran on. A batch of 5 is what fits.
+ *
+ * **`bootInline` WAS FALSE AND THE REASON EXPIRED.** It was set against a 10 ms per-invocation cap
+ * that a cold boot obviously cannot fit, and against an implicit alternative of "the chain fills it
+ * shortly". Both halves are now measured and both are wrong:
+ *
+ * - **The cap does not fail a request.** A single invocation reading 1,882 ms of `cpuTime`
+ *   completed on a deployed FREE worker. The 10 ms figure is an amortised allowance, not a
+ *   per-request limit, so "a cold boot cannot fit" was never the thing being enforced.
+ * - **The alternative is not a short wait.** Time-to-served for an anonymous miss on a cold object,
+ *   deployed: **19,004 ms, and only 4 of 8 paths served at all.** A cold boot plus render is ~3.8 s.
+ *   Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the
+ *   page.
+ *
+ * So the refusal was comparing a cold boot against a fast chain that does not exist. `inlineBudgetMs`
+ * moves with it for the same reason -- it bounds the VISITOR'S PATIENCE rather than a billed
+ * resource (wall time is not charged against the CPU budget: 4 ms of Worker CPU against 827 ms of
+ * wall, measured), and 2 s of patience is the wrong bound when the alternative is 19 s of waiting.
+ *
+ * What still protects the object: `estimateRenderMs()` against this budget, the herd collapse (N
+ * concurrent identical misses cost ONE render), the daily row and request meters, and
+ * `degraded.render` which answers 503 rather than rendering once the quota is spent. Cold encounters
+ * are **0.13% of all visitor requests**, so this path is rare by construction.
  */
 export const FREE_PROFILE: PlanProfile = {
 	fillBatchSize: 5,
 	httpDrainLimit: 3,
 	mirrorLimit: 2,
-	inlineBudgetMs: 2_000,
-	bootInline: false
+	inlineBudgetMs: 10_000,
+	bootInline: true
 };
 
 /**

@@ -8,6 +8,7 @@ import {
 	SWEEP_ROWS_PER_FILL,
 	SWEEP_ROWS_PER_PAGE,
 	SWEEP_START_FLOOR,
+	UNASKED_ROWS_FRACTION,
 	enqueueSweep,
 	enumerateAddressable,
 	freshCursor,
@@ -494,19 +495,35 @@ describe('the cursor', () => {
 });
 
 describe('sweepEnabled', () => {
-	it('is off unless asked for, because the row quota is account-wide', () => {
-		expect(sweepEnabled(null)).toBe(false);
-		expect(sweepEnabled({})).toBe(false);
-		expect(sweepEnabled({ SWEEP: '' })).toBe(false);
-		expect(sweepEnabled({ SWEEP: '0' })).toBe(false);
+	it('is ON by default, because a path nobody swept is the one profile a render cannot win', () => {
+		// it was off, and the reason was the account-wide quota rather than caution. That is priced
+		// now rather than overridden: an unasked sweep takes a fifth of the share, so it takes 20
+		// sweeping sites to saturate the account where it took 4
+		expect(sweepEnabled(null)).toBe(true);
+		expect(sweepEnabled({})).toBe(true);
+		expect(sweepEnabled({ SWEEP: '' })).toBe(true);
 		expect(sweepEnabled({ SWEEP: '1' })).toBe(true);
+		// and the off switch still works, which is what makes the default reversible
+		expect(sweepEnabled({ SWEEP: '0' })).toBe(false);
+	});
+
+	it('spends less when nobody asked for it than when an operator did', () => {
+		// the whole safety argument is this asymmetry, so assert BOTH sides rather than the default
+		// alone: a default that matched the asked-for share would reintroduce the refusal's cause
+		expect(sweepRowsFraction(null)).toBe(UNASKED_ROWS_FRACTION);
+		expect(sweepRowsFraction({})).toBe(UNASKED_ROWS_FRACTION);
+		expect(sweepRowsFraction({ SWEEP: '1' })).toBe(SWEEP_ROWS_FRACTION);
+		expect(UNASKED_ROWS_FRACTION).toBeLessThan(SWEEP_ROWS_FRACTION);
 	});
 
 	it('takes the declared share, clamped to the range its derivation covers', () => {
-		expect(sweepRowsFraction(null)).toBe(SWEEP_ROWS_FRACTION);
 		expect(sweepRowsFraction({ SWEEP_ROWS_FRACTION: '0.1' })).toBe(0.1);
 		expect(sweepRowsFraction({ SWEEP_ROWS_FRACTION: 9 })).toBe(SWEEP_MAX_FRACTION);
-		expect(sweepRowsFraction({ SWEEP_ROWS_FRACTION: -1 })).toBe(SWEEP_ROWS_FRACTION);
+		// an unparseable value falls to the share this site would have used anyway
+		expect(sweepRowsFraction({ SWEEP: '1', SWEEP_ROWS_FRACTION: -1 })).toBe(
+			SWEEP_ROWS_FRACTION
+		);
+		expect(sweepRowsFraction({ SWEEP_ROWS_FRACTION: -1 })).toBe(UNASKED_ROWS_FRACTION);
 	});
 });
 

@@ -13,23 +13,21 @@ import {
  */
 
 describe('the profiles', () => {
-	it('gives free everything sized for a 10 ms cap, unchanged from the measured constants', () => {
+	it('gives free the batch sizes a 10 ms cap bounds, and the patience the visitor needs', () => {
 		expect(FREE_PROFILE).toEqual({
 			fillBatchSize: 5,
 			httpDrainLimit: 3,
 			mirrorLimit: 2,
-			inlineBudgetMs: 2_000,
-			bootInline: false
+			inlineBudgetMs: 10_000,
+			bootInline: true
 		});
 	});
 
-	it('raises the budgets paid can actually spend', () => {
-		for (const key of [
-			'fillBatchSize',
-			'httpDrainLimit',
-			'mirrorLimit',
-			'inlineBudgetMs'
-		] as const) {
+	it('raises the batch budgets paid can actually spend', () => {
+		// `inlineBudgetMs` is NOT in this list any more: it bounds the visitor's patience rather
+		// than a billed resource, and a free visitor's patience is not smaller than a paid one's.
+		// The batch knobs stay plan-shaped because they bound rows and occupancy, which do differ
+		for (const key of ['fillBatchSize', 'httpDrainLimit', 'mirrorLimit'] as const) {
 			expect(PAID_PROFILE[key], key).toBeGreaterThan(FREE_PROFILE[key]);
 		}
 	});
@@ -46,8 +44,14 @@ describe('the profiles', () => {
 		expect(PAID_PROFILE.fillBatchSize * 100).toBeLessThan(1_500);
 	});
 
-	it('permits a cold boot on paid only, which is the one knob that changes an outcome', () => {
-		expect(FREE_PROFILE.bootInline).toBe(false);
+	it('permits a cold boot on BOTH plans, because the refusal cost the visitor more than it saved', () => {
+		// It was false on free against a 10 ms per-invocation cap and an assumed-fast chain. Both
+		// are measured now and both were wrong: a 1,882 ms `cpuTime` invocation COMPLETED on a
+		// deployed free worker, and time-to-served for an anonymous miss on a cold object was
+		// 19,004 ms with only 4 of 8 paths served at all -- against ~3.8 s to boot and render.
+		// Refusing did not protect a budget; it made the visitor wait fifteen seconds longer and
+		// often lose the page
+		expect(FREE_PROFILE.bootInline).toBe(true);
 		expect(PAID_PROFILE.bootInline).toBe(true);
 	});
 

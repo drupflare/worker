@@ -626,23 +626,60 @@ export type SweepEnv = {
 };
 
 /**
- * OFF unless asked for, and the reason is a meter rather than caution.
+ * ON by default at a fleet-safe share; `SWEEP=0` turns it off.
  *
- * The row and DO quotas are ACCOUNT-WIDE while `dailyRows()` counts one object, so the governor
- * cannot see what the rest of the fleet has spent. At 25% of 100,000 rows per site, four sweeping
- * sites saturate the account and each one reads its own meter as healthy. The objective survives the
- * refusal: `src/ops/fleet.ts` is the inventory that would let a fleet-aware share be safe by
- * default, and nothing here forecloses it.
+ * IT WAS OFF, and the reason was a meter rather than caution: the row and DO quotas are
+ * ACCOUNT-WIDE while `dailyRows()` counts one object, so the governor cannot see what the rest of
+ * the fleet has spent. At 25% of 100,000 rows per site, four sweeping sites saturate the account
+ * and each one reads its own meter as healthy. That is a real failure mode and it is not overridden
+ * here -- it is priced. An unasked-for sweep takes {@link UNASKED_ROWS_FRACTION} instead of the
+ * full share, so the number of sites it takes to saturate the account moves from 4 to 20, and an
+ * operator who asks for a sweep still gets the measured 25%.
+ *
+ * WHY IT IS WORTH DEFAULTING ON. A path nobody has rendered is the `anon-miss` slice, 0.095 of the
+ * traffic mix, and it is the one profile a render cannot win: measured deployed, a warm inline
+ * render answers in 474 ms against a well-configured VPS's 78 ms, and the wasm penalty alone
+ * (3.57x) puts ~278 ms out of reach. **A render cannot be made competitive, so it has to not
+ * happen.** A swept path is a HIT at ~1 ms. This is the only lever that changes that profile's
+ * outcome rather than its cost.
+ *
+ * The governor is unchanged and still the thing that bounds it: `sweepStep()` reads `rowsToday`
+ * against `rowsLimit` and `doToday` against `doLimit` every step, `sweepDue()` gates on an interval
+ * rather than firing per alarm, and a site with nothing uncovered does nothing at all.
+ * `src/ops/fleet.ts` remains the inventory that would let the full share be safe by default.
  */
 export function sweepEnabled(env?: SweepEnv | null): boolean {
 	const raw = env?.SWEEP;
-	if (raw === undefined || raw === null || String(raw) === '') return false;
+	if (raw === undefined || raw === null || String(raw) === '') return true;
 	return String(raw) !== '0';
 }
 
-/** the share of the day this site declares for its sweep, clamped to the range its derivation covers */
+/** whether this site's sweep is running on the default rather than on an operator's request */
+export function sweepUnasked(env?: SweepEnv | null): boolean {
+	const raw = env?.SWEEP;
+	return raw === undefined || raw === null || String(raw) === '';
+}
+
+/**
+ * The share an UNASKED sweep may spend, against 0.25 for one an operator turned on.
+ *
+ * 0.05 of 100,000 rows is 5,000 a day, so twenty sweeping sites saturate the account where four did
+ * at the full share. At `realRender`'s 9 rows a fill that is ~555 pages a day per site, which
+ * covers an ordinary site's addressable set in well under a day and a large one over several --
+ * slower than an operator would choose, and safe without an inventory the free plan does not have.
+ */
+export const UNASKED_ROWS_FRACTION = 0.05;
+
+/**
+ * The share of the day this site declares for its sweep, clamped to the range its derivation covers.
+ *
+ * An explicit `SWEEP_ROWS_FRACTION` always wins. Otherwise a sweep an operator ASKED for takes the
+ * measured 25%, and one running on the default takes {@link UNASKED_ROWS_FRACTION} -- see
+ * {@link sweepEnabled} for why the two differ.
+ */
 export function sweepRowsFraction(env?: SweepEnv | null): number {
-	return clampFraction(env?.SWEEP_ROWS_FRACTION, SWEEP_ROWS_FRACTION);
+	const fallback = sweepUnasked(env) ? UNASKED_ROWS_FRACTION : SWEEP_ROWS_FRACTION;
+	return clampFraction(env?.SWEEP_ROWS_FRACTION, fallback);
 }
 
 export type SweepDeps = {

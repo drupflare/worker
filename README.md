@@ -28,7 +28,7 @@ so an authenticated read workload scales past one thread. See
 
 ## ⚖️ Drupflare vs a Traditional VPS
 
-Drupflare targets **solo, indie and budget-bound sites**, where the cost is the hours rather than the
+Drupflare targets **solo, enterprise, indie and budget-bound sites**, where the cost is the hours rather than the
 hosting bill.
 
 **The claim, stated precisely: Drupflare is faster than a single-region VPS for any visitor who is

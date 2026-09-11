@@ -4,6 +4,7 @@ import {
 	PARK_TRAPS,
 	type ParkBinary,
 	installPark,
+	parkEnabled,
 	parkTrapInstall
 } from '../../../src/ops/park';
 import {
@@ -535,6 +536,33 @@ describe('the drive loop', () => {
 		);
 		expect(out.state).toBe('refused');
 		expect(out.why).toContain('no pending call');
+	});
+});
+
+// #endregion
+
+// #region the operator switch
+
+describe('parkEnabled', () => {
+	// EVERY render pays `cfw_park_run` once a class is armed, including the ones that yield
+	// nothing: two ordinary renders on the gate interpreter report `runs=2 trips=0`. The switch is
+	// what a site running no module that needs a blocking call uses to stop paying for it
+	it('is on when the var is absent, which is the shipping default', () => {
+		expect(parkEnabled(undefined)).toBe(true);
+		expect(parkEnabled(null)).toBe(true);
+		expect(parkEnabled({})).toBe(true);
+	});
+
+	it('is on at "1" and off at anything else that was deliberately set', () => {
+		expect(parkEnabled({ PARK: '1' })).toBe(true);
+		expect(parkEnabled({ PARK: '0' })).toBe(false);
+		expect(parkEnabled({ PARK: 'off' })).toBe(false);
+	});
+
+	it('treats an empty string as unset rather than as off', () => {
+		// wrangler passes an undeclared `--var` through as '', and a deploy that meant nothing by it
+		// must not silently disarm a capability
+		expect(parkEnabled({ PARK: '' })).toBe(true);
 	});
 });
 

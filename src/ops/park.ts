@@ -35,6 +35,23 @@ export const PARK_TRAPS = { socket: PARK_SOCKET_TRAPS, fetch: PARK_FETCH_TRAPS }
 
 export type ParkClassName = keyof typeof PARK_TRAPS;
 
+/**
+ * Whether the park may arm at all, which is an operator switch rather than a capability.
+ *
+ * ON BY DEFAULT, and the reason it exists is that arming routes EVERY render through
+ * `cfw_park_run` -- a render that calls nothing still pays the wrapper. Measured on the gate
+ * interpreter: two ordinary renders report `runs=2 trips=0`, so the tax is paid by 100% of renders
+ * while the benefit reaches only the few that call out. `PARK=0` is what turns it off on a site
+ * that runs no module needing it, and it is what makes the tax measurable: two deploys of the same
+ * tree differing in this one value is the only paired arm available, since the capability flags are
+ * literals and the traps are installed per interpreter.
+ */
+export function parkEnabled(env?: { PARK?: unknown } | null): boolean {
+	const set = env?.PARK;
+	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	return true;
+}
+
 /** the PHP that asks whether this interpreter can park at all */
 export const PARK_PROBE = `<?php echo json_encode(['park' => function_exists('cfw_park_run')]);`;
 

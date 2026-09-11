@@ -141,6 +141,12 @@ export type ServeDo = {
 	ensureServeTables: () => void;
 	ensureHttpTables: () => void;
 	queueDepth: () => number;
+	/** the migration cursor as the object holds it, readable DURING an alarm rather than after */
+	migrateCursorOrNull: () => { state?: string; chunk?: number; chunks?: number } | null;
+	/** whether the object should drop its interpreter; reads the WHOLE isolate, not linear alone */
+	oversized: () => boolean;
+	/** wasm linear memory plus the JS-side mount bytes, which share one 128 MiB budget */
+	isolateNow: () => number;
 	generation: () => number;
 	/** the authoritative commit sequence; advances on every invalidation, unlike `generation` */
 	commitSeq: () => number;

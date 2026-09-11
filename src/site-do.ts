@@ -24,10 +24,12 @@ import {
 import { DRIVER_DIGEST } from './ops/driver-digest.js';
 import { fanoutDecision } from './ops/fanout.js';
 import { ensureFragmentTables, indexFragments } from './ops/fragment-index.js';
+import { engineFeatures } from './ops/image-runtime.js';
 import {
 	imageEngine,
 	imagesDeliveryUrl,
 	readImageRequest,
+	supportedExtensions,
 	transformIsLarge,
 	transformPath,
 	type ImageUrlRequest
@@ -259,8 +261,10 @@ import {
 	createPkce,
 	exchangeCode,
 	isTokenError,
+	needsRefresh,
 	pendingMatches,
 	randomToken,
+	refresh,
 	resolveAccountId,
 	revoke,
 	type PendingAuth,
@@ -406,7 +410,7 @@ import {
 import { drainPageMirrors, queuePageMirror } from './ops/page-mirror.js';
 import { pageKvEnabled } from './ops/page-store.js';
 import { ParkSockets, drivePark } from './ops/park-drive.js';
-import { installPark, type ParkClassName, type ParkInstall } from './ops/park.js';
+import { installPark, parkEnabled, type ParkClassName, type ParkInstall } from './ops/park.js';
 import { planProfile, resolvePlanNumber } from './ops/plan-profile.js';
 import {
 	KV_OVERRIDABLE,
@@ -483,6 +487,7 @@ import {
 	normaliseShell,
 	normalisedShellsAgree,
 	placeholderIds,
+	rolesOf,
 	shellSafety,
 	type Identity,
 	type IdentitySlot
@@ -967,6 +972,16 @@ interface FillOutcome {
 	remaining: number;
 	failed?: string;
 	error?: string;
+	/**
+	 * The render failed because the SITE is not ready, not because the render is broken.
+	 *
+	 * Today the one case is Drupal redirecting to `/core/install.php`, which is the database saying
+	 * it has not been installed. The serve path answers an ordinary failure with 500 on the ground
+	 * that "503 is right for a page that is coming; a page that threw gets the exception" -- and
+	 * this is the first of those. It stayed invisible while free refused to render inline at all,
+	 * because the refusal answered 503 before a render could report anything.
+	 */
+	notReady?: boolean;
 	attempts?: number;
 	bytes?: unknown;
 	renderMs?: unknown;
@@ -1213,6 +1228,118 @@ function recycleAboveBytes(env?: SiteEnv | null): number {
 }
 
 /**
+ * What the merged pack index RETAINS on the JS heap, in bytes.
+ *
+ * MEASURED, 2026-09-11, by retention rather than by file size: `node --expose-gc`, `heapUsed`
+ * either side of a `JSON.parse` of `assets/drupal-pf/core.pf.json` with nothing else held across
+ * the reading. **1,980,912 bytes for 11,457 entries** -- 173 per entry, and **1.5x** the 1,324,155
+ * bytes of JSON on disk. The serialised size is not the answer: what the isolate holds is objects,
+ * their hidden classes and a string per path.
+ *
+ * It was the largest UNPRICED term in the budget and it changes the conclusion. The authenticated
+ * plateau reads 129,915,852 without it (96.8% of ceiling) and **131,947,496 with it, 98.3%,
+ * 2,270,232 bytes spare** -- which is already above this file's own drop threshold. A guard that
+ * ignored it was reading ~1.98 MB short at exactly the plateau where the measured history says the
+ * next render resets the isolate.
+ *
+ * A CONSTANT, so it moves with the pack and this one does not. `pack-index-bytes.spec.ts`
+ * recomputes the ratio from the shipped artifact and fails when the two drift, which is the cheapest
+ * thing that keeps a measured number from quietly becoming a stale one.
+ */
+const PACK_INDEX_BYTES = 1_980_912;
+
+/**
+ * The largest outbound response body the queue will hold, in bytes.
+ *
+ * The body is buffered whole on the JS heap and then written into `cfw_http_cache`, and the JS heap
+ * shares the isolate's 128 MiB with wasm linear memory -- measured on a deployed worker, an
+ * ordinary serving object is already at 87.0% of that ceiling and an authenticated one at 96.8%.
+ * Six concurrent unbounded bodies against ~4 MiB of net headroom is the shape that resets an
+ * isolate inside one invocation, where the drop guard cannot reach it.
+ *
+ * 2 MiB, matching `MAX_BODY_BYTES` on the inbound side. Every declared endpoint this queue fetches
+ * -- update.drupal.org's release history being the largest -- is far under it.
+ */
+const MAX_OUTBOUND_BODY_BYTES = 2 * 1024 * 1024;
+
+/** the send attempts `/capability` reports, kept to a recent window rather than the whole life */
+const MAX_MAIL_ATTEMPTS = 50;
+
+/**
+ * Bounds the mail-attempt log in place.
+ *
+ * It grew for the life of the incarnation and was cleared only by an explicit `/__capability` call,
+ * so a site sending mail on a schedule accumulated one entry per message with nothing to stop it.
+ * Entries are small -- recipient, subject, a byte count -- and the bodies were never held, which is
+ * why the bound is entries and 50 rather than something tighter.
+ */
+function trimMails(mails: Array<unknown>): void {
+	while (mails.length > MAX_MAIL_ATTEMPTS) mails.shift();
+}
+
+/**
+ * A response body read up to a cap, rather than however much the other end sends.
+ *
+ * TRUNCATES RATHER THAN THROWS, and records that it did. A refusal would lose an answer the site is
+ * waiting on and the caller would retry it forever; a truncated body reaches the consumer with a
+ * flag it can act on, which is the same shape as every other degradation here.
+ */
+async function boundedText(res: Response): Promise<string> {
+	const reader = res.body?.getReader();
+	if (!reader) return '';
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		total += value.byteLength;
+		if (total > MAX_OUTBOUND_BODY_BYTES) {
+			await reader.cancel();
+			chunks.push(value.subarray(0, value.byteLength - (total - MAX_OUTBOUND_BODY_BYTES)));
+			break;
+		}
+		chunks.push(value);
+	}
+	const joined = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+	let at = 0;
+	for (const c of chunks) {
+		joined.set(c, at);
+		at += c.byteLength;
+	}
+	return new TextDecoder().decode(joined);
+}
+
+/**
+ * The whole isolate's ceiling, which is the one the platform actually enforces.
+ *
+ * **`RECYCLE_ABOVE_BYTES` ALONE FIRES FAR TOO LATE.** It is compared against wasm linear memory,
+ * and the isolate's 128 MiB covers the JS heap too -- `lazyMountBytes`'s own docblock says so, and
+ * the heap-snapshot path records an `exceededMemory` MEASURED on the edge when a JS-side copy took
+ * a second 64 MB "at exactly the moment the isolate had none". Add the mount to the default
+ * threshold: 117,440,512 + 12,001,784 of pack blob + 4,194,304 of MEMFS = 133,636,600 against a
+ * ceiling of 134,217,728, so it fires with **581,128 bytes left**. That is less than one growth
+ * step's slack (983,040-2,031,616) and less than the merged pack index, which is NOT MEASURED
+ * anywhere and is the largest unpriced term in the budget. It is not "already dead" -- I wrote that
+ * first and the arithmetic says otherwise -- it is too tight to act on, which is consistent with
+ * `recycles: 0` sitting beside every one of these resets.
+ *
+ * 124 MiB, holding 4 MiB back. The margin is not for a slow leak -- nothing here leaks -- it is for
+ * ONE workload landing above the rung, which is what the provisioning resets were: a single
+ * `/admin/content` at 4,661-4,936 ms of cpuTime, no message and no stack. A margin under one growth
+ * step's slack (983,040-2,031,616 bytes) cannot survive that.
+ *
+ * SEPARATE FROM `RECYCLE_ABOVE_BYTES` rather than a reinterpretation of it, because an operator who
+ * set that one set a LINEAR number, and silently reading it as a total would trip a recycle on
+ * every request -- a boot per page, which is worse than what it replaces.
+ */
+function isolateAboveBytes(env?: SiteEnv | null): number {
+	const n = Number(env?.ISOLATE_ABOVE_BYTES);
+	if (Number.isFinite(n) && n > 0) return Math.max(64 * 1024 * 1024, Math.floor(n));
+	return 130_023_424;
+}
+
+/**
  * How many files one alarm firing may push to R2.
  *
  * Same budget as the HTTP drain and for the same reason: a put is one of the 50 subrequests an
@@ -1287,6 +1414,42 @@ export function shellAssemblyEnabled(env?: SiteEnv | null): boolean {
  */
 export function argon2Enabled(env?: SiteEnv | null): boolean {
 	return String(env?.ARGON2 ?? '0') === '1';
+}
+
+/**
+ * How long a superseded page may still be answered, in ms.
+ *
+ * A row is served while its age is BELOW this, so 0 is a real off switch rather than a window of
+ * one millisecond. 60 s, and it is a bound on the DRAIN WINDOW rather than a freshness policy: a bump queues the
+ * refill and arms the alarm, so anything still aged after a minute means the chain has stopped, and
+ * an object that cannot refill should return the 503 the delete used to give rather than serve an
+ * unbounded-age page. Deliberately far tighter than the KV tier's {@link STALE_MAX_AGE_MS}, which
+ * is 24 hours because it answers from a PREVIOUS GENERATION that may be days old.
+ */
+function agedServeMaxMs(env?: SiteEnv | null): number {
+	const n = Number(env?.AGED_SERVE_MAX_MS ?? 60_000);
+	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 60_000;
+}
+
+/**
+ * Whether a superseded page may be answered for this path.
+ *
+ * `staleAllowed()`'s built-in deny-list is NOT applied, and that is a decision rather than an
+ * oversight. That list is calibrated for the KV tier, where a stale answer can be 24 hours old and
+ * `/user/login` is on it for good reason. Here the row is the current content superseded seconds
+ * ago by an unrelated save, and applying that list would keep the exact 503 this exists to remove --
+ * the login page was the symptom that started it. Only the OPERATOR's own `NEVER_STALE` entries are
+ * honoured, because those state an intent this cannot infer.
+ *
+ * The pages where a stale answer would be dangerous are not in this table at all: `fillOne()`
+ * refuses to store anything Drupal marked `private, no-store`, which is what a CSRF-bearing form is.
+ */
+function agedServeAllowed(path: string, env?: SiteEnv | null): boolean {
+	const denied = String(env?.NEVER_STALE ?? '')
+		.split(',')
+		.map((p) => p.trim())
+		.filter((p) => p !== '');
+	return !denied.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
 /** whether a generation bump re-queues the pages it just purged */
@@ -1602,6 +1765,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	httpTablesReady?: boolean;
 	serveTablesReady?: boolean;
 	suppressBump?: boolean;
+	/** inside an `execTxn` pass that will be rolled back; see the guard in `execSql()` */
+	speculating?: boolean;
 	/** statement counter for PW_SQL_TRACE, so the tail can be read as a sequence */
 	sqlTraceSeq?: number;
 
@@ -1685,6 +1850,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** how the last parked render went, so a park that stopped answering is readable */
 	lastPark?: { state: string; trips: number; why?: string };
 	/**
+	 * Every park this interpreter has driven, and every trip inside them.
+	 *
+	 * CUMULATIVE, because `lastPark` cannot answer what one park COSTS. The meter is 1 ms granular,
+	 * so a single park is below it and the reading has to be amortised over many -- and a sampler
+	 * that polls `lastPark` between batches sees one render's trips per batch and divides by a
+	 * denominator several times too small. Two reads of these, either side of a driven window, give
+	 * the count that happened rather than the count that was observed. Same shape as
+	 * `crossingsTotal` beside it, and for the same reason.
+	 */
+	parkTotals?: { runs: number; trips: number; refused: number };
+	/**
 	 * What a parked HTTP yield is performed with; the global `fetch` unless a test replaces it.
 	 *
 	 * The same injection `TcpDeps.connect` uses and for the same reason: stubbing `drivePark` itself
@@ -1706,8 +1882,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	lastForward?: unknown;
 	/** the read-only guard when `REPLICA_READ_ONLY` is set, null on a primary; see `src/ops/replica.ts` */
 	replicaGuard: ReadOnlyGuard | null = null;
-	/** every refusal this incarnation made, which is what a failover to the primary is counted from */
+	/**
+	 * The most recent refusals this incarnation made; a failover to the primary is counted from it.
+	 *
+	 * BOUNDED, because it held every refusal for the life of the incarnation and each is an Error
+	 * with a stack. The JS heap shares the isolate's 128 MiB with wasm linear memory, and a
+	 * deployed serving object is already at 87.0% of that ceiling. The same idiom as `this.logs`.
+	 */
 	replicaRefusals: ReplicaRequiresPrimary[] = [];
+	/** the total, kept separately so bounding the array above does not deflate the reported count */
+	replicaRefusalsTotal = 0;
 
 	/**
 	 * Whether an SMTP send is holding an outbound TCP socket right now.
@@ -1754,6 +1938,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		statements: { sql: string; params?: readonly unknown[] }[];
 		overflowed: boolean;
 	};
+	/** commit advances not yet persisted; see `flushCommitSeq()` */
+	pendingCommits = 0;
+	/** renders in flight, so N concurrent identical requests cost one; see `herdKeyFor()` */
+	renderFlights = new Map<
+		string,
+		Promise<{ body: ArrayBuffer; status: number; headers: [string, string][] } | null>
+	>();
 	/** interpreter drops taken to stay under the isolate limit; `/serve-stats` reports both */
 	recycles?: number;
 	lastRecycle?: { at: number; bytes: number; reason: 'request' | 'alarm' };
@@ -1970,8 +2161,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// FROM THE HTTP CAPABILITY, not the socket one. `ParkFetchHandler` reads this to decide
 		// whether it is the transport, and selecting it while the park is refused under Drupal's
 		// dispatch would spend a yield per request to reach the same deferred fallback
+		//
+		// AND IT IS GATED ON THE SAME SWITCH THE TRAPS ARE, which the capability literal alone could
+		// not do. With the flag true and no trap armed the module would select the parked transport
+		// and hand a `cfwpark+fetch://` target to the REAL `stream_socket_client`, which is a state
+		// no caller should be able to reach. NOT MEASURED: a deployed `PARK=0` arm did fail every
+		// render, but the same object failed identically with the park back on, so the reading was
+		// the object rather than the flag and this coupling is reasoned rather than observed.
 		(binary as unknown as Record<string, unknown>)['cfwParkFetch'] =
-			SHIPPED_CAPABILITIES.blockingOutbound;
+			SHIPPED_CAPABILITIES.blockingOutbound && parkEnabled(this.env);
 		// LAST, after every installer. A wrapper applied before one is silently overwritten by it,
 		// and the tally then reads 0 for a capability being called constantly -- which is the
 		// failure this instrument exists to avoid in the first place
@@ -1988,6 +2186,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					binary as unknown as Record<string, unknown>,
 					(refusal) => {
 						this.replicaRefusals.push(refusal);
+						this.replicaRefusalsTotal += 1;
+						if (this.replicaRefusals.length > 20) this.replicaRefusals.shift();
 					},
 					// a POOL LANE forwards its writes; a var-configured replica has no primary to
 					// forward to and keeps refusing
@@ -2398,6 +2598,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					transport: null,
 					refusal
 				});
+				trimMails(this.mails!);
 				return reply({ ok: false, error: refusal });
 			};
 
@@ -2430,6 +2631,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				bytes,
 				transport: plan.transport.kind
 			});
+			trimMails(this.mails);
 			// wake the drain, or a queued message waits for the 240 s keep-warm tick; same reason
 			// `queueHttp()` arms
 			if (mailDrainEnabled(this.env ?? {})) this.armFillAlarm();
@@ -2452,7 +2654,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						? imagesDeliveryUrl(uri, transform)
 						: transformPath(uri, transform),
 				// so a formatter can decide to defer rather than block a visitor on a large one
-				large: transformIsLarge(transform)
+				large: transformIsLarge(transform),
+				// WHAT THE ENGINE ENCODES, so the toolkit stops deriving it from the engine's NAME.
+				// `CfwImageToolkit::getSupportedExtensions()` carried its own copy of the list and a
+				// `=== 'images'` branch, which pinned the wasm arm's capability to whatever it was
+				// when that line was written; tinyimg 1.1 added AVIF and every shipped style went on
+				// degrading to webp
+				extensions: supportedExtensions(
+					engine,
+					engine === 'tinyimg' ? engineFeatures() : undefined
+				)
 			});
 		};
 
@@ -2949,10 +3160,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// falls back, and when `fetch` was armed unconditionally `serve-chain` read a render
 		// estimate of -1
 		const hasRedis = !('refusal' in resolveTcpEndpoint(this.env, 'redis'));
-		const wanted: ParkClassName[] = [
-			...(SHIPPED_CAPABILITIES.blockingSocket && hasRedis ? (['socket'] as const) : []),
-			...(SHIPPED_CAPABILITIES.blockingOutbound ? (['fetch'] as const) : [])
-		];
+		const wanted: ParkClassName[] = !parkEnabled(this.env)
+			? []
+			: [
+					...(SHIPPED_CAPABILITIES.blockingSocket && hasRedis
+						? (['socket'] as const)
+						: []),
+					...(SHIPPED_CAPABILITIES.blockingOutbound ? (['fetch'] as const) : [])
+				];
 		this.parkInstall = await installPark(
 			{
 				// `run()` is the seam that collects the output event; `_run`'s own return value is
@@ -2980,6 +3195,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * A parked run that does not finish still answers: the chain is unwound inside `drivePark`, so
 	 * whatever the render managed to print is parsed, and only an unparseable answer falls back to a
 	 * second unparked render.
+	 *
+	 * **THE SHELL TIER USED `runJson` DIRECTLY AND THAT MADE IT EXCLUSIVE WITH REDIS.** With the
+	 * socket class armed, a `cache_*` read inside `renderPlaceholder()` was not parked: it fell
+	 * through to the real `stream_socket_client`, which cannot connect in workerd, so the fragment
+	 * render reported `ok !== true` and `assembleFor()` returned null on every request. A site with
+	 * Redis configured therefore never assembled a shell, degraded rather than broken, and nothing
+	 * anywhere said so. All four shell-tier runs go through here now.
 	 */
 	private async runJsonMaybeParked(code: string): Promise<Payload> {
 		const park = await this.parkState();
@@ -2997,6 +3219,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			trips: driven.trips.length,
 			...(driven.why ? { why: driven.why } : {})
 		};
+		const totals = (this.parkTotals ??= { runs: 0, trips: 0, refused: 0 });
+		totals.runs += 1;
+		totals.trips += driven.trips.length;
+		// a refused chain fell back to the real function, so it cost a run and bought nothing
+		if (driven.state !== 'done') totals.refused += 1;
 		const start = driven.output.indexOf('{');
 		if (start >= 0) {
 			try {
@@ -3034,6 +3261,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// how the last parked render went. A `refused` here is the reading that separates
 			// "nothing needed the park" from "the park was asked and could not answer"
 			lastPark: this.lastPark ?? null,
+			// CUMULATIVE, so a cost can be amortised: the meter is 1 ms granular and one park sits
+			// under it, so the denominator has to be a difference of two reads rather than a sample
+			parkTotals: this.parkTotals ?? { runs: 0, trips: 0, refused: 0 },
 			parkSockets: this.parkSockets?.size ?? 0,
 			cached: this.sql
 				.exec(
@@ -3041,7 +3271,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				)
 				.toArray(),
 			queue: this.sql
-				.exec('SELECT path, attempts, last_error FROM cfw_fill_queue ORDER BY queued_at')
+				.exec(
+					'SELECT path, attempts, last_error, priority FROM cfw_fill_queue ORDER BY priority, queued_at'
+				)
 				.toArray(),
 			alarmFirings: this.alarmFirings ?? 0,
 			lastAlarmAt: this.lastAlarmAt ?? null,
@@ -3049,6 +3281,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// count is what separates that from the one drop a fresh site takes
 			recycles: this.recycles ?? 0,
 			lastRecycle: this.lastRecycle ?? null,
+			// THE WHOLE ISOLATE, which nothing has ever reported. Every memory figure this project
+			// has published measures wasm linear memory and subtracts it from 128 MiB to call the
+			// rest headroom -- and that subtraction has no term for the JS side, which the same
+			// ceiling covers. Reported as its three parts so a reader can see which one moved
+			isolateBytes: {
+				linear: this.heapNow(),
+				mount: lazyMountBytes(this.mountInfo).blob,
+				// the merged index, measured by retention rather than by file size; see PACK_INDEX_BYTES
+				index: lazyMountBytes(this.mountInfo).blob > 0 ? PACK_INDEX_BYTES : 0,
+				resident: lazyMountBytes(this.mountInfo).resident,
+				total: this.isolateNow(),
+				ceiling: 134_217_728,
+				dropAbove: isolateAboveBytes(this.env)
+			},
 			// what a replica pool is sized from. `ahead` carries no clock and is the
 			// real signal; the two durations are floors, see `noteLaneTiming()`
 			lane: laneTimingSummary(this.laneTimings ?? []),
@@ -3067,7 +3313,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				lane: replicaOf(this.ctx.id.name ?? '')?.lane ?? 0,
 				stage: this.replicaStage(),
 				guarded: this.replicaGuard ? Object.keys(this.replicaGuard.wrapped).length : 0,
-				refusals: this.replicaRefusals.length,
+				// the TOTAL, not the retained window; the array above is bounded
+				refusals: this.replicaRefusalsTotal,
 				lastRefusal: this.replicaRefusals.at(-1)?.message ?? null,
 				// a lane stuck below SERVING is otherwise invisible: it refuses every
 				// request and the router quietly answers from the primary, so the pool
@@ -3218,7 +3465,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		});
 		const received: Record<string, string> = {};
 		for (const [k, v] of http.headers) received[k.toLowerCase()] = v;
-		return { status: http.status, headers: received, body: await http.text() };
+		return { status: http.status, headers: received, body: await boundedText(http) };
 	}
 
 	/**
@@ -3319,12 +3566,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			)
 			.toArray();
 		const done: Payload[] = [];
-		const inflight: Array<{
+		/**
+		 * PREPARED, NOT STARTED. This held a `run: Promise<TcpResult>` begun right here, so every
+		 * queued URL opened at once and the chunked loop below only chunked the AWAITS -- while its
+		 * comment said the batch "is chunked rather than opened all at once". At the paid
+		 * `httpDrainLimit` that is 15 concurrent responses buffered whole on the JS heap, against a
+		 * measured ~4 MiB of net isolate headroom; `/__ops` can raise it to 25.
+		 */
+		const prepared: Array<{
 			key: string;
 			url: string;
 			method: string;
+			sent: string;
+			outbound: Record<string, string>;
 			attempts: number;
-			run: Promise<TcpResult>;
 		}> = [];
 		for (const item of pending) {
 			const key = String(item.key);
@@ -3350,23 +3605,24 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			} catch {
 				outbound = {};
 			}
-			inflight.push({
+			prepared.push({
 				key,
 				url,
 				method,
-				attempts: Number(item.attempts ?? 0),
-				// STARTED HERE AND AWAITED BELOW. This was a `for...of` with the `await` inside, so
-				// N queued URLs cost N round trips in series -- and duration is wall clock, so the
-				// object is billed for every one of them. Nothing in the call touches SQL, which is
-				// what makes several open at once safe
-				run: this.performOutbound(url, method, sent, outbound)
+				sent,
+				outbound,
+				attempts: Number(item.attempts ?? 0)
 			});
 		}
-		// the published subrequest concurrency is 6, so the batch is chunked rather than opened all
-		// at once; `drainHttpQueue`'s own limit is 25
-		for (let i = 0; i < inflight.length; i += 6) {
-			const batch = inflight.slice(i, i + 6);
-			const settled = await Promise.allSettled(batch.map((b) => b.run));
+		// SIX AT A TIME, STARTED HERE. The published subrequest concurrency is 6 and that is what
+		// this loop now opens; serialising entirely would be wrong for the reason the old comment
+		// gave -- N queued URLs would cost N round trips in series and duration is billed on wall
+		// clock. Nothing in `performOutbound` touches SQL, which is what makes six at once safe.
+		for (let i = 0; i < prepared.length; i += 6) {
+			const batch = prepared.slice(i, i + 6);
+			const settled = await Promise.allSettled(
+				batch.map((b) => this.performOutbound(b.url, b.method, b.sent, b.outbound))
+			);
 			for (let j = 0; j < batch.length; j++) {
 				const entry = batch[j];
 				const outcome = settled[j];
@@ -4306,6 +4562,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			);
 			return {
 				...summary,
+				// `...summary` carries `ok: true`, so a ROLLED-BACK pull answered HTTP 200 with
+				// `ok: true` and a caller testing `status < 400 && body.ok !== false` -- which is
+				// drangler's own idiom -- read a refused module install as a success. The conflict
+				// branch above already sets `ok: false`, so the two failure modes disagreed.
+				ok: false,
 				applied: false,
 				rolledBack: true,
 				error: `rolled back: ${verdict.error ?? 'the kernel refused to boot'}`
@@ -5280,11 +5541,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// `sqlite_master` the same way a CREATE TABLE does, turns later reads in the same
 		// transaction into speculative replays, and was measured taking the serve path into
 		// `migrate: starting` on 2 of 3 runs. One `pragma_table_info` read instead
-		const hasTags = this.sql
+		const pageColumns = this.sql
 			.exec<Row<{ name: string }>>("SELECT name FROM pragma_table_info('cfw_page')")
 			.toArray()
-			.some((r) => String(r.name) === 'tags');
-		if (!hasTags) this.sql.exec('ALTER TABLE cfw_page ADD COLUMN tags TEXT');
+			.map((r) => String(r.name));
+		if (!pageColumns.includes('tags'))
+			this.sql.exec('ALTER TABLE cfw_page ADD COLUMN tags TEXT');
+		// when a bump superseded this row, or NULL while it is current. A bump SETS this rather than
+		// deleting, so the drain window has something to answer with; see `bumpGeneration()`
+		if (!pageColumns.includes('stale_at')) {
+			this.sql.exec('ALTER TABLE cfw_page ADD COLUMN stale_at INTEGER');
+		}
 		this.sql.exec(
 			`CREATE TABLE IF NOT EXISTS cfw_plan (
         path TEXT PRIMARY KEY,
@@ -5307,6 +5574,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
         last_error TEXT
       ) WITHOUT ROWID`
 		);
+		// 0 for a path a VISITOR is waiting on, 1 for background prefill. The queue is drained
+		// `ORDER BY priority, queued_at`, so a miss someone is holding a connection for is served
+		// before work nobody is waiting for; see the enqueue on the MISS path
+		const queueColumns = this.sql
+			.exec<Row<{ name: string }>>("SELECT name FROM pragma_table_info('cfw_fill_queue')")
+			.toArray()
+			.map((r) => String(r.name));
+		if (!queueColumns.includes('priority')) {
+			this.sql.exec(
+				'ALTER TABLE cfw_fill_queue ADD COLUMN priority INTEGER NOT NULL DEFAULT 1'
+			);
+		}
 		// scalars the Worker needs cheaply; the generation counter lives here rather
 		// than in ctx.storage.kv because a bump can fire from inside execSql(), which
 		// is synchronous PHP-facing code that cannot await
@@ -5756,7 +6035,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		let recipes: Record<string, unknown> = {};
 		let shellTags: unknown = [];
 		for (const cookie of cookies) {
-			const out = await this.runJson(harvestShell(path, { cookie, origin }));
+			const out = await this.runJsonMaybeParked(harvestShell(path, { cookie, origin }));
 			if (out['ok'] !== true) {
 				return {
 					stored: false,
@@ -5858,9 +6137,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		path: string,
 		cookie: string,
 		origin: string
-	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
+	): Promise<{
+		html: string;
+		holes: number;
+		verified: ShellVerdict;
+		roles?: string[];
+	} | null> {
 		this.ensureServeTables();
-		const out = await this.runJson(harvestShell(path, { cookie, origin }));
+		const out = await this.runJsonMaybeParked(harvestShell(path, { cookie, origin }));
 		if (out['ok'] !== true) return null;
 
 		const body = String(out['html'] ?? '');
@@ -5874,7 +6158,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 		const recipes = (out['recipes'] ?? {}) as Record<string, unknown>;
 		const shellTags = out['cacheTags'] ?? [];
-		const probe = await this.runJson(renderFragments(path, recipes, { cookie, origin }));
+		const probe = await this.runJsonMaybeParked(
+			renderFragments(path, recipes, { cookie, origin })
+		);
 		const identity = (probe['identity'] ?? {}) as Identity;
 		const fragmentTags = (probe['fragmentTags'] ?? {}) as Record<string, string[]>;
 		const permissionsHash = String(identity.permissionsHash ?? '');
@@ -5925,7 +6211,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// see the same line in `harvestShellFor()`: a shell is a cacheable artifact and storing one
 		// has to re-arm the coalesced bump, or the next content save purges nothing
 		this.bumpCoalesced = false;
-		return { html: body, holes: placeholderIds(normalised.shell).length, verified: 'proven' };
+		return {
+			html: body,
+			holes: placeholderIds(normalised.shell).length,
+			verified: 'proven',
+			// the fragment probe already asked PHP who this is; `harvestShell` does not report it
+			roles: rolesOf(probe)
+		};
 	}
 
 	/**
@@ -5953,7 +6245,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		path: string,
 		cookie: string,
 		origin: string
-	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
+	): Promise<{
+		html: string;
+		holes: number;
+		verified: ShellVerdict;
+		roles?: string[];
+	} | null> {
 		this.ensureServeTables();
 		const candidates = this.sql
 			.exec<{
@@ -5975,7 +6272,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			string,
 			unknown
 		>;
-		const rendered = await this.runJson(
+		const rendered = await this.runJsonMaybeParked(
 			renderFragments(path, probeRecipes, { cookie, origin })
 		);
 		if (rendered['ok'] !== true) return null;
@@ -6005,7 +6302,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// an unfilled hole is a region the visitor would simply not see, which is worse than paying
 		// for the render this was avoiding
 		if (out.unfilled.length > 0) return null;
-		return { html: out.html, holes: out.filled.length, verified: 'cached' };
+		// the role set the fragment render already computed. Carried out because the edge plan is
+		// keyed on it and a shell response used to omit it, which starved the plan tier for the
+		// whole session rather than just for this path -- `roleSeen` is keyed by cookie
+		return {
+			html: out.html,
+			holes: out.filled.length,
+			verified: 'cached',
+			roles: rolesOf(rendered)
+		};
 	}
 
 	/** how many shells are stored for a path; 0 is what makes a seed the right move rather than a retry */
@@ -6074,8 +6379,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		cookie: string,
 		origin: string,
 		row: { permissions_hash: string; shell: string; harvested_at: number }
-	): Promise<{ html: string; holes: number; verified: ShellVerdict } | null> {
-		const out = await this.runJson(harvestShell(path, { cookie, origin }));
+	): Promise<{
+		html: string;
+		holes: number;
+		verified: ShellVerdict;
+		roles?: string[];
+	} | null> {
+		const out = await this.runJsonMaybeParked(harvestShell(path, { cookie, origin }));
 		if (out['ok'] !== true) return null;
 		const body = String(out['html'] ?? '');
 		const mine = normaliseShell(body);
@@ -6108,7 +6418,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					when: this.nowMs()
 				})
 			);
-			return { html: body, holes: placeholderIds(body).length, verified: 'refused' };
+			return {
+				html: body,
+				holes: placeholderIds(body).length,
+				verified: 'refused',
+				roles: rolesOf(out)
+			};
 		}
 
 		// ponytail: unbounded, and the natural bound is (harvested paths x role sets x users) with
@@ -6125,7 +6440,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			row.harvested_at,
 			this.nowMs()
 		);
-		return { html: body, holes: placeholderIds(body).length, verified: 'proven' };
+		return {
+			html: body,
+			holes: placeholderIds(body).length,
+			verified: 'proven',
+			roles: rolesOf(out)
+		};
 	}
 
 	/**
@@ -6250,15 +6570,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const path = last ? String(last.filled) : undefined;
 		const bytes = last && typeof last.bytes === 'number' ? last.bytes : undefined;
 
-		// MEMFS resident bytes, not `HEAPU8.length`: total linear memory moves only on a grow, and
-		// two rungs reach the cap, so four rising readings of it cannot happen
-		const lazy = lazyMountBytes(this.mountInfo);
-		const memory =
-			lazy.resident > 0
-				? lazy.resident
-				: this.php
-					? (this.heapBytes(this.php.binary)?.length ?? 0)
-					: 0;
+		// THE WHOLE ISOLATE. This read MEMFS resident bytes, for a reason that is half right: total
+		// linear memory moves only on a grow and two rungs reach the cap, so four rising readings of
+		// IT cannot happen. But MEMFS is capped at `LAZY_FS_BUDGET_BYTES` and saturates -- measured
+		// on a deployed object at 4,193,165 of 4,194,304 -- so four rising readings of that cannot
+		// happen either, and the finding was labelled `scope: 'linear-memory'` while watching
+		// neither. `isolateNow()` is linear plus the JS-side mount, which is the quantity the
+		// platform enforces and the only one here that both varies and matters.
+		const memory = this.isolateNow();
 		if (memory > 0) this.memoryRing.push(memory);
 		const rowsToday = this.dailyRows();
 		const doToday = this.dailyDoRequests();
@@ -6538,6 +6857,51 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			key,
 			String(value)
 		);
+	}
+
+	/**
+	 * The Cloudflare API credentials, from the durable grant or from the deployed pair.
+	 *
+	 * **THE GRANT WAS WRITTEN TO MEMORY AND READ FROM MEMORY ONLY.** `/__cfoauth?action=callback`
+	 * put the access token on `this.env`, which is one incarnation's overlay; the persisted copy was
+	 * read by `status` and `disconnect` and by nothing that put it back. An object hibernates at
+	 * about ten seconds idle, so the very next request had no token -- `/setup/mail` answered
+	 * `no Cloudflare token; connect an account first` while `/setup/cf?action=status` answered
+	 * `connected: true` at the same moment. Every consumer goes through here now.
+	 *
+	 * **AND THE GRANT NEVER REFRESHED.** `refresh()` and `needsRefresh()` were exported, unit
+	 * tested and called by nothing under `src/` -- `check:reachability` listed the second under
+	 * "tested but never called". An expired grant's only recovery was re-consent. A refreshed set is
+	 * persisted here so the next incarnation starts from it.
+	 *
+	 * A refresh failure is not an error: the stored access token may still have life in it, and the
+	 * caller's own 401 is a better signal than a guess taken from a clock.
+	 */
+	async cfCredentials(): Promise<{ token: string; accountId: string }> {
+		const env = this.env as unknown as Record<string, string | undefined>;
+		const accountOf = (): string =>
+			env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
+
+		const raw = this.metaGet(CF_OAUTH_TOKEN_KEY);
+		if (!raw) return { token: env.CF_EMAIL_TOKEN ?? '', accountId: accountOf() };
+
+		let set: TokenSet | null = null;
+		try {
+			set = JSON.parse(raw) as TokenSet;
+		} catch {
+			set = null;
+		}
+		if (!set?.accessToken) return { token: env.CF_EMAIL_TOKEN ?? '', accountId: accountOf() };
+
+		const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY) ?? '';
+		if (clientId && set.refreshToken && needsRefresh(set, this.nowMs())) {
+			const next = await refresh({ clientId, refreshToken: set.refreshToken });
+			if (!isTokenError(next)) {
+				this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
+				set = next;
+			}
+		}
+		return { token: set.accessToken, accountId: accountOf() };
 	}
 
 	/**
@@ -7341,6 +7705,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				applied = outcome.applied;
 			}
 			this.metaSet(COMMIT_SEQ_KEY, applied);
+			// the primary purged when it wrote these; a lane holds its own copies of the same
+			// derived caches and nothing else invalidates them
+			if (applied > position.applied) this.purgeAfterApply();
 		}
 
 		const read = readStateRows((sql) => this.sql.exec(sql).toArray());
@@ -7664,17 +8031,37 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// written is the free plan's binding meter, which is what the cap protects
 		const droppedFromRequeue = Math.max(0, doomed.length - requeue.length);
 
+		// SUPERSEDED, NOT DELETED, and this is the whole 503 storm.
+		//
+		// A bump used to empty `cfw_page`, so between the save and the refill there was nothing to
+		// answer with and EVERY anonymous visitor got a 503 -- on the profile carrying 0.82 of the
+		// traffic, after every content save, on every site. `PREFILL_ON_SAVE` re-queues what it
+		// purged and that is correct, but it bounds how many pages come BACK; it cannot shorten a
+		// window whose length is the fill cost times the queue position. Measured on a deployed
+		// object: `/user/login` took three drain rounds to return, and a queue holding 15 entries
+		// from one arm kept it 503 throughout -- which is why an intermittent login failure read as
+		// a wrong password.
+		//
+		// The row is kept and marked instead. `serveFromStorage()` answers it as `AGED` inside
+		// {@link AGED_SERVE_MAX_MS} and queues the refill, so the visitor gets content that is one
+		// save old rather than an error. `putPage()` refuses any tier that is not HIT or RENDER, so
+		// an aged body cannot reach `caches.default`, the KV tier or the isolate page memo.
+		const now = this.nowMs();
 		let purgedPages: number;
 		if (scopedTo === undefined) {
 			purgedPages = Number(
 				this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_page').toArray()[0]
 					?.c ?? 0
 			);
-			this.sql.exec('DELETE FROM cfw_page');
+			this.sql.exec('UPDATE cfw_page SET stale_at = ? WHERE stale_at IS NULL', now);
 		} else {
 			purgedPages = 0;
 			for (const path of scopedTo) {
-				this.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
+				this.sql.exec(
+					'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL',
+					now,
+					path
+				);
 				purgedPages++;
 			}
 		}
@@ -7765,6 +8152,43 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * Drops the derived caches a lane holds, once the primary's log has moved it past a generation.
+	 *
+	 * A LANE SERVED A STALE PAGE FOREVER WITHOUT THIS. `bumpGeneration()` is what empties
+	 * `cfw_page`, and only the primary ever runs it -- a lane's content arrives as replayed SQL,
+	 * which writes `node_field_data` and leaves the rendered HTML beside it untouched. `cfw_page`
+	 * has no generation column and is read by path alone, so nothing else could have caught it.
+	 * Masked until 2026-09-10 because a provisioned lane had no stored pages at all, and an empty
+	 * cache cannot be stale.
+	 *
+	 * WHOLESALE, matching what the primary does for every reason but `cachetags`. The log carries
+	 * statements rather than the tag set behind them, so the scope a scoped purge would need is not
+	 * on this side of the seam; `pathsForTags()` already refuses to guess for the same reason.
+	 *
+	 * A bump carrying no authoritative statement -- `/bump` by hand -- writes only `cfw_meta` and so
+	 * never reaches a lane. Content saves always carry one.
+	 *
+	 * @returns what each store gave up, for the pull loop to report.
+	 */
+	purgeAfterApply(): { pages: number; shells: number; plans: number; dynamic: number } {
+		const count = (table: string): number =>
+			Number(
+				this.sql.exec<Row<{ c: number }>>(`SELECT COUNT(*) AS c FROM ${table}`).toArray()[0]
+					?.c ?? 0
+			);
+		const pages = count('cfw_page');
+		if (pages > 0) this.sql.exec('DELETE FROM cfw_page');
+		const shells = count('cfw_shell');
+		if (shells > 0) {
+			this.sql.exec('DELETE FROM cfw_shell');
+			this.sql.exec('DELETE FROM cfw_shell_verified');
+		}
+		const plans = this.purgePlansFor();
+		const dynamic = this.purgeDynamicPageCache();
+		return { pages, shells, plans, dynamic };
+	}
+
+	/**
 	 * Arms the fill alarm without disturbing one that is already sooner.
 	 *
 	 * Extracted because `bumpGeneration()` is synchronous and cannot await
@@ -7772,6 +8196,24 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * chain out. Fire-and-forget is safe: the worst case is an alarm at +1 ms that
 	 * finds nothing to do.
 	 */
+	/**
+	 * Queues a refill for one path and wakes the chain, from the fast lane.
+	 *
+	 * Await-free by construction -- one indexed INSERT and a `setAlarm` that is not awaited -- because
+	 * the storage lane answers outside the gate and must not block. Bounded by `FILL_QUEUE_MAX` for
+	 * the same reason every other enqueue is: an aged path under traffic must not be able to grow the
+	 * queue without limit.
+	 */
+	enqueueRefill(path: string): void {
+		if (this.queueDepth() >= FILL_QUEUE_MAX) return;
+		this.sql.exec(
+			'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
+			path,
+			this.nowMs()
+		);
+		this.armFillAlarm();
+	}
+
 	armFillAlarm(): void {
 		try {
 			const armed = this.storage.setAlarm(this.nowMs() + 1);
@@ -7826,7 +8268,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the tally is NOT taken here: this is the PHP driver's entry point and sees none of the
 		// host's own writes. `countingSql()` wraps the handle both halves run through
 		if (!this.suppressBump) {
-			this.noteAuthoritativeWrite(sql, params);
+			// NOT inside a rolled-back replay. A speculative pass re-executes the whole buffer to
+			// learn an id, so noting it again buffers every statement into the replication log a
+			// second time and advances the commit clock per re-execution -- measured on one node
+			// edit: 154 statements logged for 19 real ones, `INSERT INTO node_revision` 23 times,
+			// and 55 of 65 `commit_seq` rows written inside a pass that committed nothing
+			if (!this.speculating) this.noteAuthoritativeWrite(sql, params);
 			if (CACHETAG_WRITE.test(sql)) {
 				// EVERY tag, not just the first. The bump stays coalesced because bumping a
 				// generation fifty times costs fifty times and means the same thing; the tag set
@@ -7932,6 +8379,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * at, none of which the primary was ever observably in.
 	 */
 	async sealGeneration(): Promise<{ generation: number; statements: number } | null> {
+		// BEFORE the buffer check: the sequence must persist even on an invocation that advanced it
+		// and sealed no record, or the next one restarts from a stale base
+		this.flushCommitSeq();
 		const buffer = this.pendingReplication;
 		this.pendingReplication = undefined;
 		if (!buffer) return null;
@@ -8010,13 +8460,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * permission grant invalidated two tags and left the generation still.
 	 */
 	advanceCommit(): number {
-		const next = this.commitSeq() + 1;
-		this.metaSet(COMMIT_SEQ_KEY, next);
-		return next;
+		this.pendingCommits = (this.pendingCommits ?? 0) + 1;
+		return this.commitSeq();
 	}
 
 	commitSeq(): number {
-		return Number(this.metaGet(COMMIT_SEQ_KEY, '0') ?? 0);
+		return Number(this.metaGet(COMMIT_SEQ_KEY, '0') ?? 0) + (this.pendingCommits ?? 0);
+	}
+
+	/**
+	 * Persists the invocation's commit advances as ONE row.
+	 *
+	 * `advanceCommit()` used to write `cfw_meta` per authoritative STATEMENT, and a node save issues
+	 * about 28 of them: measured, `commit_seq` was written **28 times in one save**, which is 15% of
+	 * that save's entire 188-row cost and the largest non-content charge on it. Nothing could observe
+	 * the intermediate values -- the statements they count are buffered and only sealed at the end of
+	 * the invocation by {@link sealGeneration} -- so every write but the last was a counter counting
+	 * itself, which is a shape this project has already paid for once on the warming tick.
+	 *
+	 * Safe against eviction because a Durable Object commits an invocation's SQLite writes together:
+	 * the counter and the rows it counts land or are lost as one, so the sequence cannot fall behind
+	 * the data it fences. Under-advancing is the dangerous direction -- it serves stale authorization
+	 * from a replica -- which is why this flushes unconditionally at the top of the seal rather than
+	 * behind the buffer check below it.
+	 */
+	flushCommitSeq(): void {
+		if (!this.pendingCommits) return;
+		const next = this.commitSeq();
+		this.pendingCommits = 0;
+		this.metaSet(COMMIT_SEQ_KEY, next);
 	}
 
 	/**
@@ -8051,7 +8523,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				}
 			}
 		}
-		return super.execTxn(req);
+		// `commit: false` means this pass is discarded, either because the driver is replaying the
+		// buffer to learn an id or because a lane is forwarding. Neither outcome is authoritative,
+		// so the bookkeeping in `execSql()` must not run for it
+		const was = this.speculating;
+		this.speculating = req?.commit === false;
+		try {
+			return super.execTxn(req);
+		} finally {
+			this.speculating = was;
+		}
 	}
 
 	/**
@@ -8073,7 +8554,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.ensureServeTables();
 		const head = this.sql
 			.exec<Row<{ path: string; attempts: number }>>(
-				'SELECT path, attempts FROM cfw_fill_queue ORDER BY queued_at LIMIT 1'
+				'SELECT path, attempts FROM cfw_fill_queue ORDER BY priority, queued_at LIMIT 1'
 			)
 			.toArray()[0];
 		if (!head) return null;
@@ -8126,7 +8607,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (targetPath === null) {
 			const next = this.sql
 				.exec<Row<{ path: string; attempts: number }>>(
-					'SELECT path, attempts FROM cfw_fill_queue ORDER BY queued_at LIMIT 1'
+					'SELECT path, attempts FROM cfw_fill_queue ORDER BY priority, queued_at LIMIT 1'
 				)
 				.toArray()[0];
 			if (!next) return { filled: null, remaining: 0 };
@@ -8263,6 +8744,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				filled: null,
 				failed: path,
 				error,
+				// A SITE THAT IS NOT INSTALLED YET IS NOT A RENDER FAULT. The serve path answers a
+				// failed render with 500 on the stated ground that "503 is right for a page that is
+				// coming; a page that threw gets the exception" -- and an installer redirect is the
+				// first of those, not the second. It was invisible while free refused to render
+				// inline at all: the refusal answered 503 before the render could report anything.
+				// Letting free boot inline exposed it as a 500 on every unclaimed site
+				...(installerRedirect ? { notReady: true } : {}),
 				attempts: attempts + 1,
 				remaining: this.queueDepth()
 			};
@@ -8330,7 +8818,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
          html = excluded.html,
          rendered_at = excluded.rendered_at,
          render_ms = excluded.render_ms,
-         tags = excluded.tags`,
+         tags = excluded.tags,
+         stale_at = NULL`,
 				path,
 				status,
 				String(result.contentType ?? 'text/html; charset=utf-8'),
@@ -8956,7 +9445,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
            ON CONFLICT(path) DO UPDATE SET
              status = excluded.status, content_type = excluded.content_type,
              html = excluded.html, rendered_at = excluded.rendered_at,
-             render_ms = excluded.render_ms`,
+             render_ms = excluded.render_ms, stale_at = NULL`,
 					path,
 					Number(page.status ?? 200),
 					String(page.contentType ?? 'text/html; charset=utf-8'),
@@ -9806,7 +10295,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				requiresPrimary: true,
 				capability: refusal.capability,
 				detail: refusal.detail,
-				refusals: this.replicaRefusals.length
+				refusals: this.replicaRefusalsTotal
 			},
 			{
 				status: 421,
@@ -9908,14 +10397,58 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			if (fast) return fast;
 		}
 
+		// #region the herd, collapsed where every request already converges
+		//
+		// Measured deployed: 16 concurrent authenticated readers on a path whose plan had not
+		// compiled read p50 9,709 ms with `RENDER=16` and zero plan hits -- each paid its own ~2.5 s
+		// render and they serialised on this object.
+		//
+		// The same coalescing in the FRONT WORKER was built and refuted: its map is per-isolate and
+		// Cloudflare spreads concurrent requests across isolates, so 16 requests still produced 17
+		// object hops. Here there is exactly one object per site, so every duplicate does arrive at
+		// the same map -- which is the whole reason this belongs at the object and not above it.
+		//
+		// BEFORE the gate, or the waiters each take a gate slot and queue behind the leader anyway,
+		// which is the cost this removes.
+		const herdKey = this.herdKeyFor(request, url);
+		if (herdKey !== null) {
+			const waiting = this.renderFlights.get(herdKey);
+			if (waiting !== undefined) {
+				const shared = await waiting;
+				if (shared !== null) {
+					return new Response(shared.body, {
+						status: shared.status,
+						headers: { ...Object.fromEntries(shared.headers), 'x-cfw-herd': 'joined' }
+					});
+				}
+			}
+		}
+		// #endregion
+
 		this.phpLaneEntries = (this.phpLaneEntries ?? 0) + 1;
 		// THE QUEUEING SIGNAL, taken before the gate because that is the only place it exists.
 		// `ahead` is what a replica removes: an exact count of requests this one waits behind, with
 		// no clock in it. See `noteLaneTiming()` for why the two durations beside it are floors.
+		// **HOISTING `adoptSettings()` OUT OF THE GATE WAS TRIED AND REVERTED, and the reason is
+		// worth more than the saving was.** `handle()` awaits it first, so once per isolate-minute a
+		// gated request performs a real `CONFIG_KV.get()` while holding this object's single-threaded
+		// lane -- 4-6 ms warm, 46-140 ms for a key the colo has not seen. Awaiting it up here
+		// instead removes that, and it also inserts a microtask boundary into a stretch of `route()`
+		// that is load-bearing precisely because it is synchronous:
+		//
+		// - the HERD check reads `renderFlights` and the leader registers its flight afterwards, so
+		//   an await between them lets all N waiters miss the map. Measured: eight concurrent
+		//   identical requests went from one render to EIGHT.
+		// - `ahead` is read immediately before `gate.run()`, so an await between them makes every
+		//   concurrent arrival see zero and the queueing signal report nothing.
+		//
+		// One KV read a minute against a herd collapse worth 16x on a burst is not a trade. If this
+		// is worth revisiting, the shape is an out-of-band refresh that leaves the read path
+		// synchronous, not a hoist.
 		const arrivedAt = this.nowMs();
 		const ahead = this.gate.stats().active + this.gate.stats().queued;
 		// one gate entry for the whole request; handle() must never re-enter it
-		return this.gate.run(async () => {
+		const entered = this.gate.run(async () => {
 			const enteredAt = this.nowMs();
 			const response = await this.handle(request, url);
 			// a lane's writes ran speculatively and were rolled back, so this is the only place
@@ -9943,6 +10476,57 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.recycleIfOversized('request');
 			return this.noteLaneTiming(response, ahead, arrivedAt, enteredAt);
 		});
+		if (herdKey === null) return entered;
+		const key = herdKey;
+		// the leader publishes a SHAREABLE copy; a response nobody may share resolves to null and
+		// every waiter falls through to its own gate entry, which is the old behaviour
+		const shareable = entered
+			.then(async (r) => {
+				// a rotated session is per-visitor by definition, and a non-200 is not worth
+				// fanning out; both fall back rather than being shared
+				if (r.status !== 200 || r.headers.has('set-cookie')) return null;
+				return {
+					body: await r.clone().arrayBuffer(),
+					status: r.status,
+					headers: [...r.headers] as [string, string][]
+				};
+			})
+			.catch(() => null);
+		this.renderFlights.set(key, shareable);
+		try {
+			// THE LEADER AWAITS ITS OWN BUFFERING BEFORE THE ENTRY IS DROPPED, and the first version
+			// did not: it returned while `shareable` was still reading the body, so the entry
+			// outlived the render and the NEXT SEQUENTIAL request for the same session and path
+			// joined a settled flight and was served the previous answer. `shell.spec.ts` caught it
+			// -- a request that should have been `ASSEMBLED` came back as the prior `VERIFY`
+			const shared = await shareable;
+			if (shared === null) return await entered;
+			return new Response(shared.body, {
+				status: shared.status,
+				headers: Object.fromEntries(shared.headers)
+			});
+		} finally {
+			this.renderFlights.delete(key);
+		}
+	}
+
+	/**
+	 * The key N concurrent identical requests share, or null when they may not be coalesced.
+	 *
+	 * The COOKIE is in the key, so what is shared is one session asking for one page -- the same
+	 * request, never one visitor's page handed to another. Only serving GETs: a write must not be
+	 * folded into another write's answer, and a diagnostic route has side effects a caller is
+	 * entitled to each time.
+	 */
+	private herdKeyFor(request: Request, url: URL): string | null {
+		if (request.method !== 'GET') return null;
+		if (url.pathname !== '/__serve') return null;
+		if (url.searchParams.get('lane') === 'gate') return null;
+		const path = url.searchParams.get('path') ?? '/';
+		// an anonymous request is already answered by the fast lane above without entering the gate
+		const cookie = request.headers.get('cookie') ?? '';
+		if (!hasSessionCookie(cookie)) return null;
+		return `${this.generation()} ${path} ${cookie}`;
 	}
 
 	/**
@@ -10025,9 +10609,32 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return this.heapBytes(binary)?.byteLength ?? 0;
 	}
 
-	/** whether linear memory has passed the recycle threshold; the batch guard reads this too */
+	/**
+	 * The whole isolate's demand: wasm linear memory PLUS the JS-side bytes the mount holds.
+	 *
+	 * The two share one 128 MiB budget and only the first was ever read. The pack blob is resident
+	 * for the life of the interpreter by design, and MEMFS contents are typed arrays on the JS
+	 * heap -- `lazyMountBytes` says both in its own docblock, one function away from the guard that
+	 * did not call it.
+	 */
+	isolateNow(): number {
+		const linear = this.heapNow();
+		if (linear === 0) return 0;
+		const lazy = lazyMountBytes(this.mountInfo);
+		return linear + lazy.blob + lazy.resident + (lazy.blob > 0 ? PACK_INDEX_BYTES : 0);
+	}
+
+	/**
+	 * Whether this object should drop its interpreter at the next safe point.
+	 *
+	 * EITHER threshold, and the isolate one is the one that can fire before death. The batch guard
+	 * reads this too.
+	 */
 	oversized(): boolean {
-		return this.heapNow() >= recycleAboveBytes(this.env);
+		return (
+			this.heapNow() >= recycleAboveBytes(this.env) ||
+			this.isolateNow() >= isolateAboveBytes(this.env)
+		);
 	}
 
 	/**
@@ -10063,11 +10670,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	serveFromStorage(url: URL): Response | null {
 		const path = url.searchParams.get('path') ?? '/';
 		const t0 = Date.now();
-		let row: PageRow | undefined;
+		let row: (PageRow & { stale_at?: number | null }) | undefined;
 		try {
 			row = this.sql
-				.exec<PageRow>(
-					'SELECT status, content_type, html, rendered_at, render_ms FROM cfw_page WHERE path = ?',
+				.exec<PageRow & { stale_at?: number | null }>(
+					'SELECT status, content_type, html, rendered_at, render_ms, stale_at FROM cfw_page WHERE path = ?',
 					path
 				)
 				.toArray()[0];
@@ -10077,6 +10684,31 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			return null;
 		}
 		if (!row) return null;
+
+		// #region the superseded row
+		//
+		// A bump marks rather than deletes, so this is the drain window: the content is one save
+		// old and its refill is queued. Answering it beats the 503 that used to be the only other
+		// option, and the window is bounded so an object whose alarm chain has stopped degrades to
+		// that 503 rather than serving last week's page forever.
+		const staleAt = typeof row.stale_at === 'number' ? row.stale_at : null;
+		let aged = false;
+		if (staleAt !== null) {
+			const age = this.nowMs() - staleAt;
+			if (age >= agedServeMaxMs(this.env) || !agedServeAllowed(path, this.env)) {
+				// past the window, or a path the operator has excluded: drop it and let the gated
+				// lane answer, which is exactly the behaviour a delete used to give
+				this.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
+				this.enqueueRefill(path);
+				return null;
+			}
+			aged = true;
+			// the refill the bump may not have re-queued: `PREFILL_ON_SAVE_LIMIT` caps that list, so
+			// the long tail self-heals on its first visit instead of staying aged until the cap
+			// happens to reach it. ON CONFLICT DO NOTHING, so a burst costs one row, not one per hit
+			this.enqueueRefill(path);
+		}
+		// #endregion
 
 		this.serveRequestsPending = (this.serveRequestsPending ?? 0) + 1;
 		if (this.serveRequestsPending >= SERVE_REQUESTS_FLUSH) this.flushServeRequests();
@@ -10098,8 +10730,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// sending anonymous cached traffic, the workload lanes exist for, back to the primary alone.
 		// Memoised, so this stays one indexed read and no await
 		const lanes = this.isPoolLane() ? 0 : this.lanesProvisioned();
-		return this.pageResponse(row, 'HIT', Date.now() - t0, {
+		return this.pageResponse(row, aged ? 'AGED' : 'HIT', Date.now() - t0, {
 			'x-cfw-lane': 'storage',
+			...(aged ? { 'x-cfw-aged-ms': String(this.nowMs() - (staleAt ?? 0)) } : {}),
 			...(lanes > 0 ? { [LANES_HEADER]: String(lanes) } : {}),
 			// Proof of overlap with no timing involved: `active` counts callbacks
 			// currently inside the PHP lane, so a 1 here means this HIT was answered
@@ -10519,10 +11152,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * log the request touches.
 				 */
 				case '/__mailonboard': {
-					const env = this.env as unknown as Record<string, string | undefined>;
-					const token = env.CF_EMAIL_TOKEN ?? '';
-					const accountId =
-						env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
+					// through the resolver, which reads the DURABLE grant. Reading `this.env`
+					// directly meant onboarding refused on every incarnation after the connect
+					const { token, accountId } = await this.cfCredentials();
 					const zoneId =
 						url.searchParams.get('zone') ?? this.metaGet(MAIL_ZONE_KEY) ?? '';
 					if (!token) {
@@ -10799,6 +11431,31 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					}
 
 					if (action === 'callback') {
+						// THE RETURN LEG IS A BROWSER NAVIGATION, and this route answered it with
+						// raw JSON: after consent the operator landed on `{"ok":true,...}` with no
+						// way back. The refusal branches were the same dead end. A navigation is
+						// sent to the Deploy page carrying the outcome; anything else still gets
+						// JSON, because the CLI and the specs read it.
+						//
+						// `surface-lifecycle.pw.ts` could not have caught this -- it intercepts and
+						// ABORTS the handoff, so the leg is uncovered by construction.
+						const wantsHtml = (request.headers.get('accept') ?? '').includes(
+							'text/html'
+						);
+						const backTo = (params: string): Response =>
+							new Response(null, {
+								status: 303,
+								headers: {
+									// the literal rather than an import: the object must not pull
+									// the UI module into its bundle for one path
+									location: `/_cfw/deploy?${params}`,
+									'cache-control': 'no-store'
+								}
+							});
+						const refuse = (error: string): Response =>
+							wantsHtml
+								? backTo(`error=${encodeURIComponent(error)}`)
+								: Response.json({ ok: false, error }, { status: 400 });
 						const raw = this.metaGet(CF_OAUTH_PENDING_KEY);
 						let pending: PendingAuth | null = null;
 						try {
@@ -10814,28 +11471,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// consumed only on a MATCH: this route is public and takes no credential, so
 						// clearing on every inbound request let anyone cancel an owner's connect
 						// mid-flight with `GET /setup/cf/callback?state=x`, one `cfw_meta` write each
-						if (!check.ok)
-							return Response.json(
-								{ ok: false, error: check.reason },
-								{ status: 400 }
-							);
+						if (!check.ok) return refuse(check.reason);
 						// still before the exchange, so a code cannot be replayed against it
 						this.metaSet(CF_OAUTH_PENDING_KEY, '');
 						const code = url.searchParams.get('code') ?? '';
-						if (!code || !clientId) {
-							return Response.json(
-								{ ok: false, error: 'no code returned' },
-								{ status: 400 }
-							);
-						}
+						if (!code || !clientId) return refuse('no code returned');
 						const out = await exchangeCode({
 							clientId,
 							code,
 							verifier: (pending as PendingAuth).verifier,
 							redirectUri: (pending as PendingAuth).redirectUri
 						});
-						if (isTokenError(out))
-							return Response.json({ ok: false, error: out.error }, { status: 400 });
+						if (isTokenError(out)) return refuse(out.error);
 						const accountId = await resolveAccountId(out.accessToken);
 						this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(out));
 						if (accountId) this.metaSet(CF_OAUTH_ACCOUNT_KEY, accountId);
@@ -10845,7 +11492,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							CF_EMAIL_TOKEN: out.accessToken,
 							...(accountId ? { CF_EMAIL_ACCOUNT_ID: accountId } : {})
 						};
-						return Response.json({ ok: true, accountId, scopes: out.scopes });
+						return wantsHtml
+							? backTo('connected=1')
+							: Response.json({ ok: true, accountId, scopes: out.scopes });
 					}
 
 					if (action === 'disconnect') {
@@ -11017,12 +11666,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						getBookmarkForTime?: (at: Date) => Promise<string>;
 						onNextSessionRestoreBookmark?: (b: string) => Promise<string>;
 					};
+					// 501 rather than 200. This answered `ok: false` with a 200, so a caller polling
+					// the BACKUP route could not tell "this back end keeps no change log" from
+					// "the bookmark was taken" without parsing the body -- and a 200 is what every
+					// generic client treats as success.
 					const refuse = (e: unknown) =>
-						Response.json({
-							ok: false,
-							supported: false,
-							error: String((e as { message?: string })?.message ?? e)
-						});
+						Response.json(
+							{
+								ok: false,
+								supported: false,
+								error: String((e as { message?: string })?.message ?? e)
+							},
+							{ status: 501 }
+						);
 
 					if (request.method === 'POST') {
 						const bookmark = url.searchParams.get('bookmark') ?? '';
@@ -11082,12 +11738,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// a back end with no change log answers an ALL-ZERO bookmark rather than
 					// throwing, so a feature-detect on the method passes and the value is useless
 					if (!isBookmark(current)) {
-						return Response.json({
-							ok: false,
-							supported: false,
-							current,
-							error: 'this storage back-end keeps no change log; the bookmark is zero'
-						});
+						return Response.json(
+							{
+								ok: false,
+								supported: false,
+								current,
+								error: 'this storage back-end keeps no change log; the bookmark is zero'
+							},
+							{ status: 501 }
+						);
 					}
 					return Response.json({ ok: true, supported: true, current, windowDays: 30 });
 				}
@@ -11553,10 +12212,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						}
 						this.ensureServeTables();
 						const record = (await request.json()) as LogRecord;
+						const before = readPosition(this.logStore()).applied;
 						const outcome = applyRecord(this.logStore(), record, {
 							localSchema: this.packGeneration(),
 							chunkSize: Number(url.searchParams.get('chunk') ?? '') || undefined
 						});
+						// the same invalidation the pull loop performs; this route is the other way
+						// a record reaches a lane and it skipped it
+						if (outcome.applied > before) this.purgeAfterApply();
 						return Response.json(outcome, {
 							status: outcome.action === 'refuse' ? 409 : 200
 						});
@@ -11845,7 +12508,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						const verified = await this.runJson(ENABLE_VERIFY);
 						return Response.json(verified ?? { ok: false, error: 'no reply' });
 					}
-					const name = url.searchParams.get('module') ?? 'drupflare';
+					// NO DEFAULT. This was `?? 'drupflare'`, so a bare `GET /enable` carrying an
+					// owner token installed a module nobody asked for. Every other write route
+					// refuses a missing argument rather than choosing one.
+					const name = (url.searchParams.get('module') ?? '').trim();
+					if (name === '') {
+						return Response.json(
+							{ ok: false, error: 'name the module to enable' },
+							{ status: 400 }
+						);
+					}
 					const dry = url.searchParams.get('dry') === '1';
 					const stopAt = url.searchParams.get('stop') ?? '';
 					const preamble =
@@ -11984,8 +12656,29 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					}
 					const name = url.searchParams.get('op');
 					if (!name) {
+						// THE DRIVER IS RESOLVED HERE, and it was resolved nowhere. `OPS_DRIVERS` was
+						// read only inside the 501 refusal below, so the listing carried no `driver`
+						// field at all and every caller rendering it reported that nothing could run.
+						// The table is this object's to publish; a consumer re-deriving it would be a
+						// second copy of a map that already exists.
+						const listed = Object.fromEntries(
+							Object.entries(
+								(registry.operations ?? {}) as Record<string, Payload>
+							).map(([op, meta]) => [
+								op,
+								{
+									...meta,
+									// an unsliced operation needs no driver: it IS the driver
+									driver:
+										meta.sliced === false
+											? 'runs in one invocation'
+											: (OPS_DRIVERS[op] ?? null)
+								}
+							])
+						);
 						return Response.json({
 							...registry,
+							operations: listed,
 							how: 'GET /ops?op=<name> to run one; sliced operations are refused with their driver named'
 						});
 					}
@@ -12586,8 +13279,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const queueable =
 						!authenticated && degraded.queue && this.queueDepth() < FILL_QUEUE_MAX;
 					if (queueable) {
+						// PRIORITY 0: someone is holding a connection open for this one.
+						//
+						// The queue was FIFO, so a visitor's miss was served after every path
+						// already queued -- and a bump queues up to `PREFILL_ON_SAVE_LIMIT` of
+						// them, none of which anyone is waiting for. Measured on a deployed free
+						// object with a queue ~28 deep: time-to-served for a never-seen path was
+						// p50 19,004 ms and 4 of 8 probes were never served at all, against a
+						// localhost VPS answering 8 of 8 on the first attempt at p50 78 ms.
+						//
+						// `DO UPDATE` rather than `DO NOTHING`, because a path already queued by
+						// background prefill is exactly the one a waiting visitor needs promoted.
 						this.sql.exec(
-							'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
+							`INSERT INTO cfw_fill_queue (path, queued_at, priority) VALUES (?, ?, 0)
+               ON CONFLICT(path) DO UPDATE SET priority = 0`,
 							path,
 							this.nowMs()
 						);
@@ -12667,7 +13372,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// One `ctx.storage.put`, inside the ~13 rows a real render already writes,
 						// so the accounting does not meaningfully change what it accounts for.
 						if (authenticated) {
-							const stored = await this.storage.get<AuthSpend>('authSpend');
+							// the memo first: this object is the key's only writer, so a value it
+							// already holds cannot be behind the stored one, and the read it
+							// replaces happened INSIDE the gate on every authenticated render
+							const stored =
+								this.authSpend ?? (await this.storage.get<AuthSpend>('authSpend'));
 							// spendForToday() discards a record from another UTC day rather than
 							// carrying it, which is what makes the budget daily rather than forever
 							const today = spendForToday(stored ?? null);
@@ -12676,13 +13385,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							this.authSpend = today;
 						}
 						// try the stored shell before paying for a render. Never for a submission,
-						// whose response is for one submitter, and never when the lever is off
-						if (
-							authenticated &&
-							!submission &&
-							shellAssemblyEnabled(this.env) &&
-							this.php !== undefined
-						) {
+						// whose response is for one submitter, and never when the lever is off.
+						//
+						// A FOURTH CLAUSE READ `this.php !== undefined` AND COULD NOT FIRE: `php` is
+						// `PhpInstance | null`, assigned null in the constructor, and every one of
+						// its reassignments writes null or an instance. It read as "only if an
+						// interpreter already exists" and was deleted rather than corrected to
+						// `!== null`, because that correction would be wrong: an authenticated
+						// request needs an interpreter either way, and once booted a fragment render
+						// is 4-5 ms of gate-lane wall clock against 20-21 for the page render it
+						// replaces. Skipping the cheaper path on a cold object is the opposite of
+						// what the clause was reaching for.
+						if (authenticated && !submission && shellAssemblyEnabled(this.env)) {
 							const cookieHeader = request.headers.get('cookie') ?? '';
 							const shellOrigin = this.canonicalOrigin(url.origin);
 							let assembled = await this.assembleFor(path, cookieHeader, shellOrigin);
@@ -12723,6 +13437,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 										'x-cfw-generation': String(this.generation()),
 										'x-cfw-shell-holes': String(assembled.holes),
 										'x-cfw-serve-ms': String(Date.now() - t0),
+										// see `rolesOf()`: omitting this made one shell-served path
+										// starve the compiled-plan tier for the whole session,
+										// because `roleSeen` is keyed by cookie rather than by path
+										...(assembled.roles && assembled.roles.length > 0
+											? { [ROLES_HEADER]: assembled.roles.join(',') }
+											: {}),
+										// the shell tier spends the allowance too -- it runs a real
+										// fragment render -- and reported none of it
+										...(this.authSpend
+											? authSpendHeaders(
+													this.authSpend,
+													authAllowance(this.env)
+												)
+											: {}),
 										'x-cfw-v': CFW_HEADER_VERSION
 									})
 								});
@@ -12777,6 +13505,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 								'x-cfw-generation': String(this.generation()),
 								'x-cfw-method': String(request.method),
 								'x-cfw-serve-ms': String(Date.now() - t0),
+								// THIS IS WHERE THE ALLOWANCE HAS TO BE REPORTED, and for the whole
+								// life of the counter it was reported only on the `outcome.filled`
+								// branch below. That branch needs a `cfw_page` row, and `fillOne()`
+								// refuses to store anything with a cookie -- so an AUTHENTICATED
+								// render, the only kind that spends the allowance, could never reach
+								// it. The header therefore never appeared, `parseAuthSpend()` always
+								// answered null, and `decideAuthMode()` always returned `render`:
+								// both the read-only 503 and the stale degrade in `site.ts` were
+								// unreachable on every deployment.
+								...(this.authSpend
+									? authSpendHeaders(this.authSpend, authAllowance(this.env))
+									: {}),
 								// what the edge plan is keyed on, and the ONLY source for it: a
 								// client cannot present a role set, it presents a cookie and is
 								// told what that cookie is. Sorted by the render
@@ -12846,7 +13586,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// failing render -- so a route that cannot render never converged and read
 						// as a boot loop. 503 is right for a page that is coming; a page that threw
 						// gets the exception, and the log line is the only place it was ever visible
-						if (outcome.failed === path && outcome.error) {
+						if (outcome.failed === path && outcome.error && outcome.notReady !== true) {
 							console.error(`cfw render failed: ${path}: ${outcome.error}`);
 							return Response.json(
 								{ ok: false, error: outcome.error, path },
@@ -13395,6 +14135,62 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					});
 				}
 
+				/**
+				 * The fill queue, and a way to drain it.
+				 *
+				 * THE ONLY RECOVERY LEVER FOR A RESET LOOP. A queue deeper than one batch can
+				 * survive resets the isolate INSIDE the alarm; the queue keeps its depth, the next
+				 * alarm attempts the same batch, and the object never serves again. Measured on a
+				 * deployed free worker at 103 entries and 70 stored pages: every render answered
+				 * 500 with "Durable Object's isolate exceeded its memory limit and was reset",
+				 * across three redeploys. `recycleIfOversized()` cannot reach it -- it runs between
+				 * invocations and the death is inside one.
+				 *
+				 * `drop` takes a COUNT, so an operator can shed enough to get under the batch and
+				 * keep the rest queued. Oldest first: those are the ones that already failed a
+				 * batch.
+				 */
+				case '/__queue': {
+					this.ensureServeTables();
+					const action = url.searchParams.get('action') ?? 'list';
+					const depth = this.queueDepth();
+					if (action === 'list') {
+						return Response.json({
+							ok: true,
+							depth,
+							queue: this.sql
+								.exec(
+									'SELECT path, attempts, last_error, priority FROM cfw_fill_queue ' +
+										'ORDER BY priority, queued_at LIMIT 200'
+								)
+								.toArray()
+						});
+					}
+					if (action !== 'drop') {
+						return Response.json(
+							{ ok: false, error: `unknown action ${action}; use list or drop` },
+							{ status: 400 }
+						);
+					}
+					// the whole queue unless a count is given, because the case this exists for is
+					// "the queue is why the object cannot run" and asking for a number there asks
+					// an operator to guess at one they cannot read
+					const asked = Number(url.searchParams.get('n') ?? '0');
+					const limit = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : depth;
+					this.sql.exec(
+						'DELETE FROM cfw_fill_queue WHERE path IN (' +
+							'SELECT path FROM cfw_fill_queue ORDER BY priority, queued_at LIMIT ?)',
+						limit
+					);
+					const after = this.queueDepth();
+					return Response.json({
+						ok: true,
+						before: depth,
+						dropped: depth - after,
+						after
+					});
+				}
+
 				case '/__serve-stats': {
 					this.ensureServeTables();
 					// memoized before the synchronous half reads it; the probe runs PHP, so it
@@ -13597,11 +14393,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 							rowsWritten: cursor.rowsWritten
 						});
 					} catch (e: any) {
-						return Response.json({
-							ok: false,
-							params: params.length,
-							error: String(e?.message ?? e)
-						});
+						// 400 rather than 200: a caller that only reads the status cannot otherwise
+						// tell a rejected statement from an empty result set
+						return Response.json(
+							{
+								ok: false,
+								params: params.length,
+								error: String(e?.message ?? e)
+							},
+							{ status: 400 }
+						);
 					}
 				}
 

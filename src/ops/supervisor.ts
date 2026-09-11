@@ -322,7 +322,7 @@ export function memoryHighwaterRising(obs: Observation): Finding | null {
 	return {
 		code: 'memory.highwater_rising',
 		severity: 'warn',
-		scope: 'linear-memory',
+		scope: 'isolate-bytes',
 		context: `rose ${last - first} bytes over ${MEMORY_RISE_SAMPLES} samples`
 	};
 }
@@ -505,7 +505,7 @@ export function memoryTrendRising(obs: Observation): Finding | null {
 	return {
 		code: 'memory.trend_rising',
 		severity: 'warn',
-		scope: 'linear-memory',
+		scope: 'isolate-bytes',
 		context:
 			`trending up ~${Math.round(trend.rise)} bytes over ${samples?.length ?? 0} samples ` +
 			`(${trend.slope.toFixed(1)}/request); recycle at the next quiet moment`

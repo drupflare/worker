@@ -31,6 +31,13 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * the boot this avoids for the reset it exists to prevent.
 	 */
 	RECYCLE_ABOVE_BYTES?: string | number;
+	/**
+	 * the WHOLE isolate's drop threshold, wasm linear memory plus the JS-side mount bytes.
+	 *
+	 * `RECYCLE_ABOVE_BYTES` reads linear memory alone, and the 128 MiB ceiling covers both -- so at
+	 * its default plus the pack blob and MEMFS the object is already past the limit when it fires.
+	 */
+	ISOLATE_ABOVE_BYTES?: string | number;
 	PREFILL?: string;
 	/** fragment assembly for authenticated GETs; ON unless explicitly set to `0` */
 	SHELL_ASSEMBLY?: string;
@@ -75,6 +82,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * page staleable by configuring badly. See `staleAllowed()` in `src/ops/page-store.ts`.
 	 */
 	NEVER_STALE?: string;
+	/** how long a superseded page may still be answered, in ms; see `agedServeMaxMs()` */
+	AGED_SERVE_MAX_MS?: string;
 	/**
 	 * makes this object a read-only replica: every mutating host capability is refused.
 	 *
@@ -89,6 +98,13 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * so raising this cannot make an existing object read-only by accident.
 	 */
 	REPLICA_COUNT?: string;
+	/**
+	 * whether the Zend park may arm; on unless set to something other than `1`.
+	 *
+	 * Arming routes every render through `cfw_park_run`, including the ones that call nothing, so a
+	 * site running no module that needs a blocking outbound call pays a wrapper for no yield.
+	 */
+	PARK?: string;
 	/**
 	 * how long a SERVING lane may go without pulling the primary's log; the bound on staleness.
 	 *

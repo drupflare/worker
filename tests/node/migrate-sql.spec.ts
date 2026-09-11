@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+	FREE_CHUNKS_PER_INVOCATION,
+	FREE_SUBREQUEST_LIMIT,
 	MIGRATE_TABLE,
 	MigrationChunkError,
 	MigrationGenerationError,
@@ -914,19 +916,34 @@ describeIfPacked('reset', () => {
 
 describe('chunksPerInvocation', () => {
 	it.each([
-		['free replays one chunk per invocation', { PLAN: 'free' }, 1],
-		['no plan set defaults to free', {}, 1],
-		['undefined env defaults to free', undefined, 1],
+		['free replays a batch per invocation', { PLAN: 'free' }, FREE_CHUNKS_PER_INVOCATION],
+		['no plan set defaults to free', {}, FREE_CHUNKS_PER_INVOCATION],
+		['undefined env defaults to free', undefined, FREE_CHUNKS_PER_INVOCATION],
 		['paid replays the lot', { PLAN: 'paid' }, Infinity],
 		['PAID is case-insensitive', { PLAN: 'PAID' }, Infinity],
 		['an explicit override wins', { PLAN: 'free', MIGRATE_CHUNKS_PER_INVOCATION: '4' }, 4],
 		[
 			'a zero override falls through to the plan default rather than stalling forever',
 			{ PLAN: 'free', MIGRATE_CHUNKS_PER_INVOCATION: '0' },
-			1
+			FREE_CHUNKS_PER_INVOCATION
 		]
 	])('%s', (_label, env, want) => {
 		expect(chunksPerInvocation(env)).toBe(want);
+	});
+
+	// THE BOUND IS SUBREQUESTS, NOT CPU, and the batch was 1 against the wrong one for the life of
+	// the project. `assetChunkLoader` spends one `env.ASSETS.fetch()` per chunk plus one for the
+	// manifest, and a deployed free worker answered `Too many subrequests by single Worker
+	// invocation` rather than a CPU kill. So this is the assertion that keeps the constant honest;
+	// raising it past the allowance fails here rather than on somebody's first deploy.
+	it('leaves headroom under the free subrequest allowance, manifest included', () => {
+		expect(FREE_CHUNKS_PER_INVOCATION + 1).toBeLessThanOrEqual(FREE_SUBREQUEST_LIMIT);
+	});
+
+	// the control: a batch of 1 would pass the line above and is the thing being replaced, so the
+	// assertion has to say the batch is worth having as well as that it fits
+	it('is a batch rather than the one-at-a-time it replaced', () => {
+		expect(FREE_CHUNKS_PER_INVOCATION).toBeGreaterThan(1);
 	});
 });
 

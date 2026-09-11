@@ -542,14 +542,41 @@ export function assetChunkLoader(env: MigrateAssetEnv, prefix = 'drupal-sql'): M
 /**
  * How many chunks a plan should replay per invocation.
  *
- * Free is 1: the 10 ms ceiling is per invocation, and the chunk sizes in
- * `scripts/pack-sql.ts` are chosen so one chunk is the largest unit with a chance of
- * fitting. Paid has a 30 s CPU budget, so the whole migration is one invocation and the
- * chunking is only a crash-resume property there.
+ * **FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.** That premise is retracted in writing
+ * one file over: a single invocation reading 1,882 ms of `cpuTime` completed on a deployed free
+ * worker, so the cap is an amortised allowance rather than a per-request limit -- see
+ * `FREE_PROFILE` in `src/ops/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
+ * over **75 separate
+ * Durable Object invocations**, each paying an alarm turnaround, a `setAlarm` row and a cursor row,
+ * while the new owner watches the `migrating` page refresh itself.
+ *
+ * **The real bound is SUBREQUESTS, and it was measured rather than reasoned.** `/migrate?all=1` on
+ * a deployed free worker failed with `Too many subrequests by single Worker invocation` -- free
+ * allows 50, and {@link assetChunkLoader} spends one `env.ASSETS.fetch()` per chunk plus one for a
+ * manifest that is memoised per incarnation. So N chunks costs at most N+1. That failure is also
+ * the positive evidence that the whole replay fits one invocation's CPU: nothing else stopped it.
+ *
+ * 40 leaves ten subrequests of headroom. The migration branch returns before any other alarm work
+ * runs, so nothing else is competing for them.
+ *
+ * Paid has a 30 s CPU budget and a 1,000-subrequest allowance, so the whole migration is one
+ * invocation and the chunking is only a crash-resume property there.
  */
 export function chunksPerInvocation(env?: MigratePlanEnv | null): number {
 	const explicit = Number(env?.MIGRATE_CHUNKS_PER_INVOCATION ?? 0);
 	if (Number.isFinite(explicit) && explicit > 0) return explicit;
 	// not a planFlag(): this one is a COUNT, so it shares the predicate and not the boolean chain
-	return isPaid(env) ? Infinity : 1;
+	return isPaid(env) ? Infinity : FREE_CHUNKS_PER_INVOCATION;
 }
+
+/**
+ * Chunks a free invocation replays, bounded by the subrequest allowance rather than by CPU.
+ *
+ * Kept beside {@link FREE_SUBREQUEST_LIMIT} so the relationship is checkable: one fetch per chunk
+ * plus one for the manifest must stay under the platform's count, which is what
+ * `tests/unit/db/migrate-plan.spec.ts` asserts.
+ */
+export const FREE_CHUNKS_PER_INVOCATION = 40;
+
+/** subrequests a single free-plan Worker invocation may issue */
+export const FREE_SUBREQUEST_LIMIT = 50;

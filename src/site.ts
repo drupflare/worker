@@ -28,13 +28,17 @@ import {
 	believedRoles,
 	edgePlanEnabled,
 	edgePlanKey,
+	edgePlanRefused,
 	forgetWitness,
 	hasEdgePlan,
+	isRedirectStatus,
 	lookupEdgePlan,
 	noteEdgeRender,
 	planEligibility,
 	privatePlanKey,
 	readEdgePlan,
+	readRedirectPlan,
+	redirectPlanBody,
 	rememberCsrf,
 	rememberEdgeGeneration,
 	rememberRoles,
@@ -56,6 +60,7 @@ import {
 } from './ops/fleet.js';
 import { IMAGE_ROUTE_PREFIX, parseTransformPath, runImageTransform } from './ops/image-runtime.js';
 import { callbackUri } from './ops/oidc.js';
+import { lookupPageMemo, pageMemoHeaders, storePageMemo } from './ops/page-memo.js';
 import {
 	pageKvEnabled,
 	readPage,
@@ -90,9 +95,11 @@ import {
 	renderExtend,
 	renderGit,
 	renderLogin,
+	renderOperate,
 	renderShell,
 	renderThresholds,
 	SURFACE_PREFIX,
+	type CfAccountStatus,
 	type OidcSetupRow,
 	type OpsEntry,
 	type RemoteRow
@@ -192,6 +199,7 @@ const DIAGNOSTIC_ROUTES = new Set([
 	'/export',
 	'/restore',
 	'/pitr',
+	'/queue',
 	'/savenode',
 	'/writeworkload',
 	'/capability',
@@ -233,6 +241,10 @@ const DIAGNOSTIC_ROUTES = new Set([
 const OWNER_ROUTES = new Set([
 	'/export',
 	'/health',
+	// what the object is actually doing: cached paths, queue depth, recycles, and the day's row and
+	// request spend. Diagnostic-only meant a site owner could not read their own meters without the
+	// flag that also opens `/sql`, which is the same trade `/export` was on
+	'/serve-stats',
 	'/setup/cf',
 	'/setup/mail',
 	'/setup/oidc',
@@ -257,12 +269,33 @@ const OWNER_ROUTES = new Set([
 	// `site-do.ts` refused a sliced `updb` operation by naming "/updb" as its driver while no such
 	// route existed anywhere, which is a 501 pointing at a door that is not there
 	'/updb',
+	// THE OPERATION REGISTRY ITSELF. It was diagnostic-only, so an owner token answered 404 and the
+	// only reader was the Commands page reaching `/__ops` internally -- which meant `drangler`
+	// could not list what a site can run without turning on the flag that also opens `/sql`.
+	'/ops',
+	// RECOVERY, and ONLY the half that does not take a payload. `/pitr` reads the platform's own
+	// 30-day bookmark window and schedules a restore from it; its docblock says there is no
+	// wrangler command and no dashboard button for that window, so without an owner-reachable
+	// route an operator cannot recover a site at all.
+	//
+	// **`/restore` STAYS DIAGNOSTIC-ONLY and was promoted here for one commit before this comment
+	// replaced it.** It replays SQL a caller supplies, which is the same shape as `/sql` rather
+	// than the same shape as `/pitr`: a bookmark names a state the platform already holds, a body
+	// names one the caller invents. `serve-edge.spec.ts` pins the pair and was right to.
+	'/pitr',
 	// FLEET RECONCILIATION. The pack delivers only at provisioning, so a fix that lands in it reaches
 	// new sites and no existing one. This reports what a site still owes and drives one step of it
 	'/reconcile',
 	// THE ADDRESSABLE SWEEP. Coverage was demand-driven, so nothing knew how much of a site was
 	// covered and nothing bounded what an indexer could make it spend
 	'/sweep',
+	// THE FILL QUEUE, and it is a RECOVERY route rather than a diagnostic one. A queue deeper than
+	// a batch can survive resets the isolate inside the alarm, which leaves the queue at its old
+	// depth and the next alarm attempting the same batch: measured on a deployed free worker at 103
+	// entries, every render answering 500 across three redeploys. `recycleIfOversized()` cannot
+	// reach it because it runs between invocations and the death is inside one. Draining the queue
+	// is the only lever an operator has, and until now there was none
+	'/queue',
 	// UPLOADED MODULE REVISIONS. `/git` delivers a tree from a git host and `/install` delivers one
 	// from a registry; there was no way to deliver a tree that is on a developer's disk, and no
 	// history behind either -- `gitRestore()` restores within the same call and then the previous
@@ -407,6 +440,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/export': '/__export',
 	'/restore': '/__restore',
 	'/pitr': '/__pitr',
+	'/queue': '/__queue',
 	'/firstrun': '/__firstrun',
 	'/savenode': '/__savenode',
 	'/writeworkload': '/__writeworkload',
@@ -557,16 +591,29 @@ export function isNeverDrupal(pathname: string): boolean {
 	return NEVER_DRUPAL.some((re) => re.test(bare));
 }
 
+/** the string half of a cache key; `cacheKey()` is the same identity as a `Request` */
+const cacheKeyUrl = (origin: string, parts: string[]) =>
+	`${origin}/__cfw/${parts.map(encodeURIComponent).join('/')}`;
+
 const cacheKey = (origin: string, parts: string[]) =>
-	new Request(`${origin}/__cfw/${parts.map(encodeURIComponent).join('/')}`, {
-		method: 'GET'
-	});
+	new Request(cacheKeyUrl(origin, parts), { method: 'GET' });
 
 const genKey = (origin: string, site: string, bucket: number) =>
 	cacheKey(origin, ['gen', site, String(bucket)]);
 
+/**
+ * The page cache key AS A STRING, which is what the isolate memo is keyed on.
+ *
+ * Split from {@link pageKey} because the memo is consulted FIRST and a `Request` is a URL parse
+ * plus an object the memo never reads -- so a MEM hit, which is the tier answering almost all of
+ * this path, was allocating a Request to throw it away. The two cannot drift: `pageKey()` is this
+ * string handed to `new Request`.
+ */
+const pageKeyUrl = (origin: string, site: string, generation: number, path: string) =>
+	cacheKeyUrl(origin, ['page', String(generation), site, path]);
+
 const pageKey = (origin: string, site: string, generation: number, path: string) =>
-	cacheKey(origin, ['page', String(generation), site, path]);
+	new Request(pageKeyUrl(origin, site, generation, path), { method: 'GET' });
 
 /**
  * A generation, or null. Never a number that is not one.
@@ -755,6 +802,14 @@ function putPage(
 	// cloned HERE rather than inside the deferred write: the body below is returned to the caller and
 	// a clone taken after the response has been consumed is empty
 	const copy = new Response(res.clone().body, { status: 200, headers });
+	// **SEEDING THE ISOLATE MEMO FROM HERE WAS TRIED AND REVERTED.** The memo only ever warms from a
+	// `caches.default` HIT, so the isolate that just produced a page pays one `cache.match` on its
+	// next request for it. Seeding it here removes that read -- ONCE per isolate per page, after
+	// which the memo is warm either way -- and in exchange the EDGE tier stops being observable
+	// within an isolate at all: `serve-edge.spec.ts` polls for `x-cfw-cache: EDGE` and gets `MEM`
+	// forever, because `edge=0` declines the memo and the cache together. A 0.65 ms read taken once
+	// is not worth a tier nobody can see; the three tiers being distinguishable is what that spec
+	// exists for. Do not re-propose without a lever that separates the two.
 	return {
 		outcome: 'deferred',
 		// a rejection degrades to "no edge cache", the same as the awaited version did
@@ -879,23 +934,33 @@ export default {
 		// was one constant string, and every such request piled onto whichever lane it hashes to.
 		// The query is dropped so a page is one key however a visitor arrived at it
 		const visitorPath = (url.searchParams.get('path') ?? url.pathname).split('?')[0] as string;
-		const lane = chooseTarget({
-			site,
-			method: request.method,
-			affinity: affinityKey({
-				session: sessionCookieValue(request.headers.get('cookie')),
-				address: request.headers.get('cf-connecting-ip'),
-				pathname: visitorPath
-			}),
-			// an operator's REPLICA_COUNT is a floor and what the primary has actually built is the
-			// other half; autoscaling grew lanes nothing routed to until this read the second one
-			replicas: Math.max(replicaCount(env), believedLanes(site, t0)),
-			// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or owner
-			// route reads as itself; those pin to the primary
-			pathname: url.pathname,
-			writeForward: writeForwardEnabled(env)
-		});
-		const stub = env.SITE.get(env.SITE.idFromName(lane.target), siteStubOptions(env));
+		// LAZY, because the tier that answers 82% of traffic never reads either of them. Choosing a
+		// lane allocates an affinity input, a decision and a copy of it; the stub then costs a
+		// native hash to a 256-bit id, a `DurableObjectId` and a stub object -- all of it upstream
+		// of an edge or memo hit that returns without touching the object at all. Both are memoised
+		// on first read, so every path that does need them sees one construction and the same
+		// values, and the routing decision still happens before any request reaches an object.
+		let laneMemo: ReturnType<typeof chooseTarget> | null = null;
+		const laneOf = (): ReturnType<typeof chooseTarget> =>
+			(laneMemo ??= chooseTarget({
+				site,
+				method: request.method,
+				affinity: affinityKey({
+					session: sessionCookieValue(request.headers.get('cookie')),
+					address: request.headers.get('cf-connecting-ip'),
+					pathname: visitorPath
+				}),
+				// an operator's REPLICA_COUNT is a floor and what the primary has actually built is
+				// the other half; autoscaling grew lanes nothing routed to until this read the second
+				replicas: Math.max(replicaCount(env), believedLanes(site, t0)),
+				// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or
+				// owner route reads as itself; those pin to the primary
+				pathname: url.pathname,
+				writeForward: writeForwardEnabled(env)
+			}));
+		let stubMemo: DurableObjectStub | null = null;
+		const stubOf = (): DurableObjectStub =>
+			(stubMemo ??= env.SITE.get(env.SITE.idFromName(laneOf().target), siteStubOptions(env)));
 
 		const cache = caches.default;
 		const origin = url.origin;
@@ -928,7 +993,7 @@ export default {
 		// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
 		// including `scripts/security-update.mjs --fleet=`
 		if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
-			return await renderAdmin(request, url, env, stub, ownerToken);
+			return await renderAdmin(request, url, env, stubOf(), ownerToken);
 		}
 
 		const path = url.searchParams.get('path') ?? '/';
@@ -954,8 +1019,12 @@ export default {
 			});
 		}
 
+		// ONE SCAN, not two. It is a `split(/[?#]/)` plus up to six regex tests, and it ran here and
+		// again on the authenticated check below over the same string for the same answer
+		const neverDrupal = isNeverDrupal(path);
+
 		// the cheapest request in the system.
-		if (serving && isNeverDrupal(path)) {
+		if (serving && neverDrupal) {
 			return new Response('not found\n', {
 				status: 404,
 				headers: {
@@ -972,15 +1041,23 @@ export default {
 		// -- so every one is a full render at 13 rows and ~500 ms. It is decided here rather than
 		// inside the object because a check made after the hop has already spent the DO request the
 		// reservation exists to protect.
-		const authenticated = isNeverDrupal(path) ? false : isAuthenticatedRequest(request);
+		const authenticated = neverDrupal ? false : isAuthenticatedRequest(request);
 		let authMode: 'render' | 'stale' | 'read-only' = 'render';
 		let authReason = '';
 		// the reservation is enforced on FREE only, and `decideAuthMode()` discards the counter when it
 		// is not -- so reading it on paid cost one `cache.match` (9.5 ms on the first authenticated
 		// request per isolate) for an answer nothing consults
-		const enforced = authAllowance(env as AuthBudgetEnv).enforced;
+		//
+		// LAZY, because `authAllowance()` builds an eight-field object with five `Math.floor` and a
+		// clamp, and both of its readers sit behind a check an anonymous request fails. It ran
+		// unconditionally, so 82% of traffic paid for a budget it never consults. Memoised rather
+		// than moved into one branch: the second reader is the deferred spend write further down,
+		// and computing it twice would trade one waste for another
+		let enforcedMemo: boolean | null = null;
+		const enforcedOf = (): boolean =>
+			(enforcedMemo ??= authAllowance(env as AuthBudgetEnv).enforced);
 		if (authenticated && url.pathname === '/serve') {
-			const spend = enforced ? await readAuthSpend(cache, origin, site, t0) : null;
+			const spend = enforcedOf() ? await readAuthSpend(cache, origin, site, t0) : null;
 			const decision = decideAuthMode(request, spend, env as AuthBudgetEnv, t0);
 			authMode = decision.mode;
 			authReason = decision.reason;
@@ -1066,6 +1143,23 @@ export default {
 					}
 				}
 				const html = held === null ? null : runEdgePlan(held, believedCsrf(planCookie, t0));
+				const jump = html === null ? null : readRedirectPlan(html);
+				if (jump !== null) {
+					// `/user` is a 302 to `/user/<uid>` and was the only profile the tier could not
+					// answer; see `redirectPlanBody()` for why this is safe under the private key
+					return new Response(null, {
+						status: jump.status,
+						headers: {
+							location: jump.location,
+							'cache-control': 'private, no-store',
+							'x-cfw-cache': 'PLAN',
+							'x-cfw-plan': from,
+							'x-cfw-generation': String(planGeneration),
+							[AUTH_MODE_HEADER]: authMode,
+							'x-worker-ms': String(Date.now() - t0)
+						}
+					});
+				}
 				if (html !== null) {
 					return new Response(html, {
 						status: 200,
@@ -1081,6 +1175,15 @@ export default {
 						}
 					});
 				}
+				// the render below reports `sampling` whether it feeds a compile or a key that has
+				// given up, so a path that permanently left the tier read identically to one about
+				// to join it
+				if (
+					edgePlanRefused(planKey) ||
+					edgePlanRefused(privatePlanKey(planKey, planCookie))
+				) {
+					planTier = 'refused';
+				}
 			}
 		}
 		// #endregion
@@ -1091,7 +1194,21 @@ export default {
 		if (edgeWanted) {
 			generation = await readGeneration(cache, origin, site, bucket);
 			if (generation !== null) {
-				const cached = await cache.match(pageKey(origin, site, generation, path));
+				// THE STRING BEFORE THE REQUEST, because the memo below is the tier that answers
+				// almost all of this path and it reads only the string. Building the `Request` first
+				// made every MEM hit pay a URL parse and an object allocation it never used
+				const memoKey = pageKeyUrl(origin, site, generation, path);
+				// the tier above `caches.default`, answered with no I/O at all. `anon-cached` costs
+				// 0.70 ms of cpuTime and 7.9-14.0 ms of `x-worker-ms` on a deployed worker, so
+				// almost all of it is the read below; see `src/ops/page-memo.ts`
+				const held = lookupPageMemo(memoKey, t0);
+				if (held) {
+					// the header set was assembled at STORE time; this path only stamps the timing
+					const headers = pageMemoHeaders(memoKey, t0) ?? new Headers();
+					headers.set('x-worker-ms', String(Date.now() - t0));
+					return new Response(held.body, { status: held.status, headers });
+				}
+				const cached = await cache.match(new Request(memoKey, { method: 'GET' }));
 				if (cached) {
 					// the tier that answered, without having touched the Durable Object;
 					// the DO's own verdict is preserved separately so a measurement can
@@ -1100,8 +1217,30 @@ export default {
 					headers.set('x-cfw-cache', 'EDGE');
 					headers.set('x-cfw-edge', 'HIT');
 					headers.set('cache-control', 'public, max-age=0, must-revalidate');
+					// BUFFERED rather than streamed, which is what makes the memo above possible.
+					// The body is a stored page -- 12 KB for the front page with aggregates on --
+					// so holding it costs one copy and saves this read on every later request
+					const body = new Uint8Array(await cached.arrayBuffer());
+					storePageMemo(
+						memoKey,
+						{
+							body,
+							status: cached.status,
+							contentType:
+								cached.headers.get('content-type') ?? 'text/html; charset=utf-8',
+							// only the object's own verdict travels; the tier headers are set fresh
+							// above so a memo hit never claims to have been an edge hit
+							headers: [...cached.headers].filter(
+								([name]) =>
+									name.startsWith('x-cfw-') &&
+									name !== 'x-cfw-cache' &&
+									name !== 'x-cfw-edge'
+							)
+						},
+						t0
+					);
 					headers.set('x-worker-ms', String(Date.now() - t0));
-					return new Response(cached.body, {
+					return new Response(body, {
 						status: cached.status,
 						headers
 					});
@@ -1140,7 +1279,7 @@ export default {
 			});
 			if (stale) {
 				defer(
-					stub
+					stubOf()
 						.fetch(
 							new Request(`https://do.local/__fill?path=${encodeURIComponent(path)}`)
 						)
@@ -1233,7 +1372,7 @@ export default {
 		// login POST hung forever the first time traffic actually met a lane. The bytes are already
 		// in hand a few lines up, so the retry costs a second `Request` and no stream at all
 		const retryOnPrimary =
-			lane.role !== 'replica'
+			laneOf().role !== 'replica'
 				? null
 				: buffered === undefined
 					? innerRequest.clone()
@@ -1243,7 +1382,7 @@ export default {
 							body: buffered,
 							redirect: 'manual'
 						});
-		let res = await stub.fetch(innerRequest);
+		let res = await stubOf().fetch(innerRequest);
 		if (retryOnPrimary !== null && shouldFailover(res)) {
 			// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
 			// from the status alone
@@ -1288,7 +1427,7 @@ export default {
 		// the counter rides along on a response already paid for, same as the generation. The isolate
 		// memo is set synchronously inside these two, so only ANOTHER isolate waits on the cache copy
 		// -- which is why both are deferred rather than awaited
-		if (personalised && enforced) {
+		if (personalised && enforcedOf()) {
 			const reported = parseAuthSpend(res.headers);
 			if (reported) defer(writeAuthSpend(cache, origin, site, reported));
 		}
@@ -1333,7 +1472,8 @@ export default {
 			setCookie: res.headers.getSetCookie(),
 			personalised,
 			generation: doGeneration,
-			cookie: planCookie
+			cookie: planCookie,
+			location: res.headers.get('location')
 		});
 		// what the object says this cookie is. Recorded before the compile below, because the compile
 		// keys on it, and taken from the RESPONSE so a client cannot present a role set of its own
@@ -1353,9 +1493,15 @@ export default {
 			const rolesForPlan = reportedRoles;
 			const witness = planCookie;
 			planTier = 'sampling';
+			// a redirect has no body; its whole content is the status and the target, expressed as a
+			// body so the compiler's proofs run on it unchanged
+			const jump = res.headers.get('location');
+			const asPlanBody =
+				isRedirectStatus(res.status) && jump !== null
+					? Promise.resolve(redirectPlanBody(res.status, jump))
+					: copy.text();
 			defer(
-				copy
-					.text()
+				asPlanBody
 					.then((html) => {
 						// the one slot value the front worker cannot generate, taken from this
 						// session's own render so a shared plan can substitute it later
@@ -1465,7 +1611,7 @@ export default {
 		// taken without it. A driven copy left `lanes_provisioned` unwritten, so the router never
 		// learned the pool existed and every "with lanes" arm served from the primary while the rig
 		// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object
-		headers.set(REPLICA_HEADER, lane.lane === 0 ? 'primary' : `r${lane.lane}`);
+		headers.set(REPLICA_HEADER, laneOf().lane === 0 ? 'primary' : `r${laneOf().lane}`);
 		if (armedFill !== 'n/a') headers.set('x-cfw-arm-fill', armedFill);
 		return new Response(res.body, { status: res.status, headers });
 	},
@@ -1611,8 +1757,34 @@ async function renderAdmin(
 			ownerToken === null ? undefined : { headers: { authorization: `Bearer ${ownerToken}` } }
 		);
 
+	if (url.pathname === `${SURFACE_PREFIX}/operate`) {
+		// every control on this page drives an owner route directly from the browser, so there is
+		// nothing to fetch here; the page IS the wiring that was missing
+		return html(renderShell('operate', renderOperate(), env));
+	}
+
 	if (url.pathname === `${SURFACE_PREFIX}/deploy`) {
-		return html(renderShell('deploy', renderDeploy(), env));
+		// the page took no arguments and never reached the object, so it rendered identically
+		// before and after connecting an account. The status is one read and it is what makes
+		// Disconnect reachable at all
+		let status: CfAccountStatus | null = null;
+		try {
+			const inner = new URL(url);
+			inner.pathname = '/__cfoauth';
+			inner.search = '?action=status';
+			const res = await stub.fetch(asOwner(inner));
+			const body = (await res.json()) as CfAccountStatus & { ok?: boolean };
+			if (body?.ok !== false) status = body;
+		} catch {
+			// a page that cannot read the status still renders the connect flow; it is the
+			// requirement list that matters and an error banner here would be noise
+			status = null;
+		}
+		// the OAuth return leg lands here with the outcome, because a JSON body was a dead end
+		const notice = url.searchParams.has('connected')
+			? 'Connected.'
+			: (url.searchParams.get('error') ?? null);
+		return html(renderShell('deploy', renderDeploy(status, notice), env));
 	}
 
 	if (url.pathname === `${SURFACE_PREFIX}/git`) {
@@ -1708,17 +1880,22 @@ async function renderAdmin(
 			// the registry always answers, so the table renders even when the typed command goes
 			// somewhere else
 			const res = await stub.fetch(asOwner(inner));
+			// AN OBJECT, KEYED BY NAME, and this read it as an array for the whole life of the
+			// surface. `OpsRegistry::operations()` returns a string-keyed PHP array, so `json_encode`
+			// emits an object and `for...of` over it throws `is not iterable`. The throw landed in
+			// the catch below, so `entries` stayed empty AND the typed command never ran: every visit
+			// rendered "0 of 0 have a driver" beside an error card, and no command an operator typed
+			// did anything. `site-do.ts` reads the same payload as a Record two lines from where it
+			// builds it.
 			const body = (await res.json()) as {
-				operations?: {
-					op: string;
-					label?: string;
-					driver?: string | null;
-					cost?: string | null;
-				}[];
+				operations?: Record<
+					string,
+					{ label?: string; driver?: string | null; cost?: string | null }
+				>;
 			};
-			for (const o of body.operations ?? []) {
+			for (const [op, o] of Object.entries(body.operations ?? {})) {
 				entries.push({
-					op: o.op,
+					op,
 					label: o.label ?? '',
 					driver: o.driver ?? null,
 					cost: o.cost ?? null

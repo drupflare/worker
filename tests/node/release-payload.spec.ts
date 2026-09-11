@@ -1,9 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { afterAll, describe, expect, it } from 'vitest';
-import { isSafePayloadPath, readManifest, verifyExtracted } from '../../scripts/hydrate.ts';
+import {
+	isSafePayloadPath,
+	missingMarkers,
+	readManifest,
+	verifyExtracted
+} from '../../scripts/hydrate.ts';
 import { SIZE_CEILING } from '../../scripts/measure/bundle-size.ts';
 import {
 	ASSET_FILE_BYTES_LIMIT,
@@ -551,5 +556,49 @@ describe('the asset tree against the upload limits', () => {
 		const root = fixture();
 		mkdirSync(join(root, 'assets'), { recursive: true });
 		expect(measureAssetUpload(root, '/*\n!/never-built/\n').files).toBe(0);
+	});
+});
+
+/**
+ * Hydrating a tree that is already hydrated.
+ *
+ * **IT OVERWRITES IT**, with whatever release `package.json`'s version names -- so a developer who
+ * has just repacked `assets/driver.json` gets the published copy back with nothing said. Observed:
+ * a `bun run hydrate` on a working tree replaced a freshly packed driver with the one from a stale
+ * local payload. That is the same shape as `restore-artifacts.ts` reverting a hand edit to
+ * `site.sqlite`, and `wrangler.jsonc` now names this as its build command, so every
+ * `wrangler deploy` would have done it.
+ */
+describe('hydrate leaves a complete tree alone', () => {
+	it('finds nothing missing when every marker is present', () => {
+		expect(missingMarkers('/nowhere', () => true)).toEqual([]);
+	});
+
+	it('names every marker when none is, so a refusal can say which', () => {
+		const missing = missingMarkers('/nowhere', () => false);
+		expect(missing.length).toBeGreaterThan(0);
+		// the artifacts a checkout genuinely cannot build; if one leaves this list the guard stops
+		// protecting it
+		expect(missing).toContain('assets/driver.json');
+		expect(missing).toContain('assets/drupal-pf/core.pf.json');
+		expect(missing).toContain('assets/drupal-sql/manifest.json');
+	});
+
+	it('names a partial tree by the one thing it lacks', () => {
+		const missing = missingMarkers('/nowhere', (p) => !String(p).endsWith('prefill.json'));
+		expect(missing).toEqual(['assets/prefill.json']);
+	});
+
+	// the wiring: the build command wrangler runs has to be the one that no-ops, or the guard above
+	// protects a path nothing takes
+	it('is what wrangler.jsonc declares as its build command', () => {
+		const config = readFileSync(
+			resolve(import.meta.dirname, '../../wrangler.jsonc'),
+			'utf8'
+		).replace(/^\s*\/\/.*$/gm, '');
+		const parsed = JSON.parse(config) as { build?: { command?: string } };
+		expect(parsed.build?.command, 'no build command, so a fresh clone builds nothing').toMatch(
+			/hydrate/
+		);
 	});
 });

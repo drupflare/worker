@@ -17,6 +17,10 @@ services:
       - vps-site:/var/www/html/sites/default
       - ../assets/drupal/site.sqlite:/seed/site.sqlite:ro
       - vps-db:/var/www/db
+      # SHARED WITH NGINX so a save can evict what nginx cached. `ngx_cache_purge` is a
+      # third-party module and is not in the official image, so the purge is done by removing the
+      # cache entries themselves -- see `docker/vps/purge.php`
+      - vps-cache:/var/cache/nginx/drupal
     deploy:
       resources:
         limits:
@@ -37,6 +41,7 @@ services:
       - ../drupal-src:/var/www/html:ro
       - vps-site:/var/www/html/sites/default
       - ./vps/nginx.conf:/etc/nginx/nginx.conf:ro
+      - vps-cache:/var/cache/nginx/drupal
     ports:
       - '127.0.0.1:${VPS_PORT:-8099}:80'
     deploy:
@@ -53,3 +58,4 @@ services:
 volumes:
   vps-db:
   vps-site:
+  vps-cache:

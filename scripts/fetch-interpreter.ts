@@ -54,6 +54,13 @@ export type FetchResult = {
  * and the frame is brotli now, which has no such field. Nothing is lost: `files[].sha256` already
  * content-addresses the frame, which is the stronger identity the declared length was standing in
  * for.
+ *
+ * `files` NAMES ONLY WHAT WAS DOWNLOADED, and it named the frame until 2026-09-10. A frame is packed
+ * from the wasm on this machine, so its bytes are already determined by an entry beside it -- and
+ * the shipping seam stopped importing one when the compressed bundle limit was removed. The stale
+ * entry outlived two switches, zstd to brotli and then brotli to raw, so the pin named a
+ * `php8.5.wasm.zst` compressed from a binary no longer on disk. `cdn-manifest.json` mirrors these
+ * same two files and `interp-pin-agreement.spec.ts` holds the pair together.
  */
 export type InterpreterPin = {
 	name: 'drupflare-interpreter-pin';
@@ -91,7 +98,7 @@ export function buildPin(
 		phpVersion,
 		artifactId: result.artifactId,
 		frame: { raw: result.raw, packed: result.packed },
-		files: [result.wasm, result.glue, result.frame].sort().map((path) => ({
+		files: [result.wasm, result.glue].sort().map((path) => ({
 			path,
 			bytes: statSync(path).size,
 			sha256: sha256(path)
@@ -118,12 +125,17 @@ export function pristineGlue(path: string): string {
  * and what was measured is the incumbent interpreter. A hydrated tree makes that the DEFAULT
  * outcome, because hydrate restores the incumbent first.
  *
+ * IT CHECKS THE DOWNLOAD, NOT THE FRAME, and checking the frame made `bun run build:wasm`
+ * unrunnable on the canonical config. `php-binary-raw.ts` imports the wasm uncompressed, so a frame
+ * is never among the seam's imports and the guard fired on every fetch. Only the bench and
+ * `experiments/wrangler/` configs still name one, and this reads `wrangler.jsonc`.
+ *
  * @param root - the checkout holding `wrangler.jsonc`
  * @throws naming both sides, because the failure is a version mismatch and not a missing file.
  */
 export function assertSeamImports(root: string, result: FetchResult): void {
 	const imports = interpreterFiles(root).map(pristineGlue);
-	const missing = [result.frame, result.glue].filter((path) => !imports.includes(path));
+	const missing = [result.wasm, result.glue].filter((path) => !imports.includes(path));
 	if (missing.length) {
 		throw new Error(
 			`the aliased seam imports ${imports.join(', ')} and this fetch wrote ` +
@@ -231,13 +243,16 @@ if (import.meta.main) {
 	if (!variant || !phpVersion) {
 		console.error(
 			'usage: bun scripts/fetch-interpreter.ts <variant> <php-version> [artifact-id]' +
-				' [--pin] [--any-version] [--force]'
+				' [--pin] [--any-version] [--force] [--cached]'
 		);
 		console.error('   eg: bun scripts/fetch-interpreter.ts control85 8.5');
 		process.exit(2);
 	}
-	// a pin records WHICH artifact produced the bytes, so it cannot be written from a cached run
-	const force = args.includes('--force') || args.includes('--pin');
+	// a pin records WHICH artifact produced the bytes, so it cannot be written from a cached run.
+	// `--cached` is for the one case where that is unrecoverable: the shipping binary's artifact
+	// has expired off phasm and the only copy left is the one `restore-artifacts.ts` verified
+	const force =
+		args.includes('--force') || (args.includes('--pin') && !args.includes('--cached'));
 	const result = fetchInterpreter(variant, phpVersion, artifactId, force);
 	if (!args.includes('--any-version')) assertSeamImports(process.cwd(), result);
 	console.log(

@@ -496,7 +496,24 @@ export const ROWS_PER_FILL = {
 	// collection at BUILD time, so the first fill no longer writes what it used to discover. The
 	// remaining charge attributes to `cache_data` (12) and `key_value` (4), measured by
 	// `rows-per-fill-audit.spec.ts`, which reports every class beside its constant
-	firstFillOnFreshObject: 88
+	//
+	// 88 -> 96 WITH THE MODULE SURFACE THIS REPOSITORY SHIPS. The packed driver went from 2 routes
+	// to 4 and gained the health ledger's capability; the growth is `cache_discovery` 27,
+	// `cache_default` 21 and `cache_render` 15, which is where a larger surface is discovered.
+	// THE CONTROL IS THE OTHER THREE CLASSES: `firstEverForPath` 14, `realRender` 9 and
+	// `warmReassemble` 2 are unchanged to the row, so nothing about steady-state rendering or
+	// storing moved and the cost is confined to the once-per-object class. n=2, no spread.
+	//
+	// The A/B that would have named it directly is not constructible: packing the driver from the
+	// pre-session sibling and leaving the host current reads 70, with 5 `watchdog` rows and
+	// `warmReassemble` moving the WRONG way, because that pairing is a host and a module that no
+	// longer fit. A control has to move both sides or neither
+	/**
+	 * 96 -> 94 on 2026-09-11, when `advanceCommit()` stopped writing `cfw_meta` per authoritative
+	 * statement. A fill advances the commit sequence a handful of times; batching them to one row
+	 * per invocation is what moved this, and it moved a content SAVE far more -- 188 -> 161.
+	 */
+	firstFillOnFreshObject: 94
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

@@ -58,6 +58,8 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/park-dispatch.spec.ts',
 	'tests/integration/park-interpreter.spec.ts',
 	'tests/integration/park-oidc.spec.ts',
+	// drives two real renders to prove the tally moves with them and only with them
+	'tests/integration/park-totals.spec.ts',
 	'tests/integration/seed-cache-cost.spec.ts',
 	'tests/integration/session-gc.spec.ts',
 	'tests/integration/interpreter-recycle.spec.ts',

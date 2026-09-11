@@ -1,14 +1,13 @@
 {
 	"name": "drupflare-interpreter-pin",
-	"version": 1,
+	"version": 2,
 	"repo": "drupflare/phasm",
 	"variant": "long64",
 	"phpVersion": "8.5",
-	"artifactId": "9674599820",
+	"artifactId": "cached",
 	"frame": {
-		"raw": 12234575,
-		"packed": 2671745,
-		"declared": 12234575
+		"raw": 13401742,
+		"packed": 2810301
 	},
 	"files": [
 		{
@@ -20,11 +19,6 @@
 			"path": ".interp/php8.5.wasm",
 			"bytes": 13401742,
 			"sha256": "fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac"
-		},
-		{
-			"path": ".interp/php8.5.wasm.zst",
-			"bytes": 2671745,
-			"sha256": "2e5e143e90e9cae4b095a245b4784f8e2ebccdc2a58a2b55ee673c5298b6fe85"
 		}
 	]
 }

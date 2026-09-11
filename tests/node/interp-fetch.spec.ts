@@ -50,21 +50,27 @@ function hasZstd(): boolean {
 	}
 }
 
-/** a checkout whose canonical config aliases a seam importing the 8.5 interpreter */
+/**
+ * A checkout whose canonical config aliases a seam importing the 8.5 interpreter.
+ *
+ * THE RAW SEAM, because that is what `wrangler.jsonc` aliases and `assertSeamImports` reads. This
+ * modelled the brotli one and so asserted a guard the canonical config can never satisfy: the raw
+ * seam imports no frame, so requiring one refused every fetch and `bun run build:wasm` could not
+ * complete.
+ */
 function checkout(): string {
 	const root = fixture();
 	mkdirSync(join(root, 'src/runtime'), { recursive: true });
 	writeFileSync(
 		join(root, 'wrangler.jsonc'),
-		'{ "alias": { "./runtime/php-binary.js": "./src/runtime/php-binary-85.ts" } }'
+		'{ "alias": { "./runtime/php-binary.js": "./src/runtime/php-binary-raw.ts" } }'
 	);
 	writeFileSync(
-		join(root, 'src/runtime/php-binary-85.ts'),
+		join(root, 'src/runtime/php-binary-raw.ts'),
 		[
-			"import PHPFactory from '../../.interp/php8.5-worker.mjs';",
-			"import blob from '../../.interp/php8.5.wasm.br';",
-			"import decoder from '../../.interp/zstddec.wasm';",
-			'export { PHPFactory, blob, decoder };'
+			"import PHPFactory from '../../.interp/php8.5-worker.tuned.mjs';",
+			"import wasmModule from '../../.interp/php8.5.wasm';",
+			'export { PHPFactory, wasmModule };'
 		].join('\n')
 	);
 	return root;
@@ -143,12 +149,14 @@ describe('the pin is the only reviewable part of an interpreter bump', () => {
 		expect(pin.phpVersion).toBe('8.5');
 		expect(pin.artifactId).toBe('4102938475');
 		expect(pin.frame).toEqual({ raw: 12_218_393, packed: 2_659_133 });
-		expect(pin.files).toHaveLength(3);
+		// the DOWNLOAD only. A frame is packed from the wasm on this machine, so its bytes are
+		// already determined by the entry beside it, and pinning it left the file naming a
+		// `.wasm.zst` compressed from a binary two seam switches ago
+		expect(pin.files).toHaveLength(2);
 		for (const file of pin.files) expect(file.sha256).toMatch(/^[0-9a-f]{64}$/);
 		expect(pin.files.map((f) => `${f.path.split('/').pop()}:${f.bytes}`)).toEqual([
 			'php8.5-worker.mjs:4',
-			'php8.5.wasm:4',
-			'php8.5.wasm.br:5'
+			'php8.5.wasm:4'
 		]);
 	});
 
@@ -188,7 +196,7 @@ describe('fetching a version the seam does not import measures the incumbent', (
 		} catch (cause) {
 			message = cause instanceof Error ? cause.message : String(cause);
 		}
-		expect(message).toContain('.interp/php8.5.wasm.br');
-		expect(message).toContain('.interp/php8.3.wasm.br');
+		expect(message).toContain('.interp/php8.5.wasm');
+		expect(message).toContain('.interp/php8.3.wasm');
 	});
 });

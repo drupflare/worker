@@ -49,12 +49,15 @@ outbound call between invocations rather than inside one, so a deferred exchange
 the first request. The module is recorded untested with that mechanism: measured, the deferred tier
 does carry its GET across two renders, and what it lacks is a live Search.gov key.
 
-`drupal/redis` was named here as refused for the same reason and no longer is, which is worth
-separating rather than leaving as a pair. Redis speaks a socket protocol, and a trapped socket call
-freezes PHP while the Worker performs the exchange, so the answer does arrive inside the request. An
-HTTP call cannot take that route, because PHP reaches HTTPS through a wrapper the runtime invokes
-from inside a C frame that a suspended call cannot return through. So the two are refused by
-different mechanisms, and only one of them is still refused.
+`drupal/redis` was named here as refused for the same reason and no longer is. **Nor is HTTP**, which
+this page said could not take that route: PHP does reach HTTPS through a wrapper the runtime invokes
+from inside a C frame a suspended call cannot return through, and the answer was to stop going that
+way rather than to accept it. `ParkFetchHandler` replaces Guzzle's transport with plain userland
+code, which is a frame the park can suspend under, so an HTTP response arrives inside the render that
+asked for it. `config/modules.yml` records the park carrying `api.gsa.gov` that way.
+
+What keeps the module untested is now its own: a live Search.gov key, and its `#pre_render`
+behaviour. Neither is a runtime refusal.
 
 ## The USWDS Theme
 

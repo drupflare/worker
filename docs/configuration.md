@@ -25,15 +25,29 @@ read where they are bound and absent otherwise.
 | `ASSETS`              | Workers Assets   | declared         | no pack, no driver, no `/core/**`; an object cannot boot                             |
 | `CONFIG_KV`           | KV               | declared         | the plan override and the runtime levers are absent; the deployed vars stay in force |
 | `FLEET_DB`            | D1               | declared         | the cross-site inventory is absent; a single site does not need one                  |
-| `FILES`               | R2               | declared         | the page and file mirror drains nothing; the off-Worker serving path is unavailable  |
+| `FILES`               | R2               | **not declared** | the page and file mirror drains nothing; the off-Worker serving path is unavailable  |
 | `CF_VERSION_METADATA` | version metadata | declared         | the fleet row records `workerVersion: "unknown"`                                     |
 | `PAGE_KV`             | KV               | not declared     | the cross-colo page tier is absent rather than broken                                |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
 `FILES` was undeclared until 2026-09-07, and the whole R2 tier was unreachable because of it:
 `drainMirrors()` and `drainPageMirrors()` were both gated on a binding the config never named, so they
-ran on no deploy. R2 is a paid-plan feature and has to be enabled on the account before the bucket
-exists, which is a dashboard action rather than a wrangler one.
+ran on no deploy.
+
+**IT IS UNDECLARED AGAIN, AND THIS TIME IT IS THE ONE-CLICK DEPLOY THAT DECIDED IT.** Measured
+2026-09-11 against a fresh free account: the canonical config uploaded all 4,749 assets and was then
+refused with _"Please enable R2 through the Cloudflare Dashboard. [code: 10042]"_ on
+`/r2/buckets/drupflare-files`. R2 has to be enabled from the dashboard before a bucket can exist, so
+naming one in the shipping config makes the deploy button fail for every account that has not done
+that. The control is the same deploy with only `r2_buckets` removed: it succeeded, and wrangler
+**auto-provisioned both of the others** -- `CONFIG_KV` came back with a new namespace id and
+`FLEET_DB` was created by name. KV and D1 were never the problem.
+
+Add it back yourself when you want the mirror:
+
+```jsonc
+"r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }]
+```
 
 An unbound optional binding always wins over the var that would enable the feature. Asking for a tier
 that is not bound is a configuration error, and answering it with a crash on the serving path would
@@ -417,7 +431,7 @@ the pool rather than to whoever holds the owner token. Read the state through `/
 
 ## The Admin Surface
 
-The six `/_cfw` pages take the same owner token. A browser cannot put a header on its own navigation,
+The seven `/_cfw` pages take the same owner token. A browser cannot put a header on its own navigation,
 so `/_cfw/login` exchanges the token for a cookie: `HttpOnly`, `SameSite=Strict`, twelve hours,
 cleared by `/_cfw/logout`. A page reached without it redirects to the sign-in form and returns
 afterwards. A bearer header reaches the same pages, so a script needs no browser.

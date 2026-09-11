@@ -31,6 +31,21 @@ so an authenticated read workload scales past one thread. See
 Drupflare targets **solo, indie and budget-bound sites**, where the cost is the hours rather than the
 hosting bill.
 
+**The claim, stated precisely: Drupflare is faster than a single-region VPS for any visitor who is
+not sitting next to it, and the margin grows with distance.** Traffic-weighted across the workload
+mix, against nginx and PHP-FPM 8.5 serving the same Drupal tree and the same database:
+
+| the visitor is               | ratio      |
+| ---------------------------- | ---------- |
+| in the VPS's own datacenter  | **1.50x**  |
+| on the same continent        | **6.35x**  |
+| one ocean away               | **11.32x** |
+| on the far side of the world | **23.09x** |
+
+Same-datacenter is the VPS at its theoretical best and nobody's real audience. The rest is
+[Geography](#-geography-the-term-localhost-leaves-out). Where Drupflare is slower is under
+[Limitations](#-limitations), and a raw uncached render is one of them.
+
 Every Drupflare figure marked **M** is measured, on deployed Cloudflare infrastructure or on this
 machine, and the column says which. **D** is derived from measured inputs and is arithmetic rather
 than a reading. **L** is a vendor's published list price. **n/m** is not measured, and is stated as a
@@ -67,8 +82,10 @@ workloads. The VPS peaks at 204 req/s on the front page and 67 on admin, then de
 Read three things off these tables before drawing a conclusion from them.
 
 **Both arms are on localhost, which is the VPS's best case and not a real one.** A VPS sits in one
-region; Drupflare answers from the visitor's own colo. The network term that a real user pays on
-every VPS request is absent here and has to be added back before any end-to-end claim.
+region; Drupflare answers from the visitor's own colo. The network term a real user pays on every
+VPS request is absent from the tables above. It is measured separately in
+[Geography](#-geography-the-term-localhost-leaves-out), and it is the largest term in the
+comparison.
 
 **A re-render is 1.28x, not two orders of magnitude.** The larger ratios elsewhere in this file are
 a warm-kernel interpreter comparison and a both-bins-emptied edge render, which are different
@@ -167,6 +184,47 @@ A raw uncached render is slower than native PHP, by a ratio the technical report
 architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor
 forces a render, shell assembly cuts the render rather than the boot. What remains slower is listed
 under [Limitations](#-limitations).
+
+### 🌍 Geography, the term localhost leaves out
+
+Every table above gives the VPS a visitor standing in its own datacenter. A real visitor is somewhere
+else, and a single-region VPS answers all of them from one place while Cloudflare answers from the
+colo nearest each. That difference is the largest term in the comparison and it is measured rather
+than argued: `scripts/measure/delay-proxy.mjs` puts a real delaying proxy in front of the VPS arm, so
+its connection pays the network instead of having a number added afterwards.
+
+Distances are Azure's published P50 round-trip figures between regions, 30-day window ending
+2026-07-30. From US-East: West US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia
+201 ms, Southeast Asia 224 ms.
+
+| injected round trip   | VPS weighted p50 | Drupflare weighted p50 | ratio      |
+| --------------------- | ---------------- | ---------------------- | ---------- |
+| 0 ms, same datacenter | 14.8 ms          | 9.9 ms                 | **1.50x**  |
+| 40 ms, same continent | 56.5 ms          | 8.9 ms                 | **6.35x**  |
+| 82 ms, transatlantic  | 100.2 ms         | 8.9 ms                 | **11.32x** |
+| 200 ms, antipodal     | 218.0 ms         | 9.4 ms                 | **23.09x** |
+
+Traffic-weighted across the workload mix, three replica lanes, `viable: true` with zero regressions
+on all three network arms. Drupflare's figure barely moves across them, because the term being added
+is one a single-region VPS pays and an edge network does not.
+
+Four things bound the claim.
+
+**The advantage is not uniform. It is zero for a visitor in the VPS's own city and largest for one
+on the other side of the world.** A site whose audience sits beside its VPS gains nothing here.
+
+**A weighted global average is not available.** The ITU publishes internet penetration by region and
+not users per region, so any single worldwide figure needs a population table this project does not
+have. The per-distance rows above are the honest form.
+
+**The proxy understates, twice.** It delays data rather than the TCP handshake, so a real first visit
+pays a handshake and a TLS round trip this does not model; and Drupflare's own arm stays on localhost
+and pays no network at all.
+
+**Drupflare's edge is not zero either.** Cloudflare's own real-user measurements, published
+2026-09-26 over the top 964 networks, put its median connect time at 49 ms including the last mile,
+and 113 ms in India. The last mile is paid by both arms and cancels; what does not cancel is the
+distance to the origin.
 
 ---
 
@@ -680,8 +738,9 @@ a site actually has, from its router table and its entity tables, ranks them by 
 recency then depth, and queues the top of the list for the same fill batch a visitor's request would
 use. It never renders, so it cannot compete with a request for the interpreter.
 
-It is off by default and bounded when on: it refuses below a remaining-budget floor, spends at most a
-declared share of the day's writes, and resumes the next day when that share is gone.
+It runs by default and is bounded: it refuses below a remaining-budget floor, spends at most a
+declared share of the day's writes, and resumes the next day when that share is gone. Left unasked it
+takes the smaller share; `SWEEP` sets it explicitly in both directions, and `SWEEP=0` turns it off.
 
 ```sh
 drangler sweep my-site.example       # coverage, and what bounded the last step

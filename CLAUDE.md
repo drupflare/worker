@@ -220,7 +220,8 @@ shipping-code change: `parseRemote()` discards the host for Bitbucket, `cloneUrl
 
 ## The database HAS a producer now, and four claims here were stale
 
-`assets/drupal/site.sqlite` is **7,585,792 bytes** and `scripts/drupal/install-site-db.php` builds it
+`assets/drupal/site.sqlite` is **5,349,376 bytes** as of `3e4f2737` and
+`scripts/drupal/install-site-db.php` builds it
 from nothing. `docs/database.md` is the recipe; `bun run build:site-db` runs it and
 `node scripts/diff-site-db.ts` is the acceptance check. Measured 2026-09-09, a fresh build against
 the shipped file agrees on **41 modules of 41 and 175 config rows of 175**, with every remaining
@@ -229,7 +230,9 @@ difference attributed.
 **This section said the opposite until 2026-09-09, and each correction is worth knowing:**
 
 - "6.6 MB" was the superseded R2-archived lineage `site.sqlite.trimmed-1618p-cc13` at 6,627,328
-  bytes, pinned in `scripts/backup-cdn.ts`. The shipped file has been 7,585,792 since 2026-08-14.
+  bytes, pinned in `scripts/backup-cdn.ts`. It then read 7,585,792 from 2026-08-14, and 5,349,376
+  since `3e4f2737 chore: rebuild the packed database at 11.4.6`. **Count it, do not quote it** --
+  this line has been wrong twice.
 - "nothing in this repo produces it" -- `install-site-db.php` had existed for two weeks and
   `bake-pack.ts` already said so. What had no producer was three DELTAS: the `page_content_type`
   recipe, enabling `drupflare`, and 16 cache index drops. All three are in the script now.
@@ -906,6 +909,62 @@ row drops the connection, so it is read in 64 KiB slices.
 Use the canonical `wrangler.jsonc`, not `wrangler.bench.jsonc` -- bench aliases the brotli seam and
 `.interp/php8.5.wasm.br` lags the glue, which aborts the boot with `ASM_CONSTS[e] is not a function`.
 
+## The one-click deploy was refused by ONE binding, and it was not the one this file named
+
+Measured 2026-09-11 on a fresh free account with the canonical config, name changed and nothing
+else. All 4,749 assets uploaded and the deploy was then refused:
+_"Please enable R2 through the Cloudflare Dashboard. [code: 10042]"_ on
+`/r2/buckets/drupflare-files`.
+
+**The control is the finding.** The same deploy with only `r2_buckets` removed SUCCEEDED, and
+wrangler **auto-provisioned both of the others** -- `CONFIG_KV` came back with a new namespace id
+and `FLEET_DB` was created by name. This file had recorded "CONFIG_KV, the drupflare-files R2 bucket
+and the drupflare-fleet D1 database do not exist on the free account" as though the three were
+equivalent; only R2 needs a dashboard action before a bucket can exist, so only R2 can refuse a
+deploy.
+
+`r2_buckets` is out of `wrangler.jsonc` and documented as an opt-in addition. **The test lane still
+has it**: `vitest.config.ts` declares `r2Buckets: ['FILES']`, because miniflare's R2 is local and
+needs no account, so the tier stays exercised while the button works.
+
+What the same deploy then proved end to end: the 75-chunk pack replays in **2 invocations**
+(`x-cfw-migrate: 40/75` on the first poll), a real Drupal page answered ~6 s after deploy, and
+`/user/login` read `x-cfw-cache: HIT` with `x-cfw-php-booted: 0`. Worker Startup Time 24 ms.
+
+**`wrangler deploy --dry-run` cannot see any of this.** A binding that names an existing resource is
+a deploy-time dependency even where the runtime treats it as optional, and the only instrument for a
+one-click claim is a real deploy against an account that has never been used.
+
+## `bun run hydrate` OVERWRITES a hydrated tree, and that took three artifacts at once
+
+Run on a complete checkout it unpacks the payload `package.json`'s version names, over whatever is
+there. Measured 2026-09-11: one run replaced `assets/drupal-pf`, `assets/drupal-sql` and the tuned
+interpreter glue with an older release's copies, and the damage presented as three unrelated
+failures rather than as one clobber.
+
+- `container-cid.spec.ts`: the pack hashed `748a88e7a06b6d0a` against the database's
+  `01b5b66bd61b00b1`, which is the 1,024 ms-per-boot container rebuild this file already documents.
+- twelve `index-audit` assertions: **302 CREATE INDEX against 157**.
+- every workers spec aborting with `ASM_CONSTS[code] is not a function`, which is a glue/wasm
+  mismatch and reads exactly like a broken interpreter.
+
+**All three were recovered with no download**, which is the useful half: `bun run assets:pack`
+rebuilds the pack from `drupal-src`, whose `vendor/drupal/DrupalInstalled.php` carries the right
+`VERSIONS_HASH`; `bun run assets:sql` rebuilds the chunks from the TRACKED `site.sqlite`; and
+`emitTunedGlue()` in `scripts/measure/growth-glue.ts` re-derives the tuned glue from the pristine
+`php8.5-worker.mjs`, which still matched `interp.lock.json`.
+
+**AND `assets:pack` ALONE IS NOT THE RECOVERY, which this project has now got wrong twice.** It
+needs `assets:twig` BEFORE it -- the pack has to carry the baked templates and the manifest is
+compared against them -- and `assets:scrub` AFTER it, because a rebuild puts a `hash_salt` back into
+`sites/default/settings.php` and every site would then share one. Seven assertions across
+`twig-bake.spec.ts` and `pack-secrets.spec.ts` are what catch each half. The order is
+`assets:twig` -> `assets:pack` -> `assets:scrub`, and running the middle alone is the mistake.
+
+`hydrate` no-ops on a complete tree now unless `--force`. That matters beyond the accident:
+`wrangler.jsonc` declares `build.command` for the first time, so without the guard every
+`wrangler deploy` would have done this to a developer's tree.
+
 ## Commands
 
 **VITEST 4'S DEFAULT REPORTER HIDES CONSOLE OUTPUT FROM PASSING TESTS, and every `DRUPFLARE_MEASURE`
@@ -1335,12 +1394,25 @@ ahead of a tree resolved weeks earlier.
 **The root's phpstan is at 56 errors, always has been, and is gated nowhere** -- verified against the
 old manifest and lock, same count. Not caused by this.
 
-## The end-to-end host comparison exists, and it answers NO
+## The end-to-end host comparison exists, and every cross-arm number it gave is pending
 
 `bun run measure:host` drives BOTH hosts through one matched workload set in ONE process and decides
 against a predicate written before the numbers (`scripts/measure/verdict-math.ts`, 23 assertions in
 `tests/node/host-verdict.spec.ts`). Every earlier comparison was a human reading two JSON documents
 and dividing, which is where "225x" came from.
+
+**IT DROVE `vps` THEN `edge` IN EVERY CELL OF EVERY RUN, so its bias had a direction and pointed at
+the arm the rig exists to judge.** Sequential arms are correct and were justified; the FIXED ORDER
+was not, and the docblock's reasoning stopped one step short. Anything that drifts inside a cell --
+a cache filling, memory pressure building, another job starting -- lands on whichever arm goes
+second. This repository had already recorded the identical mistake against the ABI harness: per-arm
+blocks read long64 1.5% faster than wasm32 and interleaving read 1.001x. The order rotates per cell
+now, and `selfControl()` runs ONE arm as both so a run prints the resolution a cell has to beat.
+**The magnitude is unmeasured, so treat the readings below as owed a re-run rather than as refuted.**
+
+**AND CHECK FREE MEMORY BEFORE BELIEVING ANY CELL.** On 2026-09-10 the OOM killer took the full gate
+and `wrangler dev` twice at ~60 MB free, and an `auth-admin c=4` reading of 452 ms with errors was
+the edge worker dying rather than answering. Never run `bun run test` alongside the rig.
 
 **EVERY EARLIER "WITH LANES" READING DROVE 100% OF TRAFFIC TO THE PRIMARY, so re-measure before
 citing one.** `/replica?action=provision` copied a lane, promoted it to SERVING and reported it
@@ -1361,7 +1433,11 @@ One mechanism blocks a yes, and one that used to be listed here is refuted:
 
 - **One Durable Object serializes.** `anon-cached` reads 2/2 ms at c=1 but 6 against 3 at c=4 and 25
   against 4 at c=16, against `pm.max_children = 32`. That slice is 82% of the traffic weight, so it
-  decides the verdict alone.
+  decides the verdict alone. **These predate the `cfw_page` seed**: `planRestore()` refused to copy
+  the page store, so every lane met anonymous traffic with an empty cache and RENDERED. Within the
+  edge arm, c=4 went 405 ms / 6.1 req/s to 6 ms / 510 req/s once lanes arrived holding pages -- see
+  `SEED_ON_RESTORE`. The serialization claim is about ONE object and may still hold; what is certain
+  is that no reading taken before the seed measured a pool that could serve.
 - **REFUTED: "the replica pool and the plan tier fight each other".** The reading behind it -- 0
   lanes reaching `PLAN:private` at request 4 and 3 lanes reading `RENDER` for all eight -- was taken
   on a rig where no request reached a lane, so lanes were not the variable it named. With them

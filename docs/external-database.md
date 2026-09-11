@@ -64,15 +64,22 @@ no coordination.
 
 Today a new site costs one Durable Object and no account-level resource at all.
 
-### The Interpreter Cannot Await
+### The Statement Boundary, Not the Await
 
-`SqlLike.exec()` in `src/db/migrate-sql.ts` is synchronous and returns a cursor, and every write path
-runs inside `ctx.storage.transactionSync()`. The runtime forces that: PHP compiled to wasm is a
-synchronous interpreter, and the shipping build is not a JSPI build. `wrangler.jsonc` aliases
-`./runtime/php-binary.js` to `src/runtime/php-binary-85.ts`; the JSPI seam
-(`src/runtime/php-binary-jspi.ts`) targets an 8.3 experiment build and does not ship. Without JSPI,
-PHP cannot suspend across a JavaScript `await`, so a database reachable only through a Promise cannot
-be read from inside a Drupal render.
+This section said the interpreter cannot await, and that is no longer the constraint.
+`ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and lets the Worker perform
+I/O in JavaScript before resuming the same PHP call. A Promise-based client is therefore reachable
+from PHP, and `drupal/redis` proves it against a real server.
+
+What survives is narrower and sits one level down. `SqlLike.exec()` in `src/db/migrate-sql.ts` is
+synchronous and returns a cursor, and every write path runs inside `ctx.storage.transactionSync()`.
+The park suspends a PHP call; it cannot suspend the host callback a statement is already executing
+inside. So an external database is reachable from PHP code that has not yet entered a statement, and
+unreachable from inside one -- which is where Drupal's driver spends a render.
+
+Costing it needs a number nobody has taken: **a single park's `cpuTime` on a deployed worker**. A
+database makes about fifteen calls per warm render, so fifteen parks is either negligible or the
+whole request depending on that figure, and no proposal here should be scored until it exists.
 
 Every documented Hyperdrive call is Promise-based. PostgreSQL usage is `env.HYPERDRIVE.connectionString`
 handed to `postgres.js` or `node-postgres` and awaited; MySQL usage is `mysql2/promise`. There is no
@@ -188,9 +195,10 @@ real. Hyperdrive is a compatibility escape hatch, and no kind of capacity lever.
   first. There is no free tier of "a Postgres you own".
 - **The consistency primitives.** The generation counter, the resumable migration and the chunked
   restore would each need rewriting against a different concurrency model.
-- **A JSPI interpreter, or an async bridge for every statement.** This is the blocking item. JSPI is
-  worth about 1% of the regeneration ceiling as a performance lever, so it would be built for
-  this reason alone.
+- **An async bridge for every statement.** This is the blocking item, and the bridge exists at the
+  wrong level: the park suspends a PHP call, not the host callback a statement executes inside. JSPI
+  is not the answer either -- it is dominated by the park and is worth about 1% of the regeneration
+  ceiling on its own.
 - **A second failure domain.** Today a site is up when its object is up. With an external database it
   is up when the object, Hyperdrive and the database are all up.
 

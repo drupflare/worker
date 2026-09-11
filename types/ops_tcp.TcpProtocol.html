@@ -16,14 +16,20 @@
 <p><strong>Imported from <code>edgeport/core</code>, not the package root</strong>, which re-exports 20 namespaces it never
 imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
 not bundle.</p>
-<p><strong><code>cfw_tcp_connect()</code> / <code>read()</code> / <code>write()</code> / <code>close()</code> CANNOT EXIST, and that is a property of
-the interpreter rather than a gap in this file.</strong> <code>Host::call()</code> is <code>$reply = $invoke($json)</code>: the
-wasm stack cannot suspend without JSPI or Asyncify, so any host function that awaits hands PHP a
-Promise it can only stringify. A session API needs a <code>read()</code> that blocks for bytes that have not
-arrived, so the mechanism is closed. The OBJECTIVE -- PHP-reachable TCP -- is not, and this is what
-survives it: PHP declares a whole exchange, the exchange runs in JS between invocations, and the
-answer is readable on a later one. That is the same cached -&gt; deferred -&gt; sync layering
-<code>cfwFetch</code> lives under, with the sync tier absent for the same reason.</p>
+<p><strong>THIS DOCBLOCK ASSERTED THAT A SESSION API CANNOT EXIST, AND THE SHIPPING BINARY HAS ONE.</strong> The
+claim was that <code>Host::call()</code> is <code>$reply = $invoke($json)</code>, so a host function that awaits hands
+PHP a Promise it can only stringify, and a <code>read()</code> blocking for bytes that have not arrived is
+therefore impossible. That was true of a HOST FUNCTION and it was never a property of the
+interpreter: <code>ext/cfwpark</code> freezes the Zend continuation, <code>longjmp</code>s out of <code>pib_run</code>, and lets
+<code>src/ops/park-drive.ts</code> perform exactly <code>open</code> / <code>write</code> / <code>read</code> / <code>line</code> in JavaScript before
+resuming the same PHP chain. <code>drupal/redis</code> runs on it and is <code>verified</code>. The refusal closed a
+mechanism and took the objective with it, which is the failure this repository names most often.</p>
+<p>So this file is the DEFERRED tier, not the only tier. PHP declares a whole exchange, the exchange
+runs in JS between invocations, and the answer is readable on a later one -- the same
+cached -&gt; deferred -&gt; sync layering <code>cfwFetch</code> lives under, and the sync tier is <code>src/ops/park.ts</code>.
+The deferred tier survives on its own terms rather than as a consolation: a park is refused
+wherever the safety predicate cannot walk the frames, and <strong>a refused park must degrade rather
+than fail</strong>, so this is what it degrades to.</p>
 <p><strong>The ENDPOINT is the operator's, never the caller's.</strong> A queued row names a host, so letting PHP
 choose one would put arbitrary <code>host:port</code> TCP behind any module that can call a host function --
 a port scanner and a protocol-smuggling surface, which is a strictly larger hole than the HTTP
@@ -34,7 +40,7 @@ therefore cached-or-deferred, <code>syslog</code> has none and is fire-and-forge
 registry entry.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/tcp.ts#L40">src/ops/tcp.ts:40</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a29d7b34a1cfb4ae9264a6fe50cd58cf6bf7ae1b/src/ops/tcp.ts#L47">src/ops/tcp.ts:47</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

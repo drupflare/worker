@@ -16,9 +16,19 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="affinitykey"><span class="tsd-kind-call-signature">affinityKey</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">input</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span><br/>        <span class="tsd-kind-property">address</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">session</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><a href="#affinitykey" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>The stable per-visitor string a lane is chosen from.</p>
-<p>Session, then client address, then path. The path fallback exists so requests carrying neither
+<div class="tsd-comment tsd-typography"><p>The stable string a lane is chosen from.</p>
+<p>Anonymous requests spread by client address, then by path when they carry no address, so they
 still spread rather than piling onto whichever lane the empty string hashes to.</p>
+<p>A SESSION-CARRYING REQUEST IS KEYED ON THE PATH, so a page's readers share a lane. Measured over
+eight paths a run, two fresh sessions each, three lanes and the primary: keyed on the session the
+plan tier compiled on 5/8 and 4/8 paths, keyed on the path 6/8 -- and the trials that failed under
+the session key are the ones whose two sessions landed on different objects. It is a rate rather
+than a rule, because a split pair still compiles sometimes: the compile runs in the FRONT WORKER's
+isolate, so it sees both renders wherever they came from, and what a split costs it is agreement
+on the generation the two samples were taken at.</p>
+<p>The trade is per-page concurrency for authenticated readers, and it is the right way round: the
+anonymous slice is the bulk of the traffic and keeps spreading by address, while a plan HIT
+answers without rendering at all, which beats sharing a page's renders across lanes.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -26,7 +36,7 @@ still spread rather than piling onto whichever lane the empty string hashes to.<
 <li><span><span class="tsd-kind-parameter">input</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">address</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">session</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/replica-routing.ts#L92">src/ops/replica-routing.ts:92</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a29d7b34a1cfb4ae9264a6fe50cd58cf6bf7ae1b/src/ops/replica-routing.ts#L114">src/ops/replica-routing.ts:114</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

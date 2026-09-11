@@ -16,7 +16,10 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="sweeprowsfraction"><span class="tsd-kind-call-signature">sweepRowsFraction</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ops_sweep.SweepEnv.html" class="tsd-signature-type tsd-kind-type-alias">SweepEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><a href="#sweeprowsfraction" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>the share of the day this site declares for its sweep, clamped to the range its derivation covers</p>
+<div class="tsd-comment tsd-typography"><p>The share of the day this site declares for its sweep, clamped to the range its derivation covers.</p>
+<p>An explicit <code>SWEEP_ROWS_FRACTION</code> always wins. Otherwise a sweep an operator ASKED for takes the
+measured 25%, and one running on the default takes <a href="../variables/ops_sweep.UNASKED_ROWS_FRACTION.html" class="tsd-kind-variable">UNASKED_ROWS_FRACTION</a> -- see
+<a href="ops_sweep.sweepEnabled.html" class="tsd-kind-function">sweepEnabled</a> for why the two differ.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +27,7 @@
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../types/ops_sweep.SweepEnv.html" class="tsd-signature-type tsd-kind-type-alias">SweepEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/sweep.ts#L644">src/ops/sweep.ts:644</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a29d7b34a1cfb4ae9264a6fe50cd58cf6bf7ae1b/src/ops/sweep.ts#L680">src/ops/sweep.ts:680</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

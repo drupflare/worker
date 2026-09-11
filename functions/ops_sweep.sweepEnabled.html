@@ -16,12 +16,24 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="sweepenabled"><span class="tsd-kind-call-signature">sweepEnabled</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <a href="../types/ops_sweep.SweepEnv.html" class="tsd-signature-type tsd-kind-type-alias">SweepEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">boolean</span><a href="#sweepenabled" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>OFF unless asked for, and the reason is a meter rather than caution.</p>
-<p>The row and DO quotas are ACCOUNT-WIDE while <code>dailyRows()</code> counts one object, so the governor
-cannot see what the rest of the fleet has spent. At 25% of 100,000 rows per site, four sweeping
-sites saturate the account and each one reads its own meter as healthy. The objective survives the
-refusal: <code>src/ops/fleet.ts</code> is the inventory that would let a fleet-aware share be safe by
-default, and nothing here forecloses it.</p>
+<div class="tsd-comment tsd-typography"><p>ON by default at a fleet-safe share; <code>SWEEP=0</code> turns it off.</p>
+<p>IT WAS OFF, and the reason was a meter rather than caution: the row and DO quotas are
+ACCOUNT-WIDE while <code>dailyRows()</code> counts one object, so the governor cannot see what the rest of
+the fleet has spent. At 25% of 100,000 rows per site, four sweeping sites saturate the account
+and each one reads its own meter as healthy. That is a real failure mode and it is not overridden
+here -- it is priced. An unasked-for sweep takes <a href="../variables/ops_sweep.UNASKED_ROWS_FRACTION.html" class="tsd-kind-variable">UNASKED_ROWS_FRACTION</a> instead of the
+full share, so the number of sites it takes to saturate the account moves from 4 to 20, and an
+operator who asks for a sweep still gets the measured 25%.</p>
+<p>WHY IT IS WORTH DEFAULTING ON. A path nobody has rendered is the <code>anon-miss</code> slice, 0.095 of the
+traffic mix, and it is the one profile a render cannot win: measured deployed, a warm inline
+render answers in 474 ms against a well-configured VPS's 78 ms, and the wasm penalty alone
+(3.57x) puts ~278 ms out of reach. <strong>A render cannot be made competitive, so it has to not
+happen.</strong> A swept path is a HIT at ~1 ms. This is the only lever that changes that profile's
+outcome rather than its cost.</p>
+<p>The governor is unchanged and still the thing that bounds it: <code>sweepStep()</code> reads <code>rowsToday</code>
+against <code>rowsLimit</code> and <code>doToday</code> against <code>doLimit</code> every step, <code>sweepDue()</code> gates on an interval
+rather than firing per alarm, and a site with nothing uncovered does nothing at all.
+<code>src/ops/fleet.ts</code> remains the inventory that would let the full share be safe by default.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +41,7 @@ default, and nothing here forecloses it.</p>
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../types/ops_sweep.SweepEnv.html" class="tsd-signature-type tsd-kind-type-alias">SweepEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">boolean</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/sweep.ts#L637">src/ops/sweep.ts:637</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a29d7b34a1cfb4ae9264a6fe50cd58cf6bf7ae1b/src/ops/sweep.ts#L651">src/ops/sweep.ts:651</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

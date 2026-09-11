@@ -13,11 +13,30 @@
 <h1>Variable FREE_PROFILE<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">FREE_PROFILE</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_plan-profile.PlanProfile.html" class="tsd-signature-type tsd-kind-type-alias">PlanProfile</a><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>Free: sized for a 10 ms per-invocation cap.</p>
-<p>These are the measured constants the project ran on, unchanged. A batch of 5 and a 2 s budget are
-not conservative guesses; they are what fits.</p>
+<p>These are the measured constants the project ran on. A batch of 5 is what fits.</p>
+<p><strong><code>bootInline</code> WAS FALSE AND THE REASON EXPIRED.</strong> It was set against a 10 ms per-invocation cap
+that a cold boot obviously cannot fit, and against an implicit alternative of &quot;the chain fills it
+shortly&quot;. Both halves are now measured and both are wrong:</p>
+<ul>
+<li><strong>The cap does not fail a request.</strong> A single invocation reading 1,882 ms of <code>cpuTime</code>
+completed on a deployed FREE worker. The 10 ms figure is an amortised allowance, not a
+per-request limit, so &quot;a cold boot cannot fit&quot; was never the thing being enforced.</li>
+<li><strong>The alternative is not a short wait.</strong> Time-to-served for an anonymous miss on a cold object,
+deployed: <strong>19,004 ms, and only 4 of 8 paths served at all.</strong> A cold boot plus render is ~3.8 s.
+Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the
+page.</li>
+</ul>
+<p>So the refusal was comparing a cold boot against a fast chain that does not exist. <code>inlineBudgetMs</code>
+moves with it for the same reason -- it bounds the VISITOR'S PATIENCE rather than a billed
+resource (wall time is not charged against the CPU budget: 4 ms of Worker CPU against 827 ms of
+wall, measured), and 2 s of patience is the wrong bound when the alternative is 19 s of waiting.</p>
+<p>What still protects the object: <code>estimateRenderMs()</code> against this budget, the herd collapse (N
+concurrent identical misses cost ONE render), the daily row and request meters, and
+<code>degraded.render</code> which answers 503 rather than rendering once the quota is spent. Cold encounters
+are <strong>0.13% of all visitor requests</strong>, so this path is rare by construction.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/3e4f27371405a8cb8d15693f6f3b29b3d141a793/src/ops/plan-profile.ts#L53">src/ops/plan-profile.ts:53</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/a29d7b34a1cfb4ae9264a6fe50cd58cf6bf7ae1b/src/ops/plan-profile.ts#L73">src/ops/plan-profile.ts:73</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

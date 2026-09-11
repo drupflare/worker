@@ -95,9 +95,9 @@ The architecture wins by not rendering rather than by rendering faster. An uncac
 **A SITE IS NO LONGER ONE OBJECT.** That sentence used to end here, and the second half of it -- "so
 a site is one thread" -- was a property of the topology rather than of the platform. A namespace
 holds unlimited objects, an authenticated GET writes no authoritative state under this SAPI, and a
-site now has replica lanes: 1.00 / 2.03 / 3.29x at 1 / 2 / 4 on real authenticated renders, against
-1.00 / 2.05 / 3.16 / 5.72x for a fixed CPU burn on independent objects. Content sites win decisively
-and authenticated reads scale with the pool. **Writes now spread too**, and this paragraph used to
+site now has replica lanes. Measured on a deployed free worker with the control repeated at both ends
+of the sweep: **1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16, which is 95% at sixteen.**
+Content sites win decisively and authenticated reads scale with the pool. **Writes now spread too**, and this paragraph used to
 say they could not: a lane runs the write, discards its own effect and forwards the statements to
 the primary, which stays the sequencer. What still serialises there is the commit itself and any
 write whose target originates a value a lane may not mint.
@@ -395,9 +395,18 @@ host function is a port scanner and a protocol-smuggling surface, strictly wider
 SSRF because it is not confined to HTTP semantics. Both are secrets and neither may join
 `KV_OVERRIDABLE`.
 
-**A Redis cache backend cannot be built on this.** A cache get has to answer inside the request that
-asked, and a deferred exchange always misses the first time. The object's own SQLite is the backend.
-What the tier reaches is the deferrable half, plus `syslog`, which never replies.
+**THIS SAID A REDIS CACHE BACKEND CANNOT BE BUILT, AND `drupal/redis` IS `verified`.** The reasoning
+was correct about the DEFERRED tier -- a cache get has to answer inside the request that asked, and a
+deferred exchange always misses the first time -- and it closed the objective along with the
+mechanism. `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and
+`src/ops/park-drive.ts` performs the socket exchange in JavaScript before resuming the same PHP call,
+so the answer arrives inside the request. Measured against the rig Redis: PHP opens a socket, writes
+and reads twice, and receives `+OK|+PONG` over five parks.
+
+The object's own SQLite remains the DEFAULT backend, which is a placement decision rather than a
+limit: a configured external Redis costs nine parked round trips per render, ~9 ms same-region and
+~477 ms distant. The deferred tier in this section is what a refused park degrades to, plus `syslog`,
+which never replies and therefore never wanted a park.
 
 **Mail.** `CfwMail` passes `smtp.settings` through `mailEnvFromSite()`, so a site that configured
 `drupal/smtp` needs no Worker vars; the deployment's own vars win every field they set. The settings
@@ -405,14 +414,18 @@ are persisted to `cfw_meta` because the alarm re-resolves the transport and neve
 
 ### Identity
 
-**`WITH_OPENSSL=0`, so the interpreter cannot verify an RS256 `id_token` at all.** A JSPI build that
-let PHP fetch the token endpoint synchronously would hand PHP a token it still could not check, and
-an unverified `id_token` is an unauthenticated login. The host has `crypto.subtle`, so host-side
-pre-exchange is the only route rather than the cheap one.
+**HOST-SIDE PRE-EXCHANGE IS NO LONGER THE ONLY ROUTE, AND THIS SECTION SAID IT WAS.** The argument
+was that `WITH_OPENSSL=0` leaves the interpreter unable to verify an RS256 `id_token` at all, so even
+a synchronous token fetch would hand PHP something it could not check -- and an unverified
+`id_token` is an unauthenticated login. Both halves have since moved. `src/drupal/openssl-fix.ts`
+bridges `openssl_sign` / `openssl_verify` / `openssl_pkey_get_public` over `node:crypto`, and the
+park carries the token POST and the userinfo GET, so **`drupal/openid_connect` completes a login
+through its OWN client**: `park-oidc.spec.ts` drives a real authorization code from the rig Keycloak
+and `externalauth` writes `openid_connect.keycloak` into `authmap` against the id_token's `sub`.
 
-`src/ops/oidc.ts` owns discovery, PKCE, state, the token exchange and the signature check. `/oidc`
-starts and completes; `cfwOidcClaims` hands PHP a decided result synchronously, because the awaiting
-already happened at a route the host owns.
+`src/ops/oidc.ts` still owns discovery, PKCE, state, the token exchange and the signature check, and
+`/oidc` still starts and completes. It is the route for a site that wants identity without installing
+a module, and the control beside the module path rather than the only way through.
 
 - The claims never travel in a URL. The browser carries a single-use ticket, the row is deleted
   before the claims are returned, and a replay finds nothing. A redirect lands in browser history, in
@@ -469,8 +482,16 @@ than paraphrased: no `setTimeout`/`setInterval`, no in-progress awaited `fetch()
 WebSocket, no request still being processed, no outbound TCP socket or WebSocket.
 
 **A pending alarm is not on that list.** An armed-alarm object accrued 0.177 s over a 60 s pending
-window, so a keep-warm chain costs a row and a DO request per arm and buys no residency. Because the
-free DO quotas are account-wide, 277 sites saturate both meters with zero visitors.
+window, so ARMING an alarm costs a row and a DO request and buys no residency.
+
+**The sentence that followed generalised that to the whole chain and was wrong**, and the correction
+is later in this file rather than here, which is the wrong order for a reader. Arming does not warm;
+FIRING under the hibernation threshold does, because the firing resets the idle clock. The threshold
+is 10 s, measured: re-armed every 8 s one incarnation survived 71 consecutive alarms, while at 12,
+20, 30 and 45 s the constructor ran again on every probe. And the row cost was mostly the meters
+counting their own writes -- 3 charged rows per idle tick, of which 2 were `flushDailyRows()` and
+`flushDailyDoRequests()` recording themselves. With `shouldFlushMeters()` gating those, a tick
+charges 1, and **92 sites saturate both meters rather than 277**.
 
 **`connect()` is on the list**, and `src/ops/mail.ts` is the only place in `src/` that opens one. An
 SMTP send makes the object non-hibernateable for the length of the send, and the drain sends
@@ -543,6 +564,29 @@ The isolate ceiling is **134,217,728 bytes**. The heap starts at `INITIAL_MEMORY
 peaks where the growth step puts it; at the shipping configuration the authenticated peak is
 **113,770,496**, leaving 19.50 MiB.
 
+**THAT 19.50 MiB IS GROSS, AND EVERY MEMORY FIGURE BELOW MEASURES WASM LINEAR MEMORY ALONE.** The
+isolate's budget also covers the JS heap, and the JS half is not small. Measured on a deployed
+worker 2026-09-11 by reading all four terms together for the first time:
+
+| term                                     | bytes           | how                                     |
+| ---------------------------------------- | --------------- | --------------------------------------- |
+| linear memory, anonymous serving          | 100,663,296     | `HEAPU8.byteLength`                     |
+| linear memory, authenticated plateau      | 113,770,496     | same, after an authenticated render     |
+| pack blob, resident for the interpreter   | 12,001,784      | `lazyMountBytes().blob`                 |
+| MEMFS contents                            | 4,193,165       | `LAZY_FS_BUDGET_BYTES` is 4,194,304     |
+| merged pack index                         | 1,980,912       | `heapUsed` either side of a `JSON.parse` |
+
+An ordinary anonymous serving object therefore holds **116,835,132 bytes, 87.0% of the ceiling**,
+and an authenticated one **131,947,496, 98.3%, with 2,270,232 bytes spare**. Fifty uncached renders
+move neither figure; linear memory does not leave its rung and MEMFS saturates at its budget.
+
+Two consequences. The drop guard compared linear memory against `RECYCLE_ABOVE_BYTES` = 117,440,512,
+which with the JS half added trips at 133,636,600 against a 134,217,728 ceiling -- 581,128 bytes of
+margin, less than one growth step's slack. It reads `isolateNow()` against a whole-isolate threshold
+now, and `/serve-stats` reports the four terms. And the index is measured by RETENTION rather than
+file size: 1,324,155 bytes of JSON retain 1,980,912, so the serialised size under-reads it by a
+third.
+
 **THAT PEAK IS PER WORKLOAD AND THE ISOLATE IS CHARGED PER INCARNATION.** `USE_ZEND_ALLOC=0` means
 PHP returns nothing between requests, so demand inside one incarnation is the SUM of what it has
 done, and the growth step rounds every rise up. Measured on one object, MiB:
@@ -567,7 +611,7 @@ INSIDE one: the first authenticated `/admin/content` on each of four freshly pro
 from the install's 108.50 straight past the limit in a single render, 4,661-4,936 ms of cpuTime,
 `outcome: exception` with no message and no stack. So `/__migrate` and `/__firstrun` drop the
 interpreter when they finish, the way `/__enable` always has, and the serving incarnation starts at
-`INITIAL_MEMORY`. The peak over four authenticated pages is then 108.50, flat, with 19.50 MiB spare.
+`INITIAL_MEMORY`. The peak over four authenticated pages is then 108.50, flat -- and that is LINEAR memory; the whole-isolate reading for a serving object is 87.0% of ceiling, above.
 
 Confirmed on the edge rather than only in the gate: provisioning four fresh sites on the previous
 build reset all four, and the same provisioning on the fixed build produced **zero** entries in
@@ -636,6 +680,36 @@ raw `CompiledWasm` import, and startup fell from 106 ms to 5 ms with it.
 `bun run release:check` and `scripts/measure/bundle-size.ts` were both still scoring the gzipped
 figure against 3,145,728 and therefore FAILED a bundle that deploys. A gate enforcing a dead limit
 reads exactly like a real regression; when a platform limit moves, grep for the constant.
+
+**AND THE GREP MISSED TWO, which is the part worth carrying.** `scripts/measure/php-version-headroom.ts`
+and `scripts/measure/size-report.mjs` held their own copies of the same constant, and the first
+carried a 148-assertion spec whose verdicts included *"reports both versions as not fitting"* and
+*"clears the ceiling on the WASM ALONE, so no bundle accounting can rescue either"* -- for **PHP 8.5,
+which is the version that ships**. A green test asserting the opposite of production is the strongest
+form of this failure, and it survived the fix to the other two because nothing but its own spec
+imported it. Both scripts and the spec are deleted; the arithmetic they did is answered by
+`release:check` against wrangler's own `Total Upload` line, which is a measurement rather than an
+estimate.
+
+Their durable half, kept because it is expensive to re-measure and because it is the clearest case in
+this project of an estimator bracketing the wrong number. Wasm plus glue, `gzip -9`, from binaries
+that each passed `inspect-build.sh --expect-static --expect-rc`:
+
+| PHP  |      wasm |    glue |     total | delta against 8.3 |
+| ---- | --------: | ------: | --------: | ----------------: |
+| 8.3  | 2,757,693 | 119,162 | 2,876,855 |                 0 |
+| 8.4  | 3,756,464 | 122,782 | 3,879,246 |        +1,002,391 |
+| 8.5  | 3,686,964 | 146,358 | 3,833,322 |          +956,467 |
+
+Two facts no extrapolation produces. **8.4 cost 5.8x the pessimistic estimate** (+1,002,391 against a
+bracket of +144,935 to +173,830), because 8.4 vendors lexbor inside `ext/dom` for
+`Dom\HTMLDocument` and Drupal requires ext-dom, so no trim can reach it: as LTO bitcode
+`ext/dom/lexbor` is 4,195,780 B in 8.4 against 0 in 8.3, while Zend, ext/standard and main each move
+under 2%. And **8.5 is SMALLER than 8.4**, which an estimator that only climbs cannot express: 8.5
+promotes lexbor to its own always-on `ext/lexbor` and drops the CJK encoding tables on the way
+(`gb18030` 767,216 + `big5` 615,108 + `euc_kr` 600,052 + `jis0208` 254,996 + `jis0212` 194,244 B of
+bitcode, replaced by one 825,364 B `multi.o`), which pays for all of `ext/uri` including uriparser
+with change left over.
 
 **The frame is BROTLI and the inflate is `node:zlib`, as of 2026-08-30.** Both halves are one change
 and the second is what made the first possible. `node:zlib` carries brotli and zstd, and workerd runs
@@ -1892,12 +1966,38 @@ the terminal-`WITHDRAWN` defect, reproduced under load rather than reasoned abou
 4-lane arms lost runs to the same cause. Re-measure the curve now that readmission exists; the ratios
 above are a floor rather than a ceiling, because each arm was scored on the runs that survived.
 
-**The shortfall at 4 and 8 is NOT attributed.** Little's Law closes at 1 and 2 -- 48/0.528 = 90.9
-against 91.4 observed, 96/0.51 = 188 against 187.7 -- and opens a gap at 4 (predicted 364, observed
-289) and 8 (predicted 708, observed 523). Something above the service-time path constrains aggregate
-concurrency past N=2. A single Node process holding 384 sockets is a candidate and is not evidence;
-separating it needs a distributed generator, and 16 and 32 are not worth building until it is
-separated.
+**THE SHORTFALL AT 4 AND 8 WAS THE INSTRUMENT, AND THE POOL SCALES TO 16.** This paragraph said the
+gap was "not attributed" and that 16 and 32 were not worth building until a distributed generator
+separated it. Re-measured 2026-09-10 on a deployed free worker with `?lane=N` addressing an object
+directly so routing is not a variable, a fixed iteration count rather than a wall-clock loop, arms
+interleaved, and an N=1 control on BOTH sides of the sweep:
+
+| lanes |    vs 1 lane |
+| ----: | -----------: |
+|     1 |        1.00x |
+|     2 |        1.72x |
+|     4 |        3.64x |
+|     8 | 7.10x, 7.20x |
+|    16 | **15.19x (95%)** |
+
+Generator ceiling 2,068-2,120 req/s against a maximum observed 77.6, so it constrains nothing.
+
+The old curve is what an ASCENDING sweep produces when the baseline is taken once at the start and
+one object's throughput decays during the run. **A single object steps to about 2x slower after ~180
+requests / ~5 CPU-seconds**: traced at c=1 on a fresh object, `x-worker-ms` p50 per 30 requests reads
+43, 55, 53, 49, 55, 54, **111, 106**. A linear pool plus that decay reproduces 5.72/8 exactly, with
+no scaling limit existing at all. Little's Law was closing at 1 and 2 and opening a gap at 4 and 8
+because the later arms ran on objects that had already decayed.
+
+**The decay is real, reaches the shipping product, and is NOT attributed.**
+`durableObjectsInvocationsAdaptiveGroups` returns no rows on free, so throttling and extra work stay
+unseparated. An object driven 20 minutes read 1,431 ms on a path that starts at ~116. That is the
+open question; pool scaling is not.
+
+The method lesson is the transferable half, and this project had already paid for it once on the ABI
+comparison: **an ascending sweep with the control taken once at the start cannot distinguish a
+scaling limit from a time-dependent decay in the thing being scaled.** Repeat the control at both
+ends, or interleave.
 
 **Three instrument errors had to fall first**, each of which produced a confident wrong curve:
 
@@ -2266,6 +2366,44 @@ one thing an operator would reach for to understand the outage is the thing the 
 Reached here by provisioning a handful of sites and running load against them, which is a
 measurement session rather than a workload, but nothing about the cliff is specific to that.
 
+### Geography, Measured Rather Than Argued
+
+Every localhost comparison in this report gives the VPS a visitor standing in its own datacenter.
+`scripts/measure/delay-proxy.mjs` puts a real delaying proxy in front of the VPS arm so its
+connection pays a network, and `scratchpad/geo.sh <site> <ms-one-way>` runs the whole verdict
+through it. Distances are Azure's published P50 round-trip inter-region figures, 30-day window
+ending 2026-07-30.
+
+| injected round trip | VPS weighted p50 | edge weighted p50 | ratio  | verdict |
+| ------------------- | ---------------: | ----------------: | -----: | ------- |
+| 0                   |          14.8 ms |            9.9 ms |  1.50x | one p95 regression |
+| 40                  |          56.5 ms |            8.9 ms |  6.35x | `viable: true` |
+| 82                  |         100.2 ms |            8.9 ms | 11.32x | `viable: true` |
+| 200                 |         218.0 ms |            9.4 ms | 23.09x | `viable: true` |
+
+Three replica lanes, traffic-weighted across the workload mix, zero regressions on the three network
+arms. The edge figure barely moves because the term being added is one a single-region host pays and
+an edge network does not.
+
+**THE FIRST VERSION OF THIS INSTRUMENT INFLATED THE RESULT AND ITS DOCBLOCK ASSERTED THE OPPOSITE.**
+It delayed every TCP chunk and claimed that was "exactly as a real path does". A real path pipelines
+segments: a multi-segment response pays about one round trip to first byte and then streams. Charging
+each chunk a full round trip makes a large response pay N times over, and the tell was in the numbers
+-- `auth-admin` on the VPS arm read 627 ms at a 40 ms injection and 1,454 ms at 82 ms, far more than
+the 42 ms difference can explain. It delays per FLIGHT now: a chunk arriving within 5 ms of the
+previous one is forwarded without further delay. The same cell reads 106 ms at 40 ms injection, which
+is its 66 ms of service plus one round trip.
+
+The published ratios moved 6.61 -> 6.35 and 12.78 -> 11.32. A hand correction made before the re-run
+estimated "nearer 9x" for the second and was wrong in the other direction, which is why it was
+labelled arithmetic rather than a result.
+
+Two limits travel with these figures. The proxy delays data rather than the TCP handshake, so a real
+first visit pays a handshake and a TLS round trip this does not model. And the edge arm stays on
+localhost and pays no network of its own -- Cloudflare's own real-user measurement, published
+2026-09-26 across the top 964 networks, puts its median connect time at 49 ms including the last
+mile. The last mile is paid by both arms and cancels; the distance to the origin does not.
+
 ### What Each Replica Buys, Against a VPS
 
 A PHP-FPM worker and a replica are the same unit: one execution lane. So the comparison is
@@ -2339,13 +2477,13 @@ Rows stay inside the included 50 M at every size, so requests are the only line 
 **Cost does not decide the pool size on paid** -- 32 replicas kept permanently hot is under two
 dollars a month. Measured queueing relief and replica utilisation should decide it.
 
-**The 4 and 8 arms are not yet interpretable, and the reason is not recorded.** The on-platform
+**The 4 and 8 arms were not interpretable HERE, and a later run settled them.** The on-platform
 generator saw 1,438 of 2,880 requests fail at N=2, and the run counted non-200 responses without
 capturing the status, the Cloudflare error code, or the account's usage at that moment. Cloudflare
 documents no general requests-per-second limit on Workers -- free has a 100,000/day request quota
-that answers Error 1027 when exhausted -- so "free-plan rate limiting" is a guess and is withdrawn
-until a run records the code. 16 and 32 are not worth building until a paid account has re-run
-1->2->4 on a real Drupal workload with per-object `cpuTime` and DO identity captured.
+that answers Error 1027 when exhausted -- so "free-plan rate limiting" was a guess and stays
+withdrawn. The scaling question it was blocking is answered above: **15.19x at 16 lanes, 95%**, on a
+deployed free worker with the control repeated at both ends of the sweep.
 
 ---
 
@@ -2365,11 +2503,12 @@ rc. The ABI stamp treats it as its own ABI, because every object differs.
 | raw wasm | 12,218,393 | **12,234,574** | 12,563,711 |
 | zstd -22 | 2,659,133 | **2,671,380** | 2,720,787 |
 | auth peak | 108,724,224 | **113,770,496** | ~129 MB |
-| headroom | 24.31 MiB | **19.50 MiB** | 5.00 MiB |
+| linear-memory headroom | 24.31 MiB | **19.50 MiB** | 5.00 MiB |
 | blended CPU vs wasm32 | 1.000x | **1.001x** | 1.030x |
 
 It buys the same capability as wasm64 for 21x fewer raw bytes, 5x fewer shipping bytes and 3.9x the
-heap margin. The CPU figures sit inside a self-control that reads **1.005x**, which is the harness's
+heap margin. The headroom row is LINEAR memory and the row above compares arms on that basis; the
+whole-isolate figure for a serving object is 87.0% of ceiling, measured above. The CPU figures sit inside a self-control that reads **1.005x**, which is the harness's
 resolution: `bun run measure:abi-control` loads one binary as two arms, so anything other than 1.000x
 there is the instrument. Arms must be interleaved; run in series, machine contention inverts the
 result.

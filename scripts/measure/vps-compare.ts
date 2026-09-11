@@ -32,6 +32,15 @@ export interface Sample {
 	/** which tier answered, when the arm reports one; empty on the VPS, which has no tiers */
 	tier: string;
 	/**
+	 * Which OBJECT answered, from `x-cfw-replica`; empty on the VPS and on an edge-cache hit.
+	 *
+	 * THE CONTROL FOR EVERY LANE CLAIM. A latency number from a run where one object answered
+	 * everything is a single-object number however many lanes were provisioned, and that is exactly
+	 * what every anonymous figure here has been. Captured so the reading can be believed rather
+	 * than assumed.
+	 */
+	replica: string;
+	/**
 	 * The front worker's own round trip, from `x-worker-ms`; null on the VPS.
 	 *
 	 * `ms - workerMs` IS THE CLIENT'S CONTRIBUTION, and capturing it is what separates this rig from
@@ -41,6 +50,20 @@ export interface Sample {
 	 * the 1.00/2.05/3.16/5.72 curve could report a shortfall no server-side mechanism accounts for.
 	 */
 	workerMs: number | null;
+	/**
+	 * Whether the EDGE refused this request before the worker ever ran.
+	 *
+	 * THE WORST INSTRUMENT FAILURE AVAILABLE HERE, and it has already happened. Cloudflare answers
+	 * 403 to any request carrying a client-set `cf-connecting-ip`, which this generator sent on
+	 * every anonymous request. A deployed sweep then read `/`, `/x.php` and `/robots.txt` at an
+	 * identical 25 ms p50 and 1,144-1,190 req/s -- three different paths agreeing to the
+	 * millisecond, because every sample was the same refusal page. Nothing in the summary could
+	 * say so: a 403 is an ordinary status and the cell looked fast.
+	 *
+	 * Recognised by the ABSENCE of `x-worker-ms` on a 4xx: the worker stamps that on every response
+	 * it produces, so a refusal carrying none never reached it.
+	 */
+	edgeRefused: boolean;
 	/**
 	 * How many requests the object was already handling when this one arrived, from
 	 * `x-cfw-gate-ahead`; null when the response never entered the gate.
@@ -79,12 +102,16 @@ export interface Summary {
 	mean: number;
 	/** which tiers answered and how often; empty on the VPS. Discarding this hid the anon question */
 	tiers: Record<string, number>;
+	/** which objects answered and how often; one entry means the pool did nothing for this arm */
+	replicas: Record<string, number>;
 	/** mean `x-worker-ms`, or null when the arm stamps none */
 	workerMs: number | null;
 	/** mean client-side residue, `ms - workerMs`: what the GENERATOR contributed */
 	clientMs: number | null;
 	/** mean `x-cfw-gate-ahead`: queueing measured inside the object, with no clock in it */
 	gateAhead: number | null;
+	/** samples the edge refused before the worker ran; any is a broken run, see {@link Sample} */
+	edgeRefusals: number;
 	min: number;
 	max: number;
 	bytes: number;
@@ -100,7 +127,12 @@ export const WORKLOADS: Record<string, { path: string; auth: boolean; note: stri
 	'anon-miss': { path: '/?cachebust=', auth: false, note: 'the regeneration boundary' },
 	'auth-front': { path: '/', auth: true, note: 'authenticated, role-shaped' },
 	'auth-admin': { path: '/admin/content', auth: true, note: 'authenticated, admin-shaped' },
-	'auth-account': { path: '/user', auth: true, note: 'authenticated, user-specific' }
+	// `/user/1`, NOT `/user`. `/user` is a 302 to `/user/<uid>` for a signed-in visitor and `one()`
+	// does not follow redirects, so this cell measured how fast each host emits a redirect -- a
+	// 358-byte body on the VPS arm over 1,732 samples, which the body-size guard caught. The weight
+	// on this slice is meant to buy a user-specific PAGE. Every `auth-account` figure taken before
+	// 2026-09-11 is a redirect timing and is not comparable with one taken after
+	'auth-account': { path: '/user/1', auth: true, note: 'authenticated, user-specific' }
 };
 
 /** extra request headers, which is how a drupflare arm names the site it is driving */
@@ -122,11 +154,40 @@ export function percentile(sorted: number[], p: number): number {
  * in", not as a wrong number, only because the two sites had different passwords.
  */
 export async function login(base: string, user: string, pass: string): Promise<string | null> {
-	const page = await fetch(`${base}/user/login`, { redirect: 'manual', headers: EXTRA });
+	// THE FORM HAS TO BE SERVED BEFORE A LOGIN MEANS ANYTHING, and this took it once. A cold
+	// `/user/login` is a 503 carrying no `form_build_id`, and a busy local worker answers
+	// `ECONNRESET` -- both return null here, which the caller reports as "cannot log in" and which
+	// reads as a wrong password. It cost a run and then a wrong diagnosis: the second editor's
+	// login failed with three replica lanes and succeeded with none, so the lanes looked
+	// responsible. Isolated afterwards, a fresh account's FIRST login succeeds at three lanes and
+	// at zero, both answered by `x-cfw-replica: primary`. The pool was never involved.
+	// THE WHOLE EXCHANGE RETRIES, not the form fetch alone. Retrying only the GET fixed the case
+	// where a cold form carried no token and left the POST one-shot -- so a login whose form arrived
+	// fine and whose POST met a busy object still returned null, and the caller still reported it as
+	// a wrong password. It failed that way on two consecutive runs against a SECOND editor created
+	// moments earlier, which is exactly the window where one attempt is not enough.
+	for (let attempt = 0; attempt < 40; attempt++) {
+		const session = await loginOnce(base, user, pass);
+		if (session !== null) return session;
+		await fetch(`${base}/fill?path=%2Fuser%2Flogin`, { headers: EXTRA }).catch(() => {});
+		await new Promise((r) => setTimeout(r, 1000));
+	}
+	return null;
+}
+
+/** one form-then-post exchange; null for every reason a retry could fix */
+async function loginOnce(base: string, user: string, pass: string): Promise<string | null> {
+	let page: Response;
+	try {
+		page = await fetch(`${base}/user/login`, { redirect: 'manual', headers: EXTRA });
+	} catch {
+		// a reset is the worker being busy, not an answer
+		return null;
+	}
 	const html = await page.text();
 	const token = /name="form_build_id" value="([^"]+)"/.exec(html)?.[1];
+	if (token === undefined) return null;
 	const formId = /name="form_id" value="([^"]+)"/.exec(html)?.[1] ?? 'user_login_form';
-	if (!token) return null;
 	const jar = (page.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
 	const body = new URLSearchParams({
 		name: user,
@@ -135,16 +196,21 @@ export async function login(base: string, user: string, pass: string): Promise<s
 		form_id: formId,
 		op: 'Log in'
 	});
-	const res = await fetch(`${base}/user/login`, {
-		method: 'POST',
-		body,
-		redirect: 'manual',
-		headers: {
-			'content-type': 'application/x-www-form-urlencoded',
-			...EXTRA,
-			...(jar ? { cookie: jar } : {})
-		}
-	});
+	let res: Response;
+	try {
+		res = await fetch(`${base}/user/login`, {
+			method: 'POST',
+			body,
+			redirect: 'manual',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				...EXTRA,
+				...(jar ? { cookie: jar } : {})
+			}
+		});
+	} catch {
+		return null;
+	}
 	const set = res.headers.getSetCookie?.() ?? [];
 	const session = set
 		.map((c) => c.split(';')[0] as string)
@@ -164,22 +230,68 @@ export function setExtraHeaders(headers: Record<string, string>): void {
 	EXTRA = headers;
 }
 
-export async function one(url: string, cookie: string | null): Promise<Sample> {
+/**
+ * The address a synthetic client presents.
+ *
+ * TEST-NET-3, which RFC 5737 reserves for documentation, so nothing here can be mistaken for a real
+ * client and nothing routable is implied.
+ */
+export const clientAddress = (index: number): string => `203.0.113.${(index % 254) + 1}`;
+
+/**
+ * Whether a target is this machine, which decides whether the spread header may be sent.
+ *
+ * `URL.hostname` KEEPS THE BRACKETS on an IPv6 literal, so `http://[::1]:8787` answers `[::1]` and
+ * a bare `::1` comparison misses it. `host-verdict.ts` carried that comparison and imports this now.
+ */
+export function isLocalTarget(target: string): boolean {
+	const host = (URL.parse(target)?.hostname ?? '').replace(/^\[|\]$/g, '');
+	return (
+		host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local')
+	);
+}
+
+/**
+ * The per-client headers, which are NOT the same on a local target and a deployed one.
+ *
+ * `cf-connecting-ip` is what `affinityKey()` spreads anonymous traffic by, and miniflare accepts
+ * whatever a client sends -- so locally it is the only way a single-address generator reaches more
+ * than one lane, and `anon-cached` is 82% of the traffic weight. Cloudflare owns that header on a
+ * real deployment and answers **403 at the edge** to any request that presents one, before the
+ * worker runs. Sending it to both kinds of target measured a refusal page and called it a host.
+ *
+ * Nothing replaces it remotely: Cloudflare sets the header to the true client address, so a
+ * single-source benchmark reaches one lane whatever it does. That is a property of the routing and
+ * of the rig, not something a header can paper over.
+ */
+export function spreadHeaders(base: string, index: number): Record<string, string> {
+	return isLocalTarget(base) ? { 'cf-connecting-ip': clientAddress(index) } : {};
+}
+
+export async function one(
+	url: string,
+	cookie: string | null,
+	extra: Record<string, string> = {}
+): Promise<Sample> {
 	const t0 = Date.now();
 	try {
 		const res = await fetch(url, {
 			redirect: 'manual',
-			headers: { ...EXTRA, ...(cookie ? { cookie } : {}) }
+			headers: { ...EXTRA, ...extra, ...(cookie ? { cookie } : {}) }
 		});
 		const buf = await res.arrayBuffer();
 		const cache = res.headers.get('x-cfw-cache') ?? '';
 		const plan = res.headers.get('x-cfw-plan') ?? '';
+		const workerMs = numberHeader(res, 'x-worker-ms');
 		return {
 			ms: Date.now() - t0,
 			status: res.status,
 			bytes: buf.byteLength,
 			tier: cache === 'PLAN' && plan !== '' ? `PLAN:${plan}` : cache,
-			workerMs: numberHeader(res, 'x-worker-ms'),
+			replica: res.headers.get('x-cfw-replica') ?? '',
+			workerMs,
+			// a 4xx with no `x-worker-ms` never reached the worker; see `edgeRefused`
+			edgeRefused: res.status >= 400 && res.status < 500 && workerMs === null,
 			gateAhead: numberHeader(res, 'x-cfw-gate-ahead')
 		};
 	} catch {
@@ -188,7 +300,9 @@ export async function one(url: string, cookie: string | null): Promise<Sample> {
 			status: 0,
 			bytes: 0,
 			tier: '',
+			replica: '',
 			workerMs: null,
+			edgeRefused: false,
 			gateAhead: null
 		};
 	}
@@ -215,18 +329,31 @@ export async function run(
 	const samples: Sample[] = [];
 	let counter = 0;
 
-	const client = async (): Promise<void> => {
+	/**
+	 * ONE ADDRESS PER CLIENT ON A LOCAL TARGET, and none on a deployed one; see {@link spreadHeaders}.
+	 *
+	 * `affinityKey()` spreads an anonymous request by `cf-connecting-ip` and falls back to the path
+	 * only when there is none. This generator sent no address at all until 2026-09-10, so every
+	 * anonymous request in every run collapsed onto ONE affinity key and therefore one lane -- and
+	 * `anon-cached` is 82% of the traffic weight and the slice that decides the verdict.
+	 *
+	 * Sent to both arms of a LOCAL run so the two remain identical in what they transmit; nginx and
+	 * php-fpm have no use for it, and it cannot reach the edge cache key, which `cacheKey()` builds
+	 * from explicit parts and no headers.
+	 */
+	const client = async (index: number): Promise<void> => {
+		const extra = spreadHeaders(base, index);
 		while (Date.now() < deadline) {
 			// a unique query per request on the miss arm, so nothing upstream can answer it twice
 			const url = spec.path.endsWith('=')
 				? `${base}${spec.path}${++counter}-${concurrency}`
 				: `${base}${spec.path}`;
-			samples.push(await one(url, spec.auth ? cookie : null));
+			samples.push(await one(url, spec.auth ? cookie : null, extra));
 		}
 	};
 
 	const started = Date.now();
-	await Promise.all(Array.from({ length: concurrency }, () => client()));
+	await Promise.all(Array.from({ length: concurrency }, (_, i) => client(i)));
 	const elapsed = (Date.now() - started) / 1000;
 
 	const ok = samples.filter((s) => s.status >= 200 && s.status < 400);
@@ -236,7 +363,11 @@ export async function run(
 		concurrency,
 		n: samples.length,
 		errors: samples.length - ok.length,
-		rps: samples.length / elapsed,
+		// OVER SUCCESSFUL REQUESTS, and it used to be over every attempt. A dead server answers
+		// instantly with status 0, so `samples.length / elapsed` read 45,279 req/s on an arm whose
+		// worker had crashed -- a confident wrong number, and the one a reader would quote. Identical
+		// on any cell with no errors, which is every cell that means anything
+		rps: ok.length / elapsed,
 		p50: percentile(times, 50),
 		p95: percentile(times, 95),
 		p99: percentile(times, 99),
@@ -247,9 +378,15 @@ export async function run(
 			if (s.tier !== '') acc[s.tier] = (acc[s.tier] ?? 0) + 1;
 			return acc;
 		}, {}),
+		replicas: ok.reduce<Record<string, number>>((acc, s) => {
+			if (s.replica !== '') acc[s.replica] = (acc[s.replica] ?? 0) + 1;
+			return acc;
+		}, {}),
 		workerMs: meanOf(ok.map((s) => s.workerMs)),
 		clientMs: meanOf(ok.map((s) => (s.workerMs === null ? null : s.ms - s.workerMs))),
 		gateAhead: meanOf(ok.map((s) => s.gateAhead)),
+		// over EVERY sample, not the successful ones: a refusal is a 403 and never counts as ok
+		edgeRefusals: samples.filter((s) => s.edgeRefused).length,
 		bytes: ok.length === 0 ? 0 : Math.round(ok.reduce((n, s) => n + s.bytes, 0) / ok.length)
 	};
 }
@@ -466,6 +603,16 @@ if (import.meta.main) {
 					`p95=${String(summary.p95).padStart(5)}ms p99=${String(summary.p99).padStart(5)}ms ` +
 					`err=${summary.errors} bytes=${summary.bytes}`
 			);
+			// LOUD, because the alternative is a fast-looking cell. A run that measured the edge's
+			// refusal page reported three different paths at the same 25 ms and 1,150 req/s
+			if (summary.edgeRefusals > 0) {
+				console.error(
+					`[${label}] ${summary.edgeRefusals} of ${summary.n} samples were refused AT THE ` +
+						'EDGE (a 4xx carrying no x-worker-ms), so this cell measured Cloudflare and ' +
+						'not the host'
+				);
+				process.exit(3);
+			}
 		}
 	}
 

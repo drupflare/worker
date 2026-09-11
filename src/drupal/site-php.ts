@@ -4027,6 +4027,13 @@ try {
   try {
     $identity['csrf'] = ['user/logout' => \Drupal::csrfToken()->get('user/logout')];
   } catch (\Throwable $e) {}
+  // the edge plan is keyed on this and a shell response carried none, so a path the shell tier
+  // answered could never collect a sample and the plan tier starved for the whole session
+  try {
+    $roles = array_values(\Drupal::currentUser()->getRoles());
+    sort($roles);
+    $out['roles'] = $roles;
+  } catch (\Throwable $e) {}
   $out['identity'] = $identity;
 
   $t1 = $clock();

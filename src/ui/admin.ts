@@ -11,8 +11,9 @@ import {
  * | ---------- | ---------------------------------------------------------------------------- |
  * | Thresholds | **live**: pure arithmetic over `src/ops/thresholds.ts`, nothing to wire       |
  * | Extend     | **live**: drives `/installable`, which is `catalog.ts` + `packagist.ts` + `oracle.ts` |
- * | Commands   | **partly**: lists what `/__ops` registers, and says which have NO driver      |
- * | Deploy     | **NOT wired**: no provisioning exists; the surface says so instead of lying   |
+ * | Commands   | **live**: lists what `/__ops` registers with the driver each one has         |
+ * | Deploy     | **partly**: connects and disconnects an account; no provisioning exists yet   |
+ * | Operate    | **live**: the eleven owner routes that had no control anywhere, plus `/pitr`  |
  * | Git        | **live**: drives `/git` -- smart HTTP to any remote, four provider APIs above it |
  *
  * A button that appears to deploy and does not is worse than no button, so the Deploy surface renders
@@ -35,8 +36,9 @@ export function escapeHtml(value: unknown): string {
 		.replace(/'/g, '&#39;');
 }
 
-/** the six surfaces */
-export type AdminPage = 'thresholds' | 'extend' | 'commands' | 'deploy' | 'git' | 'access';
+/** the seven surfaces */
+export type AdminPage =
+	'thresholds' | 'extend' | 'commands' | 'operate' | 'deploy' | 'git' | 'access';
 
 /**
  * The prefix every product surface lives under.
@@ -58,6 +60,7 @@ export const ADMIN_PAGES: readonly { page: AdminPage; path: string; label: strin
 	{ page: 'thresholds', path: SURFACE_PREFIX, label: 'Limits' },
 	{ page: 'extend', path: `${SURFACE_PREFIX}/extend`, label: 'Extend' },
 	{ page: 'commands', path: `${SURFACE_PREFIX}/commands`, label: 'Commands' },
+	{ page: 'operate', path: `${SURFACE_PREFIX}/operate`, label: 'Operate' },
 	{ page: 'deploy', path: `${SURFACE_PREFIX}/deploy`, label: 'Deploy' },
 	{ page: 'git', path: `${SURFACE_PREFIX}/git`, label: 'Git' },
 	{ page: 'access', path: `${SURFACE_PREFIX}/access`, label: 'Access' }
@@ -280,7 +283,9 @@ ${install}
 		out.textContent = 'Installing ' + name + '...';
 		try {
 			const body = await ask('/install?module=' + encodeURIComponent(name) + (force ? '&force=1' : ''));
-			out.textContent = 'Installed ' + name + ': ' + (body.stored || 0) + ' files. Now enable it.';
+			// installPackage() reports \`files\`; this read \`stored\`, which it has never returned, so
+			// every successful install said "0 files"
+			out.textContent = 'Installed ' + name + ': ' + (body.files || 0) + ' files. Now enable it.';
 			const b = document.querySelector('[data-enable="' + name + '"]');
 			if (b) b.disabled = false;
 		} catch (e) {
@@ -292,9 +297,25 @@ ${install}
 		out.textContent = 'Enabling ' + machine + '...';
 		try {
 			const body = await ask('/enable?module=' + encodeURIComponent(machine));
-			out.textContent = body.enabled
-				? 'Enabled ' + machine + '.'
-				: 'Not enabled: ' + (body.reason || body.error || 'unknown');
+			// \`nowEnabled\` is what ENABLE_MODULE reads back out of core.extension. This read
+			// \`enabled\`, which only ENABLE_VERIFY sets and only to a module name, so a successful
+			// enable rendered "Not enabled: unknown"
+			if (!body.nowEnabled) {
+				out.textContent = 'Not enabled: ' + (body.error || body.throwMessage || body.readbackError || 'unknown');
+				return;
+			}
+			out.textContent = 'Enabled ' + machine + '.';
+			// the object hands back this cue and the page dropped it, so a UI enable left the
+			// requeued pages asleep until the next alarm happened along
+			if (body.armFill) {
+				out.textContent = 'Enabled ' + machine + '. Waking the fill chain...';
+				try {
+					await ask('/armfill');
+					out.textContent = 'Enabled ' + machine + '. Pages are regenerating.';
+				} catch (e) {
+					out.textContent = 'Enabled ' + machine + ', but the fill chain did not wake: ' + e.message;
+				}
+			}
 		} catch (e) {
 			out.textContent = 'Refused: ' + e.message;
 		}
@@ -481,6 +502,200 @@ ${result ? `<div class="card"><pre style="margin:0;overflow-x:auto"><code>${esca
 }
 // #endregion
 
+// #region Operate -- the owner routes that had no surface at all
+
+/** one owner action, and what pressing it actually does */
+export interface OperateAction {
+	/** the owner route, as the front worker maps it */
+	path: string;
+	label: string;
+	/** what it does, in one sentence a site owner can act on */
+	detail: string;
+	/** extra query the button sends, e.g. `action=run` */
+	query?: string;
+	/** true when it changes the site, which is what earns a confirmation */
+	writes: boolean;
+}
+
+/**
+ * Eleven owner routes reached the product with no control anywhere.
+ *
+ * `/export`, `/health`, `/armfill`, `/invalidate`, `/bump`, `/migrate`, `/updb`, `/reconcile`,
+ * `/sweep`, `/modify` and `/setup/mail` were all owner-gated, all documented, all driven by
+ * `drangler` -- and unreachable from a browser. Taking your own data out, seeing whether the site
+ * is healthy and purging your own cache needed a terminal.
+ *
+ * Two more were worse than that: `/pitr` and `/restore` are the BACKUP AND RECOVERY pair and were
+ * reachable only with `PW_DIAGNOSTICS=1`, the same flag that opens arbitrary SQL. `/pitr`'s own
+ * docblock says there is no wrangler command and no dashboard button for the platform's 30-day
+ * bookmark window, which is the whole reason the route exists.
+ *
+ * The list is data rather than markup so the page and its test read the same thing.
+ */
+export const OPERATE_ACTIONS: readonly OperateAction[] = [
+	{
+		path: '/health',
+		label: 'Check Health',
+		detail: 'the ledger, the circuit breaker and whether anything quarantined this site',
+		writes: false
+	},
+	{
+		path: '/serve-stats',
+		label: 'Serving Stats',
+		detail: 'cached paths, queue depth, recycles and the day’s row and request spend',
+		writes: false
+	},
+	{
+		path: '/sweep',
+		label: 'Sweep Coverage',
+		detail: 'how much of the site is pre-rendered, and what bounded the last step',
+		writes: false
+	},
+	{
+		path: '/sweep',
+		label: 'Sweep Now',
+		detail: 'take one addressable-sweep step immediately rather than waiting for the interval',
+		query: 'run=1',
+		writes: true
+	},
+	{
+		path: '/reconcile',
+		label: 'Reconcile',
+		detail: 'what this site still owes the shipping pack, and one step of paying it',
+		query: 'action=run',
+		writes: true
+	},
+	{
+		path: '/updb',
+		label: 'Database Updates',
+		detail: 'drive one beat of the pending-update chain and report the phase',
+		query: 'action=run',
+		writes: true
+	},
+	{
+		path: '/invalidate',
+		label: 'Purge Everything',
+		detail: 'invalidate every cached page; they regenerate as visitors ask for them',
+		writes: true
+	},
+	{
+		path: '/bump',
+		label: 'Bump Generation',
+		detail: 'retire every stored page and edge entry at once, which is the wider hammer',
+		writes: true
+	},
+	{
+		path: '/armfill',
+		label: 'Wake The Fill Chain',
+		detail: 'restart regeneration on a site whose alarm chain has stopped',
+		writes: true
+	},
+	{
+		path: '/migrate',
+		label: 'Replay The Pack',
+		detail: 'replay the packed database from where the cursor stopped',
+		writes: true
+	},
+	{
+		path: '/pitr',
+		label: 'Recovery Points',
+		detail: 'the platform’s own 30-day bookmark window; there is no dashboard button for this',
+		writes: false
+	}
+];
+
+/**
+ * The Operate surface.
+ *
+ * Reads are buttons that print what came back. Writes are buttons that confirm first and print what
+ * came back. Nothing here is hidden behind a flag, because every one of these is something a site
+ * owner is entitled to do to their own site.
+ */
+export function renderOperate(): string {
+	const row = (a: OperateAction, i: number): string =>
+		`<tr><td><strong>${escapeHtml(a.label)}</strong><br><code>${escapeHtml(a.path)}</code></td>
+<td><span class="dim">${escapeHtml(a.detail)}</span></td>
+<td>${a.writes ? `${pill('warn')} writes` : `${pill('ok')} read only`}</td>
+<td><button data-op="${i}" data-path="${escapeHtml(a.path)}" data-query="${escapeHtml(a.query ?? '')}" data-writes="${a.writes ? '1' : '0'}" data-label="${escapeHtml(a.label)}">${escapeHtml(a.label)}</button></td></tr>`;
+
+	return `<h1>Operate</h1>
+<p class="sub">Everything an owner can do to their own site, without a terminal. These routes all existed and all took the owner token; none of them had a control anywhere.</p>
+
+<table><thead><tr><th>Action</th><th>What it does</th><th>Effect</th><th></th></tr></thead>
+<tbody>${OPERATE_ACTIONS.map(row).join('')}</tbody></table>
+<p id="operate-out" class="sub"></p>
+<div id="operate-result"></div>
+
+<h2>Take Your Data Out</h2>
+<p class="sub">The whole site database as replayable SQL. It is a plain download and it takes the same owner token these pages did.</p>
+<div class="card"><a href="/export" download>Download <code>site.sql</code></a></div>
+
+<h2>Restore From A Recovery Point</h2>
+<p class="sub">Cloudflare keeps a 30-day change log for this site's database. Recovering to a point in it REPLACES the database on the object's next start, so the confirmation asks you to type the word. Read the points above first; the bookmark goes here.</p>
+<form id="restore-form"><input type="text" name="bookmark" placeholder="bookmark" spellcheck="false" autocomplete="off">
+<input type="text" name="confirm" placeholder="type: replace" spellcheck="false" autocomplete="off">
+<button type="submit">Schedule The Restore</button></form>
+<p id="restore-out" class="sub"></p>
+<p class="sub">Replaying a dump you uploaded is a different thing and is not here: it takes SQL this site did not write, so it stays behind <code>PW_DIAGNOSTICS</code> with the rest of the arbitrary-SQL surface.</p>
+
+<script>
+(function () {
+  const out = document.getElementById('operate-out');
+  const pane = document.getElementById('operate-result');
+  function show(data) {
+    const pre = document.createElement('pre');
+    pre.style.margin = '0';
+    pre.style.overflowX = 'auto';
+    pre.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.appendChild(pre);
+    pane.replaceChildren(card);
+  }
+  async function ask(path, query) {
+    const res = await fetch(path + (query ? '?' + query : ''), { credentials: 'same-origin' });
+    if (res.status === 401) { window.location.href = '${LOGIN_PATH}?next=' + encodeURIComponent(location.pathname); return null; }
+    const text = await res.text();
+    try { return JSON.parse(text); } catch (e) { return text.slice(0, 4000); }
+  }
+  document.querySelectorAll('button[data-op]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (b.dataset.writes === '1' && !window.confirm(b.dataset.label + '? This changes the site.')) return;
+      out.textContent = b.dataset.label + '...';
+      try {
+        const data = await ask(b.dataset.path, b.dataset.query);
+        if (data === null) return;
+        out.textContent = b.dataset.label + ': done';
+        show(data);
+      } catch (err) { out.textContent = 'Failed: ' + err.message; }
+    });
+  });
+  document.getElementById('restore-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const o = document.getElementById('restore-out');
+    const form = new FormData(e.target);
+    if (form.get('confirm') !== 'replace') {
+      o.textContent = 'Type the word replace to confirm, so this cannot happen by accident.';
+      return;
+    }
+    const bookmark = String(form.get('bookmark') || '');
+    if (!bookmark) { o.textContent = 'Paste a bookmark from Recovery Points above.'; return; }
+    o.textContent = 'Scheduling...';
+    try {
+      const res = await fetch('/pitr?bookmark=' + encodeURIComponent(bookmark), {
+        method: 'POST', credentials: 'same-origin'
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'refused');
+      // the undo exists ONLY in this reply; there is no second call that can produce it
+      o.textContent = 'Scheduled; it applies on this object\'s next start. Keep this undo bookmark, it is the only way back: ' + (data.undo || 'none reported');
+    } catch (err) { o.textContent = 'Failed: ' + err.message; }
+  });
+})();
+</script>`;
+}
+// #endregion
+
 // #region Deploy -- NOT wired, and says so instead of pretending
 
 /** what a provisioner would have to create; rendered as a checklist rather than executed */
@@ -543,12 +758,49 @@ export const PROVISION_STEPS: readonly ProvisionStep[] = [
 /** shown so an operator can copy it into their OAuth client's redirect list */
 export const CFW_CALLBACK_PATH = 'https://<your-site>/setup/cf/callback';
 
-export function renderDeploy(): string {
+/** what `/setup/cf?action=status` reports, so the page can say whether an account is connected */
+export interface CfAccountStatus {
+	connected: boolean;
+	accountId?: string | null;
+	clientId?: string | null;
+}
+
+export function renderDeploy(status?: CfAccountStatus | null, notice?: string | null): string {
 	const rows = PROVISION_STEPS.map(
 		(s) =>
 			`<tr><td><strong>${escapeHtml(s.label)}</strong></td><td><span class="dim">${escapeHtml(s.detail)}</span></td>
 <td>${s.automatable ? `${pill('ok')} scriptable` : `${pill('warn')} needs a human`}</td></tr>`
 	).join('');
+
+	// THIS PAGE RENDERED IDENTICALLY BEFORE AND AFTER A CONNECTION, because it took no arguments
+	// and the front worker never asked the object. An operator had no way to see that an account was
+	// connected and no way to give it back.
+	const connected = status?.connected
+		? `<div class="card ok"><p><strong>Connected.</strong> ${
+				status.accountId
+					? `Account <code>${escapeHtml(status.accountId)}</code>.`
+					: 'The account id was not reported.'
+			} The grant is short-lived and refreshes itself; revoking it here also revokes it at Cloudflare.</p>
+<button type="button" id="cfdisconnect">Disconnect This Account</button>
+<p id="cfdisconnect-out" class="sub"></p></div>
+<script>
+document.getElementById('cfdisconnect').addEventListener('click', async () => {
+  const out = document.getElementById('cfdisconnect-out');
+  out.textContent = 'Disconnecting...';
+  try {
+    const res = await fetch('/setup/cf?action=disconnect', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'refused');
+    out.textContent = data.revoked
+      ? 'Disconnected and revoked at Cloudflare.'
+      : 'Disconnected here; Cloudflare did not confirm the revocation, so revoke it in your dashboard too.';
+    setTimeout(() => window.location.reload(), 1200);
+  } catch (err) {
+    out.textContent = 'Could not disconnect: ' + err.message;
+  }
+});
+</script>`
+		: '';
 
 	return `<h1>Deploy</h1>
 <div class="card bad"><p><strong>There is no one-click deploy yet, and this page will not pretend otherwise.</strong>
@@ -558,9 +810,10 @@ No provisioning exists in this repository: no account picker and no namespace cr
 <div class="card"><p><strong>OAuth needs a client you register once.</strong> Cloudflare registers a redirect URI against the client, and every drupflare deployment answers on a different origin, so there is no shared client that could work for all of them. In your dashboard go to <em>Manage account &rsaquo; OAuth clients</em>, create one with <strong>private</strong> visibility, and register this callback:</p>
 <pre style="margin:0;overflow-x:auto"><code>${escapeHtml(CFW_CALLBACK_PATH)}</code></pre>
 <p class="sub">Private visibility is enough: you are a member of the account you are authorising. Then paste the client ID here. The client ID is not a secret, but it is stored in this site's own database rather than in KV, because a KV writer who could change it could point the consent screen at an application they control.</p>
-<form id="cfoauth"><label>Client ID<input name="client_id" autocomplete="off" spellcheck="false"></label>
+<form id="cfoauth"><label>Client ID<input name="client_id" autocomplete="off" spellcheck="false" value="${escapeHtml(status?.clientId ?? '')}"></label>
 <button type="submit">Connect With Cloudflare</button></form>
-<p id="cfoauth-out" class="sub"></p></div>
+<p id="cfoauth-out" class="sub">${escapeHtml(notice ?? '')}</p></div>
+${connected}
 <script>
 document.getElementById('cfoauth').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -679,7 +932,7 @@ export function renderGit(remotes: readonly RemoteRow[], now: number): string {
 <button data-act="pull" data-id="${id}">Pull</button>
 <button data-act="prs" data-id="${id}">Requests</button>
 ${r.previewOf ? `<button data-act="unpreview" data-id="${id}">Exit Preview</button>` : ''}
-<button data-act="hook" data-id="${id}">Webhook</button>
+<button data-act="hook" data-id="${id}" data-provider="${escapeHtml(r.provider)}">Webhook</button>
 <button data-act="remove" data-id="${id}">Remove</button></td></tr>`;
 					})
 					.join('');
@@ -838,7 +1091,13 @@ document.querySelectorAll('button[data-act]').forEach((b) => {
     if (b.dataset.act === 'remove' && !window.confirm('Disconnect ' + b.dataset.id + '? Its files stay installed.')) return;
     out.textContent = b.dataset.act + '...';
     try {
-      const data = await call({ action: b.dataset.act, id: b.dataset.id });
+      // A PLAIN REMOTE HAS NO API TO REGISTER A HOOK THROUGH, and this page told the operator
+      // to press this button anyway: action=hook is refused with 400 for a non-API provider,
+      // and hooksecret -- the manual path the prose describes -- had no caller anywhere.
+      const action = b.dataset.act === 'hook' && b.dataset.provider === 'generic'
+        ? 'hooksecret'
+        : b.dataset.act;
+      const data = await call({ action, id: b.dataset.id });
       if (b.dataset.act === 'diff' || b.dataset.act === 'pull' || b.dataset.act === 'unpreview') {
         showChanges(data);
         out.textContent = data.applied === false && data.rolledBack ? data.error : 'done';
@@ -846,7 +1105,9 @@ document.querySelectorAll('button[data-act]').forEach((b) => {
       }
       if (b.dataset.act === 'prs') { showPulls(data, b.dataset.id); out.textContent = 'done'; return; }
       if (b.dataset.act === 'hook') {
-        out.textContent = data.message + ' Delivery URL: ' + data.deliverTo;
+        out.textContent = data.secret
+          ? 'Add this delivery URL and secret to your host. URL: ' + data.deliverTo + '  Secret: ' + data.secret
+          : data.message + ' Delivery URL: ' + data.deliverTo;
         return;
       }
       out.textContent = data.message || 'done';
@@ -885,9 +1146,20 @@ export interface OidcSetupRow {
  * it is held to the same bar as the client id. The secret stays a binding and is reported present or
  * absent rather than shown.
  */
+/** where a visitor starts an SSO login; the object's own public route */
+export const OIDC_START_PATH = '/oidc';
+
 export function renderAccess(row: OidcSetupRow): string {
 	const configured = row.issuer !== '' && row.clientId !== '';
 	const d = row.discovery;
+	// derived from the redirect uri the object composed, so both come from the same origin rather
+	// than from a guess about how this page is being served
+	let startUrl = OIDC_START_PATH;
+	try {
+		startUrl = new URL(OIDC_START_PATH, row.redirectUri).toString();
+	} catch {
+		startUrl = OIDC_START_PATH;
+	}
 	return `<h1>Access</h1>
 <p class="sub">Single sign-on through an OpenID Connect provider. The host verifies the <code>id_token</code> signature, because the interpreter is built without OpenSSL and cannot.</p>
 
@@ -906,6 +1178,14 @@ Client secret ${row.secretPresent ? `<span class="ok">present</span>` : `<span c
 <h2>Redirect URI</h2>
 <p class="sub">Add this to the provider's allowed redirect list before the first login.</p>
 <div class="card"><code>${escapeHtml(row.redirectUri)}</code></div>
+
+<h2>Where People Sign In</h2>
+<p class="sub">This page printed the redirect URI and never the START url, and nothing on the site links to it -- so single sign-on could be fully configured and no visitor could reach it. Send people here, or link it from your theme's login block.</p>
+<div class="card"><code>${escapeHtml(startUrl)}</code>${
+		configured
+			? ` <a href="${escapeHtml(OIDC_START_PATH)}">Try It</a>`
+			: ' <span class="dim">available once an issuer is configured</span>'
+	}</div>
 
 <h2>Configure</h2>
 <p class="sub">Saving fetches the issuer's discovery document, so a wrong issuer is reported here rather than at the first login.</p>

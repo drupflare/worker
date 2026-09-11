@@ -158,11 +158,45 @@ describe('which engine answers, and what it may claim', () => {
 	 */
 	it('claims avif only on the engine that encodes it', () => {
 		expect(supportedExtensions('images')).toContain('avif');
-		expect(supportedExtensions('tinyimg')).not.toContain('avif');
+		// the wasm arm answers from what the loaded module reports, so both directions are real
+		expect(supportedExtensions('tinyimg', ['png', 'jpeg', 'webp'])).not.toContain('avif');
+		expect(supportedExtensions('tinyimg', ['png', 'jpeg', 'webp', 'avif'])).toContain('avif');
+	});
+
+	/**
+	 * The reason this stopped being a function of the engine NAME.
+	 *
+	 * tinyimg 1.0 could not encode AVIF and 1.1 can. With the capability hardcoded against the
+	 * name, all four shipped styles went on degrading to webp after the upgrade and nothing said
+	 * so -- the same shape as a `run: false` outliving the limit that justified it.
+	 */
+	it('reads the wasm arm from the features it was handed, not from its name', () => {
+		const shipped = ['simd', 'png', 'jpeg', 'bmp', 'gif', 'tiff', 'webp', 'avif', 'icc'];
+		const claimed = supportedExtensions('tinyimg', shipped);
+		expect(claimed).toContain('avif');
+		expect(claimed).toContain('tiff');
+		// `simd` and `icc` are capabilities rather than formats, so neither becomes an extension
+		expect(claimed).not.toContain('simd');
+		expect(claimed).not.toContain('icc');
+		// jpeg is reachable by three, and Drupal matches on the extension rather than the format
+		expect(claimed).toEqual(expect.arrayContaining(['jpe', 'jpeg', 'jpg']));
+	});
+
+	it('falls back to the pre-1.1 set when no features are named', () => {
+		// an older host answers no `extensions`, and claiming a format it cannot encode is the one
+		// failure this list exists to avoid
+		expect(supportedExtensions('tinyimg')).toEqual([
+			'png',
+			'jpe',
+			'jpeg',
+			'jpg',
+			'gif',
+			'webp'
+		]);
 	});
 
 	it('claims webp on both, which is what the fallback lands on', () => {
-		expect(supportedExtensions('tinyimg')).toContain('webp');
+		expect(supportedExtensions('tinyimg', ['webp'])).toContain('webp');
 		expect(supportedExtensions('images')).toContain('webp');
 	});
 

@@ -41,8 +41,50 @@ describe('the surface lists what the registry declares', () => {
 			{ label: string; writes: boolean; sliced: boolean; cost: string | null }
 		>;
 		for (const [name, op] of Object.entries(ops)) {
-			expect(Object.keys(op).sort(), name).toEqual(['cost', 'label', 'sliced', 'writes']);
+			expect(Object.keys(op).sort(), name).toEqual([
+				'cost',
+				'driver',
+				'label',
+				'sliced',
+				'writes'
+			]);
 		}
+	});
+
+	// THE LISTING CARRIED NO `driver` AT ALL, and the surface that reads it reported "0 of 18 have a
+	// driver that can actually run here" for its whole life. `OPS_DRIVERS` existed and was consulted
+	// only inside the 501 refusal, so the map was right and nothing published it.
+	it('names a driver for every operation it can point somewhere', async () => {
+		const stub = freshSite();
+		const { body } = await registry(stub);
+		const ops = body.operations as unknown as Record<
+			string,
+			{ sliced: boolean; driver: string | null }
+		>;
+		const withDriver = Object.values(ops).filter((op) => op.driver !== null);
+		// counted rather than pinned, for the same reason the count above is
+		expect(withDriver.length).toBeGreaterThan(Object.keys(ops).length / 2);
+
+		// an unsliced operation IS its own driver; asserting that separately is what stops the line
+		// above passing on a build where every entry says the same thing
+		for (const [name, op] of Object.entries(ops)) {
+			if (op.sliced === false) {
+				expect(op.driver, name).toBe('runs in one invocation');
+			}
+		}
+		// and the sliced ones that genuinely have nowhere to go still say null rather than implying
+		// a route
+		expect(ops['sql-dump']?.driver).toContain('/export');
+	});
+
+	// the shape the consumer reads. `site.ts` declared this an ARRAY and did `for...of` over it,
+	// which throws, so the Commands page rendered an error card and ran no command anybody typed.
+	it('is an object keyed by name, which is what the front worker iterates', async () => {
+		const stub = freshSite();
+		const { body } = await registry(stub);
+		expect(Array.isArray(body.operations)).toBe(false);
+		expect(body.operations).toBeTypeOf('object');
+		expect(Object.keys((body.operations ?? {}) as object)).toContain('status');
 	});
 
 	it('carries the fail-closed pair, so an unknown name reads as writing AND sliced', async () => {
@@ -208,5 +250,36 @@ describe('the health route names the worker version', () => {
 		expect(typeof version?.id).toBe('string');
 		expect(version?.id).not.toBe('');
 		expect(version?.tag).toBeNull();
+	});
+});
+
+describe('a write route names its own argument', () => {
+	// `/__enable` read `url.searchParams.get('module') ?? 'drupflare'`, so a bare GET carrying an
+	// owner token installed a module the caller never named. Every other write route on this object
+	// refuses a missing argument, which is what makes this the odd one out rather than a style note.
+	it('refuses an enable with no module rather than choosing one', async () => {
+		const stub = freshSite();
+		const res = await stub.fetch('https://do.local/__enable');
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { ok?: boolean; error?: string };
+		expect(body.ok).toBe(false);
+		expect(String(body.error)).toContain('name the module');
+	});
+
+	// the control: a named module gets PAST the argument check. It does not have to succeed -- this
+	// site is unmigrated, so the route reaches `SELECT ... FROM router` and throws, which is itself
+	// the proof that the gate above let it through. Without this the refusal could be unconditional
+	// and the assertion beside it would still pass.
+	it('CONTROL: a named module gets past the argument check', async () => {
+		const stub = freshSite();
+		let refusal = '';
+		try {
+			const res = await stub.fetch('https://do.local/__enable?module=token');
+			refusal = String(((await res.json()) as { error?: string }).error ?? '');
+		} catch (e) {
+			refusal = String((e as Error)?.message ?? e);
+		}
+		expect(refusal).not.toContain('name the module');
+		expect(refusal).not.toBe('');
 	});
 });

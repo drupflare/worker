@@ -2,10 +2,18 @@ import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:
 import { describe, expect, it } from 'vitest';
 import { ADMIN_COOKIE } from '../../src/ops/admin-session';
 import worker, { routeTable } from '../../src/site';
-import { ADMIN_PAGES, LOGIN_PATH, LOGOUT_PATH, SURFACE_PREFIX } from '../../src/ui/admin';
+import {
+	ADMIN_PAGES,
+	LOGIN_PATH,
+	LOGOUT_PATH,
+	OPERATE_ACTIONS,
+	SURFACE_PREFIX,
+	renderOperate,
+	renderShell
+} from '../../src/ui/admin';
 
 /**
- * The six `/_cfw` pages, driven through the front worker rather than through their renderers.
+ * The seven `/_cfw` pages, driven through the front worker rather than through their renderers.
  *
  * NOTHING TESTED THESE AT THE ROUTE LEVEL AND ONE OF THEM WAS BROKEN ON EVERY INPUT. The Extend page
  * proxies to `/__installable`; it sent `name` and the route has always read `module`, so every query
@@ -347,5 +355,67 @@ describe('the pages that proxy survive an object that will not answer', () => {
 		const out = await page(SURFACE_PREFIX, dead);
 		expect(out.status).toBe(302);
 		expect(out.location).toContain(LOGIN_PATH);
+	});
+});
+
+/**
+ * The Operate surface, and the gap it closes.
+ *
+ * ELEVEN OWNER ROUTES REACHED THE PRODUCT WITH NO CONTROL ANYWHERE. Taking your own data out,
+ * reading the health ledger, purging your own cache, driving the update chain and replaying the
+ * pack were all owner-gated, all documented, all driven by `drangler` -- and unreachable from a
+ * browser. Two more were worse: `/pitr` and `/restore` are the backup and recovery pair and sat
+ * behind `PW_DIAGNOSTICS`, the same flag that opens arbitrary SQL.
+ *
+ * These assert the WIRING rather than the markup: every path the page offers has to be an owner
+ * route with a `DO_ROUTE` entry, or the button is a 404 with a confident label on it.
+ */
+describe('the Operate page reaches what it offers', () => {
+	it('offers only paths that are owner-reachable and mapped', () => {
+		const table = routeTable();
+		for (const action of OPERATE_ACTIONS) {
+			expect(table.owner.has(action.path), `${action.path} is not owner-reachable`).toBe(
+				true
+			);
+			expect(
+				table.doRoute[action.path] ?? (action.path === '/fleet' ? 'worker' : undefined),
+				`${action.path} has no DO_ROUTE entry, so the button is a 404`
+			).toBeTypeOf('string');
+		}
+	});
+
+	// the backup story. Named explicitly because the general assertion above would still pass if
+	// they were quietly dropped from the page
+	it.each(['/pitr', '/export'])('%s is owner-reachable, not diagnostic-only', (p) => {
+		expect(routeTable().owner.has(p)).toBe(true);
+	});
+
+	// THE OTHER HALF, and it is the control that gives the line above its meaning. `/restore`
+	// replays SQL a caller supplies, so it is the same shape as `/sql` rather than the same shape
+	// as `/pitr`: a bookmark names a state the platform already holds, a body names one the caller
+	// invents. It was promoted with `/pitr` for one commit and `serve-edge.spec.ts` caught it.
+	it.each(['/restore', '/sql'])(
+		'%s stays diagnostic-only, so the owner tier did not widen',
+		(p) => {
+			expect(routeTable().owner.has(p)).toBe(false);
+		}
+	);
+
+	it('renders a control for every declared action, and marks the writes', () => {
+		const html = renderOperate();
+		for (const action of OPERATE_ACTIONS) {
+			expect(html, action.label).toContain(action.label);
+			expect(html, action.path).toContain(action.path);
+		}
+		// a write has to be distinguishable, or a purge reads like a report
+		expect(OPERATE_ACTIONS.some((a) => a.writes)).toBe(true);
+		expect(OPERATE_ACTIONS.some((a) => !a.writes)).toBe(true);
+		expect(html).toContain('data-writes="1"');
+		expect(html).toContain('data-writes="0"');
+	});
+
+	it('is in the nav, so it is reachable without knowing the URL', () => {
+		expect(ADMIN_PAGES.some((p) => p.page === 'operate')).toBe(true);
+		expect(renderShell('operate', '', env)).toContain(`${SURFACE_PREFIX}/operate`);
 	});
 });

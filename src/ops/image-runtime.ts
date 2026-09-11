@@ -30,6 +30,18 @@ export {
  */
 const tinyimg = TinyImgModule.load(wasm);
 
+/**
+ * What the loaded engine reports it can encode, read from the module rather than assumed.
+ *
+ * Measured on the shipped 1.1 build: `simd, png, jpeg, bmp, gif, tiff, webp, avif, text, detect,
+ * icc`. The type union in `@gmitch215/tinyimg` lists `heif` too and there is NO feature flag for
+ * it, so a format being in that union says nothing about this build encoding it -- which is exactly
+ * why this reads `features` instead of the type.
+ */
+export function engineFeatures(): readonly string[] {
+	return tinyimg.features;
+}
+
 /** what a transform produced */
 export type TransformResult = { bytes: Uint8Array; contentType: string };
 

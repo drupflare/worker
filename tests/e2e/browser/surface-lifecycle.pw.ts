@@ -138,11 +138,27 @@ test.describe('the surface acts on the site', () => {
 	 */
 	test('a Command runs against the object and reports what it did', async ({ page }) => {
 		await page.goto(`${SURFACE}/commands`);
+
+		// THE TABLE FIRST, because this test passed against a page that listed nothing. The registry
+		// is an object keyed by name and the front worker iterated it as an array, so the `for...of`
+		// threw, `entries` stayed empty, and the page rendered "0 of 0 have a driver" beside an error
+		// card -- whose own `<pre>` satisfied the visibility assertion below. Naming a row is what
+		// separates a working listing from a caught exception.
+		await expect(page.locator('body')).toContainText('status');
+		await expect(page.locator('body')).not.toContainText(
+			'the operation registry could not be read'
+		);
+		// and drivers resolve: `OPS_DRIVERS` was read only inside the 501 refusal, so every row
+		// reported none
+		await expect(page.locator('body')).not.toContainText('0 of');
+
 		await page.locator('input[name="op"]').fill('status');
 		await page.getByRole('button', { name: 'Run' }).click();
 		await page.waitForLoadState('load');
 		// the result card only exists when the operation returned something
 		await expect(page.locator('.card pre')).toBeVisible();
+		// and it is the OPERATION's output rather than the registry's failure
+		await expect(page.locator('.card pre')).not.toContainText('could not be read');
 	});
 
 	test('a command that takes no arguments says so rather than running', async ({ page }) => {
@@ -254,8 +270,15 @@ test.describe('the surface acts on the site', () => {
 		for (let i = 0; i < (await buttons.count()); i++) {
 			labels.push(((await buttons.nth(i).textContent()) ?? '').trim());
 		}
-		// the OAuth connect is the only one, and it starts a consent flow rather than provisioning
-		expect(labels).toEqual(['Connect With Cloudflare']);
+		// stated as the property rather than as a count: pinning the exact list forbade the
+		// Disconnect control the page needs once an account is connected, which is why it rendered
+		// identically in both states for so long
+		expect(labels).toContain('Connect With Cloudflare');
+		for (const label of labels) {
+			expect(label.toLowerCase()).not.toContain('deploy');
+			expect(label.toLowerCase()).not.toContain('provision');
+			expect(label.toLowerCase()).not.toContain('create');
+		}
 		await expect(page.locator('body')).toContainText('will not pretend otherwise');
 	});
 

@@ -6,12 +6,18 @@
  * a transport, so the lower layer reported success for a message that went nowhere. This module is
  * the transport that was missing; the var is gone.
  *
- * **A send cannot happen inside `cfwMail`.** PHP calls the host synchronously and cannot await, the
- * same constraint that split `cfwFetch` into a queue and a drain. So `cfwMail` resolves a transport
- * and durably queues, and the send happens here on the alarm, in JS, between PHP runs. `{ok: true}`
- * therefore means "a transport resolved and the message is committed to the queue" -- what an SMTP
- * submission server means by 250, not "the recipient has it". No transport means a refusal WITH A
- * REASON, which is what `CfwMail` logs.
+ * **The send is DEFERRED because nothing waits for it, not because PHP cannot wait.** This said
+ * "PHP calls the host synchronously and cannot await", which stopped being true when `ext/cfwpark`
+ * shipped -- a socket exchange can park mid-render now, and `drupal/smtp` reaches a real relay that
+ * way. The reason that survives is better: `MailManager::mail()` returns a bool and no render reads
+ * the result, so the send is deferrable BY CONSTRUCTION, and a parked SMTP conversation measured 13
+ * round trips. Spending 13 RTT on a visitor's request to learn a boolean nobody reads is the wrong
+ * trade at any latency.
+ *
+ * So `cfwMail` resolves a transport and durably queues, and the send happens here on the alarm, in
+ * JS, between PHP runs. `{ok: true}` therefore means "a transport resolved and the message is
+ * committed to the queue" -- what an SMTP submission server means by 250, not "the recipient has
+ * it". No transport means a refusal WITH A REASON, which is what `CfwMail` logs.
  *
  * ## Three transports, and what actually gates them
  *

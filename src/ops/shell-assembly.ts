@@ -285,6 +285,27 @@ export type Identity = {
 };
 
 /**
+ * Reads the role set out of a PHP reply, sorted, or an empty list.
+ *
+ * **A SHELL RESPONSE CARRIED NO ROLES AND THAT STARVED THE COMPILED-PLAN TIER.** The edge plan
+ * compiles from three agreeing samples of `x-cfw-roles`, and `roleSeen` in the front worker is
+ * keyed by COOKIE rather than by path -- so one path answered `ASSEMBLED` was enough to make the
+ * whole session read `skip:roles-unknown` and never compile a plan for anything. `ASSEMBLED` still
+ * costs a Durable Object hop and a real fragment render; `PLAN` costs neither, so the cheaper tier
+ * was being locked out by the more expensive one.
+ *
+ * The render already computes this, so carrying it out is free. Anything not a list of strings
+ * yields nothing rather than a guess: a partial role set would compile a plan for the wrong
+ * audience, which is strictly worse than compiling none.
+ */
+export function rolesOf(reply: Record<string, unknown> | null | undefined): string[] {
+	const raw = reply?.['roles'];
+	if (!Array.isArray(raw)) return [];
+	const roles = raw.filter((r): r is string => typeof r === 'string' && r !== '');
+	return roles.length === raw.length ? [...roles].sort() : [];
+}
+
+/**
  * Puts one visitor's own values back into the slots.
  *
  * REFUSES ON A PERMISSIONS-HASH MISMATCH, which is the check that keeps a role-keyed shell inside

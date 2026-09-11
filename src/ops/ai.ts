@@ -1,11 +1,18 @@
 /**
  * Workers AI as a QUEUED tier, over the same queue the HTTP and TCP tiers already use.
  *
- * The interpreter cannot await, so an inference call has the same shape every outbound call here
- * has: PHP names the whole operation, the host runs it between invocations, and the answer is read
- * on a later one. `drupal/ai`'s provider interface is synchronous and has no async form, so a
- * provider on this runtime can satisfy it only by having the answer already -- which is this tier's
- * contract exactly.
+ * An inference call has the same shape every outbound call here has: PHP names the whole operation,
+ * the host runs it between invocations, and the answer is read on a later one. `drupal/ai`'s
+ * provider interface is synchronous and has no async form, which this tier satisfies by having the
+ * answer already.
+ *
+ * **"The interpreter cannot await" was the stated reason and it expired.** `ext/cfwpark` freezes the
+ * Zend continuation and resumes it after host-performed I/O, so an inference COULD block a render.
+ * Two things still say queue, and neither is about the interpreter. A generation is seconds rather
+ * than milliseconds, so an inline call spends the visitor's whole request on one field. And the
+ * neuron meter below is a hard 429, so an inline call fails a page for a quota the page did not
+ * need -- where a queued one degrades to nothing. **Streaming is the case that stays genuinely
+ * closed**: a park delivers one answer, not a stream, and that holds whatever the meters do.
  *
  * **The `AI` binding, never the REST API.** A REST call to `api.cloudflare.com` needs
  * `Authorization: Bearer` and an account id in the URL, so the account token would have to be

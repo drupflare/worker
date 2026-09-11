@@ -15,14 +15,21 @@ import { _sessionFromSocket as syslogSessionFromSocket } from 'edgeport/syslog';
  * imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
  * not bundle.
  *
- * **`cfw_tcp_connect()` / `read()` / `write()` / `close()` CANNOT EXIST, and that is a property of
- * the interpreter rather than a gap in this file.** `Host::call()` is `$reply = $invoke($json)`: the
- * wasm stack cannot suspend without JSPI or Asyncify, so any host function that awaits hands PHP a
- * Promise it can only stringify. A session API needs a `read()` that blocks for bytes that have not
- * arrived, so the mechanism is closed. The OBJECTIVE -- PHP-reachable TCP -- is not, and this is what
- * survives it: PHP declares a whole exchange, the exchange runs in JS between invocations, and the
- * answer is readable on a later one. That is the same cached -> deferred -> sync layering
- * `cfwFetch` lives under, with the sync tier absent for the same reason.
+ * **THIS DOCBLOCK ASSERTED THAT A SESSION API CANNOT EXIST, AND THE SHIPPING BINARY HAS ONE.** The
+ * claim was that `Host::call()` is `$reply = $invoke($json)`, so a host function that awaits hands
+ * PHP a Promise it can only stringify, and a `read()` blocking for bytes that have not arrived is
+ * therefore impossible. That was true of a HOST FUNCTION and it was never a property of the
+ * interpreter: `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and lets
+ * `src/ops/park-drive.ts` perform exactly `open` / `write` / `read` / `line` in JavaScript before
+ * resuming the same PHP chain. `drupal/redis` runs on it and is `verified`. The refusal closed a
+ * mechanism and took the objective with it, which is the failure this repository names most often.
+ *
+ * So this file is the DEFERRED tier, not the only tier. PHP declares a whole exchange, the exchange
+ * runs in JS between invocations, and the answer is readable on a later one -- the same
+ * cached -> deferred -> sync layering `cfwFetch` lives under, and the sync tier is `src/ops/park.ts`.
+ * The deferred tier survives on its own terms rather than as a consolation: a park is refused
+ * wherever the safety predicate cannot walk the frames, and **a refused park must degrade rather
+ * than fail**, so this is what it degrades to.
  *
  * **The ENDPOINT is the operator's, never the caller's.** A queued row names a host, so letting PHP
  * choose one would put arbitrary `host:port` TCP behind any module that can call a host function --

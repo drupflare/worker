@@ -207,15 +207,39 @@ describe('renderDeploy: it must not render a button that lies', () => {
 	 * approximated by counting elements.
 	 */
 	it('offers no control that claims to deploy', () => {
-		const html = renderDeploy();
-		const controls = [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map((m) => m[1] ?? '');
-		expect(controls.length, 'the connect button is the only one').toBe(1);
-		for (const label of controls) {
-			expect(label.toLowerCase()).not.toContain('deploy');
-			expect(label.toLowerCase()).not.toContain('provision');
-			expect(label.toLowerCase()).not.toContain('create');
+		// COUNTING THE BUTTONS WAS THE APPROXIMATION AGAIN. The assertion was `length === 1`, which
+		// is not the property -- it forbade a Disconnect control the page needed, and the page went
+		// on rendering identically before and after an account was connected because nothing could
+		// be added without failing here. What must stay absent is a control claiming to provision.
+		for (const html of [
+			renderDeploy(),
+			renderDeploy({ connected: true, accountId: 'acc-1', clientId: 'cid' })
+		]) {
+			const controls = [...html.matchAll(/<button[^>]*>(.*?)<\/button>/g)].map(
+				(m) => m[1] ?? ''
+			);
+			expect(controls.length).toBeGreaterThan(0);
+			for (const label of controls) {
+				expect(label.toLowerCase()).not.toContain('deploy');
+				expect(label.toLowerCase()).not.toContain('provision');
+				expect(label.toLowerCase()).not.toContain('create');
+			}
+			expect(controls).toContain('Connect With Cloudflare');
 		}
-		expect(controls[0]).toBe('Connect With Cloudflare');
+	});
+
+	it('says whether an account is connected, in both directions', () => {
+		expect(renderDeploy()).not.toContain('Disconnect This Account');
+		expect(renderDeploy({ connected: false })).not.toContain('Disconnect This Account');
+		const on = renderDeploy({ connected: true, accountId: 'acc-1' });
+		expect(on).toContain('Disconnect This Account');
+		expect(on).toContain('acc-1');
+	});
+
+	it('shows the outcome the OAuth return leg redirected with', () => {
+		// the callback used to answer raw JSON, so there was nowhere for an outcome to land
+		expect(renderDeploy({ connected: true }, 'Connected.')).toContain('Connected.');
+		expect(renderDeploy(null, 'state did not match')).toContain('state did not match');
 	});
 
 	it('still refuses to imply provisioning exists', () => {

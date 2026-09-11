@@ -12,19 +12,26 @@ import { CACHE_TIERS, isCacheTier } from '../../src/ops/cache-tiers.js';
  */
 
 const ROOT = resolve(import.meta.dirname, '../..');
-const SOURCES = ['src/site.ts', 'src/site-do.ts'];
+// `page-memo.ts` joined when the MEM headers moved there: the hit path used to assemble them per
+// request and now the store path does it once, so the only `'x-cfw-cache': 'MEM'` in the tree is
+// in that file. The scan reads the source rather than a list precisely so a move like that is
+// caught, and it was -- as `MEM is declared and nothing emits it`
+const SOURCES = ['src/site.ts', 'src/site-do.ts', 'src/ops/page-memo.ts'];
 const LITERAL = /'x-cfw-cache':\s*'([A-Z]+)'/g;
 const SET_CALL = /set\('x-cfw-cache',\s*'([A-Z]+)'\)/g;
 // `pageResponse()` takes the tier as an argument, so those never appear as a header literal
 const PAGE_RESPONSE = /pageResponse\(\s*\w+,\s*'([A-Z]+)'/g;
 // the shell path chooses between two tiers on the verdict, and BOTH branches ship
 const TERNARY = /'x-cfw-cache':[^,]*?\?\s*'([A-Z]+)'\s*:\s*'([A-Z]+)'/g;
+// the same shape one function over: the storage lane picks AGED or HIT on whether the row a bump
+// superseded is still inside its window, and both branches ship
+const PAGE_RESPONSE_TERNARY = /pageResponse\(\s*\w+,\s*[^,]*?\?\s*'([A-Z]+)'\s*:\s*'([A-Z]+)'/g;
 
 function tiersInSource(): Map<string, string[]> {
 	const found = new Map<string, string[]>();
 	for (const file of SOURCES) {
 		const text = readFileSync(resolve(ROOT, file), 'utf8');
-		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE, TERNARY]) {
+		for (const re of [LITERAL, SET_CALL, PAGE_RESPONSE, TERNARY, PAGE_RESPONSE_TERNARY]) {
 			re.lastIndex = 0;
 			for (const m of text.matchAll(re)) {
 				for (const tier of m.slice(1)) {

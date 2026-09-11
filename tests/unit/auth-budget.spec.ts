@@ -369,7 +369,9 @@ describe('the wiring in src/site.ts', () => {
 	it('decides authenticated-ness BEFORE the DO hop', () => {
 		// after the hop the DO request is already spent, so the reservation would buy nothing
 		const decidedAt = siteSource.indexOf('isAuthenticatedRequest(request)');
-		const hopAt = siteSource.indexOf('await stub.fetch(innerRequest)');
+		// `stubOf()`, because the stub is built lazily now: the tier answering 82% of traffic
+		// returns without a Durable Object stub ever being constructed
+		const hopAt = siteSource.indexOf('await stubOf().fetch(innerRequest)');
 		expect(decidedAt).toBeGreaterThan(-1);
 		expect(hopAt).toBeGreaterThan(-1);
 		expect(decidedAt).toBeLessThan(hopAt);

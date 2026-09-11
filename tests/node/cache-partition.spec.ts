@@ -66,9 +66,15 @@ describe('the shipping configs do not enable an unpartitioned cache', () => {
 		// THE KEY ARRAY, NOT THE DECLARATION. Reading the whole arrow function matched `site` in
 		// the PARAMETER LIST, so deleting it from the key left this green -- the exact defect the
 		// file guards against, in the guard itself
+		//
+		// TARGETED AT `pageKeyUrl`, which is where the array now lives: `pageKey()` became
+		// `new Request(pageKeyUrl(...))` so the memo could be consulted without building a Request,
+		// and an unanchored search ran past it to the NEXT `cacheKey(origin, [` in the file and
+		// asserted against the auth-budget key instead. A source guard has to be anchored on the
+		// thing it names or it silently guards something else.
 		const src = readFileSync('src/site.ts', 'utf8');
-		const parts = src.match(/const pageKey =[\s\S]*?cacheKey\(\s*origin,\s*\[([^\]]*)\]/);
-		expect(parts?.[1], 'pageKey() not found in src/site.ts').toBeTruthy();
+		const parts = src.match(/const pageKeyUrl =[\s\S]*?cacheKeyUrl\(\s*origin,\s*\[([^\]]*)\]/);
+		expect(parts?.[1], 'pageKeyUrl() not found in src/site.ts').toBeTruthy();
 		const key = parts?.[1] ?? '';
 		expect(
 			key,

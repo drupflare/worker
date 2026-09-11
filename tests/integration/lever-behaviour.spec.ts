@@ -204,18 +204,22 @@ describe('the fixture covers the allow-list', () => {
  * so one response carries both the profile lever and the number that overrides it.
  */
 describe('PLAN and RENDER_BUDGET_MS move the inline budget', () => {
-	it('gives paid a longer budget than free', async () => {
+	it('gives both plans the same budget, because it bounds patience rather than spend', async () => {
+		// free was 2,000 and is 10,000. `inlineBudgetMs` is not a billed resource -- wall time is
+		// not charged against the CPU budget (4 ms of Worker CPU against 827 ms of wall, measured)
+		// -- so it bounds how long a VISITOR waits, and a free visitor's patience is not smaller
+		// than a paid one's. What it was really doing was refusing a cold boot, against an
+		// alternative measured at 19,004 ms
 		const free = await missWith({}, '/lever-plan-free', { render: true });
 		const paid = await missWith({ PLAN: 'paid' }, '/lever-plan-paid', { render: true });
-		expect(free.budgetMs).toBe(2000);
+		expect(free.budgetMs).toBe(10_000);
 		expect(paid.budgetMs).toBe(10_000);
-		expect(paid.budgetMs).not.toBe(free.budgetMs);
 	});
 
 	it('takes an explicit budget over the plan default', async () => {
 		const fallback = await missWith({}, '/lever-budget-default');
 		const set = await missWith({ RENDER_BUDGET_MS: '7777' }, '/lever-budget-set');
-		expect(fallback.budgetMs).toBe(2000);
+		expect(fallback.budgetMs).toBe(10_000);
 		expect(set.budgetMs).toBe(7777);
 		// the same response names the plan the budget came from, so a free arm cannot read as paid.
 		// `x-cfw-account-plan` since header version 2; `x-cfw-plan` is the edge-plan tier and always
@@ -508,8 +512,13 @@ describe('SHELL_ASSEMBLY switches fragment assembly', () => {
  */
 describe('SITE_LOCATION_HINT reaches the namespace', () => {
 	it('passes no options by default and a hint when one is set', async () => {
-		const fallback = await through('/lever-hint');
-		const set = await through('/lever-hint', { SITE_LOCATION_HINT: 'weur' });
+		// A DISTINCT PATH PER ARM, because the two used the same one and the second was answered by
+		// the isolate page memo -- which is module state and survives between `through()` calls. It
+		// passed only while the front worker built a stub EAGERLY on every request: once the stub
+		// went lazy, a memo hit stopped calling `SITE.get()` at all and this read `undefined`.
+		// That is the optimisation working, and the test was depending on the waste.
+		const fallback = await through('/lever-hint-default');
+		const set = await through('/lever-hint-set', { SITE_LOCATION_HINT: 'weur' });
 		expect(fallback.options[0]).toBeUndefined();
 		expect(set.options[0]).toEqual({ locationHint: 'weur' });
 	});

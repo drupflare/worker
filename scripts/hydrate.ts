@@ -231,6 +231,32 @@ async function hydrateFrom(
 	}
 }
 
+/**
+ * The artifacts that make a tree deployable, and whether they are all there.
+ *
+ * **HYDRATING A TREE THAT IS ALREADY HYDRATED OVERWRITES IT**, and the payload it overwrites with is
+ * whatever release `package.json`'s version names -- so a developer who has just repacked
+ * `assets/driver.json` gets the published copy back, silently. That is the same shape as
+ * `restore-artifacts.ts` reverting a hand edit to `site.sqlite`, and it becomes a live hazard the
+ * moment `wrangler.jsonc` names this as its build command: every `wrangler deploy` would do it.
+ *
+ * So a complete tree is left alone unless `--force` says otherwise.
+ */
+const HYDRATED_MARKERS = [
+	'assets/driver.json',
+	'assets/prefill.json',
+	'assets/core',
+	'assets/drupal-pf/core.pf.json',
+	'assets/drupal-pf/core.pf.bin',
+	'assets/drupal-sql/manifest.json',
+	'assets/drupal/twig-bake.json'
+] as const;
+
+/** the marker paths a tree is missing, so a refusal can NAME them rather than say "incomplete" */
+export function missingMarkers(root: string, exists = existsSync): string[] {
+	return HYDRATED_MARKERS.filter((p) => !exists(join(root, p)));
+}
+
 async function main(): Promise<number> {
 	const root = resolve(import.meta.dirname, '..');
 	const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
@@ -239,6 +265,14 @@ async function main(): Promise<number> {
 	const tag = arg('tag', `v${pkg.version}`)!;
 	const payloadOnly = process.argv.includes('--payload-only');
 	const fromSource = process.argv.includes('--from-source');
+	const force = process.argv.includes('--force');
+
+	const missing = missingMarkers(root);
+	if (missing.length === 0 && !force && !fromSource) {
+		console.log('the tree is already hydrated; nothing to do.');
+		console.log('pass --force to replace it with the published payload anyway.');
+		return 0;
+	}
 	// --force reaches the source route, where it means "rebuild every step"; the payload route has
 	// nothing to force, since it overwrites whatever is there anyway
 	const forwarded = process.argv

@@ -244,6 +244,13 @@ export default defineConfig({
 						remoteBindings: false,
 						wrangler: { configPath: './wrangler.jsonc' },
 						miniflare: {
+							// **THE SHIPPING CONFIG NO LONGER DECLARES `FILES`, AND THE TEST LANE
+							// STILL HAS TO.** `r2_buckets` was removed from `wrangler.jsonc` because
+							// naming a bucket makes a fresh free account refuse the whole deploy --
+							// R2 must be enabled from the dashboard first, measured as
+							// `code: 10042`. Miniflare's R2 is local and needs no account, so the
+							// tier stays exercised here while the deploy button works there.
+							r2Buckets: ['FILES'],
 							// DRUPFLARE_MEASURE gates the wall-clock instruments, which cannot be
 							// hermetic; forwarded because the pool has its own env
 							bindings: {

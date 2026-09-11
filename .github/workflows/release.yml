@@ -154,7 +154,7 @@ jobs:
             echo "- Suites: run with REQUIRE_ARTIFACTS=1, so the pack-dependent specs asserted"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Hand the Payload to the Publish Job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-payload
           path: |
@@ -189,7 +189,7 @@ jobs:
         id: latest_tag
         run: echo "LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo '')" >> "$GITHUB_ENV"
       - name: Collect the Payload the Previous Job Built
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-payload
           path: dist

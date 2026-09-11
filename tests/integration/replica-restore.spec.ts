@@ -349,14 +349,20 @@ describe('a replica reaches VERIFIED only by a whole consistent copy', () => {
 	it(
 		'refuses to snapshot a table the replica owns itself',
 		async () => {
-			const status = await inObject(freshSite(), async (site) => {
+			const out = await inObject(freshSite(), async (site) => {
 				role(site, 'primary');
-				const res = await site.fetch(
+				const owned = await site.fetch(
+					new Request('https://do.local/__replica?action=snapshot&table=cfw_shell')
+				);
+				// and the seeded one is NOT refused, which is what makes the refusal mean
+				// something rather than reading as "snapshot rejects the cfw_ prefix"
+				const seeded = await site.fetch(
 					new Request('https://do.local/__replica?action=snapshot&table=cfw_page')
 				);
-				return res.status;
+				return { owned: owned.status, seeded: seeded.status };
 			});
-			expect(status).toBe(409);
+			expect(out.owned).toBe(409);
+			expect(out.seeded).toBe(200);
 		},
 		TIMEOUT
 	);

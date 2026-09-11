@@ -34,6 +34,23 @@ export type TableVerdict = {
 };
 
 /**
+ * Locally-owned tables handed over anyway, so a lane starts warm rather than empty.
+ *
+ * `LOCAL_EPHEMERAL` is the right WRITE verdict and it stays: a lane originates its own pages with
+ * no forwarding. Whether to SEED one is a different question, and answering both with the same
+ * rule is what made the pool lose the workload it exists for. Measured 2026-09-10 with three lanes
+ * genuinely receiving traffic: anon-cached went from 2 ms at c=1 to 405 ms at c=4, because every
+ * request routed to a lane met an empty page store and rendered. That slice is 82% of the traffic
+ * weight.
+ *
+ * `cfw_page` alone. Enumerated rather than derived, because each entry needs its own argument that
+ * a stale copy is reachable by an invalidation the lane will actually receive -- for this one,
+ * `purgeAfterApply()` on the log pull. A bin whose staleness nothing on the lane can detect belongs
+ * nowhere near this set.
+ */
+const SEED_ON_RESTORE: ReadonlySet<string> = new Set(['cfw_page']);
+
+/**
  * Which of the primary's tables belong on a replica.
  *
  * `UNKNOWN` is copied, the opposite of the request-time rule. An unclassified table that routes a
@@ -53,7 +70,15 @@ export function planRestore(tables: readonly string[]): TableVerdict[] {
 		}
 		const status = classifyState(table);
 		if (status === 'LOCAL_EPHEMERAL') {
-			out.push({ table, status, copy: false, reason: 'the replica owns its own' });
+			const seeded = SEED_ON_RESTORE.has(table);
+			out.push({
+				table,
+				status,
+				copy: seeded,
+				reason: seeded
+					? "the replica owns its own, but starts from the primary's"
+					: 'the replica owns its own'
+			});
 			continue;
 		}
 		if (status === 'PRIMARY_ONLY_SIDE_EFFECT') {

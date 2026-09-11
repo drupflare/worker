@@ -32,9 +32,31 @@ type CatchUp = {
 	admitted: boolean;
 };
 
+/** a stored page, written straight in so a case does not have to drive a real fill to get one */
+function storePage(site: ServeDo, path: string, html: string): void {
+	site.ensureServeTables();
+	site.sql.exec(
+		'INSERT OR REPLACE INTO cfw_page (path, status, content_type, html, rendered_at, render_ms)' +
+			' VALUES (?, 200, ?, ?, ?, 1.0)',
+		path,
+		'text/html',
+		html,
+		site.nowMs()
+	);
+}
+
+function storedPaths(site: ServeDo): string[] {
+	site.ensureServeTables();
+	return site.sql
+		.exec('SELECT path FROM cfw_page ORDER BY path')
+		.toArray()
+		.map((r) => String((r as { path: unknown }).path));
+}
+
 /** the whole primary -> replica handover, so each case starts from a lane that has real state */
 async function pairedLane(
-	name: string
+	name: string,
+	seed?: (site: ServeDo) => void
 ): Promise<{ primary: string; lane: string; armedAtRestore: number | null }> {
 	const primary = `catchup.${name}`;
 	const lane = replicaName(primary, 1);
@@ -53,6 +75,7 @@ async function pairedLane(
 		await site.runJson(
 			drupalOp(`$out['k'] = strlen(\\Drupal::service('private_key')->get());`)
 		);
+		seed?.(site);
 	});
 
 	const plan = (await inObject(namedSite(primary), async (site) => {
@@ -187,6 +210,73 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 			const out = await catchUp(lane);
 			expect(out.records, out.reason).toBeGreaterThan(0);
 			expect(out.applied).toBe(out.advertised);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The page store crossing the seam, and the invalidation that has to cross with it.
+ *
+ * A lane started with an empty `cfw_page` and rendered every anonymous request it was handed, which
+ * is the one workload the pool exists to absorb. Seeding it is half the fix; the other half is that
+ * `bumpGeneration()` runs only on the primary, so nothing on a lane ever dropped a stored page.
+ */
+describe("a lane serves the primary's pages and stops serving them when they change", () => {
+	it(
+		'arrives holding the pages the primary had stored',
+		async () => {
+			const { lane } = await pairedLane('seeded', (site) => {
+				storePage(site, '/seeded-one', '<html>one</html>');
+				storePage(site, '/seeded-two', '<html>two</html>');
+			});
+
+			const paths = await inObject(namedSite(lane), (site) => {
+				role(site, 'primary');
+				return storedPaths(site);
+			});
+			expect(paths).toEqual(['/seeded-one', '/seeded-two']);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'drops what it holds once the log moves it past a generation',
+		async () => {
+			const { primary, lane } = await pairedLane('invalidates', (site) => {
+				storePage(site, '/stale', '<html>before the save</html>');
+			});
+			await catchUp(lane);
+			// present before the write, or the assertion below passes on an empty store
+			expect(
+				await inObject(namedSite(lane), (site) => {
+					role(site, 'primary');
+					return storedPaths(site);
+				})
+			).toContain('/stale');
+
+			await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const ok = (await site.runJson(
+					drupalOp(`
+\\Drupal::configFactory()->getEditable('system.site')->set('slogan', 'after-the-save')->save();
+$out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
+				)) as { ok?: boolean };
+				expect(ok?.ok, `the write did not run: ${JSON.stringify(ok).slice(0, 200)}`).toBe(
+					true
+				);
+				await site.sealGeneration();
+			});
+
+			const out = await catchUp(lane);
+			expect(out.records, out.reason).toBeGreaterThan(0);
+			const after = await inObject(namedSite(lane), (site) => {
+				role(site, 'primary');
+				return storedPaths(site);
+			});
+			// FALSIFIED by removing the `purgeAfterApply()` call in `catchUpOnce`: this reads
+			// ['/stale'], which is a visitor being served content the site no longer has
+			expect(after).toEqual([]);
 		},
 		TIMEOUT
 	);

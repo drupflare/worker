@@ -24,8 +24,125 @@ type Arm = {
 	rows: number;
 	index: number;
 	statements: number;
-	perTable: { table: string; indexRows: number; chargePerRow: number }[];
+	perTable: { table: string; chargedRows: number; indexRows: number; chargePerRow: number }[];
 };
+
+/**
+ * WHAT A CONTENT SAVE COSTS ON THE ROW METER, attributed per table.
+ *
+ * Measured deployed 2026-09-11: a node save costs ~208-233 charged rows, consistently across 4, 12
+ * and 30 saves per minute. Against the free plan's ~100,000 rows/day that is roughly 480 saves a
+ * day, and it is the product's binding write limit -- it arrives an order of magnitude before any
+ * latency problem, and nothing was designed against it because every earlier measurement was in
+ * milliseconds. This attributes the rows so a lever has somewhere to aim.
+ *
+ * Same harness as the fill arms above and the same meter; the operation is the difference.
+ */
+describe('rows per content save, which is the write ceiling', () => {
+	it(
+		'attributes a node save per table',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const first = await site.fetch(
+					new Request('https://do.local/__firstrun', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							adminPass: 'cfw-Audit-9912-pass',
+							siteName: 'Audit'
+						})
+					})
+				);
+				expect(first.status, await first.clone().text()).toBe(200);
+				// a page warm first, so the save's own invalidation has something to purge and
+				// re-queue -- a save on a site with nothing cached under-reports by construction
+				await site.fillOne('/');
+
+				const save = async (title: string): Promise<Arm> => {
+					await site.fetch(new Request('https://do.local/__writes?op=off'));
+					await site.fetch(new Request('https://do.local/__writes?op=on'));
+					const res = await site.fetch(
+						new Request(
+							`https://do.local/__savenode?title=${encodeURIComponent(title)}`
+						)
+					);
+					expect(res.status, await res.clone().text()).toBe(200);
+					const t = (await (
+						await site.fetch(new Request('https://do.local/__writes'))
+					).json()) as {
+						rowsWritten: number;
+						statements: number;
+						indexSplit: {
+							indexRows: number;
+							rows: {
+								table: string;
+								chargedRows: number;
+								indexRows: number;
+								chargePerRow: number;
+							}[];
+						};
+					};
+					return {
+						rows: t.rowsWritten,
+						index: t.indexSplit.indexRows,
+						statements: t.statements,
+						perTable: t.indexSplit.rows
+							.filter((r) => r.chargedRows > 0)
+							.sort((a, b) => b.chargedRows - a.chargedRows)
+					};
+				};
+
+				// two consecutive saves: the first carries any one-off warming, the second is the
+				// marginal cost an editor actually repeats
+				const firstSave = await save('audit one');
+				// `cfw_meta` is the largest NON-CONTENT charge and it is entirely ours, so the keys
+				// behind it are counted rather than left as a total. Wrapping the setter is the only
+				// way to attribute them: the write tally sees a table, not a key
+				const metaKeys: Record<string, number> = {};
+				const realMetaSet = site.metaSet.bind(site);
+				site.metaSet = (k: string, v: unknown) => {
+					metaKeys[k] = (metaKeys[k] ?? 0) + 1;
+					return realMetaSet(k, v);
+				};
+				const secondSave = await save('audit two');
+				site.metaSet = realMetaSet;
+				return { firstSave, secondSave, metaKeys };
+			});
+
+			const share = (arm: Arm) =>
+				arm.perTable.map((r) => ({
+					table: r.table,
+					rows: r.chargedRows,
+					pct: Math.round((r.chargedRows / arm.rows) * 100)
+				}));
+			console.log(
+				`[rows-per-save] ${JSON.stringify({
+					firstSaveRows: out.firstSave.rows,
+					secondSaveRows: out.secondSave.rows,
+					firstSave: share(out.firstSave),
+					secondSave: share(out.secondSave),
+					metaKeys: Object.entries(out.metaKeys).sort((a, b) => b[1] - a[1])
+				})}`
+			);
+
+			// a save that writes nothing prices nothing, and a save is the operation the write
+			// ceiling is computed from
+			expect(out.firstSave.rows).toBeGreaterThan(0);
+			expect(out.secondSave.rows).toBeGreaterThan(0);
+			expect(out.secondSave.perTable.length).toBeGreaterThan(0);
+
+			// ONE `commit_seq` row per save, not one per authoritative statement. It was 28 -- 15% of
+			// a 188-row save and the largest non-content charge on it -- and batching took the save
+			// to 161. A regression here is invisible in latency and shows up only as a site that
+			// runs out of daily rows sooner, which is the failure mode nobody was watching
+			expect(out.metaKeys.commit_seq ?? 0).toBe(1);
+			// and the fence still has to MOVE, or the saving came from breaking replication
+			expect(out.metaKeys.commit_seq).toBeGreaterThan(0);
+		},
+		TIMEOUT
+	);
+});
 
 describe('rows per fill, against the constants the ceiling is computed from', () => {
 	it(
@@ -57,18 +174,26 @@ describe('rows per fill, against the constants the ceiling is computed from', ()
 						statements: number;
 						indexSplit: {
 							indexRows: number;
-							rows: { table: string; indexRows: number; chargePerRow: number }[];
+							rows: {
+								table: string;
+								chargedRows: number;
+								indexRows: number;
+								chargePerRow: number;
+							}[];
 						};
 					};
 					return {
 						rows: t.rowsWritten,
 						index: t.indexSplit.indexRows,
 						statements: t.statements,
-						// which tables carry the index charge, so a lever aimed at it knows where
-						// to aim rather than assuming the cfw_* tables matter
+						// EVERY table that charged, not just the ones carrying an index charge. The
+						// narrow list answered "where does the index cost live" and could not answer
+						// "why did the total move": a drift of 8 landed entirely in single-charge
+						// tables, so the report named `cache_data` and `key_value` at exactly their
+						// documented values while the total disagreed
 						perTable: t.indexSplit.rows
-							.filter((r) => r.indexRows > 0)
-							.sort((a, b) => b.indexRows - a.indexRows)
+							.filter((r) => r.chargedRows > 0)
+							.sort((a, b) => b.chargedRows - a.chargedRows)
 					};
 				};
 

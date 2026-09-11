@@ -1,19 +1,20 @@
 import { SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import {
-	type BumpResult,
-	type ServeDo,
-	type ServeProbe,
 	driveAlarms,
 	freshSite,
 	inObject,
+	markProvisioned,
 	namedSite,
 	pageFor,
 	seedPage,
 	serveDirect,
 	serveThroughWorker,
 	statsOf,
-	stubRender
+	stubRender,
+	type BumpResult,
+	type ServeDo,
+	type ServeProbe
 } from '../helpers/serve-do';
 
 /**
@@ -349,6 +350,146 @@ describe('a save must not hand the next visitor a 202', () => {
 		expect(bump.purgedPages).toBe(0);
 		expect(bump.requeued).toBe(0);
 		expect(bump.generation).toBe(2);
+	});
+
+	/**
+	 * THE 503 STORM. A bump used to empty `cfw_page`, so between a save and the refill every
+	 * anonymous visitor -- 0.82 of the traffic weight -- got an error, on every site and every save.
+	 * `PREFILL_ON_SAVE` re-queues and is not the fix: it bounds how many pages come BACK, not the
+	 * window in which there are none. The row is superseded rather than deleted now.
+	 */
+	it('answers the drain window with content instead of a 503', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.fillOne('/');
+			site.bumpGeneration('storm');
+			// nothing has refilled yet: this is the exact instant that used to be an error
+			return await serveDirect(site, '/', '&inline=0');
+		});
+		expect(out.status).toBe(200);
+		expect(out.cache).toBe('AGED');
+	});
+
+	it('goes back to HIT once the chain has refilled it', async () => {
+		const stub = freshSite();
+		await inObject(stub, async (site) => {
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.fillOne('/');
+			site.bumpGeneration('storm');
+		});
+		await driveAlarms(stub, (site) => site.queueDepth() === 0);
+		const out = await inObject(stub, (site) => serveDirect(site, '/', '&inline=0'));
+		// the refill clears the mark, so an aged row cannot survive its own replacement
+		expect(out.cache).toBe('HIT');
+	});
+
+	it('queues a refill for a path the cap left out, so the tail self-heals on its first visit', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			site.env = { ...site.env, PREFILL_ON_SAVE_LIMIT: '0' };
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.fillOne('/tail');
+			const bump = site.bumpGeneration('capped');
+			const before = site.queueDepth();
+			const served = await serveDirect(site, '/tail', '&inline=0');
+			return { bump, before, after: site.queueDepth(), served };
+		});
+		// the cap re-queued nothing, so without the serve-side enqueue this path stays aged forever
+		expect(out.bump.requeued).toBe(0);
+		expect(out.before).toBe(0);
+		expect(out.served.cache).toBe('AGED');
+		expect(out.after).toBe(1);
+	});
+
+	it('degrades to the old refusal once the window has passed, rather than serving forever', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			// an object whose alarm chain has stopped is the case this bound exists for
+			site.env = { ...site.env, AGED_SERVE_MAX_MS: '0' };
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.fillOne('/');
+			site.bumpGeneration('expired');
+			return await serveDirect(site, '/', '&inline=0');
+		});
+		expect(out.cache).not.toBe('AGED');
+		expect(out.status).toBeGreaterThanOrEqual(400);
+	});
+
+	it('honours an operator exclusion and refuses to age that path', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			site.env = { ...site.env, NEVER_STALE: '/checkout' };
+			stubRender(site, ({ path }) => pageFor(path));
+			await site.fillOne('/checkout');
+			await site.fillOne('/');
+			site.bumpGeneration('excluded');
+			return {
+				checkout: await serveDirect(site, '/checkout', '&inline=0'),
+				root: await serveDirect(site, '/', '&inline=0')
+			};
+		});
+		expect(out.checkout.cache).not.toBe('AGED');
+		// the control: the exclusion is a path rule, not a switch that turned the tier off
+		expect(out.root.cache).toBe('AGED');
+	});
+
+	/**
+	 * A visitor's miss must not wait behind work nobody is waiting for. A bump queues up to
+	 * `PREFILL_ON_SAVE_LIMIT` background paths; the queue was FIFO, so a miss arriving after one
+	 * was served last. Measured deployed with a queue ~28 deep: time-to-served p50 19,004 ms and
+	 * 4 of 8 probes never served at all, against a VPS answering all 8 first time at p50 78 ms.
+	 *
+	 * `markProvisioned()` because `freshSite()` has never migrated, and every `/__serve` on one
+	 * returns the `migrating` warming page before it reaches the enqueue -- which is why the first
+	 * version of this test saw an empty queue and looked like a broken promotion.
+	 */
+	it('serves a visitor-demanded miss before background prefill', async () => {
+		const stub = freshSite();
+		const order = await inObject(stub, async (site) => {
+			markProvisioned(site);
+			stubRender(site, ({ path }) => pageFor(path));
+			for (const path of ['/a', '/b', '/c']) await site.fillOne(path);
+			// the bump queues all three as background work
+			site.bumpGeneration('prefill');
+			// and now a visitor misses a path none of them is
+			const probe = await serveDirect(site, '/wanted', '&inline=0');
+			expect(probe.status).toBe(503);
+			return site.sql
+				.exec('SELECT path, priority FROM cfw_fill_queue ORDER BY priority, queued_at')
+				.toArray()
+				.map((r) => `${r.path}:${r.priority}`);
+		});
+		expect(order[0]).toBe('/wanted:0');
+		expect(order).toHaveLength(4);
+	});
+
+	it('promotes a path background prefill had already queued', async () => {
+		const stub = freshSite();
+		const order = await inObject(stub, async (site) => {
+			markProvisioned(site);
+			site.ensureServeTables();
+			stubRender(site, ({ path }) => pageFor(path));
+			// queued as background work, with nothing stored for it, so a visitor still misses
+			site.sql.exec(
+				'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?)',
+				'/slow',
+				Date.now() - 1000
+			);
+			site.sql.exec(
+				'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?)',
+				'/wanted',
+				Date.now()
+			);
+			await serveDirect(site, '/wanted', '&inline=0');
+			return site.sql
+				.exec('SELECT path, priority FROM cfw_fill_queue ORDER BY priority, queued_at')
+				.toArray()
+				.map((r) => `${r.path}:${r.priority}`);
+		});
+		// DO UPDATE rather than DO NOTHING: the row already existed, and leaving it at background
+		// priority is exactly the case the visitor is waiting through
+		expect(order[0]).toBe('/wanted:0');
 	});
 
 	it('arms the chain, because a bump is not otherwise a wake-up', async () => {

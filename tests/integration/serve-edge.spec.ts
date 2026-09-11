@@ -214,9 +214,13 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		// write was issued; the EDGE hit two lines down is what says it landed
 		expect(doHit.edge).toBe('MISS');
 		expect(doHit.edgePut).toBe('deferred');
+		expect(warmed?.edge).toBe('HIT');
 		expect(edge).not.toBeNull();
-		expect(edge?.cache).toBe('EDGE');
-		expect(edge?.edge).toBe('HIT');
+		// the FOURTH tier: `untilEdge` above already paid the `caches.default` read, so this
+		// isolate holds the page and answers with no I/O at all. Both are edge tiers and neither
+		// touches the object; they are separate values so a measurement can tell them apart
+		expect(edge?.cache).toBe('MEM');
+		expect(edge?.edge).toBe('MEM');
 		// the tier's claim: no DO request at all, asserted on the object's own
 		// persisted counter rather than on timing
 		expect(after).toBe(before);
@@ -224,7 +228,7 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		// edge HIT from a DO HIT
 		expect(edge?.doCache).toBe('HIT');
 		expect(edge?.body).toBe(doHit.body);
-		expect(new Set([miss.cache, doHit.cache, edge?.cache]).size).toBe(3);
+		expect(new Set([miss.cache, doHit.cache, warmed?.cache, edge?.cache]).size).toBe(4);
 	});
 
 	it('re-validates at the client so a generation bump is not defeated by a browser cache', async () => {
@@ -311,7 +315,9 @@ describe('the generation pointer survives a response that carries no generation'
 		expect(stats.headers.get('x-cfw-generation')).toBeNull();
 
 		const after = await serveThroughWorker(site, '/');
-		expect(after.cache).toBe('EDGE');
+		// MEM rather than EDGE because `untilEdge` above warmed this isolate's page memo; what the
+		// test is about is that the pointer survived, and both tiers require a pointer to build a key
+		expect(after.cache).toBe('MEM');
 	});
 
 	it('discovers the pointer once per window, not once per request', async () => {
@@ -585,10 +591,23 @@ describe('a DIAGNOSTIC route fails closed; the serving path does not', () => {
 		// DRUPAL OWNS THE URL SPACE. This asserted 404 until the front end gained a catch-all, and
 		// the old expectation was the bug: `/` answered 404 on a deployed site too, so the only way
 		// to reach the product was `/serve?site=X&path=Y`. What must NOT happen is the request being
-		// refused by the Worker -- whether Drupal then answers 200 or its own 404 is Drupal's call,
-		// and this object holds no migrated site, so the render tier reports itself unready instead.
+		// refused by the WORKER -- whether Drupal then answers 200 or its own 404 is Drupal's call.
+		//
+		// **IT ASSERTED `status !== 404` AND ITS OWN COMMENT SAYS THAT IS THE WRONG TEST.** It
+		// passed only because the object was still migrating by the time this ran, so the render
+		// tier answered 503 and Drupal never got to reply. Raising the migration batch from one
+		// chunk per invocation to forty finished the replay in time, Drupal rendered its own 404
+		// page, and the assertion failed on the behaviour it exists to allow. The Worker's own
+		// refusal is the string `not found\n`; a Drupal 404 is a rendered document, and that is
+		// the difference the assertion has to name.
 		const res = await SELF.fetch('https://cfw.local/definitely-not-a-route');
-		expect(res.status, 'the Worker refused a path that belongs to Drupal').not.toBe(404);
+		const body = await res.text();
+		expect(body, 'the Worker refused a path that belongs to Drupal').not.toBe('not found\n');
+		// and it reached the serving path rather than some other branch that also answers a body
+		expect(
+			res.headers.get('x-cfw-cache'),
+			'nothing on the serving path answered it'
+		).not.toBeNull();
 	});
 });
 

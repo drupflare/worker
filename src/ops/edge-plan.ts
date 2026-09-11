@@ -121,6 +121,23 @@ export function edgePlanEnabled(env?: { EDGE_PLAN?: string | null } | null): boo
  */
 export const SAMPLES_PER_COMPILE = 3;
 
+/**
+ * Compiles the proofs may refuse for one key before it stops trying.
+ *
+ * ONE REFUSAL USED TO BE PERMANENT, and a single unlucky pair of renders is enough to produce one:
+ * anything that varies between two consecutive renders and is not a recognised slot -- an `H:i`
+ * timestamp crossing a minute, a queue count, a message -- makes the compiler name an unknown region
+ * and refuse. Nothing cleared the latch until the generation moved, so the path paid a Durable
+ * Object render on every authenticated view for the rest of that generation.
+ *
+ * Measured on `wrangler dev`, `/admin/content` in the two states: 12.6-17.9 req/s at p50 60-939 ms
+ * when the tier is not answering, against 221-400 req/s at p50 4-38 ms when it is.
+ *
+ * Still BOUNDED, because the latch was protecting something real: a page that genuinely varies every
+ * render would otherwise spend a diff every third render forever.
+ */
+export const PLAN_COMPILE_ATTEMPTS = 3;
+
 /** how many keys one isolate holds; a clear is cheaper than an LRU, as with `genMemo` */
 export const EDGE_PLAN_ENTRIES = 64;
 
@@ -143,8 +160,8 @@ type Entry = {
 	/** sessions whose own live render has agreed with the stored plan */
 	agreed: Set<string>;
 	bytes: number;
-	/** a compile that the proofs refused; retried only when the generation moves */
-	refused?: boolean;
+	/** compiles the proofs have refused for this key; see {@link PLAN_COMPILE_ATTEMPTS} */
+	refusals?: number;
 	/** keyed to one session rather than to a role set; see {@link privatePlanKey} */
 	owned?: boolean;
 	/** whether the cold-isolate tier has already been consulted for this key */
@@ -366,6 +383,18 @@ export function hasEdgePlan(key: string, nowMs: number = Date.now()): boolean {
 }
 
 /**
+ * Whether this key has spent its compile attempts and will not try again.
+ *
+ * REPORTED BECAUSE A LATCHED REFUSAL LOOKED EXACTLY LIKE SAMPLING. `x-cfw-plan` read `sampling` on
+ * every render that fed the compiler whether the compile stored a plan or gave up on the key
+ * forever, so a path that had permanently left the tier was indistinguishable from one about to
+ * join it -- and the two differ by a factor of 18 in throughput.
+ */
+export function edgePlanRefused(key: string): boolean {
+	return (store.get(key)?.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS;
+}
+
+/**
  * Drops what a session has proven, and every plan compiled for it alone.
  *
  * Called on a non-GET, which is the only thing that queues a Drupal message for the next page. The
@@ -387,7 +416,7 @@ export function forgetWitness(cookie: string): void {
 /** whether the cold-isolate tier is worth consulting for this key; true at most once per key */
 export function shouldCheckKv(key: string): boolean {
 	const entry = entryFor(key);
-	if (entry.kvChecked || entry.plan || entry.refused) return false;
+	if (entry.kvChecked || entry.plan || edgePlanRefused(key)) return false;
 	entry.kvChecked = true;
 	return true;
 }
@@ -487,7 +516,7 @@ export function noteEdgeRender(
 		entry.provenUntil = 0;
 		entry.agreed.clear();
 	}
-	if (entry.refused) return null;
+	if ((entry.refusals ?? 0) >= PLAN_COMPILE_ATTEMPTS) return null;
 	entry.samples.push(html);
 	entry.witnesses.push(witness);
 	if (entry.samples.length < SAMPLES_PER_COMPILE) return null;
@@ -518,7 +547,7 @@ export function noteEdgeRender(
 		!planExplainsBoth(plan, a, b) ||
 		!generatorAgrees(plan)
 	) {
-		entry.refused = true;
+		entry.refusals = (entry.refusals ?? 0) + 1;
 		return null;
 	}
 	storeEdgePlan(key, plan, nowMs, owned);
@@ -574,6 +603,45 @@ export function rotatesSession(cookie: string, setCookie: readonly string[]): bo
 	return false;
 }
 
+/**
+ * A redirect expressed as the body the plan compiler already knows how to diff.
+ *
+ * `auth-account` (`/user`) is the only profile the tier structurally could not serve, and it was the
+ * only one still losing on service time once the isolate page memo landed: measured on a deployed
+ * free worker, `x-worker-ms` 68.1 / 76.5 / 226.9 ms at c=1 / 4 / 16 against a localhost VPS's
+ * 5 / 6 / 83, because `/user` is a 302 to `/user/<uid>` and every request rendered it.
+ *
+ * The redirect is SYNTHESISED INTO A BODY rather than given a store of its own, which is what keeps
+ * this small: two renders that disagree still refuse, `unservableSlots` still runs, the generation
+ * still fences the key, the session still has to agree before it is served, and `forgetWitness()`
+ * still spends that agreement on a write. A per-user `Location` is exactly what a shared plan
+ * refuses -- two sessions redirect to different uids, the compiler names an unknown region and
+ * `unservableSlots` declines -- so it reaches only the private key, which is the correct scope.
+ *
+ * NUL-prefixed because it must be unmistakable for a page: no HTML render can begin with one.
+ */
+export const REDIRECT_PLAN_PREFIX = '\u0000cfw-redirect\n';
+
+/** the statuses a redirect plan may hold; a 304 carries no Location and is not one */
+export function isRedirectStatus(status: number): boolean {
+	return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+/** the plan body for a redirect */
+export function redirectPlanBody(status: number, location: string): string {
+	return `${REDIRECT_PLAN_PREFIX}${status}\n${location}`;
+}
+
+/** the status and target a redirect plan holds, or null when the plan is an ordinary page */
+export function readRedirectPlan(body: string): { status: number; location: string } | null {
+	if (!body.startsWith(REDIRECT_PLAN_PREFIX)) return null;
+	const [status, ...rest] = body.slice(REDIRECT_PLAN_PREFIX.length).split('\n');
+	const code = Number(status);
+	const location = rest.join('\n');
+	if (!isRedirectStatus(code) || location === '') return null;
+	return { status: code, location };
+}
+
 /** what a response has to be before a plan may be compiled from it */
 export interface PlanEligibilityInput {
 	method: string;
@@ -586,6 +654,8 @@ export interface PlanEligibilityInput {
 	personalised: boolean;
 	generation: number | null;
 	cookie: string;
+	/** the `Location` header, when the response is a redirect; see {@link REDIRECT_PLAN_PREFIX} */
+	location?: string | null;
 }
 
 /**
@@ -601,8 +671,19 @@ export function planEligibility(
 	if (input.method !== 'GET') return { ok: false, reason: `skip:${input.method.toLowerCase()}` };
 	if (!input.personalised) return { ok: false, reason: 'skip:not-personalised' };
 	if (input.cookie === '') return { ok: false, reason: 'skip:no-cookie' };
-	if (input.status !== 200) return { ok: false, reason: `skip:${input.status}` };
-	if (input.doCache !== 'HIT' && input.doCache !== 'RENDER' && input.doCache !== 'VERIFY') {
+	const redirect = isRedirectStatus(input.status) && (input.location ?? '') !== '';
+	if (input.status !== 200 && !redirect) return { ok: false, reason: `skip:${input.status}` };
+	// `ASSEMBLED` joined `VERIFY` here, and until a shell response carried `x-cfw-roles` the
+	// `VERIFY` entry was decorative: the caller cannot reach the compile without a role set, so
+	// naming the tier bought nothing. Both are the shell tier and both are worth compiling away --
+	// an assembly still costs a Durable Object hop and a real fragment render, where a plan costs
+	// neither.
+	if (
+		input.doCache !== 'HIT' &&
+		input.doCache !== 'RENDER' &&
+		input.doCache !== 'VERIFY' &&
+		input.doCache !== 'ASSEMBLED'
+	) {
 		return { ok: false, reason: `skip:${input.doCache}` };
 	}
 	if (input.generation === null) return { ok: false, reason: 'skip:no-generation' };
@@ -611,7 +692,8 @@ export function planEligibility(
 	if (rotatesSession(input.cookie, input.setCookie)) {
 		return { ok: false, reason: 'skip:set-cookie' };
 	}
-	if (!(input.contentType ?? '').toLowerCase().includes('text/html')) {
+	// a redirect has no body to be HTML, and its whole content is the status and the Location
+	if (!redirect && !(input.contentType ?? '').toLowerCase().includes('text/html')) {
 		return { ok: false, reason: 'skip:not-html' };
 	}
 	return { ok: true };

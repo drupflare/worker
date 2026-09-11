@@ -41,6 +41,8 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 
 /** the Durable Object isolate limit; a platform figure rather than a budget chosen here */
 const ISOLATE_LIMIT = 128 * 1_048_576;
+/** what the glue starts the heap at, so an arm reading exactly this one has grown by nothing */
+const INITIAL_MEMORY = 96 * 1_048_576;
 
 async function armProfile(mode: string) {
 	return inObject(freshSite(), async (site: ServeDo) => {
@@ -125,12 +127,20 @@ describe('P30: the opcache arms', () => {
 		expect((by('shm').opcache as { enabled: boolean } | null)?.enabled).toBe(true);
 		expect(by('shm').heap).toBeGreaterThan(ISOLATE_LIMIT);
 
-		// and off is cheaper than the shipping arm on the MEMFS axis. The heap axis no longer
-		// separates them: it moves in whole growth steps, and once the packed `cache_container`
-		// row became readable neither arm builds a container, so both read `INITIAL_MEMORY`
-		// exactly. Asserting a difference below the reading's resolution is a probe that cannot
-		// fail either way.
+		// and off is cheaper than the shipping arm on BOTH axes, which is what the docblock's
+		// table measured and what an equality assertion here denied. The two read the same heap
+		// for a while and that was a coincidence of the growth step, not a property: MEMFS lives
+		// in linear memory, so 26 MB of write-only `.bin` files has to appear on the heap axis as
+		// soon as it crosses a step. Pinning them equal made the arm's own documented cost
+		// unassertable, and the pack growing by a few hundred KB was enough to end it.
+		//
+		// The ORDERING is the durable claim; the magnitude moves with the pack and is reported
+		// rather than pinned. `off` sitting exactly at INITIAL_MEMORY is the sharp half: it says
+		// the arm costs nothing at all, not merely less.
 		expect(by('off').bytes).toBe(0);
-		expect(by('off').heap).toBe(by('file').heap);
+		expect(by('off').heap).toBeLessThanOrEqual(by('file').heap);
+		expect(by('off').heap, 'the off arm grew, so something other than opcache allocated').toBe(
+			INITIAL_MEMORY
+		);
 	}, 900_000);
 });

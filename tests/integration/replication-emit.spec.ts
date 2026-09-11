@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
+import { drupalOp, writeWorkload } from '../../src/drupal/site-php';
 import type { LogRecord } from '../../src/ops/replication-log';
 import { freshSite, inObject, markProvisioned, type ServeDo } from '../helpers/serve-do';
 
@@ -213,6 +213,72 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 			expect(rec?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
 			expect(rec?.parent).toBeLessThan(rec!.generation);
 			expect(rec?.schemaVersion).not.toBe('');
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * The replay a record describes has to be the one the primary performed, ONCE.
+	 *
+	 * A buffered transaction is replayed speculatively to learn an insert id, and every statement in
+	 * that pass reached `execSql()` and was buffered again. Measured on one node edit before the
+	 * guard: **154 statements recorded for 19 real ones**, with `INSERT INTO node_revision` 23 times
+	 * and `INSERT INTO node_field_revision` 14 -- so a replica applying that record would have created
+	 * 23 revisions where the primary created one. The pass commits nothing, which is why nothing on
+	 * the primary ever looked wrong.
+	 */
+	it(
+		'records a buffered save once, not once per speculative replay',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const first = await site.fetch(
+					new Request('https://do.local/__firstrun', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ adminPass: PASS, siteName: 'Emit' })
+					})
+				);
+				expect(first.status, await first.clone().text()).toBe(200);
+				role(site, 'primary');
+
+				const created = (await site.runJson(
+					writeWorkload('node-create', { seq: 1, nid: 0 })
+				)) as Record<string, unknown>;
+				const nid = Number(created['id'] ?? 0);
+				// `runJson()` reaches the object directly, so nothing seals between the workloads;
+				// draining here makes the next record describe one save rather than three
+				await site.sealGeneration();
+				const before = (await log(site)).generation;
+
+				const edited = (await site.runJson(
+					writeWorkload('node-revision', { seq: 2, nid })
+				)) as Record<string, unknown>;
+				await site.sealGeneration();
+				return { created, edited, records: (await log(site, before)).records };
+			});
+
+			// THE CONTROL: a workload that threw records nothing, which reads the same as a fix
+			expect(out.created['ok'], JSON.stringify(out.created).slice(0, 300)).toBe(true);
+			expect(out.edited['ok'], JSON.stringify(out.edited).slice(0, 300)).toBe(true);
+			expect(out.records.length).toBe(1);
+
+			const counts = new Map<string, number>();
+			for (const st of out.records[0]?.statements ?? []) {
+				const shape = st.sql.replace(/\s+/g, ' ').trim();
+				counts.set(shape, (counts.get(shape) ?? 0) + 1);
+			}
+			const revisions = [...counts].find(([sql]) =>
+				/^INSERT INTO "node_revision"/i.test(sql)
+			);
+			expect(revisions?.[1], 'one save inserted more than one revision into the log').toBe(1);
+			// and nothing else repeated either, which is what makes the assertion above a property
+			// rather than one table getting lucky
+			const repeated = [...counts].filter(([, n]) => n > 1);
+			expect(
+				repeated,
+				`statements recorded more than once: ${JSON.stringify(repeated)}`
+			).toEqual([]);
 		},
 		TIMEOUT
 	);

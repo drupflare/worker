@@ -5,16 +5,21 @@ import {
 	EDGE_PLAN_ENTRIES,
 	edgePlanKey,
 	edgePlanKvKey,
+	edgePlanRefused,
 	edgePlanStats,
 	forgetWitness,
 	GENERATION_TRUST_MS,
 	hasEdgePlan,
+	isRedirectStatus,
 	lookupEdgePlan,
 	noteEdgeRender,
+	PLAN_COMPILE_ATTEMPTS,
 	PLAN_TTL_MS,
 	planEligibility,
 	privatePlanKey,
 	readEdgePlan,
+	readRedirectPlan,
+	redirectPlanBody,
 	rememberEdgeGeneration,
 	resetEdgePlans,
 	rotatesSession,
@@ -208,19 +213,38 @@ describe('compiling from renders', () => {
 		expect(Object.keys((plan as RenderPlan).slots)).toHaveLength(0);
 	});
 
-	it('refuses a page whose variation nothing recognises, and stops retrying', () => {
-		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+	/** one compile's worth of renders, the last from a second session so the pair is eligible */
+	const feedOneCompile = (key: string, page: (i: number) => string, from: number): void => {
 		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
 			const who = i === SAMPLES_PER_COMPILE - 1 ? COOKIE_B : COOKIE_A;
-			expect(noteEdgeRender(key, PATH, opaquePage(i), Date.now(), who)).toBeNull();
+			expect(noteEdgeRender(key, PATH, page(from + i), Date.now(), who)).toBeNull();
 		}
-		expect(lookupEdgePlan(key)).toBeNull();
-		// a refusal is remembered: three more renders must not spend another compile
-		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
-			const who = i === SAMPLES_PER_COMPILE - 1 ? COOKIE_B : COOKIE_A;
-			expect(noteEdgeRender(key, PATH, opaquePage(10 + i), Date.now(), who)).toBeNull();
+	};
+
+	it('refuses a page whose variation nothing recognises, and gives up after a bound', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		for (let attempt = 0; attempt < PLAN_COMPILE_ATTEMPTS; attempt++) {
+			feedOneCompile(key, opaquePage, attempt * 10);
+			expect(lookupEdgePlan(key)).toBeNull();
 		}
 		expect(edgePlanStats().plans).toBe(0);
+		expect(edgePlanRefused(key)).toBe(true);
+		// spent: the samples are not even kept now, so nothing can compile under this key again
+		feedOneCompile(key, staticPage, 100);
+		expect(edgePlanStats().plans).toBe(0);
+	});
+
+	it('lets a page recover from a refusal one unlucky pair produced', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, PATH);
+		// one bad pair, which is all a ticking timestamp or a queued message costs
+		feedOneCompile(key, opaquePage, 0);
+		expect(edgePlanRefused(key)).toBe(false);
+		// and the page compiles on the next attempt rather than paying a render for the rest of
+		// the generation
+		expect(noteEdgeRender(key, PATH, staticPage(0), Date.now(), COOKIE_A)).toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_A)).toBeNull();
+		expect(noteEdgeRender(key, PATH, staticPage(1), Date.now(), COOKIE_B)).not.toBeNull();
+		expect(edgePlanStats().plans).toBe(1);
 	});
 
 	it('records nothing more once a plan is held', () => {
@@ -494,5 +518,86 @@ describe('the cold-isolate tier', () => {
 		const plan = compilePlan(staticPage(), staticPage(), PATH);
 		expect(await writeEdgePlan(free, SITE, 5, COOKIE_A, PATH, plan)).toBe(false);
 		expect(await readEdgePlan(free, SITE, 5, COOKIE_A, PATH)).toBeNull();
+	});
+});
+
+/**
+ * `/user` is a 302 to `/user/<uid>` and was the only profile the tier structurally could not serve.
+ * What is asserted is the round trip and the two refusals that keep it per-session: a body that is
+ * not a redirect plan must not be read as one, and two sessions redirecting to different uids must
+ * not compile a SHARED plan.
+ */
+describe('a redirect as a plan', () => {
+	beforeEach(() => resetEdgePlans());
+
+	it('round-trips the status and the target', () => {
+		expect(readRedirectPlan(redirectPlanBody(302, '/user/1'))).toEqual({
+			status: 302,
+			location: '/user/1'
+		});
+		expect(readRedirectPlan(redirectPlanBody(308, 'https://example.com/a?b=c#d'))).toEqual({
+			status: 308,
+			location: 'https://example.com/a?b=c#d'
+		});
+	});
+
+	it('reads an ordinary page as a page, whatever it contains', () => {
+		expect(readRedirectPlan(staticPage(0))).toBeNull();
+		expect(readRedirectPlan('')).toBeNull();
+		// the shape without the marker, which a page could otherwise produce by accident
+		expect(readRedirectPlan('302\n/user/1')).toBeNull();
+	});
+
+	it('refuses a status that carries no target and a target that is empty', () => {
+		expect(isRedirectStatus(304)).toBe(false);
+		expect(isRedirectStatus(200)).toBe(false);
+		expect(readRedirectPlan(redirectPlanBody(302, ''))).toBeNull();
+	});
+
+	it('is eligible when it has a Location and refused when it does not', () => {
+		const base = {
+			method: 'GET',
+			doCache: 'RENDER',
+			contentType: null,
+			setCookie: [] as string[],
+			personalised: true,
+			generation: 1,
+			cookie: COOKIE_A
+		};
+		expect(planEligibility({ ...base, status: 302, location: '/user/1' }).ok).toBe(true);
+		expect(planEligibility({ ...base, status: 302, location: null })).toEqual({
+			ok: false,
+			reason: 'skip:302'
+		});
+		// and an ordinary 200 still has to be HTML
+		expect(planEligibility({ ...base, status: 200, location: null })).toEqual({
+			ok: false,
+			reason: 'skip:not-html'
+		});
+	});
+
+	it('compiles for one session and serves that session its own target', () => {
+		const key = privatePlanKey(edgePlanKey(SITE, 1, ROLES, '/user'), COOKIE_A);
+		const body = redirectPlanBody(302, '/user/1');
+		for (let i = 0; i < SAMPLES_PER_COMPILE; i++) {
+			noteEdgeRender(key, '/user', body, Date.now(), COOKIE_A, true);
+		}
+		const plan = lookupEdgePlan(key, Date.now(), COOKIE_A);
+		expect(plan).not.toBeNull();
+		expect(readRedirectPlan(runEdgePlan(plan as RenderPlan) as string)).toEqual({
+			status: 302,
+			location: '/user/1'
+		});
+	});
+
+	it('refuses a SHARED plan when two sessions redirect to different users', () => {
+		const key = edgePlanKey(SITE, 1, ROLES, '/user');
+		noteEdgeRender(key, '/user', redirectPlanBody(302, '/user/1'), Date.now(), COOKIE_A);
+		noteEdgeRender(key, '/user', redirectPlanBody(302, '/user/1'), Date.now(), COOKIE_A);
+		// the second session's target differs, which is the whole hazard; the compiler must name it
+		// an unknown region and decline rather than send one user to the other's account
+		noteEdgeRender(key, '/user', redirectPlanBody(302, '/user/2'), Date.now(), COOKIE_B);
+		expect(lookupEdgePlan(key, Date.now(), COOKIE_B)).toBeNull();
+		expect(edgePlanStats().plans).toBe(0);
 	});
 });

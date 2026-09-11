@@ -29,10 +29,34 @@ const WRAPPER = resolve(
 );
 
 describe('the binding the whole R2 tier was gated on', () => {
-	it('is declared in the shipping config', () => {
+	/**
+	 * **IT IS DELIBERATELY NOT IN THE SHIPPING CONFIG ANY MORE, AND THIS ASSERTED THAT IT WAS.**
+	 * Measured 2026-09-11 on a fresh free account: the canonical config uploaded all 4,749 assets
+	 * and was then refused with *"Please enable R2 through the Cloudflare Dashboard. [code: 10042]"*
+	 * on `/r2/buckets/drupflare-files`. R2 must be enabled from the dashboard before a bucket can
+	 * exist, so naming one made the README's deploy button fail for every account that had not done
+	 * that. The control was the same deploy with only `r2_buckets` removed: it succeeded, and
+	 * wrangler auto-provisioned `CONFIG_KV` and `FLEET_DB` -- KV and D1 were never the problem.
+	 *
+	 * So the property to hold is no longer "declared". It is that the tier stays EXERCISED and the
+	 * runtime stays tolerant, which is what the two assertions below say.
+	 */
+	it('is not in the shipping config, because naming a bucket refuses the deploy', () => {
 		const config = readFileSync(resolve(ROOT, 'wrangler.jsonc'), 'utf8');
-		expect(config).toContain('"binding": "FILES"');
-		expect(config).toContain('drupflare-files');
+		expect(config).not.toContain('r2_buckets');
+		expect(config).not.toContain('drupflare-files');
+	});
+
+	it('is still bound in the test lane, so the tier is exercised rather than skipped', () => {
+		// miniflare's R2 is local and needs no account, which is what lets these two diverge
+		const vitest = readFileSync(resolve(ROOT, 'vitest.config.ts'), 'utf8');
+		expect(vitest).toContain("r2Buckets: ['FILES']");
+	});
+
+	it('is documented as an opt-in addition rather than dropped in silence', () => {
+		const docs = readFileSync(resolve(ROOT, 'docs', 'configuration.md'), 'utf8');
+		expect(docs).toContain('r2_buckets');
+		expect(docs).toContain('10042');
 	});
 });
 

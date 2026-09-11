@@ -31,14 +31,36 @@ function chunk(over: Partial<RestoreChunk> = {}): RestoreChunk {
 
 describe('which tables a restore copies', () => {
 	it('never copies state the replica owns itself', () => {
-		const plan = planRestore(['cfw_page', 'cache_config', 'cachetags', '_cf_KV']);
+		const plan = planRestore(['cache_config', 'cachetags', '_cf_KV']);
 		expect(plan.every((t) => !t.copy)).toBe(true);
 		expect(plan.map((t) => t.status)).toEqual([
 			'LOCAL_EPHEMERAL',
 			'LOCAL_EPHEMERAL',
-			'LOCAL_EPHEMERAL',
 			'LOCAL_EPHEMERAL'
 		]);
+	});
+
+	it('seeds the page store, which the lane still owns once it has it', () => {
+		// the write verdict and the seed verdict are different questions, and answering both with
+		// LOCAL_EPHEMERAL cost the pool its own workload: a lane met every anonymous request with
+		// an empty page store and rendered, 2 ms at c=1 against 405 at c=4
+		const [page] = planRestore(['cfw_page']);
+		expect(page?.status).toBe('LOCAL_EPHEMERAL');
+		expect(page?.copy).toBe(true);
+		expect(page?.reason).toContain('starts from the');
+	});
+
+	it('seeds nothing else that is locally owned', () => {
+		// each entry needs its own argument that a stale copy is reachable by an invalidation the
+		// lane receives, so the set does not grow by resemblance
+		const others = planRestore([
+			'cfw_shell',
+			'cfw_plan',
+			'cfw_http_cache',
+			'cfw_heap_chunk',
+			'cache_render'
+		]);
+		expect(others.every((t) => !t.copy)).toBe(true);
 	});
 
 	it('never copies an outbound effect', () => {
@@ -73,7 +95,9 @@ describe('what a chunk must satisfy before it lands', () => {
 	});
 
 	it('refuses a table the plan would not copy', () => {
-		expect(chunkRefusal(chunk({ table: 'cfw_page' }), SCHEMA, null)).toContain('not copyable');
+		// `cfw_shell` rather than `cfw_page`, which is seeded now and so is copyable; the point of
+		// the case is the refusal, and a table the plan accepts cannot make it
+		expect(chunkRefusal(chunk({ table: 'cfw_shell' }), SCHEMA, null)).toContain('not copyable');
 	});
 
 	it('refuses a column that is not an identifier', () => {

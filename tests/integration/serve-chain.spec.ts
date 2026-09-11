@@ -4,6 +4,7 @@ import { HeapRestoreIncomplete } from '../../src/site-do';
 import {
 	type FillOutcome,
 	type RenderCall,
+	SESSION_COOKIE,
 	type ServeDo,
 	decodeRenderCall,
 	driveAlarms,
@@ -63,22 +64,24 @@ import {
  */
 
 /** the wrangler.jsonc default: what a MISS may spend rendering for the visitor */
-const BUDGET_MS = 2000;
+const BUDGET_MS = 10000;
 
 /** what `estimateRenderMs()` returns with no interpreter, and with one but no measured render */
 const COLD_ESTIMATE_MS = 4000;
 const FIRST_RENDER_ESTIMATE_MS = 1800;
 
 describe('a cold MISS costs no interpreter and no render', () => {
-	it('returns the placeholder, queues the path and says why it did not render', async () => {
+	it('still answers 503 and queues when the SITE is not ready, rather than 500', async () => {
+		// `provisionedSite()` stamps the migration cursor and nothing else, so there is no Drupal
+		// database behind it: the render reaches the installer redirect. That used to be
+		// unreachable because free refused to boot at all, and letting it boot turned every
+		// unclaimed site into a 500. A site that is not installed is "a page that is coming",
+		// which is exactly what 503 is for; only a render that THREW earns the exception
 		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
 
 		expect(cold.status).toBe(503);
 		expect(cold.cache).toBe('MISS');
-		// the tier's claim: a MISS must not instantiate PHP
-		expect(cold.phpBooted).toBe('0');
-		expect(cold.inline).toBe('cold');
 		expect(cold.queueDepth).toBe(1);
 		expect(cold.body).toContain('warming');
 		// a placeholder must never be cacheable anywhere
@@ -87,20 +90,27 @@ describe('a cold MISS costs no interpreter and no render', () => {
 		expect(cold.lane).toBe('php-gate');
 	});
 
-	it('fits the 10 ms a free-plan invocation gets', async () => {
+	it('BOOTS for the visitor now, which is the trade free used to refuse', async () => {
+		// It answered in under 10 ms by not rendering, and the visitor then waited on the chain.
+		// Measured deployed, that wait is 19,004 ms with only 4 of 8 paths served at all, against
+		// ~3.8 s to boot and render. The cheap answer was cheap for the OBJECT and expensive for
+		// the person waiting, which is the wrong thing to optimise
 		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
+		expect(cold.phpBooted).toBe('1');
 		expect(cold.missMs).toBeGreaterThanOrEqual(0);
-		expect(cold.missMs).toBeLessThan(10);
 	});
 
-	it('estimates a BOOT rather than a render, so it cannot gamble the visitor on one', async () => {
+	it('still estimates a BOOT, and the budget now admits one', async () => {
 		const stub = await provisionedSite();
 		const cold = await inObject(stub, (site) => serveDirect(site, '/'));
+		// the estimate is unchanged: with no interpreter it is the BOOT cost, not a render
 		expect(cold.estimateMs).toBe(COLD_ESTIMATE_MS);
 		expect(cold.budgetMs).toBe(BUDGET_MS);
-		// the refusal is arithmetic, not a special case: 4,000 does not fit 2,000
-		expect(cold.estimateMs).toBeGreaterThan(cold.budgetMs);
+		// and the arithmetic now goes the other way, which is the whole change: 4,000 fits 10,000.
+		// `inlineBudgetMs` bounds the VISITOR'S PATIENCE rather than a billed resource, and 2 s of
+		// patience was the wrong bound against a 19 s alternative
+		expect(cold.estimateMs).toBeLessThan(cold.budgetMs);
 	});
 
 	it('counts the request and pulls the fill alarm in', async () => {
@@ -175,11 +185,14 @@ describe('inline rendering off is the free-plan shape and stays reachable', () =
 		expect(off.budgetMs).toBe(0);
 	});
 
-	it('never renders when the interpreter is absent, whatever the budget says', async () => {
+	it('a zero budget is still the way to refuse a cold render outright', async () => {
+		// the explicit lever survives the default moving: `budget=0` is the documented always-503
+		// switch and it is what a spec uses to force a MISS
 		const stub = await provisionedSite();
-		const cold = await inObject(stub, (site) => serveDirect(site, '/', '&budget=99999'));
-		expect(cold.inline).toBe('cold');
-		expect(cold.status).toBe(503);
+		const off = await inObject(stub, (site) => serveDirect(site, '/', '&budget=0'));
+		expect(off.inline).toBe('off');
+		expect(off.status).toBe(503);
+		expect(off.phpBooted).toBe('0');
 	});
 });
 
@@ -1170,4 +1183,81 @@ describe('the page cache and non-GET methods', () => {
 			expect(await res.text()).not.toContain('the empty form');
 		});
 	}
+});
+
+/**
+ * THE HERD, collapsed at the object.
+ *
+ * Measured deployed: 16 concurrent authenticated readers on a path whose plan had not compiled read
+ * p50 9,709 ms with `RENDER=16` -- each paid its own render and they serialised on the one object.
+ * The same coalescing in the FRONT WORKER was refuted, because its map is per-isolate and Cloudflare
+ * spreads concurrent requests across isolates; 16 requests still produced 17 object hops. There is
+ * exactly one object per site, so this is the level at which duplicates actually meet.
+ */
+describe('concurrent identical requests collapse to one render', () => {
+	it('renders once for N waiters and answers them all', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			let renders = 0;
+			stubRender(site, ({ path }) => {
+				renders++;
+				return pageFor(path);
+			});
+			const all = await Promise.all(
+				Array.from({ length: 8 }, () =>
+					serveDirect(site, '/herd', '&inline=1', {
+						headers: { cookie: SESSION_COOKIE }
+					})
+				)
+			);
+			return { renders, statuses: all.map((r) => r.status), bodies: all.map((r) => r.body) };
+		});
+		// every waiter is answered, and with the same bytes -- a shared answer that differed would
+		// mean they were not the same request after all
+		expect(out.statuses.every((s) => s === out.statuses[0])).toBe(true);
+		expect(new Set(out.bodies).size).toBe(1);
+		// and the point: far fewer renders than requests
+		expect(out.renders).toBeLessThan(8);
+	});
+
+	it('does not hand a later request the previous answer', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			let n = 0;
+			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
+			// SEQUENTIAL, which is the case the first version of the coalescer got wrong: it
+			// published the flight and returned before the shared copy finished buffering, so the
+			// entry outlived the render and this second request joined a settled flight
+			const first = await serveDirect(site, '/seq', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			const second = await serveDirect(site, '/seq', '&inline=1', {
+				headers: { cookie: SESSION_COOKIE }
+			});
+			return { first: first.body, second: second.body, renders: n };
+		});
+		// the second request must reflect its own render, not the first's
+		expect(out.renders).toBe(2);
+		expect(out.second).not.toBe(out.first);
+	});
+
+	it('never shares across sessions, which is the whole hazard', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			markProvisioned(site);
+			// a UNIQUE body per render, because `RenderCall` carries no cookie: a stub keyed on one
+			// returns identical bytes for both sessions and the test passes whether or not they were
+			// shared. With a counter, sharing is the only way the two can match
+			let n = 0;
+			stubRender(site, ({ path }) => pageFor(`${path}|render-${++n}`));
+			const a = `SESS${'a'.repeat(32)}`;
+			const b = `SESS${'b'.repeat(32)}`;
+			const [ra, rb] = await Promise.all([
+				serveDirect(site, '/herd', '&inline=1', { headers: { cookie: a } }),
+				serveDirect(site, '/herd', '&inline=1', { headers: { cookie: b } })
+			]);
+			return { a: ra.body, b: rb.body };
+		});
+		// two different sessions must never be folded into one answer
+		expect(out.a).not.toBe(out.b);
+	});
 });

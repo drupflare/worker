@@ -287,15 +287,22 @@ describe('write amplification per semantic operation', () => {
 	);
 
 	it(
-		'shows the content path is charged an order of magnitude over what it stores',
+		'shows the content path is charged well over what it stores',
 		async () => {
 			const ops = await measured();
 			for (const name of ENTITY_OPS) {
 				const op = by(ops, name);
-				// measured 18x to 23.6x; the floor is set well under that so a schema change moves
-				// the number without failing the gate, and a REGRESSION to no amplification would
-				// mean the instrument stopped seeing half the writes
-				expect(op.rowsWritten / op.storedRows, name).toBeGreaterThan(10);
+				// THE FLOOR WAS 10 AND THE LEVER MOVED THROUGH IT, which is what it was built to do.
+				// This measured 18x to 23.6x when the floor was set; a node-create now reads 7.29,
+				// because a speculative replay sends only the statements that write a table the
+				// asked-about statement touches instead of the whole buffer. The amplification that
+				// remains is index maintenance, which no replay change can reach.
+				//
+				// The floor stays well under the reading for the same reason it always did -- a
+				// schema change should move the number without failing the gate -- and what it still
+				// catches is the failure it was written for: a REGRESSION to no amplification at all
+				// would mean the instrument stopped seeing half the writes.
+				expect(op.rowsWritten / op.storedRows, name).toBeGreaterThan(3);
 			}
 		},
 		REQUEST_TIMEOUT
@@ -305,6 +312,12 @@ describe('write amplification per semantic operation', () => {
 		'separates the two multipliers: index maintenance, then re-execution',
 		async () => {
 			const ops = await measured();
+			// and at least one operation still re-executes, or the assertion below is satisfied by
+			// an instrument that has stopped counting replays at all
+			expect(
+				ENTITY_OPS.map((n) => by(ops, n)).some((op) => op.rowsWritten > op.firstPassRows),
+				'no operation re-executes, so the replay counter may have stopped'
+			).toBe(true);
 			for (const name of ENTITY_OPS) {
 				const op = by(ops, name);
 				// the schema half: one stored row costs several charged rows before anything runs
@@ -312,8 +325,14 @@ describe('write amplification per semantic operation', () => {
 				expect(op.firstPassRows / op.storedRows, `${name} schema factor`).toBeGreaterThan(
 					2
 				);
-				// the execution half: what the meter billed exceeds one pass over what was stored
-				expect(op.rowsWritten, `${name} re-execution`).toBeGreaterThan(op.firstPassRows);
+				// The execution half. This asserted STRICTLY greater, and `file-create` now reads
+				// exactly its first pass -- the narrowed replay removed its re-execution entirely,
+				// so the meter bills one pass and nothing more. That is the lever landing rather
+				// than the instrument failing, and asserting it away would hide the case where a
+				// replay re-executes LESS than it ran, which would mean rows went unrecorded.
+				expect(op.rowsWritten, `${name} re-execution`).toBeGreaterThanOrEqual(
+					op.firstPassRows
+				);
 			}
 		},
 		REQUEST_TIMEOUT

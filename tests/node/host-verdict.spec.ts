@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-	type Cell,
 	TRAFFIC_MIX,
 	decide,
+	generatorBound,
 	ratio,
+	unusable,
 	weightedP50,
-	withRtt
+	withRtt,
+	type Cell
 } from '../../scripts/measure/verdict-math';
-import type { Summary } from '../../scripts/measure/vps-compare';
+import { isLocalTarget, spreadHeaders, type Summary } from '../../scripts/measure/vps-compare';
 
 /**
  * The viability predicate, driven over fixtures rather than over two live hosts.
@@ -36,10 +38,14 @@ function summary(p50: number, p95 = p50, over: Partial<Summary> = {}): Summary {
 		p99: p95,
 		min: p50,
 		max: p95,
+		// zero is the only healthy value; a run with any of these exits before it reaches a verdict
+		edgeRefusals: 0,
 		// the MEAN defaults to p50 here rather than being omitted: the verdict does not read it, and a
 		// fixture that left it undefined would make every cell look like a tight distribution
 		mean: p50,
 		tiers: {},
+		// which objects answered; a fixture asserts on the verdict maths and drives no pool
+		replicas: {},
 		workerMs: null,
 		clientMs: null,
 		gateAhead: null,
@@ -96,6 +102,69 @@ describe('withRtt', () => {
 		// a doubled term would overstate the gap, and overstating is the error this whole harness
 		// is arranged to avoid
 		expect(withRtt(12, 25)).toBe(37);
+	});
+});
+
+describe('the p95 rule needs a gap the clock can resolve', () => {
+	// THE CELL THAT FAILED THE WHOLE VERDICT, 2026-09-11: `anon-cached c=1`, edge p95 3ms against
+	// the VPS's 1ms. Every sample is a `Date.now()` delta, so both readings are small integer counts
+	// of quanta and "3x worse" is arithmetic on the quantisation
+	const quantised = cell('anon-cached', summary(0, 1), summary(2, 3));
+
+	it('does not call a 2ms gap a regression when the rig resolves 2ms', () => {
+		const v = decide([quantised], 0, [], TRAFFIC_MIX, 'total-p50', 2);
+		expect(v.regressions).toEqual([]);
+	});
+
+	it('SAYS it skipped one rather than dropping it silently', () => {
+		const notes: string[] = [];
+		decide([quantised], 0, notes, TRAFFIC_MIX, 'total-p50', 2);
+		expect(notes.join('\n')).toContain('clock quantum');
+	});
+
+	it('still fails the same ratio once the gap clears the floor', () => {
+		// the falsifying half: identical ratio, magnitudes the clock can actually separate
+		const real = cell('anon-cached', summary(0, 40), summary(2, 120));
+		const v = decide([real], 0, [], TRAFFIC_MIX, 'total-p50', 2);
+		expect(v.regressions).toEqual(['anon-cached c=1: p95 120ms against 40ms, worse than 2x']);
+	});
+
+	it('defaults to the clock quantum, so a caller with no measured floor still gets one', () => {
+		const v = decide([cell('anon-cached', summary(0, 1), summary(0, 3))]);
+		expect(v.regressions).toEqual(['anon-cached c=1: p95 3ms against 1ms, worse than 2x']);
+	});
+});
+
+describe('generatorBound reads the ceiling at the cell own width', () => {
+	// the shape that was measured: one ceiling for every level, taken by a batched `Promise.all`
+	// barrier while the cells drove an open pool, so the VPS cleared its own asserted bound by 2.2x
+	const perLevel = { vps: { 1: 2000, 4: 6000, 16: 9000 }, edge: { 1: 500, 4: 900, 16: 1100 } };
+
+	it('flags a cell within 20% of the ceiling for ITS concurrency', () => {
+		expect(generatorBound(4, { vps: 5900, edge: 640 }, perLevel)).toBe(true);
+	});
+
+	it('leaves the same reading alone at a width whose ceiling is higher', () => {
+		// 5,900 req/s clears the c=1 ceiling of 2,000 outright and sits inside 20% of the c=4 one;
+		// against the c=16 ceiling of 9,000 it is not bound at all. One number cannot answer all
+		// three, which is the defect this function replaced
+		expect(generatorBound(16, { vps: 5900, edge: 640 }, perLevel)).toBe(false);
+	});
+
+	it('flags on EITHER arm, because a bound cell measures neither host', () => {
+		expect(generatorBound(1, { vps: 10, edge: 480 }, perLevel)).toBe(true);
+	});
+
+	it('answers false for a level with no ceiling rather than excluding the cell', () => {
+		// generatorBound excludes a cell from the p95 rule downstream, so a missing measurement
+		// that answered true would switch a verdict rule off silently
+		expect(generatorBound(32, { vps: 99_999, edge: 99_999 }, perLevel)).toBe(false);
+	});
+
+	it('does not divide by a zero ceiling', () => {
+		expect(generatorBound(1, { vps: 1, edge: 1 }, { vps: { 1: 0 }, edge: { 1: 0 } })).toBe(
+			false
+		);
 	});
 });
 
@@ -226,5 +295,129 @@ describe('the traffic mix', () => {
 			.filter(([k]) => k !== 'anon-cached')
 			.reduce((n, [, m]) => n + m.weight, 0);
 		expect(anon).toBeGreaterThan(rest);
+	});
+});
+
+/**
+ * A cell that measured a stopped server.
+ *
+ * The local worker crashed mid-run and every later request returned status 0 in about a
+ * millisecond, so the arm read `p50 0ms` and -- before `rps` counted successes only -- 45,279
+ * req/s. The `ERRORS` flag fired and the verdict still folded that p50 into the weighted mean, so a
+ * crash could read as a win on the slice it crashed during.
+ */
+describe('a run that measured a crash cannot answer either way', () => {
+	/** what a stopped server looks like: instant, and every request a failure */
+	const dead = (workload: string): Cell =>
+		cell(workload, summary(10), { ...summary(0), n: 200, errors: 200 });
+
+	it('names the cell as unusable rather than as a fast one', () => {
+		const out = decide([pair('anon-cached', 3, 2), dead('anon-cached')]);
+		expect(out.regressions.join(' ')).toContain('unusable');
+		expect(out.viable, 'a crash produced a verdict').toBe(false);
+	});
+
+	it('keeps the dead cell out of the weighted mean', () => {
+		const healthy = [pair('anon-cached', 10, 5)];
+		const alone = decide(healthy);
+		const withDead = decide([...healthy, dead('anon-cached')]);
+		// a p50 of 0 folded in would drag the edge mean down and flatter the arm that failed:
+		// (5 + 0) / 2 against 5. The control below is that the maths is reachable at all
+		expect(withDead.weighted.edge).toBe(alone.weighted.edge);
+		expect(alone.weighted.edge).toBe(5);
+	});
+
+	it('leaves a cell with a few errors alone, because a refusal is sometimes the measurement', () => {
+		const flaky = cell('anon-miss', summary(20), { ...summary(25), n: 200, errors: 2 });
+		expect(unusable(flaky)).toBe(false);
+		// still reported as a regression, which is the existing behaviour and is not this rule
+		expect(decide([flaky]).regressions.join(' ')).toContain('errored');
+	});
+});
+
+/**
+ * The generator's own trust boundary, and the one place it can measure something other than a host.
+ *
+ * Cloudflare owns `cf-connecting-ip` and answers 403 at the edge to any request that presents one.
+ * miniflare accepts whatever is sent, and that header is the only spread a single-address generator
+ * has locally -- so the header is right on one target and fatal on the other, and nothing in a
+ * summary says which happened: a refusal is a fast 403.
+ */
+describe('the spread header', () => {
+	it('is sent to a local target and to nothing else', () => {
+		expect(spreadHeaders('http://127.0.0.1:8787', 0)).toHaveProperty('cf-connecting-ip');
+		expect(spreadHeaders('http://localhost:8099', 3)).toHaveProperty('cf-connecting-ip');
+		expect(spreadHeaders('https://cfw-probe.example.workers.dev', 0)).toEqual({});
+		expect(spreadHeaders('https://example.com', 7)).toEqual({});
+	});
+
+	it('gives each local client its own address, which is what reaches more than one lane', () => {
+		const a = spreadHeaders('http://127.0.0.1:8787', 0)['cf-connecting-ip'];
+		const b = spreadHeaders('http://127.0.0.1:8787', 1)['cf-connecting-ip'];
+		expect(a).not.toBe(b);
+	});
+
+	it('recognises the hosts that are this machine', () => {
+		expect(isLocalTarget('http://127.0.0.1:8787')).toBe(true);
+		expect(isLocalTarget('http://[::1]:8787')).toBe(true);
+		expect(isLocalTarget('https://rig.local')).toBe(true);
+		expect(isLocalTarget('https://cfw-probe.example.workers.dev')).toBe(false);
+	});
+});
+
+/**
+ * The rig can measure two different quantities and they answer different questions. What is pinned
+ * here is that the verdict SAYS which one, and that choosing service time cannot quietly flatter the
+ * edge arm: a cell that stamped no `x-worker-ms` falls back to its own p50 rather than to 0.
+ */
+describe('which quantity the verdict decided on', () => {
+	const withWorker = (p50: number, workerMs: number | null): Summary => ({
+		...summary(p50),
+		workerMs
+	});
+
+	it('uses total p50 by default and says so', () => {
+		const out = decide([cell('anon-cached', summary(10), withWorker(40, 3))]);
+		expect(out.decidedOn).toBe('total-p50');
+		expect(out.weighted.edge).toBe(40);
+		expect(out.because).toContain('TOTAL p50');
+	});
+
+	it('uses the edge arm own clock when asked, and reports the choice', () => {
+		const out = decide(
+			[cell('anon-cached', summary(10), withWorker(40, 3))],
+			0,
+			[],
+			undefined,
+			'service-time'
+		);
+		expect(out.decidedOn).toBe('service-time');
+		// 40 ms of total was 37 ms of network to one colo; 3 ms is what the host did
+		expect(out.weighted.edge).toBe(3);
+		expect(out.weightedRatio).toBeCloseTo(10 / 3, 5);
+		expect(out.because).toContain('SERVICE TIME');
+	});
+
+	it('falls back to p50 for a cell that stamped no worker time', () => {
+		const out = decide(
+			[cell('anon-cached', summary(10), withWorker(40, null))],
+			0,
+			[],
+			undefined,
+			'service-time'
+		);
+		// 0 would make the arm that reported nothing look infinitely fast
+		expect(out.weighted.edge).toBe(40);
+	});
+
+	it('still prices the network on the vps side when one is stated', () => {
+		const out = decide(
+			[cell('anon-cached', summary(10), withWorker(40, 3))],
+			25,
+			[],
+			undefined,
+			'service-time'
+		);
+		expect(out.weighted.vps).toBe(35);
 	});
 });

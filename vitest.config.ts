@@ -123,6 +123,29 @@ const havePack = existsSync(PACK_INDEX);
 const haveStatic = existsSync(STATIC_TREE);
 const haveArtifacts = haveBinary && havePack && haveStatic;
 
+/**
+ * Specs that import an artifact of their own at COLLECTION time, and the file that has to exist.
+ *
+ * `ARTIFACT_SPECS` is the pack boundary and these are not on it: a tree can hold the whole pack and
+ * still not hold these, because nothing in this repository produces them. A top-level
+ * `import ...?raw` fails collection, so `describe.skipIf` cannot reach it and the spec's own
+ * `DRUPFLARE_MEASURE` gate never gets a chance to decline.
+ *
+ * Measured rather than assumed: the pack lane builds every artifact and still read
+ * `ENOENT: '../../assets/probe/pw-probe.php'`.
+ */
+const PROBE_IMPORTS: Record<string, string> = {
+	'tests/integration/render-buckets.spec.ts': 'assets/probe/pw-probe.php',
+	'tests/integration/render-plan-arms.spec.ts': 'scripts/bench/pw-plan-replay.php'
+};
+const missingProbeSpecs = listAll
+	? []
+	: Object.entries(PROBE_IMPORTS)
+			.filter(([, file]) => !existsSync(resolve(import.meta.dirname, file)))
+			.map(([spec]) => spec);
+
+const excludedSpecs = [...(haveArtifacts || listAll ? [] : ARTIFACT_SPECS), ...missingProbeSpecs];
+
 // stderr, not stdout: `vitest list --json` is parsed by the metrics collector, and a banner on
 // stdout made every run answer `JSON Parse error: Unexpected identifier "vitest"`
 if (haveShipping && abi) {
@@ -270,11 +293,18 @@ export default defineConfig({
 				// workerd has no `process.env`, so a spec cannot read the ABI arm the way this
 				// config did -- an env-gated `skipIf` inside the isolate is always true and the
 				// spec silently never runs. Injecting it is the only way the two sides agree.
-				define: { __DRUPFLARE_ABI__: JSON.stringify(abi ?? '') },
+				// workerd has no `process.env`, so `builtFromSource()` cannot be read inside the
+				// isolate the way the node project reads it -- see the ABI note above
+				define: {
+					__DRUPFLARE_ABI__: JSON.stringify(abi ?? ''),
+					__DRUPFLARE_PACK_FROM_SOURCE__: JSON.stringify(
+						process.env.PACK_FROM_SOURCE === '1'
+					)
+				},
 				test: {
 					name: 'workers',
 					include: ['tests/unit/**/*.spec.ts', 'tests/integration/**/*.spec.ts'],
-					exclude: haveArtifacts || listAll ? [] : ARTIFACT_SPECS,
+					exclude: excludedSpecs,
 					maxWorkers: workerLanes(),
 					// 30s, not 15s: a worker-loading spec imports the interpreter in ~6.5 s under
 					// eight contending lanes, so 15 s left specs that do no real work timing out as
@@ -293,7 +323,7 @@ export default defineConfig({
 					// through `packVersionsHash()` rather than rendering -- and listing one here did
 					// nothing at all, so a clean checkout stayed red on them however carefully the
 					// list was maintained.
-					exclude: haveArtifacts || listAll ? [] : ARTIFACT_SPECS,
+					exclude: excludedSpecs,
 					// these shell out to php and read the filesystem; serial keeps the failure
 					// output attributable
 					maxWorkers: 1,

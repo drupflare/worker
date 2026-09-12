@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { builtFromSource } from './helpers/artifact-gate';
 
 /**
  * `bun install` restores from the CDN, and a manifest that disagrees with a TRACKED file makes it a
@@ -50,7 +51,9 @@ function present(): Array<Entry & { path: string }> {
 		.filter((e) => existsSync(e.path));
 }
 
-describe('the CDN manifest against the files it would overwrite', () => {
+// `assets:container` rewrites `site.sqlite` in place, so a built tree legitimately disagrees with
+// the manifest describing the published one
+describe.skipIf(builtFromSource())('the CDN manifest against the files it would overwrite', () => {
 	it('found entries to check, or it is asserting nothing', () => {
 		expect(entries().length).toBeGreaterThan(10);
 	});

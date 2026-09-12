@@ -42,3 +42,23 @@ export function artifactGate(paths: string[]): boolean {
 	}
 	return true;
 }
+
+/**
+ * Whether the artifacts in this tree were BUILT rather than shipped.
+ *
+ * `build-local.ts` produces a SUPERSET of the published pack -- 19.74 MB against 11.49 -- because the
+ * shipped file list came from a traced run a checkout does not have, so the bootstrap globs every
+ * non-test file. `assets:container` then rewrites `assets/drupal/site.sqlite` in place, which is a
+ * TRACKED artifact with a `cdn-manifest.json` entry.
+ *
+ * Both are correct for that lane and neither is true of a released tree, so a spec whose subject is
+ * the SHIPPED bytes -- a pinned row count, a manifest digest -- cannot pass against one and should
+ * say so rather than be relaxed for everybody. A spec asserting a PROPERTY (no credential ships, the
+ * chunks replay) still runs, which is what keeps the flag from becoming a way to skip the lane.
+ *
+ * The lane sets it, because the lane is what knows: nothing on disk distinguishes a built pack from a
+ * hydrated one.
+ */
+export function builtFromSource(): boolean {
+	return process.env.PACK_FROM_SOURCE === '1';
+}

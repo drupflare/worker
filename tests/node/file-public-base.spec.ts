@@ -19,14 +19,11 @@ import { REPLICA_SAFE_CAPABILITIES } from '../../src/ops/replica';
  */
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
-const WRAPPER = resolve(
-	ROOT,
-	'..',
-	'drupflare',
-	'src',
-	'StreamWrapper',
-	'CfwFileStreamWrapper.php'
-);
+// `DRUPFLARE_SRC`, which is how CI points at `.siblings/drupflare`. This hardcoded `../drupflare`
+// and so read a path that exists on a dev machine and nowhere else -- the same shape CLAUDE.md
+// records for `tests/fixtures/renamed-form-state.php`, and the idiom five sibling specs already use
+const SIBLING = process.env.DRUPFLARE_SRC ?? '../drupflare';
+const WRAPPER = resolve(ROOT, SIBLING, 'src', 'StreamWrapper', 'CfwFileStreamWrapper.php');
 
 describe('the binding the whole R2 tier was gated on', () => {
 	/**

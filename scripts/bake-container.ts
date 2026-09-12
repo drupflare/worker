@@ -33,6 +33,15 @@ const PORT = Number(process.env.CONTAINER_BAKE_PORT ?? 8799);
 const SITE = 'container-bake';
 
 /**
+ * One path per pass, all distinct, because a repeat is answered from `cfw_page` and boots nothing.
+ *
+ * Two passes is what the reconciliation race needs; the other two are margin. `/user/password` is
+ * the reliable one -- Drupal marks it `private, no-store` for its CSRF token, so it is never stored
+ * and always renders.
+ */
+const RENDER_PATHS = ['/', '/user/login', '/user/password', '/filter/tips'] as const;
+
+/**
  * Chunks the database when nothing has yet, because `/migrate` replays the CHUNKS rather than the
  * file.
  *
@@ -132,40 +141,57 @@ async function capture(base: string, wanted: string): Promise<CapturedRow> {
 	const migrateBody = await migrated.text();
 	if (!migrated.ok) throw new Error(`migrate answered ${migrated.status}: ${migrateBody}`);
 
-	// a real render is what boots the kernel, and it takes both calls: the serve QUEUES `/` and
-	// answers 503 warming, the fill drains that queue and renders inline. `/fill` alone returns in
-	// milliseconds having booted nothing, and the row read after it is just the migrated one
-	const queued = await fetch(`${base}/serve?path=/&edge=0`, { headers: host });
-	if (queued.status !== 503 && !queued.ok) {
-		throw new Error(`serve answered ${queued.status}: ${await queued.text()}`);
-	}
-	const filled = await fetch(`${base}/fill`, { headers: host });
-	const fillBody = await filled.text();
-	if (!filled.ok) throw new Error(`fill answered ${filled.status}: ${fillBody}`);
-	console.log(`fill: ${fillBody.slice(0, 200)}`);
-	// a fill that renders nothing boots no kernel, so the read below finds no container and answers
-	// 400 -- which names sqlite rather than the empty queue that caused it
-	if ((JSON.parse(fillBody) as { filled?: unknown }).filled === null) {
-		throw new Error(
-			`the serve queued nothing, so no render booted a kernel: ${fillBody}. ` +
-				'The object has no site to render; check that assets/drupal-sql carries a migration.'
-		);
+	/*
+	 * ONE RENDER IS NOT ENOUGH, and the terminating observation is the ROW rather than the render.
+	 *
+	 * Two things make a single pass unreliable and neither is visible from the serve's own status.
+	 * `reconcile.ts`'s `container-driver-digest` step reads a fresh site as owed -- it has no
+	 * recorded digest -- so it runs `DELETE FROM cache_container` and deliberately leaves the
+	 * rebuild to the NEXT boot. And the render arrives by either shape: the serve can answer 200
+	 * having rendered inline, or 503 having queued for the fill. Measured 2026-09-12 against a live
+	 * dev server: pass one read `serve 200`, `{"filled":null,"remaining":0}` and `rowCount: 0`, and
+	 * pass two put the row back.
+	 *
+	 * So this renders until the row it wants exists, which is true whichever way the race lands.
+	 *
+	 * EACH PASS TAKES A DIFFERENT PATH, and repeating `/` is why the first version of this loop still
+	 * failed. Pass one stores `/` in `cfw_page`, so every later serve of it is a HIT: 200, no render,
+	 * no kernel, and four passes read `0 row(s)` exactly like one. A fresh path is what forces the
+	 * boot -- measured on the same server, `/user/login` on pass two put the row back.
+	 */
+	const seen: string[] = [];
+	let meta: Omit<CapturedRow, 'hexdata'>[] = [];
+	let match: Omit<CapturedRow, 'hexdata'> | undefined;
+	for (let pass = 1; pass <= RENDER_PATHS.length && !match; pass++) {
+		const path = RENDER_PATHS[pass - 1] as string;
+		const url = `${base}/serve?path=${encodeURIComponent(path)}&edge=0`;
+		const served = await fetch(url, { headers: host });
+		const serveBody = await served.text();
+		if (!served.ok && served.status !== 503) {
+			throw new Error(`serve ${path} answered ${served.status}: ${serveBody.slice(0, 300)}`);
+		}
+		const filled = await fetch(`${base}/fill`, { headers: host });
+		const fillBody = await filled.text();
+		if (!filled.ok) throw new Error(`fill answered ${filled.status}: ${fillBody}`);
+
+		meta = (await sql(
+			base,
+			host,
+			'SELECT cid, expire, created, serialized, tags, checksum FROM cache_container'
+		)) as Omit<CapturedRow, 'hexdata'>[];
+		// the stale row survives alongside the rebuilt one, so pick by hash rather than by count
+		match = meta.find((r) => r.cid.includes(wanted));
+		const note =
+			`pass ${pass} ${path}: serve ${served.status}, fill ${fillBody.slice(0, 60)}, ` +
+			`${meta.length} container row(s)${match ? ' including the one wanted' : ''}`;
+		seen.push(note);
+		console.log(note);
 	}
 
-	const meta = (await sql(
-		base,
-		host,
-		'SELECT cid, expire, created, serialized, tags, checksum ' + 'FROM cache_container'
-	)) as Omit<CapturedRow, 'hexdata'>[];
-	console.log(
-		`the boot left ${meta.length} container row(s): ${meta.map((r) => r.cid).join(', ')}`
-	);
-
-	// the stale row survives alongside the rebuilt one, so pick by hash rather than by count
-	const match = meta.find((r) => r.cid.includes(wanted));
 	if (!match) {
 		throw new Error(
-			`no row carries the pack's ${wanted}. The pack and the running tree disagree; ` +
+			`${seen.join('\n')}\n` +
+				`no row carries the pack's ${wanted}. The pack and the running tree disagree; ` +
 				'rebuild the pack before baking the row.'
 		);
 	}

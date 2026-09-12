@@ -89,9 +89,28 @@ describe('what bake-container needs before it spawns wrangler', () => {
 		expect(source.indexOf('ensureChunks()')).toBeLessThan(source.indexOf('spawn('));
 	});
 
-	// a fill that renders nothing boots no kernel, and the read then names sqlite rather than the
-	// empty queue that caused it
-	it('fails on an empty fill instead of deferring to a confusing read error', () => {
-		expect(source).toContain('the serve queued nothing');
+	/**
+	 * THE TERMINATING OBSERVATION IS THE ROW, not a render's status code.
+	 *
+	 * Two things defeat a single pass and neither shows in the serve's status. Reconciliation's
+	 * `container-driver-digest` step reads a fresh site as owed and runs `DELETE FROM
+	 * cache_container`, leaving the rebuild to the next boot. And the serve renders inline (200) or
+	 * queues for the fill (503) depending on what the object already holds -- both were observed on
+	 * one run. A guard written against either shape refused a build that had succeeded.
+	 */
+	it('loops on the container row rather than on one render', () => {
+		expect(source).toMatch(/for \(let pass = 1; pass <= RENDER_PATHS\.length && !match/);
+		expect(source).toContain('match = meta.find((r) => r.cid.includes(wanted))');
+	});
+
+	/**
+	 * A REPEATED PATH IS A CACHE HIT AND BOOTS NOTHING, which is why the first loop still failed:
+	 * pass one stores `/` in `cfw_page` and four serves of it read `0 row(s)` exactly like one.
+	 */
+	it('takes a different path each pass, all distinct', () => {
+		const paths = source.match(/const RENDER_PATHS = \[(.*?)\] as const/s)?.[1] ?? '';
+		const list = [...paths.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+		expect(list.length).toBeGreaterThanOrEqual(2);
+		expect(new Set(list).size).toBe(list.length);
 	});
 });

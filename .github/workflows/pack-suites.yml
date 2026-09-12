@@ -108,17 +108,20 @@ jobs:
 
       - name: Start a Worker for the e2e Lane
         run: |
-          bun run dev > /tmp/dev.log 2>&1 &
+          setsid nohup bun run dev > /tmp/dev.log 2>&1 < /dev/null &
+          disown || true
           for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:8787/stats?site=e2e" >/dev/null 2>&1; then
               echo "worker reachable"
-              exit 0
+              break
             fi
             sleep 3
           done
-          echo "the worker never answered on 8787"
-          tail -50 /tmp/dev.log
-          exit 1
+          if ! curl -sf "http://127.0.0.1:8787/stats?site=e2e" >/dev/null 2>&1; then
+            echo "the worker never answered on 8787"
+            tail -50 /tmp/dev.log
+            exit 1
+          fi
 
       - name: Populate the e2e Site
         run: |

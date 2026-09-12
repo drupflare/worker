@@ -398,7 +398,7 @@ import {
 	type Blob,
 	type DeclaredFile
 } from './ops/module-rev.js';
-import { resolveInstallable } from './ops/oracle.js';
+import { resolveInstallable, type OracleResult } from './ops/oracle.js';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard.js';
 import {
 	distOf,
@@ -5850,6 +5850,45 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * REPORTS WHAT IT DROPPED. `unpackZip()` keeps only mountable files, so an install of 40 files
 	 * that stores 12 is normal and has to be explainable rather than mysterious.
 	 */
+	/**
+	 * The installability verdict, callable without going through the router.
+	 *
+	 * **IT WAS REACHED BY `this.fetch()` AND THAT SELF-DEADLOCKED.** `fetch()` takes one gate entry
+	 * for the whole request and `handle()` runs inside it, so `/__install` calling the router again
+	 * awaited a release that only happens when the outer call returns -- which was waiting on the
+	 * inner. Measured 2026-09-12 against a real migrated site: `/install` answered
+	 * `Uncaught Error: Promise will never complete` and a 500 after 300,160 ms, twice, and read as a
+	 * registry or network fault rather than as a lock.
+	 *
+	 * That is the third instance of this exact shape here; `/updb` and `fillOne()` both carry the
+	 * same warning. A route needing another route's ANSWER calls the method, never the router.
+	 */
+	async installableVerdict(name: string): Promise<OracleResult> {
+		const cache = caches.default;
+		return await resolveInstallable(
+			this.env as never,
+			async (target: string) => {
+				const key = new Request(target, { method: 'GET' });
+				const hit = await cache.match(key);
+				if (hit) return hit;
+				const res = await fetch(key);
+				if (res.ok) {
+					// clone before the body is read, and give it a TTL: immutable per version, but a
+					// NEW version appears under the same URL
+					const copy = new Response(res.clone().body, {
+						status: res.status,
+						headers: { 'cache-control': 'public, max-age=3600' }
+					});
+					await cache.put(key, copy);
+				}
+				return res;
+			},
+			name,
+			SHIPPED_LOCK_VERSIONS,
+			SHIPPED_CORE_VERSION
+		);
+	}
+
 	async installPackage(
 		registry: Registry,
 		name: string,
@@ -11859,29 +11898,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * `caches.default` because a p2 payload is immutable per version.
 				 */
 				case '/__installable': {
-					const name = url.searchParams.get('module') ?? '';
-					const cache = caches.default;
-					const verdict = await resolveInstallable(
-						this.env as never,
-						async (target: string) => {
-							const key = new Request(target, { method: 'GET' });
-							const hit = await cache.match(key);
-							if (hit) return hit;
-							const res = await fetch(key);
-							if (res.ok) {
-								// clone before the body is read, and give it a TTL: immutable per
-								// version, but a NEW version appears under the same URL
-								const copy = new Response(res.clone().body, {
-									status: res.status,
-									headers: { 'cache-control': 'public, max-age=3600' }
-								});
-								await cache.put(key, copy);
-							}
-							return res;
-						},
-						name,
-						SHIPPED_LOCK_VERSIONS,
-						SHIPPED_CORE_VERSION
+					const verdict = await this.installableVerdict(
+						url.searchParams.get('module') ?? ''
 					);
 					return Response.json(
 						{ ...verdict, shippedCore: SHIPPED_CORE_VERSION },
@@ -11920,15 +11938,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						);
 					}
 					if (url.searchParams.get('force') !== '1') {
-						const check = await this.fetch(
-							new Request(
-								`https://do.local/__installable?module=${encodeURIComponent(name)}`
-							)
-						);
-						const verdict = (await check.json()) as {
-							verdict?: string;
-							conflicts?: { reason?: string }[];
-						};
+						// the METHOD, not `this.fetch()`: the router already holds the gate
+						const verdict = await this.installableVerdict(name);
 						if (verdict.verdict !== 'installable') {
 							return Response.json(
 								{

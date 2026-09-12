@@ -14,7 +14,10 @@ let ours = 0;
 let theirs = 0;
 
 for (const project of PROJECTS) {
-	const run = spawnSync('bunx', ['tsc', '-p', project, '--noEmit'], { encoding: 'utf8' });
+	// the INSTALLED tsc; bunx resolves from the registry when the name is not already cached
+	const run = spawnSync('./node_modules/.bin/tsc', ['-p', project, '--noEmit'], {
+		encoding: 'utf8'
+	});
 	const lines = `${run.stdout ?? ''}${run.stderr ?? ''}`
 		.split('\n')
 		.filter((l) => /error TS[0-9]+/.test(l));

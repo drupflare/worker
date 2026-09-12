@@ -33,6 +33,7 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { markHydrating } from './hydrating';
 import { SIZE_CEILING, measureBundle } from './measure/bundle-size';
 import { decodeLatin1, readEntry, readPack } from './scrub-pack-secrets';
 
@@ -599,10 +600,14 @@ function checkBundle(root: string): number {
 	// a stale artifact in the outdir is counted by measureBundle: a leftover 11 MB probe wasm read
 	// 6,542,971 against a real 2,876,078
 	rmSync(outdir, { recursive: true, force: true });
+	// the INSTALLED wrangler, and hydration marked off: bunx resolves from the registry when the name
+	// is not already cached, and wrangler's build command would rebuild the tree this is pricing
+	const env = { ...process.env };
+	markHydrating(env);
 	const out = execFileSync(
-		'bunx',
-		['wrangler', 'deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
-		{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] }
+		'./node_modules/.bin/wrangler',
+		['deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
+		{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'], env }
 	);
 	const bytes = parseWranglerRawBytes(out);
 	if (bytes === undefined) {

@@ -115,9 +115,10 @@ async function main(): Promise<void> {
 	const endpoint = await waitForReady();
 	console.log(`[e2e] worker ready at ${endpoint}`);
 
-	const vitestArgs = ['vitest', 'run', '--project=e2e'];
+	const vitestArgs = ['run', '--project=e2e'];
 	if (only) vitestArgs.push(`tests/e2e/${only}.spec.ts`);
-	const code = await run('bunx', vitestArgs, {
+	// the INSTALLED vitest; bunx resolved 5.0.0 from the registry against a lockfile pinning 4.1.11
+	const code = await run('./node_modules/.bin/vitest', vitestArgs, {
 		CFW_E2E_ENDPOINT: endpoint,
 		// the shared-site specs in `serve.spec.ts` migrate nothing themselves, so they get their own
 		// name and read whatever state they find; the lifecycle spec mints its own per run

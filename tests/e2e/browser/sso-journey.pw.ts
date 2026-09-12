@@ -50,6 +50,41 @@ async function configureProvider(): Promise<{ ok: boolean; discovery: unknown }>
 	return { ok: body.ok === true, discovery: body.discovery };
 }
 
+/**
+ * Installs and enables `drupal/externalauth`, which the host's SSO refuses to complete without.
+ *
+ * `CfwOidc::signIn` declines deliberately when it is absent -- "this module does NOT create users
+ * itself... inventing an account-provisioning path here would be a second, untested one" -- so the
+ * journey below could verify a provider login and still finish with no session. Neither the shipped
+ * pack nor a from-source one carries the module and this lane mounts no contrib fixture, so these
+ * two tests had never been able to pass.
+ *
+ * At RUNTIME through the owner routes rather than by adding it to the pack: that exercises the
+ * `/install` + `/enable` path an operator uses and leaves what drupflare ships unchanged.
+ */
+async function ensureExternalauth(): Promise<{ ok: boolean; why: string }> {
+	const owner = { authorization: `Bearer ${ownerToken()}` };
+	const step = async (path: string): Promise<{ ok: boolean; why: string }> => {
+		const res = await fetch(`${BASE_URL}${path}`, { headers: owner });
+		const text = await res.text();
+		let ok = false;
+		try {
+			ok = (JSON.parse(text) as { ok?: boolean }).ok === true;
+		} catch {
+			/* not JSON, which is itself the answer */
+		}
+		// the whole body on failure: `ok:false` carries its reason in a field whose name varies by
+		// refusal, and a bare status names none of them
+		return { ok, why: ok ? '' : `${path} -> ${res.status} ${text.slice(0, 400)}` };
+	};
+
+	const installed = await step(
+		`/install?site=${SITE}&module=${encodeURIComponent('drupal/externalauth')}`
+	);
+	if (!installed.ok) return installed;
+	return await step(`/enable?site=${SITE}&module=externalauth`);
+}
+
 let reachable = false;
 
 /**
@@ -72,6 +107,12 @@ test.beforeAll(async () => {
 		);
 	}
 	if (reachable) {
+		const auth = await ensureExternalauth();
+		expect(
+			auth.ok,
+			`externalauth could not be provisioned (${auth.why}); the host refuses to map a ` +
+				'verified login without it'
+		).toBe(true);
 		const setup = await configureProvider();
 		expect(
 			setup.ok,
@@ -106,13 +147,24 @@ test.describe('a visitor signs in through the identity provider', () => {
 		// hop 3: real credentials against a real Keycloak
 		await page.locator('#username').fill(USERNAME);
 		await page.locator('#password').fill(PASSWORD);
-		await page.locator('#kc-login').click();
 
 		// hop 4: back on the site, holding the ticket the callback minted. Getting here means the
 		// authorization code was exchanged, the id_token signature verified against the live JWKS,
 		// and the nonce and state matched -- none of which a browser could have faked
-		await page.waitForURL(/cfw_oidc=/, { timeout: 60_000 });
-		const landed = new URL(page.url());
+		/*
+		 * THE TICKET URL IS PASSED THROUGH, NOT LANDED ON, so it has to be observed as a REQUEST.
+		 *
+		 * `CfwOidc::complete` redeems the ticket and redirects onward, and a 302 fires no load event
+		 * at the URL it redirects from -- which is the one carrying `?cfw_oidc`. `waitForURL` waits
+		 * for a load, so it timed out on a journey that had already succeeded: the log shows
+		 * `External registration`, `Session opened` and the ticket in the request line. Arming the
+		 * wait BEFORE the click is what makes it race-free.
+		 */
+		const ticketNav = page.waitForRequest((r) => r.url().includes('cfw_oidc='), {
+			timeout: 60_000
+		});
+		await page.locator('#kc-login').click();
+		const landed = new URL((await ticketNav).url());
 		// THE ROUTE THAT REDEEMS THE TICKET, and this used to assert `/user/login`. `CfwOidc::complete`
 		// is the only thing that reads `?cfw_oidc`, so a ticket delivered anywhere else is spent
 		// nowhere -- which is exactly what shipped, because the callback redirected to `returnTo`
@@ -165,12 +217,15 @@ test.describe('a callback this site did not start', () => {
 		await page.goto(`/oidc?action=start&return=${encodeURIComponent('/user/login')}`);
 		await page.locator('#username').fill(USERNAME);
 		await page.locator('#password').fill(PASSWORD);
+		// the REQUEST, for the same reason as above: the ticket URL is redirected away from
+		const firstNav = page.waitForRequest((r) => r.url().includes('cfw_oidc='), {
+			timeout: 60_000
+		});
 		await page.locator('#kc-login').click();
-		await page.waitForURL(/cfw_oidc=/, { timeout: 60_000 });
+		const first = new URL((await firstNav).url());
 
 		// the callback URL the provider used, replayed. The pending record is cleared whatever
 		// happens, so the second attempt has no state to match
-		const first = new URL(page.url());
 		const replayed = await page.goto(
 			`/oidc?action=callback&state=stale&code=${encodeURIComponent(first.searchParams.get('cfw_oidc') ?? 'x')}`
 		);

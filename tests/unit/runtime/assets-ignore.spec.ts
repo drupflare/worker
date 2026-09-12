@@ -180,16 +180,26 @@ describe('the canonical config serves the static tree the browser reads', () => 
 		expect(missing).toEqual([]);
 	});
 
-	it('serves every core asset the prefilled pages reference', async () => {
-		// the prefill IS the first page a visitor sees, so a URL in it that 404s is a broken render
-		// rather than a missing optimisation
+	/**
+	 * THE ASSERTION IS THAT EVERY REFERENCED URL RESOLVES, and the count is only a non-vacuity
+	 * control.
+	 *
+	 * It required more than 50 `/core/**` URLs, which is a magnitude rather than a property and it
+	 * moved the moment `agg` joined the build sequence: with aggregates on disk the prefill bakes
+	 * pages whose stylesheet and script tags have already been rewritten to `/agg/**`, so the pack
+	 * lane read 6. Both prefixes are the same claim -- a URL the first page a visitor sees asks for,
+	 * which 404s if the asset layer does not publish it -- so both are counted and the threshold is
+	 * gone.
+	 */
+	it('serves every asset the prefilled pages reference', async () => {
 		const referenced = new Set<string>();
 		for (const page of await prefilledPages()) {
 			for (const m of page.html.matchAll(/\/core\/[A-Za-z0-9/_.@-]+\.[a-z0-9]{2,5}/g)) {
 				referenced.add(m[0]);
 			}
+			for (const m of page.html.matchAll(/\/agg\/[A-Za-z0-9._-]+/g)) referenced.add(m[0]);
 		}
-		expect(referenced.size).toBeGreaterThan(50);
+		expect(referenced.size, 'the prefilled pages reference no asset at all').toBeGreaterThan(0);
 
 		const missing: string[] = [];
 		for (const path of referenced) {

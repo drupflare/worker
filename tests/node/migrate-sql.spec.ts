@@ -269,6 +269,12 @@ async function openSourceRewritten(): Promise<{ db: DatabaseSync; tmp: string }>
 	await copyFile(SOURCE_DB, tmp);
 	const db = new DatabaseSync(tmp);
 	const before = Number(db.prepare('PRAGMA schema_version').get()?.schema_version ?? 0);
+	// LOAD THE SCHEMA BEFORE ARMING THE PRAGMA. SQLite clears `writable_schema` whenever it reloads
+	// the schema, and preparing the UPDATE is itself what triggers that load on a connection that has
+	// not read a table yet -- so the flag was already off by the time the write ran. It failed only in
+	// the pack lane, whose database is freshly built, and passed in every lane reading the shipped
+	// one on the same node 24.20.0, which is what ruled the runtime out
+	db.prepare('SELECT count(*) FROM sqlite_master').get();
 	db.exec('PRAGMA writable_schema=ON');
 	db.exec(
 		"UPDATE sqlite_master SET sql = replace(sql, 'NOCASE_UTF8', 'NOCASE') WHERE sql LIKE '%NOCASE_UTF8%'"

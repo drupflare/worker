@@ -43,6 +43,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { REENTRY_VAR, reentered } from './hydrating';
 import { PAYLOAD_ROOTS, payloadName, sha256, type PayloadManifest } from './release-payload';
 
 /** where a payload is published, so the default path needs no argument */
@@ -266,6 +267,11 @@ async function main(): Promise<number> {
 	const payloadOnly = process.argv.includes('--payload-only');
 	const fromSource = process.argv.includes('--from-source');
 	const force = process.argv.includes('--force');
+
+	if (reentered()) {
+		console.log(`${REENTRY_VAR} is set; a build is already producing these artifacts.`);
+		return 0;
+	}
 
 	const missing = missingMarkers(root);
 	if (missing.length === 0 && !force && !fromSource) {

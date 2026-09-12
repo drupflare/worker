@@ -31,6 +31,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { drupalVersion, installedVersion } from './fetch-drupal-tree';
+import { markHydrating } from './hydrating.js';
 import { packVersionsHash } from './pack-hash.js';
 
 /** an external program a step shells out to, and how to get it */
@@ -831,6 +832,9 @@ export function assertKnownSteps(ids: readonly string[]): void {
 }
 
 if (import.meta.main) {
+	// the container step spawns `wrangler dev`, whose build command is `bun run hydrate`; mid-build
+	// the tree is legitimately incomplete, so without this the hydrate re-enters this script
+	markHydrating();
 	const argv = process.argv.slice(2);
 	const root = resolve(import.meta.dirname, '..');
 	const only = listArg('only', argv);

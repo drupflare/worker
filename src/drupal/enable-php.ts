@@ -100,6 +100,24 @@ try {
 // is the module even discoverable? A module Drupal cannot see fails with a confusing
 // "missing dependency" rather than "not found", so it is separated out
 try {
+  // THE FILE SCAN IS A STATIC AND THIS SAPI NEVER TEARS ONE DOWN. pib_run performs no
+  // php_request_startup/shutdown, so ExtensionDiscovery keeps its scanned file list for the life of
+  // the interpreter. A site that rendered anything before the install therefore holds a scan taken
+  // without the new module, and extension.list.module's own reset() does not reach it. Measured:
+  // /install wrote 27 files, the boot mounted them, and discoverable stayed false forever.
+  // there is no public reset in Drupal 11 and the property is protected, so reflection is the only
+  // way to reach it. Guarded: a core that drops the property must not take the enable down with it
+  try {
+    $prop = new \ReflectionProperty(\Drupal\Core\Extension\ExtensionDiscovery::class, 'files');
+    $prop->setAccessible(true);
+    $prop->setValue(null, []);
+    $out['discoveryScanCleared'] = true;
+  } catch (\Throwable $e) {
+    $out['discoveryScanCleared'] = false;
+  }
+  // whether the module is on disk at all, which separates a mount failure from a stale scan. Without
+  // it both read as "discoverable: false" and the two have completely different fixes
+  $out['filesMounted'] = is_dir('/drupal/modules/contrib/' . $name);
   $available = \Drupal::service('extension.list.module')->reset()->getList();
   $out['discoverable'] = isset($available[$name]);
   if (isset($available[$name])) {

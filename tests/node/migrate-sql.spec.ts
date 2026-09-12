@@ -269,12 +269,20 @@ async function openSourceRewritten(): Promise<{ db: DatabaseSync; tmp: string }>
 	await copyFile(SOURCE_DB, tmp);
 	const db = new DatabaseSync(tmp);
 	const before = Number(db.prepare('PRAGMA schema_version').get()?.schema_version ?? 0);
-	// LOAD THE SCHEMA BEFORE ARMING THE PRAGMA. SQLite clears `writable_schema` whenever it reloads
-	// the schema, and preparing the UPDATE is itself what triggers that load on a connection that has
-	// not read a table yet -- so the flag was already off by the time the write ran. It failed only in
-	// the pack lane, whose database is freshly built, and passed in every lane reading the shipped
-	// one on the same node 24.20.0, which is what ruled the runtime out
-	db.prepare('SELECT count(*) FROM sqlite_master').get();
+	/*
+	 * `writable_schema` IS NOT ENOUGH ON NODE 24.20, which added `enableDefensive` and defaults it
+	 * ON: SQLITE_DBCONFIG_DEFENSIVE refuses a direct write to `sqlite_master` whatever the pragma
+	 * says, and the failure reads as a corrupt database rather than a policy.
+	 *
+	 * Measured across both runtimes and both databases, which is what separates the two candidates
+	 * this was blamed on first: 24.11.0 permits the write on the shipped file AND on a freshly built
+	 * one, 24.20.0 refuses both. So it is the runtime, and neither the pack nor a schema reload.
+	 *
+	 * Guarded because the method does not exist before 24.20.
+	 */
+	const defensive = (db as unknown as { enableDefensive?: (on: boolean) => void })
+		.enableDefensive;
+	if (typeof defensive === 'function') defensive.call(db, false);
 	db.exec('PRAGMA writable_schema=ON');
 	db.exec(
 		"UPDATE sqlite_master SET sql = replace(sql, 'NOCASE_UTF8', 'NOCASE') WHERE sql LIKE '%NOCASE_UTF8%'"
@@ -671,12 +679,32 @@ describeIfPacked('replaying every shipped chunk, one per invocation, reproduces 
 		).toBeGreaterThan(1000);
 	});
 
-	it('is still truncated on a JS read of that row, so the assertion above is load-bearing', () => {
+	/**
+	 * The control for the assertion above, and NODE 24.20 FIXED THE BUG IT PINNED.
+	 *
+	 * It used to require the JS read to still be truncated, which is a claim about a runtime defect
+	 * rather than about this pack: on 24.11.0 the read gives 117 bytes and on 24.20.0 it gives the
+	 * full 1,697. Asserting the defect persists turns an upstream fix into a red gate.
+	 *
+	 * So the property is that the read is one of the two KNOWN shapes -- truncated at the first NUL,
+	 * or the whole value -- and never something in between, which is what a new truncation bug would
+	 * look like. Either way the `hex()` assertion above is the one that decides, because it is
+	 * computed inside SQLite and cannot be cut by a JS decode.
+	 *
+	 * Measured on this row only. It says nothing about the other NUL hazards this project records --
+	 * `length()` in SQL, and fflate's `{ out }` hint -- which were never node:sqlite's doing.
+	 */
+	it('reads that row either truncated at the NUL or whole, never in between', () => {
 		const text = db.prepare("SELECT data FROM cache_data WHERE cid LIKE 'route:%'").get()?.data;
-		expect(
-			typeof text === 'string' && text.length < 200,
-			`JS read gave ${typeof text === 'string' ? text.length : typeof text}`
-		).toBe(true);
+		const full = Number(
+			db
+				.prepare(
+					"SELECT length(hex(data)) / 2 AS bytes FROM cache_data WHERE cid LIKE 'route:%'"
+				)
+				.get()?.bytes ?? 0
+		);
+		const read = typeof text === 'string' ? text.length : -1;
+		expect(read === 117 || read === full, `JS read gave ${read}, hex says ${full}`).toBe(true);
 	});
 
 	it('has no table shorter than its source, so no text value lost bytes to a NUL', () => {

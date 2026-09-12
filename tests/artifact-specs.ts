@@ -135,5 +135,19 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/shared-base-share.spec.ts',
 	'tests/integration/state-inventory.spec.ts',
 	'tests/integration/warm-alarm-cost.spec.ts',
-	'tests/unit/runtime/assets-ignore.spec.ts'
+	'tests/unit/runtime/assets-ignore.spec.ts',
+	// NINE JOINED 2026-09-12, found by the reproduction this file's own docblock prescribes: hide
+	// `assets/drupal-pf/core.pf.json` and run the gate. Master had been red on all nine since the
+	// pack-dependent set last moved, and no local run could see it because every dev machine has the
+	// pack. Seven fail with `per-file pack not reachable: core.pf.json 404` from a real render; the
+	// two node ones read the pack's manifest directly through `packVersionsHash()`.
+	'tests/integration/lever-behaviour.spec.ts',
+	'tests/integration/replica-failover.spec.ts',
+	'tests/integration/replica-fence.spec.ts',
+	'tests/integration/serve-decision.spec.ts',
+	'tests/integration/serve-edge.spec.ts',
+	'tests/integration/serve-provision.spec.ts',
+	'tests/integration/unicode-runtime.spec.ts',
+	'tests/node/build-from-source.spec.ts',
+	'tests/node/container-cid.spec.ts'
 ];

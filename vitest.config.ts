@@ -288,6 +288,12 @@ export default defineConfig({
 					name: 'node',
 					environment: 'node',
 					include: ['tests/node/**/*.spec.ts'],
+					// THE SAME EXCLUSION THE WORKERS PROJECT GETS, which this project did not have.
+					// `ARTIFACT_SPECS` names `tests/node/**` files -- they read the pack's manifest
+					// through `packVersionsHash()` rather than rendering -- and listing one here did
+					// nothing at all, so a clean checkout stayed red on them however carefully the
+					// list was maintained.
+					exclude: haveArtifacts || listAll ? [] : ARTIFACT_SPECS,
 					// these shell out to php and read the filesystem; serial keeps the failure
 					// output attributable
 					maxWorkers: 1,

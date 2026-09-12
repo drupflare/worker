@@ -342,7 +342,13 @@ describe('the chain that keeps a lane replicating', () => {
 			// four minutes behind the primary and look healthy doing it
 			// measured both ways: 30,000 with the tightening and 240,000 without it
 			expect(out.alarm! - out.now).toBeLessThanOrEqual(DEFAULT_REPLICA_LAG_MS);
-			expect(out.alarm! - out.now).toBeGreaterThan(0);
+			// NOT IN THE PAST, which is the property; `> 0` was a millisecond race and failed about
+			// one run in six with `expected 0 to be greater than 0`. The clock can land on the same
+			// millisecond the re-arm chose, and an alarm due immediately is the TIGHTEST possible
+			// answer to "inside the staleness bound" rather than a violation of it. A genuinely
+			// missed re-arm is negative, which this still catches, and the 240 s idle case is
+			// caught by the bound above.
+			expect(out.alarm! - out.now).toBeGreaterThanOrEqual(0);
 		},
 		TIMEOUT
 	);

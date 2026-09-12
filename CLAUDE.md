@@ -1011,6 +1011,38 @@ already holds; both shapes were observed in one run.
 `pass 2 /user/login: 1 container row(s) including the one wanted`, and returns 482,568 bytes at
 `expire -1`. **A 200 from `/serve` is not evidence a kernel booted.**
 
+## Run the pack lane locally before pushing at it
+
+Four rounds of this lane were fixed one CI failure at a time, because nothing here ran what it runs.
+The step it fails on is reproducible in full:
+
+```sh
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm use 24.20.0 # what CI resolves for '24'
+REQUIRE_ARTIFACTS=1 PACK_FROM_SOURCE=1 bun run test
+```
+
+That alone catches the node-version and flag failures, which were three of the last six. For the
+from-source pack, copy the tree and build it:
+
+```sh
+rsync -a --exclude '.git' ./ /tmp/ci-repro/ # NOT --exclude vendor/dist, see below
+cd /tmp/ci-repro
+find assets -mindepth 1 -maxdepth 1 ! -name '.assetsignore' ! -name 'robots.txt' ! -name drupal -exec rm -rf {} +
+find assets/drupal -mindepth 1 ! -name site.sqlite -exec rm -rf {} + # a fresh checkout's state
+DRUPFLARE_SRC= ROM_SRC= STREAM_HTTP_SRC= < abs > /drupflare < abs > /rom < abs > /stream-http/src bun run build:local
+```
+
+**An rsync exclude matches at every depth, and it cost two rounds here.** `--exclude vendor` also
+removes `drupal-src/vendor`, which fails the twig bake on a missing `autoload.php`; `--exclude dist`
+also removes `node_modules/*/dist`, which makes vitest unresolvable. Exclude `.git` and nothing else,
+or name the paths with a leading slash.
+
+**A `bun -e` script is NOT the node the gate runs on.** Bun ships its own `node:sqlite`, and it
+refused a `sqlite_master` write that real node 24.11 allows -- so a harness written in bun reported
+the wrong answer for both runtimes. Use `node` for anything that measures node behaviour.
+
 **AND A BUILT PACK IS NOT THE SHIPPED PACK, which the pack lane asserts against by default.** Seven
 specs failed the first time that lane got as far as running the gate, and only one was a defect:
 
@@ -1021,10 +1053,22 @@ specs failed the first time that lane got as far as running the gate, and only o
 - **`agg` was outside the numbered build sequence** while `wrangler.jsonc` ships
   `ASSET_AGGREGATES: "1"`, so every from-source tree ran the lever against nothing. It degrades
   quietly by design, which is why nothing reported it.
-- **`PRAGMA writable_schema` is cleared by a schema reload**, and preparing the `UPDATE
-sqlite_master` is what triggers that load on a connection which has not read a table yet. It
-  failed only against a freshly built database and passed in every lane reading the shipped one on
-  the SAME node 24.20.0, which is what ruled the runtime out.
+- **`writable_schema` IS NOT ENOUGH ON NODE 24.20**, which added `enableDefensive` and defaults it
+  ON: `SQLITE_DBCONFIG_DEFENSIVE` refuses a direct write to `sqlite_master` whatever the pragma says.
+  Measured across both runtimes and both databases -- 24.11.0 permits it on the shipped file AND on a
+  freshly built one, 24.20.0 refuses both -- which is what separated the runtime from the pack.
+  **Two earlier explanations were wrong and each cost a round**: a schema reload clearing the pragma,
+  and "Build Project passes on the same node, so it is not the runtime". The second read as decisive
+  and was not.
+- **Node 24.20 also FIXED the `node:sqlite` NUL truncation.** The control asserting a JS read is
+  still cut at the first NUL read 117 bytes on 24.11 and the full 1,697 on 24.20, so it turned an
+  upstream fix into a red gate. It asserts one of the two known shapes now. The other NUL hazards
+  this file records -- `length()` in SQL, fflate's `{ out }` hint -- were never node:sqlite's doing
+  and are unaffected.
+- **A magnitude in a control moves when a feature lands.** `assets-ignore.spec.ts` required more than
+  50 `/core/**` URLs across the prefilled pages; once `agg` joined the sequence the prefill bakes
+  pages whose tags are already rewritten to `/agg/**`, and the lane read 6. Both prefixes are the
+  same claim, so both are counted and the threshold is gone.
 - The rest are the boundary itself: `PACK_FROM_SOURCE=1` marks a tree whose artifacts were BUILT, and
   a spec whose subject is the shipped bytes -- a pinned row count, a manifest digest -- skips on it.
   A spec asserting a PROPERTY still runs, which is what stops the flag becoming a way to skip the

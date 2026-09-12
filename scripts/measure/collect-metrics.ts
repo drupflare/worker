@@ -25,12 +25,25 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { markHydrating } from '../hydrating';
 import { ceilingVerdict, parseWranglerGzipBytes, parseWranglerRawBytes } from '../release-payload';
 import { SIZE_CEILING } from './bundle-size';
 import { DEFAULT_MIX, envelope, scoreWorkload } from './free-envelope';
 import { auditSchema, loadPack } from './index-audit';
+
+/**
+ * The INSTALLED binaries, not `bunx`'s.
+ *
+ * `bunx` resolves from the registry when a name is not already cached, which is how a CI runner ran
+ * vitest 5.0.0 against a lockfile pinning 4.1.11. The timeout is the other half: an `execFileSync`
+ * with no timeout waits forever on a stalled resolve, and the runner's SIGTERM is then the only
+ * thing that ends it -- which reads as the job being killed rather than as a hung child.
+ */
+const LOCAL_WRANGLER = './node_modules/.bin/wrangler';
+const LOCAL_VITEST = './node_modules/.bin/vitest';
+const TOOL_TIMEOUT_MS = 15 * 60 * 1_000;
 
 /** a metric whose inputs were not present, carrying the reason rather than a zero */
 export type Skipped = { skipped: string };
@@ -142,10 +155,22 @@ export function collectBundle(root: string): Metric<BundleMetric> {
 	const outdir = join(root, 'dist/metrics-dry-run');
 	let printed: string;
 	try {
+		// a dry run MEASURES the tree; it must not rebuild one. wrangler's build command is
+		// `bun run hydrate`, which on a tree with no published release falls through to a full
+		// source build and then spawns wrangler again
+		const env = { ...process.env };
+		markHydrating(env);
 		printed = execFileSync(
-			'bunx',
-			['wrangler', 'deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
-			{ cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] }
+			LOCAL_WRANGLER,
+			['deploy', '-c', 'wrangler.jsonc', '--dry-run', '--outdir', outdir],
+			{
+				cwd: root,
+				encoding: 'utf8',
+				maxBuffer: 1 << 28,
+				stdio: ['ignore', 'pipe', 'pipe'],
+				timeout: TOOL_TIMEOUT_MS,
+				env
+			}
 		);
 	} catch (error) {
 		return { skipped: `wrangler dry-run failed: ${(error as Error).message.split('\n')[0]}` };
@@ -169,10 +194,11 @@ export function collectBundle(root: string): Metric<BundleMetric> {
 
 function wranglerVersion(root: string): string {
 	try {
-		const out = execFileSync('bunx', ['wrangler', '--version'], {
+		const out = execFileSync(LOCAL_WRANGLER, ['--version'], {
 			cwd: root,
 			encoding: 'utf8',
-			stdio: ['ignore', 'pipe', 'ignore']
+			stdio: ['ignore', 'pipe', 'ignore'],
+			timeout: TOOL_TIMEOUT_MS
 		});
 		return (out.match(/\d+\.\d+\.\d+/)?.[0] ?? out.trim()).trim();
 	} catch {
@@ -321,20 +347,23 @@ export function collectTests(root: string, opts: { vitest: boolean }): TestsMetr
 	if (!opts.vitest) {
 		return { specFiles, cases: { skipped: 'not collected; --no-vitest was passed' } };
 	}
+	// TO A FILE, not to stdout. "vitest writes its own progress to stderr" was true of vitest and
+	// false of the pool: miniflare prints `Using secrets defined in .dev.vars` on STDOUT once per
+	// worker, INTERLEAVED with the array, so no prefix trim recovers it. The metric read `skipped`
+	// on every machine that has a `.dev.vars`, and CI has none, so the gate compared two runs that
+	// both avoided the line
+	const listFile = join(root, 'dist/metrics-vitest-list.json');
 	try {
-		const out = execFileSync(
-			'bunx',
-			['vitest', 'list', '--project=workers', '--json'],
-			// vitest writes its own progress to stderr, so only stdout carries the JSON
-			{
-				cwd: root,
-				encoding: 'utf8',
-				maxBuffer: 1 << 28,
-				stdio: ['ignore', 'pipe', 'ignore'],
-				env: { ...process.env, ...LIST_ENV }
-			}
-		);
-		const listed = JSON.parse(out) as unknown[];
+		mkdirSync(dirname(listFile), { recursive: true });
+		execFileSync(LOCAL_VITEST, ['list', '--project=workers', `--json=${listFile}`], {
+			cwd: root,
+			encoding: 'utf8',
+			maxBuffer: 1 << 28,
+			stdio: ['ignore', 'ignore', 'ignore'],
+			env: { ...process.env, ...LIST_ENV },
+			timeout: TOOL_TIMEOUT_MS
+		});
+		const listed = JSON.parse(readFileSync(listFile, 'utf8')) as unknown[];
 		return { specFiles, cases: { workers: listed.length } };
 	} catch (error) {
 		return {

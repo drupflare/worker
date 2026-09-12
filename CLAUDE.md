@@ -1011,6 +1011,37 @@ already holds; both shapes were observed in one run.
 `pass 2 /user/login: 1 container row(s) including the one wanted`, and returns 482,568 bytes at
 `expire -1`. **A 200 from `/serve` is not evidence a kernel booted.**
 
+## A STATIC SURVIVES EVERY LATER RUN, and that is what made `/install` useless
+
+`pib_run` performs no `php_request_startup`/`shutdown`, which this file already records for
+`$GLOBALS` and parked generators. It is equally true of CLASS statics, and
+`ExtensionDiscovery::$files` is one: a site that rendered anything before a module was installed
+keeps a file scan taken without it, for the life of the interpreter. So `/install` wrote its 27
+files, the boot mounted them, PHP could open them by path, and `/enable` still answered
+`discoverable: false` however long anything waited.
+
+`extension.list.module`'s own `reset()` does not reach it, and Drupal 11 removed
+`ExtensionDiscovery::reset()` -- the property is `protected static` with no public clear, so
+reflection is the only way in. `ENABLE_MODULE` does that now and reports `filesMounted` beside
+`discoverable`, because without the first the second has two completely different causes and reads
+identically.
+
+**FOUR WRONG DIAGNOSES PRECEDED IT**, each plausible and each costing a round: an enable/mount race
+(five retries over 8 s changed nothing), a missing boot between install and enable (a forced render
+changed nothing), the lazy mount hiding a directory (it creates REAL MEMFS nodes and real
+directories, so a scan sees them), and `LAZY_MOUNT=0` as a workaround (it needs `core.json` /
+`core.bin.gz`, which the asset layer does not publish -- 404). The thing that ended it was making the
+probe report `filesMounted` rather than reasoning about which half was broken.
+
+## A REDIRECTED-THROUGH URL IS A REQUEST, NOT A NAVIGATION
+
+`page.waitForURL()` waits for a LOAD at a matching URL, and a 302 fires no load event at the URL it
+redirects away from. `CfwOidc::complete` redeems the ticket and redirects onward, so the only URL
+carrying `?cfw_oidc` is one the browser passes through -- and the wait timed out on a journey that
+had already succeeded, with `External registration`, `Session opened for Drup Flare` and the ticket
+visible in the worker's own request line. `page.waitForRequest()`, armed BEFORE the click that
+starts the navigation, observes it without a race.
+
 ## Run the pack lane locally before pushing at it
 
 Four rounds of this lane were fixed one CI failure at a time, because nothing here ran what it runs.

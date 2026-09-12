@@ -989,6 +989,29 @@ forwards neither into the worker's `env`, so a `PW_DIAGNOSTICS` set on the spawn
 `/migrate` is an owner route, so it answered 401 on CI and 200 on every machine with a `.dev.vars` --
 measured both ways with the file parked, 401 without the flag and 200 with it.
 
+**AND THE SAME STEP ORDER HAS A SECOND CONSEQUENCE, which closing the cycle is what exposed.** `sql`
+running after `container` also means there is no `assets/drupal-sql/` when the container step asks
+the object to migrate, so `/migrate` answered 200 in 54 ms having replayed nothing, `/fill` drained
+`{"filled":null,"remaining":0}` and the read came back `400 no such table: cache_container`.
+`bake-container.ts` chunks the database itself when nothing has. The stale row inside those chunks is
+the point rather than a problem: the boot misses on it and rebuilds the container the script exists
+to capture.
+
+**THE COVERAGE THRESHOLD IS MEASURED ON A LANE WHOSE SCOPE SHRINKS, so adding to `ARTIFACT_SPECS`
+lowers it.** `coverage.yml` never builds the pack, so every pack-dependent spec is excluded and the
+~2,210 uncovered statements in `site-do.ts` are structural rather than a testing gap. Nine specs
+joined the list on 2026-09-12 and the lines figure fell to 74.76 against a threshold of 75. Reproduce
+it the way CI sees it before believing a local number:
+
+```sh
+mv assets/drupal-pf/core.pf.json assets/drupal-pf/core.pf.json.absent
+mv .dev.vars /tmp/dev.vars.bak
+bun run test:coverage
+```
+
+Read 75.31 / 74.68 / 64.04 / 81.19 against 75 / 74 / 63 / 72 once the shell slot half was covered.
+The lines margin is 0.31, so the next spec to join the list needs its own tests in the same commit.
+
 ## Commands
 
 **VITEST 4'S DEFAULT REPORTER HIDES CONSOLE OUTPUT FROM PASSING TESTS, and every `DRUPFLARE_MEASURE`

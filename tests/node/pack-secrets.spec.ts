@@ -34,12 +34,22 @@ describe.skipIf(artifactGate(ARTIFACTS))('the shipped assets', () => {
 
 	it('leave the scrub with nothing to do, and it stays that way when run again', () => {
 		// idempotence is the property that lets `bun run assets` end with a scrub: a repack
-		// reintroduces the salt, and a second scrub of an already-clean pack must not rewrite it
-		expect(scrubPack(PACK, true)).toEqual([
-			{ path: 'sites/default/settings.php', found: [], rewritten: false }
-		]);
-		expect(scrubPack(PACK, false)).toEqual([
-			{ path: 'sites/default/settings.php', found: [], rewritten: false }
-		]);
+		// reintroduces the salt, and a second scrub of an already-clean pack must not rewrite it.
+		//
+		// THE PROPERTY, NOT THE ENUMERATION. This pinned a one-element list, so it failed on a
+		// FROM-SOURCE pack for a correct reason: that pack also carries `sites/build/settings.php`,
+		// the installer's own output, so the scrub reports on two files rather than one. What has to
+		// hold is that every file it reports on is already clean
+		for (const check of [true, false]) {
+			const results = scrubPack(PACK, check);
+			expect(results.length, 'the scrub reported on no file at all').toBeGreaterThan(0);
+			expect(results.map((r) => r.path)).toContain('sites/default/settings.php');
+			for (const r of results) {
+				expect(r, `${r.path} still carries ${r.found.join(', ')}`).toMatchObject({
+					found: [],
+					rewritten: false
+				});
+			}
+		}
 	});
 });

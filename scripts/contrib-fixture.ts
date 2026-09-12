@@ -114,7 +114,8 @@ try {
 				'                  put it back with: bun scripts/contrib-fixture.ts --restore'
 		);
 	} else {
-		run('bunx', ['vitest', 'run', '--project=workers', SPEC, ...passthrough]);
+		// the INSTALLED vitest; bunx resolves from the registry and CI ran 5.0.0 against a 4.1.11 pin
+		run('./node_modules/.bin/vitest', ['run', '--project=workers', SPEC, ...passthrough]);
 	}
 } finally {
 	if (!mountOnly) restore();

@@ -52,8 +52,25 @@ function currentCid(): string | null {
 	return row?.cid ?? null;
 }
 
-async function waitForPort(proc: { killed: boolean }, url: string): Promise<void> {
-	for (let i = 0; i < 240; i++) {
+/**
+ * Waits for `wrangler dev --local` to bind, which on a cold runner is not quick.
+ *
+ * 120 s WAS NOT ENOUGH IN CI and the failure read as a hang. A cold miniflare compiles the 13.4 MB
+ * interpreter before it answers anything, and a shared runner with no warm cache does that a good
+ * deal slower than a laptop -- the browser lane failed here on 2026-09-11 while `wrangler` had
+ * printed its banner and was still starting. Raised to 300 s, which is bounded by the job timeout
+ * rather than by this number.
+ *
+ * The message now says how long it actually waited and repeats wrangler's own output, because
+ * "nothing answered" names neither the cause nor the thing to look at next.
+ */
+async function waitForPort(
+	proc: { killed: boolean },
+	url: string,
+	log: () => string = () => ''
+): Promise<void> {
+	const started = Date.now();
+	for (let i = 0; i < 600; i++) {
 		if (proc.killed) throw new Error('wrangler exited before it served');
 		try {
 			const res = await fetch(url, { signal: AbortSignal.timeout(2_000) });
@@ -63,7 +80,11 @@ async function waitForPort(proc: { killed: boolean }, url: string): Promise<void
 		}
 		await new Promise((r) => setTimeout(r, 500));
 	}
-	throw new Error(`nothing answered ${url} within 120s`);
+	const tail = log().split('\n').slice(-25).join('\n');
+	throw new Error(
+		`nothing answered ${url} within ${Math.round((Date.now() - started) / 1000)}s.\n` +
+			`wrangler said:\n${tail || '(nothing captured)'}`
+	);
 }
 
 type CapturedRow = {
@@ -180,7 +201,9 @@ async function main(): Promise<void> {
 	// the CANONICAL config, not wrangler.bench.jsonc: bench aliases the brotli seam, whose
 	// `.interp/php8.5.wasm.br` lags the glue and aborts the boot with `ASM_CONSTS[e] is not a
 	// function`. The shipping raw seam is the one whose binary and glue are built together
-	const proc = spawn('bunx', ['wrangler', 'dev', '--local', '--port', String(PORT)], {
+	// the INSTALLED wrangler, not bunx's: bunx resolves from the registry when the name is not
+	// already cached, which is how CI ran vitest 5.0.0 against a lockfile pinning 4.1.11
+	const proc = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--port', String(PORT)], {
 		cwd: ROOT,
 		stdio: ['ignore', 'pipe', 'pipe'],
 		env: { ...process.env, PW_DIAGNOSTICS: '1' }
@@ -191,7 +214,7 @@ async function main(): Promise<void> {
 
 	const base = `http://127.0.0.1:${PORT}`;
 	try {
-		await waitForPort(proc, base);
+		await waitForPort(proc, base, () => log);
 		const row = await capture(base, wanted);
 
 		// the runtime's own root, not the build machine's; a Darwin/absolute-path row is the bug

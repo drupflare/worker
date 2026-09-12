@@ -89,9 +89,9 @@ async function main(): Promise<void> {
 	// `PW_DIAGNOSTICS` is ON here and OFF in `wrangler.jsonc`: the lifecycle drives
 	// /migrate, /assemble, /firstrun and /export, and a DEPLOYED worker must not expose any of them
 	dev = spawn(
-		'bunx',
+		// the INSTALLED wrangler; bunx resolves from the registry when the name is not cached
+		'./node_modules/.bin/wrangler',
 		[
-			'wrangler',
 			'dev',
 			'-c',
 			'wrangler.jsonc',

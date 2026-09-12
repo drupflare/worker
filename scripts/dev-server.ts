@@ -130,7 +130,10 @@ export async function startDevServer(opts: DevServerOptions): Promise<DevServer>
 	];
 	for (const [name, value] of Object.entries(vars)) argv.push('--var', `${name}:${value}`);
 
-	const child: ChildProcess = spawn('bunx', argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+	// the INSTALLED wrangler; bunx resolves from the registry when the name is not already cached
+	const child: ChildProcess = spawn('./node_modules/.bin/wrangler', argv.slice(1), {
+		stdio: ['ignore', 'pipe', 'pipe']
+	});
 	const sink = createWriteStream(logFile);
 	child.stdout?.pipe(sink);
 	child.stderr?.pipe(sink);

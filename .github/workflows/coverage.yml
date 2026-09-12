@@ -65,11 +65,16 @@ jobs:
           php-version: '8.5'
           extensions: pdo_sqlite, sqlite3, mbstring, iconv
           coverage: none
+      # `./node_modules/.bin/vitest`, NOT `bunx vitest`. bunx resolves from the REGISTRY when the
+      # name is not already a local binary in its cache, so it fetched vitest@5.0.0 while the
+      # lockfile pins 4.1.11 -- and `@cloudflare/vitest-pool-workers` supports `^4.1.0` only. The
+      # pool then failed to start for every spec file with `SyntaxError: Unexpected identifier
+      # 'file'`, which reads as a broken worker rather than as a wrong vitest.
       - name: Run Tests (workers)
-        run: bunx vitest run --project=workers --reporter=default --reporter=junit --outputFile=test-report.workers.junit.xml
+        run: ./node_modules/.bin/vitest run --project=workers --reporter=default --reporter=junit --outputFile=test-report.workers.junit.xml
       - name: Run Tests (node)
         if: ${{ !cancelled() }}
-        run: bunx vitest run --project=node --reporter=default --reporter=junit --outputFile=test-report.node.junit.xml
+        run: ./node_modules/.bin/vitest run --project=node --reporter=default --reporter=junit --outputFile=test-report.node.junit.xml
       - name: Upload Test Results to Codecov (workers)
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7
@@ -78,6 +83,7 @@ jobs:
           fail_ci_if_error: false
           report_type: test_results
           flags: workers
+          disable_search: true
           files: test-report.workers.junit.xml
       - name: Upload Test Results to Codecov (node)
         if: ${{ !cancelled() }}
@@ -87,6 +93,7 @@ jobs:
           fail_ci_if_error: false
           report_type: test_results
           flags: node
+          disable_search: true
           files: test-report.node.junit.xml
 
   coverage:
@@ -152,6 +159,7 @@ jobs:
           fail_ci_if_error: false
           report_type: coverage
           flags: coverage
+          disable_search: true
           files: coverage/lcov.info
       - name: Archive Coverage
         if: ${{ !cancelled() }}

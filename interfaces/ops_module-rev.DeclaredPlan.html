@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">DeclaredPlan</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#counts">counts</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span><br/>        <span class="tsd-kind-property">added</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">modified</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">removed</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">unchanged</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#removed">removed</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowswritten">rowsWritten</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/a48e9c1b9c6cf4c68a6c4e5bff0f9882eef5260f/src/ops/module-rev.ts#L158">src/ops/module-rev.ts:158</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ae86ebacdd5dbbb27c256c3f847d1e96f583ee06/src/ops/module-rev.ts#L158">src/ops/module-rev.ts:158</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -35,21 +35,21 @@
 <h3 class="tsd-anchor-link" id="counts"><span>counts</span><a href="#counts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">counts</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">added</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">modified</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">removed</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">unchanged</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/a48e9c1b9c6cf4c68a6c4e5bff0f9882eef5260f/src/ops/module-rev.ts#L159">src/ops/module-rev.ts:159</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ae86ebacdd5dbbb27c256c3f847d1e96f583ee06/src/ops/module-rev.ts#L159">src/ops/module-rev.ts:159</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="removed"><span>removed</span><a href="#removed" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">removed</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>paths the site would stop carrying</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/a48e9c1b9c6cf4c68a6c4e5bff0f9882eef5260f/src/ops/module-rev.ts#L163">src/ops/module-rev.ts:163</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ae86ebacdd5dbbb27c256c3f847d1e96f583ee06/src/ops/module-rev.ts#L163">src/ops/module-rev.ts:163</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowswritten"><span>rows<wbr/>Written</span><a href="#rowswritten" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsWritten</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>rows the apply would charge: one per write plus one per delete, as <code>planSync</code> counts them</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/a48e9c1b9c6cf4c68a6c4e5bff0f9882eef5260f/src/ops/module-rev.ts#L161">src/ops/module-rev.ts:161</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ae86ebacdd5dbbb27c256c3f847d1e96f583ee06/src/ops/module-rev.ts#L161">src/ops/module-rev.ts:161</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

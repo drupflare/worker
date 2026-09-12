@@ -1011,6 +1011,31 @@ already holds; both shapes were observed in one run.
 `pass 2 /user/login: 1 container row(s) including the one wanted`, and returns 482,568 bytes at
 `expire -1`. **A 200 from `/serve` is not evidence a kernel booted.**
 
+**AND A BUILT PACK IS NOT THE SHIPPED PACK, which the pack lane asserts against by default.** Seven
+specs failed the first time that lane got as far as running the gate, and only one was a defect:
+
+- **A from-source pack SHIPPED A HASH SALT.** `install-site-db.php` writes
+  `sites/build/settings.php`, the bootstrap globs every non-test file, and `SECRET_REWRITES` named
+  only `sites/default/settings.php`. The DETECTOR was already general -- `pack-secrets.spec.ts`
+  scans every entry, which is how this surfaced -- and only the rewriter was keyed to one literal.
+- **`agg` was outside the numbered build sequence** while `wrangler.jsonc` ships
+  `ASSET_AGGREGATES: "1"`, so every from-source tree ran the lever against nothing. It degrades
+  quietly by design, which is why nothing reported it.
+- **`PRAGMA writable_schema` is cleared by a schema reload**, and preparing the `UPDATE
+sqlite_master` is what triggers that load on a connection which has not read a table yet. It
+  failed only against a freshly built database and passed in every lane reading the shipped one on
+  the SAME node 24.20.0, which is what ruled the runtime out.
+- The rest are the boundary itself: `PACK_FROM_SOURCE=1` marks a tree whose artifacts were BUILT, and
+  a spec whose subject is the shipped bytes -- a pinned row count, a manifest digest -- skips on it.
+  A spec asserting a PROPERTY still runs, which is what stops the flag becoming a way to skip the
+  lane. The workers side reads it through a `define`, because workerd has no `process.env` and an
+  env-gated `skipIf` there is false on every run.
+
+**A collection-time `import ...?raw` cannot be skipped by any gate**, so `PROBE_IMPORTS` in
+`vitest.config.ts` excludes those specs when the file they import is absent. Nothing in this
+repository produces `assets/probe/pw-probe.php`, so the pack lane built every artifact and still read
+`ENOENT` on it.
+
 **THE COVERAGE THRESHOLD IS MEASURED ON A LANE WHOSE SCOPE SHRINKS, so adding to `ARTIFACT_SPECS`
 lowers it.** `coverage.yml` never builds the pack, so every pack-dependent spec is excluded and the
 ~2,210 uncovered statements in `site-do.ts` are structural rather than a testing gap. Nine specs

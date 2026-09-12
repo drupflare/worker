@@ -64,6 +64,7 @@ export type StepId =
 	| 'core'
 	| 'pack'
 	| 'static'
+	| 'agg'
 	| 'container'
 	| 'sql'
 	| 'prefill';
@@ -510,6 +511,22 @@ export const LOCAL_STEPS: readonly LocalStep[] = [
 			'every pack SKIPs these extensions because PHP never opens them, and nothing serves a ' +
 			'file out of the MEMFS over HTTP -- so without this step every stylesheet, script and ' +
 			'font 404s'
+	},
+	{
+		id: 'agg',
+		title: 'concatenate each library into the CSS and JS aggregates the asset layer publishes',
+		/**
+		 * `wrangler.jsonc` ships `ASSET_AGGREGATES: "1"`, and this step was not in the sequence -- so
+		 * a from-source tree ran the lever with nothing to substitute. That degrades safely, because
+		 * `substituteAggregates()` matches no library rather than breaking a page, which is exactly
+		 * why nothing reported it. `assets-ignore.spec.ts` did, once the pack lane began asserting
+		 * the artifacts: `/agg/manifest.json` answered 404.
+		 */
+		produces: ['assets/agg/manifest.json'],
+		inputs: ['drupal-src/core/lib/Drupal.php'],
+		tools: ['bun'],
+		commands: () => [['bun', 'run', 'assets:agg']],
+		note: 'reads drupal-src, where the source CSS and JS exist; the pack cannot supply them'
 	},
 	{
 		id: 'container',

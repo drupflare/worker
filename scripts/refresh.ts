@@ -271,7 +271,7 @@ run('bun', [
 	'build:local',
 	'--',
 	'--force',
-	'--only=driver,twig,core,pack,static,container,sql'
+	'--only=driver,twig,core,pack,static,agg,container,sql'
 ]);
 
 console.error('\n[refresh] manifest: so the next install does not restore the old database');

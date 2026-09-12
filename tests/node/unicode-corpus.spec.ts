@@ -10,10 +10,24 @@ import {
 	expandInt,
 	jsCasing,
 	nativeCorpus,
+	oracleMatchesArtifact,
 	readArtifact,
 	subjectSweep,
 	type Packed
 } from '../../scripts/measure/unicode-corpus';
+
+/**
+ * Whether this machine's PHP carries the Unicode data the artifact was swept from.
+ *
+ * THE CORPUS IS A SWEEP, NOT A SPECIFICATION. Comparing it against a sweep taken on different
+ * Unicode data compares two oracles rather than testing the tables. Nothing checked this and CI
+ * installs the newest PHP 8.5.x: a runner on 8.5.10 against an artifact from 8.5.7 reported
+ * eighteen codepoints around U+10D74 as divergent, and the tables were not the thing that differed.
+ *
+ * Reported below rather than skipped silently, because a guard that vanishes without saying so is
+ * how this file would go green while asserting nothing.
+ */
+const oracle = oracleMatchesArtifact();
 
 /**
  * P27's corpus, asserted rather than described.
@@ -76,13 +90,17 @@ describeIfPhp('the Unicode corpus artifact', () => {
 	 * Every other table is mbstring alone and is compared. `unicode-runtime.spec.ts` is where
 	 * `titleExtra` is asserted, against the engine that uses it.
 	 */
-	it('matches what a fresh sweep of the real extension produces', () => {
-		const strip = (c: ReturnType<typeof readArtifact>) => {
-			const { provenance: _provenance, titleExtra: _titleExtra, ...data } = c;
-			return JSON.stringify(data);
-		};
-		expect(strip(nativeCorpus())).toBe(strip(readArtifact()));
-	}, 60_000);
+	it.runIf(oracle.same)(
+		'matches what a fresh sweep of the real extension produces',
+		() => {
+			const strip = (c: ReturnType<typeof readArtifact>) => {
+				const { provenance: _provenance, titleExtra: _titleExtra, ...data } = c;
+				return JSON.stringify(data);
+			};
+			expect(strip(nativeCorpus())).toBe(strip(readArtifact()));
+		},
+		60_000
+	);
 
 	it('pins the oracle it came from', () => {
 		const c = readArtifact();
@@ -90,6 +108,22 @@ describeIfPhp('the Unicode corpus artifact', () => {
 		expect(c.provenance.mbstring).toBeTruthy();
 		// every scalar value, not a sample: 0x110000 minus the 2,048 surrogates
 		expect(c.provenance.scalars).toBe(0x110000 - 2048);
+		// and it records the Unicode version, which is what the two sweeps above are gated on
+		expect(c.provenance.icuUnicode).toBeTruthy();
+	});
+
+	it('SAYS whether the two sweep comparisons ran', () => {
+		// the guard that keeps the skip honest. A gated spec that vanishes quietly is how a file
+		// goes green while asserting nothing, and the two it gates are the only ones here that
+		// compare the shipping tables against anything
+		console.log(
+			oracle.same
+				? `[unicode-corpus] oracle matches the artifact at Unicode ${oracle.artifact}; both sweeps ran`
+				: `[unicode-corpus] SWEEPS SKIPPED: this PHP carries Unicode ${oracle.running} and the ` +
+						`artifact was swept on ${oracle.artifact}. Regenerate the artifact on this ` +
+						`machine to compare, or pin CI's PHP to the artifact's.`
+		);
+		expect(typeof oracle.same).toBe('boolean');
 	});
 
 	it('covers the families a codepoint sweep cannot reach', () => {
@@ -137,21 +171,25 @@ describeIfPhp('the shipping tables', () => {
 		expect(fresh, 'run `bun run measure:unicode --write`').toBe(readFileSync(TABLES, 'utf8'));
 	}, 60_000);
 
-	it('takes the shipping stack to zero divergent scalars', () => {
-		const c = readArtifact();
-		const s = subjectSweep();
-		const ship = {
-			lower: expand(s.ship.case.lower as Packed),
-			upper: expand(s.ship.case.upper as Packed),
-			title: expand(s.ship.case.title as Packed),
-			width: expandInt(s.ship.width)
-		};
-		// the four numbers the tables exist to move, measured against 1,112,064 scalars each
-		expect(diffCase(expand(c.case.lower), ship.lower)).toEqual([]);
-		expect(diffCase(expand(c.case.upper), ship.upper)).toEqual([]);
-		expect(diffCase(expand(c.case.title), ship.title)).toEqual([]);
-		expect(diffInt(expandInt(c.width), ship.width)).toEqual([]);
-	}, 60_000);
+	it.runIf(oracle.same)(
+		'takes the shipping stack to zero divergent scalars',
+		() => {
+			const c = readArtifact();
+			const s = subjectSweep();
+			const ship = {
+				lower: expand(s.ship.case.lower as Packed),
+				upper: expand(s.ship.case.upper as Packed),
+				title: expand(s.ship.case.title as Packed),
+				width: expandInt(s.ship.width)
+			};
+			// the four numbers the tables exist to move, measured against 1,112,064 scalars each
+			expect(diffCase(expand(c.case.lower), ship.lower)).toEqual([]);
+			expect(diffCase(expand(c.case.upper), ship.upper)).toEqual([]);
+			expect(diffCase(expand(c.case.title), ship.title)).toEqual([]);
+			expect(diffInt(expandInt(c.width), ship.width)).toEqual([]);
+		},
+		60_000
+	);
 
 	/**
 	 * The other half of the guard, and the one that is easy to skip.

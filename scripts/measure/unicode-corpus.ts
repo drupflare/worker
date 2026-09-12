@@ -122,6 +122,50 @@ function php(script: string, extra: string[] = []): string {
 	return r.stdout;
 }
 
+/**
+ * The Unicode version the RUNNING PHP's ICU carries, or null when it cannot be read.
+ *
+ * The corpus is a sweep of the local extension's answers over every scalar, so it is only
+ * comparable against another sweep taken on the same Unicode data. The artifact records its own
+ * `provenance.icuUnicode` and nothing checked it: CI installs the newest PHP 8.5.x, so a runner on
+ * 8.5.10 measured Unicode data the artifact's 8.5.7 had never seen and reported eighteen codepoints
+ * around U+10D74 as a divergence in the shipping tables. The tables were not wrong; the oracles
+ * were different.
+ */
+export function runningUnicodeVersion(): [number, number, number, number] | null {
+	const out = spawnSync(
+		'php',
+		[
+			'-d',
+			'opcache.enable_cli=0',
+			'-r',
+			'echo class_exists("IntlChar") ? json_encode(IntlChar::getUnicodeVersion()) : "";'
+		],
+		{ encoding: 'utf8' }
+	);
+	if (out.status !== 0 || !out.stdout.trim()) return null;
+	try {
+		const parsed: unknown = JSON.parse(out.stdout);
+		return Array.isArray(parsed) && parsed.length === 4
+			? (parsed as [number, number, number, number])
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+/** whether this machine's oracle is the one the artifact was generated from */
+export function oracleMatchesArtifact(): { same: boolean; running: string; artifact: string } {
+	const running = runningUnicodeVersion();
+	const artifact = readArtifact().provenance.icuUnicode;
+	const show = (v: readonly number[] | null) => (v === null ? 'unknown' : v.join('.'));
+	return {
+		same: running !== null && show(running) === show(artifact),
+		running: show(running),
+		artifact: show(artifact)
+	};
+}
+
 /** the oracle: the real extension, swept over every scalar */
 export function nativeCorpus(): Corpus {
 	return JSON.parse(php('unicode-corpus.php')) as Corpus;

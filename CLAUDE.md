@@ -965,6 +965,30 @@ compared against them -- and `assets:scrub` AFTER it, because a rebuild puts a `
 `wrangler.jsonc` declares `build.command` for the first time, so without the guard every
 `wrangler deploy` would have done this to a developer's tree.
 
+**AND THE NO-OP GUARD IS NOT ENOUGH, BECAUSE MID-BUILD THE TREE IS LEGITIMATELY INCOMPLETE.**
+`build-local.ts` orders `container` before `sql`, so when the container step spawns
+`wrangler dev --local` the tree is still missing `assets/drupal-sql/manifest.json`. The build command
+fires, `missingMarkers()` correctly answers "not hydrated", there is no published release, and hydrate
+falls back to `build-local.ts` -- which reaches the container step and spawns wrangler again. Each
+level forks another full Drupal build.
+
+Measured 2026-09-12: Pack Suites, Browser Lane and Class A Metrics all ended in
+_"The runner has received a shutdown signal"_ about three minutes in, three lanes running three
+different commands. `scripts/hydrating.ts` is the flag that closes it; `hydrate-reentry.spec.ts` pins
+all three links.
+
+**NOTHING NAMED IT, BECAUSE THE INSTRUMENT SWALLOWED THE ONLY OUTPUT THAT COULD.**
+`bake-container.ts` buffered wrangler's stdout into a string and printed it from its `catch`, and a
+SIGTERM never reaches a `catch` -- so the logs read as 200 seconds of silence. The run of 2026-09-11
+01:37 is the control: it predates the build command, so wrangler bound, `waitForPort` returned, and
+the next real defect printed as `migrate answered 401: owner token required`. **A long wait on a
+child must echo that child as it arrives.**
+
+That 401 is the second half and is its own rule: **`--var`, not the process environment.** wrangler
+forwards neither into the worker's `env`, so a `PW_DIAGNOSTICS` set on the spawn was never read.
+`/migrate` is an owner route, so it answered 401 on CI and 200 on every machine with a `.dev.vars` --
+measured both ways with the file parked, 401 without the flag and 200 with it.
+
 ## Commands
 
 **VITEST 4'S DEFAULT REPORTER HIDES CONSOLE OUTPUT FROM PASSING TESTS, and every `DRUPFLARE_MEASURE`

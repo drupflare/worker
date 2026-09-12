@@ -23,6 +23,7 @@ import { Database } from 'bun:sqlite';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { markHydrating } from './hydrating.js';
 import { PACK_BIN, packVersionsHash } from './pack-hash.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -198,19 +199,33 @@ async function main(): Promise<void> {
 	}
 	console.log(`pack wants ${wanted}; the database carries ${before ?? '(no row)'}`);
 
-	// the CANONICAL config, not wrangler.bench.jsonc: bench aliases the brotli seam, whose
-	// `.interp/php8.5.wasm.br` lags the glue and aborts the boot with `ASM_CONSTS[e] is not a
-	// function`. The shipping raw seam is the one whose binary and glue are built together
-	// the INSTALLED wrangler, not bunx's: bunx resolves from the registry when the name is not
-	// already cached, which is how CI ran vitest 5.0.0 against a lockfile pinning 4.1.11
-	const proc = spawn('./node_modules/.bin/wrangler', ['dev', '--local', '--port', String(PORT)], {
-		cwd: ROOT,
-		stdio: ['ignore', 'pipe', 'pipe'],
-		env: { ...process.env, PW_DIAGNOSTICS: '1' }
-	});
+	/*
+	 * Four things about this line, each of which was wrong first.
+	 *
+	 * The CANONICAL config, not `wrangler.bench.jsonc`: bench aliases the brotli seam, whose
+	 * `.interp/php8.5.wasm.br` lags the glue and aborts the boot with `ASM_CONSTS[e] is not a
+	 * function`. The INSTALLED wrangler, not bunx's, which resolves from the registry when the name
+	 * is not already cached. `--var` rather than the process environment, because wrangler forwards
+	 * neither into the worker's `env` -- `/migrate` is an owner route and answered
+	 * `401 owner token required` on CI while passing on any machine that has a `.dev.vars`. And
+	 * `markHydrating`, or the build command re-enters the build that is running this.
+	 */
+	const env = { ...process.env };
+	markHydrating(env);
+	const proc = spawn(
+		'./node_modules/.bin/wrangler',
+		['dev', '--local', '--port', String(PORT), '--var', 'PW_DIAGNOSTICS:1'],
+		{ cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], env }
+	);
+	// echoed as it arrives, not only from the catch below: a SIGTERM never reaches a catch, so the
+	// output that names the reason for the kill is exactly what a buffered log loses
 	let log = '';
-	proc.stdout?.on('data', (d: Buffer) => (log += d.toString()));
-	proc.stderr?.on('data', (d: Buffer) => (log += d.toString()));
+	const tee = (d: Buffer) => {
+		log += d.toString();
+		process.stderr.write(d);
+	};
+	proc.stdout?.on('data', tee);
+	proc.stderr?.on('data', tee);
 
 	const base = `http://127.0.0.1:${PORT}`;
 	try {

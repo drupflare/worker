@@ -70,6 +70,25 @@ export const SECRET_REWRITES: readonly {
 			'// minted per site by the Durable Object and appended below; empty here so a missing\n' +
 			'// override throws instead of sharing one salt across every deployed site\n' +
 			"$settings['hash_salt'] = '';"
+	},
+	{
+		/**
+		 * The installer's own output, which a FROM-SOURCE pack carries and the shipped one does not.
+		 *
+		 * `install-site-db.php` writes it, and the from-source bootstrap globs every non-test file
+		 * because the shipped file list came from a traced run a checkout does not have. So the pack
+		 * lane shipped a real salt at `sites/build/settings.php` while `sites/default/settings.php`
+		 * beside it was correctly empty. The DETECTOR was already general -- `pack-secrets.spec.ts`
+		 * scans every entry, which is how this surfaced -- and only the rewriter was keyed to one
+		 * literal path.
+		 */
+		file: 'sites/build/settings.php',
+		kind: 'hash_salt',
+		find: /^\$settings\['hash_salt'\] = '[^']+';$/m,
+		replace:
+			'// minted per site by the Durable Object and appended below; empty here so a missing\n' +
+			'// override throws instead of sharing one salt across every deployed site\n' +
+			"$settings['hash_salt'] = '';"
 	}
 ];
 

@@ -997,6 +997,20 @@ the object to migrate, so `/migrate` answered 200 in 54 ms having replayed nothi
 the point rather than a problem: the boot misses on it and rebuilds the container the script exists
 to capture.
 
+**THE CAPTURE ALSO NEEDED MORE THAN ONE RENDER, and its terminating observation is the ROW.** Two
+things defeat a single pass and neither is visible from the serve's status code. Reconciliation's
+`container-driver-digest` step reads a FRESH site as owed -- it has no recorded digest -- so it runs
+`DELETE FROM cache_container` and deliberately leaves the rebuild to the next boot. And the serve
+renders inline and answers 200, or queues and answers 503 for the fill, depending on what the object
+already holds; both shapes were observed in one run.
+
+**AND THE FIRST RETRY LOOP STILL FAILED, because a repeated path is a cache HIT.** Pass one stores
+`/` in `cfw_page`, so every later serve of it answers 200 having booted nothing: four passes read
+`0 row(s)` exactly like one. `RENDER_PATHS` is one distinct path per pass. Measured against a live
+`wrangler dev`, the shipping `capture()` reads `pass 1 /: 0 container row(s)` then
+`pass 2 /user/login: 1 container row(s) including the one wanted`, and returns 482,568 bytes at
+`expire -1`. **A 200 from `/serve` is not evidence a kernel booted.**
+
 **THE COVERAGE THRESHOLD IS MEASURED ON A LANE WHOSE SCOPE SHRINKS, so adding to `ARTIFACT_SPECS`
 lowers it.** `coverage.yml` never builds the pack, so every pack-dependent spec is excluded and the
 ~2,210 uncovered statements in `site-do.ts` are structural rather than a testing gap. Nine specs

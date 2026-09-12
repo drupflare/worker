@@ -114,3 +114,30 @@ describe('what bake-container needs before it spawns wrangler', () => {
 		expect(new Set(list).size).toBe(list.length);
 	});
 });
+
+/**
+ * The lever the config ships on, and the step that feeds it.
+ *
+ * `wrangler.jsonc` carries `ASSET_AGGREGATES: "1"`, and `agg` sat outside the numbered sequence, so
+ * every from-source tree ran the substitution against nothing. It degrades quietly --
+ * `substituteAggregates()` matches no library rather than breaking a page -- which is why it went
+ * unreported until the pack lane began asserting the artifacts and `/agg/manifest.json` read 404.
+ */
+describe('the aggregates the shipping config expects', () => {
+	it('are built by the numbered sequence, not only by a hand-run command', () => {
+		const ids = LOCAL_STEPS.map((s) => s.id);
+		expect(ids).toContain('agg');
+	});
+
+	it('are rebuilt by refresh, which a repack invalidates', () => {
+		const refresh = readFileSync(resolve(ROOT, 'scripts/refresh.ts'), 'utf8');
+		expect(refresh).toMatch(/--only=[a-z,]*\bagg\b/);
+	});
+
+	it('are the lever the canonical config turns on', () => {
+		const config = readJsonc(resolve(ROOT, 'wrangler.jsonc')) as {
+			vars?: Record<string, string>;
+		};
+		expect(config.vars?.['ASSET_AGGREGATES']).toBe('1');
+	});
+});

@@ -164,26 +164,36 @@ async function capture(base: string, wanted: string): Promise<CapturedRow> {
 	let match: Omit<CapturedRow, 'hexdata'> | undefined;
 	for (let pass = 1; pass <= RENDER_PATHS.length && !match; pass++) {
 		const path = RENDER_PATHS[pass - 1] as string;
-		const url = `${base}/serve?path=${encodeURIComponent(path)}&edge=0`;
-		const served = await fetch(url, { headers: host });
-		const serveBody = await served.text();
-		if (!served.ok && served.status !== 503) {
-			throw new Error(`serve ${path} answered ${served.status}: ${serveBody.slice(0, 300)}`);
-		}
-		const filled = await fetch(`${base}/fill`, { headers: host });
-		const fillBody = await filled.text();
-		if (!filled.ok) throw new Error(`fill answered ${filled.status}: ${fillBody}`);
+		let note: string;
+		try {
+			const url = `${base}/serve?path=${encodeURIComponent(path)}&edge=0`;
+			const served = await fetch(url, { headers: host });
+			const serveBody = await served.text();
+			if (!served.ok && served.status !== 503) {
+				throw new Error(`serve answered ${served.status}: ${serveBody.slice(0, 200)}`);
+			}
+			const filled = await fetch(`${base}/fill`, { headers: host });
+			const fillBody = await filled.text();
+			if (!filled.ok) throw new Error(`fill answered ${filled.status}: ${fillBody}`);
 
-		meta = (await sql(
-			base,
-			host,
-			'SELECT cid, expire, created, serialized, tags, checksum FROM cache_container'
-		)) as Omit<CapturedRow, 'hexdata'>[];
-		// the stale row survives alongside the rebuilt one, so pick by hash rather than by count
-		match = meta.find((r) => r.cid.includes(wanted));
-		const note =
-			`pass ${pass} ${path}: serve ${served.status}, fill ${fillBody.slice(0, 60)}, ` +
-			`${meta.length} container row(s)${match ? ' including the one wanted' : ''}`;
+			meta = (await sql(
+				base,
+				host,
+				'SELECT cid, expire, created, serialized, tags, checksum FROM cache_container'
+			)) as Omit<CapturedRow, 'hexdata'>[];
+			// the stale row survives alongside the rebuilt one, so pick by hash rather than by count
+			match = meta.find((r) => r.cid.includes(wanted));
+			note =
+				`pass ${pass} ${path}: serve ${served.status}, fill ${fillBody.slice(0, 60)}, ` +
+				`${meta.length} container row(s)${match ? ' including the one wanted' : ''}`;
+		} catch (err) {
+			// A FAILED PASS IS A PASS, NOT A FATAL. Measured 2026-09-12: the browser lane read
+			// `fill answered 500: Error: Network connection lost.` while the pack lane's identical
+			// bake succeeded, so miniflare drops the connection under a ~4 s render often enough to
+			// decide a build. The loop already has more paths to try, and a genuine failure still
+			// ends with no row and every pass reported
+			note = `pass ${pass} ${path}: ${err instanceof Error ? err.message : String(err)}`;
+		}
 		seen.push(note);
 		console.log(note);
 	}

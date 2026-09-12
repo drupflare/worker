@@ -66,3 +66,32 @@ describe('the three links of the cycle', () => {
 		expect(source.indexOf('reentered()')).toBeLessThan(source.indexOf('missingMarkers(root)'));
 	});
 });
+
+/**
+ * The same step ordering has a SECOND consequence, and closing the cycle is what exposed it.
+ *
+ * `sql` running after `container` also means there is no `assets/drupal-sql/` when the container
+ * step asks the object to migrate. Measured 2026-09-12 in CI, once wrangler could start at all:
+ * `/migrate` answered 200 in 54 ms having replayed nothing, `/fill` drained
+ * `{"filled":null,"remaining":0}`, and the read came back
+ * `400 no such table: cache_container`. Every dev machine carries the chunks from an earlier build,
+ * which is why only a clean checkout could see it.
+ */
+describe('what bake-container needs before it spawns wrangler', () => {
+	const source = readFileSync(resolve(ROOT, 'scripts/bake-container.ts'), 'utf8');
+
+	it('chunks the database itself when nothing else has', () => {
+		expect(source).toContain('function ensureChunks');
+		expect(source).toContain("'assets', 'drupal-sql', 'manifest.json'");
+	});
+
+	it('ensures them BEFORE the spawn, or the object has nothing to replay', () => {
+		expect(source.indexOf('ensureChunks()')).toBeLessThan(source.indexOf('spawn('));
+	});
+
+	// a fill that renders nothing boots no kernel, and the read then names sqlite rather than the
+	// empty queue that caused it
+	it('fails on an empty fill instead of deferring to a confusing read error', () => {
+		expect(source).toContain('the serve queued nothing');
+	});
+});

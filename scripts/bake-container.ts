@@ -20,7 +20,7 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { markHydrating } from './hydrating.js';
@@ -28,8 +28,35 @@ import { PACK_BIN, packVersionsHash } from './pack-hash.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SQLITE = resolve(ROOT, 'assets', 'drupal', 'site.sqlite');
+const CHUNKS = resolve(ROOT, 'assets', 'drupal-sql', 'manifest.json');
 const PORT = Number(process.env.CONTAINER_BAKE_PORT ?? 8799);
 const SITE = 'container-bake';
+
+/**
+ * Chunks the database when nothing has yet, because `/migrate` replays the CHUNKS rather than the
+ * file.
+ *
+ * `build-local.ts` runs `sql` after `container`, and `assets:container` chunks only once
+ * `bake-container` has returned -- so on a clean checkout there is no `assets/drupal-sql/` here at
+ * all. Measured 2026-09-12: `/migrate` answered 200 in 54 ms having replayed nothing, `/fill` drained
+ * `{"filled":null,"remaining":0}`, and the read came back `400` because no `cache_container` existed.
+ * Every dev machine carries the chunks from an earlier build, which is why only CI saw it.
+ *
+ * The stale row inside them is not a problem and is the point: the boot misses on it and rebuilds the
+ * container this script exists to capture.
+ */
+function ensureChunks(): void {
+	if (existsSync(CHUNKS)) return;
+	console.log('no assets/drupal-sql yet; chunking so the object has a migration to replay');
+	execFileSync(
+		'node',
+		['scripts/pack-sql.ts', 'assets/drupal/site.sqlite', 'assets/drupal-sql'],
+		{
+			cwd: ROOT,
+			stdio: 'inherit'
+		}
+	);
+}
 
 /**
  * Whether a cid came from the RUNTIME rather than from a native bake.
@@ -116,6 +143,14 @@ async function capture(base: string, wanted: string): Promise<CapturedRow> {
 	const fillBody = await filled.text();
 	if (!filled.ok) throw new Error(`fill answered ${filled.status}: ${fillBody}`);
 	console.log(`fill: ${fillBody.slice(0, 200)}`);
+	// a fill that renders nothing boots no kernel, so the read below finds no container and answers
+	// 400 -- which names sqlite rather than the empty queue that caused it
+	if ((JSON.parse(fillBody) as { filled?: unknown }).filled === null) {
+		throw new Error(
+			`the serve queued nothing, so no render booted a kernel: ${fillBody}. ` +
+				'The object has no site to render; check that assets/drupal-sql carries a migration.'
+		);
+	}
 
 	const meta = (await sql(
 		base,
@@ -197,6 +232,7 @@ async function main(): Promise<void> {
 		console.log(`container row already keyed to ${wanted}; nothing to do`);
 		return;
 	}
+	ensureChunks();
 	console.log(`pack wants ${wanted}; the database carries ${before ?? '(no row)'}`);
 
 	/*

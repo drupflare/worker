@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">CronOptions</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#chainms">chainMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#healthobservation">healthObservation</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#hookpolicy">hookPolicy</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <a href="ops_cron.CronHookPolicy.html" class="tsd-signature-type tsd-kind-interface">CronHookPolicy</a><span class="tsd-signature-symbol">&gt;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#hooks">hooks</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#idlems">idleMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#includeadvisories">includeAdvisories</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#includecronlast">includeCronLast</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#includefetchreopen">includeFetchReopen</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#includehealth">includeHealth</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#includequeue">includeQueue</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxqueuerepeats">maxQueueRepeats</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxrows">maxRows</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#nowms">nowMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#origin">origin</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pass">pass</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#queuebatchsize">queueBatchSize</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowlimit">rowLimit</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#tables">tables</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L85">src/ops/cron.ts:85</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L85">src/ops/cron.ts:85</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -50,7 +50,7 @@
 <h3 class="tsd-anchor-link" id="chainms"><code class="tsd-tag">Optional</code><span>chain<wbr/>Ms</span><a href="#chainms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">chainMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L94">src/ops/cron.ts:94</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L94">src/ops/cron.ts:94</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="healthobservation"><code class="tsd-tag">Optional</code><span>health<wbr/>Observation</span><a href="#healthobservation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">healthObservation</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">&gt;</span></div>
@@ -59,68 +59,68 @@
 what lets the unit run with no Drupal kernel behind it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L108">src/ops/cron.ts:108</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L108">src/ops/cron.ts:108</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="hookpolicy"><code class="tsd-tag">Optional</code><span>hook<wbr/>Policy</span><a href="#hookpolicy" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">hookPolicy</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">Record</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <a href="ops_cron.CronHookPolicy.html" class="tsd-signature-type tsd-kind-interface">CronHookPolicy</a><span class="tsd-signature-symbol">&gt;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L96">src/ops/cron.ts:96</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L96">src/ops/cron.ts:96</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="hooks"><code class="tsd-tag">Optional</code><span>hooks</span><a href="#hooks" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">hooks</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L95">src/ops/cron.ts:95</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L95">src/ops/cron.ts:95</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="idlems"><code class="tsd-tag">Optional</code><span>idle<wbr/>Ms</span><a href="#idlems" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">idleMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L93">src/ops/cron.ts:93</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L93">src/ops/cron.ts:93</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="includeadvisories"><code class="tsd-tag">Optional</code><span>include<wbr/>Advisories</span><a href="#includeadvisories" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">includeAdvisories</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the advisory scan unit; off only for a test that is measuring something else</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L99">src/ops/cron.ts:99</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L99">src/ops/cron.ts:99</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="includecronlast"><code class="tsd-tag">Optional</code><span>include<wbr/>Cron<wbr/>Last</span><a href="#includecronlast" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">includeCronLast</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L111">src/ops/cron.ts:111</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L111">src/ops/cron.ts:111</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="includefetchreopen"><code class="tsd-tag">Optional</code><span>include<wbr/>Fetch<wbr/>Reopen</span><a href="#includefetchreopen" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">includeFetchReopen</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the update-fetch reopen unit; off only for a test that is measuring something else</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L110">src/ops/cron.ts:110</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L110">src/ops/cron.ts:110</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="includehealth"><code class="tsd-tag">Optional</code><span>include<wbr/>Health</span><a href="#includehealth" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">includeHealth</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the PHP health unit; off only for a test that is measuring something else</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L101">src/ops/cron.ts:101</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L101">src/ops/cron.ts:101</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="includequeue"><code class="tsd-tag">Optional</code><span>include<wbr/>Queue</span><a href="#includequeue" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">includeQueue</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L97">src/ops/cron.ts:97</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L97">src/ops/cron.ts:97</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxqueuerepeats"><code class="tsd-tag">Optional</code><span>max<wbr/>Queue<wbr/>Repeats</span><a href="#maxqueuerepeats" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxQueueRepeats</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L92">src/ops/cron.ts:92</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L92">src/ops/cron.ts:92</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxrows"><code class="tsd-tag">Optional</code><span>max<wbr/>Rows</span><a href="#maxrows" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxRows</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L89">src/ops/cron.ts:89</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L89">src/ops/cron.ts:89</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="nowms"><code class="tsd-tag">Optional</code><span>now<wbr/>Ms</span><a href="#nowms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">nowMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L87">src/ops/cron.ts:87</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L87">src/ops/cron.ts:87</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="origin"><code class="tsd-tag">Optional</code><span>origin</span><a href="#origin" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">origin</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div>
@@ -130,27 +130,27 @@ request -- so booted against the default, every link Drupal mails points the rec
 their own machine. Empty leaves the old behaviour, which is correct for a probe.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L119">src/ops/cron.ts:119</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L119">src/ops/cron.ts:119</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pass"><code class="tsd-tag">Optional</code><span>pass</span><a href="#pass" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pass</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L86">src/ops/cron.ts:86</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L86">src/ops/cron.ts:86</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="queuebatchsize"><code class="tsd-tag">Optional</code><span>queue<wbr/>Batch<wbr/>Size</span><a href="#queuebatchsize" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">queueBatchSize</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L91">src/ops/cron.ts:91</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L91">src/ops/cron.ts:91</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowlimit"><code class="tsd-tag">Optional</code><span>row<wbr/>Limit</span><a href="#rowlimit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowLimit</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L88">src/ops/cron.ts:88</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L88">src/ops/cron.ts:88</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="tables"><code class="tsd-tag">Optional</code><span>tables</span><a href="#tables" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">tables</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b9257cde5c64be51bde204324a4db6b074939a97/src/ops/cron.ts#L90">src/ops/cron.ts:90</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5f018ac230e95e12f316aec448e6ed0eba78edff/src/ops/cron.ts#L90">src/ops/cron.ts:90</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

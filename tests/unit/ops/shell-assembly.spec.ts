@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
 	assemble,
 	decodeEntities,
+	fillIdentity,
+	normalisedShellsAgree,
+	normaliseShell,
 	placeholderIds,
+	rolesOf,
 	shellDecision,
-	shellSafety
+	shellSafety,
+	SLOT_PREFIX
 } from '../../../src/ops/shell-assembly';
 
 /**
@@ -231,5 +236,126 @@ describe('shellDecision', () => {
 			fragmentsAvailable: false
 		});
 		expect(d.assemble).toBe(false);
+	});
+});
+
+/**
+ * The slot half, which decides whether ONE stored shell may be served to a second person.
+ *
+ * `fillIdentity`'s permissions-hash refusal is a disclosure guard and had no test at all: every
+ * export below sat in the uncovered 239-342 band the coverage lane reports, while
+ * `normalisedShellsAgree` is what the harvest calls before storing anything.
+ */
+
+const HASH_A = 'a'.repeat(64);
+const HASH_B = 'b'.repeat(64);
+
+/** a rendered page carrying one of each measured per-person value, plus a real placeholder */
+const rendered = (uid: string, hash: string, token: string, viewId: string) =>
+	`${hole('one')}<script>{"uid":"${uid}","permissionsHash":"${hash}"}</script>` +
+	`<a href="/user/logout?token=${token}">Out</a>` +
+	`<div class="js-view-dom-id-${viewId}"></div>`;
+
+describe('normaliseShell', () => {
+	it('refuses a page with no placeholders, which is a rendered page and not a shell', () => {
+		const out = normaliseShell('<html><body>no holes</body></html>');
+		expect(out.ok).toBe(false);
+		expect(out.ok === false && out.reason).toContain('no placeholders');
+	});
+
+	it('names a slot for each measured class and leaves the value out of the shell', () => {
+		const out = normaliseShell(
+			rendered('42', HASH_A, 'tok_abcdefghijklmnop', '0123456789abcdef')
+		);
+		expect(out.ok).toBe(true);
+		if (!out.ok) return;
+		expect(out.slots.map((s) => s.kind).sort()).toEqual([
+			'csrf',
+			'nonce',
+			'permissions-hash',
+			'uid'
+		]);
+		for (const value of ['"42"', HASH_A, 'tok_abcdefghijklmnop', '0123456789abcdef']) {
+			expect(out.shell).not.toContain(value);
+		}
+		for (const slot of out.slots) expect(out.shell).toContain(slot.name);
+	});
+});
+
+describe('normalisedShellsAgree', () => {
+	// two members of one role set: every per-person value differs and nothing else does
+	const alice = rendered('42', HASH_A, 'tok_aaaaaaaaaaaaaaaa', '1111111111111111');
+	const bob = rendered('99', HASH_A, 'tok_bbbbbbbbbbbbbbbb', '2222222222222222');
+
+	it('agrees when the only differences are slotted', () => {
+		expect(normalisedShellsAgree(alice, bob)).toEqual({ agree: true, reason: '' });
+	});
+
+	it('refuses when a difference survives normalisation, and says where', () => {
+		const out = normalisedShellsAgree(alice, bob.replace('Out', 'Sign out'));
+		expect(out.agree).toBe(false);
+		expect(out.reason).not.toBe('');
+	});
+
+	it('refuses when either side is not a shell at all', () => {
+		expect(normalisedShellsAgree('<p>flat</p>', bob).reason).toContain('left:');
+		expect(normalisedShellsAgree(alice, '<p>flat</p>').reason).toContain('right:');
+	});
+});
+
+describe('rolesOf', () => {
+	it('sorts, so three samples of one role set compare equal whatever order PHP sent', () => {
+		expect(rolesOf({ roles: ['editor', 'authenticated'] })).toEqual([
+			'authenticated',
+			'editor'
+		]);
+	});
+
+	// a partial role set compiles a plan for the wrong audience, which is worse than compiling none
+	it('yields nothing rather than a partial set', () => {
+		expect(rolesOf({ roles: ['editor', 7] })).toEqual([]);
+		expect(rolesOf({ roles: ['editor', ''] })).toEqual([]);
+		expect(rolesOf({ roles: 'editor' })).toEqual([]);
+		expect(rolesOf({})).toEqual([]);
+		expect(rolesOf(null)).toEqual([]);
+	});
+});
+
+describe('fillIdentity', () => {
+	const source = rendered('42', HASH_A, 'tok_aaaaaaaaaaaaaaaa', '1111111111111111');
+	const normalised = normaliseShell(source);
+	const slots = normalised.ok ? normalised.slots : [];
+	const shellText = normalised.ok ? normalised.shell : '';
+
+	it('puts this visitor own values back', () => {
+		const out = fillIdentity(shellText, slots, {
+			uid: '99',
+			permissionsHash: HASH_A,
+			csrf: { 'user/logout': 'tok_bbbbbbbbbbbbbbbb' }
+		});
+		expect(out.ok).toBe(true);
+		if (!out.ok) return;
+		expect(out.html).toContain('"99"');
+		expect(out.html).toContain('tok_bbbbbbbbbbbbbbbb');
+		// a nonce belongs to nobody, so the harvested one is kept
+		expect(out.html).toContain('1111111111111111');
+		expect(out.html).not.toContain(SLOT_PREFIX);
+	});
+
+	// the whole reason a shell may be shared is that both visitors are in one role set
+	it('refuses a visitor whose permissions hash differs from the shell', () => {
+		const out = fillIdentity(shellText, slots, {
+			uid: '99',
+			permissionsHash: HASH_B,
+			csrf: { 'user/logout': 'tok_bbbbbbbbbbbbbbbb' }
+		});
+		expect(out.ok).toBe(false);
+		expect(out.ok === false && out.reason).toContain('another role set');
+	});
+
+	it('refuses rather than serving a slot name when a value was not supplied', () => {
+		const out = fillIdentity(shellText, slots, { permissionsHash: HASH_A });
+		expect(out.ok).toBe(false);
+		expect(out.ok === false && out.reason).toContain('uid');
 	});
 });

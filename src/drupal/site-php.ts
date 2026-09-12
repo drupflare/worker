@@ -676,6 +676,23 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
     \\Drupal\\Component\\Utility\\Html::setIsAjax(false);
   }
 
+  // AND THE PAGE CACHE KILL SWITCH IS THE SAME SHAPE AGAIN, on a container SERVICE this time.
+  // KillSwitch::trigger() sets $kill true and core never sets it back, because a real SAPI ends the
+  // process instead. Messenger::addMessage() calls it, so ONE saved node or config form makes
+  // check() answer DENY for every later render on this incarnation: every page comes back
+  // private, no-store, fillOne() refuses the upsert, and cfw_page stops filling for the whole site.
+  // Measured in the browser lane -- save a node as admin and the ANONYMOUS front page is
+  // uncacheable from then on. The service carries the page_cache and dynamic_page_cache tags both,
+  // so one reset covers both policies. Skipped when it was never built, which cannot have set it.
+  try {
+    $container = \\Drupal::getContainer();
+    if ($container !== null && $container->initialized("page_cache_kill_switch")) {
+      $switch = $container->get("page_cache_kill_switch");
+      $ref = new \\ReflectionObject($switch);
+      if ($ref->hasProperty("kill")) { $ref->getProperty("kill")->setValue($switch, false); }
+    }
+  } catch (\\Throwable $e) {}
+
   // PATH.MATCHER LEAKS ITS FRONT-PAGE VERDICT ACROSS RENDERS, and this fixes markup that was
   // being served wrong to real visitors. isFrontPage() memoises into $isCurrentFrontPage, and on a
   // persistent container the FIRST path rendered decides for every later one. Measured: render /
@@ -3042,6 +3059,17 @@ $out['seenIds'] = $ask(function () {
 $out['isAjax'] = $ask(function () {
   $property = new \ReflectionProperty(\Drupal\Component\Utility\Html::class, 'isAjax');
   return $property->getValue() ? 1 : 0;
+});
+
+// the same shape on a SERVICE, which is why the blind half over class statics cannot see it.
+// Messenger::addMessage() triggers it and core never untriggers it, so one save makes every later
+// render on the incarnation private, no-store and cfw_page stops filling site-wide
+$out['killSwitch'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('page_cache_kill_switch')) { return null; }
+  $switch = $container->get('page_cache_kill_switch');
+  $property = new \ReflectionProperty($switch, 'kill');
+  return $property->getValue($switch) ? 1 : 0;
 });
 
 // keyed by the Request OBJECT in a static SplObjectStorage, so every request ever served stays

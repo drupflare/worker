@@ -10,12 +10,8 @@ import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } f
  * access-denied page rather than a form.
  */
 
-const call = async (
-	path: string,
-	init?: RequestInit,
-	base: string = BASE_URL
-): Promise<globalThis.Response> => {
-	const url = new URL(`${base}${path}`);
+const call = async (path: string, init?: RequestInit): Promise<globalThis.Response> => {
+	const url = new URL(`${BASE_URL}${path}`);
 	if (!url.searchParams.has('site')) url.searchParams.set('site', SITE);
 	return fetch(url, { signal: AbortSignal.timeout(180_000), ...init });
 };
@@ -25,21 +21,14 @@ const call = async (
  *
  * `wrangler dev` answers an occasional `500 Error: Network connection lost.` on a warm object, and a
  * setup that aborts on one of those takes the whole lane down before a single spec runs.
- *
- * @param base which worker to ask; `aggregate-styling.pw.ts` provisions the second one.
  */
-export async function callJson<T>(
-	path: string,
-	init?: RequestInit,
-	tries = 3,
-	base: string = BASE_URL
-): Promise<T> {
+export async function callJson<T>(path: string, init?: RequestInit, tries = 3): Promise<T> {
 	let last = '';
 	for (let i = 0; i < tries; i++) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 1000));
 		let text: string;
 		try {
-			text = await (await call(path, init, base)).text();
+			text = await (await call(path, init)).text();
 		} catch (e) {
 			last = String(e);
 			continue;

@@ -1200,3 +1200,68 @@ describe('the instrument itself', () => {
 		REQUEST_TIMEOUT
 	);
 });
+
+describe('the page cache kill switch, which stops the whole site caching', () => {
+	/**
+	 * `KillSwitch::$kill` is the family's seventh member and the first that is not a class static.
+	 *
+	 * `Messenger::addMessage()` calls `$this->killSwitch->trigger()` -- core wires the two together
+	 * in `core.services.yml` -- and `trigger()` sets a protected property on a CONTAINER SERVICE
+	 * that nothing ever sets back, because a real SAPI ends the process instead. The service is
+	 * tagged `page_cache_response_policy` and `dynamic_page_cache_response_policy` both, so once it
+	 * is set `check()` answers DENY for every later render on the incarnation.
+	 *
+	 * What that costs is the whole page store. `fillOne()` reads `result.cacheControl`, refuses the
+	 * `cfw_page` upsert on `private` or `no-store`, and the row is never written -- so after the
+	 * first save on a site, every anonymous visitor re-renders and nothing reports it. It is the
+	 * same shape as the `system.performance:cache.page.max_age` defect, arriving from the runtime
+	 * rather than from the shipped configuration.
+	 *
+	 * FOUND BY THE BROWSER LANE, like `Html::$isAjax`. `admin-surfaces.pw.ts` saves a node, and
+	 * `aggregate-styling.pw.ts` then could not get `/` to store at all: twelve consecutive
+	 * anonymous renders answered `200 RENDER` with `cache-control: private, no-store` while
+	 * `cfw_page` held no `/` row. Run the same spec on its own and the first render stores.
+	 *
+	 * The blind fingerprint cannot see this one -- it walks static properties of declared classes,
+	 * and this is instance state on a service -- which is why `BOUNDARY_STATE` reports it by name.
+	 */
+	it(
+		'is cleared at the boundary, so an anonymous page still caches after a save',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				const before = await renderWith(site, '/', COLD_BINS);
+				const { jar, fields } = await adminWithForm(site);
+				const saved = await render(
+					site,
+					'/node/add/page',
+					formPost(encodeForm({ ...fields, ...NODE_BODY }), jar)
+				);
+				const flag = (await boundary(site))['killSwitch'];
+				const after = await renderWith(site, '/', COLD_BINS);
+				return {
+					beforeCc: String(before['cacheControl'] ?? ''),
+					savedStatus: saved['status'],
+					flag,
+					afterCc: String(after['cacheControl'] ?? '')
+				};
+			});
+
+			// the control: an anonymous front page is cacheable on this site to begin with, or the
+			// assertion below would pass on a site that never caches anything
+			expect(out.beforeCc, 'the front page is not cacheable even before a save').not.toMatch(
+				/no-store|private/
+			);
+			expect(out.savedStatus, 'the save has to have happened').toBeGreaterThanOrEqual(200);
+			// THE HAZARD IS REAL, and this is what makes the rest mean anything: the flag does
+			// survive the script boundary. It reads 1 with the fix in place too, because the reset
+			// runs at the START of the next request -- the same reason `isAjax` reads 1 above
+			expect(out.flag, 'the switch does not survive, so this proves nothing').toBe(1);
+			// and this is what fails without the fix, on every later render the site ever makes
+			expect(out.afterCc, 'the front page stopped caching after a save').not.toMatch(
+				/no-store|private/
+			);
+		},
+		REQUEST_TIMEOUT
+	);
+});

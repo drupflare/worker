@@ -23,20 +23,6 @@ const SITE = process.env.CFW_BROWSER_SITE ?? 'browser';
 const STATE_DIR = process.env.CFW_BROWSER_STATE ?? join(tmpdir(), 'drupflare-browser-state');
 
 /**
- * A SECOND worker, and the only difference is `ASSET_AGGREGATES:1`.
- *
- * The lever is an env var read inside the Durable Object, so it cannot be flipped per spec: nothing
- * writes the `settings` KV key over HTTP, and turning it on for the shared server would change what
- * every other spec here renders. `aggregate-styling.pw.ts` drives this one and the shared one as its
- * control, which is what separates a broken aggregate from a broken harness.
- *
- * Its own `--persist-to`, because two miniflare instances on one state directory share sqlite files.
- */
-const AGG_PORT = Number(process.env.CFW_BROWSER_AGG_PORT ?? PORT + 2);
-const AGG_STATE_DIR =
-	process.env.CFW_BROWSER_AGG_STATE ?? join(tmpdir(), 'drupflare-browser-agg-state');
-
-/**
  * The OIDC rig, which is opt-in because it needs a container.
  *
  * `docker compose -f docker/compose.yml up -d keycloak` brings it up. When it is not running the
@@ -94,22 +80,6 @@ export default defineConfig({
 			].join(' '),
 			// `/stats` answers 200 on a site that holds nothing; `/` answers 503 until the queue fills it
 			url: `${BASE_URL}/stats?site=${encodeURIComponent(SITE)}`,
-			reuseExistingServer: !isCI,
-			timeout: 180_000,
-			stdout: 'pipe',
-			stderr: 'pipe'
-		},
-		{
-			command: [
-				'bunx wrangler dev -c wrangler.jsonc',
-				`--port ${AGG_PORT}`,
-				`--inspector-port ${AGG_PORT + 1000}`,
-				`--persist-to ${JSON.stringify(AGG_STATE_DIR)}`,
-				'--var PW_DIAGNOSTICS:1',
-				`--var SITE_ID:${SITE}`,
-				'--var ASSET_AGGREGATES:1'
-			].join(' '),
-			url: `http://127.0.0.1:${AGG_PORT}/stats?site=${encodeURIComponent(SITE)}`,
 			reuseExistingServer: !isCI,
 			timeout: 180_000,
 			stdout: 'pipe',

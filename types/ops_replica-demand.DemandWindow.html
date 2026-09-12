@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">DemandWindow</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#at">at</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#peakinflight">peakInflight</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#queued">queued</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#waitedms">waitedMs</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/replica-demand.ts#L14">src/ops/replica-demand.ts:14</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e1dc318a77e5bf306257255b0400b8b3200a993/src/ops/replica-demand.ts#L14">src/ops/replica-demand.ts:14</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,12 +36,12 @@
 <h3 class="tsd-anchor-link" id="at"><span>at</span><a href="#at" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">at</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/replica-demand.ts#L16">src/ops/replica-demand.ts:16</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e1dc318a77e5bf306257255b0400b8b3200a993/src/ops/replica-demand.ts#L16">src/ops/replica-demand.ts:16</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="peakinflight"><span>peak<wbr/>Inflight</span><a href="#peakinflight" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">peakInflight</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/replica-demand.ts#L15">src/ops/replica-demand.ts:15</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e1dc318a77e5bf306257255b0400b8b3200a993/src/ops/replica-demand.ts#L15">src/ops/replica-demand.ts:15</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="queued"><code class="tsd-tag">Optional</code><span>queued</span><a href="#queued" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">queued</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
@@ -53,14 +53,14 @@ several. Optional because a window recorded before this existed is still a windo
 <a href="../functions/ops_replica-demand.laneTarget.html" class="tsd-kind-function">laneTarget</a> falls back to the proxy rather than discarding it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/replica-demand.ts#L26">src/ops/replica-demand.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e1dc318a77e5bf306257255b0400b8b3200a993/src/ops/replica-demand.ts#L26">src/ops/replica-demand.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="waitedms"><code class="tsd-tag">Optional</code><span>waited<wbr/>Ms</span><a href="#waitedms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">waitedMs</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div>
 <div class="tsd-comment tsd-typography"><p>ms the queued requests waited, summed; a long single wait is not two short ones</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/replica-demand.ts#L28">src/ops/replica-demand.ts:28</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/5e1dc318a77e5bf306257255b0400b8b3200a993/src/ops/replica-demand.ts#L28">src/ops/replica-demand.ts:28</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

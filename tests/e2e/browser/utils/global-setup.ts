@@ -103,6 +103,38 @@ async function registrationIsOpen(): Promise<boolean> {
 }
 
 /**
+ * The isolate's own accounting, printed around the renders that have killed the worker.
+ *
+ * A crossed 128 MiB isolate limit arrives here as a message-less `[ERROR]` from wrangler and then
+ * `ERR_CONNECTION_REFUSED` on the NEXT navigation, which reads as a dead server rather than as
+ * memory -- so the run that fails names nothing. `/serve-stats` already reports `isolateBytes` as
+ * its parts, and `USE_ZEND_ALLOC=0` means demand inside one incarnation is the SUM, so the shape to
+ * look for is a rise across consecutive authenticated renders rather than any single figure.
+ *
+ * Never throws: an instrument that can fail the lane it measures is worse than no instrument.
+ */
+async function reportIsolate(label: string): Promise<void> {
+	try {
+		const res = await fetch(`${BASE_URL}/serve-stats?site=${SITE}`, {
+			signal: AbortSignal.timeout(10_000)
+		});
+		const body = (await res.json()) as {
+			isolateBytes?: Record<string, number>;
+			recycles?: number;
+		};
+		const b = body.isolateBytes ?? {};
+		const mib = (n: number | undefined) => (n === undefined ? '?' : (n / 1048576).toFixed(2));
+		console.log(
+			`[isolate] ${label}: total ${mib(b['total'])} MiB of ${mib(b['ceiling'])} ` +
+				`(linear ${mib(b['linear'])}, mount ${mib(b['mount'])}, resident ${mib(b['resident'])}), ` +
+				`recycles ${body.recycles ?? '?'}`
+		);
+	} catch (e) {
+		console.log(`[isolate] ${label}: unreadable (${e instanceof Error ? e.message : e})`);
+	}
+}
+
+/**
  * Opens registration to visitors, which the pack ships as `admin_only`.
  *
  * Through Drupal's own form rather than an UPDATE, and this was measured rather than assumed: the
@@ -114,6 +146,7 @@ async function openRegistration(): Promise<void> {
 	try {
 		const context = await browser.newContext({ baseURL: BASE_URL });
 		const page = await context.newPage();
+		await reportIsolate('before the login');
 		await page.goto('/user/login');
 		await page.locator('#edit-name').fill(ADMIN_USER);
 		await page.locator('#edit-pass').fill(ADMIN_PASS);
@@ -121,8 +154,11 @@ async function openRegistration(): Promise<void> {
 			page.waitForURL(/\/user\/1(\?|$)/),
 			page.locator('#edit-submit').click()
 		]);
+		// the first authenticated render, which is where the documented rise starts
+		await reportIsolate('after /user/1');
 
 		await page.goto('/admin/config/people/accounts');
+		await reportIsolate('after /admin/config/people/accounts');
 		await page.locator('#edit-user-register-visitors').check();
 		await page.getByRole('button', { name: 'Save configuration' }).click();
 		await page.waitForLoadState('load');

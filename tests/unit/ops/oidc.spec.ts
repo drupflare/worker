@@ -320,11 +320,21 @@ describe('the claims ticket', () => {
 		name: 'Someone'
 	};
 
+	/**
+	 * SCANNING THE SERIALIZED TICKET FOR `eyJ` IS A COIN FLIP, and CI lost it on 2026-09-12:
+	 * `{"ticket":"gA_2_hyGjbld8_RQO-JX2yNSddXsZ6Wp6eyJ9iNp3pA"...}` failed with nothing wrong. The
+	 * ticket id is random base64url, so about one in 8,700 of them carries the substring somewhere
+	 * in the middle. A JWT begins with it, which is the property; a value CONTAINING it is noise.
+	 */
 	it('carries the identity and nothing that could be replayed at the provider', () => {
 		const t = mintTicket(claims, PROVIDER, 1000);
 		expect(t).toMatchObject({ sub: 'user-42', issuer: ISSUER, email: 'someone@example.com' });
 		// no id_token, no access token, no refresh token -- a leaked ticket is useless anywhere else
-		expect(JSON.stringify(t)).not.toContain('eyJ');
+		const jwtish = Object.values(t).filter((v) => typeof v === 'string' && v.startsWith('eyJ'));
+		expect(jwtish).toEqual([]);
+		expect(Object.keys(t)).not.toContain('id_token');
+		expect(Object.keys(t)).not.toContain('access_token');
+		expect(Object.keys(t)).not.toContain('refresh_token');
 	});
 
 	// SINGLE USE is the property. A ticket rides in a redirect, so it lands in history and in every

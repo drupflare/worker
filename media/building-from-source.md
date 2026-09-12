@@ -83,9 +83,10 @@ own manifest rather than against a list.
 | 11  | `core`        | the same two, repacked from the list               | `node`, step 10       |
 | 12  | `pack`        | `assets/drupal-pf/core.pf.json`, `core.pf.bin`     | step 11               |
 | 13  | `static`      | `assets/core/`                                     | step 5                |
-| 14  | `container`   | the packed `cache_container` row, rekeyed          | a free port, step 12  |
-| 15  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
-| 16  | `prefill`     | `assets/prefill.json`                              | a free port, 1-14     |
+| 14  | `agg`         | `assets/agg/`                                      | `bun`, step 5         |
+| 15  | `container`   | the packed `cache_container` row, rekeyed          | a free port, step 12  |
+| 16  | `sql`         | `assets/drupal-sql/`                               | `node`, `site.sqlite` |
+| 17  | `prefill`     | `assets/prefill.json`                              | a free port, 1-16     |
 
 ### 1-2, The Interpreter
 
@@ -153,7 +154,7 @@ runtime. The patch swaps the class for a synchronous stand-in with the same surf
 all: the default storage hashes the containing directory's mtime into the filename, and a mounted
 MEMFS directory's mtime is mount time.
 
-### 9-15, The Assets
+### 9-16, The Assets
 
 `bootstrap` exists because the packers and the bake read each other's output. `bake-twig.php` builds
 `core.list.json` as _the previous `core.json`, minus the compiled-Twig paths, plus the ones it just
@@ -207,13 +208,18 @@ site's first page weeks in the past, and `SystemRequirementsHooks` falls back to
 date. This is a build step rather than a hand edit because a hand edit to a tracked artifact is
 reverted by the next `bun install` restore.
 
-### Optional, `assets:agg`
+### 14, The Aggregates
 
-`bun run assets:agg` reads the `*.libraries.yml` definitions out of `drupal-src` and emits immutable
-per-library CSS and JS aggregates into `assets/agg/`, plus a file-to-library index. It is not part of
-the numbered sequence and its output is not committed: 808 aggregates over 6.57 MB for 725 libraries,
-where a given site uses a few dozen. The serving side is off unless `ASSET_AGGREGATES=1`, and with no
-manifest present it changes nothing rather than breaking a page.
+`agg` reads the `*.libraries.yml` definitions out of `drupal-src` and emits immutable per-library CSS
+and JS aggregates into `assets/agg/`, plus a file-to-library index. Its output is not committed: 808
+aggregates over 6.57 MB for 725 libraries, where a given site uses a few dozen. The serving side is
+off unless `ASSET_AGGREGATES=1`, and with no manifest present it changes nothing rather than breaking
+a page.
+
+**It was outside the numbered sequence until 2026-09-12, and `wrangler.jsonc` ships
+`ASSET_AGGREGATES: "1"`.** So every from-source tree ran the lever with nothing to substitute. That
+degrades quietly by design, which is why nothing reported it for as long as it was true; the pack
+lane found it once that lane began asserting the artifacts, with `/agg/manifest.json` answering 404.
 
 The output has to be published as well as built. `assets/.assetsignore` denies by default, and until
 2026-09-09 it did not carry `!/agg/`, so the aggregates uploaded nowhere and a page with the lever on
@@ -222,8 +228,9 @@ of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB uplo
 
 ## Why The Order Is The Order
 
-Four of these orderings fail silently when reversed, which is why
-`tests/node/build-from-source.spec.ts` asserts them.
+These orderings fail silently when reversed, which is why
+`tests/node/build-from-source.spec.ts` asserts them. `agg` is absent from the list because it reads
+`drupal-src` and nothing else, so it has no ordering constraint against the rest.
 
 - **`site` before `patch`.** The settings half of the patch appends to a file the installer creates.
   On a tree with no `settings.php` the patch reports it skipped and the build continues.
@@ -241,7 +248,7 @@ Four of these orderings fail silently when reversed, which is why
 - **`container` before `sql`.** `sql` chunks the database into the migration the Durable Object
   replays, so a rekey after it would ship the old row.
 
-### 14, The Container Row
+### 15, The Container Row
 
 `container` rewrites one row of `assets/drupal/site.sqlite` and produces no file of its own.
 
@@ -259,7 +266,7 @@ and reads back the row that boot rebuilt.
 `tests/node/container-cid.spec.ts` compares the pack against the database and fails when they
 disagree. Run the step on its own with `bun run assets:container`, which re-chunks afterwards.
 
-### 16, The Prefill
+### 17, The Prefill
 
 `prefill` produces `assets/prefill.json`, which holds the bytes the site returns for five paths. A
 prefilled path is a **hit on its first ever request**, so whatever is in that file is the page a

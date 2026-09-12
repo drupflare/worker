@@ -13,7 +13,7 @@
 <h1>Type Alias SweepDeps</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">SweepDeps</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#batch">batch</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#generation">generation</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#hits">hits</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">ReadonlyMap</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#isunstorable">isUnstorable</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#maxperkind">maxPerKind</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#meters">meters</a><span class="tsd-signature-symbol">:</span> <a href="ops_sweep.SweepMeters.html" class="tsd-signature-type tsd-kind-type-alias">SweepMeters</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#nowms">nowMs</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#rowsfraction">rowsFraction</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sql">sql</a><span class="tsd-signature-symbol">:</span> <a href="../interfaces/ops_sweep.SweepSql.html" class="tsd-signature-type tsd-kind-interface">SweepSql</a><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L685">src/ops/sweep.ts:685</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L685">src/ops/sweep.ts:685</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -40,51 +40,51 @@
 <div class="tsd-comment tsd-typography"><p><code>fillBatchSize(env)</code>; one step queues at most one batch</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L693">src/ops/sweep.ts:693</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L693">src/ops/sweep.ts:693</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="generation"><span>generation</span><a href="#generation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">generation</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L694">src/ops/sweep.ts:694</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L694">src/ops/sweep.ts:694</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="hits"><span>hits</span><a href="#hits" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">hits</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">ReadonlyMap</span><span class="tsd-signature-symbol">&lt;</span><span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">&gt;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></div>
 <div class="tsd-comment tsd-typography"><p>the per-path view counts the object keeps in memory; null when it has none yet</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L689">src/ops/sweep.ts:689</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L689">src/ops/sweep.ts:689</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="isunstorable"><span>is<wbr/>Unstorable</span><a href="#isunstorable" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">isUnstorable</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">path</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">)</span> <span class="tsd-signature-symbol">=&gt;</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p><code>this.isUnstorable</code>, so the terminating observation is read rather than re-derived</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L691">src/ops/sweep.ts:691</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L691">src/ops/sweep.ts:691</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="maxperkind"><code class="tsd-tag">Optional</code><span>max<wbr/>Per<wbr/>Kind</span><a href="#maxperkind" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">maxPerKind</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L697">src/ops/sweep.ts:697</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L697">src/ops/sweep.ts:697</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="meters"><span>meters</span><a href="#meters" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">meters</span><span class="tsd-signature-symbol">:</span> <a href="ops_sweep.SweepMeters.html" class="tsd-signature-type tsd-kind-type-alias">SweepMeters</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L687">src/ops/sweep.ts:687</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L687">src/ops/sweep.ts:687</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="nowms"><span>now<wbr/>Ms</span><a href="#nowms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">nowMs</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L695">src/ops/sweep.ts:695</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L695">src/ops/sweep.ts:695</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="rowsfraction"><code class="tsd-tag">Optional</code><span>rows<wbr/>Fraction</span><a href="#rowsfraction" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">rowsFraction</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L696">src/ops/sweep.ts:696</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L696">src/ops/sweep.ts:696</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sql"><span>sql</span><a href="#sql" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sql</span><span class="tsd-signature-symbol">:</span> <a href="../interfaces/ops_sweep.SweepSql.html" class="tsd-signature-type tsd-kind-interface">SweepSql</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/e1546e0b664dc58d128070e40ed3d83491053611/src/ops/sweep.ts#L686">src/ops/sweep.ts:686</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9442dee4a2235916eed77d1f6864e678b1b3f6b9/src/ops/sweep.ts#L686">src/ops/sweep.ts:686</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

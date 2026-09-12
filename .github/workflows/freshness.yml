@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   branches:
-    name: Update Behind Pull Requests
+    name: Update Pull Request Branches
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10

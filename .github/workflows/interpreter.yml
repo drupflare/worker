@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   interpreter:
-    name: Fetch, Verify and Propose
+    name: Fetch and Verify the Interpreter
     runs-on: ubuntu-latest
     timeout-minutes: 30
 

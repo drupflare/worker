@@ -124,9 +124,11 @@ const RESTARTING = /Network connection lost|internal error; reference/i;
 /**
  * Binds a transport to one origin and one site name, and waits out a restart.
  *
- * ONLY WHERE A RETRY IS SAFE. A rejected fetch never reached the worker, so repeating it cannot
- * duplicate anything. A 500 carrying wrangler's restart text DID get an answer, so that one is
- * repeated only for GET and HEAD -- `saveNode()` is a POST and a second one would be a second node.
+ * ONLY WHERE A RETRY IS SAFE, and that is GET and HEAD for BOTH failure shapes. An earlier version
+ * of this said a rejected fetch never reached the worker so replaying it could not duplicate
+ * anything; the CI failure that followed disproves it -- `SocketError: other side closed` arrived
+ * with `bytesWritten: 910, bytesRead: 4692`, so the worker had received the request, acted on it,
+ * and died partway through answering. A replayed POST there is a second submission.
  */
 export function transportFor(endpoint: string, site: string): Transport {
 	const base = endpoint.replace(/\/+$/, '');
@@ -143,7 +145,7 @@ export function transportFor(endpoint: string, site: string): Transport {
 				const body = await res.clone().text();
 				if (!RESTARTING.test(body)) return res;
 			} catch (e) {
-				if (Date.now() >= until) throw e;
+				if (!replayable || Date.now() >= until) throw e;
 			}
 			await new Promise((r) => setTimeout(r, 1000));
 		}

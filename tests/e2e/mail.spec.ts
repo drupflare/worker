@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { e2eGate, ENDPOINT, SITE } from './helpers/endpoint';
+import { transportFor } from './helpers/lifecycle';
 
 /**
  * Drupal mail, delivered to a real SMTP server.
@@ -16,6 +17,16 @@ import { e2eGate, ENDPOINT, SITE } from './helpers/endpoint';
  * SKIP LOCALLY, FAIL IN CI, the same asymmetry as the rest of this lane: a developer with no rig
  * running should not see red, and a CI run that quietly skipped is indistinguishable from a pass.
  */
+
+/**
+ * The worker under test, through the transport that waits out a restart.
+ *
+ * Every call here used a bare `fetch()` and the lane paid for it: a Durable Object reset restarts
+ * `wrangler dev`, and two of these landed in the window -- `serve-stats` answering not-ok, then
+ * `SocketError: other side closed` mid-response. The rig calls below stay bare, because GreenMail
+ * is not the thing that restarts.
+ */
+const worker = transportFor(ENDPOINT, SITE);
 
 const MAIL_API = process.env.CFW_E2E_MAIL_API ?? 'http://127.0.0.1:8080';
 const MAILBOX = process.env.CFW_E2E_MAILBOX ?? 'drupflare';
@@ -75,9 +86,7 @@ async function waitForSubject(match: RegExp, timeoutMs = 45_000): Promise<GreenM
 /** the site's resolved relay, or null when the worker under test has none configured */
 async function mailTransport(): Promise<string | null> {
 	try {
-		const res = await fetch(`${ENDPOINT}/serve-stats?site=${encodeURIComponent(SITE)}`, {
-			signal: AbortSignal.timeout(15_000)
-		});
+		const res = await worker('/serve-stats');
 		if (!res.ok) return null;
 		const body = (await res.json()) as { mailTransport?: string | null };
 		return body.mailTransport ?? null;
@@ -97,10 +106,7 @@ async function formFields(path: string, deadlineMs = 90_000): Promise<Record<str
 	const until = Date.now() + deadlineMs;
 	let html = '';
 	while (Date.now() < until) {
-		const res = await fetch(
-			`${ENDPOINT}/serve?site=${encodeURIComponent(SITE)}&path=${encodeURIComponent(path)}&edge=0`,
-			{ signal: AbortSignal.timeout(60_000) }
-		);
+		const res = await worker(`/serve?path=${encodeURIComponent(path)}&edge=0`);
 		if (res.status < 500) {
 			html = await res.text();
 			break;
@@ -167,9 +173,7 @@ describe('Drupal mail reaches a real SMTP server', () => {
 	 */
 	it('has a recipient to send to', async () => {
 		if (skip) return;
-		const res = await fetch(`${ENDPOINT}/serve-stats?site=${encodeURIComponent(SITE)}`, {
-			signal: AbortSignal.timeout(30_000)
-		});
+		const res = await worker('/serve-stats');
 		expect(res.ok, 'serve-stats did not answer, so the site is not reachable').toBe(true);
 	});
 
@@ -198,11 +202,17 @@ describe('Drupal mail reaches a real SMTP server', () => {
 		// RETRIED WHILE THE OBJECT IS WARMING, the way `formFields()` above already retries its GET.
 		// A submission arriving while the fill chain still owes this path answers 503 `warming`,
 		// which is the queue talking rather than the form refusing -- and it only happens partway
-		// through a full lane run, so the spec passed on its own and failed in company
+		// through a full lane run, so the spec passed on its own and failed in company.
+		//
+		// AND THE RETRY IS HERE RATHER THAN IN THE TRANSPORT, because this is a POST. The shared
+		// transport replays GET and HEAD only: a rejected fetch can still have reached the worker
+		// -- `other side closed` arrived with 4,692 bytes already read -- so a replayed submission
+		// is a second submission. It is repeated HERE because the cost is known and bounded: a
+		// duplicate reset mail, which `waitForSubject()` matches either way.
 		let res!: Response;
 		const until = Date.now() + 90_000;
-		for (;;) {
-			res = await fetch(
+		const post = () =>
+			fetch(
 				`${ENDPOINT}/serve?site=${encodeURIComponent(SITE)}&path=${encodeURIComponent('/user/password')}&edge=0`,
 				{
 					method: 'POST',
@@ -210,7 +220,13 @@ describe('Drupal mail reaches a real SMTP server', () => {
 					body
 				}
 			);
-			if (res.status < 500 || Date.now() >= until) break;
+		for (;;) {
+			try {
+				res = await post();
+				if (res.status < 500 || Date.now() >= until) break;
+			} catch (e) {
+				if (Date.now() >= until) throw e;
+			}
 			await new Promise((r) => setTimeout(r, 1000));
 		}
 		// the form answers 200 with a status message or 303 to itself; either means it was accepted

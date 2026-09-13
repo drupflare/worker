@@ -529,9 +529,14 @@ distance to the origin.</p>
 and the front worker spreads the serving path across them. Only <code>/serve</code> spreads: an owner or
 diagnostic route pins to the primary, so <code>/export</code> cannot answer from a lane's copy.</p>
 <p>Measured on real authenticated Drupal renders across a replicated pool, against a generator whose own
-ceiling was measured first at 121.9 req/s: <strong>1.00 / 2.03 / 3.29x at 1 / 2 / 4 lanes</strong>. A fixed CPU
-burn on independent objects gives 1.00 / 2.05 / 3.16 / 5.72x at 1 / 2 / 4 / 8, so replication costs
-nothing the topology arm did not already show.</p>
+ceiling was measured first at 121.9 req/s: <strong>1.00 / 2.03 / 3.29x at 1 / 2 / 4 lanes</strong>. On a deployed
+worker with <code>?lane=N</code> addressing each object directly, so routing is not a variable, the topology
+scales <strong>1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes</strong>, which is 95% at sixteen.</p>
+<p>That second curve replaces an earlier <code>1.00 / 2.05 / 3.16 / 5.72x at 1 / 2 / 4 / 8</code>, which measured
+something else: an ascending sweep with its baseline taken once at the start cannot separate a
+scaling limit from a decay in the thing being scaled, and a single object steps to roughly half its
+throughput after ~180 requests. A linear pool plus that decay reproduces the old numbers with no
+scaling limit existing. The decay itself is real, reaches this product, and is not attributed.</p>
 <p>This works because an authenticated GET writes no authoritative state under this SAPI. Measured
 per-table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core
 throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches.</p>
@@ -756,9 +761,9 @@ answers a page without the Worker running. Both page tiers, the edge cache and t
 tier, cost one Worker request each because the Worker has to run to consult them. The ceiling
 shipping today is the 3.0M row above, saturated; the floor once pages do move off-Worker is
 3.33x, 10M R2 Class B operations/month against 100,000 Worker requests/day.</p>
-<p><strong>There is no single rows-per-fill figure.</strong> A fill costs 3 to 62 rows depending on what is
-already warm, so the model names four measured warmth classes rather than averaging them;
-<code>ROWS_PER_FILL</code> in <code>scripts/measure/free-envelope.ts</code> carries all four, and <code>warmthMix</code> prices a
+<p><strong>There is no single rows-per-fill figure.</strong> A fill costs 2 to 94 rows depending on what is
+already warm, so the model names five measured warmth classes rather than averaging them;
+<code>ROWS_PER_FILL</code> in <code>scripts/measure/free-envelope.ts</code> carries all five, and <code>warmthMix</code> prices a
 realistic spread. Every figure is counted at the storage handle, so it includes the host's own
 writes -- notably the <code>cfw_page</code> insert that stores the whole rendered page.</p>
 </div>
@@ -971,7 +976,7 @@ and every meter except Worker requests has roughly 5x headroom.</p>
 </tr>
 <tr>
 <td>First-run migration</td>
-<td>one chunk per invocation on free, so a first boot spans several alarms</td>
+<td>chunked and resumable, each batch sized to complete on its own</td>
 <td><code>assets/drupal-sql/manifest.json</code></td>
 </tr>
 <tr>
@@ -1013,7 +1018,7 @@ database in one shot instead, which is faster locally:</p>
 <h3 id="first-boot" class="tsd-anchor-link">First Boot<a href="#first-boot" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>A deployed site has an empty Durable Object until something asks it for a page. The first request
 records the ask, arms the alarm chain and answers 503 with a self-refreshing page, and the object
-replays the packed database one chunk per invocation until the cursor is done.</p>
+replays the packed database a batch of chunks at a time until the cursor is done.</p>
 <table>
 <thead>
 <tr>
@@ -1038,10 +1043,12 @@ replays the packed database one chunk per invocation until the cursor is done.</
 </table>
 <p>A browser follows the <code>&lt;meta http-equiv=&quot;refresh&quot;&gt;</code> on that page and lands on the site by itself.
 Every other client gets the same 503 with the one-word body <code>migrating</code>.</p>
-<p><strong>Measured on a deployed worker: 4 to 7 polls at 2 s, so 8 to 14 seconds from the first request to
-the first 200.</strong> A 503 in that window means the site is starting, not that the deploy failed.</p>
-<p>One chunk per invocation is what keeps every invocation under the free plan's 10 ms CPU cap, and the
-chain drives itself to completion over <strong>62 alarm firings</strong>. The chunk count is whatever
+<p><strong>Measured on a deployed free worker: the 75-chunk pack replays in 2 invocations, <code>x-cfw-migrate</code>
+reading <code>40/75</code> on the first poll, and a real Drupal page answers about 6 seconds after the deploy.</strong>
+A 503 in that window means the site is starting, not that the deploy failed.</p>
+<p>Free replays <code>FREE_CHUNKS_PER_INVOCATION</code> chunks per invocation, which is 40; paid and local replay
+the whole pack in one. Batching is bounded by chunk count rather than by a clock, because the clock
+does not advance across a synchronous replay. The chunk count is whatever
 <code>assets/drupal-sql/manifest.json</code> reports, and it moves whenever the packed database does.</p>
 <h3 id="claim-the-site" class="tsd-anchor-link">Claim the Site<a href="#claim-the-site" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>The pack ships an installed database, so Drupal's <code>install.php</code> never runs and never asks you to
@@ -1325,7 +1332,7 @@ itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which is what <
 </tr>
 <tr>
 <td><code>bun run typecheck</code></td>
-<td><code>tsc --noEmit</code></td>
+<td>all three tsconfig projects; bare <code>tsc</code> covers only one</td>
 </tr>
 <tr>
 <td><code>bun run check:reachability</code></td>
@@ -1354,7 +1361,7 @@ itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which is what <
 </tbody>
 </table>
 <h3 id="🧰-building-from-a-clean-clone" class="tsd-anchor-link">🧰 Building From a Clean Clone<a href="#🧰-building-from-a-clean-clone" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p><code>assets/</code> is 121 MB of generated packs and <code>.interp/</code> holds the interpreter. Both are gitignored, so
+<p><code>assets/</code> is generated packs and <code>.interp/</code> holds the interpreter. Both are gitignored, so
 a fresh clone has nothing to deploy until one of two routes lands them.</p>
 <pre><code class="bash"><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1">     </span><span class="hl-5"># postinstall restores the interpreter from the CDN, verified by sha256</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">hydrate</span><span class="hl-1"> </span><span class="hl-5"># the payload if one is published, a source build if not</span><br/><span class="hl-0">bun</span><span class="hl-1"> </span><span class="hl-2">run</span><span class="hl-1"> </span><span class="hl-2">dev</span>
 </code><button type="button">Copy</button></pre>
@@ -1652,9 +1659,9 @@ manifest cannot come to name content the site never received.</p>
   probes/            measurement workers, kept so a report figure can be reproduced
 assets/
   core/              the browser-fetchable Drupal tree, served by Workers Assets
-  driver.json        the two Drupal modules, packed; this is the copy that executes
+  driver.json        the two Drupal modules and the stream-http library, packed; this executes
   drupal-pf/         the per-file pack PHP materialises from
-  drupal-sql/        the 62 migration chunks
+  drupal-sql/        the migration chunks, counted by their own manifest
   drupal/site.sqlite the installed database the chunks are cut from; the one tracked asset
 tests/               unit (in workerd), integration (live Durable Object), e2e
 scripts/             packers, benches, and the measurement instruments
@@ -1794,7 +1801,9 @@ all with <code>carryforward: true</code>.</p>
 <li><code>transactionSync()</code> has no Node equivalent; <code>BEGIN</code> as SQL is refused outright.</li>
 <li>The host caps a statement at <strong>100 bound parameters</strong>; local PDO allows 32,766. That gap
 hid a live cache-write defect behind a green suite.</li>
-<li>In-PHP <code>microtime()</code> and JS <code>Date.now()</code> both return 0 on the edge.</li>
+<li>Neither clock advances across a synchronous <code>php._run()</code>, so a duration taken by subtracting two
+readings either side of one is 0. A <code>Date.now()</code> delta that spans I/O is usable, because the clock
+updates on I/O completion.</li>
 </ul>
 <h3 id="coverage" class="tsd-anchor-link">Coverage<a href="#coverage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>Coverage uses <code>provider: 'istanbul'</code>, not <code>v8</code>. The v8 provider reads coverage off the Node
@@ -1992,12 +2001,15 @@ request for a path with history is answered from the previous generation with <c
 while the current one regenerates on the alarm chain. It is bounded two generations and 24 hours
 deep, never applies to a session-carrying response, and refuses a deny-list that <code>NEVER_STALE</code>
 extends.</li>
-<li><strong>Outbound TCP is declared, not opened.</strong> Redis and syslog are reachable through
-<code>Drupal\drupflare\Network\CfwTcp</code>, which describes a whole exchange and reads the answer on a
-later request over the same queue. The endpoint and its credentials come from <code>REDIS_URL</code> and
-<code>SYSLOG_URL</code> rather than from the calling code, and administrative Redis commands are refused. A
-Redis cache backend is not possible on this: a cache read has to answer inside the request that
-asked it. The Durable Object's own SQLite is the cache backend.</li>
+<li><strong>Outbound TCP is either parked or declared, depending on which the module needs.</strong>
+<code>Drupal\drupflare\Network\CfwTcp</code> describes a whole exchange and reads the answer on a later
+request over a queue, which suits syslog. A module that needs the answer inside the request that
+asked, which is what a cache read is, gets it instead from the park: the PHP call is suspended
+mid-frame, the Worker performs the socket read, and the same call resumes with the result.
+<code>drupal/redis</code> is verified on that path. The endpoint and its credentials come from <code>REDIS_URL</code>
+and <code>SYSLOG_URL</code> rather than from the calling code, and administrative Redis commands are refused.
+<strong>The Durable Object's own SQLite is still the recommended cache backend</strong>, because a parked get is
+a network round trip where SQLite is a local read.</li>
 <li><strong>Greek word-final sigma lowercases differently</strong> from native PHP, and <code>mb_strwidth</code>
 under-counts emoji. Neither affects Drupal core.</li>
 <li><strong>Writes do not scale, and a replica pool does not change that.</strong> A replica refuses an

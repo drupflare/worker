@@ -10,6 +10,9 @@ import { ADMIN_PASS, ADMIN_USER, BASE_URL, OWNER_TOKEN_FILE, SITE, SITE_NAME } f
  * access-denied page rather than a form.
  */
 
+/** how long a caller waits out a supervised restart; measured at 15-25 s for `wrangler dev` */
+const RESTART_WAIT_S = 60;
+
 const call = async (path: string, init?: RequestInit): Promise<globalThis.Response> => {
 	const url = new URL(`${BASE_URL}${path}`);
 	if (!url.searchParams.has('site')) url.searchParams.set('site', SITE);
@@ -21,16 +24,26 @@ const call = async (path: string, init?: RequestInit): Promise<globalThis.Respon
  *
  * `wrangler dev` answers an occasional `500 Error: Network connection lost.` on a warm object, and a
  * setup that aborts on one of those takes the whole lane down before a single spec runs.
+ *
+ * THREE TRIES A SECOND APART CANNOT OUTLAST A RESTART. A Durable Object reset exits `wrangler dev`,
+ * and the supervisor in `playwright.config.ts` brings it back in 15-25 s -- so a setup that gave up
+ * after 3 s reported `fetch failed` and took the lane with it, on a dependency bump that touched
+ * nothing.
  */
 export async function callJson<T>(path: string, init?: RequestInit, tries = 3): Promise<T> {
 	let last = '';
-	for (let i = 0; i < tries; i++) {
+	// UNREACHABLE AND ANSWERING-BADLY ARE DIFFERENT WAITS. A connection refused means the supervisor
+	// is rebuilding the worker and the only useful thing to do is wait it out; a reply that is not
+	// JSON is a decision the worker made and repeating it 45 times just spends the deadline
+	let unreachable = 0;
+	for (let i = 0; i < tries + unreachable; i++) {
 		if (i > 0) await new Promise((r) => setTimeout(r, 1000));
 		let text: string;
 		try {
 			text = await (await call(path, init)).text();
 		} catch (e) {
 			last = String(e);
+			if (unreachable < RESTART_WAIT_S) unreachable++;
 			continue;
 		}
 		try {
@@ -39,7 +52,7 @@ export async function callJson<T>(path: string, init?: RequestInit, tries = 3): 
 			last = `not JSON: ${text.slice(0, 200)}`;
 		}
 	}
-	throw new Error(`${path} failed after ${tries} tries: ${last}`);
+	throw new Error(`${path} failed after ${tries + unreachable} tries: ${last}`);
 }
 
 const sql = (q: string): Promise<{ ok: boolean; rows: Record<string, string>[] }> =>

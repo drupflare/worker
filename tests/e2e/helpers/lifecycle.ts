@@ -107,13 +107,46 @@ export function newSiteName(prefix = 'lc'): string {
 	return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** binds a transport to one origin and one site name */
+/**
+ * How long a call waits out a supervised restart of `wrangler dev`.
+ *
+ * A Durable Object reset exits the dev session -- the proxy worker's fetch rejects with an Error
+ * carrying no name, message or stack, and the ProxyController treats that as fatal -- and the
+ * supervisor in the workflow brings it back in 15-25 s. Measured in CI: the lane logged
+ * `[supervisor] wrangler exited 1; restarting`, the restart worked, and five calls made during the
+ * window failed anyway with `not JSON (500): Error: Network connection lost.`
+ */
+const RESTART_WAIT_MS = 60_000;
+
+/** what wrangler's proxy answers while the worker behind it is being rebuilt */
+const RESTARTING = /Network connection lost|internal error; reference/i;
+
+/**
+ * Binds a transport to one origin and one site name, and waits out a restart.
+ *
+ * ONLY WHERE A RETRY IS SAFE. A rejected fetch never reached the worker, so repeating it cannot
+ * duplicate anything. A 500 carrying wrangler's restart text DID get an answer, so that one is
+ * repeated only for GET and HEAD -- `saveNode()` is a POST and a second one would be a second node.
+ */
 export function transportFor(endpoint: string, site: string): Transport {
 	const base = endpoint.replace(/\/+$/, '');
-	return (path, init) => {
+	return async (path, init) => {
 		const url = new URL(`${base}${path.startsWith('/') ? path : `/${path}`}`);
 		if (!url.searchParams.has('site')) url.searchParams.set('site', site);
-		return fetch(url, { signal: AbortSignal.timeout(120_000), ...init });
+		const method = (init?.method ?? 'GET').toUpperCase();
+		const replayable = method === 'GET' || method === 'HEAD';
+		const until = Date.now() + RESTART_WAIT_MS;
+		for (;;) {
+			try {
+				const res = await fetch(url, { signal: AbortSignal.timeout(120_000), ...init });
+				if (res.status < 500 || !replayable || Date.now() >= until) return res;
+				const body = await res.clone().text();
+				if (!RESTARTING.test(body)) return res;
+			} catch (e) {
+				if (Date.now() >= until) throw e;
+			}
+			await new Promise((r) => setTimeout(r, 1000));
+		}
 	};
 }
 

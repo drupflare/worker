@@ -74,6 +74,19 @@ async function packedHome(): Promise<string> {
 const HOME_SHA1 = '9e0ffe64f622cd30ac04c81b1fa8083472955843';
 const HOME_BYTES = 17686;
 
+/**
+ * Whether the pack under test was BUILT rather than published, which moves every pinned byte.
+ *
+ * `tests/node/helpers/artifact-gate.ts` draws the same boundary for the node lane and gives the
+ * reasoning: the from-source pack is a superset, so a spec whose subject is the SHIPPED bytes cannot
+ * pass against one and should say so rather than be relaxed for everybody. Measured in CI: the front
+ * page served 12,224 bytes against the shipped 17,686, because a built pack aggregates its assets.
+ *
+ * The PROPERTIES either side of these pins -- served from storage, no interpreter booted, a real
+ * document, and a re-render that differs from the packed one -- run on both.
+ */
+const PACKED = process.env.PACK_FROM_SOURCE !== '1';
+
 /** the site name the pack ships with; firstrun is what changes it, and it changes the bytes too */
 const PACK_SITE_NAME = 'CFW Bench';
 
@@ -140,8 +153,13 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		expect(r.lane).toBe('storage');
 		// the assertion the byte count alone cannot make: nothing rendered this
 		expect(r.phpBooted).toBe('0');
-		expect(r.byteLength).toBe(HOME_BYTES);
-		expect(r.sha1).toBe(HOME_SHA1);
+		if (PACKED) {
+			expect(r.byteLength).toBe(HOME_BYTES);
+			expect(r.sha1).toBe(HOME_SHA1);
+		} else {
+			// a built pack has its own bytes; what still has to hold is that this is a whole page
+			expect(r.byteLength).toBeGreaterThan(1000);
+		}
 		expect(r.body).toContain(`<title>Welcome! | ${PACK_SITE_NAME}</title>`);
 		expect(r.body).toContain('</html>');
 	});
@@ -191,9 +209,11 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 
 		// the packed artifact is still pinned by digest, so a change to the PACK is still caught;
 		// what is no longer asserted is that a live render can reproduce it
-		expect(createHash('sha1').update(Buffer.from(packed, 'utf8')).digest('hex')).toBe(
-			HOME_SHA1
-		);
+		if (PACKED) {
+			expect(createHash('sha1').update(Buffer.from(packed, 'utf8')).digest('hex')).toBe(
+				HOME_SHA1
+			);
+		}
 	});
 
 	it('6. routes a second path to its own render rather than re-serving the first', async () => {
@@ -234,8 +254,11 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		expect(r.status).toBe(200);
 		// the end-to-end proof: a config write reached Drupal, invalidated the page and re-rendered
 		expect(r.body).toContain('<title>Welcome! | Lifecycle E2E</title>');
-		// and therefore is no longer the packed artifact
-		expect(r.sha1).not.toBe(HOME_SHA1);
+		// and therefore is no longer the packed artifact, whichever pack that is
+		const packedSha = createHash('sha1')
+			.update(Buffer.from(await packedHome(), 'utf8'))
+			.digest('hex');
+		expect(r.sha1).not.toBe(packedSha);
 	});
 
 	it('7b. refuses a second first run, and refuses a password in a query string', async () => {

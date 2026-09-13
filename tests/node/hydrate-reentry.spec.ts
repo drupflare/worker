@@ -141,3 +141,35 @@ describe('the aggregates the shipping config expects', () => {
 		expect(config.vars?.['ASSET_AGGREGATES']).toBe('1');
 	});
 });
+
+/**
+ * The release lane's own verification step, which was verifying the wrong tree.
+ *
+ * `release.yml` builds every artifact with `build:local`, then hydrates from the payload, then runs
+ * the suites "against the hydrated tree". Without `--force` the middle step takes hydrate's
+ * already-hydrated exit and returns 0, so the suites assert the BUILT tree and the payload's
+ * completeness is never tested -- the same shape as a `--verify` that passes against a file the
+ * artifact does not contain.
+ */
+describe('the release lane hydrates from the payload it just built', () => {
+	const release = readFileSync(resolve(ROOT, '.github/workflows/release.yml'), 'utf8');
+
+	it('builds the packs before it builds the payload', () => {
+		expect(release.indexOf('bun run build:local')).toBeLessThan(
+			release.indexOf('bun run release:payload')
+		);
+	});
+
+	it('forces the hydrate, or the step is a no-op on the tree it just built', () => {
+		const step = /bun scripts\/hydrate\.ts([^\n]*)/.exec(release)?.[1] ?? '';
+		expect(step, 'the release hydrate step is missing').not.toBe('');
+		expect(step).toContain('--from=');
+		expect(step, 'without --force this exits on "already hydrated"').toContain('--force');
+	});
+
+	it('runs the suites with the artifacts asserted, after the hydrate', () => {
+		expect(release.indexOf('bun scripts/hydrate.ts')).toBeLessThan(
+			release.indexOf("REQUIRE_ARTIFACTS: '1'")
+		);
+	});
+});

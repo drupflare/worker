@@ -134,7 +134,11 @@ jobs:
       - name: Check the Payload Against Its Own Sums
         run: cd dist && sha256sum -c SHA256SUMS
       - name: Hydrate the Checkout
-        run: bun scripts/hydrate.ts --from="dist/$PAYLOAD"
+        # --force, or this step verifies nothing. `build:local` above leaves every marker present,
+        # so hydrate takes its "already hydrated; nothing to do" exit and the suites below then run
+        # against the BUILT tree rather than the payload -- a check passing against a copy the
+        # artifact does not contain. --force reaches the payload route, which overwrites.
+        run: bun scripts/hydrate.ts --force --from="dist/$PAYLOAD"
       - name: Run the Suites Against the Hydrated Tree
         env:
           REQUIRE_ARTIFACTS: '1'

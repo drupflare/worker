@@ -41,6 +41,20 @@ if (isCI) {
 	reporters.push(['junit', { outputFile: 'playwright-report/junit.xml' }]);
 }
 
+/**
+ * Restarts the worker if it exits, because one Durable Object reset should not end the lane.
+ *
+ * A reset takes `wrangler dev` down with it: the proxy worker's fetch rejects with an Error
+ * carrying no name, message or stack, and the ProxyController treats that as fatal and exits --
+ * while the worker itself is still serving. Playwright then reports every spec as a dead server
+ * rather than naming the one that failed, which is what turned an intermittent reset into a red
+ * lane on a dependency bump that touched nothing.
+ *
+ * Playwright kills the process group on teardown, so the loop dies with the run.
+ */
+const supervised = (command: string) =>
+	`bash -c 'while true; do ${command}; echo "[supervisor] wrangler exited $?; restarting"; sleep 2; done'`;
+
 export default defineConfig({
 	testDir: './tests/e2e/browser',
 	testMatch: '**/*.pw.ts',
@@ -66,18 +80,20 @@ export default defineConfig({
 	outputDir: 'playwright-results',
 	webServer: [
 		{
-			command: [
-				'bunx wrangler dev -c wrangler.jsonc',
-				`--port ${PORT}`,
-				`--inspector-port ${PORT + 1000}`,
-				`--persist-to ${JSON.stringify(STATE_DIR)}`,
-				'--var PW_DIAGNOSTICS:1',
-				`--var SITE_ID:${SITE}`,
-				// the OIDC rig's client secret. A `--var` rather than a secret because this value is in
-				// `docker/keycloak-realm.json` in the clear and belongs to a container that exists for
-				// this lane; a real deployment binds it as a secret
-				`--var OIDC_CLIENT_SECRET:${OIDC_SECRET}`
-			].join(' '),
+			command: supervised(
+				[
+					'bunx wrangler dev -c wrangler.jsonc',
+					`--port ${PORT}`,
+					`--inspector-port ${PORT + 1000}`,
+					`--persist-to ${JSON.stringify(STATE_DIR)}`,
+					'--var PW_DIAGNOSTICS:1',
+					`--var SITE_ID:${SITE}`,
+					// the OIDC rig's client secret. A `--var` rather than a secret because this value is
+					// in `docker/keycloak-realm.json` in the clear and belongs to a container that exists
+					// for this lane; a real deployment binds it as a secret
+					`--var OIDC_CLIENT_SECRET:${OIDC_SECRET}`
+				].join(' ')
+			),
 			// `/stats` answers 200 on a site that holds nothing; `/` answers 503 until the queue fills it
 			url: `${BASE_URL}/stats?site=${encodeURIComponent(SITE)}`,
 			reuseExistingServer: !isCI,

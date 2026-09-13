@@ -108,7 +108,9 @@ INSERT as a column it costs 0. Price the index against the meter the feature exi
 same instrument, before building the second half.
 
 A cache hit still costs one Worker request, and decomposition spends the DO quota it is trying to
-dodge. Rows-per-fill is 2 to 156 depending on what is already warm, not a flat number, and
+dodge. Rows-per-fill is 2 to 94 across five classes depending on what is already warm, not a flat
+number -- **count it from `ROWS_PER_FILL`, do not quote it**, this line said 156 after the
+`WITHOUT ROWID` conversion took it to 94 -- and
 `tests/integration/rows-per-fill-audit.spec.ts` pins each class.
 
 **When a measurement kills an approach, close the approach and keep the goal.** The tell is "X does

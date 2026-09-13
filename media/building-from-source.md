@@ -12,17 +12,44 @@ payload exists. `--payload-only` forbids the fallback; `--from-source` skips str
 
 ## Why Two Routes
 
-`assets/` is 121 MB of generated packs and `.interp/` holds the interpreter. Both are gitignored, so
-a clean checkout has neither and `wrangler deploy` has nothing to upload.
+`assets/` is generated packs and `.interp/` holds the interpreter. Both are gitignored, so a clean
+checkout has neither and `wrangler deploy` has nothing to upload.
 
-The payload route downloads them from a GitHub Release as one verified tarball. It is a plain HTTPS
-GET: no Docker, no `gh` auth, no PHP, no Cloudflare credential. That is what makes the Deploy to
-Cloudflare button work, since its build command is `bun install && bun run hydrate` and Workers
-Builds has no Docker to build with.
+The payload route downloads them as one verified tarball. It is a plain HTTPS GET: no Docker, no
+`gh` auth, no PHP, no Cloudflare credential. That is what makes the Deploy to Cloudflare button
+work, since its build command is `bun install && bun run hydrate` and Workers Builds has no Docker
+to build with.
 
 The source route regenerates the same bytes locally. It exists for the case the payload cannot
 cover: a checkout of a commit no release was cut from, and the window before the first release
 exists at all. It produces every artifact the payload carries, `assets/prefill.json` included.
+
+## Where a Payload Comes From
+
+`hydrate` tries four places and takes the first that answers, and every one of them is verified
+against the `SHA256SUMS` published beside it.
+
+| order | source                         | what it is                                    |
+| ----- | ------------------------------ | --------------------------------------------- |
+| 1     | `--from=<path>` or `dist/`     | a tarball on disk, which outranks the network |
+| 2     | `payloads/v<version>/` on R2   | the release, mirrored to the CDN              |
+| 3     | the GitHub Release             | the same bytes, canonical                     |
+| 4     | `payloads/dev-<branch>/` on R2 | that branch's tip, replaced on every push     |
+
+**The CDN copy is tried before the GitHub Release, and that order is measured rather than
+preferred.** A Cloudflare Workers Builds job hung for its whole timeout pulling a release asset body
+in a container that had restored 13.4 MB from this CDN 0.6 s earlier. The Release stays canonical
+and stays the fallback, so a CDN that is down costs a retry rather than a deploy.
+
+**The dev line never displaces a release.** It is last, it announces itself, and it exists so a
+checkout on a commit no release was cut from downloads a tree in seconds instead of building one in
+minutes with a toolchain the deploy container does not have. `bun run build:local` is still there
+when you want the bytes regenerated rather than fetched.
+
+Both lines are published by CI from the tarball the release job already built, so nothing is
+rebuilt to publish it. The keys come from `scripts/payload-cdn.ts`, which the resolver and the
+workflows both read; `tests/node/workflows.spec.ts` fails if a workflow starts spelling a key of its
+own.
 
 ## Quick Start
 

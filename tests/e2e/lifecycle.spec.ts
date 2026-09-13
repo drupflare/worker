@@ -90,6 +90,26 @@ const PACKED = process.env.PACK_FROM_SOURCE !== '1';
 /** the site name the pack ships with; firstrun is what changes it, and it changes the bytes too */
 const PACK_SITE_NAME = 'CFW Bench';
 
+/** every loopback origin a document names; a loopback origin can only be a harness */
+function loopbackOrigins(html: string): string[] {
+	return [
+		...new Set(
+			[...html.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/g)].map((m) => m[0])
+		)
+	];
+}
+
+/**
+ * Deduped and LONGEST FIRST, which is the half that makes the masking correct.
+ *
+ * `maskOrigins()` replaces in list order, so masking `http://localhost` before
+ * `http://localhost:8812` leaves a bare `:8812` behind -- the exact shape of the CI failure this
+ * exists for, `<origin>/rss.xml` against `<origin>:8801/rss.xml`.
+ */
+function longestFirst(origins: string[]): string[] {
+	return [...new Set(origins.filter(Boolean))].sort((a, b) => b.length - a.length);
+}
+
 const site = newSiteName('lifecycle');
 let t: Transport;
 /** carried between stages, because a lifecycle assertion is usually a comparison across two of them */
@@ -192,16 +212,27 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		// (scripts/drupal/prefill-cache.php) once the per-site nonces and the origin are masked.
 		// Two different PHP builds, identical output.
 		//
-		// The origin is masked rather than the length pinned: the pack was rendered on the build
-		// machine at `http://localhost` and this render uses the endpoint's own origin, so the two
-		// differ by exactly the length of that string. Measured here: 17,691 against 17,686, and
-		// `http://127.0.0.1:8787` is 5 characters longer than `http://localhost`.
+		// The origin is masked rather than the length pinned: the pack was rendered on a build
+		// worker and this render uses the endpoint's own origin, so the two differ by exactly the
+		// length of that string.
+		//
+		// THE BAKE ORIGIN CARRIES A PORT AND IT IS NOT ALWAYS THE SAME ONE. `lift-prefill.ts`
+		// defaults to `http://localhost:8801`; the shipped artifact here was baked at `:8812`.
+		// Masking `FALLBACK_ORIGIN` alone strips the host and leaves the port, which is how this
+		// read `<origin>/rss.xml` against `<origin>:8801/rss.xml` in CI. So the origins are read
+		// off the two documents rather than listed -- a loopback origin can only be a harness, and
+		// deriving the actual value beats a pattern loose enough to mask a URL that really changed.
 		const packed = await packedHome();
 		const masked = stripAssetTags(
-			maskOrigins(maskNonces({ first: r.body, second: packed }), [
-				new URL(ENDPOINT).origin,
-				FALLBACK_ORIGIN
-			])
+			maskOrigins(
+				maskNonces({ first: r.body, second: packed }),
+				longestFirst([
+					new URL(ENDPOINT).origin,
+					FALLBACK_ORIGIN,
+					...loopbackOrigins(r.body),
+					...loopbackOrigins(packed)
+				])
+			)
 		);
 		expect(firstDifference(masked.first, masked.second)).toBeNull();
 		// still an equality, just on the comparable form: a real content change moves this

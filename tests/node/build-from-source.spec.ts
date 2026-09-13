@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { ORIGINS } from '../../scripts/backup-cdn.ts';
 import {
 	assertKnownSteps,
 	LOCAL_STEPS,
@@ -28,6 +29,13 @@ import {
 import { resolvePayloadSource } from '../../scripts/hydrate.ts';
 import { PREFILL_PATHS } from '../../scripts/lift-prefill.ts';
 import { packVersionsHash } from '../../scripts/pack-hash.js';
+import {
+	devKeyBase,
+	devLabel,
+	payloadBaseUrl,
+	readSums,
+	releaseKeyBase
+} from '../../scripts/payload-cdn.ts';
 import { PAYLOAD_ASSETS, payloadName } from '../../scripts/release-payload.ts';
 import { SHIPPED_CORE_VERSION } from '../../src/ops/shipped-lock';
 
@@ -559,6 +567,103 @@ describe('hydrate picks between the payload and the source route', () => {
 		const source = await resolvePayloadSource(scratch(), 'v9.9.9', undefined, no);
 		expect(source.kind).toBe('none');
 		expect(source).toMatchObject({ reason: expect.stringContaining('v9.9.9') });
+	});
+
+	/**
+	 * The ordering is the whole point of the CDN work, so each rung is driven by a probe that
+	 * answers for exactly one host. `yes` cannot test an order: it stops at the first candidate.
+	 */
+	describe('which host answers, in order', () => {
+		/** a probe that admits only URLs containing `allow`, so one rung is reachable at a time */
+		const only = (allow: string) => async (url: string) => url.includes(allow);
+
+		it('prefers the CDN over the release, because the release body is what hung a build', async () => {
+			const source = await resolvePayloadSource(scratch(), 'v1.0.0', undefined, yes);
+			expect(source).toMatchObject({ kind: 'release', via: 'cdn' });
+			expect((source as { base: string }).base).toBe(
+				payloadBaseUrl(ORIGINS[0]!, releaseKeyBase('v1.0.0'))
+			);
+		});
+
+		it('probes SHA256SUMS rather than a tarball name, which is what lets dev resolve', async () => {
+			const seen: string[] = [];
+			await resolvePayloadSource(scratch(), 'v1.0.0', undefined, async (url) => {
+				seen.push(url);
+				return false;
+			});
+			expect(seen.length).toBeGreaterThan(0);
+			expect(seen.every((u) => u.endsWith('/SHA256SUMS'))).toBe(true);
+		});
+
+		it('falls back to the GitHub release when the CDN does not answer', async () => {
+			const source = await resolvePayloadSource(
+				scratch(),
+				'v1.0.0',
+				undefined,
+				only('github.com')
+			);
+			expect(source).toMatchObject({ kind: 'release', via: 'github' });
+		});
+
+		it('takes the branch dev line only when no release answers anywhere', async () => {
+			const source = await resolvePayloadSource(
+				scratch(),
+				'v1.0.0',
+				undefined,
+				only(`/${devKeyBase('master')}/`)
+			);
+			expect(source).toMatchObject({ kind: 'release', via: 'cdn-dev' });
+			expect((source as { base: string }).base).toContain('dev-master');
+		});
+
+		it('never lets the dev line displace a release that does answer', async () => {
+			// both would answer; the release has to win, or a cut version silently serves a tip
+			const source = await resolvePayloadSource(scratch(), 'v1.0.0', undefined, yes);
+			expect((source as { via: string }).via).not.toBe('cdn-dev');
+		});
+
+		it('asks for the checkout branch before master, so a feature branch gets its own', async () => {
+			const seen: string[] = [];
+			process.env['DRUPFLARE_DEV_BRANCH'] = 'feat/thing';
+			try {
+				await resolvePayloadSource(scratch(), 'v1.0.0', undefined, async (url) => {
+					seen.push(url);
+					return false;
+				});
+			} finally {
+				delete process.env['DRUPFLARE_DEV_BRANCH'];
+			}
+			const feat = seen.findIndex((u) => u.includes('dev-feat-thing'));
+			const master = seen.findIndex((u) => u.includes('dev-master'));
+			expect(feat).toBeGreaterThanOrEqual(0);
+			expect(master).toBeGreaterThan(feat);
+		});
+	});
+
+	describe('the keys both the workflows and the resolver derive', () => {
+		it('flattens a slash, so feat/x is one prefix rather than a nested one', () => {
+			expect(devLabel('feat/x')).toBe('dev-feat-x');
+			expect(devLabel('refs/heads/master')).toBe('dev-master');
+			expect(devKeyBase('master')).toBe('payloads/dev-master');
+			expect(releaseKeyBase('1.0.0')).toBe('payloads/v1.0.0');
+			expect(releaseKeyBase('v1.0.0')).toBe('payloads/v1.0.0');
+		});
+
+		it('reads the tarball name back out of SHA256SUMS', () => {
+			const digest = 'a'.repeat(64);
+			expect(readSums(`${digest}  drupflare-worker-1.2.3.tar.gz\n`)).toEqual({
+				sha256: digest,
+				name: 'drupflare-worker-1.2.3.tar.gz'
+			});
+		});
+
+		it('refuses a SHA256SUMS that names no tarball rather than downloading a guess', () => {
+			expect(() => readSums('')).toThrow(/empty/);
+			expect(() => readSums('not-a-digest  x.tar.gz')).toThrow(/sha256/);
+			expect(() => readSums(`${'a'.repeat(64)}  ../../etc/passwd`)).toThrow(
+				/names no tarball/
+			);
+		});
 	});
 });
 

@@ -43,7 +43,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { ORIGINS } from './backup-cdn';
 import { REENTRY_VAR, reentered } from './hydrating';
+import { devKeyBase, payloadBaseUrl, readSums, releaseKeyBase } from './payload-cdn';
 import { PAYLOAD_ROOTS, payloadName, sha256, type PayloadManifest } from './release-payload';
 
 /** where a payload is published, so the default path needs no argument */
@@ -103,8 +105,55 @@ export function verifyExtracted(dir: string, manifest: PayloadManifest): string[
 export type PayloadSource =
 	| { kind: 'given'; path: string }
 	| { kind: 'dist'; path: string }
-	| { kind: 'release'; tag: string; base: string }
+	| { kind: 'release'; tag: string; base: string; via: PayloadVia }
 	| { kind: 'none'; tag: string; reason: string };
+
+/** which host answered, and whether the bytes are a cut release or a branch tip */
+export type PayloadVia = 'cdn' | 'github' | 'cdn-dev';
+
+/** the branch whose rolling payload answers when no release does */
+function currentBranch(root: string): string {
+	const named = process.env.DRUPFLARE_DEV_BRANCH?.trim();
+	if (named) return named;
+	try {
+		return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+			cwd: root,
+			encoding: 'utf8'
+		}).trim();
+	} catch {
+		return 'master';
+	}
+}
+
+/**
+ * Every network base to try for a tag, in order, each paired with what answering it would mean.
+ *
+ * THE CDN OUTRANKS THE RELEASE and that ordering is measured rather than preferred: Workers Builds
+ * hung for its whole job timeout on a release asset body in a container that had pulled 13.4 MB
+ * from this CDN 0.6 s earlier. The release is still the canonical artifact and still the fallback,
+ * so a CDN that is down or behind costs a retry rather than the deploy.
+ *
+ * The dev line comes last and never displaces a release. A checkout sitting on a commit no release
+ * was cut from used to have only the source route, which needs a PHP toolchain the deploy container
+ * does not have -- so `dev-<branch>` is what turns that case from "build for minutes, if you can"
+ * into "download the tip". `master` is tried after the checkout's own branch because a fork or a
+ * detached HEAD names a branch nothing publishes.
+ */
+function networkBases(root: string, tag: string): { base: string; via: PayloadVia }[] {
+	const bases: { base: string; via: PayloadVia }[] = [];
+	for (const origin of ORIGINS) {
+		bases.push({ base: payloadBaseUrl(origin, releaseKeyBase(tag)), via: 'cdn' });
+	}
+	bases.push({ base: `https://github.com/${REPO}/releases/download/${tag}`, via: 'github' });
+
+	const branches = [currentBranch(root), 'master'];
+	for (const branch of [...new Set(branches)]) {
+		for (const origin of ORIGINS) {
+			bases.push({ base: payloadBaseUrl(origin, devKeyBase(branch)), via: 'cdn-dev' });
+		}
+	}
+	return bases;
+}
 
 /**
  * Picks the payload to hydrate from, cheapest first.
@@ -113,6 +162,11 @@ export type PayloadSource =
  * `bun run release:payload` just produced and re-downloading a release to test the build that made it
  * would test the wrong bytes. A release is probed rather than inferred from `git tag`: a shallow clone
  * has no tags, and the tags a clone does have say nothing about whether the asset was ever attached.
+ *
+ * EVERY NETWORK CANDIDATE IS PROBED BY ITS `SHA256SUMS` rather than by a tarball name. The name is
+ * then read back out of that file, which is what lets the rolling dev line resolve at all: it is
+ * built from whatever `package.json` said at that commit and a checkout cannot know which version
+ * that was.
  *
  * @param probe - answers whether a URL exists; injected so the routing is testable without a network
  */
@@ -130,14 +184,16 @@ export async function resolvePayloadSource(
 	const local = join(root, 'dist', payloadName(tag.replace(/^v/, '')));
 	if (existsSync(local)) return { kind: 'dist', path: local };
 
-	const base = `https://github.com/${REPO}/releases/download/${tag}`;
-	const url = `${base}/${payloadName(tag.replace(/^v/, ''))}`;
-	if (await probe(url)) return { kind: 'release', tag, base };
+	for (const { base, via } of networkBases(root, tag)) {
+		if (await probe(`${base}/SHA256SUMS`)) return { kind: 'release', tag, base, via };
+	}
 
 	return {
 		kind: 'none',
 		tag,
-		reason: `no ${local} on disk and ${REPO} has published no ${tag} payload`
+		reason:
+			`no ${local} on disk, and no ${tag} payload on the CDN, on ${REPO}'s releases, ` +
+			`or on the dev line for ${currentBranch(root)}`
 	};
 }
 
@@ -246,19 +302,32 @@ async function hydrateFrom(
 	try {
 		let tarball: string;
 		if (found.kind === 'release') {
-			const asset = payloadName(tag.replace(/^v/, ''));
-			tarball = join(work, asset);
-			console.log(`fetching ${found.base}/${asset}`);
-			await download(`${found.base}/${asset}`, tarball);
-
+			// SUMS FIRST, because it is what NAMES the tarball. Deriving the name from the tag is
+			// right for a cut release and impossible for the dev line, whose version is whatever
+			// the branch tip happened to carry
 			const sums = join(work, 'SHA256SUMS');
 			await download(`${found.base}/SHA256SUMS`, sums);
-			const expected = readFileSync(sums, 'utf8').trim().split(/\s+/)[0];
+			const { sha256: expected, name: asset } = readSums(readFileSync(sums, 'utf8'));
+
+			tarball = join(work, asset);
+			console.log(`fetching ${found.base}/${asset} (${found.via})`);
+			await download(`${found.base}/${asset}`, tarball);
+
 			const actual = sha256(tarball);
 			if (expected !== actual) {
 				throw new Error(`SHA256SUMS says ${expected}, the download is ${actual}`);
 			}
 			console.log(`tarball sha256 ${actual} matches SHA256SUMS`);
+			if (found.via === 'cdn-dev') {
+				// NAMING THE BRANCH IS THE POINT: the resolver tries `master` after the checkout's
+				// own branch, so a fork or a detached HEAD legitimately lands on a line it is not
+				// on, and a message that says only "a branch tip" makes that substitution silent
+				const line = found.base.slice(found.base.lastIndexOf('/') + 1);
+				console.log(
+					`this is the ${line} BRANCH TIP rather than a cut release: no release carried ` +
+						'these bytes, and the next push to that branch replaces them'
+				);
+			}
 		} else {
 			tarball = found.path;
 			console.log(`hydrating from ${tarball} (${found.kind})`);

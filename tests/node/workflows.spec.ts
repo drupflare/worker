@@ -160,3 +160,76 @@ describe('the interpreter lane', () => {
 		expect(runs(doc())).toContain('interp-proposal.ts');
 	});
 });
+
+/**
+ * The two lanes that publish a payload to the CDN.
+ *
+ * WHAT THIS EXISTS TO CATCH IS A PREFIX THAT DRIFTS. The resolver in `scripts/hydrate.ts` derives
+ * its candidate URLs from `scripts/payload-cdn.ts`; if a workflow ever grows its own
+ * `wrangler r2 object put payloads/...` line, the two can disagree and the symptom is a deploy that
+ * silently falls through to a source build. So the workflows are asserted to go through the script
+ * rather than to spell a key, which is the only form that cannot drift.
+ */
+describe('the payload publishing lanes', () => {
+	const byFile = (file: string) => workflows().find((w) => w.file === file)?.doc as Workflow;
+
+	it('publishes from both lanes through the shared script, never a hand-spelled key', () => {
+		for (const file of ['build.yml', 'release.yml']) {
+			const text = readFileSync(join(DIR, file), 'utf8');
+			expect(text, `${file} should publish`).toContain('publish-payload.ts');
+			// a literal key here is the drift this guard exists for
+			expect(text, `${file} spells a key`).not.toMatch(/r2 object put/);
+		}
+	});
+
+	it('gives each lane its own line: a release is versioned, a push is the branch tip', () => {
+		expect(runs(byFile('release.yml'))).toContain('publish-payload.ts --release');
+		expect(runs(byFile('build.yml'))).toContain('publish-payload.ts --dev');
+	});
+
+	it('never publishes a branch payload from a pull request, which has no branch line', () => {
+		const job = byFile('build.yml').jobs['dev-payload'] as { if?: string } | undefined;
+		expect(job).toBeDefined();
+		expect(job?.if).toContain("github.event_name == 'push'");
+	});
+
+	it('publishes only after the gate, so a red commit does not become a dev payload', () => {
+		const job = byFile('build.yml').jobs['dev-payload'] as { needs?: string } | undefined;
+		expect(job?.needs).toBe('gate');
+	});
+
+	it('verifies the sums before uploading, in both lanes', () => {
+		for (const file of ['build.yml', 'release.yml']) {
+			const text = readFileSync(join(DIR, file), 'utf8');
+			const check = text.indexOf('sha256sum -c SHA256SUMS');
+			const publish = text.indexOf('publish-payload.ts');
+			expect(check, `${file} checks sums`).toBeGreaterThanOrEqual(0);
+			expect(publish, `${file} publishes after checking`).toBeGreaterThan(check);
+		}
+	});
+
+	/**
+	 * A RELEASE PREFIX OUTRANKS THE GITHUB RELEASE IN `hydrate`, so publishing one before the suites
+	 * have passed leaves a resolvable payload for a version that may never be released. The run of
+	 * 2026-09-13 is the case: the payload built, the hydrated-tree suites then failed, and nothing
+	 * was published. Under the wrong order that failure would have left `payloads/v1.0.0/` behind
+	 * for every `bun run hydrate` to prefer.
+	 */
+	it('publishes a release payload only after the hydrated-tree suites have run', () => {
+		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
+		const suites = text.indexOf('Run the Suites Against the Hydrated Tree');
+		const publish = text.indexOf('publish-payload.ts');
+		expect(suites).toBeGreaterThanOrEqual(0);
+		expect(publish).toBeGreaterThan(suites);
+	});
+
+	it('hands both lanes the credential the bucket needs', () => {
+		for (const file of ['build.yml', 'release.yml']) {
+			const step = Object.values(byFile(file).jobs)
+				.flatMap((job) => job.steps ?? [])
+				.find((s) => (s.run ?? '').includes('publish-payload.ts'));
+			expect(step?.env?.['CLOUDFLARE_ACCOUNT_ID'], file).toBeDefined();
+			expect(step?.env?.['CLOUDFLARE_API_TOKEN'], file).toBeDefined();
+		}
+	});
+});

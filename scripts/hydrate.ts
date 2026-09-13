@@ -146,17 +146,61 @@ function arg(name: string, fallback?: string): string | undefined {
 	return hit ? hit.slice(name.length + 3) : fallback;
 }
 
-/** Downloads a URL to a path, failing on any non-200 rather than writing an error page to disk. */
+/** one attempt's budget; the failure this bounds is a body that stalls, not a slow link */
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+const PROBE_TIMEOUT_MS = 30_000;
+const DOWNLOAD_ATTEMPTS = 3;
+
+/**
+ * Downloads a URL to a path, failing on any non-200 rather than writing an error page to disk.
+ *
+ * **A BARE `fetch()` HERE HANGS THE BUILD INSTEAD OF FAILING IT**, measured on Cloudflare Workers
+ * Builds: the job printed `fetching` and stopped dead. {@link assetExists} had already HEADed the
+ * same URL through its redirect, so the host resolved and only the body stalled -- and with no
+ * signal there was nothing to end it, so the platform's own job timeout was the only thing that
+ * could, which names nothing and reads as a slow download rather than an unreachable one.
+ *
+ * The body is buffered rather than streamed into {@link Bun.write} so the signal covers reading it
+ * too, and so a short read is caught here by length instead of two steps later as a sha256 mismatch,
+ * which reads as a corrupt release.
+ */
 async function download(url: string, to: string): Promise<void> {
-	const res = await fetch(url);
-	if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-	await Bun.write(to, res);
+	let last = 'no attempt was made';
+	for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
+		const started = Date.now();
+		try {
+			const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+			const declared = Number(res.headers.get('content-length') ?? 0);
+			const body = new Uint8Array(await res.arrayBuffer());
+			if (declared > 0 && body.byteLength !== declared) {
+				throw new Error(`read ${body.byteLength} bytes of a declared ${declared}`);
+			}
+			await Bun.write(to, body);
+			return;
+		} catch (e) {
+			const secs = Math.round((Date.now() - started) / 1000);
+			last = `${(e as Error).message}, after ${secs}s`;
+			console.log(
+				`hydrate: attempt ${attempt}/${DOWNLOAD_ATTEMPTS} for ${url} failed: ${last}`
+			);
+		}
+	}
+	throw new Error(
+		`could not download ${url}: ${last}. The interpreter restore in \`bun install\` reaches the ` +
+			`CDN from the same place, so a failure only here is specific to the release asset host ` +
+			`rather than to outbound HTTP. Hydrate from a local tarball with --from=<path> instead.`
+	);
 }
 
 /** whether a release asset is actually there, without pulling 22 MB to find out */
 async function assetExists(url: string): Promise<boolean> {
 	try {
-		const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+		const res = await fetch(url, {
+			method: 'HEAD',
+			redirect: 'follow',
+			signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
+		});
 		return res.ok;
 	} catch {
 		return false;

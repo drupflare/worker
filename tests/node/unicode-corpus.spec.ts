@@ -15,6 +15,7 @@ import {
 	subjectSweep,
 	type Packed
 } from '../../scripts/measure/unicode-corpus';
+import { artifactGate } from './helpers/artifact-gate';
 
 /**
  * Whether this machine's PHP carries the Unicode data the artifact was swept from.
@@ -62,6 +63,23 @@ if (!php && process.env.CI) {
 }
 
 const describeIfPhp = php ? describe : describe.skip;
+
+/**
+ * The SUBJECT, which is a different thing from the oracle above.
+ *
+ * `subjectSweep()` runs the sweep against `drupal-src`, so it needs the fetched Drupal tree and not
+ * just a native php. The gate here covered the oracle only, and a clean checkout has no tree: every
+ * assertion in `the shipping tables` failed with `unicode-subject.php exited 2` and a bare
+ * `missing .../symfony/polyfill-iconv/Iconv.php` on stdout. That is the release GATE job, which
+ * installs dependencies and never builds a pack -- so this had to fail there the moment the step
+ * before it was fixed enough to reach it.
+ *
+ * `artifactGate` is the boundary the rest of the node lane already draws: skip when the subject is
+ * absent, and throw instead in a lane that set `REQUIRE_ARTIFACTS`, which the payload job does after
+ * hydrating.
+ */
+const SUBJECT_TREE = 'drupal-src/vendor/symfony/polyfill-iconv/Iconv.php';
+const describeIfSubject = php && !artifactGate([SUBJECT_TREE]) ? describe : describe.skip;
 
 describeIfPhp('the Unicode corpus artifact', () => {
 	/**
@@ -142,7 +160,7 @@ describeIfPhp('the Unicode corpus artifact', () => {
 	});
 });
 
-describeIfPhp('the shipping tables', () => {
+describeIfSubject('the shipping tables', () => {
 	it('are exactly what the artifact implies, so a hand-edit fails', () => {
 		const c = readArtifact();
 		const nat = {

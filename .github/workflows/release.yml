@@ -53,8 +53,20 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '24'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_sqlite, sqlite3, mbstring, iconv
       - name: Install Dependencies
         run: bun install --frozen-lockfile
+      # `check:driver-drift` compares the packed bytes against what composer INSTALLED, reading
+      # `.composer-vendor/composer/installed.json`. Nothing in CI had ever populated that, so the
+      # step could only ever report all three siblings as "composer has not installed this package"
+      # and fail -- a release gate that could not pass. It passes locally, where the vendor tree
+      # exists, which is why it read as the siblings being unpublished rather than as a missing step.
+      - name: Install the Locked PHP Packages
+        run: composer install --no-interaction --no-progress
       - name: Typecheck
         run: bun run typecheck
       - name: Check Prettier Formatting
@@ -142,6 +154,12 @@ jobs:
       - name: Run the Suites Against the Hydrated Tree
         env:
           REQUIRE_ARTIFACTS: '1'
+          # This job BUILDS the pack, so the tree it verifies is a from-source one. `assets:container`
+          # rewrites `assets/drupal/site.sqlite` in place and a built pack is a superset, so the specs
+          # whose subject is the SHIPPED bytes -- the CDN manifest digest, the pinned rows-per-fill
+          # classes -- cannot hold against it. Both already carry the gate; nothing was setting it,
+          # so they failed here on a payload that was correct.
+          PACK_FROM_SOURCE: '1'
         run: bun run test
       - name: Price the Bundle Against the Free Ceiling
         run: bun run release:check | tee /tmp/bundle.txt
@@ -272,7 +290,10 @@ jobs:
       - name: Install Dependencies
         run: bun install --frozen-lockfile
       - name: Hydrate From the Published Payload
-        run: bun run hydrate -- --payload-only
+        # --tag, because hydrate defaults to `v${package.json version}` and the release carries the
+        # dispatch SUFFIX. Without it the step above waits for `v1.0.0-rc1` and this one then looks
+        # for `v1.0.0`, so every suffixed release fails here on an asset that was published fine.
+        run: bun run hydrate -- --payload-only --tag="$TAG"
       - name: Bundle the Canonical Config
         run: bunx wrangler deploy --dry-run --outdir=/tmp/deploy-path -c wrangler.jsonc
       - name: Deploy Path to Job Summary

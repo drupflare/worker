@@ -14,7 +14,10 @@ const PRODUCED_BY: Record<string, string> = {
 	// structurally equivalent, NOT byte-identical: an install mints a fresh hash salt and UUIDs
 	'assets/drupal/site.sqlite':
 		'bun run build:site-db <out> (verify with bun run check:site-db <out>)',
-	'assets/drupal-sql': 'bun run assets:sql'
+	'assets/drupal-sql': 'bun run assets:sql',
+	// not an asset but the same kind of dependency: the fetched Drupal tree, which
+	// `unicode-corpus.spec.ts` sweeps as its SUBJECT
+	'drupal-src/vendor/symfony/polyfill-iconv/Iconv.php': 'bun run fetch:drupal'
 };
 
 /**

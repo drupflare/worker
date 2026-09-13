@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PARK_PROBE, parkTrapInstall } from '../../src/ops/park';
 import { drivePark, ParkSockets } from '../../src/ops/park-drive';
+import { resolveTcpEndpoint } from '../../src/ops/tcp';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -20,6 +21,34 @@ const REDIS = { REDIS_URL: 'redis://:testpass@127.0.0.1:6379' };
 type Interp = ServeDo & { run: (code: string) => Promise<string> };
 
 const canPark = async (site: ServeDo) => (await site.runJson(PARK_PROBE))['park'] === true;
+
+/**
+ * Whether the rig Redis is listening, resolved through the same function the drive connects with.
+ *
+ * WITHOUT THIS AN ABSENT CONTAINER READS AS A BROKEN PARK. `ParkSockets.open()` throws
+ * `ConnectionError` and the throw unwinds out of `drivePark`, so a machine with no rig fails the
+ * assertion that `+PONG` came back -- which is the sentence "the park cannot carry a conversation",
+ * said about an endpoint that was never there. It cost the release workflow a run: the `payload` job
+ * sets `REQUIRE_ARTIFACTS=1`, which stops excluding this file, and no job in that workflow stands up
+ * `docker/compose.yml`.
+ *
+ * Deliberately narrow: it decides reachability BEFORE the mechanism runs, so every assertion below
+ * still fails for real once the endpoint answers. A drive that opens and then misbehaves is a
+ * regression, not a missing rig.
+ */
+const rigListening = async () => {
+	const resolved = resolveTcpEndpoint(REDIS, 'redis');
+	if ('refusal' in resolved) return false;
+	const sockets = new ParkSockets();
+	try {
+		await sockets.open(0, resolved.endpoint);
+		return true;
+	} catch {
+		return false;
+	} finally {
+		await sockets.closeAll();
+	}
+};
 
 /**
  * Whether a chain parked in ONE invocation can be resumed in a LATER one.
@@ -89,6 +118,7 @@ describe('the park, against the interpreter on disk', () => {
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
 			if (!(await canPark(site))) return { build: 'absent' as const };
 			if (!(await canMultiTrip(site))) return { build: 'no-rearm' as const };
+			if (!(await rigListening())) return { build: 'no-rig' as const };
 
 			// a RESP client in PHP: AUTH then PING, which is open + 2 writes + 2 reads
 			const code = [
@@ -128,6 +158,13 @@ describe('the park, against the interpreter on disk', () => {
 			ctx.skip(
 				'this build parks once and then falls through: ext/cfwpark predates the ' +
 					'cfw_park_resume re-arm, so no multi-trip operation can complete on it'
+			);
+			return;
+		}
+		if (seen.build === 'no-rig') {
+			ctx.skip(
+				'no Redis on 127.0.0.1:6379; the endpoint is absent rather than the park broken. ' +
+					'docker compose -f docker/compose.yml up -d redis'
 			);
 			return;
 		}

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
+import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
 import { memfsCensus, renderPage } from '../../src/drupal/site-php';
 import {
 	DEFAULT_OPCACHE_MODE,
@@ -41,8 +43,13 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
 
 /** the Durable Object isolate limit; a platform figure rather than a budget chosen here */
 const ISOLATE_LIMIT = 128 * 1_048_576;
-/** what the glue starts the heap at, so an arm reading exactly this one has grown by nothing */
-const INITIAL_MEMORY = 96 * 1_048_576;
+/**
+ * What the BINARY starts the heap at, so an arm reading exactly this one has grown by nothing.
+ *
+ * Read from the figure the build step sets rather than written here as `96 * 1_048_576`: tuning the
+ * memory section to 80 MiB turned this red against an arm that had allocated nothing.
+ */
+const INITIAL_MEMORY = INITIAL_BYTES;
 
 async function armProfile(mode: string) {
 	return inObject(freshSite(), async (site: ServeDo) => {
@@ -139,8 +146,14 @@ describe('P30: the opcache arms', () => {
 		// the arm costs nothing at all, not merely less.
 		expect(by('off').bytes).toBe(0);
 		expect(by('off').heap).toBeLessThanOrEqual(by('file').heap);
-		expect(by('off').heap, 'the off arm grew, so something other than opcache allocated').toBe(
-			INITIAL_MEMORY
-		);
+		// AT MOST ONE GROWTH STEP, not zero. A render's demand is ~90.4 MiB, which fitted inside the
+		// old 96 MiB start and does not fit inside the tuned 80 -- so `off` now grows once while
+		// still allocating nothing of its own. The claim that survives is that it does not grow
+		// MORE than the step the glue takes, which is what "costs nothing" was standing in for
+		const oneStep = Math.ceil((INITIAL_MEMORY * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
+		expect(
+			by('off').heap,
+			'the off arm grew more than one step, so something other than opcache allocated'
+		).toBeLessThanOrEqual(oneStep);
 	}, 900_000);
 });

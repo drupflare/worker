@@ -1,5 +1,5 @@
 import PHPFactory from '../../.interp/php8.5-worker.tuned.mjs';
-import wasmModule from '../../.interp/php8.5.wasm';
+import wasmModule from '../../.interp/php8.5.tuned.wasm';
 
 /**
  * PHP 8.5 as a pre-compiled `CompiledWasm` import, with no compression frame at all.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
 import { renderPage } from '../../src/drupal/site-php';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';
@@ -45,8 +46,14 @@ const MIB = 1_048_576;
 /** the Durable Object isolate limit; a platform figure rather than a budget chosen here */
 const ISOLATE_LIMIT = 128 * MIB;
 
-/** `INITIAL_MEMORY`: where a booted interpreter starts and where provisioning must leave one */
-const BOOTED_IDLE = 96 * MIB;
+/**
+ * `INITIAL_MEMORY`: where a booted interpreter starts and where provisioning must leave one.
+ *
+ * READ FROM THE BINARY'S OWN FIGURE rather than written here. This was `96 * MIB`, and tuning the
+ * memory section to 80 turned two assertions red against an interpreter that was behaving exactly
+ * as intended -- the same shape as the hardcoded `< 80 MB` heap assertion 8.5 failed at 96.
+ */
+const BOOTED_IDLE = INITIAL_BYTES;
 
 const REQUEST_TIMEOUT = 900_000;
 const AUTH_PASS = 'cfw-Recycle-Pass-4412';

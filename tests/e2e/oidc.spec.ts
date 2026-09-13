@@ -303,7 +303,28 @@ describe('the OIDC tier against a real identity provider', () => {
 			'jwk',
 			(stranger as CryptoKeyPair).publicKey
 		)) as Jwk;
-		foreign.kid = keys[0]?.kid;
+		// THE KID THE TOKEN WAS SIGNED UNDER, not `keys[0]`. Keycloak publishes several keys and
+		// the first is usually not the signer, so the stranger carried a kid nothing matched and the
+		// refusal was "no JWKS key matches kid ..." -- a real refusal, but the wrong one: the
+		// signature check was never reached. Taking the kid from the token own header makes the
+		// stranger impersonate the signer, which is the case under test
+		const header = JSON.parse(
+			new TextDecoder().decode(
+				Uint8Array.from(
+					atob(idToken.split('.')[0]!.replace(/-/g, '+').replace(/_/g, '/')),
+					(c) => c.charCodeAt(0)
+				)
+			)
+		) as { kid?: string };
+		expect(
+			header.kid,
+			'the token carries no kid, so this cannot impersonate the signer'
+		).toBeTruthy();
+		expect(
+			keys.some((k) => k.kid === header.kid),
+			'the signer is not in the JWKS'
+		).toBe(true);
+		foreign.kid = header.kid;
 
 		expect(
 			await verifyIdToken(

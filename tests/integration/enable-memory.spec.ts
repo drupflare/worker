@@ -136,14 +136,21 @@ describe('the memory an enable costs', () => {
 			const grew = heap.after - heap.before;
 			expect(out['ok']).toBe(true);
 
-			// this asserted 15-35 MB, then none, and now one rung. Dropping opcache took the
-			// enable inside `INITIAL_MEMORY` on wasm32; 64-bit `zend_long` puts its working set
-			// back over 96 MB, so it grows ONCE. The peak is the invariant, not the growth: a
-			// bound on `grew` alone reads a step change as a regression
-			const oneRung = Math.ceil(heap.before * SHIPPING_STEP) + 65_536;
-			expect(grew, `grew ${grew} bytes, more than one grow event`).toBeLessThanOrEqual(
-				oneRung
-			);
+			// this asserted 15-35 MB, then none, then one rung, and now two. The demand has not
+			// moved; where it lands has. `INITIAL_MEMORY` is 80 MiB rather than 96 since the build
+			// step began tuning the binary, so the same install crosses two rungs instead of one --
+			// which is exactly the case this comment already warned about, "a bound on `grew` alone
+			// reads a step change as a regression". The rungs are computed from the start rather
+			// than written down, so the next change to either figure moves this with it
+			const rungs = 2;
+			let ceiling = heap.before;
+			for (let i = 0; i < rungs; i++) {
+				ceiling = Math.ceil((ceiling * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
+			}
+			expect(
+				heap.after,
+				`grew ${grew} bytes, more than ${rungs} grow events from ${heap.before}`
+			).toBeLessThanOrEqual(ceiling);
 			// the instrument check the growth bound used to provide. A reading of zero from a
 			// BROKEN probe and a reading of zero from a heap that did not grow look identical, so
 			// the heap has to be a real, page-aligned, plausible figure either way

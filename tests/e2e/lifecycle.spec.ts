@@ -19,7 +19,7 @@ import {
 	type ServeStats,
 	type Transport
 } from './helpers/lifecycle';
-import { firstDifference, maskNonces, maskOrigins } from './helpers/twice';
+import { firstDifference, maskNonces, maskOrigins, stripAssetTags } from './helpers/twice';
 
 /**
  * ONE Drupal lifecycle, driven end to end against a running worker: provision, migrate, prefill,
@@ -179,10 +179,12 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 		// differ by exactly the length of that string. Measured here: 17,691 against 17,686, and
 		// `http://127.0.0.1:8787` is 5 characters longer than `http://localhost`.
 		const packed = await packedHome();
-		const masked = maskOrigins(maskNonces({ first: r.body, second: packed }), [
-			new URL(ENDPOINT).origin,
-			FALLBACK_ORIGIN
-		]);
+		const masked = stripAssetTags(
+			maskOrigins(maskNonces({ first: r.body, second: packed }), [
+				new URL(ENDPOINT).origin,
+				FALLBACK_ORIGIN
+			])
+		);
 		expect(firstDifference(masked.first, masked.second)).toBeNull();
 		// still an equality, just on the comparable form: a real content change moves this
 		expect(masked.first.length).toBe(masked.second.length);
@@ -268,7 +270,12 @@ describe.skipIf(skip)(`the Drupal lifecycle at ${ENDPOINT} (site ${site})`, () =
 	it('10. answers the operations surface, and refuses what it cannot slice', async () => {
 		const registry = await ops(t);
 		expect(registry.ok).toBe(true);
-		expect(registry.count).toBe(8);
+		// THE OPS THIS TEST DRIVES, NOT HOW MANY THERE ARE. This pinned 8 and the registry has since
+		// grown to 18, so it failed on a surface that had gained capability -- and it failed
+		// invisibly, because the lane it lives in could not reach the worker at all
+		const operations = registry.operations as Record<string, unknown>;
+		expect(Object.keys(operations)).toEqual(expect.arrayContaining(['status', 'en', 'cr']));
+		expect(registry.count).toBe(Object.keys(operations).length);
 
 		const status = await ops(t, 'status');
 		expect(status.ok).toBe(true);

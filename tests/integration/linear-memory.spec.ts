@@ -110,13 +110,20 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		expect(heap.bootedIdle % 65_536, 'wasm pages are 64 KiB').toBe(0);
 	}, 900_000);
 
-	it('does NOT grow for an anonymous render any more, which P30 is what changed', async () => {
+	it('costs an anonymous render at most one growth step', async () => {
 		const heap = await readHeap();
-		// THIS ASSERTED GROWTH UNTIL 2026-08-23 and now asserts none. With `OPCACHE_MODE=off` a
-		// render completes inside `INITIAL_MEMORY`; opcache's compile-time working set was the
-		// growth. The install and the authenticated render still grow, which is where the step
-		// earns its keep and why the table above has three columns rather than one
-		expect(heap.afterRender).toBe(heap.bootedIdle);
+		// THIS ASSERTED GROWTH UNTIL 2026-08-23, then none, and now one step at most. The middle
+		// reading was true of a 96 MiB INITIAL_MEMORY, where a render's ~90.4 MiB of demand fit
+		// inside the start; at the tuned 80 MiB it does not, so the render grows exactly once --
+		// which is the trade the tuning makes and the reason the equality could not stay.
+		//
+		// What it buys is on the other side of the same measurement: after five renders and an
+		// invalidation between each, the isolate holds 119.58 MiB against 125.83 at 96, so the
+		// object that used to sit 2.17 MiB from a reset now sits 8.42 clear. One `memory.grow` is
+		// the price
+		const oneStep = Math.ceil((heap.bootedIdle * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
+		expect(heap.afterRender).toBeGreaterThanOrEqual(heap.bootedIdle);
+		expect(heap.afterRender).toBeLessThanOrEqual(oneStep);
 		expect(heap.afterRender % 65_536).toBe(0);
 	}, 900_000);
 

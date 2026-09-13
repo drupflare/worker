@@ -1265,3 +1265,143 @@ describe('the page cache kill switch, which stops the whole site caching', () =>
 		REQUEST_TIMEOUT
 	);
 });
+
+const RECURSION_TITLE = 'Recursion Key Probe';
+
+describe('the recursion keys, which cost CONTENT rather than bytes', () => {
+	/**
+	 * `EntityViewBuilder::$recursionKeys` is the eighth member and the most expensive so far.
+	 *
+	 * A key goes in at `#pre_render` and comes out at `#post_render`, so a render that throws in
+	 * between never removes it. On a persistent interpreter the entry then survives the request, and
+	 * `setRecursiveRenderProtection()` marks every later build of that entity and view mode
+	 * `#printed` -- which renders EMPTY rather than failing. Nothing reports it.
+	 *
+	 * MEASURED: save a node, empty the render bin, and the front page comes back 9,981 bytes against
+	 * 15,055 with the teaser gone, logging `Recursive rendering attempt aborted for
+	 * node:entity_id:1:1:en:teaser`. Every later render on that object agrees, and dropping the
+	 * interpreter is the only thing that brings the content back. `/node/1` keeps rendering fine
+	 * throughout, which is what makes it read as a Views problem rather than a static.
+	 *
+	 * Found by `operate.spec.ts` in the e2e lane -- a lane that had never reached a worker -- and it
+	 * predates the kill-switch reset above: the control ran with that reset disabled and reproduced
+	 * byte for byte.
+	 */
+	it(
+		'are cleared at the boundary, so a node still renders after a failed render',
+		async () => {
+			const servedHtml = (site: ServeDo) =>
+				site
+					.fetch(new Request('https://do.local/__serve?path=%2F&edge=0'))
+					.then((r) => r.text());
+
+			/**
+			 * The key core logs when it aborts, planted directly.
+			 *
+			 * INDUCING the leak needs a render that THROWS, and the one that does it -- the front page
+			 * through `fillOne()` with the bins emptied, raising `A stray renderRoot() invocation is
+			 * causing bubbling of attached assets to break` -- does not reproduce in this harness.
+			 * Planting the entry is the same starting state and is deterministic: what is under test is
+			 * whether a key that IS present survives the boundary, not how it got there.
+			 */
+			const plant = `<?php
+$p = new \\ReflectionProperty(\\Drupal\\Core\\Entity\\EntityViewBuilder::class, 'recursionKeys');
+$p->setValue(null, ['node:entity_id:1:1:en:teaser' => true]);
+$out = ['planted' => count($p->getValue())];
+echo json_encode($out);`;
+
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				// THROUGH `/__savenode` RATHER THAN THE NODE FORM. The front page is a view of
+				// PROMOTED nodes and Basic page does not promote by default, so a form submission
+				// leaves the control below refusing -- correctly, because the node never appears there
+				const saved = await callDo(
+					site,
+					`/__savenode?title=${encodeURIComponent(RECURSION_TITLE)}&body=teaser`
+				);
+				// the teaser has to be on the front page BEFORE any of this means anything
+				const warm = await servedHtml(site);
+				const planted = (await site.runJson(plant)) as Payload;
+				const residue = (await boundary(site))['recursionKeys'];
+				await callDo(site, '/__assemble?path=%2F&bins=dynamic_page_cache,render,page');
+				const again = await servedHtml(site);
+				return {
+					savedOk: saved['ok'] === true,
+					planted: Number(planted['planted'] ?? 0),
+					warm,
+					residue,
+					again
+				};
+			});
+
+			const title = RECURSION_TITLE;
+			expect(out.savedOk, 'the save has to have happened').toBe(true);
+			// the control: the node reaches the front page at all, or the assertion below passes on a
+			// site that never listed it
+			expect(out.warm, 'the node never reached the front page').toContain(title);
+			// and the plant took, so the starting state is the one being claimed about
+			expect(out.planted, 'the key was never planted').toBe(1);
+			expect(out.residue, 'the key did not survive to the next request').toBeGreaterThan(0);
+			// this is what fails without the reset: the teaser is marked #printed and renders empty,
+			// so the node disappears from the front page while /node/1 keeps working
+			expect(out.again, 'the node vanished once a recursion key was left behind').toContain(
+				title
+			);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the rendering-root flag, which turns every later render into a 500', () => {
+	/**
+	 * `Renderer::$isRenderingRoot` is the ninth member, and core already guards the case it expects.
+	 *
+	 * `renderRoot()` sets the flag, renders, and resets it -- including from a `catch`, precisely so
+	 * a render that THROWS does not poison the next one. What that cannot cover is an abort, and
+	 * this SAPI does not unwind: a run cut short leaves the flag true on the `renderer` service,
+	 * which outlives the request, and every `renderRoot()` after it throws `A stray renderRoot()
+	 * invocation is causing bubbling of attached assets to break`.
+	 *
+	 * The visible cost is a 500 on a healthy site. Measured in the e2e lane across three cold runs:
+	 * the front page answered 500 after an invalidation in two of them, the warm-up timed out at
+	 * 60 s, and nothing about the site or the content was wrong.
+	 *
+	 * Planted rather than induced, for the reason the recursion-key case gives: what is under test
+	 * is whether a flag that IS set survives the boundary, not the abort that sets it.
+	 */
+	it(
+		'is cleared at the boundary, so a later render is not a 500',
+		async () => {
+			const plant = `<?php
+$r = \\Drupal::service('renderer');
+$p = new \\ReflectionProperty($r, 'isRenderingRoot');
+$p->setValue($r, true);
+echo json_encode(['planted' => $p->getValue($r) ? 1 : 0]);`;
+
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				const before = await renderWith(site, '/', COLD_BINS);
+				const planted = (await site.runJson(plant)) as Payload;
+				const residue = (await boundary(site))['renderingRoot'];
+				const after = await renderWith(site, '/', COLD_BINS);
+				return {
+					beforeStatus: before['status'],
+					planted: Number(planted['planted'] ?? 0),
+					residue,
+					afterStatus: after['status'],
+					afterHtml: html(after)
+				};
+			});
+
+			// the control: the page renders at all before the flag is touched
+			expect(out.beforeStatus, 'the front page did not render to begin with').toBe(200);
+			expect(out.planted, 'the flag was never planted').toBe(1);
+			expect(out.residue, 'the flag did not survive to the next request').toBe(1);
+			// and this is what fails without the reset: renderRoot() refuses for the rest of the
+			// incarnation and the site answers 500 on every page
+			expect(out.afterStatus, 'a stray renderRoot() took the next render down').toBe(200);
+			expect(out.afterHtml).toContain('</html>');
+		},
+		REQUEST_TIMEOUT
+	);
+});

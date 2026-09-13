@@ -224,14 +224,22 @@ async function main(): Promise<void> {
 		// #endregion
 
 		// #region what the site actually does
-		const attempt = await api<{
+		type Attempt = {
 			ok?: boolean;
+			retry?: boolean;
 			discoverable?: boolean;
 			alreadyEnabled?: boolean;
 			rowsWritten?: number;
 			writeStatements?: number;
 			routerRebuilds?: number | null;
-		}>('/enable', { module: mod.machine });
+		};
+		// `retry` means the object dropped a resident interpreter and needs the next invocation
+		// before it can boot a fresh one
+		let attempt = await api<Attempt>('/enable', { module: mod.machine });
+		for (let i = 0; i < 2 && attempt.body?.retry === true; i++) {
+			await new Promise((r) => setTimeout(r, 2000));
+			attempt = await api<Attempt>('/enable', { module: mod.machine });
+		}
 		const body = attempt.body ?? {};
 		const discoverable = body.discoverable === true;
 		const enabled = body.ok === true || body.alreadyEnabled === true;

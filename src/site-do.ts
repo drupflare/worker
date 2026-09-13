@@ -12506,6 +12506,24 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// reproduces the failing order for the A/B rather than being a tuning knob
 					const keepInterpreter = url.searchParams.get('keep') === '1';
 					if (wantVerify || !keepInterpreter) {
+						// AND THE DROP CANNOT BE FOLLOWED BY A BOOT IN THE SAME INVOCATION, which
+						// is the half the comment above was missing: linear memory comes back
+						// only when the module is COLLECTED, and that cannot happen while the
+						// call that dropped it is still on the stack. Measured on an object at
+						// 125.83 MiB of a 128 MiB isolate -- five renders -- the second
+						// interpreter resets the object.
+						//
+						// Only when the heap is in the way: deferring unconditionally moved a
+						// refusal onto a cold kernel, which costs 45 rows against a warm 41.
+						if (this.php?.binary && this.oversized()) {
+							this.php = null;
+							return Response.json({
+								ok: false,
+								retry: true,
+								droppedInterpreter: true,
+								error: 'dropped the interpreter to free its heap; call again'
+							});
+						}
 						this.php = null;
 					}
 					const booted = await this.runJson(BOOT_KERNEL);
@@ -13049,7 +13067,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const message = url.searchParams.get('message') ?? '';
 					const fragment = tcpLive({ protocol, args, message });
 					const first = await this.runJson(fragment);
-					const drained = await this.drainHttpQueue(3);
+					// UNTIL THE QUEUE IS EMPTY, not once. A TCP exchange shares `cfw_http_queue`
+					// with the deferred fetches, so a single `drainHttpQueue(3)` spent its budget
+					// on whatever was already waiting -- the health suite leaves three -- and the
+					// exchange this route just queued stayed queued. The second ask then answered
+					// "is not in the exchange cache" forever, which reads as a broken transport
+					const drained: Awaited<ReturnType<typeof this.drainHttpQueue>>[] = [];
+					for (let i = 0; i < 8; i++) {
+						const round = await this.drainHttpQueue(5);
+						drained.push(round);
+						if (Number(round.remaining ?? 0) === 0) break;
+					}
 					const second = protocol === 'redis' ? await this.runJson(fragment) : null;
 					return Response.json({ first, drained, second });
 				}

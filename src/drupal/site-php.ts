@@ -693,6 +693,42 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
     }
   } catch (\\Throwable $e) {}
 
+  // AND EntityViewBuilder::$recursionKeys, which is the one that costs CONTENT rather than bytes.
+  // A key goes in at #pre_render and comes out at #post_render, so a render that throws in between
+  // leaves it set -- and on a persistent interpreter every later build of that entity and view mode
+  // is marked #printed and renders EMPTY. Measured: save a node, empty the render bin, and the front
+  // page comes back 9,981 bytes against 15,055 with the teaser gone, logging "Recursive rendering
+  // attempt aborted for node:entity_id:1:1:en:teaser". One failed render blanks that node for the
+  // life of the incarnation, and /node/1 still rendering is what makes it look like a view problem.
+  try {
+    $keys = new \\ReflectionProperty(
+      \\Drupal\\Core\\Entity\\EntityViewBuilder::class,
+      "recursionKeys"
+    );
+    $keys->setValue(null, []);
+  } catch (\\Throwable $e) {}
+
+  // AND Renderer::$isRenderingRoot, which turns every later render into a 500.
+  // renderRoot() sets it, and core resets it in a catch -- so an EXCEPTION is handled and an
+  // abort is not. This SAPI does not unwind: a run cut short leaves the flag true on a service
+  // that outlives the request, and every renderRoot() after it throws "A stray renderRoot()
+  // invocation is causing bubbling of attached assets to break". Measured in the e2e lane as the
+  // front page answering 500 after an invalidation, with the site otherwise healthy.
+  // Walked through any decorator, for the reason the path.matcher walk below gives.
+  try {
+    $node = \\Drupal::service("renderer");
+    $seen = 0;
+    while (is_object($node) && $seen < 8) {
+      $seen++;
+      $ref = new \\ReflectionObject($node);
+      if ($ref->hasProperty("isRenderingRoot")) {
+        $ref->getProperty("isRenderingRoot")->setValue($node, false);
+      }
+      if (!$ref->hasProperty("decorated")) { break; }
+      $node = $ref->getProperty("decorated")->getValue($node);
+    }
+  } catch (\\Throwable $e) {}
+
   // PATH.MATCHER LEAKS ITS FRONT-PAGE VERDICT ACROSS RENDERS, and this fixes markup that was
   // being served wrong to real visitors. isFrontPage() memoises into $isCurrentFrontPage, and on a
   // persistent container the FIRST path rendered decides for every later one. Measured: render /
@@ -3070,6 +3106,27 @@ $out['killSwitch'] = $ask(function () {
   $switch = $container->get('page_cache_kill_switch');
   $property = new \ReflectionProperty($switch, 'kill');
   return $property->getValue($switch) ? 1 : 0;
+});
+
+// the one that costs content: a key left behind by a render that threw makes every later build of
+// that entity and view mode render EMPTY, and nothing anywhere reports it
+$out['recursionKeys'] = $ask(function () {
+  $property = new \ReflectionProperty(
+    \Drupal\Core\Entity\EntityViewBuilder::class,
+    'recursionKeys'
+  );
+  $value = $property->getValue();
+  return is_array($value) ? count($value) : -1;
+});
+
+// the flag core resets in a catch and this SAPI can leave set, because an abort is not an
+// exception: true here means every later renderRoot() answers 500
+$out['renderingRoot'] = $ask(function () {
+  $container = \Drupal::getContainer();
+  if ($container === null || !$container->initialized('renderer')) { return null; }
+  $renderer = $container->get('renderer');
+  $property = new \ReflectionProperty($renderer, 'isRenderingRoot');
+  return $property->getValue($renderer) ? 1 : 0;
 });
 
 // keyed by the Request OBJECT in a static SplObjectStorage, so every request ever served stays

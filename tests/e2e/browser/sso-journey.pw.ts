@@ -82,7 +82,14 @@ async function ensureExternalauth(): Promise<{ ok: boolean; why: string }> {
 		`/install?site=${SITE}&module=${encodeURIComponent('drupal/externalauth')}`
 	);
 	if (!installed.ok) return installed;
-	return await step(`/enable?site=${SITE}&module=externalauth`);
+	// `retry` is the route reporting it dropped a resident interpreter; the boot needs the next
+	// invocation before the freed heap is actually back
+	let enabled = await step(`/enable?site=${SITE}&module=externalauth`);
+	for (let i = 0; i < 2 && !enabled.ok; i++) {
+		await new Promise((r) => setTimeout(r, 2000));
+		enabled = await step(`/enable?site=${SITE}&module=externalauth`);
+	}
+	return enabled;
 }
 
 let reachable = false;

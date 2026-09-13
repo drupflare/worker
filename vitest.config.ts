@@ -11,6 +11,7 @@ import {
 	tunedGlueFor,
 	type Abi
 } from './scripts/measure/growth-glue.js';
+import { PRISTINE_WASM, TUNED_WASM, emitTunedWasm } from './scripts/measure/initial-memory.js';
 
 const SHIPPING_CODE = [
 	'src/site.ts',
@@ -23,7 +24,19 @@ const SHIPPING_CODE = [
 
 const DEFAULT_SEAM = 'vendor/static-free-v1/php8.3-worker.mjs';
 const PRISTINE_GLUE = '.interp/php8.5-worker.mjs';
-const SHIPPING_WASM = '.interp/php8.5.wasm';
+const PRISTINE_WASM_PATH = PRISTINE_WASM;
+
+/**
+ * The TUNED binary, which is what `src/runtime/php-binary-raw.ts` imports.
+ *
+ * Emitted here when it is missing for the same reason as the glue below: INITIAL_MEMORY lives in the
+ * module's memory section, so a gate running the pristine 96 MiB while production runs 80 is a lane
+ * divergence at the one seam this project has already had one at.
+ */
+const SHIPPING_WASM = TUNED_WASM;
+if (!existsSync(SHIPPING_WASM) && existsSync(PRISTINE_WASM_PATH)) {
+	emitTunedWasm(process.cwd());
+}
 
 /**
  * The TUNED glue, which is what `src/runtime/php-binary-85.ts` imports.
@@ -228,9 +241,15 @@ const binaryAlias = haveShipping
  * reaches a 113,770,496-byte linear memory on an authenticated render. Budgeting 400 MiB a lane
  * covers that plus V8's own overhead, and half of physical memory keeps the machine usable.
  *
- * CI stays at 1 by default. A hosted runner is 4 cores against a workload that is 12 MB of wasm per
- * lane, and a lane that OOMs there fails the whole gate rather than one file.
- * `DRUPFLARE_TEST_WORKERS` overrides either way.
+ * **CI USED TO PIN THIS AT 1 AND THAT IS THE WHOLE HOUR.** `Run the Gate With the Pack Asserted`
+ * took 3,410 s of a 3,479 s Pack Suites run on 2026-09-12 -- every other step totalled 69 s -- and
+ * the breakdown says why: 2,583 s of tests plus 597 s of import against 3,410 s of wall clock is a
+ * single lane. The same suite locally runs 2,169 s of tests in 651 s.
+ *
+ * The pin was set against a memory worry the runner does not have. `ubuntu-24.04` is 4 cores and
+ * 16 GB, so this function's OWN budget allows 20 lanes there and the cores allow 3. Computing it
+ * from the runner rather than hardcoding 1 keeps the budget honest if the runner ever shrinks, and
+ * `DRUPFLARE_TEST_WORKERS` still overrides either way.
  */
 const MIB = 1_048_576;
 
@@ -251,11 +270,12 @@ const MIB = 1_048_576;
 function workerLanes(): number {
 	const explicit = Number(process.env.DRUPFLARE_TEST_WORKERS);
 	if (Number.isFinite(explicit) && explicit >= 1) return Math.floor(explicit);
-	if (process.env.CI) return 1;
+	const ci = process.env.CI !== undefined;
 	const byMemory = Math.floor((totalmem() * 0.5) / (400 * MIB));
-	// leave two cores for the host, and cap at 8: past that the lanes contend on the same SQLite
-	const byCores = availableParallelism() - 2;
-	return Math.max(2, Math.min(byCores, byMemory, 8));
+	// one core for the runner, two for a developer's machine; cap at 8, past which the lanes
+	// contend on the same SQLite
+	const byCores = availableParallelism() - (ci ? 1 : 2);
+	return Math.max(ci ? 1 : 2, Math.min(byCores, byMemory, 8));
 }
 
 export default defineConfig({

@@ -296,7 +296,14 @@ ${install}
 		const machine = machineName(name);
 		out.textContent = 'Enabling ' + machine + '...';
 		try {
-			const body = await ask('/enable?module=' + encodeURIComponent(machine));
+			// \`retry\` means the object dropped a resident interpreter and needs a new invocation
+			// before it can boot a fresh one. Repeated here rather than shown, because it is
+			// bookkeeping the operator did not ask about
+			let body = await ask('/enable?module=' + encodeURIComponent(machine));
+			for (let i = 0; i < 2 && body.retry; i++) {
+				await new Promise(r => setTimeout(r, 2000));
+				body = await ask('/enable?module=' + encodeURIComponent(machine));
+			}
 			// \`nowEnabled\` is what ENABLE_MODULE reads back out of core.extension. This read
 			// \`enabled\`, which only ENABLE_VERIFY sets and only to a module name, so a successful
 			// enable rendered "Not enabled: unknown"

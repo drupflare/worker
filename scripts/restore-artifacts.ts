@@ -27,12 +27,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import {
 	ARCHIVED,
-	MANIFEST_PATH,
 	fetchFromCdn,
+	MANIFEST_PATH,
 	type ArchivedEntry,
 	type CdnManifest
 } from './backup-cdn';
 import { emitTunedGlue, glueFor } from './measure/growth-glue.js';
+import { emitTunedWasm, INITIAL_PAGES, mib } from './measure/initial-memory.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -147,6 +148,18 @@ if (import.meta.main) {
 		console.log(`restore-artifacts: tuned glue -> ${emitTunedGlue(ROOT)}`);
 	} catch (e) {
 		console.warn(`restore-artifacts: could not emit the tuned glue: ${(e as Error).message}`);
+		if (strict) process.exit(1);
+	}
+	// and the other half of the same budget: INITIAL_MEMORY lives in the binary's memory section,
+	// where no env var reaches it. At the published 96 MiB an object five renders old holds 125.83
+	// of the 128 MiB isolate; at 80 it holds 119.58. See `initial-memory.ts` for the whole curve
+	try {
+		const out = emitTunedWasm(ROOT);
+		console.log(`restore-artifacts: tuned interpreter -> ${out} (${mib(INITIAL_PAGES)} MiB)`);
+	} catch (e) {
+		console.warn(
+			`restore-artifacts: could not emit the tuned interpreter: ${(e as Error).message}`
+		);
 		if (strict) process.exit(1);
 	}
 	// the wasm64 arm, when its build is present. Never fetched -- `phasm` publishes it separately

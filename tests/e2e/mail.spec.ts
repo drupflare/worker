@@ -195,14 +195,24 @@ describe('Drupal mail reaches a real SMTP server', () => {
 			form_id: hidden.form_id ?? 'user_pass',
 			op: 'Submit'
 		});
-		const res = await fetch(
-			`${ENDPOINT}/serve?site=${encodeURIComponent(SITE)}&path=${encodeURIComponent('/user/password')}&edge=0`,
-			{
-				method: 'POST',
-				headers: { 'content-type': 'application/x-www-form-urlencoded' },
-				body
-			}
-		);
+		// RETRIED WHILE THE OBJECT IS WARMING, the way `formFields()` above already retries its GET.
+		// A submission arriving while the fill chain still owes this path answers 503 `warming`,
+		// which is the queue talking rather than the form refusing -- and it only happens partway
+		// through a full lane run, so the spec passed on its own and failed in company
+		let res!: Response;
+		const until = Date.now() + 90_000;
+		for (;;) {
+			res = await fetch(
+				`${ENDPOINT}/serve?site=${encodeURIComponent(SITE)}&path=${encodeURIComponent('/user/password')}&edge=0`,
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/x-www-form-urlencoded' },
+					body
+				}
+			);
+			if (res.status < 500 || Date.now() >= until) break;
+			await new Promise((r) => setTimeout(r, 1000));
+		}
 		// the form answers 200 with a status message or 303 to itself; either means it was accepted
 		expect([200, 303]).toContain(res.status);
 
@@ -226,8 +236,14 @@ describe('Drupal mail reaches a real SMTP server', () => {
 		if (!found) return;
 		const raw = String(found.mimeMessage ?? '');
 		expect(raw).toMatch(/user\/reset\//);
-		expect(raw, 'a link to localhost points the recipient at their own machine').not.toMatch(
-			/https?:\/\/(localhost|127\.0\.0\.1)/
+		// AGAINST THE ENDPOINT UNDER TEST, not merely away from a literal. This banned
+		// `127.0.0.1` while the rig's own endpoint IS `http://127.0.0.1:8787`, so a correctly
+		// built link failed: measured `http://127.0.0.1:8787/user/reset/1/...`. The defect it
+		// exists for is Drupal building the link from `Request::create()`'s default
+		// `http://localhost/` -- no port, wrong host -- and comparing against the endpoint catches
+		// that wherever the worker is, which the deny-list could not
+		expect(raw, 'the reset link is not built against the site origin').toContain(
+			`${ENDPOINT}/user/reset/`
 		);
 	});
 });

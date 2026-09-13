@@ -171,3 +171,27 @@ export function maskOrigins(pair: Pair<string>, origins: string[]): Pair<string>
 	}
 	return out;
 }
+
+/**
+ * Drops the asset tag run from both documents, so an aggregated render and a packed one compare.
+ *
+ * `wrangler.jsonc` ships `ASSET_AGGREGATES: "1"` and the substitution happens in `fillOne()` at
+ * store time, so a live render names 13 aggregates where `assets/prefill.json` -- baked by native
+ * PHP before the lever existed -- names 63 individual files. That is not a content difference and
+ * no amount of URL masking reconciles it, because the two documents carry a different NUMBER of
+ * elements: measured 12,056 bytes against 17,523.
+ *
+ * So the run is removed rather than rewritten, and the claim narrows honestly to "the two PHP builds
+ * produce the same document apart from which asset URLs it points at". What the tags themselves do
+ * is asserted by the browser lane, which loads them in an engine and reads the computed style back.
+ */
+export function stripAssetTags(pair: Pair<string>): Pair<string> {
+	const drop = (html: string) =>
+		html
+			.replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, '')
+			.replace(/<script[^>]+src=["'][^"']+["'][^>]*>\s*<\/script>/gi, '')
+			// and the blank lines the removed elements stood on, or the two documents still differ by
+			// one newline per tag: 13 aggregates against 63 files read as 11,204 bytes vs 11,254
+			.replace(/\n(?:[ \t]*\n)+/g, '\n');
+	return { first: drop(pair.first), second: drop(pair.second) };
+}

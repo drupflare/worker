@@ -8,6 +8,19 @@ import type { Transport } from './lifecycle';
  * operated for years.
  */
 
+/**
+ * The gap a deferred `/enable` needs before its retry.
+ *
+ * Dropping the interpreter frees nothing until the module is COLLECTED, and the collection does not
+ * happen just because the invocation that dropped it returned. Measured on `wrangler dev` against an
+ * object at 125.83 MiB of its 128 MiB isolate: an immediate retry still reset the Durable Object,
+ * and the same retry after a pause completed the install with the worker still serving. There is no
+ * API for "collect now", so this is a wait rather than a signal.
+ */
+const DROP_SETTLE_MS = 2000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 const json = async <T>(res: Response): Promise<T> => {
 	const text = await res.text();
 	try {
@@ -61,6 +74,8 @@ export interface EnableReply {
 	requirementsError?: string;
 	throwMessage?: string;
 	throwClass?: string;
+	retry?: boolean;
+	droppedInterpreter?: boolean;
 	rowsWritten?: number;
 	writeStatements?: number;
 	routes?: number;
@@ -68,15 +83,27 @@ export interface EnableReply {
 	moduleCountAfter?: number;
 }
 
-/** Enables a packed module; `dry` reports discoverability without installing. */
-export function enableModule(
+/**
+ * Enables a packed module; `dry` reports discoverability without installing.
+ *
+ * `retry` is the route saying it dropped a resident interpreter and needs a NEW invocation before
+ * it can boot a fresh one -- linear memory comes back only when the old module is collected, which
+ * cannot happen while the call that dropped it is still on the stack. One repeat is enough, and
+ * the loop is bounded so a route that answered `retry` forever fails rather than hanging.
+ */
+export async function enableModule(
 	t: Transport,
 	module: string,
 	opts: { dry?: boolean } = {}
 ): Promise<EnableReply> {
-	return t(`/enable?module=${encodeURIComponent(module)}${opts.dry ? '&dry=1' : ''}`).then((r) =>
-		json<EnableReply>(r)
-	);
+	const path = `/enable?module=${encodeURIComponent(module)}${opts.dry ? '&dry=1' : ''}`;
+	let reply: EnableReply = { ok: false };
+	for (let i = 0; i < 3; i++) {
+		reply = await json<EnableReply>(await t(path));
+		if (reply.retry !== true) return reply;
+		await sleep(DROP_SETTLE_MS);
+	}
+	return reply;
 }
 
 /**
@@ -93,8 +120,16 @@ export function enableModule(
  * A defect that needs `this.migrated` or `this.lastGc` to be forgotten will not show up here, and
  * that limit is why this is named for what it does rather than for what it stands in for.
  */
-export function dropInterpreter(t: Transport): Promise<Record<string, unknown>> {
-	return t('/enable?verify=1').then((r) => json<Record<string, unknown>>(r));
+export async function dropInterpreter(t: Transport): Promise<Record<string, unknown>> {
+	// the same deferral `enableModule` follows: the first call drops a resident interpreter and
+	// cannot verify against a fresh one until the next invocation has freed it
+	let reply: Record<string, unknown> = {};
+	for (let i = 0; i < 3; i++) {
+		reply = await json<Record<string, unknown>>(await t('/enable?verify=1'));
+		if (reply['retry'] !== true) return reply;
+		await sleep(DROP_SETTLE_MS);
+	}
+	return reply;
 }
 
 export interface FilesReply {

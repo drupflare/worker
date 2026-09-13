@@ -91,10 +91,17 @@ jobs:
 
       - name: Start the Rig
         run: |
-          docker compose -f docker/compose.yml up -d greenmail redis syslog gitea
+          docker compose -f docker/compose.yml up -d greenmail redis syslog gitea keycloak
           for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:3300/api/v1/version >/dev/null; then
               echo "gitea reachable"
+              break
+            fi
+            sleep 3
+          done
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8081/realms/drupflare/.well-known/openid-configuration >/dev/null; then
+              echo "keycloak realm reachable"
               break
             fi
             sleep 3
@@ -108,7 +115,15 @@ jobs:
 
       - name: Start a Worker for the e2e Lane
         run: |
-          setsid nohup bun run dev > /tmp/dev.log 2>&1 < /dev/null &
+          WORKER="bunx wrangler dev -c wrangler.jsonc --port 8787 --var PW_DIAGNOSTICS:1"
+          # the rig is all loopback and the SSRF guard refuses loopback SILENTLY -- `queueHttp()`
+          # returns without queueing, so `cfwTcp` answers "queued" and nothing ever drains
+          WORKER="$WORKER --var OUTBOUND_GUARD:0"
+          WORKER="$WORKER --var REDIS_URL:redis://:testpass@127.0.0.1:6379/0"
+          WORKER="$WORKER --var SYSLOG_URL:syslog://127.0.0.1:5514"
+          WORKER="$WORKER --var MAIL_TRANSPORT:smtp --var SMTP_HOST:127.0.0.1 --var SMTP_PORT:3025 --var SMTP_TLS:off"
+          WORKER="$WORKER --var OIDC_CLIENT_SECRET:drupflare-rig-secret"
+          setsid nohup bash -c "while true; do $WORKER; echo \"[supervisor] wrangler exited \$?; restarting\"; sleep 2; done" > /tmp/dev.log 2>&1 < /dev/null &
           disown || true
           for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:8787/stats?site=e2e" >/dev/null 2>&1; then
@@ -127,6 +142,9 @@ jobs:
         run: |
           curl -sf "http://127.0.0.1:8787/migrate?site=e2e&all=1" > /dev/null
           curl -sf "http://127.0.0.1:8787/fill?site=e2e&path=/" > /dev/null
+          curl -sf -X POST "http://127.0.0.1:8787/setup/oidc?action=save&site=e2e" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            -d 'issuer=http://127.0.0.1:8081/realms/drupflare&clientId=drupflare-worker' > /dev/null
 
       - name: Run the e2e Lane
         env:

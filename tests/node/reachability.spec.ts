@@ -53,20 +53,57 @@ const ALLOWED_OFF_EDGE = new Map<string, string>([
 	// wrong: an allow-list nobody prunes is how the next dead module gets waved through.
 ]);
 
+/**
+ * Named exports that must be CALLED from somewhere under `src/`, not merely exported and tested.
+ *
+ * `unusedExports` has always been reported and asserted on by nothing, which is how a whole
+ * lifecycle went missing: `updbPrepare` -- the only thing that can START a database-update run --
+ * was exported, covered by its own unit spec, and reached from no shipping code, so `/updb` could
+ * advance a run nothing was able to create and an operator saw `{"beat":"none","reason":"no-run"}`.
+ * `degradeHeaders` was the same shape one module over.
+ *
+ * This is deliberately a short NAMED list rather than a blanket "no unused exports" rule. Most
+ * entries in that report are the legitimate exported-for-its-unit-test pattern, and a rule that
+ * fails on all 785 of them would be turned off within a week. What belongs here is a function
+ * whose absence from `src/` means a capability does not exist on a deployed site.
+ */
+const MUST_BE_CALLED = new Map<string, string>([
+	[
+		'updbPrepare',
+		'nothing else can START an update run; without it /updb only ever reports no-run'
+	],
+	['updbRollback', 'the operator decision that clears a halted run so a new one may be prepared'],
+	['updbAbandon', 'the other half of that decision, and the one that records a written reason'],
+	['updbDrain', 'runs several beats in one invocation, which is what a paid plan wants'],
+	[
+		'degradeHeaders',
+		'the only thing that makes the `reduced` band observable on an answered response'
+	]
+]);
+
 type Scan = {
 	scanned: number;
 	edge: number;
 	offEdge: { file: string; reach: string }[];
 	dead: { file: string }[];
+	unusedExports: { file: string; name: string; testOnly: boolean }[];
 };
 
+/**
+ * MEMOISED. The scan shells out to a bun process that walks every import under `src/`, which is
+ * ~9.5 s; five assertions calling it directly spent that five times for one answer that cannot
+ * change between them.
+ */
+let scanned: Scan | null = null;
+
 function scan(): Scan {
+	if (scanned) return scanned;
 	const out = execFileSync('bun', ['scripts/qa/reachability.ts', '--json'], {
 		cwd: ROOT,
 		encoding: 'utf8',
 		maxBuffer: 32 * 1024 * 1024
 	});
-	return JSON.parse(out) as Scan;
+	return (scanned = JSON.parse(out) as Scan);
 }
 
 describe('every module under src/ is reachable, or is allowed not to be by name', () => {
@@ -108,5 +145,30 @@ describe('every module under src/ is reachable, or is allowed not to be by name'
 			'src/runtime/php-binary-o2.ts',
 			'src/runtime/php-binary-raw.ts'
 		]);
+	});
+});
+
+/**
+ * A module can be on the edge while the FUNCTION that matters in it is not.
+ *
+ * `src/ops/updb.ts` was reachable the whole time -- `updbStep()` is called from the alarm -- so
+ * every check above was green while the four lifecycle calls beside it were exported, unit-tested
+ * and called by nothing. Module-level reachability cannot see that; this can.
+ */
+describe('the exports a capability depends on are called from src/, not only tested', () => {
+	it('finds each named export still reached from shipping code', () => {
+		const unused = new Set(scan().unusedExports.map((e) => e.name));
+		const missing = [...MUST_BE_CALLED.keys()].filter((name) => unused.has(name));
+		expect(
+			missing.map((name) => `${name}: ${MUST_BE_CALLED.get(name)}`),
+			'exported, tested, and reached from nothing under src/'
+		).toEqual([]);
+	});
+
+	// the list only means anything if the report it reads can actually say "unused", so this is
+	// the control: something is on that report, or the assertion above passes vacuously
+	it('CONTROL: the report is non-empty, so the check above is not vacuous', () => {
+		expect(scan().unusedExports.length).toBeGreaterThan(0);
+		expect(scan().unusedExports.some((e) => e.testOnly)).toBe(true);
 	});
 });

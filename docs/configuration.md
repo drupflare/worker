@@ -16,8 +16,8 @@ Three layers decide what a value is, most specific first:
 
 ## Bindings
 
-`wrangler.jsonc` is the canonical config and declares six of the eight. `PAGE_KV` and `SEND_EMAIL` are
-read where they are bound and absent otherwise.
+`wrangler.jsonc` is the canonical config and declares seven of the eight. `SEND_EMAIL` is read where
+it is bound and absent otherwise.
 
 | binding               | kind             | canonical config | what breaks without it                                                               |
 | --------------------- | ---------------- | ---------------- | ------------------------------------------------------------------------------------ |
@@ -27,7 +27,7 @@ read where they are bound and absent otherwise.
 | `FLEET_DB`            | D1               | declared         | the cross-site inventory is absent; a single site does not need one                  |
 | `FILES`               | R2               | **not declared** | the page and file mirror drains nothing; the off-Worker serving path is unavailable  |
 | `CF_VERSION_METADATA` | version metadata | declared         | the fleet row records `workerVersion: "unknown"`                                     |
-| `PAGE_KV`             | KV               | not declared     | the cross-colo page tier is absent rather than broken                                |
+| `PAGE_KV`             | KV               | declared         | the cross-colo page tier is absent, and so is the stale-generation serve             |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
 `FILES` was undeclared until 2026-09-07, and the whole R2 tier was unreachable because of it:
@@ -396,23 +396,41 @@ one beat and re-arms nothing, so a caller that wants the chain finished polls. T
 the same step, and it was the only thing that could: `OPS_DRIVERS` refused a sliced operation by
 naming a route that did not exist.
 
+`POST` also takes an `action`, and without it a beat could only ever advance a run nothing was able
+to start. `updbPrepare()` had no caller anywhere in `src/`, so pressing **Database Updates** on a
+site that had never run one answered `{"beat":"none","reason":"no-run"}`, which reads the same as
+nothing to do.
+
+| action              | what it does                                                                |
+| ------------------- | --------------------------------------------------------------------------- |
+| none, `run`, `beat` | advances one beat, which is what the Operate page has always sent           |
+| `prepare`           | raises the maintenance fence, snapshots the bookkeeping and plans the units |
+| `drain`             | runs up to `maxBeats` beats in this invocation; keep it at 1 on free        |
+| `rollback`          | restores what the snapshot covers; legal only from a halted run             |
+| `abandon`           | accepts a halted run as-is; requires a written `reason`                     |
+
+`abandon` will not take a default reason. The next person reading the run has to see that a human
+decided, and a generated string would forge that signature.
+
 ### The Repair Surface
 
 What an owner token can fix, and what each one costs. The class decides whether a tool may run it
 unattended: **safe** changes nothing a visitor sees, **rebuild** discards derived state that comes
 back on its own, and **stateful** changes what the site serves.
 
-| route               | class    | what it does                                              |
-| ------------------- | -------- | --------------------------------------------------------- |
-| `/health`           | safe     | reads the repair state, the ledger and the worker version |
-| `/health?clear=1`   | stateful | releases a quarantine, so the site serves again           |
-| `/updb`             | safe     | reads the update run                                      |
-| `/updb` (POST)      | stateful | advances one beat of a database update                    |
-| `/armfill`          | rebuild  | queues a fill, so cold paths warm without a visitor       |
-| `/invalidate`       | rebuild  | drops stored pages for a path or a tag                    |
-| `/bump`             | rebuild  | advances the generation, retiring every stored page       |
-| `/migrate`          | stateful | resumes first-run migration on a site that stalled        |
-| `/git?action=unpin` | stateful | releases a preview pin without reaching the remote        |
+| route                   | class    | what it does                                              |
+| ----------------------- | -------- | --------------------------------------------------------- |
+| `/health`               | safe     | reads the repair state, the ledger and the worker version |
+| `/health?clear=1`       | stateful | releases a quarantine, so the site serves again           |
+| `/updb`                 | safe     | reads the update run                                      |
+| `/updb` (POST)          | stateful | advances one beat of a database update                    |
+| `/updb?action=prepare`  | stateful | starts an update run, fence and snapshot included         |
+| `/updb?action=rollback` | stateful | restores the bookkeeping a halted run snapshotted         |
+| `/armfill`              | rebuild  | queues a fill, so cold paths warm without a visitor       |
+| `/invalidate`           | rebuild  | drops stored pages for a path or a tag                    |
+| `/bump`                 | rebuild  | advances the generation, retiring every stored page       |
+| `/migrate`              | stateful | resumes first-run migration on a site that stalled        |
+| `/git?action=unpin`     | stateful | releases a preview pin without reaching the remote        |
 
 `/git?action=unpin` exists because `unpreview` cannot help here: it re-syncs to the branch head, so it
 needs the remote to answer, and a pin held against a remote that is down is exactly what an operator
@@ -421,6 +439,32 @@ gives the poller the branch back, so the next successful poll converges it.
 
 A quarantine is released rather than prevented. `/health` reports what tripped it and the ledger
 entry that recorded it; clearing without reading that first is how the same fault comes back.
+
+### Reading the Degradation Band Off a Response
+
+Once a site leaves `normal`, every response it serves carries three headers:
+
+| header                 | value                                                   |
+| ---------------------- | ------------------------------------------------------- |
+| `x-cfw-degrade`        | `reduced` or `read-only`                                |
+| `x-cfw-degrade-driver` | which meter drove it: `rows` or `do`                    |
+| `x-cfw-degrade-at`     | the fraction of that meter's daily budget already spent |
+
+A `normal` site carries none of them, so their presence is the signal and no parsing is needed to
+tell the two states apart.
+
+`readOnlyResponse()` had always named the band on a REFUSAL, so `read-only` was observable and
+`reduced` was not: a site spends the whole way from 80% of a daily quota to 95% while every response
+looks identical, and the first thing an operator saw was the 503 at the end of it. `degradeHeaders()`
+was written for exactly that and called by nothing.
+
+The band recovers on its own. Nothing persists the level, and the counter is keyed per UTC day, so
+midnight clears it with no flag to reset.
+
+Three timestamps that also had no reader are on `/serve-stats` now: `lastGitPoll`, `lastMirrorDrain`
+and `lastPageMirrorDrain`, each with its `*At`. Every one of those alarm units catches its own error
+so a failure cannot stop the chain, which is right and means a git poll that has been failing for a
+week otherwise looks identical to one that has never run.
 
 **A withdrawn replica lane is not on this list, and does not need to be.** A lane that withdrew asks
 the primary for a fresh copy itself, and the primary queues the copy and arms an alarm to perform it,
@@ -1421,17 +1465,41 @@ declines. `GET /sweep?run=1` forces a step off its interval.
 
 ## Runtime Overrides
 
-Eleven names can be overridden from the `CONFIG_KV` namespace under the key `settings`, as one JSON
-object. One key covers them all: a single read is atomic, costs one of the 100,000 daily KV reads
-instead of one per lever, and gives an operator one place to see every override in force.
+The names on `KV_OVERRIDABLE` can be overridden from the `CONFIG_KV` namespace under the key
+`settings`, as one JSON object. One key covers them all: a single read is atomic, costs one of the
+100,000 daily KV reads instead of one per lever, and gives an operator one place to see every
+override in force.
 
 ```json
 { "RENDER_BUDGET_MS": 4000, "FILL_BATCH_SIZE": 8, "PREFILL": "0" }
 ```
 
-`RENDER_BUDGET_MS`, `FILL_BATCH_SIZE`, `HTTP_DRAIN_LIMIT`, `MIRROR_LIMIT`,
-`LAZY_FS_BUDGET_BYTES`, `PREFILL`, `GEN_BUCKET_MS`, `SITE_LOCATION_HINT`, `MAIL_TRANSPORT`,
-`MAIL_DRAIN_LIMIT`.
+`GET /settings` prints the current list with the value in force and where it came from, which is the
+answer to keep rather than a count here. This page said eleven while the list held eighteen.
+
+### Writing Them
+
+`GET /settings` reports every lever with its value and its source (`kv`, `var` or `default`);
+`PUT /settings` merges a JSON patch. Both take the owner token.
+
+```sh
+curl -H "authorization: Bearer $OWNER_TOKEN" https://your-site/settings
+curl -X PUT -H "authorization: Bearer $OWNER_TOKEN" -H 'content-type: application/json' \
+  -d '{"RENDER_BUDGET_MS": 4000, "PREFILL": "0"}' https://your-site/settings
+```
+
+`resolvePlan()` and `resolveSettings()` had read these keys since they shipped and nothing in `src/`
+ever called `CONFIG_KV.put()`, so every name below was a knob that could only be turned by editing
+`wrangler.jsonc` and redeploying: a deploy to change a value the deploy exists to avoid.
+
+An unlisted name is refused and named in the reply rather than dropped in silence. The allow-list is
+enforced at the writer as well as the reader, because a reader-side filter makes an unlisted name
+inert while a writer-side one makes it unstorable, and a document written before another reader
+exists is a document that reader will trust.
+
+The route is answered by the front Worker with no object hop: `CONFIG_KV` is a front-Worker binding,
+so reaching it through the Durable Object would spend a request to get at a namespace the isolate
+already holds.
 
 **Every one of them reaches a reader inside the Durable Object, and for a while only two did.**
 `withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
@@ -1450,7 +1518,9 @@ otherwise, since `DurableObjectNamespace.get()` takes the hint per call.
 **The list is an allow-list and it is a privilege boundary.** KV is operator-writable, so merging an
 arbitrary object into the environment would let anyone with KV write set `PW_DIAGNOSTICS=1`. Every
 name here is a performance lever whose worst case is a slow site; none changes what is reachable.
-`PLAN` has its own key and its own resolver, because it selects a whole profile. The mail credentials
+`PLAN` has its own key, its own resolver and its own authorisation, because it selects a whole
+profile. `writeSettings()` refuses it at any spelling: every other name has a worst case of a slow
+site, while the quotas `PLAN` models are account-wide and the actor setting it is one tenant. The mail credentials
 are absent for the same reason: `MAIL_TRANSPORT` only chooses between transports the deploy already
 configured, while a KV writer who could set `SMTP_HOST` would receive every password-reset link the
 site sends.

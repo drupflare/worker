@@ -88,6 +88,47 @@ Three things the rig cannot say, and each has bitten a comparison before:
   benchmark client never gives. **A single-editor site therefore never gets one** -- correct as a
   safety property, and a real coverage hole.
 
+## The levers are writable now, and `PLAN` is deliberately not one of them
+
+`resolvePlan()` and `resolveSettings()` had read the `plan` and `settings` KV keys since they
+shipped and **nothing in `src/` ever called `CONFIG_KV.put()`**, so every name on `KV_OVERRIDABLE`
+was a knob that could only be turned by editing `wrangler.jsonc` and redeploying -- a deploy to
+change a fact the deploy does not control, which is the exact thing `resolvePlan()`'s own docblock
+says KV exists to avoid. `/settings` is the writer: GET reports every lever with the value in force
+AND its source (`kv` / `var` / `default`), PUT merges a patch.
+
+It is an OWNER route with no `DO_ROUTE` entry, for the reason `/fleet` has none: `CONFIG_KV` is a
+front-worker binding, so an object hop would spend a Durable Object request to reach a namespace
+this isolate already holds. `owner-routes.spec.ts` keeps a `WORKER_ANSWERED` set for exactly these.
+
+**The allow-list is enforced at the WRITER, not only at the reader, and that is a privilege boundary
+rather than belt-and-braces.** A reader-side filter makes an unlisted name inert; a writer-side
+filter makes it unstorable. `KV_OVERRIDABLE`'s docblock says what a stored `PW_DIAGNOSTICS` would
+reach -- `/sql` and `/restore` -- and a document written before another reader exists is a document
+that reader will trust.
+
+**`PLAN` has its own key, its own function and its own authorisation.** Every other name on the list
+has a worst case of "a slow site". `PLAN` selects a whole limits profile, and the quotas it models
+are ACCOUNT-WIDE while any actor setting it is one tenant -- which is the structural SaaS risk the
+roadmap already names, with a write handle on it. `writeSettings()` refuses `PLAN` at any spelling.
+
+## The owner-token check had no failure budget, and the token was never the risk
+
+`ownerCredential()` fetched `/__ownercheck` on the Durable Object for every presented token, right or
+wrong, unbounded. The token is 32 CSPRNG bytes compared in constant time, so guessing it is not a
+practical attack -- **what was free was the COST of guessing.** An unauthenticated client could drive
+the object's request counter, which is the meter the whole free-plan model is scored against, at one
+DO request per HTTP request until the site degraded to read-only.
+
+The budget is in `src/ops/admin-session.ts` and is checked BEFORE the hop, keyed on
+`cf-connecting-ip`, 12 failures per 60 s, cleared by a correct token. Three things it is deliberately
+not: durable (a row per attempt spends the meter it protects), a brute-force defence, or a stop to a
+distributed attacker. It removes the amplification. The map is size-bounded because the key is
+attacker-supplied, which would otherwise be a second amplification through the same door.
+
+**A failed check is NOT counted when the object could not answer.** A migrating or quarantined object
+must not lock its owner out of the routes they need to repair it.
+
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
@@ -174,6 +215,29 @@ packed tree IS the vendor directory. `drupflare` requires `drupflare/stream-http
 Adding a dependency means all three steps; the manifest line alone is a fatal on a missing class.
 It is read from the sibling rather than copied under `drupal/`, because a fourth copy is what
 created the drift the subclass removed.
+
+## A PLAUSIBLE CAUSE THAT FITS THE SYMPTOM IS THE EXPENSIVE KIND OF WRONG
+
+The 2026-09-14 replica arm came back with lanes 1 to 3 answering nothing, and it was written up --
+here, in the roadmap, in a memory file and in two docblocks -- as affinity: an anonymous one-machine
+generator keys on its own address and cannot spread across a pool. That mechanism is real, it is
+reachable by reading `affinityKey()`, and it is NOT what happened. The arm drives AUTHENTICATED
+requests, which key on the PATH, and running the router's own FNV-1a over its eight paths covers
+**4 of 4 buckets at 3 lanes**. The cause was admission, above.
+
+Two rules out of it. **Where the question is arithmetic, compute it against the real function**
+rather than inferring it -- twenty lines settled what four documents had asserted. And **count the
+distinct objects in `x-cfw-replica` AND check the lanes reached `SERVING` before attributing a pool
+reading to routing**; a fitting explanation ends the investigation, which is what makes it costlier
+than no explanation at all.
+
+**The affinity fact still holds for ANONYMOUS load** and is measured: a one-address drive answered
+`{r3: 662}`, one object for every sample. `v101-arms.ts --clients=N` presents N synthetic addresses,
+honoured by a local `wrangler dev` only.
+
+**AND NEVER RUN THE RIG BESIDE A VITEST RUN.** `wrangler dev` died mid-measurement under 24
+concurrent while the gate had the memory, which this file already records for `bun run test` and is
+equally true of a background agent running one.
 
 ## The rig is `docker/compose.yml`, and a rig finds what a green suite cannot
 
@@ -548,6 +612,12 @@ exists.
 
 Measured 2026-09-10 on the canonical config: **14,481.28 KiB uncompressed against 65,536 KiB, which
 is 22.1%.** Its gzip figure is 4,621.13 KiB, so this configuration was impossible six days ago. The
+
+**AND IT HAS MOVED SINCE, unremarked, which is what the sentence below means.** `metrics.yml` run
+34777198609 on 2026-09-13 read **15,479,767 bytes against 67,108,864, which is 23.1%** (gzip
+4,969,636). That is ~650 KB of growth in three days with nothing reporting it, because the gate
+compares against a baseline rather than against this file. The gate is the counter; this paragraph
+is history with a date on it.
 figure moves with `src/`; `bun run release:check` prints the current one.
 
 **The interpreter therefore ships as a raw `CompiledWasm` import.** `src/runtime/php-binary-raw.ts`
@@ -697,6 +767,44 @@ broken for a day with the whole suite green.
 `bunx wrangler deploy --dry-run --outdir=<tmp>` is the check and does not deploy. Run it after any
 dependency change, and prefer a subpath export (`edgeport/core`) over a package root.
 `tests/node/bundle-imports.spec.ts` is an allow-list of known-broken roots, not a general check.
+
+## A DOCUMENTED FIX IS A CLAIM, and one was cited as settled for three weeks
+
+`TECHNICAL_REPORT.md` stated that the replica-admission gap was closed: "the primary mints with
+`\Drupal::service('private_key')->get()`". **No call to that service existed anywhere under `src/`.**
+Drupal mints `system.private_key` lazily on the first render carrying a CSRF token, `MANDATORY_STATE`
+lists it because two objects each minting their own issue tokens the other rejects, and so every
+replica of a migrated-and-claimed site was refused. The whole pool was unreachable while the document
+said it worked.
+
+A local rig found it, not a re-read: three lanes sat at stage `CREATED` through **40** provision
+steps each, then reached `VERIFIED` in **1** step each once a single `/user/login` render had minted
+the key. `firstRunConfig()` mints it now, and `tests/integration/firstrun.spec.ts` derives the names
+it asserts from `MANDATORY_STATE` rather than restating them.
+
+`check:reachability` catches a module nothing imports and `MUST_BE_CALLED` catches an export nothing
+calls; neither can read a paragraph. **Grep for the call before citing a document as evidence a
+defect is fixed.**
+
+## A module can be on the edge while the FUNCTION that matters is not
+
+The reachability scan classifies MODULES, so `src/ops/updb.ts` passed every check for its whole life:
+`updbStep()` is called from the alarm. Beside it, `updbPrepare()`, `updbRollback()`, `updbAbandon()`
+and `updbDrain()` were exported, unit-tested and called by nothing -- and `updbPrepare()` is the only
+thing that can START a run, so `/updb` could advance a run nothing was able to create and an operator
+got `{"beat":"none","reason":"no-run"}`, which reads as nothing to do. **The database-update chain had
+never run on any site.** `degradeHeaders()` was the same shape one module over, which is why the
+`reduced` band was invisible on every answered response.
+
+`MUST_BE_CALLED` in `tests/node/reachability.spec.ts` is the guard: a short NAMED list of exports
+whose absence from `src/` means a capability does not exist. Deliberately not a blanket rule -- 785
+entries on that report are the legitimate exported-for-its-unit-test pattern, and a check that fails
+on all of them gets switched off within a week.
+
+**AND A CATCH CAN NAME AN ERROR RAISED OUTSIDE ITS `try`.** `runRedis()` caught `AuthError` on the
+stated reasoning that a server which has answered must not be retried; `AuthError` is raised by
+`_connectOverSocket()`, which sat one line ABOVE the `try`, so a wrong password escaped as a
+retryable transport fault and the drain would retry it forever.
 
 ## A passing test does not mean anything calls it
 
@@ -1113,6 +1221,13 @@ specs failed the first time that lane got as far as running the gate, and only o
 repository produces `assets/probe/pw-probe.php`, so the pack lane built every artifact and still read
 `ENOENT` on it.
 
+**THE COVERAGE LANE BUILDS THE PACK AS OF 2026-09-14, so the paragraph below is history.** It was
+dropping **104 spec files** every run -- every `park-*`, `crossings`, `opcache-ab`, `effect-census`
+and the integration half of `fragment-index` -- which is why those modules read as coverage gaps
+when each of them has a spec. The gap was lane scope, not missing tests. `coverage.yml` now resolves
+a release payload and hydrates, or runs `bun run build:local`, exactly as the browser lane does, and
+its `timeout-minutes` went 20 -> 45 to pay for it.
+
 **THE COVERAGE THRESHOLD IS MEASURED ON A LANE WHOSE SCOPE SHRINKS, so adding to `ARTIFACT_SPECS`
 lowers it.** `coverage.yml` never builds the pack, so every pack-dependent spec is excluded and the
 ~2,210 uncovered statements in `site-do.ts` are structural rather than a testing gap. Nine specs
@@ -1126,7 +1241,41 @@ bun run test:coverage
 ```
 
 Read 75.31 / 74.68 / 64.04 / 81.19 against 75 / 74 / 63 / 72 once the shell slot half was covered.
-The lines margin is 0.31, so the next spec to join the list needs its own tests in the same commit.
+CI run 34777198614 on 2026-09-13 read **74.45 stmts / 63.9 branch / 80.97 funcs / 75.06 lines**,
+which clears the lines gate by **0.06** -- so the margin has been eroding, not holding at 0.31, and
+the next spec to join the list would have taken the lane red on its own.
+
+## The gate's time is IMPORT, and splitting a spec file makes it worse
+
+Profiled 2026-09-14 on the workers project: 251 files, 510 s wall, lane-work
+`transform 14 + import 1,188 + tests 2,284 = 3,487 s`. At 8 lanes the balanced floor is 436 s, so
+**1 s of lane-work removed is 0.146 s of wall**.
+
+**Import is charged per FILE.** A spec whose graph reaches `cloudflare:test`, `src/site.ts` or
+`src/site-do.ts` instantiates the 12,218,393-byte interpreter into a fresh isolate: 52 ms outside
+that set against 3.19 s inside it, n=3 each, and **7.78 s under eight contending lanes**. 152 of 251
+files are in it. So a new spec file is not free, and splitting one to parallelise it **costs ~1.1 s
+of wall** for nothing.
+
+`static-sweep.spec.ts` was the candidate and is refused three ways: its lane-cost is 354.8 s against
+a 436 s floor, it ends at t=363.5 s of a 509.2 s run and so finishes 145.8 s before the tail, and
+the split adds import. **The lever is the WORK in a file, not its boundary** -- deleting that one
+would save ~52 s.
+
+What did work, both measured: making two `createUser()` calls opt-in took it 380 s -> 240 s alone
+(26 of 28 provisions paid for accounts they never used), and memoising `subjectSweep()` took
+`unicode-corpus.spec.ts` **53.81 s -> 27.39 s**, which passes 1:1 because the node project is
+serial. What did NOT work is `maxWorkers` on the node project: `fileParallelism: false` means plain
+`it()` cases do not parallelise, so it bought ~0.
+
+**`workerLanes()`'s cap of 8 is a guess wearing a rule's clothes** -- its stated reason, that the
+lanes contend on the same SQLite, has no reading behind it, and `byCores` is 10 on this machine. The
+balanced floor at 10 is 349 s against 436. `DRUPFLARE_TEST_WORKERS=10` runs the arm.
+
+**MEASURE THE GATE ON A QUIET MACHINE.** These numbers were taken with 18 GB swapped and an
+unrelated process pinned at ~98% CPU for three days; a two-file control drifted +45% inside one
+session, and a combined `bun run test` read 1,784 s against 617 s for the same work as two separate
+invocations. Check `sysctl vm.swapusage` and `ps` before believing any gate timing.
 
 ## Commands
 
@@ -1168,6 +1317,21 @@ bun run vps:down           # tear it down, including its volume
 by `drupflare-cdn.gmitch215.dev`, and the network blocklists `*.dev`, so it answers
 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Run it behind a VPN or from CI. Do not debug the script, and do
 not conclude anything about the bucket's contents from a failure with that error.
+
+**AND "RUN IT FROM CI" WAS ADVICE TO USE AN INSTRUMENT THAT HAD NEVER RUN.** Found 2026-09-14:
+`manifestFromDisk()` was called unconditionally at the top of `backup-cdn.ts`'s `import.meta.main`
+block, BEFORE the `--verify` / `--restore` / `--upload` dispatch. It walks `vendor/static-long64/`,
+which exists only on a machine that ran `composer install`, and no runner does -- so every scheduled
+run threw `ENOENT: scandir .../vendor` and exited 1 before its first HTTP HEAD. `backup.yml` then
+piped through `tee` with no `set -o pipefail`, so the step reported the exit status of `tee`. **Nine
+of nine scheduled runs since 2026-09-05 were green and none verified a key.** The call is lazy now
+and the step sets `pipefail`.
+
+Two things to carry from it. The recoverability of all 34 `vendor/` files -- which is the whole
+reason the "never touch `vendor/`" section says a local delete is survivable -- rested on this
+check, so that claim was unverified for as long as the lane was green. And a `| tee` in a workflow
+step silently discards the exit status of everything upstream of it: grep for one before trusting
+any lane that ends in a pipe.
 
 `docs/building-from-source.md` is the release and build procedure; `docs/configuration.md` is every
 var and binding; `docs/database.md` is how `assets/drupal/site.sqlite` is built and what each of its
@@ -1627,6 +1791,70 @@ tells were a never-used id answering `already migrated` and two random ids repor
 generation and the same 428 rows. All three scripts send `Host: <site>.localhost` now, and that also
 turned a replica `schema mismatch` refusal from "provisioning is broken" into "the shared object was
 migrated against an older pack and the lane was right".
+
+## There are TWO stale tiers, and only `x-cfw-edge` tells them apart
+
+`AGED` is the OBJECT answering a page that is stale BY TIME out of its own SQLite, reported with
+`x-cfw-aged-ms`. `STALE` is the FRONT WORKER answering a PREVIOUS GENERATION out of `PAGE_KV` after
+a content change, reported with `x-cfw-edge: STALE` and `x-cfw-stale-behind`. **Both answer
+`x-cfw-cache: KV`**, so a measurement that reads only that header cannot say which mechanism
+answered -- and one of mine did not, producing a 265 ms figure filed against the wrong item.
+
+**NEITHER HAD EVER FIRED IN ANY LANE, because the test pool bound no KV at all.** `pageKvEnabled()`
+returns false on a missing binding and `readStalePage()` returns null at its first line, so the KV
+page tier and the stale-generation serve on top of it were unreachable in the gate AND on the
+shipping config at once -- the same shape as `reportToFleet()` returning early on an undefined
+`FLEET_DB`, one binding over. `vitest.config.ts` now declares `kvNamespaces: ['PAGE_KV','CONFIG_KV']`
+and `wrangler.jsonc` declares both namespaces.
+
+Two things to get right before measuring it, each of which cost a wrong reading:
+
+- **The tier is PAID-ONLY by default.** `pageKvEnabled()` ends in `isPaid(env)`, so binding the
+  namespace changes nothing for a free site: it stores no page and has no previous generation to
+  fall back to. `PAGE_KV_ENABLED=1` overrides the plan in both directions.
+- **The generation pointer is discovered once per 5 s window**, so a request straight after a
+  `/bump` is answered from the isolate memo at the OLD generation and the tier never runs. One
+  `edge=0` request reaches the object and teaches the pointer forward. It cannot be the assertion
+  itself: the KV read and the stale read both sit INSIDE the same `edgeWanted` guard that flag
+  turns off.
+
+## A hook timeout that was real did not explain the intermittent blamed on it
+
+The `e2e` project set `testTimeout` and never `hookTimeout`, so a `beforeAll` could die at vitest's
+10 s default while waiting out a `wrangler dev` Durable Object restart the gate exists to absorb.
+That is fixed and covers **six** of the eight e2e specs, counted rather than asserted: `git`,
+`hard-cases`, `lifecycle`, `mail`, `oidc` and `tcp` carry a bare `beforeAll`.
+
+**`leak.spec.ts` is not one of them.** Its `beforeAll` carries an explicit `1_200_000` timeout, so
+the default never governed it, and its `e2eGate()` call is at MODULE level where collection rather
+than the hook applies. The roadmap had recorded the fix as the likely cause of that file's
+intermittent; it cannot be. Check which hook actually governs before attributing a timeout.
+
+## `/big_pipe/no-js` answering 400 is core, and the transport is what to guard
+
+Twelve occurrences sat in the browser lane's logs as UNVERIFIED for weeks.
+`BigPipeController::setNoJsCookie()` throws `HttpException(400, 'The original location is missing.')`
+when the request carries no `destination`, which is correct -- there is nowhere to redirect back to.
+Measured: an authenticated render emits `big_pipe/no-js?destination=/admin/content`, and that URL
+through the front worker answers 302. Nothing in this project produces the bare request.
+
+What earns a regression test is the TRANSPORT. `/serve` is built from the ORIGIN so a visitor's query
+cannot land among its own parameters, and the visitor's query rides inside the `path` parameter as
+one percent-encoded value. If that ever became concatenation, `destination` would parse as a
+parameter of `/serve`, `path` would read `/big_pipe/no-js` alone, and every no-JS visitor would meet
+exactly the 400 already in the logs.
+
+## The boundary sweep walks SERVICES now, not only class statics
+
+The blind half fingerprinted static properties of declared classes, so it could not see a carrier
+that is INSTANCE state on a persistent service -- and three of the nine named carriers are exactly
+that: the page-cache kill switch, the renderer's `isRenderingRoot` and the locale lookup's memoised
+cid. Each was found by hand and then added to the named list, which is not a search.
+
+`BOUNDARY_STATE` now also walks `$container->getServiceIds()` filtered through
+`$container->initialized($id)`. **The filter is the whole safety property**: asking the container for
+a service it never built would CONSTRUCT the state the sweep is looking for, the same mistake as a
+probe that warms what it reads. What is walked is exactly the set the request instantiated.
 
 ## The pack delivers only at provisioning, and reconciliation is the path for everything after
 

@@ -10442,7 +10442,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// queue. Peak rather than count: the alarm reads it once a window and resets it
 		this.inflight = (this.inflight ?? 0) + 1;
 		if (this.inflight > (this.inflightPeak ?? 0)) this.inflightPeak = this.inflight;
-		const refusalsBefore = this.replicaRefusals.length;
+		// THE MONOTONIC COUNTER, NOT THE RING'S LENGTH. `replicaRefusals` is capped at 20 by a
+		// `shift()` and is never cleared, so `length` saturates there and the comparison below
+		// became `20 > 20` for the rest of the incarnation. The handoff therefore worked for
+		// exactly the first 20 refusals an object ever saw, and every refusal after that reached
+		// the visitor as the 500 this block exists to prevent -- permanently, and invisibly to any
+		// run short enough to stay under the cap, which is why a 40-request arm read 0 in 40.
+		const refusalsBefore = this.replicaRefusalsTotal;
 		const forwardBefore = this.lastForward;
 		try {
 			const res = await this.route(request);
@@ -10460,7 +10466,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const refusal = this.replicaRefusals.at(-1);
 			if (
 				res.status >= 500 &&
-				this.replicaRefusals.length > refusalsBefore &&
+				this.replicaRefusalsTotal > refusalsBefore &&
 				this.lastForward === forwardBefore &&
 				refusal !== undefined
 			) {

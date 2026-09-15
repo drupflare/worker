@@ -275,15 +275,21 @@ describe('a refusal the interpreter swallowed', () => {
 		const inner = site as unknown as {
 			route: (r: Request) => Promise<Response>;
 			replicaRefusals: unknown[];
+			replicaRefusalsTotal: number;
 			replicaGuard: { didMutate: () => boolean } | null;
 		};
 		// a lane that rendered has a guard installed; `replicaHandoff()` reads `didMutate()` off it
 		// and fails CLOSED when there is none, which is right and is not the case under test
 		inner.replicaGuard = { didMutate: () => false };
 		inner.route = async () => {
+			// RECORDED THE WAY THE REAL BRIDGE RECORDS IT: push, bump the monotonic total, and cap
+			// the ring at 20. The first version of this fixture pushed only, so it could not have
+			// produced the saturation defect below however many times it ran
 			inner.replicaRefusals.push(
 				new ReplicaRequiresPrimary('cfwSqlExec', 'a write on the exec bridge')
 			);
+			inner.replicaRefusalsTotal += 1;
+			if (inner.replicaRefusals.length > 20) inner.replicaRefusals.shift();
 			return new Response('failed to start the session', { status });
 		};
 	};
@@ -316,6 +322,41 @@ describe('a refusal the interpreter swallowed', () => {
 					}
 				})
 			).toBe(true);
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * THE 21ST REFUSAL, and the reason the rate never reproduced.
+	 *
+	 * `replicaRefusals` is a ring capped at 20 by a `shift()` and is never cleared, so its `length`
+	 * saturates. The wrapper compared `length > refusalsBefore`, which becomes `20 > 20` for the
+	 * rest of the incarnation: the handoff worked for exactly the first 20 refusals an object ever
+	 * saw and every refusal after that reached the visitor as a 500 -- permanently, and invisibly
+	 * to any run short enough to stay under the cap. Both attempts to reproduce the intermittent
+	 * drove 40 requests, and 429 of one 600-request arm never reached a Durable Object at all
+	 * because a compiled plan answered them in the front worker's isolate.
+	 *
+	 * Asserted at 25 rather than 21 so the case keeps failing if the cap is raised a little.
+	 */
+	it(
+		'keeps handing off past the refusal ring cap',
+		async () => {
+			const lane = namedSite(replicaName(SITE, 3));
+			const out = await inObject(lane, async (site: ServeDo) => {
+				refusalFrom(site, 500);
+				const statuses: number[] = [];
+				for (let i = 0; i < 25; i++) {
+					const res = await site.fetch(
+						new Request(`https://do.local/__serve?path=/swallowed-${i}`)
+					);
+					statuses.push(res.status);
+				}
+				return statuses;
+			});
+			// every one, not most: a 500 here is the refusal reaching the visitor
+			expect(out.filter((s) => s === 421)).toHaveLength(25);
+			expect(out.filter((s) => s >= 500)).toEqual([]);
 		},
 		TIMEOUT
 	);

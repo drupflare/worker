@@ -98,7 +98,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -124,13 +124,25 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
       - name: Cache the Restored Interpreter
         uses: actions/cache@v6
         with:
           path: .interp
           key: interp-${{ hashFiles('cdn-manifest.json') }}
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
+      - name: Resolve the Release Payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(jq -r .version package.json)"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "HAVE_PAYLOAD=1" >> "$GITHUB_ENV"
+          else
+            echo "no release '$TAG'; this lane will build the pack from source"
+          fi
       - name: Resolve Drupal Version
         id: drupalver
         run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
@@ -139,8 +151,29 @@ jobs:
         with:
           path: drupal-src
           key: drupal-${{ steps.drupalver.outputs.version }}
+      - name: Cache the Built Pack
+        if: ${{ !env.HAVE_PAYLOAD }}
+        uses: actions/cache@v6
+        with:
+          path: |
+            assets/drupal
+            assets/drupal-pf
+            assets/drupal-sql
+            assets/core
+            assets/modules
+            assets/themes
+            assets/prefill.json
+          key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
       - name: Fetch Drupal Tree
         run: bun run fetch:drupal
+      - name: Hydrate the Checkout
+        if: ${{ env.HAVE_PAYLOAD }}
+        run: bun run hydrate
+      - name: Build the Pack From Source
+        if: ${{ !env.HAVE_PAYLOAD }}
+        run: bun run build:local
       - name: Pack the Drupal Modules
         run: bun run assets:driver
       - name: Set up PHP

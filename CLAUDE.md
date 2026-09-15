@@ -1792,6 +1792,61 @@ generation and the same 428 rows. All three scripts send `Host: <site>.localhost
 turned a replica `schema mismatch` refusal from "provisioning is broken" into "the shared object was
 migrated against an older pack and the lane was right".
 
+## EVERY HEAP PEAK IN THIS REPO IS AN ALLOCATOR RUNG, NOT A DEMAND
+
+An independent audit (`drupflare/burrow`, 2026-09-14) reproduced this project's two published peaks
+to the BYTE from `newSize = align64K(max(demand, oldSize * (1 + step)))` starting at 96 MiB:
+wasm32 at step 0.08 gives rung[1] = **108,724,224**, and long64 at 0.13 gives rung[1] =
+**113,770,496**. Both are exactly what was recorded as measured peaks.
+
+So the figures in the memory section below bound demand rather than state it, and headroom computed
+by subtracting a published peak from 128 MiB is subtracting a rung.
+
+**THE DEMAND IS MEASURED NOW, and it needed no new export.** `sbrk` is not among the interpreter's
+exports, but `growth-glue.ts` already documents the equivalent: at **step 0** the geometric candidate
+collapses to `oldSize`, so `newSize` becomes `align64K(requestedSize)` and the heap stops being a
+series. `bun scripts/measure/growth-ladder.ts 0.05 0` prints the pair, and the over-reservation
+column is the slack:
+
+| workload | demand at step 0 | shipping peak at 0.05 | over-reservation       |
+| -------- | ---------------- | --------------------- | ---------------------- |
+| render   | 90,898,432       | 92,536,832            | 1,638,400 (1.56 MiB)   |
+| install  | 91,815,936       | --                    | --                     |
+| auth     | 96,993,280       | 97,189,888            | **196,608 (0.19 MiB)** |
+
+**0.19 MiB is the free slack on the worst workload**, against an audit that could only bound it in
+[0, 983,040]. An extension whose `mem_size` exceeds it crosses a rung and costs the whole step; one
+that fits is free. For scale, the audit's three real builds ask 18,048 / 11,752 / 76,779 bytes, so
+two or three fit inside the current rung and a fourth may not.
+
+**These are the LADDER'S workloads, which peak at 92.50 MiB, not the 108.50 / 122.63 / 138.63 the
+memory section records.** The gap is unexplained and the slack on those heavier paths is still
+unmeasured. Re-run the step-0 arm against the workload you actually care about before trusting a
+number here.
+
+**AND A STEP RECOMMENDATION FROM ANOTHER HARNESS DOES NOT TRANSFER HERE, measured.** The audit found
+dropping the geometric step to 0.01 buys 13 MiB on its own harness, which fills to a chosen demand
+and then reads the rung. Re-run on THIS project's three real workloads with
+`bun scripts/measure/growth-ladder.ts 0.05 0.02 0.01`, the worst-case peak moves 92.69 -> 92.44 MiB:
+**0.25 MiB, not 13**, and 0.02 is WORSE than the shipping 0.05 at 94.00. The ladder is
+path-dependent and non-monotonic by construction -- growth compounds from the previous size, so a
+finer step can take more rungs and land higher -- which the script's own docblock already recorded
+for `0.01 > 0.05`. The shipping 0.05 stays.
+
+Three findings from that audit that DO apply and are not about the step:
+
+- **Gate on `mem_size`, never on file size**, if `.so` loading ever lands. The `dylink.0` custom
+  section is 16-18 bytes in the first ~40 bytes of the file and carries `mem_size` and `table_size`,
+  so admission control costs one header read. An 8 MiB bss ships in a **211-byte** file, and
+  `mem_size = data + bss` exactly, with code contributing zero.
+- **`dlclose` is a three-line stub and emscripten defaults `nodelete: true`.** An isolate therefore
+  accumulates the union of every extension any request ever asked for, with no upper bound. Workers
+  isolates are reused, so that is a permanent floor per isolate rather than per request.
+- **Whether workerd compiles wasm lazily is the audit's largest unverified assumption**, and this is
+  the project that can answer it: lazy costs 1.78x the file in V8 and eager 4.64x. The 5 ms startup
+  measured for the raw `CompiledWasm` seam is consistent with upload-time compilation and says
+  nothing about a module compiled during a request.
+
 ## `x-worker-ms` ON A CACHED SERVE IS ~99% NETWORK HOP, NOT OBJECT WORK
 
 Measured 2026-09-14 on two deployed paid workers, both torn down. On a cached drupflare serve the

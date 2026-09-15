@@ -33,6 +33,7 @@ import {
 	writeWorkload
 } from '../../src/drupal/site-php';
 import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
+import { tcpLive } from '../../src/drupal/tcp-php';
 import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
 import { XMLWRITER_FIX } from '../../src/drupal/xmlwriter-fix';
@@ -111,6 +112,11 @@ const FRAGMENTS: Array<[string, string]> = [
 	['updbUnit_nulls', updbUnit({ seq: 3, kind: 'x', fn: null, module: null, step: null })],
 	// BOOT_KERNEL was absent from this list while being the fragment the whole snapshot path runs
 	['BOOT_KERNEL', BOOT_KERNEL],
+	// tcp-php was absent from this list for its whole life, so the one fragment that drives the
+	// TCP tier through the module's own caller had never been linted at all
+	['tcpLive_redis', tcpLive({ protocol: 'redis', args: ['GET', 'k'] })],
+	['tcpLive_syslog', tcpLive({ protocol: 'syslog', message: 'a record' })],
+	['tcpLive_defaults', tcpLive({ protocol: 'redis' })],
 	['OPS_REGISTRY', OPS_REGISTRY],
 	// one entry per boot phase; a broken fragment here would only surface as a parse error on a
 	// deployed worker, which costs a deploy to discover

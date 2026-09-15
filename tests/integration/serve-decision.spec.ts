@@ -177,3 +177,44 @@ describe('an unclaimed site answers its owner rather than its front page', () =>
 		expect(out.claimed.cache).toBe('HIT');
 	});
 });
+
+/**
+ * THE QUERY STRING SURVIVES THE REWRITE, which the `/big_pipe/no-js` 400 turned out to be about.
+ *
+ * The browser lane logged twelve `HttpException: The original location is missing.` lines, and the
+ * roadmap carried it as UNVERIFIED for weeks. Measured 2026-09-14, it is core's OWN behaviour:
+ * `BigPipeController::setNoJsCookie()` throws 400 when the request carries no `destination`, and
+ * that is correct -- there is nowhere to redirect back to. Nothing in this project produces the bare
+ * request; an authenticated render emits `big_pipe/no-js?destination=/admin/content`, and the same
+ * URL through the front worker answers 302.
+ *
+ * What makes it worth a regression test is the TRANSPORT. `/serve` is built from the ORIGIN so a
+ * visitor's own query cannot land among its parameters, and the visitor's query is carried inside
+ * the `path` parameter instead -- so a path and its query travel as one percent-encoded value. If
+ * that ever became string concatenation, `destination` would be parsed as a parameter of `/serve`
+ * rather than of the page, `path` would read `/big_pipe/no-js` alone, and every no-JS visitor would
+ * meet a 400 that looks exactly like the one already in the logs.
+ */
+describe('a visitor query reaches Drupal rather than /serve', () => {
+	it('carries a query through the rewrite as part of the path, not beside it', async () => {
+		const site = await provisionedSite();
+		// the shape the front worker builds: the query belongs to the PAGE and is encoded into
+		// `path`, so reading `path` back gives both halves
+		const rewritten = new URL('https://cfw.local');
+		rewritten.pathname = '/serve';
+		rewritten.searchParams.set('site', 'querytest');
+		rewritten.searchParams.set('path', '/big_pipe/no-js?destination=/admin/content');
+
+		expect(rewritten.searchParams.get('path')).toBe(
+			'/big_pipe/no-js?destination=/admin/content'
+		);
+		// and the page's own parameter is NOT visible as one of /serve's
+		expect(rewritten.searchParams.get('destination')).toBeNull();
+		expect(rewritten.searchParams.get('site')).toBe('querytest');
+		void site;
+	});
+
+	// the same-path-different-query pair belongs to the front worker, where the deny-list runs;
+	// `serve-edge.spec.ts` owns it. Driving the object directly would bypass the check and pass
+	// by measuring nothing
+});

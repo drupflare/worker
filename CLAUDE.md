@@ -1792,6 +1792,37 @@ generation and the same 428 rows. All three scripts send `Host: <site>.localhost
 turned a replica `schema mismatch` refusal from "provisioning is broken" into "the shared object was
 migrated against an older pack and the lane was right".
 
+## `x-worker-ms` ON A CACHED SERVE IS ~99% NETWORK HOP, NOT OBJECT WORK
+
+Measured 2026-09-14 on two deployed paid workers, both torn down. On a cached drupflare serve the
+front worker spends **1.10 ms of CPU** and the Durable Object spends **0.70 ms of CPU and 0.93 ms of
+wall**, against an `x-worker-ms` of 85 ms. The remainder is the front-worker-to-object hop: **5 ms
+co-located in IAD, 73-84 ms across IAD to SEA**.
+
+So a change in `x-worker-ms` on a cached path is a statement about WHERE the object is, until proven
+otherwise. The single-object throughput decay this file used to treat as the most load-bearing
+unknown -- p50 stepping 43 -> 111 -- is +68 ms, which is one US coast-to-coast round trip. Before
+attributing a wall-clock move on a cached path to the object doing more work, decompose it:
+`workersInvocationsAdaptive` for the front worker and `durableObjectsInvocationsAdaptiveGroups` for
+the object, and read the colo on both.
+
+**AND THE DECAY DOES NOT REPRODUCE ON PAID.** 11,385 requests over 16 minutes on one incarnation read
+52 -> 55 ms, and 10,684 cached serves over 20.9 minutes read 74 ms flat across every bucket.
+Throttling, SQLite growth and heap growth each have their own arm ruling them out. A free-plan CPU
+allowance remains the one live hypothesis, because the original reading was taken there.
+
+## Two GraphQL traps that each read as an empty dataset
+
+Both cost a session, and the first contradicts what this file used to say.
+
+- **`durableObjectsInvocationsAdaptiveGroups` returning no rows is NOT a free-plan property.** On a
+  PAID account a newly created namespace returned zero rows for about **25 minutes** while
+  `workersInvocationsAdaptive` had the same traffic immediately. Three queries read empty before the
+  data appeared. Re-query 30+ minutes later before concluding the dataset is unavailable; this file
+  had recorded the emptiness as a plan limitation and used it to defer a measurement.
+- **`datetimeMinute_geq` silently returns zero rows** as a filter field. The working one is
+  `datetime_geq`. No error, just an empty result, which reads exactly like no traffic.
+
 ## There are TWO stale tiers, and only `x-cfw-edge` tells them apart
 
 `AGED` is the OBJECT answering a page that is stale BY TIME out of its own SQLite, reported with

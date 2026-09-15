@@ -2063,9 +2063,27 @@ replica's number real" rather than two that can disagree.
 from one.** Drupal mints it on first use rather than at install. Enumerated on a just-provisioned
 site, `key_value` carries `state:system.cron_key`, `state:install_time` and `state:install_task` --
 and not that one. It is in `MANDATORY_STATE` because two objects each minting their own issue CSRF
-tokens the other rejects, so `admissionVerdict()` would have refused every replica of a new site
-forever, for a value the primary did not have either. The snapshot route now answers 409 naming the
-gap; the primary mints with `\Drupal::service('private_key')->get()`.
+tokens the other rejects, so `admissionVerdict()` refused every replica of a new site forever, for a
+value the primary did not have either.
+
+**THIS PARAGRAPH CLAIMED THE FIX FOR THREE WEEKS AND THE FIX DID NOT EXIST.** It read "the primary
+mints with `\Drupal::service('private_key')->get()`", and no call to that service appeared anywhere
+under `src/`. What surfaced it was a local rig rather than a re-read: three lanes provisioned against
+a migrated and claimed site sat at stage `CREATED` through **40** provision steps each, then reached
+`VERIFIED` in **1** step each once a single `/user/login` render had minted the key. So the whole
+replica pool was unreachable on any site nobody had rendered a form on, and every measurement of that
+pool was measuring lanes that were never admitted.
+
+`firstRunConfig()` mints it now, through Drupal's own service so the value is indistinguishable from
+a lazily minted one, and `tests/integration/firstrun.spec.ts` derives the names it asserts from
+`MANDATORY_STATE` rather than restating them -- a name added to that list would otherwise be a value
+no new site holds with nothing reporting it. Falsified both ways: removing the mint turns two cases
+red and leaves the unclaimed-site control green.
+
+The general shape is worth more than the defect. A documented fix is a claim like any other, and this
+one was cited as settled while the code said otherwise. `bun run check:reachability` catches a module
+nothing imports and `MUST_BE_CALLED` now catches an export nothing calls, but neither can catch a
+sentence in a document. Grep for the call before citing the paragraph.
 
 The direction of the unknown flips between the two questions. At request time an
 unclassified table routes to the primary, because serving from state nobody has checked is a
@@ -2749,8 +2767,44 @@ against seven entries.
 walks imports from the wrangler `main` and classifies every module as `edge` / `probe` / `script` /
 `dead`; `tests/node/reachability.spec.ts` fails on a new dead module **and on a stale exemption**.
 Probes are correctly unreachable, which is why the scan separates them rather than counting 44
-problems to hide 6. The scan also reports exports only tests mention -- usually the legitimate
-"exported for its unit test" pattern, and sometimes a function whose writer stopped calling it.
+problems to hide 6.
+
+**A module on the edge whose load-bearing function is not.** The scan classifies MODULES, so
+`src/ops/updb.ts` passed every check above for its whole life: `updbStep()` is called from the alarm.
+Beside it, `updbPrepare()`, `updbRollback()`, `updbAbandon()` and `updbDrain()` were exported,
+unit-tested and called from nothing. `updbPrepare()` is the only thing that can START a run, so
+`/updb` could advance a run nothing was able to create and an operator pressing Database Updates got
+`{"beat":"none","reason":"no-run"}`, which reads the same as nothing to do. The whole
+database-update chain had therefore never run on any site. `degradeHeaders()` was the same shape one
+module over, which is why the `reduced` band was invisible on every answered response. The scan had
+always reported `unusedExports` and nothing asserted on it; `MUST_BE_CALLED` in
+`tests/node/reachability.spec.ts` is a short named list of exports whose absence from `src/` means a
+capability does not exist. Deliberately not a blanket rule: 785 entries are the legitimate
+exported-for-its-unit-test pattern, and a check that fails on all of them gets switched off.
+
+**Two mechanisms behind one header value.** `AGED` is the object answering a page stale BY TIME from
+its own SQLite; `STALE` is the front worker answering a PREVIOUS GENERATION from `PAGE_KV`. Both
+report `x-cfw-cache: KV`, and only `x-cfw-edge` separates them. A run that read `x-cfw-cache`
+measured the first and filed the number against the second, which is the same family as reading
+`x-cfw-plan` to decide whether the compiled-plan tier answered. The guard is to assert on the header
+that NAMES the mechanism, and `serve-edge.spec.ts` now requires `x-cfw-edge: STALE` plus
+`x-cfw-stale-behind` rather than a cache value both tiers share.
+
+**A binding absent from every lane, so the tier under it never ran anywhere.** `pageKvEnabled()`
+returns false when `env.PAGE_KV` is undefined and `readStalePage()` returns null at its first line.
+The test pool declared no KV namespace and `wrangler.jsonc` declared none either, so the KV page tier
+and the stale-generation serve were unreachable in the gate and on the shipping config at once --
+identical to `reportToFleet()` returning early on an undefined `FLEET_DB`, one binding over. Both are
+declared now. The second half is that the tier is PAID-ONLY by default (`pageKvEnabled()` ends in
+`isPaid(env)`), so adding the binding alone changes nothing for a free site; a spec asserting it has
+to say which plan it is asserting, and its control has to show the free plan storing nothing.
+
+**A catch that names an error raised outside its try.** `runRedis()` caught `ProtocolError` and
+`AuthError` and turned both into a 502, on the stated reasoning that a server which has answered must
+not be retried by the drain. `AuthError` is raised by `_connectOverSocket()`, which sat one line
+ABOVE the `try`, so the branch could never match and a wrong password escaped as a retryable
+transport fault. The catch was correct and was looking one call too late. Reached only by a socket
+that connects and then refuses the handshake, which is why the mock grew a reply for it.
 
 **An invariant enforced on one path and asserted on another.** Two serving lanes exist and guards
 added to one were never mirrored onto the other. The generalisation: any duplicated read path needs
@@ -2918,6 +2972,21 @@ observation, not just a bound.
     minute. The settle that fixes it must watch the FILL QUEUE: an idle object re-arms forever by
     design, so `alarmFirings` never goes stationary and a settle keyed on it waits out its whole
     deadline and then reports the object busy.
+
+17. **A true mechanism is not automatically the mechanism in front of you.** The 2026-09-14 replica
+    arm came back with lanes 1 to 3 answering nothing, and that was attributed to affinity: an
+    anonymous one-machine generator keys on its own address and cannot spread across a pool. The
+    mechanism is real, it is reachable by reading the router, and it explained the symptom well
+    enough to stop the search. It is also not what happened. That arm drives AUTHENTICATED requests,
+    which key on the PATH, and running the router's own FNV-1a over its eight paths covers 4 of 4
+    buckets at 3 lanes. The cause was admission: a lane lists `state:system.private_key` as
+    mandatory state, Drupal mints it lazily on the first render carrying a CSRF token, and a site
+    that has been migrated with `/firstrun` run does not have one. Reproduced on a local rig, the
+    same three lanes sat at `CREATED` through 40 provision steps each and then reached `VERIFIED` in
+    1 step each once a single `/user/login` render had minted the key. A plausible cause that fits
+    the symptom is the most expensive kind of wrong, because it ends the investigation. Where the
+    question is arithmetic -- can N keys cover M buckets -- compute it against the real hash instead
+    of inferring it; that took twenty lines and settled it.
 
 Suspect the instrument first. Most moved verdicts in this project moved because the instrument was
 wrong, not the system.

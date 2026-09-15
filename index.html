@@ -1154,6 +1154,34 @@ worker updates the checkout and then deploys it there.</p>
 <p><code>build</code>, <code>dev</code>, <code>deploy</code>, <code>update</code> and <code>migrate install</code> are the five commands that write; <code>status</code>,
 <code>doctor</code>, <code>health</code>, <code>config</code>, <code>cf</code>, <code>secrets</code>, <code>validate</code> and the rest of <code>migrate</code> read. Its README
 covers the migration commands in both directions.</p>
+<h3 id="updating-a-deployed-worker" class="tsd-anchor-link">Updating a Deployed Worker<a href="#updating-a-deployed-worker" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The deploy button creates a repository from this one, so your worker is a copy rather than a fork and
+the two share no history. Adding this repository as a remote lets you merge later releases into it.</p>
+<pre><code class="bash"><span class="hl-5"># one time</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">remote</span><span class="hl-1"> </span><span class="hl-2">add</span><span class="hl-1"> </span><span class="hl-2">template</span><span class="hl-1"> </span><span class="hl-2">https://github.com/drupflare/worker</span><br/><br/><span class="hl-5"># to install an update</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">switch</span><span class="hl-1"> </span><span class="hl-2">master</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">fetch</span><span class="hl-1"> </span><span class="hl-3">--all</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">merge</span><span class="hl-1"> </span><span class="hl-2">template</span><span class="hl-1"> </span><span class="hl-3">--allow-unrelated-histories</span><span class="hl-1"> </span><span class="hl-3">-m</span><span class="hl-1"> </span><span class="hl-2">&quot;chore: merge upstream&quot;</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Pushing the result deploys it, if you connected the repository to Cloudflare when you created it.
+Otherwise run <code>bunx wrangler deploy</code>, or <code>drangler update my-site</code> to update the checkout and deploy
+in one step.</p>
+<p>Notes:</p>
+<ul>
+<li>The <code>git remote add</code> runs once per clone.</li>
+<li>Switch to the branch you want to update before merging.</li>
+<li><code>--allow-unrelated-histories</code> is what lets two repositories with no common commit merge at all.</li>
+<li>Take a backup branch first, so a merge you dislike costs nothing:</li>
+</ul>
+<pre><code class="bash"><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">switch</span><span class="hl-1"> </span><span class="hl-3">-c</span><span class="hl-1"> </span><span class="hl-2">before-template-merge</span>
+</code><button type="button">Copy</button></pre>
+
+<p>To take a specific release rather than the tip:</p>
+<pre><code class="bash"><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">fetch</span><span class="hl-1"> </span><span class="hl-3">--tags</span><span class="hl-1"> </span><span class="hl-2">template</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">switch</span><span class="hl-1"> </span><span class="hl-2">master</span><br/><span class="hl-0">git</span><span class="hl-1"> </span><span class="hl-2">merge</span><span class="hl-1"> </span><span class="hl-2">v1.0.1</span><span class="hl-1"> </span><span class="hl-3">--allow-unrelated-histories</span><span class="hl-1"> </span><span class="hl-3">-m</span><span class="hl-1"> </span><span class="hl-2">&quot;chore: merge template v1.0.1&quot;</span>
+</code><button type="button">Copy</button></pre>
+
+<p>Your own changes are the ones that conflict, and <code>wrangler.jsonc</code> is the usual place: it carries the
+worker name and the bindings you added. Resolve it in favour of your values and take the template's
+side elsewhere. <code>-X theirs</code> does that in one pass when you have made no changes worth keeping.</p>
+<p>A merge that changes <code>src/</code> or the packed modules needs a deploy to take effect. A merge that changes
+the pack reaches existing sites through reconciliation, described next.</p>
 <h3 id="keeping-an-existing-site-current" class="tsd-anchor-link">Keeping an Existing Site Current<a href="#keeping-an-existing-site-current" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
 its own. Reconciliation carries the same fix to sites that already exist. Each step is an observation
@@ -1180,9 +1208,9 @@ takes the smaller share; <code>SWEEP</code> sets it explicitly in both direction
 </code><button type="button">Copy</button></pre>
 
 <h3 id="the-admin-surfaces" class="tsd-anchor-link">The Admin Surfaces<a href="#the-admin-surfaces" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>Six pages under <code>/_cfw</code>, each one driving machinery that already exists rather than holding its own.
-They take the owner token: sign in at <code>/_cfw/login</code>, and any page reached without a session redirects
-there and comes back afterwards.</p>
+<p>Seven pages under <code>/_cfw</code>, each one driving machinery that already exists rather than holding its
+own. They take the owner token: sign in at <code>/_cfw/login</code>, and any page reached without a session
+redirects there and comes back afterwards.</p>
 <table>
 <thead>
 <tr>
@@ -1206,6 +1234,11 @@ there and comes back afterwards.</p>
 <td><strong>Commands</strong></td>
 <td><code>/_cfw/commands</code></td>
 <td>a Drush-shaped field over the site's operations</td>
+</tr>
+<tr>
+<td><strong>Operate</strong></td>
+<td><code>/_cfw/operate</code></td>
+<td>the repair actions: purge, reconcile, sweep, database updates, restart the fill chain</td>
 </tr>
 <tr>
 <td><strong>Deploy</strong></td>
@@ -1996,11 +2029,13 @@ queued, and an idempotent request that deferred is drained and rendered once mor
 visit, so the answer usually arrives on the first request rather than the second. Request headers
 are carried across the queue and are part of the cache key, except <code>User-Agent</code>, which is sent but
 not keyed. A non-idempotent request is never re-driven: a replayed POST is a different outcome.</li>
-<li><strong>A page that has been rendered before never waits for a re-render.</strong> After a content change, a
-request for a path with history is answered from the previous generation with <code>x-cfw-edge: STALE</code>
-while the current one regenerates on the alarm chain. It is bounded two generations and 24 hours
-deep, never applies to a session-carrying response, and refuses a deny-list that <code>NEVER_STALE</code>
-extends.</li>
+<li><strong>A page that has been rendered before never waits for a re-render, on a paid plan.</strong> After a
+content change, a request for a path with history is answered from the previous generation with
+<code>x-cfw-edge: STALE</code> while the current one regenerates on the alarm chain. It is bounded two
+generations and 24 hours deep, never applies to a session-carrying response, and refuses a
+deny-list that <code>NEVER_STALE</code> extends. The tier is stored in KV and follows the KV page tier's own
+plan gate, so a free site does not store a previous generation to fall back to; <code>PAGE_KV_ENABLED=1</code>
+turns it on regardless of plan.</li>
 <li><strong>Outbound TCP is either parked or declared, depending on which the module needs.</strong>
 <code>Drupal\drupflare\Network\CfwTcp</code> describes a whole exchange and reads the answer on a later
 request over a queue, which suits syslog. A module that needs the answer inside the request that
@@ -2112,6 +2147,7 @@ and are the authority on their own module.</p>
 <li><a href="#claim-the-site"><span>Claim the <wbr/>Site</span></a></li>
 <li><a href="#log-in"><span>Log <wbr/>In</span></a></li>
 <li><a href="#manage-the-site"><span>Manage the <wbr/>Site</span></a></li>
+<li><a href="#updating-a-deployed-worker"><span>Updating a <wbr/>Deployed <wbr/>Worker</span></a></li>
 <li><a href="#keeping-an-existing-site-current"><span>Keeping an <wbr/>Existing <wbr/>Site <wbr/>Current</span></a></li>
 <li><a href="#covering-the-rest-of-the-site"><span>Covering the <wbr/>Rest of the <wbr/>Site</span></a></li>
 <li><a href="#the-admin-surfaces"><span>The <wbr/>Admin <wbr/>Surfaces</span></a></li>

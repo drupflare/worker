@@ -29,6 +29,17 @@ on the generation the two samples were taken at.</p>
 <p>The trade is per-page concurrency for authenticated readers, and it is the right way round: the
 anonymous slice is the bulk of the traffic and keeps spreading by address, while a plan HIT
 answers without rendering at all, which beats sharing a page's renders across lanes.</p>
+<p><strong>AN ANONYMOUS ONE-MACHINE CLIENT CANNOT SPREAD ACROSS A POOL.</strong> It presents one address on every
+request, so the middle branch here returns one key however many paths it rotates through --
+measured on a local rig, an anonymous drive reported <code>x-cfw-replica</code> as <code>{r3: 662}</code>, one object
+for 100% of samples. Real traffic has the spread for free;
+<code>scripts/measure/v101-arms.ts --clients=N</code> is how a rig gets it.</p>
+<p>It does NOT explain a pool whose lanes answer nothing, and it was wrongly blamed for one. An
+AUTHENTICATED drive keys on the path, and the eight paths that rig rotates cover 4 of 4 buckets
+at 3 lanes and 6 of 8 at 7 -- computed against this file's own FNV-1a, offline, in twenty lines.
+The cause there was admission: a lane is refused until something mints <code>state:system.private_key</code>.
+Count the distinct objects in <code>x-cfw-replica</code> AND check the lanes reached <code>SERVING</code> before
+attributing a pool reading to routing.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -36,7 +47,7 @@ answers without rendering at all, which beats sharing a page's renders across la
 <li><span><span class="tsd-kind-parameter">input</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">address</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">pathname</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span> <span class="tsd-kind-property">session</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/0b4f04b27159809c545cd7fde766fcf3149c2f94/src/ops/replica-routing.ts#L114">src/ops/replica-routing.ts:114</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce3959dbd6422f2e331b1a9f6022d3a3e5812d0a/src/ops/replica-routing.ts#L127">src/ops/replica-routing.ts:127</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

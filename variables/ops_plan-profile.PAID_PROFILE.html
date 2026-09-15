@@ -28,9 +28,22 @@ the worst HIT wait instead. At a measured 81 ms median per warm render (n=7, 67-
 <p>Subrequests are the reason the drain limits stay small-ish: an invocation gets 1,000 on paid
 against 50 on free, but a fill in the same firing has already spent several, and each mirror put
 carries a whole file through memory.</p>
+<p><strong>BATCHING DOES AMORTISE REAL COST, AND THAT IS NOT WHAT BOUNDS THIS NUMBER.</strong> Measured
+2026-09-14 on a deployed free worker, n=5 per k, interleaved, every batch verified to drain
+exactly k in one invocation: per-page wall falls 109 ms at k=1 to 82 at k=5, 50 at k=10 and
+<strong>42.9 at k=20</strong>, a 2.54x saving with the curve still descending. Round-trip wall rather than
+<code>cpuTime</code>, because the tag rides the front-worker request and the observability record is the
+OBJECT's invocation, which carries no query -- the network term is near constant across the four
+arms, so the relation holds even though the absolutes carry it.</p>
+<p>It does not move either number above, and saying why is the point of recording it. That run drove
+an otherwise idle object, so it measured THROUGHPUT and the two constraints here are HIT LATENCY
+during a fill and the 128 MiB isolate -- a fill batch is N workloads inside ONE invocation, which
+is what reset four freshly provisioned sites at 25. A throughput figure cannot overrule a latency
+or a memory bound. What it does establish is that the cost is genuinely amortisable, so a future
+topology where a fill does not occupy the serving object has a measured reason to revisit this.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/0b4f04b27159809c545cd7fde766fcf3149c2f94/src/ops/plan-profile.ts#L102">src/ops/plan-profile.ts:102</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ce3959dbd6422f2e331b1a9f6022d3a3e5812d0a/src/ops/plan-profile.ts#L117">src/ops/plan-profile.ts:117</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

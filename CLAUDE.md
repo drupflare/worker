@@ -1470,13 +1470,33 @@ escalate to an outage.
 ## The heap peak is per WORKLOAD; the isolate is charged per INCARNATION
 
 `USE_ZEND_ALLOC=0` means PHP returns nothing between requests, so demand inside one incarnation is
-the SUM of what it has done and the growth step rounds every rise up. Measured on one object:
-96.00 MiB booted, **108.50 after migrate + firstrun, 122.63 after the first authenticated render,
-138.63 after the second** -- 10.63 MiB past the 128 MiB isolate limit. So provisioning a site and
-then viewing two pages on it was over the ceiling BY CONSTRUCTION, which is the first-run path of
-every new site. On the edge that is `Durable Object's isolate exceeded its memory limit and was
-reset`: every in-flight request on the object is lost and a cascade of
-`Internal error in Durable Object storage caused object to be reset` follows.
+the SUM of what it has done and the growth step rounds every rise up.
+
+**THE FIGURES BELOW WERE TAKEN ON A BINARY THAT IS NO LONGER SHIPPED, and the conclusion drawn from
+them is now an open question rather than a fact.** Measured on one object: 96.00 MiB booted,
+**108.50 after migrate + firstrun, 122.63 after the first authenticated render, 138.63 after the
+second** -- 10.63 MiB past the 128 MiB isolate limit, which made provisioning a site and then
+viewing two pages over the ceiling BY CONSTRUCTION on the first-run path of every new site. On the
+edge that reads as `Durable Object's isolate exceeded its memory limit and was reset`, with a
+cascade of `Internal error in Durable Object storage caused object to be reset` behind it.
+
+That run used a 96 MiB-initial binary. Parsed from the Memory section of each `.wasm`, the shipping
+`php8.5.tuned.wasm` declares **1,280 pages = 80.00 MiB** where `php8.5.wasm` and
+`php8.5-long64.wasm` declare 1,536 = 96.00 MiB. Re-measured 2026-09-14 on the shipping binary with
+`bun scripts/measure/growth-ladder.ts 0.05 0`, driving the same three workloads:
+
+| workload                    | demand (step 0) | peak at the shipping 0.05 |
+| --------------------------- | --------------- | ------------------------- |
+| boot idle                   | 83,886,080      | 83,886,080 (80.00 MiB)    |
+| migrate + two renders       | 90,898,432      | 92,536,832 (88.25 MiB)    |
+| migrate + firstrun + render | 91,815,936      | 92,536,832 (88.25 MiB)    |
+| two authenticated renders   | 96,993,280      | 97,189,888 (92.69 MiB)    |
+
+**Worst case 92.69 MiB against a 128 MiB isolate: 35.31 MiB of headroom, not a breach.** Whether the
+by-construction ceiling problem still exists on the shipping binary is UNVERIFIED -- the drops at
+`/__migrate` and `/__firstrun` that were added to fix it are still in place, so this reading is of a
+tree that already carries the fix and cannot distinguish "the binary made it moot" from "the fix is
+working". Do not remove those drops on the strength of this table.
 
 Every figure in `TECHNICAL_REPORT.md`'s Memory section is a single-workload peak, and each one is
 correct. None of them is what the isolate meters.

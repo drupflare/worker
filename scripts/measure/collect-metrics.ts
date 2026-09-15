@@ -359,16 +359,31 @@ export function collectTests(root: string, opts: { vitest: boolean }): TestsMetr
 			cwd: root,
 			encoding: 'utf8',
 			maxBuffer: 1 << 28,
-			stdio: ['ignore', 'ignore', 'ignore'],
+			// STDERR IS KEPT, and discarding it is why this failure went a week unexplained. The
+			// metric read `vitest list failed: Command failed` with no cause anywhere, because the
+			// child's diagnosis went to /dev/null -- the same shape as `bake-container.ts`
+			// buffering wrangler and printing only from a `catch` a SIGTERM never reaches. stdout
+			// stays ignored for the reason the comment above gives; it is the one that gets
+			// interleaved with the array.
+			stdio: ['ignore', 'ignore', 'pipe'],
 			env: { ...process.env, ...LIST_ENV },
 			timeout: TOOL_TIMEOUT_MS
 		});
 		const listed = JSON.parse(readFileSync(listFile, 'utf8')) as unknown[];
 		return { specFiles, cases: { workers: listed.length } };
 	} catch (error) {
+		// the child's own stderr, which is where the cause is; `message` alone says only
+		// "Command failed" and that is what made this unattributable for a week
+		const why = String((error as { stderr?: unknown }).stderr ?? '')
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line !== '')
+			.slice(-3)
+			.join(' / ');
+		const head = (error as Error).message.split('\n')[0];
 		return {
 			specFiles,
-			cases: { skipped: `vitest list failed: ${(error as Error).message.split('\n')[0]}` }
+			cases: { skipped: `vitest list failed: ${head}${why ? ` -- ${why}` : ''}` }
 		};
 	}
 }

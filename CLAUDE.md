@@ -1834,10 +1834,16 @@ column is the slack:
 | install  | 91,815,936       | --                    | --                     |
 | auth     | 96,993,280       | 97,189,888            | **196,608 (0.19 MiB)** |
 
-**0.19 MiB is the free slack on the worst workload**, against an audit that could only bound it in
-[0, 983,040]. An extension whose `mem_size` exceeds it crosses a rung and costs the whole step; one
-that fits is free. For scale, the audit's three real builds ask 18,048 / 11,752 / 76,779 bytes, so
-two or three fit inside the current rung and a fourth may not.
+**0.19 MiB is the free SLACK on the worst workload**, against an audit that could only bound it in
+[0, 983,040]. An extension whose `mem_size` exceeds it crosses a rung; one that fits is free.
+
+**SLACK IS NOT THE BUDGET, and reading it as one understates the room by two orders of magnitude.**
+Crossing a rung is not a failure, it costs one rung -- about 4.7 MiB here -- and there are six more
+rungs before the cap. The admitted static image before the heap would pass 128 MiB is **33,423,360
+bytes (31.88 MiB) at the shipping step, 37,224,448 (35.50 MiB) at step 0**. Against the audit's real
+side-module builds, which ask 18,048 / 11,752 / 76,779 / 142,360 bytes of `mem_size`, that is
+hundreds of extensions rather than the "two or three" the slack figure suggests. Linear memory is
+not what bounds loading extensions here and never was; the interpreter tax on their WORK is.
 
 **THE GAP TO THE 108.50 / 122.63 / 138.63 FIGURES IS THE BINARY, NOT THE WORKLOAD.** The ladder's
 three arms already drive migrate, migrate-plus-firstrun, and two authenticated renders -- the same
@@ -1897,6 +1903,36 @@ the object, and read the colo on both.
 Throttling, SQLite growth and heap growth each have their own arm ruling them out. A free-plan CPU
 allowance remains the one live hypothesis, because the original reading was taken there.
 
+## PHP LOADS EXTENSIONS AT STARTUP, NOT PER REQUEST, and that bounds the whole idea
+
+A PHP request does not choose extensions; a PHP process does, from `php.ini`, before any request
+runs. The only runtime loader is `dl()`, and it is confined to the CLI SAPI and off by default --
+measured on PHP 8.5.7, `enable_dl` is empty and `dl()` returns false. This SAPI is `embed`.
+
+So "load an extension for this request" is not a shape PHP has. What the interpreter's persistence
+turns it into is **load an extension for this INCARNATION**, which is a different and better-behaved
+thing: the object already boots once and serves many requests, and `recycleIfOversized()` already
+drops the whole interpreter, which is the coarse unload path.
+
+Three numbers that size the objective, and they argue for a small ambition:
+
+- **The set is ~25 and nearly constant.** `get_loaded_extensions()` on the shipping build reports 25,
+  Drupal's own requirements page names 14, and a census across core, vendor and 65 contrib modules
+  found zero unambiguous call sites for `bcmath`, `calendar`, `exif`, `phar` or `intl`, one file for
+  `xmlreader` and two for `tidy`. The composer `ext-*` requirements across those 65 modules are
+  `ext-json` x4, `ext-xmlwriter` x2, and one each of `soap`, `simplexml`, `relay`, `redis`, `dom`.
+- **The variable tail is 0 to 2 per SITE**, not per request. A request-time mechanism would be
+  serving an almost empty tail, and a build-time one already serves the constant part.
+- **An isolate accumulates the UNION and it saturates.** Measured over 12 simulated requests drawing
+  2 extensions from a 5-item catalogue: 3,473,408 bytes total growth, all of it in the first four
+  requests, and every request after the catalogue was exhausted cost zero. So budget the union of
+  everything any tenant may ever ask for, never the per-request set -- an admission check that passes
+  each extension individually will pass all of them and still blow the isolate on the tenth request.
+
+The surviving objective is therefore per-TENANT rather than per-request, and its value is reach into
+a tail a bundle cannot hold, not speed. Anything on the hot path belongs in the bundle at native
+speed.
+
 ## Two GraphQL traps that each read as an empty dataset
 
 Both cost a session, and the first contradicts what this file used to say.
@@ -1908,6 +1944,21 @@ Both cost a session, and the first contradicts what this file used to say.
   had recorded the emptiness as a plan limitation and used it to defer a measurement.
 - **`datetimeMinute_geq` silently returns zero rows** as a filter field. The working one is
   `datetime_geq`. No error, just an empty result, which reads exactly like no traffic.
+
+## Two platform questions answered from source, so nobody re-measures them
+
+- **workerd compiles wasm LAZILY, and it is not close.** It sets no wasm-related V8 flag anywhere:
+  the complete set is five `SetFlagsFromString` calls in `jsg/setup.c++` (`--noincremental-marking`,
+  `--js-source-phase-imports`, `--single-threaded-gc` on macOS only, `--expose-gc` in test modes)
+  plus whatever `config.getV8Flags()` carries, and workerd's own config comment says most users
+  should set none. So V8's default stands: `wasm_lazy_compilation` is true. Lazy retains 1.78x the
+  file against eager's 4.64x, which means an eager penalty this project has never paid. The caveat
+  is that Cloudflare's upload pipeline is not in that repository -- but the 1 ms materialisation of
+  12.78 MiB on a cold isolate is not the shape of 59 MiB of TurboFan output being paged in.
+- **`wasm_memory_discard` is not a reclamation lever.** The compatibility flag exists and its own
+  comment in `compatibility-date.capnp` reads "Obsolete flag. Has no effect." `memory.grow` still has
+  no inverse and `mem.buffer.transfer()` throws; dropping the interpreter remains the only way to
+  return linear memory.
 
 ## There are TWO stale tiers, and only `x-cfw-edge` tells them apart
 

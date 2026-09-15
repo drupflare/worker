@@ -14,6 +14,23 @@ import { emitVariant, growthLadder } from './growth-glue.js';
  * rounded to a 64 KiB page, so `peak(0)` is the measurement and every other arm's peak minus that is
  * over-reservation. The step is a CPU/peak trade and this script scores only the peak; growth
  * overhead is a duration cost and RULE 0 forbids reading it off a local clock.
+ *
+ * **TUNING THE STEP FOR HEADROOM IS A CLOSED MECHANISM. Use this to MEASURE demand, not to pick a
+ * step.** The overshoot is bounded in [1, 1+step), so a finer step is better in expectation and in
+ * the worst case OVER DEMANDS -- and for any ONE workload it is a draw from that band, not a
+ * ranking. Swept over 639 demands: 0.01 lands ABOVE 0.05 on 9.2% of them, worst penalty 983,040
+ * bytes. Three workloads sample the lottery three times, which is exactly why the arms here read
+ * 92.69 / 94.00 / 92.44 MiB at 0.05 / 0.02 / 0.01 -- a 0.25 MiB spread with the middle arm worst.
+ * That is the distribution, not an anomaly.
+ *
+ * It can also be worth nothing at all: any single allocation larger than `oldSize * step`
+ * re-anchors at `align64K(demand)` and erases every rung before it, so a trajectory that jumps
+ * straight to its peak gives the identical answer at every step from 0 to 0.13.
+ *
+ * The lever that DOES move every rung deterministically is the anchor, `INITIAL_MEMORY`, and
+ * `initial-memory.ts` already carries its measured sweep -- which is non-monotonic for the same
+ * reason and is why 80 rather than the best-measuring 48 ships. Moving the anchor 96 -> 80 bought
+ * more than any step in this sweep does.
  */
 
 const MIB = 1_048_576;

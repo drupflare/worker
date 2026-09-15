@@ -2,7 +2,7 @@
  * The packed driver's identity. GENERATED -- run `bun run assets:driver` after any change in a
  * sibling; `tests/node/driver-pack.spec.ts` fails on drift.
  */
-export const DRIVER_DIGEST = '0d0e6a9f3e7378ce';
+export const DRIVER_DIGEST = '6b070ec30dc201fc';
 
 /**
  * The route names the packed modules declare, so a site can be asked whether its router has them.

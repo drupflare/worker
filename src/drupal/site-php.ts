@@ -428,6 +428,34 @@ class PhpWasmSyncFiber {
  */
 const PW_SERVE_INLINE = String.raw`
 if (!function_exists('cfw_serve')) { eval('
+function cfw_close_session() {
+  // THE HOST IS THE SAPI, SO IT OWNS THE CLOSE THAT BigPipe DOES NOT REACH.
+  // BigPipe::sendContent() ends with performPostSendTasks(), which is the session save, and there
+  // is no try/finally around the three sends before it. StackMiddleware\\Session deliberately
+  // skipped its own save already, because a BigPipeResponse is ResponseKeepSessionOpenInterface.
+  // So a sendContent() that throws loses every session write the render made.
+  //
+  // The CSRF seed is one of those writes. RouteProcessorCsrf defers a _csrf_token route to a lazy
+  // builder on an HTML request, so CsrfTokenGenerator::get() MINTS the seed while placeholders are
+  // being replaced -- inside sendContent(). A lost seed makes validate() answer false on the next
+  // request, which is a 403 on every _csrf_token link the page carries.
+  try {
+    $container = \\Drupal::getContainer();
+    if ($container !== null) {
+      foreach (["session", "session_manager"] as $name) {
+        if ($container->initialized($name)) {
+          $service = $container->get($name);
+          if (method_exists($service, "save")) { $service->save(); return $name; }
+        }
+      }
+    }
+  } catch (\\Throwable $e) {}
+  if (function_exists("session_status") && session_status() === PHP_SESSION_ACTIVE) {
+    @session_write_close();
+    return "session_write_close";
+  }
+  return "nothing to close";
+}
 function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $contentType = "", $cookieHeader = "", $origin = "", $clientIp = "", $accept = "") {
   $kernel = $GLOBALS["__pw_kernel"];
 
@@ -1586,6 +1614,10 @@ try {
     } catch (\Throwable $e) {
       while (ob_get_level() > $depth) { @ob_end_clean(); }
       $out['sendError'] = get_class($e) . ': ' . $e->getMessage();
+      // BigPipe::sendContent() has no try/finally around performPostSendTasks(), so a throw here
+      // skips the session save -- and the CSRF seed is minted during placeholder replacement,
+      // which is inside the call that just threw. Closing it is what a SAPI shutdown would do.
+      $out['sessionClosed'] = cfw_close_session();
       $body = (string) $response->getContent();
     }
   } else {
@@ -2338,6 +2370,15 @@ ${PACK_CONSISTENCY}
     $out['applied'][] = 'state.install_time';
     $out['applied'][] = 'state.cron_last';
   }
+
+  // MINTED HERE BECAUSE A REPLICA MAY NOT MINT IT, and until this line nothing did. Drupal creates
+  // system.private_key lazily on the first render that needs a CSRF token, so a site that had been
+  // migrated and claimed did not hold one -- and admissionVerdict() lists it as mandatory state,
+  // correctly, since two objects each minting their own issue tokens the other rejects. Measured:
+  // three lanes sat at CREATED through 40 provision steps each, then reached VERIFIED in 1 step
+  // each once a single form render had minted it. Drupal's own service, so the value is
+  // indistinguishable from a lazily minted one
+  $out['privateKey'] = strlen(\Drupal::service('private_key')->get()) > 0 ? 'present' : 'MISSING';
 
   // the salt is the HOST's now: src/ops/site-secrets.ts mints one per site at boot, persists it in
   // cfw_meta and appends the assignment to settings.php, so generating another here would replace a
@@ -3240,6 +3281,51 @@ $out['staticSkipped'] = $skipped;
 $out['classCount'] = count(get_declared_classes());
 // #endregion
 
+// #region the blind half over SERVICES
+//
+// THE HALF ABOVE CANNOT SEE A CARRIER THAT IS INSTANCE STATE ON A PERSISTENT SERVICE, and three of
+// the nine named carriers are exactly that: the page-cache kill switch, the renderer's
+// isRenderingRoot and the locale lookup's memoised cid. Each was found by hand and then added to
+// the named list; the blind half walked static properties of declared classes and reported nothing
+// for all three, so the next one would have been found by a browser again.
+//
+// THE initialized() GATE IS THE WHOLE SAFETY PROPERTY. Asking the container for a service it never
+// built would CONSTRUCT the state this is looking for, which is the same mistake as a probe that
+// warms what it reads. Every id is filtered through it, so what is walked is exactly the set the
+// request itself instantiated; a service nobody touched contributes nothing rather than being made.
+$services = [];
+$serviceSkipped = 0;
+$container = \Drupal::hasContainer() ? \Drupal::getContainer() : null;
+if ($container !== null && method_exists($container, 'getServiceIds')) {
+  foreach ((array) $container->getServiceIds() as $id) {
+    try {
+      if (!$container->initialized($id)) { continue; }
+      $service = $container->get($id);
+      if (!is_object($service)) { continue; }
+      $reflection = new \ReflectionObject($service);
+      foreach ($reflection->getProperties() as $property) {
+        if ($property->isStatic()) { continue; }
+        try {
+          $name = $id . '::' . $property->getName();
+          $services[$name] = $property->isInitialized($service)
+            ? $fingerprint($property->getValue($service))
+            : 'uninit';
+        } catch (\Throwable $e) { $serviceSkipped++; }
+      }
+    } catch (\Throwable $e) { $serviceSkipped++; }
+  }
+}
+ksort($services);
+$out['services'] = $services;
+$out['serviceCount'] = count($services);
+$out['serviceSkipped'] = $serviceSkipped;
+$out['servicesInitialized'] = $container !== null && method_exists($container, 'getServiceIds')
+  ? count(array_filter((array) $container->getServiceIds(), function ($id) use ($container) {
+      try { return $container->initialized($id); } catch (\Throwable $e) { return false; }
+    }))
+  : -1;
+// #endregion
+
 echo json_encode($out);
 `;
 
@@ -3921,6 +4007,9 @@ try {
       $body = (string) ob_get_clean();
     } catch (\Throwable $e) {
       while (ob_get_level() > $depth) { @ob_end_clean(); }
+      // same reason as the fill path: the throw skipped BigPipe's own session save
+      $out['sendError'] = get_class($e) . ': ' . $e->getMessage();
+      $out['sessionClosed'] = cfw_close_session();
       $body = (string) $response->getContent();
     }
   } else {

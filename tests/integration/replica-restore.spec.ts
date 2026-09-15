@@ -31,11 +31,19 @@ function role(site: ServeDo, as: 'primary' | 'replica'): void {
 }
 
 /**
- * Mints `system.private_key`, which a fresh install does NOT have.
+ * Mints `system.private_key` if the claim has not already.
  *
- * Drupal creates it on first use, so a site that has only been provisioned holds no value for it and
- * the snapshot route refuses to be copied from. That is not a fixture detail: it is the precondition
- * a primary has to meet before it can have replicas at all.
+ * **`/__firstrun` MINTS IT NOW, and until it did this helper was hiding the defect.** Drupal
+ * creates the value on first use, so a migrated-and-claimed site held none and the snapshot route
+ * refused to be copied from -- correctly, since two objects each minting their own issue CSRF
+ * tokens the other rejects. Every spec here called this helper, so the refusal always had a primary
+ * to accept while no real site ever reached that state, and a replica of a genuinely fresh site was
+ * refused forever with nothing reporting it. Measured: three lanes sat at `CREATED` through 40
+ * provision steps each, then reached `VERIFIED` in 1 step each once a single form render had minted
+ * the key.
+ *
+ * Kept as a no-op-when-present assertion rather than deleted, because it is the precondition a
+ * primary has to meet before it can have replicas at all and this is where that is stated.
  */
 async function mintIdentity(site: ServeDo): Promise<void> {
 	const out = (await site.runJson(
@@ -331,14 +339,20 @@ describe('a replica reaches VERIFIED only by a whole consistent copy', () => {
 			const out = await inObject(freshSite(), async (site) => {
 				role(site, 'primary');
 				await install(site, 'Unminted Primary');
+				// CONSTRUCTED, not merely un-minted. The claim mints the key now, so declining to
+				// mint no longer produces this state -- and the state is still worth refusing: a
+				// site provisioned before that landed, or one restored from a database taken
+				// before it, reaches the snapshot route without a key
+				site.sql.exec(
+					"DELETE FROM key_value WHERE collection = 'state' AND name = 'system.private_key'"
+				);
 				const res = await site.fetch(
 					new Request('https://do.local/__replica?action=snapshot')
 				);
 				return { status: res.status, body: (await res.json()) as { missing: string[] } };
 			});
 
-			// a fresh install has `system.cron_key`, `install_time` and `install_task` but NOT
-			// `system.private_key`; copying it would hand every replica the same absence, and
+			// copying a primary without one would hand every replica the same absence, and
 			// whichever reached the code path first would mint a key the others reject
 			expect(out.status).toBe(409);
 			expect(out.body.missing).toEqual(['state:system.private_key']);

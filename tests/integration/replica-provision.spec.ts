@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../src/drupal/site-php';
 import type { ProvisionOutcome } from '../../src/ops/replica-restore';
 import { replicaName } from '../../src/ops/replica-routing';
 import {
@@ -37,9 +36,16 @@ async function installed(name: string, mint = true): Promise<string> {
 				headers: { 'content-type': 'application/json' }
 			})
 		);
-		if (mint) {
-			await site.runJson(
-				drupalOp(`$out['k'] = strlen(\\Drupal::service('private_key')->get());`)
+		// THE FIXTURE DELETES IT NOW RATHER THAN DECLINING TO MINT IT, because `/__firstrun` mints
+		// it. That is the fix for the defect this flag was papering over: every spec here supplied
+		// the key itself, so the refusal below had a state to refuse while no real site ever
+		// reached it, and a replica of a genuinely fresh site was refused forever with nothing
+		// reporting it. An unminted primary is still a state worth refusing -- a site provisioned
+		// before the mint landed, or one restored from a database taken before it -- so the case
+		// stays and the fixture now constructs that state on purpose.
+		if (!mint) {
+			site.sql.exec(
+				"DELETE FROM key_value WHERE collection = 'state' AND name = 'system.private_key'"
 			);
 		}
 	});

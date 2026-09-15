@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MANDATORY_STATE } from '../../src/ops/replica-admission';
 import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
 import { freshSite, inObject } from '../helpers/serve-do';
 
@@ -225,5 +226,64 @@ describe('claiming a site pins its render origin', () => {
 	it('leaves the pin alone when the claim arrives over a local host', async () => {
 		const pinned = await claimFrom('https://do.local', 'https://real.example');
 		expect(pinned).toBe('https://real.example');
+	}, 900_000);
+});
+
+/**
+ * The one value a replica may never mint for itself.
+ *
+ * `admissionVerdict()` lists `state:system.private_key` as mandatory, correctly: it keys CSRF
+ * tokens, so two objects each minting their own issue tokens the other rejects. Drupal creates it
+ * LAZILY, on the first render that needs a token, which a migrated-and-claimed site has not had --
+ * so no replica of a new site could ever be admitted, and nothing in `src/` minted it.
+ *
+ * The report described this as fixed with a mint on the primary. No such call existed anywhere in
+ * the tree. Measured on a local rig before the fix: three lanes sat at stage `CREATED` through 40
+ * provision steps each, then reached `VERIFIED` in ONE step each once a single `/user/login` render
+ * had minted the key.
+ */
+describe('a claimed site holds the state a replica cannot produce', () => {
+	async function claimed(): Promise<DurableObjectStub> {
+		const stub = freshSite();
+		await stub.fetch('https://do.local/__migrate?all=1&prefill=0');
+		const res = await stub.fetch('https://do.local/__firstrun', {
+			method: 'POST',
+			body: JSON.stringify({ siteName: 'Replicable' }),
+			headers: { 'content-type': 'application/json' }
+		});
+		expect(((await res.json()) as { ok: boolean }).ok, 'the claim has to succeed').toBe(true);
+		return stub;
+	}
+
+	const stateNames = async (stub: DurableObjectStub): Promise<string[]> =>
+		inObject(stub, (site) =>
+			site.sql
+				.exec("SELECT name FROM key_value WHERE collection = 'state'")
+				.toArray()
+				.map((r) => String(r['name']))
+		);
+
+	it('mints system.private_key at the claim, so a lane can be admitted', async () => {
+		expect(await stateNames(await claimed())).toContain('system.private_key');
+	}, 900_000);
+
+	/**
+	 * EVERY mandatory name, derived from the admission module rather than restated. A list written
+	 * out here goes stale in the direction that matters: a name added to `MANDATORY_STATE` would
+	 * be a value no new site holds and nothing would report it.
+	 */
+	it('holds every name admission declares mandatory', async () => {
+		const present = new Set(await stateNames(await claimed()));
+		const wanted = MANDATORY_STATE.filter((e) => e.collection === 'state').map((e) => e.name);
+		expect(wanted.length, 'no mandatory state to check').toBeGreaterThan(0);
+		expect(wanted.filter((name) => !present.has(name))).toEqual([]);
+	}, 900_000);
+
+	// the control, and the reason the case above is not vacuous: an UNCLAIMED site does not hold it,
+	// so the claim is what produces it rather than the pack shipping it
+	it('CONTROL: a migrated but unclaimed site does not hold it', async () => {
+		const stub = freshSite();
+		await stub.fetch('https://do.local/__migrate?all=1&prefill=0');
+		expect(await stateNames(stub)).not.toContain('system.private_key');
 	}, 900_000);
 });

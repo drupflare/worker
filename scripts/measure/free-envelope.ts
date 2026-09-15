@@ -512,8 +512,15 @@ export const ROWS_PER_FILL = {
 	 * 96 -> 94 on 2026-09-11, when `advanceCommit()` stopped writing `cfw_meta` per authoritative
 	 * statement. A fill advances the commit sequence a handful of times; batching them to one row
 	 * per invocation is what moved this, and it moved a content SAVE far more -- 188 -> 161.
+	 *
+	 * 94 -> 91 on 2026-09-14, when `firstRunConfig()` began minting `system.private_key`. Drupal
+	 * created it lazily on the first render needing a CSRF token, which on a fresh object IS this
+	 * fill, so the write moved from here to the claim. Attributed rather than assumed: reverting
+	 * the mint reads 94 and restoring it reads 91, n=1 each with the other three classes unchanged
+	 * to the row. Net-neutral per site, and it moves the cost OFF the metered regeneration path,
+	 * which is the tighter of the two ceilings by 12x.
 	 */
-	firstFillOnFreshObject: 94
+	firstFillOnFreshObject: 91
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

@@ -235,4 +235,75 @@ describe('the CSRF token, accepted and refused', () => {
 		},
 		REQUEST_TIMEOUT
 	);
+
+	/**
+	 * THE ROUTE TOKEN, WHICH IS A DIFFERENT MECHANISM FROM THE FORM TOKEN ABOVE AND HAD NO TEST.
+	 *
+	 * A form token is rendered into the markup by `FormBuilder` and travels in the POST body. A
+	 * `_csrf_token` route token travels in the QUERY STRING and, on an HTML request,
+	 * `RouteProcessorCsrf::processOutbound()` does not compute it at all: it emits a placeholder and
+	 * a `#lazy_builder`, so `CsrfTokenGenerator::get()` runs later, while placeholders are being
+	 * replaced. `get()` MINTS the session seed when none exists, and `validate()` answers FALSE on an
+	 * empty seed -- so a seed minted during placeholder replacement and not persisted is a 403 on
+	 * every `_csrf_token` link the page carries.
+	 *
+	 * That is the shape reported against `/admin/reports/status/run-cron`:
+	 * `'csrf_token' URL query argument is invalid`. Four assertions covered the form token and none
+	 * covered this one, which is why it reached a browser first.
+	 *
+	 * The link is read out of the RENDER rather than constructed, because constructing it would test
+	 * this suite's idea of the token rather than Drupal's.
+	 */
+	it(
+		'accepts the run-cron token the status report rendered, which travels in the query',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await claimSite(site, PASS, 'Csrf');
+				const login = await render(site, '/user/login', form(credentials('admin', PASS)));
+				const jar = cookieJar(login);
+
+				const report = await render(site, '/admin/reports/status', { cookie: jar });
+				const html = String(report['html'] ?? '');
+				// `&amp;` because this is markup, not a URL; the token is the last argument
+				const link = /\/admin\/reports\/status\/run-cron\?([^"']+)/.exec(html)?.[1] ?? '';
+				const token =
+					/token=([A-Za-z0-9_%-]+)/.exec(link.replace(/&amp;/g, '&'))?.[1] ?? '';
+
+				const followed =
+					token === ''
+						? null
+						: await render(site, `/admin/reports/status/run-cron?token=${token}`, {
+								cookie: jar
+							});
+
+				return {
+					reportStatus: report['status'],
+					reportSendError: report['sendError'] ?? null,
+					token,
+					followedStatus: followed?.['status'] ?? null,
+					followedHtml: String(followed?.['html'] ?? '').slice(0, 400)
+				};
+			});
+
+			// the page itself has to render before anything on it can be followed
+			expect(out['reportStatus']).toBe(200);
+			// and it has to have completed: a `sendContent()` that threw is the state in which the
+			// seed minted during placeholder replacement is lost
+			expect(out['reportSendError'], 'the render must not have thrown mid-send').toBeNull();
+
+			// the placeholder must have been replaced with a real token rather than left as the
+			// base64 hash `RouteProcessorCsrf` emits
+			expect(String(out['token']), 'the status report must carry a run-cron link').not.toBe(
+				''
+			);
+
+			// THE ASSERTION THE REPORT IS ABOUT: the token the page issued must validate on the
+			// request that presents it. A 403 here is `'csrf_token' URL query argument is invalid`.
+			expect(
+				out['followedStatus'],
+				`run-cron answered ${out['followedStatus']}: ${out['followedHtml']}`
+			).not.toBe(403);
+		},
+		REQUEST_TIMEOUT
+	);
 });

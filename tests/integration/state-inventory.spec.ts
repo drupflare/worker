@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderPage } from '../../src/drupal/site-php';
-import { classifyState, replicaMayOriginate } from '../../src/ops/state-inventory';
+import { classifyState } from '../../src/ops/state-inventory';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -132,8 +132,10 @@ describe('every piece of persistent state has exactly one status', () => {
 
 			for (const key of ['system.private_key', 'system.cron_key']) {
 				expect(present, `${key} is not in the state collection`).toContain(key);
+				// AUTHORITATIVE is the status that means a replica may not mint it, and
+				// `hazardClass()` in write-forwarding.ts is what turns that into a refusal --
+				// `replicaMayOriginate()` was a wrapper over this same call and is deleted
 				expect(classifyState('key_value', 'state', key)).toBe('AUTHORITATIVE');
-				expect(replicaMayOriginate(classifyState('key_value', 'state', key))).toBe(false);
 			}
 		},
 		REQUEST_TIMEOUT

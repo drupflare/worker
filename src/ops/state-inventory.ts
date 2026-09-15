@@ -243,16 +243,18 @@ export function classifyState(table: string, collection?: string, name?: string)
 	return 'UNKNOWN';
 }
 
-/** whether a replica may hold this state at all without the primary handing it over */
-export function replicaMayOriginate(status: StateStatus): boolean {
-	return status === 'LOCAL_EPHEMERAL' || status === 'REPLICABLE_DERIVED';
-}
-
-/**
- * Whether a request touching this state may be answered by a replica.
- *
- * `UNKNOWN` answers false, which is what the status is for.
- */
-export function replicaMayServe(status: StateStatus): boolean {
-	return status !== 'UNKNOWN' && status !== 'PRIMARY_ONLY_SIDE_EFFECT';
-}
+// `replicaMayOriginate()` and `replicaMayServe()` were here, exported, unit-tested and called by
+// nothing, and both are DELETED rather than wired -- they read as the missing callers for two real
+// decisions and are the wrong shape for either.
+//
+// `replicaMayOriginate()` looked like the predicate `originable()` in write-forwarding.ts should
+// have used. It is not: it answers false for AUTHORITATIVE, which is every content table, and the
+// lane id partition exists precisely so a lane CAN mint into those safely under a disjoint stride.
+// Wiring it would have refused the feature it appeared to protect.
+//
+// `replicaMayServe()` is a DENY-list over statuses, and `src/ops/replica.ts` is deliberately two
+// allow-lists and no deny-list, because an unknown effect has to fail closed by being absent from
+// an allow-list rather than by being absent from a deny-list.
+//
+// What survives is `classifyState()`, which both were thin wrappers over and which
+// `hazardClass()` in write-forwarding.ts does call.

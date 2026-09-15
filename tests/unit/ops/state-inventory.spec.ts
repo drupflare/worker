@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	classifyState,
-	replicaMayOriginate,
-	replicaMayServe
-} from '../../../src/ops/state-inventory';
+import { classifyState } from '../../../src/ops/state-inventory';
 
 /**
  * The classifier's asymmetry is the property under test.
@@ -31,8 +27,8 @@ describe('a table is not an effect', () => {
 		const secret = classifyState('key_value', 'state', 'system.private_key');
 		const queue = classifyState('key_value', 'update_fetch_task', 'drupal');
 		expect(secret).not.toBe(queue);
-		expect(replicaMayOriginate(secret)).toBe(false);
-		expect(replicaMayOriginate(queue)).toBe(true);
+		expect(secret).toBe('AUTHORITATIVE');
+		expect(queue).toBe('REPLICABLE_DERIVED');
 	});
 
 	it('refuses to judge a key_value row it cannot see the name of', () => {
@@ -57,7 +53,7 @@ describe('the three values a replica may never originate', () => {
 			classifyState('key_value', 'state', 'system.cron_key'),
 			classifyState('sequences')
 		]) {
-			expect(replicaMayOriginate(status)).toBe(false);
+			expect(status).toBe('AUTHORITATIVE');
 		}
 	});
 });
@@ -96,27 +92,23 @@ describe('patterns run in the safe direction only', () => {
 	});
 });
 
-describe('what each status permits', () => {
-	it('lets a replica serve everything except an unknown or an outbound effect', () => {
-		expect(replicaMayServe('AUTHORITATIVE')).toBe(true);
-		expect(replicaMayServe('REPLICABLE_DERIVED')).toBe(true);
-		expect(replicaMayServe('LOCAL_EPHEMERAL')).toBe(true);
-		expect(replicaMayServe('PRIMARY_ONLY_SIDE_EFFECT')).toBe(false);
-		expect(replicaMayServe('UNKNOWN')).toBe(false);
-	});
-
-	it('lets a replica originate only what it can rebuild', () => {
-		expect(replicaMayOriginate('LOCAL_EPHEMERAL')).toBe(true);
-		expect(replicaMayOriginate('REPLICABLE_DERIVED')).toBe(true);
-		expect(replicaMayOriginate('AUTHORITATIVE')).toBe(false);
-		expect(replicaMayOriginate('PRIMARY_ONLY_SIDE_EFFECT')).toBe(false);
-		expect(replicaMayOriginate('UNKNOWN')).toBe(false);
-	});
-
+/**
+ * The two predicates that used to sit here are gone.
+ *
+ * `replicaMayOriginate()` and `replicaMayServe()` were exported, covered by the cases this
+ * describe used to hold, and called by nothing -- and neither was the missing caller it looked
+ * like. `replicaMayOriginate()` answers false for AUTHORITATIVE, which is every content table,
+ * so wiring it into `originable()` would have refused the lane id partition it appeared to
+ * protect; `replicaMayServe()` is a deny-list over statuses and `src/ops/replica.ts` is
+ * deliberately two allow-lists and no deny-list.
+ *
+ * What they wrapped is `classifyState()`, so the statuses they turned into booleans are asserted
+ * directly here instead.
+ */
+describe('what each status means for a replica', () => {
 	it('sends the outbound queues and the log to the primary', () => {
 		for (const table of ['cfw_http_queue', 'cfw_mail_queue', 'watchdog']) {
 			expect(classifyState(table), table).toBe('PRIMARY_ONLY_SIDE_EFFECT');
-			expect(replicaMayServe(classifyState(table))).toBe(false);
 		}
 	});
 });

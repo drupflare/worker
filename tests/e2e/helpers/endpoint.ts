@@ -46,7 +46,7 @@ export async function endpointReachable(timeoutMs = 3000): Promise<boolean> {
  * probe that gives up after 3 s reports every remaining spec as "no worker reachable" instead of
  * naming the one that failed.
  */
-const GATE_WAIT_MS = Number(process.env.CFW_E2E_GATE_WAIT_MS ?? 90_000);
+export const GATE_WAIT_MS = Number(process.env.CFW_E2E_GATE_WAIT_MS ?? 90_000);
 
 /**
  * Resolves to whether the suite should skip itself.

@@ -232,12 +232,17 @@ describe('the profiled default path', () => {
 		expect(sha(packs.default!.json)).toBe(
 			'0729d0b3bac1f922ceb15150abc8873b95276198d218ed13b4935b5ddec4dbdb'
 		);
-		expect(packs.default!.summary).toEqual({
+		// `gzipBytes` IS OMITTED ON PURPOSE. It pins the output size of zlib's DEFLATE, which moves
+		// with the runtime rather than with the pack: node 26.8.2 emits 392 where the literal said
+		// 394, on input the sha above proves is byte-identical. `assertWellFormed` still ties the
+		// field to `pack.gz.length`, so the number is checked against the buffer it describes --
+		// what is gone is a tripwire on somebody's node version. Same rule as the magnitude in
+		// `assets-ignore.spec.ts` that moved when a feature landed
+		expect(packs.default!.summary).toMatchObject({
 			files: 17,
 			missing: 2,
 			rawBytes: 897,
 			rawMb: 0,
-			gzipBytes: 394,
 			gzipMb: 0,
 			indexBytes: 1355
 		});
@@ -304,12 +309,12 @@ describe('PACK_INDEX=1 takes the list verbatim', () => {
 		expect(sha(packs.index!.json)).toBe(
 			'1471b703fb9dba2906248a713ef324eff50dab418e2b92e9842a6d98a361730e'
 		);
-		expect(packs.index!.summary).toEqual({
+		// `gzipBytes` omitted for the reason given on the default path above
+		expect(packs.index!.summary).toMatchObject({
 			files: 4,
 			missing: 1,
 			rawBytes: 139,
 			rawMb: 0,
-			gzipBytes: 138,
 			gzipMb: 0,
 			indexBytes: 292
 		});

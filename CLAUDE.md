@@ -1819,10 +1819,21 @@ column is the slack:
 that fits is free. For scale, the audit's three real builds ask 18,048 / 11,752 / 76,779 bytes, so
 two or three fit inside the current rung and a fourth may not.
 
-**These are the LADDER'S workloads, which peak at 92.50 MiB, not the 108.50 / 122.63 / 138.63 the
-memory section records.** The gap is unexplained and the slack on those heavier paths is still
-unmeasured. Re-run the step-0 arm against the workload you actually care about before trusting a
-number here.
+**THE GAP TO THE 108.50 / 122.63 / 138.63 FIGURES IS THE BINARY, NOT THE WORKLOAD.** The ladder's
+three arms already drive migrate, migrate-plus-firstrun, and two authenticated renders -- the same
+workloads the memory section names. What differs is `INITIAL_MEMORY`, parsed from the Memory section
+of each `.wasm`:
+
+| binary                      | initial pages | initial memory |
+| --------------------------- | ------------- | -------------- |
+| `php8.5.tuned.wasm` (ships) | 1,280         | **80.00 MiB**  |
+| `php8.5.wasm`               | 1,536         | 96.00 MiB      |
+| `php8.5-long64.wasm`        | 1,536         | 96.00 MiB      |
+
+The audit modelled the ladder from 96 MiB and matched the published peaks to the byte, because those
+peaks were taken on a 96 MiB-initial binary. The shipping one starts 16 MiB lower and its idle reads
+83,886,080, which is 1,280 pages exactly. So the memory section's figures describe a binary this
+project no longer ships, and the ladder's are the current ones. Re-measure before quoting either.
 
 **AND A STEP RECOMMENDATION FROM ANOTHER HARNESS DOES NOT TRANSFER HERE, measured.** The audit found
 dropping the geometric step to 0.01 buys 13 MiB on its own harness, which fills to a chosen demand

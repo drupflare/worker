@@ -76,6 +76,26 @@ describe('the manifest describes the tree', () => {
 		expect(built.bucket).toBe(BUCKET);
 	});
 
+	/**
+	 * THE MECHANISM THAT MADE NINE GREEN RUNS VERIFY NOTHING.
+	 *
+	 * `manifestFromDisk()` walks `vendor/`, which exists only on a machine that ran
+	 * `composer install`. The CLI called it unconditionally before dispatching on `--verify`, so
+	 * every CI run threw here before its first HTTP HEAD; `backup.yml` piped through `tee` with no
+	 * `pipefail` and reported the exit status of `tee`. The throw is CORRECT and is pinned so it
+	 * stays loud: a walk that silently tolerated a missing `vendor/` would let `--upload` publish a
+	 * manifest describing a tree that is not there, which is the worse failure of the two.
+	 *
+	 * What the fix changed is the CALL, not this: `--verify` reads the committed manifest and now
+	 * never reaches the walk.
+	 */
+	it('throws on a tree with no vendor, which is the state every CI runner is in', () => {
+		const root = fixture();
+		mkdirSync(join(root, 'assets/drupal'), { recursive: true });
+		writeFileSync(join(root, 'assets/drupal/site.sqlite'), 'db');
+		expect(() => manifestFromDisk(root)).toThrow(/ENOENT|no such file/i);
+	});
+
 	it('reports added, removed and changed keys against a committed manifest', () => {
 		const before = manifest([entry('vendor/a'), entry('vendor/b'), entry('vendor/c')]);
 		const after = manifest([

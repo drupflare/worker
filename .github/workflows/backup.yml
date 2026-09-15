@@ -32,7 +32,10 @@ jobs:
       - name: Install Dependencies
         run: bun install --frozen-lockfile
       - name: Verify the Backup
-        run: bun run backup:verify | tee /tmp/backup.txt
+        shell: bash
+        run: |
+          set -o pipefail
+          bun run backup:verify | tee /tmp/backup.txt
       - name: Backup to Job Summary
         if: ${{ !cancelled() }}
         run: |

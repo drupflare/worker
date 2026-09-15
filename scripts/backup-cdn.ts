@@ -446,7 +446,15 @@ async function restoreKey(root: string, entry: CdnEntry): Promise<void> {
 
 if (import.meta.main) {
 	const root = resolve(import.meta.dirname, '..');
-	const current = manifestFromDisk(root);
+	// LAZY, AND THIS IS THE WHOLE REASON `--verify` HAD NEVER VERIFIED A KEY. `manifestFromDisk()`
+	// walks `vendor/static-long64/`, which exists only on a machine that ran `composer install`;
+	// CI never does. Called unconditionally here it threw `ENOENT: scandir .../vendor` before the
+	// dispatch below, so every scheduled run exited 1 before its first HTTP HEAD -- and
+	// `backup.yml` piped through `tee` with no `pipefail`, so the step reported the exit status of
+	// `tee`. Nine consecutive green runs verified nothing. `--verify` reads the committed manifest
+	// and never needs this at all.
+	let walked: CdnManifest | null = null;
+	const current = (): CdnManifest => (walked ??= manifestFromDisk(root));
 	const committed = readManifest(root);
 
 	// `--restore=<prefix>` pulls the keys a lane needs. CI uses it for the interpreter the test
@@ -454,7 +462,7 @@ if (import.meta.main) {
 	const restoreArg = process.argv.find((a: string) => a.startsWith('--restore='));
 	if (restoreArg) {
 		const prefix = restoreArg.slice('--restore='.length);
-		const manifest = committed ?? current;
+		const manifest = committed ?? current();
 		const wanted = manifest.keys.filter((e) => e.key.startsWith(prefix));
 		if (wanted.length === 0) {
 			console.error(`no key in ${MANIFEST_PATH} starts with ${prefix}`);
@@ -468,17 +476,18 @@ if (import.meta.main) {
 	}
 
 	if (has('write')) {
-		writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(current, null, '\t') + '\n');
-		const bytes = current.keys.reduce((n, e) => n + e.bytes, 0);
+		const fresh = current();
+		writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(fresh, null, '\t') + '\n');
+		const bytes = fresh.keys.reduce((n, e) => n + e.bytes, 0);
 		console.log(
-			`${MANIFEST_PATH}: ${current.keys.length} keys, ${bytes} bytes, ` +
-				`${current.archived.length} archived`
+			`${MANIFEST_PATH}: ${fresh.keys.length} keys, ${bytes} bytes, ` +
+				`${fresh.archived.length} archived`
 		);
 		process.exit(0);
 	}
 
 	if (has('verify') || has('upload')) {
-		const manifest = has('upload') ? current : (committed ?? current);
+		const manifest = has('upload') ? current() : (committed ?? current());
 		if (!committed && has('verify')) {
 			console.error(`no ${MANIFEST_PATH}; run: bun run backup:manifest`);
 			process.exit(1);
@@ -564,11 +573,12 @@ if (import.meta.main) {
 		console.log(`no ${MANIFEST_PATH} yet; run: bun run backup:manifest`);
 		process.exit(1);
 	} else {
-		const drift = driftBetween(committed, current);
-		console.log(JSON.stringify({ keys: current.keys.length, ...drift }, null, 2));
+		const fresh = current();
+		const drift = driftBetween(committed, fresh);
+		console.log(JSON.stringify({ keys: fresh.keys.length, ...drift }, null, 2));
 		for (const key of drift.changed) {
 			const was = committed.keys.find((e) => e.key === key);
-			const now = current.keys.find((e) => e.key === key);
+			const now = fresh.keys.find((e) => e.key === key);
 			console.log(`changed ${key}: ${was?.bytes} -> ${now?.bytes} bytes`);
 		}
 		const stale = drift.added.length || drift.removed.length || drift.changed.length;

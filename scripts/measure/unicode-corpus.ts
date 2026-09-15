@@ -171,12 +171,34 @@ export function nativeCorpus(): Corpus {
 	return JSON.parse(php('unicode-corpus.php')) as Corpus;
 }
 
-/** the subject: the shipping stack, bare and wrapped, over the same scalars */
-export function subjectSweep(
-	opts: { tables?: string } = {}
-): Record<'bare' | 'ship', { case: Record<string, Packed>; width: [number, number, number][] }> {
+type SubjectSweep = Record<
+	'bare' | 'ship',
+	{ case: Record<string, Packed>; width: [number, number, number][] }
+>;
+
+/**
+ * Memoised on the options, because the sweep shells out to PHP over every scalar.
+ *
+ * `tests/node/unicode-corpus.spec.ts` calls this four times and three of them pass the same
+ * defaults; measured at 9.5 to 13.5 s each, in a project that runs serially, so the repeats were
+ * ~20 s of the node lane for an answer that cannot differ. Same shape as the reachability scan.
+ *
+ * Keyed on the options rather than a bare singleton: the fourth call passes a `tables` path that
+ * does not exist, and answering it from a default-options sweep would be a different measurement
+ * wearing the same name.
+ */
+const sweeps = new Map<string, SubjectSweep>();
+
+export function subjectSweep(opts: { tables?: string } = {}): SubjectSweep {
+	const key = JSON.stringify(opts);
+	const held = sweeps.get(key);
+	if (held) return held;
 	const stack = writeStackFile(opts);
-	return JSON.parse(php('unicode-subject.php', [`--root=${root}`, `--stack=${stack.path}`]));
+	const out = JSON.parse(
+		php('unicode-subject.php', [`--root=${root}`, `--stack=${stack.path}`])
+	) as SubjectSweep;
+	sweeps.set(key, out);
+	return out;
 }
 
 /**

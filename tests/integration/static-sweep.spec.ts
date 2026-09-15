@@ -54,9 +54,17 @@ const html = (result: Payload | FormResult) => String(result['html'] ?? '');
 /** collapses runs of whitespace, so a comparison is about content rather than indentation */
 const squash = (source: string) => source.replace(/\s+/g, ' ');
 
-/** a migrated site with a known admin password and two ordinary accounts to interleave */
-async function provision(site: ServeDo) {
+/**
+ * A migrated site with a known admin password.
+ *
+ * The two ordinary accounts are OPT-IN. They cost a full Drupal user save each and only three of
+ * the 28 provisions in this file interleave identities; the other 25 paid for them and logged in as
+ * uid 1. `withUsers` creates alice as uid 2 and bob as uid 3, in that order, which is what those
+ * three cases address them by.
+ */
+async function provision(site: ServeDo, { withUsers = false }: { withUsers?: boolean } = {}) {
 	await claimSite(site, PASS, 'Sweep');
+	if (!withUsers) return;
 	await site.runJson(createUser({ name: 'alice', pass: PASS }));
 	await site.runJson(createUser({ name: 'bob', pass: PASS }));
 }
@@ -265,7 +273,7 @@ describe('identity interleaving: what one visitor leaves for the next', () => {
 		'answers as the visitor who asked, through anonymous, alice, bob and back to alice',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
-				await provision(site);
+				await provision(site, { withUsers: true });
 				const anonFirst = await render(site, '/');
 				const aliceJar = cookieJar(await login(site, 'alice', PASS));
 				const alice = await render(site, '/user/2', { cookie: aliceJar });
@@ -421,7 +429,7 @@ describe('the caches whose key is the request they were first asked in', () => {
 		'gives each visitor a translation cache key keyed on their own roles',
 		async () => {
 			const out = await inObject(freshSite(), async (site) => {
-				await provision(site);
+				await provision(site, { withUsers: true });
 				const enabled = await callDo(site, '/__enable?module=locale');
 				const translating = await site.runJson(TRANSLATE_ENGLISH);
 				const adminJar = cookieJar(await login(site, 'admin', PASS));
@@ -1003,7 +1011,7 @@ describe('the blind half: every static property of every declared class', () => 
 		'carries nothing across the boundary that is not a named cache',
 		async () => {
 			const warm = await inObject(freshSite(), async (site) => {
-				await provision(site);
+				await provision(site, { withUsers: true });
 				await render(site, '/');
 				const jar = cookieJar(await login(site, 'admin', PASS));
 				await render(site, '/admin/content', { cookie: jar });

@@ -127,6 +127,34 @@ describe('a statement is a write unless it is proven a read', () => {
 		expect(isProvenRead('')).toBe(false);
 		expect(isProvenRead('ATTACH DATABASE ":memory:" AS other')).toBe(false);
 	});
+
+	/**
+	 * A COMPOUND IS NOT A PROVEN READ WHATEVER IT STARTS WITH, and this leaf branch had never
+	 * executed: every case above is a single statement.
+	 *
+	 * `sql.exec()` runs every statement in the string it is handed and every classifier reads the
+	 * LEADING keyword, so `SELECT 1; DELETE FROM users` would classify as a read and then mutate
+	 * authoritative state on a lane. The admission path guards this too; the check is repeated at
+	 * the leaf because the function is exported and a future caller reaching it directly would
+	 * reopen the hole.
+	 */
+	it.each([
+		['a read then a delete', 'SELECT 1; DELETE FROM users'],
+		['a read then an insert', 'SELECT * FROM node; INSERT INTO key_value VALUES (1)'],
+		['a pragma then a write', 'PRAGMA table_info("node"); UPDATE users SET name = "x"'],
+		['an explain then a drop', 'EXPLAIN SELECT 1; DROP TABLE users'],
+		['two reads, which is still unparsed', 'SELECT 1; SELECT 2']
+	])('refuses %s', (_label, sql) => {
+		expect(isProvenRead(sql), sql).toBe(false);
+	});
+
+	// one TRAILING separator is not a second statement, or Drupal's own single statements would
+	// each cost a hop to the primary
+	it('takes a single statement with a trailing semicolon as the read it is', () => {
+		expect(isProvenRead('SELECT * FROM node;')).toBe(true);
+		expect(isProvenRead('SELECT * FROM node;  ')).toBe(true);
+		expect(isProvenRead('PRAGMA table_info("node");')).toBe(true);
+	});
 });
 
 /**

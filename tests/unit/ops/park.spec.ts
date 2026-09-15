@@ -8,6 +8,7 @@ import {
 	parkTrapInstall
 } from '../../../src/ops/park';
 import {
+	PARK_FETCH_SCHEME,
 	PARK_IO_TIMEOUT_MS,
 	PARK_MARK,
 	PARK_MAX_TRIPS,
@@ -21,6 +22,7 @@ import {
 	parkResumeBytes,
 	parkResumeValue,
 	parkRun,
+	parseParkFetch,
 	parseSocketTarget,
 	stripPhpTag
 } from '../../../src/ops/park-drive';
@@ -198,6 +200,129 @@ describe('classifying what a parked call needs', () => {
 		expect(classifyParkOp(pending('fread', res(2), 0), new Set([2]), REDIS).kind).toBe(
 			'refused'
 		);
+	});
+});
+
+/**
+ * The parked HTTP yield, which is where the SSRF guard actually sits.
+ *
+ * `fopen('https://...')` cannot park -- the HTTPS wrapper is userland invoked from the INTERNAL
+ * `fopen`, and a park under one of those is refused because `fopen`'s C locals cannot survive the
+ * `longjmp`. So HTTP is served by REPLACING the transport: `ParkFetchHandler` yields a
+ * `cfwpark+fetch://` target through the socket trap, and the destination is whatever the module
+ * asked for. The guard is therefore the ONLY thing bounding where a parked fetch can reach, and it
+ * had no test that executed it.
+ */
+describe('a parked fetch is bounded by the outbound guard, not by the endpoint', () => {
+	/** the descriptor as it arrives: base64 JSON behind the scheme, through the socket trap */
+	const fetchTarget = (descriptor: object) =>
+		b64(`${PARK_FETCH_SCHEME}${btoa(JSON.stringify(descriptor))}`);
+
+	const classify = (descriptor: object, env: Record<string, string> = REDIS) =>
+		classifyParkOp(pending('stream_socket_client', fetchTarget(descriptor)), new Set(), env);
+
+	it('passes a public destination through as a fetch', async () => {
+		const op = classify({ url: 'https://updates.drupal.org/release-history' });
+		expect(op.kind).toBe('fetch');
+		expect(op.kind === 'fetch' && op.request.url).toContain('updates.drupal.org');
+	});
+
+	// the scheme is checked BEFORE the socket parse: a fetch target carries no port and would
+	// otherwise be refused as unparseable
+	it('is recognised even though it carries no port', async () => {
+		expect(classify({ url: 'https://example.test/x' }).kind).not.toBe('refused');
+	});
+
+	it.each([
+		['loopback v4', 'http://127.0.0.1/admin'],
+		['loopback by name', 'http://localhost:8080/'],
+		['link-local metadata', 'http://169.254.169.254/latest/meta-data/'],
+		['private v4', 'http://10.0.0.5/'],
+		['carrier-grade NAT', 'http://100.64.0.1/'],
+		['loopback v6', 'http://[::1]/'],
+		['unique local v6', 'http://[fd00::1]/']
+	])('refuses a parked fetch at %s', async (_name, url) => {
+		const op = classify({ url });
+		expect(op.kind).toBe('refused');
+		expect(op.kind === 'refused' && op.why).toContain(url);
+	});
+
+	/**
+	 * THE LEVER THE REST OF THE OUTBOUND PATH READS. `queueHttp()` and `cfwFetch` both go through
+	 * `outboundGuardEnabled()`, and this branch called `refuseOutbound()` directly -- so
+	 * `OUTBOUND_GUARD=0`, which exists for the rig pointing a site at containers on the host,
+	 * turned the guard off everywhere EXCEPT here and a parked fetch to the rig was refused as
+	 * loopback.
+	 */
+	it('honours OUTBOUND_GUARD=0, the same lever every other outbound path reads', async () => {
+		const url = 'http://127.0.0.1:6379/';
+		expect(classify({ url }).kind).toBe('refused');
+		expect(classify({ url }, { ...REDIS, OUTBOUND_GUARD: '0' }).kind).toBe('fetch');
+	});
+
+	it('refuses a descriptor it cannot read rather than fetching something else', async () => {
+		const op = classifyParkOp(
+			pending('stream_socket_client', b64(`${PARK_FETCH_SCHEME}not-base64-json`)),
+			new Set(),
+			REDIS
+		);
+		expect(op.kind).toBe('refused');
+		expect(op.kind === 'refused' && op.why).toContain('unreadable fetch descriptor');
+	});
+});
+
+describe('the fetch descriptor parser', () => {
+	const packed = (value: unknown) => btoa(JSON.stringify(value));
+
+	it('defaults the method to GET rather than guessing from the body', () => {
+		const one = parseParkFetch(packed({ url: 'https://example.test/' }));
+		expect(one?.method).toBe('GET');
+		expect(one?.headers).toEqual({});
+		expect(one?.body).toBeUndefined();
+	});
+
+	it('carries the method, headers and body a module set', () => {
+		const one = parseParkFetch(
+			packed({
+				url: 'https://example.test/token',
+				method: 'POST',
+				headers: { authorization: 'Bearer x' },
+				body: btoa('grant_type=authorization_code')
+			})
+		);
+		expect(one?.method).toBe('POST');
+		expect(one?.headers['authorization']).toBe('Bearer x');
+		expect(one?.body).toBe(btoa('grant_type=authorization_code'));
+	});
+
+	// a header whose value is not a string is dropped rather than coerced: `String(obj)` would
+	// put "[object Object]" on the wire as though a module had asked for it
+	it('drops a header value that is not a string', () => {
+		const one = parseParkFetch(
+			packed({ url: 'https://example.test/', headers: { good: 'yes', bad: { nested: 1 } } })
+		);
+		expect(one?.headers).toEqual({ good: 'yes' });
+	});
+
+	it('takes manual redirect only at that exact spelling', () => {
+		expect(
+			parseParkFetch(packed({ url: 'https://e.test/', redirect: 'manual' }))?.redirect
+		).toBe('manual');
+		expect(
+			parseParkFetch(packed({ url: 'https://e.test/', redirect: 'error' }))?.redirect
+		).toBeUndefined();
+	});
+
+	it.each([
+		['not base64 at all', 'not-base64'],
+		['base64 of nothing useful', btoa('nonsense')],
+		['a JSON array', btoa(JSON.stringify(['https://e.test/']))],
+		['a JSON null', btoa(JSON.stringify(null))],
+		['no url', btoa(JSON.stringify({ method: 'GET' }))],
+		['an empty url', btoa(JSON.stringify({ url: '' }))],
+		['a url that is not a string', btoa(JSON.stringify({ url: 42 }))]
+	])('answers null on %s', (_name, input) => {
+		expect(parseParkFetch(input)).toBeNull();
 	});
 });
 

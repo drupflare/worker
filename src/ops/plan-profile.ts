@@ -98,6 +98,21 @@ export const FREE_PROFILE: PlanProfile = {
  * Subrequests are the reason the drain limits stay small-ish: an invocation gets 1,000 on paid
  * against 50 on free, but a fill in the same firing has already spent several, and each mirror put
  * carries a whole file through memory.
+ *
+ * **BATCHING DOES AMORTISE REAL COST, AND THAT IS NOT WHAT BOUNDS THIS NUMBER.** Measured
+ * 2026-09-14 on a deployed free worker, n=5 per k, interleaved, every batch verified to drain
+ * exactly k in one invocation: per-page wall falls 109 ms at k=1 to 82 at k=5, 50 at k=10 and
+ * **42.9 at k=20**, a 2.54x saving with the curve still descending. Round-trip wall rather than
+ * `cpuTime`, because the tag rides the front-worker request and the observability record is the
+ * OBJECT's invocation, which carries no query -- the network term is near constant across the four
+ * arms, so the relation holds even though the absolutes carry it.
+ *
+ * It does not move either number above, and saying why is the point of recording it. That run drove
+ * an otherwise idle object, so it measured THROUGHPUT and the two constraints here are HIT LATENCY
+ * during a fill and the 128 MiB isolate -- a fill batch is N workloads inside ONE invocation, which
+ * is what reset four freshly provisioned sites at 25. A throughput figure cannot overrule a latency
+ * or a memory bound. What it does establish is that the cost is genuinely amortisable, so a future
+ * topology where a fill does not occupy the serving object has a measured reason to revisit this.
  */
 export const PAID_PROFILE: PlanProfile = {
 	fillBatchSize: 8,

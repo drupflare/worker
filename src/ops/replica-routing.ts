@@ -110,6 +110,19 @@ export function resetLaneBeliefs(): void {
  * The trade is per-page concurrency for authenticated readers, and it is the right way round: the
  * anonymous slice is the bulk of the traffic and keeps spreading by address, while a plan HIT
  * answers without rendering at all, which beats sharing a page's renders across lanes.
+ *
+ * **AN ANONYMOUS ONE-MACHINE CLIENT CANNOT SPREAD ACROSS A POOL.** It presents one address on every
+ * request, so the middle branch here returns one key however many paths it rotates through --
+ * measured on a local rig, an anonymous drive reported `x-cfw-replica` as `{r3: 662}`, one object
+ * for 100% of samples. Real traffic has the spread for free;
+ * `scripts/measure/v101-arms.ts --clients=N` is how a rig gets it.
+ *
+ * It does NOT explain a pool whose lanes answer nothing, and it was wrongly blamed for one. An
+ * AUTHENTICATED drive keys on the path, and the eight paths that rig rotates cover 4 of 4 buckets
+ * at 3 lanes and 6 of 8 at 7 -- computed against this file's own FNV-1a, offline, in twenty lines.
+ * The cause there was admission: a lane is refused until something mints `state:system.private_key`.
+ * Count the distinct objects in `x-cfw-replica` AND check the lanes reached `SERVING` before
+ * attributing a pool reading to routing.
  */
 export function affinityKey(input: {
 	session: string | null;

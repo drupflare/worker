@@ -719,6 +719,51 @@ drangler update my-site     # and then deploy it to an existing worker
 `doctor`, `health`, `config`, `cf`, `secrets`, `validate` and the rest of `migrate` read. Its README
 covers the migration commands in both directions.
 
+### Updating a Deployed Worker
+
+The deploy button creates a repository from this one, so your worker is a copy rather than a fork and
+the two share no history. Adding this repository as a remote lets you merge later releases into it.
+
+```bash
+# one time
+git remote add template https://github.com/drupflare/worker
+
+# to install an update
+git switch master
+git fetch --all
+git merge template --allow-unrelated-histories -m "chore: merge upstream"
+```
+
+Pushing the result deploys it, if you connected the repository to Cloudflare when you created it.
+Otherwise run `bunx wrangler deploy`, or `drangler update my-site` to update the checkout and deploy
+in one step.
+
+Notes:
+
+- The `git remote add` runs once per clone.
+- Switch to the branch you want to update before merging.
+- `--allow-unrelated-histories` is what lets two repositories with no common commit merge at all.
+- Take a backup branch first, so a merge you dislike costs nothing:
+
+```bash
+git switch -c before-template-merge
+```
+
+To take a specific release rather than the tip:
+
+```bash
+git fetch --tags template
+git switch master
+git merge v1.0.1 --allow-unrelated-histories -m "chore: merge template v1.0.1"
+```
+
+Your own changes are the ones that conflict, and `wrangler.jsonc` is the usual place: it carries the
+worker name and the bindings you added. Resolve it in favour of your values and take the template's
+side elsewhere. `-X theirs` does that in one pass when you have made no changes worth keeping.
+
+A merge that changes `src/` or the packed modules needs a deploy to take effect. A merge that changes
+the pack reaches existing sites through reconciliation, described next.
+
 ### Keeping an Existing Site Current
 
 The pack is delivered when a site is provisioned, so a fix that lands inside it reaches new sites on
@@ -757,15 +802,16 @@ drangler sweep my-site.example --run # take a step now
 
 ### The Admin Surfaces
 
-Six pages under `/_cfw`, each one driving machinery that already exists rather than holding its own.
-They take the owner token: sign in at `/_cfw/login`, and any page reached without a session redirects
-there and comes back afterwards.
+Seven pages under `/_cfw`, each one driving machinery that already exists rather than holding its
+own. They take the owner token: sign in at `/_cfw/login`, and any page reached without a session
+redirects there and comes back afterwards.
 
 | page         | path             | what it does                                                                            |
 | ------------ | ---------------- | --------------------------------------------------------------------------------------- |
 | **Limits**   | `/_cfw`          | every metered resource, what spends it, and whether exceeding it bills or stops working |
 | **Extend**   | `/_cfw/extend`   | whether a contrib module installs here, answered against the shipped lock               |
 | **Commands** | `/_cfw/commands` | a Drush-shaped field over the site's operations                                         |
+| **Operate**  | `/_cfw/operate`  | the repair actions: purge, reconcile, sweep, database updates, restart the fill chain   |
 | **Deploy**   | `/_cfw/deploy`   | the provisioning steps, two of which cannot be automated                                |
 | **Git**      | `/_cfw/git`      | remotes, branches, pull requests and the working-tree diff                              |
 | **Access**   | `/_cfw/access`   | the OpenID Connect provider                                                             |
@@ -1355,11 +1401,13 @@ Measured properties of the runtime, listed so they are known before they are hit
   visit, so the answer usually arrives on the first request rather than the second. Request headers
   are carried across the queue and are part of the cache key, except `User-Agent`, which is sent but
   not keyed. A non-idempotent request is never re-driven: a replayed POST is a different outcome.
-- **A page that has been rendered before never waits for a re-render.** After a content change, a
-  request for a path with history is answered from the previous generation with `x-cfw-edge: STALE`
-  while the current one regenerates on the alarm chain. It is bounded two generations and 24 hours
-  deep, never applies to a session-carrying response, and refuses a deny-list that `NEVER_STALE`
-  extends.
+- **A page that has been rendered before never waits for a re-render, on a paid plan.** After a
+  content change, a request for a path with history is answered from the previous generation with
+  `x-cfw-edge: STALE` while the current one regenerates on the alarm chain. It is bounded two
+  generations and 24 hours deep, never applies to a session-carrying response, and refuses a
+  deny-list that `NEVER_STALE` extends. The tier is stored in KV and follows the KV page tier's own
+  plan gate, so a free site does not store a previous generation to fall back to; `PAGE_KV_ENABLED=1`
+  turns it on regardless of plan.
 - **Outbound TCP is either parked or declared, depending on which the module needs.**
   `Drupal\drupflare\Network\CfwTcp` describes a whole exchange and reads the answer on a later
   request over a queue, which suits syslog. A module that needs the answer inside the request that

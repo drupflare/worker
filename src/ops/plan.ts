@@ -70,6 +70,20 @@ export const PLAN_MEMO_MS = 60_000;
 /** the minimal KV surface, so the resolver is drivable over a stand-in */
 export type PlanKv = { get(key: string): Promise<string | null> };
 
+/**
+ * The write half, which did not exist until v1.0.1.
+ *
+ * Every lever below was readable from KV and settable only by editing `wrangler.jsonc` and
+ * redeploying -- a deploy to change a fact the deploy does not control, which is the exact thing
+ * `resolvePlan()`'s docblock says KV is here to avoid. Nothing in `src/` called `put()`.
+ */
+export type PlanKvWriter = PlanKv & { put(key: string, value: string): Promise<void> };
+
+/** whether a binding can be written, so a caller can refuse rather than throw on a read-only stub */
+export function canWriteKv(kv?: PlanKv | null): kv is PlanKvWriter {
+	return !!kv && typeof (kv as PlanKvWriter).put === 'function';
+}
+
 let memo: { at: number; value: ResolvedPlan } | null = null;
 
 /** drops the isolate's memo; tests use it, and so does an explicit refresh */
@@ -227,6 +241,101 @@ export async function resolveSettings(
 	}
 	settingsMemo = { at: nowMs, value: out };
 	return out;
+}
+
+/** what a write attempt did, so a caller can report the names it refused rather than silently drop */
+export type SettingsWrite = {
+	written: Partial<Record<KvOverridable, string>>;
+	/** names the caller sent that are not on {@link KV_OVERRIDABLE} */
+	refused: string[];
+	/** names the caller cleared, which fall back to the deployed var */
+	cleared: string[];
+};
+
+/**
+ * Merges a patch into the KV settings document, keeping only allow-listed names.
+ *
+ * **THE FILTER IS ENFORCED HERE AND NOT ONLY IN {@link resolveSettings}, and that is a privilege
+ * boundary rather than belt-and-braces.** A reader-side filter makes an unlisted name inert; a
+ * writer-side filter makes it unstorable. Those differ the moment anything else grows a reader --
+ * a future surface reading the raw document would see whatever the last writer put there, and
+ * `KV_OVERRIDABLE`'s docblock explains what a `PW_DIAGNOSTICS` in that document would reach.
+ *
+ * A name mapped to `null` or `''` is REMOVED rather than stored empty, because an empty string is
+ * how every reader here spells "defer to the deployed var" and a stored one would be indistinguishable
+ * from a deliberate blank.
+ *
+ * `PLAN` is not accepted at any spelling; it has {@link writePlan}, for the reason the allow-list
+ * gives.
+ */
+export async function writeSettings(
+	kv: PlanKvWriter,
+	patch: Record<string, unknown>
+): Promise<SettingsWrite> {
+	const allowed = new Set<string>(KV_OVERRIDABLE);
+	// the raw key rather than the memo, which may be up to PLAN_MEMO_MS stale and would silently
+	// drop a concurrent operator's change. An unparseable document starts from empty rather than
+	// being merged into: it cannot be trusted to say what is in force, and the allow-list rebuild
+	// below is what makes discarding it safe
+	let current: Record<string, unknown> = {};
+	try {
+		const raw = await kv.get(SETTINGS_KV_KEY);
+		const parsed: unknown = raw ? JSON.parse(raw) : null;
+		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+			current = parsed as Record<string, unknown>;
+		}
+	} catch {
+		current = {};
+	}
+
+	const refused: string[] = [];
+	const cleared: string[] = [];
+	for (const [name, value] of Object.entries(patch)) {
+		if (!allowed.has(name)) {
+			refused.push(name);
+			continue;
+		}
+		if (value === null || value === undefined || String(value) === '') {
+			delete current[name];
+			cleared.push(name);
+			continue;
+		}
+		current[name] = String(value);
+	}
+
+	// only allow-listed names survive the round trip, so a document that arrived carrying something
+	// else cannot be written back out
+	const next: Record<string, string> = {};
+	for (const name of KV_OVERRIDABLE) {
+		const value = current[name];
+		if (value !== undefined && value !== null && String(value) !== '') {
+			next[name] = String(value);
+		}
+	}
+	await kv.put(SETTINGS_KV_KEY, JSON.stringify(next));
+	// the isolate would otherwise serve the old document for up to PLAN_MEMO_MS, which reads as the
+	// write having been ignored
+	resetSettingsMemo();
+	return { written: next as Partial<Record<KvOverridable, string>>, refused, cleared };
+}
+
+/**
+ * Sets or clears the plan override.
+ *
+ * SEPARATE FROM {@link writeSettings} AND DELIBERATELY SO. Every name on {@link KV_OVERRIDABLE}
+ * has a worst case of "a slow site", which is what makes that list safe to delegate. `PLAN` selects
+ * a whole limits profile, and the quotas it models are ACCOUNT-WIDE while any actor setting it is
+ * one tenant. Keeping it on its own function keeps the two authorisations separable.
+ *
+ * @param plan `null` removes the override, so the deployed var comes back into force.
+ */
+export async function writePlan(
+	kv: PlanKvWriter,
+	plan: 'free' | 'paid' | null
+): Promise<ResolvedPlan> {
+	await kv.put(PLAN_KV_KEY, plan === null ? '' : plan);
+	resetPlanMemo();
+	return plan === null ? { plan: 'free', source: 'default' } : { plan, source: 'kv' };
 }
 
 /**

@@ -3,6 +3,10 @@ import {
 	adminCookieToken,
 	adminSessionCookie,
 	clearedAdminCookie,
+	clearOwnerFailures,
+	noteOwnerFailure,
+	ownerFailKey,
+	ownerRefusedForNow,
 	secureOrigin
 } from './ops/admin-session.js';
 import {
@@ -68,7 +72,17 @@ import {
 	writePage,
 	type PageKv
 } from './ops/page-store.js';
-import { resolvePlan, resolveSettings, withPlan, withSettings, type PlanKv } from './ops/plan.js';
+import {
+	canWriteKv,
+	KV_OVERRIDABLE,
+	resolvePlan,
+	resolveSettings,
+	withPlan,
+	withSettings,
+	writePlan,
+	writeSettings,
+	type PlanKv
+} from './ops/plan.js';
 import { sessionCsrf } from './ops/render-plan.js';
 import {
 	affinityKey,
@@ -301,6 +315,13 @@ const OWNER_ROUTES = new Set([
 	// history behind either -- `gitRestore()` restores within the same call and then the previous
 	// state is gone
 	'/modify',
+	// THE RUNTIME LEVERS, WHICH WERE READABLE FROM KV AND WRITABLE BY NOBODY. `resolvePlan()` and
+	// `resolveSettings()` have read the `plan` and `settings` keys since they shipped, and nothing
+	// in `src/` ever called `CONFIG_KV.put()` -- so changing a lever meant editing `wrangler.jsonc`
+	// and redeploying, which is a deploy to change a fact the deploy does not control. Owner rather
+	// than diagnostic for the reason `/serve-stats` is: a site owner tuning their own site should
+	// not need the flag that also opens `/sql`
+	'/settings',
 	// THE PRODUCT SURFACES, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
 	// also reach. They used to sit in the diagnostic set alone, so the pages that install code were
 	// open to anybody who could reach a worker with the flag on, and each button's
@@ -374,6 +395,15 @@ async function ownerCredential(
 		bearerToken(request.headers.get('authorization')) ??
 		adminCookieToken(request.headers.get('cookie'));
 	if (!presented) return null;
+
+	// BEFORE THE OBJECT HOP, WHICH IS THE WHOLE POINT. Every presented token cost one Durable
+	// Object request whether or not it was right, so an unauthenticated client could drive the
+	// meter the free-plan model is scored against until the site went read-only. Refusing here
+	// spends nothing. See `OWNER_FAIL_LIMIT` for why this is not a brute-force defence.
+	const failKey = ownerFailKey(request);
+	const now = Date.now();
+	if (ownerRefusedForNow(failKey, now)) return null;
+
 	const site = await siteFor(url, env);
 	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const inner = new URL(url);
@@ -382,10 +412,20 @@ async function ownerCredential(
 		const res = await stub.fetch(
 			new Request(inner, { headers: { authorization: `Bearer ${presented}` } })
 		);
-		return res.status === 200 ? presented : null;
+		if (res.status === 200) {
+			// a correct token clears the budget, so an earlier typo never holds back the operator
+			clearOwnerFailures(failKey);
+			return presented;
+		}
+		noteOwnerFailure(failKey, now);
+		return null;
 	} catch {
 		// an object that cannot answer has not said yes, and a migrating or quarantined site must
-		// not become a site where the credential check is skipped
+		// not become a site where the credential check is skipped.
+		//
+		// NOT counted as a failure: the credential may well be correct and the object merely
+		// migrating or quarantined, and counting it would let an unreachable object lock its own
+		// owner out of the routes they need to repair it
 		return null;
 	}
 }
@@ -992,6 +1032,13 @@ export default {
 		// touching an object. It is named explicitly: it has no DO_ROUTE entry, so falling through
 		// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
 		// including `scripts/security-update.mjs --fleet=`
+		// `/settings` rides here for the same reason `/fleet` does: `CONFIG_KV` is a FRONT WORKER
+		// binding, so an object hop would spend a Durable Object request to reach a namespace this
+		// isolate already holds. It has no `DO_ROUTE` entry for that reason.
+		if (url.pathname === '/settings') {
+			return await settingsRoute(request, url, env);
+		}
+
 		if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
 			return await renderAdmin(request, url, env, stubOf(), ownerToken);
 		}
@@ -1675,6 +1722,96 @@ function safeNext(value: string | null): string | null {
 }
 
 /**
+ * Reads and writes the runtime levers, which had a resolver and no writer.
+ *
+ * GET reports every allow-listed name with the value in force AND WHERE IT CAME FROM. The source is
+ * the half that matters: "we think you are on free" is only useful with the reason, and
+ * `ResolvedPlan` has carried `kv` / `var` / `default` since it shipped with nothing rendering it.
+ *
+ * PUT takes a JSON object and merges it. `PLAN` is accepted only under its own top-level key rather
+ * than alongside the levers, because the two are different authorisations: every name on
+ * `KV_OVERRIDABLE` has a worst case of a slow site, and `PLAN` selects a limits profile whose quotas
+ * are account-wide.
+ *
+ * A binding with no `put` answers 501 rather than throwing. That is the local-dev and
+ * no-namespace case, and it has to read as "this deployment cannot store an override" rather than
+ * as a fault.
+ */
+async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Promise<Response> {
+	const kv = env.CONFIG_KV;
+	if (!kv) {
+		return Response.json(
+			{
+				ok: false,
+				error: 'no CONFIG_KV binding, so there is nowhere to store an override',
+				how: 'add the kv_namespaces binding in wrangler.jsonc; the deployed vars stay in force without it'
+			},
+			{ status: 501 }
+		);
+	}
+
+	const [plan, settings] = await Promise.all([resolvePlan(env, kv), resolveSettings(kv)]);
+	const view = () => ({
+		ok: true,
+		plan,
+		// every name, including the ones with no override, so a caller can render the whole surface
+		// from one response rather than having to know the list
+		levers: KV_OVERRIDABLE.map((name) => ({
+			name,
+			value: settings[name] ?? (env as unknown as Record<string, string>)[name] ?? null,
+			source: settings[name] !== undefined ? 'kv' : name in env ? 'var' : 'default'
+		}))
+	});
+
+	if (request.method === 'GET') return Response.json(view());
+
+	if (request.method !== 'PUT' && request.method !== 'POST') {
+		return Response.json(
+			{ ok: false, error: 'use GET to read or PUT to write' },
+			{ status: 405 }
+		);
+	}
+
+	if (!canWriteKv(kv)) {
+		return Response.json(
+			{ ok: false, error: 'this CONFIG_KV binding is read-only' },
+			{ status: 501 }
+		);
+	}
+
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		return Response.json({ ok: false, error: 'the body is not JSON' }, { status: 400 });
+	}
+	if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+		return Response.json(
+			{ ok: false, error: 'the body must be a JSON object' },
+			{ status: 400 }
+		);
+	}
+
+	const patch = body as Record<string, unknown>;
+	const wantedPlan = patch['PLAN'] ?? patch['plan'];
+	let planResult = plan;
+	if (wantedPlan !== undefined) {
+		const asked = String(wantedPlan ?? '').toLowerCase();
+		if (asked !== '' && asked !== 'free' && asked !== 'paid') {
+			return Response.json(
+				{ ok: false, error: `PLAN must be free, paid or empty; got ${asked}` },
+				{ status: 400 }
+			);
+		}
+		planResult = await writePlan(kv, asked === '' ? null : (asked as 'free' | 'paid'));
+	}
+
+	const { PLAN: _plan, plan: _lower, ...levers } = patch;
+	const written = await writeSettings(kv, levers);
+	return Response.json({ ok: true, plan: planResult, ...written });
+}
+
+/**
  * Renders one product surface.
  *
  * Kept out of `fetch` because it is the only branch that returns HTML rather than proxying, and
@@ -1936,6 +2073,8 @@ async function renderAdmin(
 	 *
 	 * `?target=<generation>` scores a rollout in progress against a specific pack.
 	 */
+	if (url.pathname === '/settings') return await settingsRoute(request, url, env);
+
 	if (url.pathname === '/fleet') {
 		if (!env.FLEET_DB) {
 			return Response.json(

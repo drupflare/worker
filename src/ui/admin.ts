@@ -575,8 +575,28 @@ export const OPERATE_ACTIONS: readonly OperateAction[] = [
 	{
 		path: '/updb',
 		label: 'Database Updates',
+		detail: 'what the pending-update chain is doing, and which units have run',
+		writes: false
+	},
+	{
+		path: '/updb',
+		label: 'Start Update Run',
+		detail: 'raise the maintenance fence, snapshot the bookkeeping and plan the units',
+		query: 'action=prepare',
+		writes: true
+	},
+	{
+		path: '/updb',
+		label: 'Advance One Beat',
 		detail: 'drive one beat of the pending-update chain and report the phase',
 		query: 'action=run',
+		writes: true
+	},
+	{
+		path: '/updb',
+		label: 'Roll Back Update Run',
+		detail: 'restore the bookkeeping a halted run snapshotted; content tables are the R2 export',
+		query: 'action=rollback',
 		writes: true
 	},
 	{
@@ -608,6 +628,24 @@ export const OPERATE_ACTIONS: readonly OperateAction[] = [
 		label: 'Recovery Points',
 		detail: 'the platform’s own 30-day bookmark window; there is no dashboard button for this',
 		writes: false
+	},
+	// THE FILL QUEUE, AND ITS OWN ROUTE COMMENT SAID THERE WAS NO LEVER FOR IT. `/queue` joined
+	// `OWNER_ROUTES` as a recovery route -- a queue deeper than a batch can survive resets the
+	// isolate inside the alarm, measured at 103 entries on a deployed free worker with every render
+	// answering 500 across three redeploys -- and then no surface ever named it, so the only lever
+	// an operator had was still a terminal.
+	{
+		path: '/queue',
+		label: 'Fill Queue',
+		detail: 'what is waiting to be regenerated, and which paths have spent their retries',
+		writes: false
+	},
+	{
+		path: '/queue',
+		label: 'Drop The Queue',
+		detail: 'empty the fill queue; a queue too deep to drain resets the object on every alarm, and this is the only way out',
+		query: 'action=drop',
+		writes: true
 	}
 ];
 

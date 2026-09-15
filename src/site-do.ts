@@ -303,7 +303,13 @@ import {
 	wrapCrossings,
 	type CrossingTally
 } from './ops/crossings.js';
-import { dailyLimit, degradation, readOnlyResponse, type Degradation } from './ops/degrade.js';
+import {
+	dailyLimit,
+	degradation,
+	degradeHeaders,
+	readOnlyResponse,
+	type Degradation
+} from './ops/degrade.js';
 import {
 	ensureFleetTable,
 	reportSite,
@@ -524,11 +530,16 @@ import { projectImageTransforms } from './ops/thresholds.js';
 import {
 	ensureUpdbTables,
 	readRun as readUpdbRun,
+	updbAbandon,
 	updbAlarmDelayMs,
+	updbDrain,
 	updbOptions,
+	updbPrepare,
+	updbRollback,
 	updbStatus,
 	updbStep,
-	type UpdbDeps
+	type UpdbDeps,
+	type UpdbOptions
 } from './ops/updb.js';
 import {
 	ID_PARTITION_LANES,
@@ -2084,12 +2095,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 		const t0 = Date.now();
 		const php = new PhpStatic({}, this.bootDiag, opcacheMode(this.env?.OPCACHE_MODE));
-		php.addEventListener('output', (e) =>
-			this.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []))
-		);
-		php.addEventListener('error', (e) =>
-			this.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []))
-		);
+		// BRACED, AND IT IS NOT STYLE. A brace-less arrow returns `Array.push`'s new length, and
+		// workerd warns `An event handler returned a value of type "number"` on every one -- 629 to
+		// 631 lines per artifact-inclusive CI run, which is the bulk of the console noise in the
+		// pack and release lanes. These two are the SHIPPING pair, so they fire on every cold boot
+		// of every site; the twelve probe copies are the same shape and were fixed with them.
+		php.addEventListener('output', (e) => {
+			this.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+		});
+		php.addEventListener('error', (e) => {
+			this.out.push(...([] as string[]).concat((e as PhpOutputEvent).detail ?? []));
+		});
 		// the one cast: php-wasm resolves this as a loosely-typed Module, and SiteBinary names
 		// both the FS surface the mounts drive and the cfw* members installed just below
 		const binary = (await php.binary) as unknown as SiteBinary;
@@ -3365,6 +3381,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			lastGcAt: this.lastGcAt ?? null,
 			lastSweep: this.lastSweep ?? null,
 			lastSweepAt: this.lastSweepAt ?? null,
+			// THE ONLY PLACE A FAILED INVENTORY WRITE IS OBSERVABLE. `reportToFleet()` catches so
+			// that D1 can never take down the alarm that serves the site, which is right -- but the
+			// field it caught into had no reader anywhere, so `GET /fleet` answering "no sites"
+			// looked the same whether nothing had reported or every report had thrown. A catch
+			// with no reader is a silenced error, not a handled one.
+			lastFleetError: this.lastFleetError ?? null,
 			coldEncounters: this.coldEncounterRate(),
 			// the ONLY place an Asyncify-boundary failure is observable: it produces
 			// no PHP fatal, no printErr and no Drupal log entry, so a PHP-side
@@ -3411,6 +3433,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			})(),
 			lastMailDrain: this.lastMailDrain ?? null,
 			lastMailDrainAt: this.lastMailDrainAt ?? null,
+			// THE OTHER THREE ALARM UNITS, which recorded their outcome and had no reader at all.
+			// Each catches its own error so a failure never stops the chain -- right, and it means
+			// a git poll that has been erroring for a week looks exactly like one that has never
+			// run. Same shape as `lastFleetError`, and as `memory.trend_rising` firing with
+			// nothing acting on it
+			lastGitPoll: this.lastGitPoll ?? null,
+			lastGitPollAt: this.lastGitPollAt ?? null,
+			lastMirrorDrain: this.lastMirrorDrain ?? null,
+			lastMirrorDrainAt: this.lastMirrorDrainAt ?? null,
+			lastPageMirrorDrain: this.lastPageMirrorDrain ?? null,
+			lastPageMirrorDrainAt: this.lastPageMirrorDrainAt ?? null,
 			// null on a site that never ran an update; a live run holds the alarm chain
 			updb: this.lastUpdb ?? null,
 			updbActive: this.updbActive(),
@@ -3433,7 +3466,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			lastBump: this.metaGet('last_bump'),
 			// persisted rather than an instance field so eviction cannot reset it
 			// mid-test; the edge-tier assertion is "this counter did not move"
-			serveRequests: this.serveRequests()
+			serveRequests: this.serveRequests(),
+			// WHICH WORKER IS SERVING THIS SITE, which is the rollback unit and had no reader on
+			// any page. `CF_VERSION_METADATA` is a binding the platform fills in for free -- no API
+			// call, no credential -- and it was consulted in exactly one place, `reportToFleet()`,
+			// to write a D1 column nothing renders. An operator asking "what is deployed here"
+			// could not find out from the product.
+			workerVersion: this.workerVersion()
 		};
 	}
 
@@ -9076,41 +9115,49 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.windowFills = 0;
 		this.windowsOpened = (this.windowsOpened ?? 0) + 1;
 
-		server.addEventListener('message', async (event) => {
-			// every message is its own invocation with its own CPU budget, so exactly ONE
-			// fill per message -- batching inside a message would spend one budget on many
-			let payload: Payload;
-			try {
-				payload = JSON.parse(String(event.data ?? '{}'));
-			} catch {
-				payload = {};
-			}
-
-			if (payload.op === 'close') {
-				server.close(1000, 'drained');
-				return;
-			}
-
-			try {
-				const outcome = await this.gate.run(() => this.fillOne(), 'window');
-				this.windowFills = (this.windowFills ?? 0) + 1;
-				server.send(
-					JSON.stringify({
-						ok: true,
-						fills: this.windowFills,
-						booted: !!this.php,
-						...outcome
-					})
-				);
-				// nothing left to do; tell the driver rather than making it guess
-				if (outcome?.filled === null || (outcome?.remaining ?? 0) === 0) {
-					server.send(
-						JSON.stringify({ ok: true, drained: true, fills: this.windowFills })
-					);
+		// `void (async ...)()` RATHER THAN AN ASYNC LISTENER, and the wrapper is the whole point.
+		// An async arrow returns a Promise, and workerd warns `An event handler returned a promise
+		// that will be ignored` on every message -- which is true and is not a bug here, because
+		// the body below catches everything and answers on the socket rather than by resolving.
+		// Nothing ever awaited this listener. A CI log analysis could not attribute the warning and
+		// concluded it was runtime-internal; it is this line.
+		server.addEventListener('message', (event) => {
+			void (async () => {
+				// every message is its own invocation with its own CPU budget, so exactly ONE
+				// fill per message -- batching inside a message would spend one budget on many
+				let payload: Payload;
+				try {
+					payload = JSON.parse(String(event.data ?? '{}'));
+				} catch {
+					payload = {};
 				}
-			} catch (e: any) {
-				server.send(JSON.stringify({ ok: false, error: String(e?.message ?? e) }));
-			}
+
+				if (payload.op === 'close') {
+					server.close(1000, 'drained');
+					return;
+				}
+
+				try {
+					const outcome = await this.gate.run(() => this.fillOne(), 'window');
+					this.windowFills = (this.windowFills ?? 0) + 1;
+					server.send(
+						JSON.stringify({
+							ok: true,
+							fills: this.windowFills,
+							booted: !!this.php,
+							...outcome
+						})
+					);
+					// nothing left to do; tell the driver rather than making it guess
+					if (outcome?.filled === null || (outcome?.remaining ?? 0) === 0) {
+						server.send(
+							JSON.stringify({ ok: true, drained: true, fills: this.windowFills })
+						);
+					}
+				} catch (e: any) {
+					server.send(JSON.stringify({ ok: false, error: String(e?.message ?? e) }));
+				}
+			})();
 		});
 
 		server.addEventListener('close', () => {
@@ -9330,6 +9377,55 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return this.updbBeat(true);
 	}
 
+	/** the one dependency bag every updb entry point takes; nothing here holds state */
+	private updbDeps(): UpdbDeps {
+		return {
+			sql: this.sql,
+			runJson: (code: string) => this.runJson(code),
+			phpReady: () => !!this.php,
+			txn: (fn: () => void) => this.storage.transactionSync(fn),
+			nowMs: () => this.nowMs()
+		} satisfies UpdbDeps;
+	}
+
+	/**
+	 * The four lifecycle calls a beat cannot make: start a run, drain several, and the two
+	 * decisions only a human may take on a halted one.
+	 *
+	 * Beating was the only reachable entry point, so `/updb` could advance a run nothing
+	 * created and an operator met `{"beat":"none","reason":"no-run"}` -- indistinguishable
+	 * from "nothing to do". `prepare` is what closes that.
+	 *
+	 * `reason` is required by `updbAbandon()` rather than defaulted here: the next reader has
+	 * to see that a human decided, and a default would forge that signature.
+	 */
+	private async updbAction(action: string, params: URLSearchParams): Promise<Payload> {
+		const deps = this.updbDeps();
+		const base = updbOptions(this.env);
+		const reason = params.get('reason');
+		const exportKey = params.get('exportKey');
+		const asked = Number(params.get('maxBeats') ?? '');
+		const options: UpdbOptions = {
+			...base,
+			...(reason !== null ? { reason } : {}),
+			...(exportKey !== null ? { exportKey } : {}),
+			...(Number.isFinite(asked) && asked > 0 ? { maxBeats: Math.floor(asked) } : {}),
+			...(params.get('requireExport') === '1' ? { requireExport: true } : {})
+		};
+		switch (action) {
+			case 'prepare':
+				return updbPrepare(deps, options) as Payload;
+			case 'rollback':
+				return updbRollback(deps, options) as Payload;
+			case 'abandon':
+				return updbAbandon(deps, options) as Payload;
+			case 'drain':
+				return (await updbDrain(deps, options)) as unknown as Payload;
+			default:
+				return { ok: false, reason: 'unknown-action', action };
+		}
+	}
+
 	/**
 	 * One beat, with the gate acquired only when the caller does not already hold it.
 	 *
@@ -9340,17 +9436,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * migrate path says so. `alarm()` is its own event and does need the explicit acquire.
 	 */
 	private async updbBeat(gated: boolean): Promise<{ updb: Payload }> {
-		const beat = () =>
-			updbStep(
-				{
-					sql: this.sql,
-					runJson: (code: string) => this.runJson(code),
-					phpReady: () => !!this.php,
-					txn: (fn: () => void) => this.storage.transactionSync(fn),
-					nowMs: () => this.nowMs()
-				} satisfies UpdbDeps,
-				updbOptions(this.env)
-			);
+		const beat = () => updbStep(this.updbDeps(), updbOptions(this.env));
 		try {
 			const step = gated ? await this.gate.run(beat, 'alarm-updb') : await beat();
 			this.lastUpdb = step;
@@ -10380,7 +10466,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			) {
 				return this.replicaHandoff(refusal);
 			}
-			return res;
+			return this.withDegradeHeaders(res);
 		} catch (e) {
 			// a replica meeting work it may not do is not a fault; it is the guard working, and the
 			// caller needs to be told to go to the primary rather than shown a 500
@@ -10394,6 +10480,35 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		} finally {
 			this.inflight = Math.max(0, (this.inflight ?? 1) - 1);
 		}
+	}
+
+	/**
+	 * Marks every response with the degradation band the site is in.
+	 *
+	 * `readOnlyResponse()` already names the band on a REFUSAL, so `read-only` was observable and
+	 * `reduced` was not -- a site can spend the whole way from 70% of a daily quota to 100% while
+	 * every response looks identical, and the first signal an operator gets is the 503 at the end.
+	 * `degradeHeaders()` was built for exactly that and called by nothing.
+	 *
+	 * Free at `normal`: the function returns an empty object and the response is passed through
+	 * untouched, so the common path allocates no header bag. The degradation read itself is two
+	 * counters this object already keeps.
+	 */
+	private withDegradeHeaders(res: Response): Response {
+		let extra: Record<string, string>;
+		try {
+			extra = degradeHeaders(this.degradation());
+		} catch {
+			// the meters are unreadable on an object that has not made its tables yet, which is a
+			// state rather than a fault; an unmarked response is the honest answer for it
+			return res;
+		}
+		if (Object.keys(extra).length === 0) return res;
+		// a 101 carries no headers a client can read and rewriting one drops the socket
+		if (res.status === 101 || res.webSocket) return res;
+		const headers = new Headers(res.headers);
+		for (const [name, value] of Object.entries(extra)) headers.set(name, value);
+		return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 	}
 
 	private async route(request: Request): Promise<Response> {
@@ -11126,9 +11241,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 * as the driver, and the route did not exist, so the refusal pointed at a
 				 * door that was not there.
 				 *
-				 * GET is read-only. POST advances exactly ONE beat and re-arms nothing: a
-				 * caller that wants the chain run to the end polls, which keeps each
+				 * GET is read-only. POST with no action advances exactly ONE beat and re-arms
+				 * nothing: a caller that wants the chain run to the end polls, which keeps each
 				 * invocation inside its own budget the way the alarm chain does.
+				 *
+				 * `?action=prepare` is what STARTS a run, and without it a beat could only ever
+				 * report `no-run` on a chain nothing was able to create.
 				 */
 				case '/__updb': {
 					this.ensureServeTables();
@@ -11137,6 +11255,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					}
 					// NOT gated: the router already holds the gate, and acquiring it again is a
 					// deadlock rather than a wait
+					// `run` is the spelling the Operate page has always sent for a beat, so it
+					// stays a beat; a new verb here must never repurpose an existing button
+					const action = url.searchParams.get('action');
+					if (action !== null && action !== 'beat' && action !== 'run') {
+						const ran = await this.updbAction(action, url.searchParams);
+						return Response.json({ action, ran, status: updbStatus(this.sql) });
+					}
 					const beat = await this.updbBeat(false);
 					return Response.json({ ...beat, status: updbStatus(this.sql) });
 				}
@@ -13805,17 +13930,65 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// front worker served the previous generation and nobody is waiting for this
 					// render, so it belongs on the alarm chain where its rows are already budgeted
 					const queuePath = url.searchParams.get('path');
+					const wantsDrain = url.searchParams.get('max') !== null;
 					if (queuePath !== null && queuePath !== '') {
 						this.ensureServeTables();
-						this.sql.exec(
-							'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
-							queuePath,
-							this.nowMs()
-						);
-						this.armFillAlarm();
-						return Response.json({ queued: queuePath, depth: this.queueDepth() });
+						// COMMA-SEPARATED, so a caller can seat a whole batch in ONE invocation.
+						// Enqueuing arms the fill alarm, and that alarm fires before a caller's next
+						// round trip can arrive -- measured: `?path=` answered `depth: 1` and the very
+						// next request answered `depth: 0`. So a batch queued across k requests is
+						// drained by the alarm rather than by the caller, and any per-invocation
+						// figure taken that way is measuring an empty queue.
+						for (const one of queuePath.split(',')) {
+							const trimmed = one.trim();
+							if (trimmed === '') continue;
+							this.sql.exec(
+								'INSERT INTO cfw_fill_queue (path, queued_at) VALUES (?, ?) ON CONFLICT(path) DO NOTHING',
+								trimmed,
+								this.nowMs()
+							);
+						}
+						// only when the caller is NOT draining here; arming behind its own drain is
+						// what hands the batch to the alarm
+						if (!wantsDrain) {
+							this.armFillAlarm();
+							return Response.json({ queued: queuePath, depth: this.queueDepth() });
+						}
 					}
-					return Response.json(await this.fillOne());
+					// `?max=` DRAINS A BATCH IN ONE INVOCATION, which is the shape the alarm already
+					// fills in and the only shape boot amortisation can be measured on: a batch pays
+					// its interpreter boot once for all k, and `cpuTime` meters an INVOCATION. Before
+					// this the route was `fillOne()` and nothing else, so k separate requests were k
+					// invocations and there was no batch to price.
+					//
+					// **`this.fillOne()` DIRECTLY, never `this.gate.run()`.** `fetch()` already holds
+					// the gate and it is not reentrant, so acquiring it here awaits a release that
+					// only happens when this handler returns. That hour has been lost twice; the
+					// alarm wraps each fill because an alarm is its own event and holds nothing.
+					const asked = Number(url.searchParams.get('max') ?? '1');
+					const max = Number.isFinite(asked) && asked > 1 ? Math.floor(asked) : 1;
+					if (max === 1) return Response.json(await this.fillOne());
+					const fills: Payload[] = [];
+					for (let i = 0; i < max; i++) {
+						const one = (await this.fillOne()) as Payload;
+						fills.push(one);
+						// an empty queue ends the batch rather than spending the rest of k on
+						// invocations that fill nothing and read as a saving
+						if ((one?.['filled'] ?? null) === null) break;
+						// the same guard the alarm batch uses: a batch is N workloads inside ONE
+						// invocation, and `recycleIfOversized()` runs BETWEEN invocations, so it
+						// cannot reach inside this loop
+						if (this.oversized()) break;
+					}
+					return Response.json({
+						ok: true,
+						asked: max,
+						fills: fills.length,
+						drained: fills.filter((f) => (f['filled'] ?? null) !== null).length,
+						remaining: this.queueDepth(),
+						oversized: this.oversized(),
+						outcomes: fills
+					});
 				}
 
 				/**

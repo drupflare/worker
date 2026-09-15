@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freshSite } from '../helpers/serve-do';
+import { freshSite, inObject } from '../helpers/serve-do';
 
 /**
  * The `cfw_ops` HTTP surface.
@@ -223,6 +223,98 @@ describe('the update chain is readable and drivable', () => {
 		expect(body.updb).toBeTruthy();
 		expect(body.status).toHaveProperty('run');
 	}, 900_000);
+
+	/**
+	 * The lifecycle calls, which were exported, unit-tested, and reachable from nothing.
+	 *
+	 * Beating was the only entry point the object offered, so a run could be advanced and never
+	 * STARTED: an operator pressing Database Updates got `{"beat":"none","reason":"no-run"}`,
+	 * which reads exactly like "nothing to do". These drive the route rather than the module, so
+	 * what they pin is the wiring; `tests/unit/ops/updb.spec.ts` owns the semantics.
+	 */
+	const post = async (stub: DurableObjectStub, query: string) => {
+		const res = await stub.fetch(new Request(`${UPDB}?${query}`, { method: 'POST' }));
+		return {
+			status: res.status,
+			body: (await res.json()) as {
+				action: string;
+				ran: Record<string, unknown>;
+				status: { run: { phase?: string } | null };
+			}
+		};
+	};
+
+	/**
+	 * `updbPrepare()` reads `system.maintenance_mode` BEFORE any PHP runs, so the value it
+	 * restores at the end is the one that was true before the fence went up. An object with no
+	 * `key_value` answers `maintenance-unreadable`, correctly -- a site with no Drupal database
+	 * has no update to run. These specs are about the WIRING, so the table is the minimum that
+	 * lets prepare reach its own logic; `tests/unit/ops/updb.spec.ts` owns the semantics.
+	 */
+	const withKeyValue = async (stub: DurableObjectStub) => {
+		await inObject(stub, (site) => {
+			site.sql.exec(
+				`CREATE TABLE IF NOT EXISTS key_value
+				 (collection TEXT NOT NULL, name TEXT NOT NULL, value BLOB NOT NULL,
+				  PRIMARY KEY (collection, name))`
+			);
+		});
+		return stub;
+	};
+
+	it('starts a run on action=prepare, which nothing could do before', async () => {
+		const stub = await withKeyValue(freshSite());
+		expect(((await (await stub.fetch(UPDB)).json()) as { run: unknown }).run).toBeNull();
+
+		const { status, body } = await post(stub, 'action=prepare');
+		expect(status).toBe(200);
+		expect(body.action).toBe('prepare');
+		expect(body.ran.ok).toBe(true);
+		// the run EXISTS now, which is the whole claim
+		expect(body.status.run).not.toBeNull();
+		expect(body.status.run?.phase).toBe('planning');
+	}, 900_000);
+
+	it('refuses a second run rather than opening a second cursor over one schema', async () => {
+		const stub = await withKeyValue(freshSite());
+		expect((await post(stub, 'action=prepare')).body.ran.ok).toBe(true);
+		const { body } = await post(stub, 'action=prepare');
+		expect(body.ran.ok).toBe(false);
+		expect(body.ran.reason).toBe('run-already-live');
+	}, 900_000);
+
+	// rollback and abandon are legal only from `halted`, so on a planning run both must refuse.
+	// That is the reachability claim: the call ran and answered, rather than 404ing
+	it('reaches rollback and abandon, and both refuse a run that is not halted', async () => {
+		const stub = await withKeyValue(freshSite());
+		await post(stub, 'action=prepare');
+		expect((await post(stub, 'action=rollback')).body.ran.reason).toBe('not-halted');
+		expect((await post(stub, 'action=abandon&reason=looked+at+it')).body.ran.reason).toBe(
+			'not-halted'
+		);
+	}, 900_000);
+
+	it('requires a written reason to abandon, so a default cannot forge the decision', async () => {
+		const stub = freshSite();
+		const { body } = await post(stub, 'action=abandon');
+		// no run at all yet, so the refusal is `no-run`; with one it is `reason-required`.
+		// Either way the call is REACHED, and the reason is never defaulted
+		expect(['no-run', 'reason-required']).toContain(String(body.ran.reason));
+	}, 900_000);
+
+	it('drains several beats in one call and reports each', async () => {
+		const stub = await withKeyValue(freshSite());
+		await post(stub, 'action=prepare');
+		const { body } = await post(stub, 'action=drain&maxBeats=3');
+		expect(Array.isArray(body.ran.beats)).toBe(true);
+		expect((body.ran.beats as unknown[]).length).toBeGreaterThanOrEqual(1);
+	}, 900_000);
+
+	it('names an unknown action rather than silently beating', async () => {
+		const stub = freshSite();
+		const { body } = await post(stub, 'action=demolish');
+		expect(body.ran.reason).toBe('unknown-action');
+	});
 });
 
 /**

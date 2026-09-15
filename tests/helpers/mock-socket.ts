@@ -230,7 +230,7 @@ export type RedisScript = {
  * `reply` is the raw RESP for the one non-handshake command; the handshake verbs are answered `+OK`
  * so the session reaches it. Pass an error frame (`-ERR ...`) to drive the server-said-no branch.
  */
-export function redisServer(options: { reply?: string } = {}): {
+export function redisServer(options: { reply?: string; handshakeReply?: string } = {}): {
 	connect: (opts: ConnectOptions) => Promise<CoreSocket>;
 	script: RedisScript;
 } {
@@ -257,7 +257,9 @@ export function redisServer(options: { reply?: string } = {}): {
 
 					const verb = (args[0] ?? '').toUpperCase();
 					if (HANDSHAKE.has(verb)) {
-						await conn.server.writeLine('+OK');
+						// a server that REFUSES the handshake is how an AuthError is produced;
+						// there is no other path to that branch over a socket that connects
+						await conn.server.writeLine(options.handshakeReply ?? '+OK');
 						continue;
 					}
 					await conn.server.writeLine(options.reply ?? '$3\r\nabc');

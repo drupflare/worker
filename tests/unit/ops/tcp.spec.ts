@@ -169,6 +169,35 @@ describe('runTcpExchange: the real client over a scripted socket', () => {
 		expect(out.body).toContain('WRONGTYPE');
 	});
 
+	/**
+	 * AN AUTH FAILURE IS THE SERVER ANSWERING TOO, and it sits on the same branch as a RESP
+	 * error for the same reason: a drain that retries a wrong password retries it forever
+	 * against a server that has already decided. Only reachable over a socket that connects and
+	 * then refuses the handshake, which is why the mock grew a reply for it.
+	 */
+	it('reports a refused handshake as 502 rather than as a transport fault', async () => {
+		const { connect } = redisServer({ handshakeReply: '-WRONGPASS invalid password' });
+		const out = await runTcpExchange('tcp+redis://cache.test:6379/', '["GET","k"]', REDIS_ENV, {
+			connect
+		});
+		expect(out.status).toBe(502);
+		expect(out.body).toMatch(/WRONGPASS|password|auth/i);
+	});
+
+	/**
+	 * CONTROL. A transport fault must still ESCAPE, so the drain's retry budget sees it. Without
+	 * this the two cases above would pass on a build that swallowed every error as 502, which is
+	 * the regression they exist to prevent.
+	 */
+	it('CONTROL: lets a connection failure escape to the drain rather than 502ing it', async () => {
+		const connect = async (): Promise<CoreSocket> => {
+			throw new Error('connection refused');
+		};
+		await expect(
+			runTcpExchange('tcp+redis://cache.test:6379/', '["GET","k"]', REDIS_ENV, { connect })
+		).rejects.toThrow(/connection refused/);
+	});
+
 	it('refuses an administrative command before it dials anything', async () => {
 		let dialled = 0;
 		const connect = async (): Promise<CoreSocket> => {

@@ -321,15 +321,21 @@ async function runRedis(
 		port: endpoint.port,
 		tls: endpoint.tls === 'implicit' ? 'on' : 'off'
 	});
-	const session = await _connectOverSocket(socket, {
-		hostname: endpoint.hostname,
-		port: endpoint.port,
-		tls: endpoint.tls === 'implicit' ? 'implicit' : 'off',
-		...(endpoint.username ? { username: endpoint.username } : {}),
-		...(endpoint.password ? { password: endpoint.password } : {}),
-		...(endpoint.db !== undefined ? { db: endpoint.db } : {})
-	});
+	// THE HANDSHAKE IS INSIDE THE TRY, and it used to sit above it. `AuthError` is raised by
+	// `_connectOverSocket()`, so naming it in the catch below could never match: a wrong password
+	// escaped as though it were a transport fault and the drain retried it, forever, against a
+	// server that had already decided. That is the exact outcome the catch exists to prevent, one
+	// call earlier than where it was looking.
+	let session: Awaited<ReturnType<typeof _connectOverSocket>> | null = null;
 	try {
+		session = await _connectOverSocket(socket, {
+			hostname: endpoint.hostname,
+			port: endpoint.port,
+			tls: endpoint.tls === 'implicit' ? 'implicit' : 'off',
+			...(endpoint.username ? { username: endpoint.username } : {}),
+			...(endpoint.password ? { password: endpoint.password } : {}),
+			...(endpoint.db !== undefined ? { db: endpoint.db } : {})
+		});
 		const reply = await session.send(...args);
 		return {
 			status: 200,
@@ -347,7 +353,8 @@ async function runRedis(
 		}
 		throw e;
 	} finally {
-		await session.close();
+		// null when the handshake itself threw, in which case there is no session to close
+		if (session) await session.close();
 	}
 }
 

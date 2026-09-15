@@ -172,6 +172,13 @@ export const ARCHIVED: readonly ArchivedEntry[] = [
 		note: 'change counter 27, the FIRST page max_age fix; superseded by the committed f97005b9 lineage and kept because an archive is a snapshot'
 	},
 	{
+		key: 'snapshots/site.sqlite.f97005b96889',
+		bytes: 7_585_792,
+		sha256: 'f97005b968897b0b16c5c7d1513253f6ca6399682ae970ec2d5c46bde50975e1',
+		md5: 'ea53ebfc02519dfa1bfba6d7220e71fd',
+		note: 'the packed database before the 11.4.6 rebuild at 3e4f2737; the bucket still held it while the tree had moved to 5,349,376 bytes, which is the size-mismatch the scheduled verify reported. Archived by the upload that replaced it'
+	},
+	{
 		key: 'snapshots/php8.5-worker.mjs.wasm.94d598fc403b',
 		bytes: 12_234_575,
 		sha256: '94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458',

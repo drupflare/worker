@@ -357,11 +357,16 @@ describe('the Durable Object contract: one codec, two callers', () => {
 describe('the wiring in src/site.ts', () => {
 	/**
 	 * SOURCE ASSERTIONS, and the same bracket `runtime/route-gate.spec.ts` uses for the same stated
-	 * reason: the decision sits in the Worker's `fetch`, ahead of any binding, so there is nothing to
-	 * drive it against without a real Durable Object. Driving `site.ts` directly is also blocked today
-	 * -- importing it pulls `src/drupal/enable-php.ts`, which does not parse (see the report).
+	 * reason: the decision sits in the Worker's `fetch`, ahead of any binding, so what a running
+	 * request cannot show is the ORDER two things happened in.
 	 *
-	 * What these pin is ORDERING and REFUSAL, which are the two things that break silently. Every
+	 * **THE REFUSALS THEMSELVES ARE DRIVEN NOW.** This block used to say driving `site.ts` was
+	 * blocked outright, and on that reasoning both rungs that keep a site from going dark were
+	 * asserted by regex and executed by nothing. `SELF` reaches the whole front worker in the
+	 * workers lane; `tests/integration/auth-budget-serve.spec.ts` drives a spent GET and a spent
+	 * POST and reads the answer.
+	 *
+	 * What these pin is ORDERING and STRUCTURE, which are the two things that break silently. Every
 	 * assertion is whitespace-tolerant, because a source assertion in this repo already broke once on
 	 * prettier changing quote style.
 	 */

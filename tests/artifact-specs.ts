@@ -29,6 +29,8 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/crossings.spec.ts',
 	'tests/integration/crud-journey.spec.ts',
 	'tests/integration/csrf.spec.ts',
+	// the ROUTE token rather than the form token; it signs in twice and renders a real admin page
+	'tests/integration/csrf-route-token.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
 	'tests/integration/effect-census.spec.ts',
 	'tests/integration/enable-memory.spec.ts',

@@ -137,6 +137,8 @@ export type ServeDo = {
 	txnSpeculativeWithRead?: number;
 	txnSpeculativeNoRead?: number;
 	alarm: () => Promise<unknown>;
+	/** the fleet inventory write the alarm performs; see `tests/integration/fleet-wire.spec.ts` */
+	reportToFleet: () => Promise<void>;
 	armFillAlarm: () => void;
 	ensureServeTables: () => void;
 	ensureHttpTables: () => void;

@@ -64,3 +64,77 @@ export function clearedAdminCookie(secure: boolean): string {
 export function secureOrigin(url: { protocol: string }): boolean {
 	return url.protocol === 'https:';
 }
+
+// #region the failure budget
+
+/**
+ * How many wrong tokens one client may present before it is refused without an object hop.
+ *
+ * **THE THREAT IS THE METER, NOT THE TOKEN.** The owner token is 32 CSPRNG bytes and
+ * `tokenMatches()` is constant-time over its full width, so guessing it is not a practical attack
+ * and this is not a brute-force defence. What was unbounded is the COST of guessing:
+ * `ownerCredential()` resolves the site and fetches `/__ownercheck` on the Durable Object for every
+ * presented token, so an unauthenticated client could drive the object's request counter -- the
+ * meter the whole free-plan model is scored against -- at one request per HTTP request, for free,
+ * until the site degraded to read-only.
+ *
+ * 12 rather than 3, because an operator with a stale cookie in an open tab should not lock
+ * themselves out of their own site: every navigation presents the same wrong token, and the window
+ * below is what clears it.
+ */
+export const OWNER_FAIL_LIMIT = 12;
+
+/** how long a client stays refused after exhausting the budget */
+export const OWNER_FAIL_WINDOW_MS = 60_000;
+
+/**
+ * Per isolate, deliberately.
+ *
+ * A durable counter would need a row per attempt, which spends the meter this exists to protect --
+ * the same self-defeating shape as the daily counters that were most of what they counted. An
+ * isolate-local bound does not stop a distributed attacker and is not meant to; it removes the
+ * amplification, which is the part that was free.
+ */
+const failures = new Map<string, { count: number; first: number }>();
+
+/** drops the budget; tests use it, and so does an isolate that has been idle */
+export function resetOwnerFailures(): void {
+	failures.clear();
+}
+
+/** how the budget identifies a client; the connecting IP, or one bucket when there is none */
+export function ownerFailKey(request: { headers: { get(name: string): string | null } }): string {
+	return request.headers.get('cf-connecting-ip') ?? 'unknown';
+}
+
+/** whether this client has spent its budget and must be refused before the object is asked */
+export function ownerRefusedForNow(key: string, nowMs: number): boolean {
+	const held = failures.get(key);
+	if (!held) return false;
+	if (nowMs - held.first >= OWNER_FAIL_WINDOW_MS) {
+		failures.delete(key);
+		return false;
+	}
+	return held.count >= OWNER_FAIL_LIMIT;
+}
+
+/** records one refused credential; returns how many this client has spent */
+export function noteOwnerFailure(key: string, nowMs: number): number {
+	// bounded, because the key is attacker-supplied: a rotating IP would otherwise grow this map
+	// without limit inside one isolate, which is a second amplification through the same door
+	if (failures.size > 4096) failures.clear();
+	const held = failures.get(key);
+	if (!held || nowMs - held.first >= OWNER_FAIL_WINDOW_MS) {
+		failures.set(key, { count: 1, first: nowMs });
+		return 1;
+	}
+	held.count += 1;
+	return held.count;
+}
+
+/** a success clears the budget, so a correct token is never held back by an earlier typo */
+export function clearOwnerFailures(key: string): void {
+	failures.delete(key);
+}
+
+// #endregion

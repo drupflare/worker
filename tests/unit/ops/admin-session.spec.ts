@@ -1,10 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	ADMIN_COOKIE,
 	ADMIN_SESSION_MAX_AGE_S,
+	OWNER_FAIL_LIMIT,
+	OWNER_FAIL_WINDOW_MS,
 	adminCookieToken,
 	adminSessionCookie,
+	clearOwnerFailures,
 	clearedAdminCookie,
+	noteOwnerFailure,
+	ownerFailKey,
+	ownerRefusedForNow,
+	resetOwnerFailures,
 	secureOrigin
 } from '../../../src/ops/admin-session';
 import { hasSessionCookie, sessionCookieValue } from '../../../src/ops/auth-budget';
@@ -128,5 +135,66 @@ describe('it cannot be confused with a Drupal login', () => {
 		const drupal = 'SESS151749d32e3fc313fb079916b2be1784=a1e6dc0e3014b54559ced460160a32bb';
 		expect(adminCookieToken(drupal)).toBe(null);
 		expect(hasSessionCookie(drupal)).toBe(true);
+	});
+});
+
+/**
+ * The failure budget, which bounds the COST of a wrong token rather than the guessing.
+ *
+ * `ownerCredential()` fetched `/__ownercheck` on the Durable Object for every presented token,
+ * right or wrong, with no bound. The token itself is 32 CSPRNG bytes compared in constant time, so
+ * guessing it was never the risk; what was free was driving the object's request counter -- the
+ * meter the whole free-plan model is scored against -- from an unauthenticated request, until the
+ * site degraded to read-only.
+ */
+describe('the owner-token failure budget', () => {
+	beforeEach(() => resetOwnerFailures());
+
+	const req = (ip: string | null) => ({
+		headers: { get: (n: string) => (n === 'cf-connecting-ip' ? ip : null) }
+	});
+
+	it('keys on the connecting IP, and buckets a request that carries none', () => {
+		expect(ownerFailKey(req('203.0.113.7'))).toBe('203.0.113.7');
+		expect(ownerFailKey(req(null))).toBe('unknown');
+	});
+
+	it('permits up to the limit and refuses past it, without asking the object', () => {
+		const at = 1_000;
+		for (let i = 0; i < OWNER_FAIL_LIMIT; i++) {
+			expect(ownerRefusedForNow('a', at), `attempt ${i} must still be tried`).toBe(false);
+			noteOwnerFailure('a', at);
+		}
+		expect(ownerRefusedForNow('a', at)).toBe(true);
+	});
+
+	it('refuses one client without refusing another', () => {
+		const at = 1_000;
+		for (let i = 0; i < OWNER_FAIL_LIMIT; i++) noteOwnerFailure('a', at);
+		expect(ownerRefusedForNow('a', at)).toBe(true);
+		expect(ownerRefusedForNow('b', at)).toBe(false);
+	});
+
+	it('forgets the budget once the window has passed', () => {
+		for (let i = 0; i < OWNER_FAIL_LIMIT; i++) noteOwnerFailure('a', 1_000);
+		expect(ownerRefusedForNow('a', 1_000)).toBe(true);
+		expect(ownerRefusedForNow('a', 1_000 + OWNER_FAIL_WINDOW_MS)).toBe(false);
+	});
+
+	/** an operator with a stale cookie must not lock themselves out of their own site */
+	it('clears the budget on a correct token', () => {
+		for (let i = 0; i < OWNER_FAIL_LIMIT - 1; i++) noteOwnerFailure('a', 1_000);
+		clearOwnerFailures('a');
+		for (let i = 0; i < OWNER_FAIL_LIMIT - 1; i++) {
+			expect(ownerRefusedForNow('a', 1_000)).toBe(false);
+			noteOwnerFailure('a', 1_000);
+		}
+	});
+
+	/** the key is attacker-supplied, so the map itself must not become the amplification */
+	it('bounds the map rather than growing it per rotating IP', () => {
+		for (let i = 0; i < 4_200; i++) noteOwnerFailure(`ip-${i}`, 1_000);
+		// the clear happened, so the earliest keys are gone rather than retained forever
+		expect(ownerRefusedForNow('ip-0', 1_000)).toBe(false);
 	});
 });

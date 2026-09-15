@@ -3,6 +3,8 @@ import {
 	KV_OVERRIDABLE,
 	PLAN_KV_KEY,
 	PLAN_MEMO_MS,
+	SETTINGS_KV_KEY,
+	canWriteKv,
 	isPaid,
 	resetPlanMemo,
 	resetSettingsMemo,
@@ -10,6 +12,8 @@ import {
 	resolveSettings,
 	withPlan,
 	withSettings,
+	writePlan,
+	writeSettings,
 	type PlanKv
 } from '../../../src/ops/plan';
 
@@ -205,5 +209,116 @@ describe('withSettings', () => {
 		expect(out.MIRROR_LIMIT).toBe('9');
 		expect(out.PW_DIAGNOSTICS).toBe('0');
 		expect(env.MIRROR_LIMIT).toBe('2');
+	});
+});
+
+/**
+ * The WRITE half, which did not exist until v1.0.1.
+ *
+ * `resolvePlan()` and `resolveSettings()` had read these two keys since they shipped and nothing in
+ * `src/` ever called `put()`, so every lever on the allow-list was a knob that could only be turned
+ * by a redeploy. The assertions below are about the boundary rather than the plumbing: the
+ * allow-list has to be enforced where the bytes are STORED, not only where they are read.
+ */
+describe('writing the levers', () => {
+	/** a KV stand-in that remembers, so a write can be read back the way a real namespace would */
+	function kvStore(seed: Record<string, string> = {}) {
+		const held = new Map(Object.entries(seed));
+		return {
+			held,
+			kv: {
+				get: async (key: string) => held.get(key) ?? null,
+				put: async (key: string, value: string) => void held.set(key, value)
+			}
+		};
+	}
+
+	const stored = (held: Map<string, string>) =>
+		JSON.parse(held.get(SETTINGS_KV_KEY) ?? '{}') as Record<string, string>;
+
+	it('stores an allow-listed lever and reports it as coming from kv', async () => {
+		const { held, kv } = kvStore();
+		const out = await writeSettings(kv, { MIRROR_LIMIT: '9' });
+
+		expect(out.written.MIRROR_LIMIT).toBe('9');
+		expect(out.refused).toEqual([]);
+		expect(stored(held).MIRROR_LIMIT).toBe('9');
+		// the memo is dropped, or the isolate serves the old value for up to PLAN_MEMO_MS and the
+		// write reads as having been ignored
+		expect((await resolveSettings(kv)).MIRROR_LIMIT).toBe('9');
+	});
+
+	/**
+	 * THE PRIVILEGE BOUNDARY, AND IT IS ENFORCED AT THE WRITER RATHER THAN ONLY AT THE READER.
+	 *
+	 * A reader-side filter makes an unlisted name INERT; a writer-side filter makes it UNSTORABLE.
+	 * Those differ the moment anything else grows a reader of the raw document, and
+	 * `KV_OVERRIDABLE`'s own docblock says what a stored `PW_DIAGNOSTICS` would reach: `/sql`, which
+	 * is arbitrary SQL against the site database, and `/restore`, which overwrites it.
+	 */
+	it('refuses a name that is not on the allow-list, and stores nothing under it', async () => {
+		const { held, kv } = kvStore();
+		const out = await writeSettings(kv, {
+			PW_DIAGNOSTICS: '1',
+			SMTP_HOST: 'evil.example',
+			MIRROR_LIMIT: '4'
+		});
+
+		expect(out.refused.sort()).toEqual(['PW_DIAGNOSTICS', 'SMTP_HOST']);
+		expect(out.written.MIRROR_LIMIT).toBe('4');
+		expect(stored(held).PW_DIAGNOSTICS).toBeUndefined();
+		expect(stored(held).SMTP_HOST).toBeUndefined();
+	});
+
+	/** a document that already carried something unlisted cannot survive a write either */
+	it('drops an unlisted name a previous writer left in the document', async () => {
+		const { held, kv } = kvStore({
+			[SETTINGS_KV_KEY]: JSON.stringify({ PW_DIAGNOSTICS: '1', MIRROR_LIMIT: '2' })
+		});
+		await writeSettings(kv, { HTTP_DRAIN_LIMIT: '7' });
+
+		expect(stored(held).PW_DIAGNOSTICS).toBeUndefined();
+		expect(stored(held).MIRROR_LIMIT).toBe('2');
+		expect(stored(held).HTTP_DRAIN_LIMIT).toBe('7');
+	});
+
+	/** an empty value means "defer to the deployed var", so it is removed rather than stored blank */
+	it('clears a lever rather than storing an empty string', async () => {
+		const { held, kv } = kvStore({ [SETTINGS_KV_KEY]: JSON.stringify({ MIRROR_LIMIT: '9' }) });
+		const out = await writeSettings(kv, { MIRROR_LIMIT: '' });
+
+		expect(out.cleared).toEqual(['MIRROR_LIMIT']);
+		expect(stored(held).MIRROR_LIMIT).toBeUndefined();
+	});
+
+	/** `PLAN` has its own key and its own function; it must not be settable as a lever */
+	it('refuses PLAN through the lever writer, because it is a different authorisation', async () => {
+		const { held, kv } = kvStore();
+		const out = await writeSettings(kv, { PLAN: 'paid' });
+
+		expect(out.refused).toEqual(['PLAN']);
+		expect(held.get(PLAN_KV_KEY)).toBeUndefined();
+		expect(stored(held).PLAN).toBeUndefined();
+	});
+
+	it('writes the plan through its own door, and clearing it returns to the var', async () => {
+		const { held, kv } = kvStore();
+		expect(await writePlan(kv, 'paid')).toEqual({ plan: 'paid', source: 'kv' });
+		expect(held.get(PLAN_KV_KEY)).toBe('paid');
+		expect(await resolvePlan({ PLAN: 'free' }, kv)).toEqual({ plan: 'paid', source: 'kv' });
+
+		await writePlan(kv, null);
+		// an empty override is not `free`; it defers, so the deployed var comes back into force
+		expect(await resolvePlan({ PLAN: 'paid' }, kv)).toEqual({ plan: 'paid', source: 'var' });
+	});
+
+	it('reports a read-only binding rather than throwing on it', () => {
+		// bound to names first, because an inline literal is excess-property-checked against
+		// `PlanKv` and the whole point here is that the writer carries one property more
+		const readOnly: PlanKv = { get: async () => null };
+		const writable = { get: async () => null, put: async () => {} };
+		expect(canWriteKv(readOnly)).toBe(false);
+		expect(canWriteKv(writable)).toBe(true);
+		expect(canWriteKv(null)).toBe(false);
 	});
 });

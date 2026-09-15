@@ -59,7 +59,7 @@ describe('site maintenance is reachable with an owner token', () => {
  * the route, because every assertion covering this names the routes it checks -- so a route added
  * tomorrow is covered by none of them.
  */
-const WORKER_ANSWERED = new Set(['/fillwindow', '/fleet']);
+const WORKER_ANSWERED = new Set(['/fillwindow', '/fleet', '/settings']);
 
 describe('the route table forwards everything it claims to own', () => {
 	it('gives every route either a DO_ROUTE entry or a Worker-side answer', () => {

@@ -184,7 +184,9 @@ async function makePhp(wasm: WebAssembly.Module, glue: string) {
 			}
 		} as never
 	) as PhpBase & { _run(code: string): Promise<unknown>; binary: Promise<unknown> };
-	php.addEventListener('output', (e) => out.push(String((e as CustomEvent).detail)));
+	php.addEventListener('output', (e) => {
+		out.push(String((e as CustomEvent).detail));
+	});
 	return { php, out };
 }
 

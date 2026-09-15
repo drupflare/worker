@@ -195,8 +195,12 @@ async function build(memoryLimit = '-1'): Promise<PhpInstance> {
 	const out: any[] = [];
 	const t0 = Date.now();
 	const php = new PhpStatic(memoryLimit, diag);
-	php.addEventListener('output', (e: any) => out.push(...[].concat(e.detail ?? [])));
-	php.addEventListener('error', (e: any) => out.push(...[].concat(e.detail ?? [])));
+	php.addEventListener('output', (e: any) => {
+		out.push(...[].concat(e.detail ?? []));
+	});
+	php.addEventListener('error', (e: any) => {
+		out.push(...[].concat(e.detail ?? []));
+	});
 	const binary = (await php.binary) as unknown as ProbeBinary;
 	return { php, out, diag, binary, bootMs: Date.now() - t0 };
 }

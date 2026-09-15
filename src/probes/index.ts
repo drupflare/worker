@@ -161,8 +161,12 @@ const output: any[] = [];
 try {
 	const t0 = Date.now();
 	php = new PhpWorkerd({}, boot.diag);
-	php.addEventListener('output', (e: any) => output.push(...[].concat(e.detail ?? [])));
-	php.addEventListener('error', (e: any) => output.push(...[].concat(e.detail ?? [])));
+	php.addEventListener('output', (e: any) => {
+		output.push(...[].concat(e.detail ?? []));
+	});
+	php.addEventListener('error', (e: any) => {
+		output.push(...[].concat(e.detail ?? []));
+	});
 	const binary = await php.binary;
 	boot.ms = Date.now() - t0;
 	boot.idleMemoryBytes = linearMemory(binary);
@@ -182,7 +186,9 @@ for (const mib of [8, 16, 32, 64]) {
 	try {
 		const inst = new PhpWorkerd({ INITIAL_MEMORY: mib * 1024 * 1024 }, diag);
 		const out: any[] = [];
-		inst.addEventListener('output', (e: any) => out.push(...[].concat(e.detail ?? [])));
+		inst.addEventListener('output', (e: any) => {
+			out.push(...[].concat(e.detail ?? []));
+		});
 
 		const ready = await withTimeout(inst.binary, 10000);
 		if (!ready.ok) {

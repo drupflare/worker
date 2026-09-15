@@ -634,8 +634,12 @@ async function build(bin: BinName, tag: string): Promise<HeapInstance> {
 	const out: any[] = [];
 	const t0 = Date.now();
 	const php = new PhpStatic(bin, {}, diag);
-	php.addEventListener('output', (e: any) => out.push(...[].concat(e.detail ?? [])));
-	php.addEventListener('error', (e: any) => out.push(...[].concat(e.detail ?? [])));
+	php.addEventListener('output', (e: any) => {
+		out.push(...[].concat(e.detail ?? []));
+	});
+	php.addEventListener('error', (e: any) => {
+		out.push(...[].concat(e.detail ?? []));
+	});
 	const binary = (await php.binary) as unknown as ProbeBinary;
 	growTag = prev;
 	return {

@@ -26,7 +26,7 @@ import {
 	resolveBaseline,
 	type BaselineValues
 } from '../../scripts/measure/metrics-gate';
-import { ARTIFACT_SPECS } from '../artifact-specs';
+import { ARTIFACT_SPECS, PROBE_IMPORTS } from '../artifact-specs';
 
 /**
  * The Class A metrics pipeline: collect, compare, fail.
@@ -180,8 +180,55 @@ describe('the case count does not move with what this machine has on disk', () =
 		expect(excludeWithNoArtifacts().length).toBeGreaterThan(15);
 	});
 
-	it('collects all of them under exactly the environment the collector runs', () => {
-		expect(excludeWithNoArtifacts({ ...LIST_ENV })).toEqual([]);
+	/**
+	 * `DRUPFLARE_LIST_ALL=1` OVERRIDES THE PACK BOUNDARY AND NOT THE COLLECTION ONE, because the two
+	 * answer different questions.
+	 *
+	 * `ARTIFACT_SPECS` is "this machine cannot RUN the spec", and a listing only imports, so the flag
+	 * correctly ignores it -- that is the whole reason the flag exists. `PROBE_IMPORTS` is "this
+	 * machine cannot COLLECT the spec", because a top-level `import ...?raw` of an absent file throws
+	 * before any gate is reached. Forcing the first override onto the second made `vitest list` throw
+	 * on exactly the lane that sets the flag, so the collector got no count at all and
+	 * `tests.cases.workers` was lost on every run.
+	 *
+	 * This case used to assert an empty list, which encoded that defect: it passed while the metric
+	 * it protects was silently missing.
+	 */
+	it('drops only what it cannot COLLECT under the environment the collector runs', () => {
+		// DERIVED FROM THE FILESYSTEM, not pinned. `pw-probe.php` is produced by nothing in this
+		// repository, so it is absent in CI and present on a machine that made one by hand -- and a
+		// pinned list would be right on exactly one of those. The claim is about WHICH boundary the
+		// flag overrides, and that holds either way
+		const uncollectable = Object.entries(PROBE_IMPORTS)
+			.filter(([, file]) => !existsSync(join(ROOT, file)))
+			.map(([spec]) => spec);
+
+		const excluded = excludeWithNoArtifacts({ ...LIST_ENV });
+		expect(excluded.sort()).toEqual([...uncollectable].sort());
+
+		// AND THE PACK BOUNDARY IS OVERRIDDEN, which is what the flag is for -- but only for a spec
+		// that is ONLY on that boundary. `render-buckets.spec.ts` is on BOTH lists, and a spec that
+		// cannot be collected stays excluded however cheap running it would have been; the stricter
+		// of the two boundaries wins, and it has to
+		const packOnly = ARTIFACT_SPECS.filter((spec) => !(spec in PROBE_IMPORTS));
+		expect(packOnly.length, 'every artifact spec is also a probe import').toBeGreaterThan(0);
+		for (const spec of packOnly) expect(excluded).not.toContain(spec);
+	});
+
+	/**
+	 * The control, and it has to be stated as a RELATION rather than as an absence.
+	 *
+	 * On CI every probe-import file is missing and the case above compares two non-empty lists; on a
+	 * machine that has them it compares two empty ones, which would prove nothing on its own. What
+	 * holds in both places is that the flag never drops a spec this machine CAN collect, and never
+	 * keeps one it cannot.
+	 */
+	it('CONTROL: the excluded set is exactly the uncollectable set, whichever this machine is', () => {
+		expect(Object.keys(PROBE_IMPORTS).length).toBeGreaterThan(0);
+		const excluded = new Set(excludeWithNoArtifacts({ ...LIST_ENV }));
+		for (const [spec, file] of Object.entries(PROBE_IMPORTS)) {
+			expect(excluded.has(spec), `${spec} vs ${file}`).toBe(!existsSync(join(ROOT, file)));
+		}
 	});
 });
 

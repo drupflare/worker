@@ -153,3 +153,21 @@ export const ARTIFACT_SPECS = [
 	'tests/node/build-from-source.spec.ts',
 	'tests/node/container-cid.spec.ts'
 ];
+
+/**
+ * Specs that import an artifact of their own at COLLECTION time, and the file that has to exist.
+ *
+ * A DIFFERENT BOUNDARY FROM {@link ARTIFACT_SPECS}, and the difference is what `DRUPFLARE_LIST_ALL=1`
+ * may override. That flag says "count the repository rather than this machine", so it correctly
+ * ignores the pack boundary above -- a listing only imports, and an artifact spec fails at RUN time.
+ * These fail at COLLECTION: a top-level `import ...?raw` of an absent file throws before any gate is
+ * reached, so `describe.skipIf` cannot help and the flag must not override it. Forcing the override
+ * onto both made `vitest list` throw on exactly the lane that sets the flag.
+ *
+ * Lives here rather than in `vitest.config.ts` because `tests/node/metrics.spec.ts` asserts the
+ * contract and cannot import a const the config keeps private.
+ */
+export const PROBE_IMPORTS: Record<string, string> = {
+	'tests/integration/render-buckets.spec.ts': 'assets/probe/pw-probe.php',
+	'tests/integration/render-plan-arms.spec.ts': 'scripts/bench/pw-plan-replay.php'
+};

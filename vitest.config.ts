@@ -71,7 +71,7 @@ const STATIC_TREE = 'assets/core/misc/drupal.js';
 
 // `.ts` rather than the repo's usual `.js` specifier: this file is loaded by vite's own config
 // loader, which resolves the path literally and warns on an extensionless one
-import { ARTIFACT_SPECS } from './tests/artifact-specs.ts';
+import { ARTIFACT_SPECS, PROBE_IMPORTS } from './tests/artifact-specs.ts';
 import { GATE_WAIT_MS } from './tests/e2e/helpers/endpoint.ts';
 
 // collect the artifact specs without running them, so the metrics case count is a property of the
@@ -137,21 +137,8 @@ const havePack = existsSync(PACK_INDEX);
 const haveStatic = existsSync(STATIC_TREE);
 const haveArtifacts = haveBinary && havePack && haveStatic;
 
-/**
- * Specs that import an artifact of their own at COLLECTION time, and the file that has to exist.
- *
- * `ARTIFACT_SPECS` is the pack boundary and these are not on it: a tree can hold the whole pack and
- * still not hold these, because nothing in this repository produces them. A top-level
- * `import ...?raw` fails collection, so `describe.skipIf` cannot reach it and the spec's own
- * `DRUPFLARE_MEASURE` gate never gets a chance to decline.
- *
- * Measured rather than assumed: the pack lane builds every artifact and still read
- * `ENOENT: '../../assets/probe/pw-probe.php'`.
- */
-const PROBE_IMPORTS: Record<string, string> = {
-	'tests/integration/render-buckets.spec.ts': 'assets/probe/pw-probe.php',
-	'tests/integration/render-plan-arms.spec.ts': 'scripts/bench/pw-plan-replay.php'
-};
+// `PROBE_IMPORTS` moved to tests/artifact-specs.ts, beside the boundary it is often confused
+// with; `metrics.spec.ts` asserts the difference and cannot import a const this file keeps private
 /**
  * NOT GATED ON `listAll`, AND THAT COUPLING LOST A METRIC ON EVERY RUN.
  *

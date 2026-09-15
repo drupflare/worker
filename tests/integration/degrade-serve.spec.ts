@@ -295,3 +295,62 @@ describe('invalidating the version-pinned caches', () => {
 		expect(out.second, 'a warm object must not re-read meta on every request').toBeNull();
 	});
 });
+
+/**
+ * The band an ANSWERED response reports, which for the whole life of the ladder was nothing.
+ *
+ * `readOnlyResponse()` names the band on a refusal, so `read-only` was observable and `reduced`
+ * was not: a site can spend the whole way from 80% of a daily quota to 95% while every response
+ * looks identical, and the first signal an operator gets is the 503 at the end of it.
+ * `degradeHeaders()` existed for exactly that, was covered by its own unit test, and was called by
+ * nothing in `src/` -- the same tested-but-never-called shape as the health layer.
+ *
+ * Driven through `stub.fetch()` rather than `obj.handle()`, because the seam is the object's own
+ * `fetch()` and a spec calling the router directly would pass without ever reaching it.
+ */
+describe('a degraded site says so on every response, not only on a refusal', () => {
+	const statusOf = async (fraction: number) => {
+		const stub = freshSite();
+		await inObject(stub, (obj) => {
+			markProvisioned(obj);
+			obj.metaSet('first_run_at', String(Date.now()));
+			spendRows(obj, fraction);
+		});
+		return stub.fetch(new Request('https://do.local/__health'));
+	};
+
+	it('carries nothing at all while the site is normal', async () => {
+		const res = await statusOf(0.1);
+		expect(res.headers.get('x-cfw-degrade')).toBeNull();
+		expect(res.headers.get('x-cfw-degrade-driver')).toBeNull();
+		expect(res.headers.get('x-cfw-degrade-at')).toBeNull();
+	});
+
+	// THE CASE THE WHOLE ITEM IS ABOUT: this band still answers, so nothing else reports it
+	it('names the reduced band, the driver and the fraction', async () => {
+		const res = await statusOf(REDUCE_AT);
+		expect(res.headers.get('x-cfw-degrade')).toBe('reduced');
+		expect(res.headers.get('x-cfw-degrade-driver')).toBe('rows');
+		expect(Number(res.headers.get('x-cfw-degrade-at'))).toBeGreaterThanOrEqual(REDUCE_AT);
+	});
+
+	it('names the read-only band on a response that was not itself refused', async () => {
+		const res = await statusOf(READ_ONLY_AT);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-degrade')).toBe('read-only');
+	});
+
+	// the body has to survive being re-wrapped, or the header would arrive on an empty response.
+	// Compared against the SAME route on an undegraded object, so this cannot pass by both
+	// answering nothing
+	it('leaves the body and the status alone', async () => {
+		const degraded = await statusOf(REDUCE_AT);
+		const normal = await statusOf(0.1);
+		expect(degraded.status).toBe(normal.status);
+		const body = (await degraded.json()) as Record<string, unknown>;
+		expect(Object.keys(body).length).toBe(
+			Object.keys((await normal.json()) as Record<string, unknown>).length
+		);
+		expect(Object.keys(body).length).toBeGreaterThan(0);
+	});
+});

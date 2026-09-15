@@ -170,7 +170,12 @@ jobs:
         run: bun run fetch:drupal
       - name: Hydrate the Checkout
         if: ${{ env.HAVE_PAYLOAD }}
-        run: bun run hydrate
+        run: |
+          bun run hydrate
+          if ! bun scripts/qa/pack-agrees.ts; then
+            bun run build:local
+            echo "PACK_FROM_SOURCE=1" >> "$GITHUB_ENV"
+          fi
       - name: Build the Pack From Source
         if: ${{ !env.HAVE_PAYLOAD }}
         run: |

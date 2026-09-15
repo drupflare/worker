@@ -51,9 +51,19 @@ const GEN_BUCKET_MS = 5000;
  * cannot use the edge and goes to the object instead. That is correct behaviour, not a failure.
  */
 async function untilEdge(site: string, path: string, tries = 6): Promise<ServeProbe | null> {
+	return untilTier(site, path, (hit) => hit.cache === 'EDGE', tries);
+}
+
+/** the same retry for any tier; the generation pointer makes every tier arrive on its own window */
+async function untilTier(
+	site: string,
+	path: string,
+	wanted: (hit: ServeProbe) => boolean,
+	tries = 6
+): Promise<ServeProbe | null> {
 	for (let i = 0; i < tries; i++) {
 		const hit = await serveThroughWorker(site, path);
-		if (hit.cache === 'EDGE') return hit;
+		if (wanted(hit)) return hit;
 	}
 	return null;
 }
@@ -229,6 +239,91 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(edge?.doCache).toBe('HIT');
 		expect(edge?.body).toBe(doHit.body);
 		expect(new Set([miss.cache, doHit.cache, warmed?.cache, edge?.cache]).size).toBe(4);
+	});
+
+	/**
+	 * THE STALE-GENERATION SERVE, which no lane could reach until the test pool bound `PAGE_KV`.
+	 *
+	 * `pageKvEnabled()` returns false on a missing binding and `readStalePage()` returns null at its
+	 * first line, so both the KV page tier and the previous-generation serve on top of it were
+	 * unreachable in every lane and on the shipping config at once. `wrangler.jsonc` declares the
+	 * namespace now and `vitest.config.ts` gives the pool a local one.
+	 *
+	 * IT IS A DIFFERENT TIER FROM `AGED`, and conflating the two cost a measurement. `AGED` is the
+	 * OBJECT answering a page that is stale by TIME out of its own SQLite, reported with
+	 * `x-cfw-aged-ms`. This is the FRONT WORKER answering a page from a PREVIOUS GENERATION out of
+	 * KV after a content change, reported with `x-cfw-edge: STALE` and `x-cfw-stale-behind`. Both
+	 * can answer `x-cfw-cache: KV`, which is why a run that read only that header could not tell
+	 * them apart.
+	 */
+	it('answers from the previous generation after a bump, rather than waiting for a re-render', async () => {
+		const site = 'stalegen';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>gen one</title>'));
+
+		// THE TIER IS PAID-ONLY BY DEFAULT, which the binding does not change: `pageKvEnabled()`
+		// ends in `isPaid(env)`, and the shipping config is `PLAN: free`. So a free site stores
+		// nothing in KV and has nothing to fall back to, and this spec has to say which
+		// configuration it is asserting
+		const paid = { ...env, PAGE_KV_ENABLED: '1' } as unknown as typeof env;
+		const serve = async (query = '') => {
+			const ctx = createExecutionContext();
+			const res = await worker.fetch(
+				new Request(
+					`https://cfw.local/serve?site=${site}&path=${encodeURIComponent('/')}${query}`
+				),
+				paid,
+				ctx
+			);
+			await waitOnExecutionContext(ctx);
+			return res;
+		};
+
+		// warm KV at the current generation, which is what gives the bump something to fall back to.
+		// The write is deferred, so the wait above is what makes it observable
+		expect((await serve()).status).toBe(200);
+		await serve();
+
+		await namedSite(site).fetch(new Request('https://do.local/__bump', { method: 'POST' }));
+
+		// ONE `edge=0` REQUEST FIRST, and it is load-bearing in a way worth stating. The generation
+		// pointer is discovered once per 5 s window, so straight after a bump the worker still
+		// believes the old generation and the isolate memo answers the pre-bump body -- the tier
+		// never runs. `edge=0` declines the memo and the per-colo cache, reaches the object, and the
+		// response teaches the pointer forward. It cannot be the assertion itself, because the KV
+		// tier and the stale read both sit INSIDE the same `edgeWanted` guard it just turned off.
+		const taught = await serve('&edge=0');
+		expect(taught.headers.get('x-cfw-generation')).not.toBe('1');
+
+		let stale: Response | null = null;
+		for (let i = 0; i < 6; i++) {
+			const res = await serve();
+			if (res.headers.get('x-cfw-edge') === 'STALE') {
+				stale = res;
+				break;
+			}
+		}
+		expect(stale, 'the previous generation was never served').not.toBeNull();
+		// BOTH STALE TIERS ANSWER `x-cfw-cache: KV`, so this is the header that separates them from
+		// the object's own time-stale `AGED` serve. A measurement that reads only `x-cfw-cache`
+		// cannot tell which mechanism answered, and one of mine did not
+		expect(stale?.headers.get('x-cfw-cache')).toBe('KV');
+		// how many generations back it came from, so a caller can bound the staleness it accepted
+		expect(Number(stale?.headers.get('x-cfw-stale-behind'))).toBeGreaterThanOrEqual(1);
+		// the body is the OLD one: serving the new generation here would mean the tier did not fire
+		expect(await stale?.text()).toContain('gen one');
+		// and it must not settle anywhere downstream, because it is known to be behind
+		expect(stale?.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
+	});
+
+	// THE CONTROL, and without it the case above would pass on a build where the tier is always on.
+	// A free site must store nothing in KV, so there is nothing to serve stale from
+	it('CONTROL: stores no KV page on the free plan, so the tier cannot fire there', async () => {
+		const site = 'stalegen-free';
+		await provisionedNamedSite(site);
+		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>free</title>'));
+		const hit = await serveThroughWorker(site, '/');
+		expect(hit.header('x-cfw-kv-put')).toBe('skipped:disabled');
 	});
 
 	it('re-validates at the client so a generation bump is not defeated by a browser cache', async () => {

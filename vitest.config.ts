@@ -72,6 +72,7 @@ const STATIC_TREE = 'assets/core/misc/drupal.js';
 // `.ts` rather than the repo's usual `.js` specifier: this file is loaded by vite's own config
 // loader, which resolves the path literally and warns on an extensionless one
 import { ARTIFACT_SPECS } from './tests/artifact-specs.ts';
+import { GATE_WAIT_MS } from './tests/e2e/helpers/endpoint.ts';
 
 // collect the artifact specs without running them, so the metrics case count is a property of the
 // checkout rather than of this machine; collection only imports, and nothing here reads at module scope
@@ -151,11 +152,20 @@ const PROBE_IMPORTS: Record<string, string> = {
 	'tests/integration/render-buckets.spec.ts': 'assets/probe/pw-probe.php',
 	'tests/integration/render-plan-arms.spec.ts': 'scripts/bench/pw-plan-replay.php'
 };
-const missingProbeSpecs = listAll
-	? []
-	: Object.entries(PROBE_IMPORTS)
-			.filter(([, file]) => !existsSync(resolve(import.meta.dirname, file)))
-			.map(([spec]) => spec);
+/**
+ * NOT GATED ON `listAll`, AND THAT COUPLING LOST A METRIC ON EVERY RUN.
+ *
+ * The two guards answer different questions. `ARTIFACT_SPECS` is "this machine cannot RUN the
+ * spec", so `DRUPFLARE_LIST_ALL=1` correctly overrides it -- a listing is a property of the
+ * repository and collection only imports. `PROBE_IMPORTS` is "this machine cannot COLLECT the
+ * spec", because a top-level `import ...?raw` of an absent file throws before any gate is reached.
+ * Forcing the first override onto the second made `vitest list` throw on exactly the lane that
+ * forces it, so `collect-metrics.ts` -- whose whole reason for setting the flag is to count the
+ * repository rather than the machine -- got no count at all.
+ */
+const missingProbeSpecs = Object.entries(PROBE_IMPORTS)
+	.filter(([, file]) => !existsSync(resolve(import.meta.dirname, file)))
+	.map(([spec]) => spec);
 
 const excludedSpecs = [...(haveArtifacts || listAll ? [] : ARTIFACT_SPECS), ...missingProbeSpecs];
 
@@ -258,10 +268,18 @@ const MIB = 1_048_576;
  *
  * Measured: a leaf import is 34 ms, six large `src/ops/*` modules together are 96 ms, and
  * `src/site.ts` is 2.60 s -- so the whole per-file cost is the 12,218,393-byte interpreter
- * instantiating into a fresh isolate. 68 of 142 spec files pay it, at 3.3 s alone and ~6.5 s under
- * eight contending lanes, which is 444 s of the suite's 280 s wall clock.
+ * instantiating into a fresh isolate. A spec whose graph reaches `cloudflare:test`,
+ * `src/site.ts` or `src/site-do.ts` pays roughly 60x what one outside that set does: 52 ms for
+ * `cdn-absorption.spec.ts` against 3.19 s for `shell-default.spec.ts`, n=3 each.
  *
- * Both obvious remedies are refused rather than untried. Consolidating the 58 integration specs
+ * **RE-MEASURED 2026-09-14: 152 of 251 spec files, 7.78 s each under eight contending lanes, which
+ * is 1,188 s of lane-work in a 510 s workers run.** The figures this paragraph carried -- 68 of
+ * 142, 444 s against a 280 s wall -- had drifted with the suite in both terms. Import is 34% of
+ * all lane-work and it is charged per FILE, which is why adding spec files is not free and
+ * splitting one to parallelise it is a net loss: `7.78 / lanes * efficiency` is ~1.1 s of wall per
+ * extra file, for nothing.
+ *
+ * Both obvious remedies are refused rather than untried. Consolidating the integration specs
  * breaks the one-spec-file-per-domain rule and the failure attribution that comes with it.
  * Importing the seam dynamically WOULD work here, because the gate aliases a pre-compiled
  * `CompiledWasm`, and would break production, where workerd forbids request-time codegen -- a lane
@@ -272,8 +290,11 @@ function workerLanes(): number {
 	if (Number.isFinite(explicit) && explicit >= 1) return Math.floor(explicit);
 	const ci = process.env.CI !== undefined;
 	const byMemory = Math.floor((totalmem() * 0.5) / (400 * MIB));
-	// one core for the runner, two for a developer's machine; cap at 8, past which the lanes
-	// contend on the same SQLite
+	// one core for the runner, two for a developer's machine. THE CAP OF 8 IS UNMEASURED: its
+	// stated reason, that the lanes contend on the same SQLite, has no reading behind it, and on a
+	// 12-core machine `byCores` is 10 and `byMemory` is 20, so this is the only thing holding it
+	// down. A balanced-floor estimate puts 10 lanes at 349 s against 436 s -- worth an arm, on a
+	// machine that is not swapping. `DRUPFLARE_TEST_WORKERS=10` runs it
 	const byCores = availableParallelism() - (ci ? 1 : 2);
 	return Math.max(ci ? 1 : 2, Math.min(byCores, byMemory, 8));
 }
@@ -294,6 +315,19 @@ export default defineConfig({
 							// `code: 10042`. Miniflare's R2 is local and needs no account, so the
 							// tier stays exercised here while the deploy button works there.
 							r2Buckets: ['FILES'],
+							// `FLEET_DB` IS IN `wrangler.jsonc` AND THE POOL DOES NOT CREATE IT, so
+							// `env.FLEET_DB` was undefined here and `reportToFleet()` returned at its
+							// first line on every test that ever reached an alarm. The inventory had a
+							// production caller and no lane that could observe one. Miniflare's D1 is
+							// local and needs no account, the same argument `FILES` above makes.
+							d1Databases: ['FLEET_DB'],
+							// AND THE SAME ARGUMENT FOR THE TWO KV NAMESPACES. `wrangler.jsonc` declares
+							// both and the pool does not create either, so `env.PAGE_KV` was undefined
+							// here: `pageKvEnabled()` returns false on a missing binding, which means the
+							// KV page tier AND the stale-generation serve on top of it were unreachable in
+							// every lane. `readStalePage()` returning null at its first line is the same
+							// shape as `reportToFleet()` above, one binding over
+							kvNamespaces: ['PAGE_KV', 'CONFIG_KV'],
 							// DRUPFLARE_MEASURE gates the wall-clock instruments, which cannot be
 							// hermetic; forwarded because the pool has its own env
 							bindings: {
@@ -344,9 +378,13 @@ export default defineConfig({
 					// nothing at all, so a clean checkout stayed red on them however carefully the
 					// list was maintained.
 					exclude: excludedSpecs,
-					// these shell out to php and read the filesystem; serial keeps the failure
-					// output attributable
-					maxWorkers: 1,
+					// THESE SHELL OUT TO PHP AND READ THE FILESYSTEM, so `fileParallelism` stays
+					// off: two files building a pack or writing a temp tree at once is a race the
+					// failure output cannot attribute. What was over-tight is `maxWorkers: 1`,
+					// which also serialised the CASES inside one file -- `php -l` over 98
+					// fragments and a `bun` subprocess per reachability scan are subprocess waits,
+					// not CPU, and nothing in a single file shares the tree it writes
+					maxWorkers: workerLanes(),
 					fileParallelism: false,
 					testTimeout: 30000
 				}
@@ -359,7 +397,15 @@ export default defineConfig({
 					maxWorkers: 1,
 					fileParallelism: false,
 					// a cold boot is ~4 s of interpreter start before the first byte
-					testTimeout: 60000
+					testTimeout: 60000,
+					// AND THE HOOK NEEDS ITS OWN, because vitest's default is 10 s and nine specs
+					// call `e2eGate()` from `beforeAll`. That gate waits `GATE_WAIT_MS` -- 90 s, set
+					// deliberately to outlast a `wrangler dev` Durable Object restart -- so the hook
+					// died at 10 s on exactly the event the gate exists to absorb, and reported it as
+					// `Hook timed out in 10000ms` rather than as a restart. Derived from the gate's
+					// own constant so the two cannot drift; the margin is for the request in flight
+					// when the wait expires.
+					hookTimeout: GATE_WAIT_MS + 30_000
 				}
 			}
 		],
@@ -369,11 +415,18 @@ export default defineConfig({
 			reportsDirectory: './coverage',
 			include: SHIPPING_CODE,
 			exclude: ['src/probes/**', 'tests/**', '**/*.d.ts'],
+			// RE-DERIVED 2026-09-14 FROM A RUN OF THE WIDENED LANE, not raised by guess. The old
+			// four were calibrated on a lane that dropped 104 spec files for want of the pack, and
+			// `coverage.yml` now builds it: a full local run with the artifacts present read
+			// 90.19 stmts / 79.58 branch / 94.4 funcs / 91.61 lines, against 74.45 / 63.9 / 80.97 /
+			// 75.06 on the narrowed lane. Every one of these is ~1.5 under its reading, which is
+			// margin for CI's own build rather than headroom to spend: the old lines gate cleared by
+			// 0.06 and the next spec to join `ARTIFACT_SPECS` would have taken it red on its own.
 			thresholds: {
-				lines: 75,
-				functions: 72,
-				branches: 63,
-				statements: 74
+				lines: 90,
+				functions: 92,
+				branches: 77,
+				statements: 88
 			}
 		}
 	}

@@ -191,6 +191,14 @@ export function staleAllowed(path: string, extra: string | null | undefined = nu
  *
  * Returns the page and how many generations back it came from, so the caller can say so in a header
  * and schedule the regeneration rather than rendering inline.
+ *
+ * **MEASURED 2026-09-14 ON A DEPLOYED FREE WORKER: 265 ms against a 476 ms render on the same
+ * object in the same run, so 1.8x.** n=13 for the stale serve (`x-worker-ms` p50, range 182-404)
+ * against n=6 for the render control (438-603). Two things the run needed, and either missing makes
+ * this read as dead code rather than as a tier: `PAGE_KV` has to be BOUND -- this function returns
+ * null at its first line without it, and the shipping `wrangler.jsonc` bound no KV namespace at all
+ * -- and the header to look for is `AGED`. `STALE` is a REPLICA REFUSAL, a different event; an
+ * earlier arm reported zero hits because it asserted on that name.
  */
 export async function readStalePage(
 	env: PageStoreEnv | null | undefined,

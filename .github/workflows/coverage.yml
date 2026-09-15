@@ -173,7 +173,9 @@ jobs:
         run: bun run hydrate
       - name: Build the Pack From Source
         if: ${{ !env.HAVE_PAYLOAD }}
-        run: bun run build:local
+        run: |
+          bun run build:local
+          echo "PACK_FROM_SOURCE=1" >> "$GITHUB_ENV"
       - name: Pack the Drupal Modules
         run: bun run assets:driver
       - name: Set up PHP

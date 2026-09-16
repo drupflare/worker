@@ -1657,6 +1657,27 @@ concurrency gives every arm a different per-replica load, so N=1 collapsed at 16
 N=8 was never saturated. Always measure the generator's own ceiling against a no-work endpoint first
 -- here it was 958 req/s, which is what makes the rest mean anything.
 
+**AN EARLY RETURN INSIDE A BATCH SKIPS EVERYTHING WRITTEN AFTER THE LOOP.** `catchUpOnce()` applies
+a batch of records and then does two things: `metaSet(COMMIT_SEQ_KEY, applied)` and
+`purgeAfterApply()`. Its refusal branch returned from inside the loop, so a batch of
+`[appliable, overflowed]` applied the first record's statements and reached neither -- the lane kept
+the pages that save invalidated and reported a commit sequence behind the state it holds. A refusal
+ends a batch; it does not undo the records ahead of it. Both now run on that branch when
+`applied > position.applied`.
+
+**The local gate could not produce it and CI could.** An overflowed record is sealed when a change is
+too large to log statement by statement, so the shape depends on what a save touches, and the pack
+lane's from-source pack is a superset of the shipped one. `replica-catchup.spec.ts` constructs the
+batch deterministically instead of waiting for one: seal a real save, then insert an `overflowed = 1`
+row at `generation + 1` straight into the primary's `cfw_repl_log`.
+
+**Two things about the diagnosis are worth more than the fix.** It was reached by exhaustion rather
+than by pattern-matching: CI asserted `records > 0` and passed, then failed the purge assertion, and
+exactly one path in that function applies a record without purging. And the first hypothesis was
+inert -- `outcome.action === 'apply'` and `outcome.applied > before` are the SAME condition, because
+`planApply()` returns `apply` only when `record.generation > pos.applied` and the apply then sets
+`applied` to it. Reverting that change altered nothing, which is what exposed it as a guess.
+
 ## `supported` is not a state a module may be in
 
 **Nothing is a support claim except a gated enable-and-assert run.** The module table has exactly

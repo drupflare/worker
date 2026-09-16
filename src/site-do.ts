@@ -7768,6 +7768,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				if (outcome.action === 'refuse') {
 					// an overflowed record is the common case here: it carries no
 					// statements, so there is nothing to apply and nothing to half-apply
+					//
+					// A REFUSAL ENDS THE BATCH; IT DOES NOT UNDO THE RECORDS AHEAD OF IT, so
+					// everything already applied is owed the same bookkeeping the loop's normal
+					// exit performs. Without this a lane that applied a save and then met an
+					// overflow kept the pages that save invalidated, and reported a commit
+					// sequence behind the state it holds
+					if (applied > position.applied) {
+						this.metaSet(COMMIT_SEQ_KEY, applied);
+						this.purgeAfterApply();
+					}
 					this.setReplicaStage('WITHDRAWN');
 					return {
 						ran: true,

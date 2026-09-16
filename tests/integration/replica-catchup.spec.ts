@@ -280,6 +280,61 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 		},
 		TIMEOUT
 	);
+
+	it(
+		'drops them when a later record in the same batch is refused',
+		async () => {
+			const { primary, lane } = await pairedLane('refused', (site) => {
+				storePage(site, '/stale', '<html>before the save</html>');
+			});
+			await catchUp(lane);
+
+			// one appliable record, then one the applier must refuse. An overflowed record is the
+			// shape the refusal path names, and it is reachable on a real primary: a change too
+			// large to log statement by statement seals as one of these
+			await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const ok = (await site.runJson(
+					drupalOp(`
+\\Drupal::configFactory()->getEditable('system.site')->set('slogan', 'before-the-overflow')->save();
+$out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
+				)) as { ok?: boolean };
+				expect(ok?.ok, `the write did not run: ${JSON.stringify(ok).slice(0, 200)}`).toBe(
+					true
+				);
+				await site.sealGeneration();
+
+				const sealed = site.commitSeq();
+				site.ensureReplicationLog();
+				site.sql.exec(
+					`INSERT INTO cfw_repl_log (generation, parent, schema_version, fingerprint,
+						overflowed, statements, sealed_at)
+					 VALUES (?, ?, ?, ?, 1, '[]', ?)`,
+					sealed + 1,
+					sealed,
+					site.packGeneration() ?? '',
+					'overflowed',
+					site.nowMs()
+				);
+			});
+
+			const out = await catchUp(lane);
+			// the batch carried both, so the refusal is what ended it rather than an empty pull
+			expect(out.records, out.reason).toBeGreaterThan(0);
+			expect(out.reason).toContain('overflowed');
+			expect(out.stage).toBe('WITHDRAWN');
+
+			const after = await inObject(namedSite(lane), (site) => {
+				role(site, 'primary');
+				return { paths: storedPaths(site), commit: site.commitSeq() };
+			});
+			// FALSIFIED by removing the bookkeeping from the refusal branch in `catchUpOnce`:
+			// reads ['/stale'] at a commit sequence behind the statements the lane applied
+			expect(after.paths).toEqual([]);
+			expect(after.commit).toBe(out.applied);
+		},
+		TIMEOUT
+	);
 });
 
 describe('the chain that keeps a lane replicating', () => {

@@ -51,10 +51,31 @@ const SEQUENCE = [
 	{ identity: 'anon-after', cookie: null }
 ] as const;
 
+/**
+ * One step, driven until the fill chain has converged on it.
+ *
+ * The bound terminates on an OBSERVATION rather than on a count: `/` is storable, so a 200 is
+ * reachable and a run that never gets one has a real fault to report. The status assertion below
+ * still accepts 503, because it speaks for the sequence this returns rather than for the fill.
+ */
+async function settledShot(
+	t: Transport,
+	identity: string,
+	cookie: string | null,
+	path: string
+): Promise<IdentityShot> {
+	let shot = await serveAs(t, identity, cookie, path);
+	for (let i = 0; i < 40 && shot.status === 503; i++) {
+		await new Promise((r) => setTimeout(r, 250));
+		shot = await serveAs(t, identity, cookie, path);
+	}
+	return shot;
+}
+
 async function runSequence(t: Transport, path: string): Promise<IdentityShot[]> {
 	const out: IdentityShot[] = [];
 	for (const step of SEQUENCE) {
-		out.push(await serveAs(t, step.identity, step.cookie, path));
+		out.push(await settledShot(t, step.identity, step.cookie, path));
 	}
 	return out;
 }

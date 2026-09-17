@@ -415,6 +415,13 @@ rendering byte-identical. `cache_container` must stay -- a rebuild is 1,024 ms a
 seven are 1,067,229 bytes, **22.6% of the stored database**, for at most 44 extra statements on the
 first render.
 
+**AND THAT LEVER IS REFUTED, WHICH THIS PARAGRAPH USED TO OMIT -- so it has been re-proposed twice
+from the figure above.** 22.6% is a PROVISIONING-TIME reading. Measured across a render: 1,273,856
+bytes saved at provisioning, then **NEGATIVE 176,128 bytes and 227 extra rows written after one
+render**, because the bins a live render rebuilds are larger than the packed ones. Rows written is
+the meter that binds regeneration, so it loses on both meters rather than trading between them.
+Quote the post-render figure; the provisioning one is the half that reads like a win.
+
 Sharing across tenants needs both layers in ONE object's SQLite, which means many tenants per object.
 That is a topology change and it is not the item as scoped; within one tenant's own object there is
 nothing to share and the overlay saves zero.

@@ -57,6 +57,14 @@ const SEQUENCE = [
  * The bound terminates on an OBSERVATION rather than on a count: `/` is storable, so a 200 is
  * reachable and a run that never gets one has a real fault to report. The status assertion below
  * still accepts 503, because it speaks for the sequence this returns rather than for the fill.
+ *
+ * **A PARTIAL CONVERGENCE IS WORSE THAN NONE HERE, which a shorter bound produced.** The marker
+ * case saves three nodes and then re-runs this sequence; a step that gives up at 503 carries a
+ * warming body with no markers in it, so it reads as an identity that saw DIFFERENT content rather
+ * than as one that saw no content. On CI that surfaced as `identities disagree about what is on
+ * the page` with two of five holding the empty set -- the signature of the uid-1 leak, from a fill
+ * that had not finished. The bound is long enough for a post-save refill and the caller asserts
+ * the status separately, so an unconverged step is named for what it is.
  */
 async function settledShot(
 	t: Transport,
@@ -65,7 +73,7 @@ async function settledShot(
 	path: string
 ): Promise<IdentityShot> {
 	let shot = await serveAs(t, identity, cookie, path);
-	for (let i = 0; i < 40 && shot.status === 503; i++) {
+	for (let i = 0; i < 120 && shot.status === 503; i++) {
 		await new Promise((r) => setTimeout(r, 250));
 		shot = await serveAs(t, identity, cookie, path);
 	}
@@ -200,6 +208,14 @@ describe.skipIf(skip)('the identity leak differential', () => {
 		expect(all.length).toBeGreaterThan(1);
 
 		const after = await runSequence(mixed, '/');
+		// EVERY STEP ANSWERED A PAGE BEFORE ANY OF THEM ARE COMPARED. A step still warming carries
+		// no markers, and an empty marker set is indistinguishable from an identity that was shown
+		// something different -- which is the finding this case exists to report, so it must not be
+		// reachable by a slow fill. Asserted here rather than inside `settledShot` so the message
+		// names the identity and the status.
+		for (const shot of after) {
+			expect(shot.status, `${shot.identity} never converged: ${shot.status}`).toBe(200);
+		}
 		const visible = after.map((shot) => ({
 			identity: shot.identity,
 			seen: all.filter((m) => shot.body.includes(m)).join(',')

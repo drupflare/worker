@@ -410,9 +410,15 @@ on regardless of plan.</p>
 <td>M edge</td>
 </tr>
 <tr>
-<td>Uncached render</td>
-<td><strong>2,127 ms</strong> DO CPU (n=10)</td>
-<td><strong>9.47 ms</strong></td>
+<td>Re-render after a save</td>
+<td><strong>32 ms</strong></td>
+<td><strong>25 ms</strong></td>
+<td>M local</td>
+</tr>
+<tr>
+<td>Uncached render, cold bins</td>
+<td><strong>2,127 ms</strong> DO CPU (n=10); a different cache state</td>
+<td>n/m on this instrument</td>
 <td>M edge</td>
 </tr>
 <tr>
@@ -447,16 +453,23 @@ on regardless of plan.</p>
 </tr>
 </tbody>
 </table>
-<p>The architecture wins by not rendering rather than by rendering faster. The 3.57x is a warm-kernel
-ratio taken on one machine; an uncached render as the edge bills it is ~2.1 s, which is the figure
-that matters and is why ~99% of traffic must never reach one.</p>
+<p>The architecture wins by not rendering rather than by rendering faster.</p>
+<p><strong>The two render rows are different workloads on different instruments and must not be divided.</strong>
+The 32/25 pair is one machine, one instrument, with Drupal's <code>render</code> and <code>dynamic_page_cache</code> bins
+warm on both sides, which is the state a content change produces. The 2,127 ms is the edge billing a
+render with both bins emptied. Dividing an edge cold figure by a local warm one is how an external
+review published a 225x that this project had to retract; the technical report keeps that correction
+at its Provenance section.</p>
 <p>Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
 page at ~467 ms against 3,525, and a replica pool spreads authenticated reads across objects instead
 of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a single request. What
 it does not have is the concurrency answer: adding lanes is a config change and a provisioning call,
 not a resize.</p>
-<p>Write-heavy traffic goes the wrong way. Every authoritative write is one object and one thread, by
-construction, and no pool changes it.</p>
+<p>Write-heavy traffic is the narrower loss it used to be stated as. A lane runs a write locally,
+discards its own effect and forwards the statement list to the primary, which sequences it, so the
+work spreads and only the commit serialises. What cannot spread is the class of write that
+ORIGINATES a value two objects would mint differently; those are refused rather than retried,
+because a retry cannot repair them.</p>
 <p>A raw uncached render is slower than native PHP, by a ratio the technical report keeps current. The
 architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor
 forces a render, shell assembly cuts the render rather than the boot. What remains slower is listed

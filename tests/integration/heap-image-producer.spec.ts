@@ -76,15 +76,32 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// Terminated on the route reporting nothing owed, which is the same observation the loop above
 	// uses, re-asked after the alarms because an alarm firing can leave a step owed that the route
 	// had already cleared.
-	await driveAlarms(stub, () => false, 12);
-	await inObject(stub, async (site) => {
-		for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
-			const res = await site.fetch(
-				new Request('https://do.local/__reconcile', { method: 'POST' })
-			);
-			if (((await res.json()) as { ran: unknown }).ran === null) break;
-		}
-	});
+	// ALTERNATED AND THEN PROVEN, because neither half settles the other on its own. An alarm firing
+	// can leave a step the route had cleared, and the route cannot run the alarm-only work. A fixed
+	// number of either is a count; what terminates this is the route reporting nothing owed AFTER a
+	// firing that changed nothing.
+	//
+	// THE BOUND IS NOT THE ASSERTION. An earlier revision drove 12 firings plus one route loop and
+	// passed against the SHIPPED pack while failing in CI's `PACK_FROM_SOURCE=1` lane, where the
+	// tree is a superset and more is owed -- reported three steps later as `expected null not to be
+	// null`, the subject having spent its firing reconciling. Running out here throws instead, so
+	// the message names the cause.
+	let settled = false;
+	for (let round = 0; round < 12 && !settled; round++) {
+		await driveAlarms(stub, () => false, 4);
+		settled = await inObject(stub, async (site) => {
+			for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
+				const res = await site.fetch(
+					new Request('https://do.local/__reconcile', { method: 'POST' })
+				);
+				if (((await res.json()) as { ran: unknown }).ran === null) return true;
+			}
+			return false;
+		});
+	}
+	if (!settled) {
+		throw new Error('reconciliation never settled, so the imaging firing would reconcile too');
+	}
 	await inObject(stub, (site) => {
 		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
 	});

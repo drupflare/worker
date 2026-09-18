@@ -54,7 +54,21 @@ export function siteKvKey(host: string): string {
  * path: a typo that the platform rejects would take the site down for the sake of a latency
  * preference, which is the wrong trade for a hint.
  */
-const LOCATION_HINTS = new Set(['wnam', 'enam', 'sam', 'weur', 'eeur', 'apac', 'oc', 'afr', 'me']);
+// `apac-ne` and `apac-se` are documented values this list refused until 2026-09-17, so an owner
+// asking for either was silently dropped to no hint; the guard is for typos, not for valid regions
+const LOCATION_HINTS = new Set([
+	'wnam',
+	'enam',
+	'sam',
+	'weur',
+	'eeur',
+	'apac',
+	'apac-ne',
+	'apac-se',
+	'oc',
+	'afr',
+	'me'
+]);
 
 /**
  * Where a site's Durable Object should be created, or undefined for "wherever it lands".

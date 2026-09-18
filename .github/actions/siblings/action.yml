@@ -1,0 +1,35 @@
+name: Check Out the Locked Siblings
+description: Checks out drupflare, rom and stream-http at the versions composer.lock pins.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the Pinned Refs
+      id: refs
+      shell: bash
+      run: |
+        for pkg in drupflare rom stream-http; do
+          version="$(jq -r --arg n "drupflare/$pkg" \
+            '.packages[] | select(.name == $n) | .version' composer.lock)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::composer.lock does not pin drupflare/$pkg" >&2
+            exit 1
+          fi
+          echo "$pkg=$version" >> "$GITHUB_OUTPUT"
+          echo "drupflare/$pkg -> $version"
+        done
+    - uses: actions/checkout@v7
+      with:
+        repository: drupflare/stream-http
+        path: .siblings/stream-http
+        ref: ${{ steps.refs.outputs.stream-http }}
+    - uses: actions/checkout@v7
+      with:
+        repository: drupflare/drupflare
+        path: .siblings/drupflare
+        ref: ${{ steps.refs.outputs.drupflare }}
+    - uses: actions/checkout@v7
+      with:
+        repository: drupflare/rom
+        path: .siblings/rom
+        ref: ${{ steps.refs.outputs.rom }}

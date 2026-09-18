@@ -1786,6 +1786,29 @@ returns. `/updb` hung past every timeout on a fresh object and read as a platfor
 `site-do.ts`. A helper written for `alarm()`, which is its own event, is not safe to call from a
 route without saying which one is holding what. `updbBeat(gated)` takes the flag for that reason.
 
+## CI CHECKS THE SIBLINGS OUT AT THE LOCKED TAG, and it used to take their default branch
+
+`actions/checkout` with no `ref` takes the default branch, and every sibling checkout in every
+workflow was written that way -- so `composer.lock` could pin `drupflare/drupflare v0.3.1` while the
+lane packed whatever was on that repo's master. The lock was authoritative for static analysis and
+for `SHIPPED_CORE_VERSION`, and decorative for the bytes that actually ship.
+
+**That made a sibling commit a silent release.** Push to a sibling's master and the next CI run packs
+it, with no commit here and nothing comparing the two. It is the same second-copy-with-no-check shape
+as the `ARCHIVED` constant and the generated `shipped-lock.ts`, and it defeats the point of making
+the lock authoritative in the first place -- syncing by commit is exactly what that change existed to
+stop.
+
+`.github/actions/siblings` is the single expression of it: one composite action reads each version
+out of `composer.lock` and checks that tag out, used by all nine sibling checkouts across
+`browser`, `build`, `coverage`, `e2e`, `metrics` and `release`. **It fails loudly on a package the
+lock does not pin** rather than silently falling back to a branch, which is the failure mode it
+replaces. Verified against the live tags: `drupflare v0.3.1`, `rom v0.2.2`, `stream-http v0.1.3` all
+resolve.
+
+Consequence worth knowing: a sibling change now reaches CI only once `composer.lock` names the
+version, which is a renovate PR rather than a push. That is the intended cost.
+
 ## The lock is authoritative now, and the chain used to be a cycle
 
 `drupal-src/composer.lock` -> `gen:lock` -> `SHIPPED_CORE_VERSION` -> `fetch:drupal` -> `drupal-src`.

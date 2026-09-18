@@ -436,11 +436,18 @@ describe('the chain that keeps a lane replicating', () => {
 				// at the shipped default it re-arms at `KEEP_WARM_MS`, 240 s. Measuring the lane's
 				// own configuration would have measured the harness
 				(site.env as Record<string, unknown>).SITE_WARM = '0';
+				// READ BEFORE THE BODY RUNS, because the body's own duration is not lag. Taken
+				// after, an alarm re-armed at `now + 1` inside a body that then spends 3 ms reads
+				// as 2 ms in the PAST, and the case failed exactly that way with
+				// `expected -2 to be greater than or equal to 0`. A previous round loosened the
+				// same assertion from `> 0` to `>= 0` for the same reason one layer up, which
+				// bought a tighter race rather than removing it.
+				const startedAt = site.nowMs();
 				await site.alarm();
 				return {
 					stage: site.replicaStage(),
 					alarm: await site.ctx.storage.getAlarm(),
-					now: site.nowMs()
+					now: startedAt
 				};
 			});
 
@@ -452,12 +459,10 @@ describe('the chain that keeps a lane replicating', () => {
 			// four minutes behind the primary and look healthy doing it
 			// measured both ways: 30,000 with the tightening and 240,000 without it
 			expect(out.alarm! - out.now).toBeLessThanOrEqual(DEFAULT_REPLICA_LAG_MS);
-			// NOT IN THE PAST, which is the property; `> 0` was a millisecond race and failed about
-			// one run in six with `expected 0 to be greater than 0`. The clock can land on the same
-			// millisecond the re-arm chose, and an alarm due immediately is the TIGHTEST possible
-			// answer to "inside the staleness bound" rather than a violation of it. A genuinely
-			// missed re-arm is negative, which this still catches, and the 240 s idle case is
-			// caught by the bound above.
+			// RE-ARMED DURING THIS FIRING, measured from when the body STARTED. An alarm at or
+			// after that instant was set by this call; one before it is the stale pre-existing
+			// alarm, which is the real defect this catches. Measured from the body's END instead,
+			// the body's own duration subtracts and a correct re-arm reads negative.
 			expect(out.alarm! - out.now).toBeGreaterThanOrEqual(0);
 		},
 		TIMEOUT

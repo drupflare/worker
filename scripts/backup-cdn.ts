@@ -185,6 +185,22 @@ export const ARCHIVED: readonly ArchivedEntry[] = [
 		md5: '1488008fc46b3182f335beff4d29cad7',
 		note: 'the shipping 8.5 binary before ext/cfwpark gained park_flatten; archived by the upload that replaced it'
 	},
+	// ORDER MATTERS AND IS ASSERTED: `cdn-backup.spec.ts` compares this list against the manifest's
+	// `archived` positionally, so an entry added here has to land at the same index there
+	{
+		key: 'snapshots/php8.5-worker.mjs.wasm.4e8501623f72',
+		bytes: 13_401_767,
+		sha256: '4e8501623f72a7236f43e3f3641fec5b46a496aa25b120da33e1e61ce78f0c02',
+		md5: 'd9a4237fd2498ca9a68ac23ae722a08f',
+		note: 'the TABLE_GROWTH arm, 8% slower and isolated to the exported __stack_pointer rather than the growable table; kept because the v1.0.2 stack-pointer question is scored against it'
+	},
+	{
+		key: 'snapshots/php8.5-worker.mjs.7bd7190c8965',
+		bytes: 876_368,
+		sha256: '7bd7190c8965dc29bbec008e887a28263f21e1370ad721b973dfc3d003064c5e',
+		md5: '1b880e440d1eff99351b5bc92b23e76d',
+		note: 'its glue, measured innocent: the same wasm across both glues reads -0.60% against a -0.34% control'
+	},
 	{
 		key: 'snapshots/php8.5-worker.mjs.6ec19188e65e',
 		bytes: 865_849,

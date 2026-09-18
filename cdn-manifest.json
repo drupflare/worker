@@ -260,6 +260,20 @@
 			"note": "the shipping 8.5 binary before ext/cfwpark gained park_flatten; archived by the upload that replaced it"
 		},
 		{
+			"key": "snapshots/php8.5-worker.mjs.wasm.4e8501623f72",
+			"bytes": 13401767,
+			"sha256": "4e8501623f72a7236f43e3f3641fec5b46a496aa25b120da33e1e61ce78f0c02",
+			"md5": "d9a4237fd2498ca9a68ac23ae722a08f",
+			"note": "the TABLE_GROWTH arm: a growable __indirect_function_table and an exported __stack_pointer. Measured 8.29%/7.90%/8.14% SLOWER than the shipping binary across five arms, and isolated to the EXPORT rather than the table -- neutralising both reads -0.20%. Kept because the v1.0.2 stack-pointer question is scored against it"
+		},
+		{
+			"key": "snapshots/php8.5-worker.mjs.7bd7190c8965",
+			"bytes": 876368,
+			"sha256": "7bd7190c8965dc29bbec008e887a28263f21e1370ad721b973dfc3d003064c5e",
+			"md5": "1b880e440d1eff99351b5bc92b23e76d",
+			"note": "its glue, measured innocent: the same wasm across both glues reads -0.60% against a -0.34% control"
+		},
+		{
 			"key": "snapshots/php8.5-worker.mjs.6ec19188e65e",
 			"bytes": 865849,
 			"sha256": "6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72",

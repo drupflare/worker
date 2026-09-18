@@ -25,16 +25,8 @@ const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do
  */
 async function provisioned(): Promise<DurableObjectStub> {
 	const stub = freshSite();
-	// THE PRODUCER IS OFF BY DEFAULT SINCE 2026-09-09, so a spec about the producer turns it on. A
-	// deployed two-arm run put the imaged cold render at a median 1,912 ms of cpuTime against 1,264
-	// unimaged with no overlap, so restoring costs more than booting; `HEAP_IMAGE=1` is the opt-in and
-	// the default is pinned separately below
-	// THE PRODUCER STAYS OFF WHILE THE SETUP RUNS, and it is armed at the end.
-	//
-	// It used to be enabled first, which made every setup step a candidate imaging pass. That was
-	// invisible until reconciliation grew a step that boots a kernel: the chain settles before the
-	// producer runs, so the last reconcile pass imaged and `latest` was already non-null before any
-	// test had armed an alarm. Establish the state, then arm the thing under test.
+	// off while the setup runs, or a setup step images and `latest` is non-null before the subject
+	// arms anything; the default-off decision is pinned separately below
 	await inObject(stub, (site) => {
 		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '0' };
 	});
@@ -55,37 +47,8 @@ async function provisioned(): Promise<DurableObjectStub> {
 			if (((await res.json()) as { ran: unknown }).ran === null) break;
 		}
 	});
-	// THE PRECONDITION IS "NO IMAGE YET", AND RECONCILING ESTABLISHES THE OPPOSITE. The chain
-	// settles first and the producer runs once nothing is owed, so the last pass of the loop above
-	// is itself an imaging pass -- which left `latest` non-null before this spec had armed anything.
-	// Dropped explicitly, the same way `php` is nulled to establish "no resident interpreter": the
-	// subject here is the ALARM taking an image, so the state it starts from has to be stated.
-	// DRIVEN TO QUIESCENCE ON THE ALARM, not only through the route.
-	//
-	// The route applies one step per call; the alarm is what a real site runs, and reconciliation
-	// shares a firing with the producer. Left partly owed, the subject's own firing reconciles AND
-	// images, so it does not end after imaging and the interpreter is still resident -- which is the
-	// property one of these specs exists to assert. `HEAP_IMAGE` is still 0 here, so none of these
-	// firings can take an image.
-	// A COUNT IS NOT AN OBSERVATION, and `() => false` with a bound of 6 is a count. Six firings
-	// settled reconciliation on a quiet machine and not under a full gate, where provisioning
-	// leaves more owed -- after which the SUBJECT's firing reconciles as well as images, so it does
-	// not end after imaging and the interpreter is still resident. That surfaced as
-	// `expected true to be false` on `php`, one spec over from where the cause was.
-	//
-	// Terminated on the route reporting nothing owed, which is the same observation the loop above
-	// uses, re-asked after the alarms because an alarm firing can leave a step owed that the route
-	// had already cleared.
-	// ALTERNATED AND THEN PROVEN, because neither half settles the other on its own. An alarm firing
-	// can leave a step the route had cleared, and the route cannot run the alarm-only work. A fixed
-	// number of either is a count; what terminates this is the route reporting nothing owed AFTER a
-	// firing that changed nothing.
-	//
-	// THE BOUND IS NOT THE ASSERTION. An earlier revision drove 12 firings plus one route loop and
-	// passed against the SHIPPED pack while failing in CI's `PACK_FROM_SOURCE=1` lane, where the
-	// tree is a superset and more is owed -- reported three steps later as `expected null not to be
-	// null`, the subject having spent its firing reconciling. Running out here throws instead, so
-	// the message names the cause.
+	// alternated then proven: an alarm can leave a step the route cleared, and a fixed count of
+	// either is not a settled chain. Throwing here names the cause instead of a null image later
 	let settled = false;
 	for (let round = 0; round < 12 && !settled; round++) {
 		await driveAlarms(stub, () => false, 4);
@@ -339,10 +302,7 @@ describe('the alarm produces this site one heap image', () => {
 				)
 			);
 			await arm(stub);
-			// ONE FIRING, on purpose: the subject is that the IMAGING firing ends after imaging, so
-			// driving until an image appears would let a later firing satisfy the assertion and
-			// prove nothing. What has to be settled before it is RECONCILIATION, which the setup
-			// owns -- see `provisioned()`.
+			// one firing on purpose: the subject is that the IMAGING firing ends after imaging
 			await runDurableObjectAlarm(stub);
 
 			const after = await inObject(stub, (site) => ({

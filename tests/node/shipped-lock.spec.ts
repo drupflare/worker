@@ -80,14 +80,7 @@ describe('the root composer lock is what the shipped map comes from', () => {
 		expect(coreIn('composer.lock')).toBe(SHIPPED_CORE_VERSION);
 	});
 
-	/**
-	 * THE WHOLE MAP, because asserting core alone let two siblings drift unnoticed.
-	 *
-	 * `drupflare/drupflare` sat at v0.3.0 and `drupflare/rom` at v0.2.1 in the generated file while
-	 * the root lock had moved both -- the bump landed, `gen:lock` was never re-run, and the core
-	 * assertion above could not see it because core had not changed. That is the same
-	 * generated-copy drift the chain exists to prevent, one field over from where it was guarded.
-	 */
+	// the generator, not the copy: `shipped-lock.ts` is gitignored and built by postinstall
 	it('names every package the root lock does, at the version the root lock pins', () => {
 		const lock = JSON.parse(readFileSync(resolve(ROOT, 'composer.lock'), 'utf8')) as {
 			packages: { name: string; version: string }[];

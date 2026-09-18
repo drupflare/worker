@@ -86,10 +86,15 @@ describe('every workflow that packs the Drupal modules can reach them', () => {
 		expect(packing.length).toBeGreaterThan(0);
 	});
 
+	// the checkouts live in .github/actions/siblings now, so a workflow satisfies this by using it
+	const SIBLINGS = './.github/actions/siblings';
+
 	it.each(REQUIRED)('every packing workflow carries %s', (needle) => {
-		const missing = packing.filter(
-			(f) => !readFileSync(join(WORKFLOWS, f), 'utf8').includes(needle)
-		);
+		const missing = packing.filter((f) => {
+			const yml = readFileSync(join(WORKFLOWS, f), 'utf8');
+			if (yml.includes(needle)) return false;
+			return !(needle.startsWith('repository:') && yml.includes(SIBLINGS));
+		});
 		expect(missing).toEqual([]);
 	});
 });

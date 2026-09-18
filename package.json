@@ -12,7 +12,7 @@
 		"prettier": "prettier --write .",
 		"prettier:check": "prettier --check .",
 		"prepare": "husky",
-		"postinstall": "bun scripts/restore-artifacts.ts",
+		"postinstall": "bun scripts/gen-lock-versions.ts && bun scripts/restore-artifacts.ts",
 		"restore:artifacts": "bun scripts/restore-artifacts.ts",
 		"test": "vitest run --project=workers --project=node",
 		"test:watch": "vitest",

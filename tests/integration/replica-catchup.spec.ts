@@ -14,17 +14,8 @@ import { driveAlarms, inObject, namedSite, type ServeDo } from '../helpers/serve
  * A replica PULLS. A push would make the primary own the delivery state of every lane and retry each
  * one, so a lane that was down would cost the primary invocations it cannot recover.
  *
- * **ASSERT THE END STATE, NEVER WHICH ACTOR REACHED IT.** Two cases here raced on that and both
- * failed the same way: a lane that has reached SERVING runs `catchUpOnce()` off its own alarm
- * chain, so it can apply a record before the explicit `catchUp()` below it and leave that call
- * reporting `records: 0`. Asserting `records > 0` makes a case a race against the very liveness
- * this file exists to prove works, and it passes until the timing moves -- one of these survived
- * three runs and a full gate before a new interpreter build shifted it.
- *
- * So: compare the lane's applied generation before and after, or drive a deterministic log through
- * `transactionSync` rather than a real save. A record's REACHABILITY is a second trap in the second
- * approach -- `/__replica` answers `generation: this.commitSeq()`, so rows written past a commit
- * sequence that never advanced are invisible and the batch loop never opens.
+ * Assert the end state, never which actor reached it: a SERVING lane runs `catchUpOnce()` off its
+ * own alarm, so `records > 0` races the liveness this file exists to prove.
  */
 
 const TIMEOUT = 900_000;
@@ -220,12 +211,7 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 				await site.sealGeneration();
 			});
 
-			// THE INVARIANT IS THAT THE LANE CONVERGED, NOT THAT THIS CALL DID THE WORK. A lane
-			// that has reached SERVING has an armed alarm chain running `catchUpOnce()` on its
-			// own, so it can apply the record before the explicit call below and leave that call
-			// reporting `records: 0` against an empty reason. Asserting `records > 0` here made
-			// the case a race against the lane's own liveness, which is the property the rest of
-			// this file exists to prove works.
+			// convergence is the invariant; which call applied the record is not
 			const out = await catchUp(lane);
 			expect(out.applied).toBe(out.advertised);
 			expect(out.applied, `lane did not advance past ${before}`).toBeGreaterThan(before);
@@ -308,28 +294,8 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 			});
 			await catchUp(lane);
 
-			// One appliable record, then one the applier must refuse. An overflowed record is the
-			// shape the refusal path names, and it is reachable on a real primary: a change too
-			// large to log statement by statement seals as one of these.
-			//
-			// BOTH ROWS GO IN ONE `transactionSync`, and the first version of this drove a real
-			// config save instead and was RACY. Each `sql.exec` autocommits, so a lane whose alarm
-			// chain is already running could catch up in the gap between the seal and the insert,
-			// apply the appliable record on its own, and leave the explicit call below pulling only
-			// the refusal -- `records: 0` against a reason that already names the overflow. It
-			// survived three runs and then failed, which is the signature of a race rather than a
-			// defect.
-			//
-			// A record with NO statements still advances the generation, which `applyRecord()`
-			// documents as the primary committing a generation whose whole effect was to state a
-			// new fingerprint. So the appliable half needs no render at all, and the case gets
-			// faster as well as deterministic. The sibling case above still covers a real save.
-			// AND THE COMMIT SEQUENCE HAS TO MOVE WITH THEM. `/__replica` answers
-			// `generation: this.commitSeq()` (`site-do.ts:12385`), and `catchUpOnce()` only opens
-			// its batch when `applied < head.generation` -- so two rows written past a commit
-			// sequence that never advanced are unreachable, the loop never runs, and the call
-			// returns `records: 0` with an EMPTY reason. The real save used to advance this as a
-			// side effect, which is what hid the requirement when the save was replaced.
+			// one appliable record then one the applier must refuse, written atomically; the commit
+			// sequence moves with them or  never advertises them
 			const startedAt = await inObject(namedSite(primary), (site) => {
 				role(site, 'primary');
 				site.ensureReplicationLog();
@@ -363,12 +329,7 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 				return at;
 			});
 
-			// NOTHING IS ASSERTED ABOUT THIS CALL'S OWN RETURN, and an earlier version asserting
-			// `records > 0` failed in the full gate twice while passing 12/12 in isolation. Making
-			// the two log rows atomic fixed the WRITE race and left the READ one: the lane's alarm
-			// chain can consume the whole batch before this call runs, after which the explicit
-			// call pulls only the already-refused record and reports 0. The end state is identical
-			// either way, which is the point -- see this file's docblock.
+			// nothing is asserted about this call: the alarm may have consumed the batch first
 			await catchUp(lane);
 
 			const after = await inObject(namedSite(lane), (site) => {
@@ -436,12 +397,7 @@ describe('the chain that keeps a lane replicating', () => {
 				// at the shipped default it re-arms at `KEEP_WARM_MS`, 240 s. Measuring the lane's
 				// own configuration would have measured the harness
 				(site.env as Record<string, unknown>).SITE_WARM = '0';
-				// READ BEFORE THE BODY RUNS, because the body's own duration is not lag. Taken
-				// after, an alarm re-armed at `now + 1` inside a body that then spends 3 ms reads
-				// as 2 ms in the PAST, and the case failed exactly that way with
-				// `expected -2 to be greater than or equal to 0`. A previous round loosened the
-				// same assertion from `> 0` to `>= 0` for the same reason one layer up, which
-				// bought a tighter race rather than removing it.
+				// read before the body: its own duration is not lag
 				const startedAt = site.nowMs();
 				await site.alarm();
 				return {
@@ -460,15 +416,9 @@ describe('the chain that keeps a lane replicating', () => {
 			// four minutes behind the primary and look healthy doing it
 			// measured both ways: 30,000 with the tightening and 240,000 without it
 			//
-			// FROM THE END, because the bound is how far behind the lane may fall FROM NOW. Taken
-			// from the body's start it also charges the body's own duration, and a correct re-arm
-			// read `31843 <= 30000` under gate load. The two bounds need different references and
-			// an earlier revision used one for both.
+			// from the END: the bound is how far behind the lane may fall from now
 			expect(out.alarm! - out.endedAt).toBeLessThanOrEqual(DEFAULT_REPLICA_LAG_MS);
-			// RE-ARMED DURING THIS FIRING, measured from when the body STARTED. An alarm at or
-			// after that instant was set by this call; one before it is the stale pre-existing
-			// alarm, which is the real defect this catches. Measured from the body's END instead,
-			// the body's own duration subtracts and a correct re-arm reads negative.
+			// from the START: an alarm at or after it was set by this firing
 			expect(out.alarm! - out.startedAt).toBeGreaterThanOrEqual(0);
 		},
 		TIMEOUT

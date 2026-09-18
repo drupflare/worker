@@ -1,4 +1,7 @@
 # build inputs and outputs that are regenerated, never committed
+# the shipped map: `bun run gen:lock` derives it from composer.lock, and `postinstall` runs that,
+# so a dependency bump needs no second commit and renovate keeps managing its own branch
+src/ops/shipped-lock.ts
 vendor/
 # composer targets this instead of vendor/, which holds the wasm binaries (see composer.json)
 .composer-vendor/

@@ -48,9 +48,14 @@ jobs:
           path: .interp
           key: interp-${{ hashFiles('cdn-manifest.json') }}
 
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
       - name: Resolve Drupal Version
         id: drupalver
-        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Drupal Tree
         uses: actions/cache@v6
         with:
@@ -69,8 +74,6 @@ jobs:
             assets/prefill.json
           key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
 
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
       - name: Build the Pack From Source
         run: bun run build:local
       - name: Pack the Drupal Modules
@@ -98,7 +101,18 @@ jobs:
         env:
           REQUIRE_ARTIFACTS: '1'
           PACK_FROM_SOURCE: '1'
-        run: bun run test
+        run: bun run test:coverage
+
+      - name: Upload Coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: coverage
+          flags: pack
+          disable_search: true
+          files: coverage/lcov.info
 
       - name: Start a Worker for the e2e Lane
         run: |

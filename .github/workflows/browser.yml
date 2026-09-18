@@ -69,10 +69,16 @@ jobs:
             echo "no release '$TAG'; this lane will build the pack from source"
           fi
 
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
       - name: Resolve Drupal Version
         id: drupalver
         if: ${{ !env.HAVE_PAYLOAD }}
-        run: echo "version=$(bun scripts/fetch-drupal-tree.ts --print-version)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(bun scripts/fetch-drupal-tree.ts --print-version)
+          test -n "$version" || { echo "::error::no Drupal version resolved" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Drupal Tree
         if: ${{ !env.HAVE_PAYLOAD }}
         uses: actions/cache@v6
@@ -92,9 +98,6 @@ jobs:
             assets/themes
             assets/prefill.json
           key: pack-${{ steps.drupalver.outputs.version }}-${{ hashFiles('scripts/pack-*.ts', 'scripts/build-local.ts', 'scripts/patch-drupal.mjs', 'scripts/drupal/**', 'cdn-manifest.json') }}
-
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
 
       - name: Hydrate the Checkout
         if: ${{ env.HAVE_PAYLOAD }}

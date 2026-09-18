@@ -402,19 +402,17 @@ export default defineConfig({
 			reportsDirectory: './coverage',
 			include: SHIPPING_CODE,
 			exclude: ['src/probes/**', 'tests/**', '**/*.d.ts'],
-			// RE-DERIVED 2026-09-14 FROM A RUN OF THE WIDENED LANE, not raised by guess. The old
-			// four were calibrated on a lane that dropped 104 spec files for want of the pack, and
-			// `coverage.yml` now builds it: a full local run with the artifacts present read
-			// 90.19 stmts / 79.58 branch / 94.4 funcs / 91.61 lines, against 74.45 / 63.9 / 80.97 /
-			// 75.06 on the narrowed lane. Every one of these is ~1.5 under its reading, which is
-			// margin for CI's own build rather than headroom to spend: the old lines gate cleared by
-			// 0.06 and the next spec to join `ARTIFACT_SPECS` would have taken it red on its own.
-			thresholds: {
-				lines: 90,
-				functions: 92,
-				branches: 77,
-				statements: 88
-			}
+			// KEYED ON `haveArtifacts`, the same flag that decides whether `ARTIFACT_SPECS` run at
+			// all, because a threshold has to describe the scope that produced it. The widened set
+			// read 90.19 stmts / 79.58 branch / 94.4 funcs / 91.61 lines; the narrowed one read
+			// 74.45 / 63.9 / 80.97 / 75.06. Each gate sits ~1.5 under its own reading, which is
+			// margin for CI rather than headroom -- the old lines gate once cleared by 0.06.
+			//
+			// Two lanes report now: Pack Suites builds the pack and uploads codecov flag `pack`,
+			// coverage.yml runs without it under flag `coverage`. Carryforward combines them.
+			thresholds: haveArtifacts
+				? { lines: 90, functions: 92, branches: 77, statements: 88 }
+				: { lines: 73, functions: 79, branches: 61, statements: 72 }
 		}
 	}
 });

@@ -27,6 +27,7 @@ type Workflow = {
 		string,
 		{
 			steps?: {
+				id?: string;
 				name?: string;
 				run?: string;
 				uses?: string;
@@ -220,6 +221,78 @@ describe('the payload publishing lanes', () => {
 				.find((s) => (s.run ?? '').includes('publish-payload.ts'));
 			expect(step?.env?.['CLOUDFLARE_ACCOUNT_ID'], file).toBeDefined();
 			expect(step?.env?.['CLOUDFLARE_API_TOKEN'], file).toBeDefined();
+		}
+	});
+});
+
+/**
+ * A cache key interpolating an empty step output does not fail; it becomes the constant prefix
+ * before it. `drupal-${{ steps.drupalver.outputs.version }}` with no value is the key `drupal-`,
+ * which `actions/cache` restores by prefix, so the job gets whichever tree was cached last under
+ * ANY version. Three lanes went red on a tree holding 11.4.6 while the lock asked for 11.4.7, and
+ * the renovate pull request that produced the bump was green on the same code because its prefix
+ * happened to hit the 11.4.7 entry its own sibling job had just written.
+ *
+ * `fetch-drupal-tree.ts --print-version` imports `src/ops/shipped-lock.ts`, which postinstall
+ * generates, so resolving the version before `bun install` prints nothing and exits non-zero --
+ * and a failing command substitution inside `echo` is discarded by the echo that wraps it.
+ */
+describe('the Drupal tree cache key', () => {
+	/** ids whose `outputs.version` some cache key in this job interpolates */
+	function keyedOn(steps: { with?: Record<string, string> }[]): Set<string> {
+		const ids = new Set<string>();
+		for (const step of steps) {
+			for (const value of Object.values(step.with ?? {})) {
+				for (const match of String(value).matchAll(
+					/steps\.([A-Za-z0-9_-]+)\.outputs\.version/g
+				)) {
+					ids.add(match[1] as string);
+				}
+			}
+		}
+		return ids;
+	}
+
+	it('finds a job to check, so neither assertion below is vacuous', () => {
+		const jobs = workflows().flatMap(({ doc }) =>
+			Object.values(doc.jobs ?? {}).filter((job) => keyedOn(job.steps ?? []).size > 0)
+		);
+		expect(jobs.length).toBeGreaterThanOrEqual(5);
+	});
+
+	it('installs before resolving, since the version comes from a generated module', () => {
+		for (const { file, doc } of workflows()) {
+			for (const [name, job] of Object.entries(doc.jobs ?? {})) {
+				const steps = job.steps ?? [];
+				const ids = keyedOn(steps);
+				if (ids.size === 0) continue;
+				const install = steps.findIndex((s) => (s.run ?? '').includes('bun install'));
+				expect(
+					install,
+					`${file}:${name} keys a cache on a version it never installs for`
+				).toBeGreaterThanOrEqual(0);
+				for (const id of ids) {
+					const at = steps.findIndex((s) => s.id === id);
+					expect(
+						at,
+						`${file}:${name} resolves '${id}' before bun install, so the key is a bare prefix`
+					).toBeGreaterThan(install);
+				}
+			}
+		}
+	});
+
+	it('refuses an empty version rather than emitting a bare prefix', () => {
+		for (const { file, doc } of workflows()) {
+			for (const [name, job] of Object.entries(doc.jobs ?? {})) {
+				for (const step of job.steps ?? []) {
+					const run = step.run ?? '';
+					if (!run.includes('--print-version')) continue;
+					expect(run, `${file}:${name} would emit an empty version`).toMatch(
+						/test -n "\$version"/
+					);
+				}
+			}
 		}
 	});
 });

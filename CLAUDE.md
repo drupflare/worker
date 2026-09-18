@@ -426,6 +426,43 @@ Sharing across tenants needs both layers in ONE object's SQLite, which means man
 That is a topology change and it is not the item as scoped; within one tenant's own object there is
 nothing to share and the overlay saves zero.
 
+## THE COST OF LOADING EXTENSIONS IS AN EXPORTED GLOBAL, NOT A GROWABLE TABLE
+
+Measured 2026-09-17, n=9 interleaved rounds per arm over `abi-speed.ts`'s `CASES`, every arm carrying
+a self-control that never read above 0.78%.
+
+A long64 rebuild carrying `-sALLOW_TABLE_GROWTH=1` and `-Wl,--export=__stack_pointer` measured
+**+8.29% and +7.90%** against the shipping binary. Isolating the two by post-link edit:
+
+| arm                              | table    | `__stack_pointer` | vs shipping |
+| -------------------------------- | -------- | ----------------- | ----------: |
+| bounded at 8192                  | max 8192 | exported          |      +8.14% |
+| restored to `max == min`         | fixed    | exported          |      +7.66% |
+| glue swapped, wasm held constant | --       | --                |      -0.60% |
+| **both neutralised**             | fixed    | **removed**       |  **-0.20%** |
+
+**The export is the whole cost; the growable table is free.** Exporting a mutable global stops the
+linker proving it module-private. `usercall` reads +13.6% and `preg` +1.1%, which is the gradient
+that predicts -- and which I first read as evidence for the table, because the table is what I had
+changed.
+
+**THREE WRONG ATTRIBUTIONS PRECEDED IT, each from reading the diff rather than isolating a
+variable**: it is the table, a bounded max will fix it, the glue differs by 99 bytes (it differs in
+378,810). The first isolation test was the fourth one run. When a change has two parts, measure each
+alone BEFORE building variants of either.
+
+**It does not contradict burrow's 1.1-1.4%; it prices a different delta.** Their arms were
+`MAIN_MODULE=0 + --export-dynamic` against the same plus table growth, so their baseline already
+exported everything and could only measure the table. This binary exports 4,178 symbols and
+`__stack_pointer` is not among them. Two correct numbers from two baselines.
+
+**And only the HOST path needs it.** Built with the local emcc: a leaf side module imports nothing;
+one with a 256-byte local imports `env.__stack_pointer` as `(mut i32)`. burrow's `dylink.ts`
+synthesises that value for a standalone library and deliberately does not with a host, where it
+would aim into PHP's heap. So a sandboxed user-supplied library costs nothing and an in-process PHP
+extension costs ~8%. The untested escape is importing the global from JS instead of exporting it;
+see the roadmap's v1.0.2 entry.
+
 ## The interpreter has no fiber backend, and the executor is persistent
 
 Both measured 2026-09-07 on the shipping binary, and the second is the useful half.

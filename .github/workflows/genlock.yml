@@ -2,6 +2,7 @@ name: Regenerate the Shipped Lock
 
 on:
   pull_request:
+    branches: [master, ver/*, feat/*]
     paths:
       - composer.lock
       - composer.json
@@ -41,13 +42,17 @@ jobs:
           bun run gen:lock
           bunx prettier --write src/ops/shipped-lock.ts
       - name: Push If Changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE: src/ops/shipped-lock.ts
         run: |
-          if git diff --quiet -- src/ops/shipped-lock.ts; then
-            echo "src/ops/shipped-lock.ts already matches composer.lock"
+          if git diff --quiet -- "$FILE"; then
+            echo "$FILE already matches composer.lock"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/ops/shipped-lock.ts
-          git commit -m "chore: regenerate the shipped lock from composer.lock"
-          git push origin HEAD:"$GITHUB_HEAD_REF"
+          blob="$(gh api "repos/$GITHUB_REPOSITORY/contents/$FILE?ref=$GITHUB_HEAD_REF" --jq .sha)"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$FILE" \
+            -f message="chore: regenerate the shipped lock from composer.lock" \
+            -f content="$(base64 -w0 "$FILE")" \
+            -f sha="$blob" \
+            -f branch="$GITHUB_HEAD_REF"

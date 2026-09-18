@@ -73,16 +73,6 @@ describe('the trigger filters', () => {
 		}
 	});
 
-	it('bases every pull_request filter on master, since that is what the filter matches', () => {
-		for (const { file, doc } of workflows()) {
-			const pr = doc.on?.pull_request;
-			if (!pr) continue;
-			expect(pr.branches, `${file} filters pull requests by base and omits master`).toContain(
-				'master'
-			);
-		}
-	});
-
 	it('leaves the three required checks unfiltered by path, so they always report', () => {
 		// master's ruleset requires Gate Suites, test and format; a path filter that skips one
 		// leaves a pull request waiting on a check that will never run

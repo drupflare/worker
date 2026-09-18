@@ -67,7 +67,24 @@ async function provisioned(): Promise<DurableObjectStub> {
 	// images, so it does not end after imaging and the interpreter is still resident -- which is the
 	// property one of these specs exists to assert. `HEAP_IMAGE` is still 0 here, so none of these
 	// firings can take an image.
-	await driveAlarms(stub, () => false, 6);
+	// A COUNT IS NOT AN OBSERVATION, and `() => false` with a bound of 6 is a count. Six firings
+	// settled reconciliation on a quiet machine and not under a full gate, where provisioning
+	// leaves more owed -- after which the SUBJECT's firing reconciles as well as images, so it does
+	// not end after imaging and the interpreter is still resident. That surfaced as
+	// `expected true to be false` on `php`, one spec over from where the cause was.
+	//
+	// Terminated on the route reporting nothing owed, which is the same observation the loop above
+	// uses, re-asked after the alarms because an alarm firing can leave a step owed that the route
+	// had already cleared.
+	await driveAlarms(stub, () => false, 12);
+	await inObject(stub, async (site) => {
+		for (let i = 0; i < RECONCILE_STEPS.length * 3 + 2; i++) {
+			const res = await site.fetch(
+				new Request('https://do.local/__reconcile', { method: 'POST' })
+			);
+			if (((await res.json()) as { ran: unknown }).ran === null) break;
+		}
+	});
 	await inObject(stub, (site) => {
 		(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
 	});
@@ -305,6 +322,10 @@ describe('the alarm produces this site one heap image', () => {
 				)
 			);
 			await arm(stub);
+			// ONE FIRING, on purpose: the subject is that the IMAGING firing ends after imaging, so
+			// driving until an image appears would let a later firing satisfy the assertion and
+			// prove nothing. What has to be settled before it is RECONCILIATION, which the setup
+			// owns -- see `provisioned()`.
 			await runDurableObjectAlarm(stub);
 
 			const after = await inObject(stub, (site) => ({

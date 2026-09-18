@@ -330,7 +330,7 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 			// sequence that never advanced are unreachable, the loop never runs, and the call
 			// returns `records: 0` with an EMPTY reason. The real save used to advance this as a
 			// side effect, which is what hid the requirement when the save was replaced.
-			await inObject(namedSite(primary), (site) => {
+			const startedAt = await inObject(namedSite(primary), (site) => {
 				role(site, 'primary');
 				site.ensureReplicationLog();
 				const at = site.commitSeq();
@@ -360,22 +360,33 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 					site.advanceCommit();
 					site.flushCommitSeq();
 				});
+				return at;
 			});
 
-			const out = await catchUp(lane);
-			// the batch carried both, so the refusal is what ended it rather than an empty pull
-			expect(out.records, out.reason).toBeGreaterThan(0);
-			expect(out.reason).toContain('overflowed');
-			expect(out.stage).toBe('WITHDRAWN');
+			// NOTHING IS ASSERTED ABOUT THIS CALL'S OWN RETURN, and an earlier version asserting
+			// `records > 0` failed in the full gate twice while passing 12/12 in isolation. Making
+			// the two log rows atomic fixed the WRITE race and left the READ one: the lane's alarm
+			// chain can consume the whole batch before this call runs, after which the explicit
+			// call pulls only the already-refused record and reports 0. The end state is identical
+			// either way, which is the point -- see this file's docblock.
+			await catchUp(lane);
 
 			const after = await inObject(namedSite(lane), (site) => {
 				role(site, 'primary');
-				return { paths: storedPaths(site), commit: site.commitSeq() };
+				return {
+					paths: storedPaths(site),
+					commit: site.commitSeq(),
+					stage: site.replicaStage()
+				};
 			});
 			// FALSIFIED by removing the bookkeeping from the refusal branch in `catchUpOnce`:
 			// reads ['/stale'] at a commit sequence behind the statements the lane applied
 			expect(after.paths).toEqual([]);
-			expect(after.commit).toBe(out.applied);
+			expect(after.commit, 'the applied record never advanced the sequence').toBeGreaterThan(
+				startedAt
+			);
+			// the refusal is what ended the batch, wherever it was consumed
+			expect(after.stage).toBe('WITHDRAWN');
 		},
 		TIMEOUT
 	);

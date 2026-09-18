@@ -160,16 +160,22 @@ Performance, with the full provenance in
 |                             | Drupflare                                                | native PHP on a VPS     | prov.   |
 | --------------------------- | -------------------------------------------------------- | ----------------------- | ------- |
 | Cached page (the ~99% case) | **1 ms** DO CPU, 1 statement                             | full LEMP round trip    | M edge  |
-| Uncached render             | **2,127 ms** DO CPU (n=10)                               | **9.47 ms**             | M edge  |
+| Re-render after a save      | **32 ms**                                                | **25 ms**               | M local |
+| Uncached render, cold bins  | **2,127 ms** DO CPU (n=10); a different cache state      | n/m on this instrument  | M edge  |
 | Wasm penalty, warm kernel   | **3.57x** warm / 3.94x cold, same-machine ratio          | 1x by definition        | M local |
 | Isolate startup             | **5 ms** of a 1,000 ms limit, not billed to the request  | n/a; the box is running | M edge  |
 | Cold boot                   | **1,398 ms**, amortised off the request path             | ~0                      | M edge  |
 | Authenticated page          | **208 ms** p50 from a client, both levers on             | tens of ms, warm pool   | M edge  |
 | Authenticated page, derived | ~467 ms, across instruments; superseded by the row above | n/a                     | D       |
 
-The architecture wins by not rendering rather than by rendering faster. The 3.57x is a warm-kernel
-ratio taken on one machine; an uncached render as the edge bills it is ~2.1 s, which is the figure
-that matters and is why ~99% of traffic must never reach one.
+The architecture wins by not rendering rather than by rendering faster.
+
+**The two render rows are different workloads on different instruments and must not be divided.**
+The 32/25 pair is one machine, one instrument, with Drupal's `render` and `dynamic_page_cache` bins
+warm on both sides, which is the state a content change produces. The 2,127 ms is the edge billing a
+render with both bins emptied. Dividing an edge cold figure by a local warm one is how an external
+review published a 225x that this project had to retract; the technical report keeps that correction
+at its Provenance section.
 
 Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
 page at ~467 ms against 3,525, and a replica pool spreads authenticated reads across objects instead
@@ -177,8 +183,11 @@ of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a 
 it does not have is the concurrency answer: adding lanes is a config change and a provisioning call,
 not a resize.
 
-Write-heavy traffic goes the wrong way. Every authoritative write is one object and one thread, by
-construction, and no pool changes it.
+Write-heavy traffic is the narrower loss it used to be stated as. A lane runs a write locally,
+discards its own effect and forwards the statement list to the primary, which sequences it, so the
+work spreads and only the commit serialises. What cannot spread is the class of write that
+ORIGINATES a value two objects would mint differently; those are refused rather than retried,
+because a retry cannot repair them.
 
 A raw uncached render is slower than native PHP, by a ratio the technical report keeps current. The
 architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor

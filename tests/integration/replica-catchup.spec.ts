@@ -447,7 +447,8 @@ describe('the chain that keeps a lane replicating', () => {
 				return {
 					stage: site.replicaStage(),
 					alarm: await site.ctx.storage.getAlarm(),
-					now: startedAt
+					startedAt,
+					endedAt: site.nowMs()
 				};
 			});
 
@@ -458,12 +459,17 @@ describe('the chain that keeps a lane replicating', () => {
 			// staleness bound rather than at the 240 s idle re-arm, which would let it serve a copy
 			// four minutes behind the primary and look healthy doing it
 			// measured both ways: 30,000 with the tightening and 240,000 without it
-			expect(out.alarm! - out.now).toBeLessThanOrEqual(DEFAULT_REPLICA_LAG_MS);
+			//
+			// FROM THE END, because the bound is how far behind the lane may fall FROM NOW. Taken
+			// from the body's start it also charges the body's own duration, and a correct re-arm
+			// read `31843 <= 30000` under gate load. The two bounds need different references and
+			// an earlier revision used one for both.
+			expect(out.alarm! - out.endedAt).toBeLessThanOrEqual(DEFAULT_REPLICA_LAG_MS);
 			// RE-ARMED DURING THIS FIRING, measured from when the body STARTED. An alarm at or
 			// after that instant was set by this call; one before it is the stale pre-existing
 			// alarm, which is the real defect this catches. Measured from the body's END instead,
 			// the body's own duration subtracts and a correct re-arm reads negative.
-			expect(out.alarm! - out.now).toBeGreaterThanOrEqual(0);
+			expect(out.alarm! - out.startedAt).toBeGreaterThanOrEqual(0);
 		},
 		TIMEOUT
 	);

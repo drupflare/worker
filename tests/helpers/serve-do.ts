@@ -103,6 +103,10 @@ export type ServeDo = {
 			sql: Sql;
 			getAlarm: () => Promise<number | null>;
 			setAlarm: (at: number) => Promise<void>;
+			/** the one way a spec can make two writes observable together, which a raceable
+			 * setup needs: each `sql.exec` autocommits, so a lane's alarm chain can catch up
+			 * between them */
+			transactionSync: <T>(fn: () => T) => T;
 		};
 	};
 	/** the counted handle; `ctx.storage` above is the raw one the proxy wraps */
@@ -153,6 +157,9 @@ export type ServeDo = {
 	/** the authoritative commit sequence; advances on every invalidation, unlike `generation` */
 	commitSeq: () => number;
 	advanceCommit: () => number;
+	/** persists what `advanceCommit()` buffered; `/__replica` answers the PERSISTED value, so a
+	 * spec writing log rows past an unflushed sequence leaves them unreachable */
+	flushCommitSeq: () => void;
 	/** the replica stage, which is durable and only moves through a legal transition */
 	replicaStage: () => string;
 	setReplicaStage: (next: string) => { stage: string; moved: boolean; reason: string };

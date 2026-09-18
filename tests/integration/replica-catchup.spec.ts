@@ -13,6 +13,18 @@ import { driveAlarms, inObject, namedSite, type ServeDo } from '../helpers/serve
  *
  * A replica PULLS. A push would make the primary own the delivery state of every lane and retry each
  * one, so a lane that was down would cost the primary invocations it cannot recover.
+ *
+ * **ASSERT THE END STATE, NEVER WHICH ACTOR REACHED IT.** Two cases here raced on that and both
+ * failed the same way: a lane that has reached SERVING runs `catchUpOnce()` off its own alarm
+ * chain, so it can apply a record before the explicit `catchUp()` below it and leave that call
+ * reporting `records: 0`. Asserting `records > 0` makes a case a race against the very liveness
+ * this file exists to prove works, and it passes until the timing moves -- one of these survived
+ * three runs and a full gate before a new interpreter build shifted it.
+ *
+ * So: compare the lane's applied generation before and after, or drive a deterministic log through
+ * `transactionSync` rather than a real save. A record's REACHABILITY is a second trap in the second
+ * approach -- `/__replica` answers `generation: this.commitSeq()`, so rows written past a commit
+ * sequence that never advanced are invisible and the batch loop never opens.
  */
 
 const TIMEOUT = 900_000;
@@ -192,6 +204,7 @@ describe('a restored lane drives itself to SERVING', () => {
 		async () => {
 			const { primary, lane } = await pairedLane('applies');
 			await catchUp(lane);
+			const before = (await catchUp(lane)).applied;
 
 			await inObject(namedSite(primary), async (site) => {
 				role(site, 'primary');
@@ -207,9 +220,15 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 				await site.sealGeneration();
 			});
 
+			// THE INVARIANT IS THAT THE LANE CONVERGED, NOT THAT THIS CALL DID THE WORK. A lane
+			// that has reached SERVING has an armed alarm chain running `catchUpOnce()` on its
+			// own, so it can apply the record before the explicit call below and leave that call
+			// reporting `records: 0` against an empty reason. Asserting `records > 0` here made
+			// the case a race against the lane's own liveness, which is the property the rest of
+			// this file exists to prove works.
 			const out = await catchUp(lane);
-			expect(out.records, out.reason).toBeGreaterThan(0);
 			expect(out.applied).toBe(out.advertised);
+			expect(out.applied, `lane did not advance past ${before}`).toBeGreaterThan(before);
 		},
 		TIMEOUT
 	);
@@ -289,33 +308,58 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 			});
 			await catchUp(lane);
 
-			// one appliable record, then one the applier must refuse. An overflowed record is the
+			// One appliable record, then one the applier must refuse. An overflowed record is the
 			// shape the refusal path names, and it is reachable on a real primary: a change too
-			// large to log statement by statement seals as one of these
-			await inObject(namedSite(primary), async (site) => {
+			// large to log statement by statement seals as one of these.
+			//
+			// BOTH ROWS GO IN ONE `transactionSync`, and the first version of this drove a real
+			// config save instead and was RACY. Each `sql.exec` autocommits, so a lane whose alarm
+			// chain is already running could catch up in the gap between the seal and the insert,
+			// apply the appliable record on its own, and leave the explicit call below pulling only
+			// the refusal -- `records: 0` against a reason that already names the overflow. It
+			// survived three runs and then failed, which is the signature of a race rather than a
+			// defect.
+			//
+			// A record with NO statements still advances the generation, which `applyRecord()`
+			// documents as the primary committing a generation whose whole effect was to state a
+			// new fingerprint. So the appliable half needs no render at all, and the case gets
+			// faster as well as deterministic. The sibling case above still covers a real save.
+			// AND THE COMMIT SEQUENCE HAS TO MOVE WITH THEM. `/__replica` answers
+			// `generation: this.commitSeq()` (`site-do.ts:12385`), and `catchUpOnce()` only opens
+			// its batch when `applied < head.generation` -- so two rows written past a commit
+			// sequence that never advanced are unreachable, the loop never runs, and the call
+			// returns `records: 0` with an EMPTY reason. The real save used to advance this as a
+			// side effect, which is what hid the requirement when the save was replaced.
+			await inObject(namedSite(primary), (site) => {
 				role(site, 'primary');
-				const ok = (await site.runJson(
-					drupalOp(`
-\\Drupal::configFactory()->getEditable('system.site')->set('slogan', 'before-the-overflow')->save();
-$out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
-				)) as { ok?: boolean };
-				expect(ok?.ok, `the write did not run: ${JSON.stringify(ok).slice(0, 200)}`).toBe(
-					true
-				);
-				await site.sealGeneration();
-
-				const sealed = site.commitSeq();
 				site.ensureReplicationLog();
-				site.sql.exec(
-					`INSERT INTO cfw_repl_log (generation, parent, schema_version, fingerprint,
-						overflowed, statements, sealed_at)
-					 VALUES (?, ?, ?, ?, 1, '[]', ?)`,
-					sealed + 1,
-					sealed,
-					site.packGeneration() ?? '',
-					'overflowed',
-					site.nowMs()
-				);
+				const at = site.commitSeq();
+				const schema = site.packGeneration() ?? '';
+				site.ctx.storage.transactionSync(() => {
+					site.sql.exec(
+						`INSERT INTO cfw_repl_log (generation, parent, schema_version, fingerprint,
+							overflowed, statements, sealed_at)
+						 VALUES (?, ?, ?, ?, 0, '[]', ?)`,
+						at + 1,
+						at,
+						schema,
+						'appliable',
+						site.nowMs()
+					);
+					site.sql.exec(
+						`INSERT INTO cfw_repl_log (generation, parent, schema_version, fingerprint,
+							overflowed, statements, sealed_at)
+						 VALUES (?, ?, ?, ?, 1, '[]', ?)`,
+						at + 2,
+						at + 1,
+						schema,
+						'overflowed',
+						site.nowMs()
+					);
+					site.advanceCommit();
+					site.advanceCommit();
+					site.flushCommitSeq();
+				});
 			});
 
 			const out = await catchUp(lane);

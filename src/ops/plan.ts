@@ -58,6 +58,31 @@ export type ResolvedPlan = { plan: 'free' | 'paid'; source: PlanSource };
 export const PLAN_KV_KEY = 'plan';
 
 /**
+ * The per-site key for one of the two documents, and why a global one is a tenancy hole.
+ *
+ * **BOTH DOCUMENTS WERE DEPLOYMENT-WIDE.** `plan` and `settings` were literal keys, so the owner of
+ * ONE site could write levers every other site on the deployment reads -- and once the Drupal
+ * settings form landed, so could a site administrator holding `administer drupflare settings`, who
+ * is a tenancy level below even that. `KV_OVERRIDABLE`'s safety argument is "the worst case is a
+ * slow site", which is an argument about the writer's OWN site; applied across tenants it does not
+ * hold, and `PLAN` selects an account-wide limits profile on top.
+ *
+ * The global key is still READ, as the deployment-wide default, so an operator can set a fleet-wide
+ * value in the dashboard and an existing deployment keeps the values it already has. A per-site
+ * document overlays it. Writes only ever land on the per-site key.
+ */
+export function siteScopedKey(base: string, site?: string | null): string {
+	const name = String(site ?? '').trim();
+	return name === '' ? base : `${base}:${name}`;
+}
+
+/** the keys to read in order, deployment default first; one entry when there is no site */
+function keyChain(base: string, site?: string | null): string[] {
+	const scoped = siteScopedKey(base, site);
+	return scoped === base ? [base] : [base, scoped];
+}
+
+/**
  * How long an isolate reuses a resolved plan before reading KV again.
  *
  * KV free allows 100,000 reads/day, the same order as the Worker-request ceiling, so a read per
@@ -84,11 +109,11 @@ export function canWriteKv(kv?: PlanKv | null): kv is PlanKvWriter {
 	return !!kv && typeof (kv as PlanKvWriter).put === 'function';
 }
 
-let memo: { at: number; value: ResolvedPlan } | null = null;
+const memo = new Map<string, { at: number; value: ResolvedPlan }>();
 
 /** drops the isolate's memo; tests use it, and so does an explicit refresh */
 export function resetPlanMemo(): void {
-	memo = null;
+	memo.clear();
 }
 
 /**
@@ -106,9 +131,14 @@ export function resetPlanMemo(): void {
 export async function resolvePlan(
 	env?: PlanEnv | null,
 	kv?: PlanKv | null,
-	nowMs: number = Date.now()
+	nowMs: number = Date.now(),
+	site?: string | null
 ): Promise<ResolvedPlan> {
-	if (memo && nowMs - memo.at < PLAN_MEMO_MS) return memo.value;
+	// MEMOISED PER SITE. One memo for the whole isolate served whichever site asked first to every
+	// site after it, which is the same cross-tenant shape the key itself had
+	const cacheKey = String(site ?? '');
+	const held = memo.get(cacheKey);
+	if (held && nowMs - held.at < PLAN_MEMO_MS) return held.value;
 
 	let value: ResolvedPlan = { plan: isPaid(env) ? 'paid' : 'free', source: 'var' };
 	if (env?.PLAN === undefined || env.PLAN === null || env.PLAN === '') {
@@ -116,13 +146,16 @@ export async function resolvePlan(
 	}
 	if (kv) {
 		try {
-			const raw = (await kv.get(PLAN_KV_KEY))?.trim().toLowerCase();
-			if (raw === 'paid' || raw === 'free') value = { plan: raw, source: 'kv' };
+			// the deployment-wide default first, then this site's own document on top
+			for (const key of keyChain(PLAN_KV_KEY, site)) {
+				const raw = (await kv.get(key))?.trim().toLowerCase();
+				if (raw === 'paid' || raw === 'free') value = { plan: raw, source: 'kv' };
+			}
 		} catch {
 			// a KV read that failed leaves the deployed var in force; never an outage
 		}
 	}
-	memo = { at: nowMs, value };
+	memo.set(cacheKey, { at: nowMs, value });
 	return value;
 }
 
@@ -203,11 +236,14 @@ export const KV_OVERRIDABLE = [
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
 
-let settingsMemo: { at: number; value: Partial<Record<KvOverridable, string>> } | null = null;
+const settingsMemo = new Map<
+	string,
+	{ at: number; value: Partial<Record<KvOverridable, string>> }
+>();
 
 /** drops the isolate's settings memo; tests use it, and so does an explicit refresh */
 export function resetSettingsMemo(): void {
-	settingsMemo = null;
+	settingsMemo.clear();
 }
 
 /**
@@ -219,19 +255,26 @@ export function resetSettingsMemo(): void {
  */
 export async function resolveSettings(
 	kv?: PlanKv | null,
-	nowMs: number = Date.now()
+	nowMs: number = Date.now(),
+	site?: string | null
 ): Promise<Partial<Record<KvOverridable, string>>> {
-	if (settingsMemo && nowMs - settingsMemo.at < PLAN_MEMO_MS) return settingsMemo.value;
+	// per site, for the reason `resolvePlan`'s memo is
+	const cacheKey = String(site ?? '');
+	const held = settingsMemo.get(cacheKey);
+	if (held && nowMs - held.at < PLAN_MEMO_MS) return held.value;
 	const out: Partial<Record<KvOverridable, string>> = {};
 	if (kv) {
 		try {
-			const raw = await kv.get(SETTINGS_KV_KEY);
-			const parsed: unknown = raw ? JSON.parse(raw) : null;
-			if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-				for (const name of KV_OVERRIDABLE) {
-					const value = (parsed as Record<string, unknown>)[name];
-					if (value !== undefined && value !== null && typeof value !== 'object') {
-						out[name] = String(value);
+			// deployment-wide defaults first, this site's own document on top
+			for (const key of keyChain(SETTINGS_KV_KEY, site)) {
+				const raw = await kv.get(key);
+				const parsed: unknown = raw ? JSON.parse(raw) : null;
+				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+					for (const name of KV_OVERRIDABLE) {
+						const value = (parsed as Record<string, unknown>)[name];
+						if (value !== undefined && value !== null && typeof value !== 'object') {
+							out[name] = String(value);
+						}
 					}
 				}
 			}
@@ -239,7 +282,7 @@ export async function resolveSettings(
 			// unparseable or unreachable: the deployed vars stay in force
 		}
 	}
-	settingsMemo = { at: nowMs, value: out };
+	settingsMemo.set(cacheKey, { at: nowMs, value: out });
 	return out;
 }
 
@@ -270,8 +313,13 @@ export type SettingsWrite = {
  */
 export async function writeSettings(
 	kv: PlanKvWriter,
-	patch: Record<string, unknown>
+	patch: Record<string, unknown>,
+	site?: string | null
 ): Promise<SettingsWrite> {
+	// WRITES LAND ON THE CALLER'S OWN SITE ONLY. The credential that reaches this is per site -- an
+	// owner token, or a Drupal permission a level below that -- so a write to the deployment-wide
+	// document would let one tenant set levers every other tenant reads
+	const key = siteScopedKey(SETTINGS_KV_KEY, site);
 	const allowed = new Set<string>(KV_OVERRIDABLE);
 	// the raw key rather than the memo, which may be up to PLAN_MEMO_MS stale and would silently
 	// drop a concurrent operator's change. An unparseable document starts from empty rather than
@@ -279,7 +327,7 @@ export async function writeSettings(
 	// below is what makes discarding it safe
 	let current: Record<string, unknown> = {};
 	try {
-		const raw = await kv.get(SETTINGS_KV_KEY);
+		const raw = await kv.get(key);
 		const parsed: unknown = raw ? JSON.parse(raw) : null;
 		if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
 			current = parsed as Record<string, unknown>;
@@ -312,7 +360,7 @@ export async function writeSettings(
 			next[name] = String(value);
 		}
 	}
-	await kv.put(SETTINGS_KV_KEY, JSON.stringify(next));
+	await kv.put(key, JSON.stringify(next));
 	// the isolate would otherwise serve the old document for up to PLAN_MEMO_MS, which reads as the
 	// write having been ignored
 	resetSettingsMemo();
@@ -331,9 +379,13 @@ export async function writeSettings(
  */
 export async function writePlan(
 	kv: PlanKvWriter,
-	plan: 'free' | 'paid' | null
+	plan: 'free' | 'paid' | null,
+	site?: string | null
 ): Promise<ResolvedPlan> {
-	await kv.put(PLAN_KV_KEY, plan === null ? '' : plan);
+	// per site, like {@link writeSettings}: the account-wide reasoning above is the argument for
+	// restricting WHO may set it, and it is also the argument for not letting one tenant set it
+	// for every other one
+	await kv.put(siteScopedKey(PLAN_KV_KEY, site), plan === null ? '' : plan);
 	resetPlanMemo();
 	return plan === null ? { plan: 'free', source: 'default' } : { plan, source: 'kv' };
 }

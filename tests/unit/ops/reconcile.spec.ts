@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { reconcileRouterPhp } from '../../../src/drupal/reconcile-php';
-import { DRIVER_ROUTES } from '../../../src/ops/driver-digest';
+import { DRIVER_DIGEST, DRIVER_ROUTES } from '../../../src/ops/driver-digest';
 import {
 	CLEAN_RECONCILE,
+	DRIVER_DIGEST_KEY,
 	PACK_VERSION,
 	RECONCILE_STEPS,
 	SHIPPED_PAGE_MAX_AGE,
@@ -497,5 +498,93 @@ describe('the router rebuild reaches the local tasks too', () => {
 		// so a route added to a sibling module cannot be missed by the step that repairs it
 		expect(DRIVER_ROUTES).toContain('drupflare.settings');
 		expect(DRIVER_ROUTES).toContain('drupflare.modules');
+	});
+});
+
+describe('a pack change re-runs plugin discovery, not only the container', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'container-driver-digest') as ReconcileStep;
+
+	/**
+	 * A tab is a discovery-cached plugin, and the router step cannot deliver it.
+	 *
+	 * The Code Delivery route reached deployed sites and its TAB did not: `/admin/modules/drupflare`
+	 * resolved while `/admin/modules` still rendered two tabs. The clear was first bolted onto
+	 * `router-driver-routes`, which was wrong for a reason worth keeping -- that step's verdict counts
+	 * ROUTES, so once the routes land it reads satisfied and never runs again, and a site whose routes
+	 * arrived before its tabs is stuck permanently.
+	 *
+	 * This step is keyed on the driver digest, so it fires whenever the packed modules change at all.
+	 */
+	it('drops the discovery cache alongside the container', () => {
+		const statements: string[] = [];
+		const sql = {
+			exec(text: string) {
+				statements.push(text);
+				return { toArray: () => [] };
+			}
+		};
+		const host = fakeHost(1_000);
+		step.sql?.(sql as never, host as never);
+		expect(statements).toContain('DELETE FROM cache_container');
+		expect(statements).toContain('DELETE FROM cache_discovery');
+	});
+
+	it('still records the digest, so it converges instead of running every alarm', () => {
+		const sql = { exec: () => ({ toArray: () => [] }) };
+		const host = fakeHost(1_000);
+		step.sql?.(sql as never, host as never);
+		expect(host.meta(DRIVER_DIGEST_KEY)).toBe(DRIVER_DIGEST);
+	});
+});
+
+describe('a step whose answer moves is never retired', () => {
+	/**
+	 * THE REASON A NEW ROUTE WAS 404 ON EVERY ALREADY-RECONCILED SITE.
+	 *
+	 * `planReconcile` skipped any step already in `applied` before asking its verdict. That is right
+	 * for a step that fixes a defect once. It is wrong for the two keyed on the driver digest: the
+	 * packed modules change on every release, and their verdicts exist precisely to compare against
+	 * the digest that ships today. A site that reconciled against an older pack marked both applied
+	 * and then skipped them forever, so the routes a later pack added never entered its router and
+	 * Drupal logged `page not found` for them with no indication why.
+	 */
+	it('re-asks a recurring step that is already applied', () => {
+		const step = RECONCILE_STEPS.find((s) => s.id === 'router-driver-routes') as ReconcileStep;
+		expect(step.recurring).toBe(true);
+		// the router holds none of the driver routes, which is the owed shape
+		const sql = fakeSql({ router: [{ name: 'system.admin' }] });
+		const planned = planReconcile(
+			{ applied: [step.id], failed: {}, version: 0 } as never,
+			sql,
+			fakeHost(1_000),
+			[step]
+		);
+		expect(planned.action).toBe('run');
+	});
+
+	it('still retires a one-shot step, so the chain converges', () => {
+		const once = RECONCILE_STEPS.find((s) => s.id === 'page-max-age') as ReconcileStep;
+		expect(once.recurring).toBeUndefined();
+		const planned = planReconcile(
+			{ applied: [once.id], failed: {}, version: 0 } as never,
+			fakeSql({}),
+			fakeHost(1_000),
+			[once]
+		);
+		expect(planned.action).toBe('done');
+	});
+
+	it('does not re-mark a recurring step that is satisfied, or it never reports done', () => {
+		const step = RECONCILE_STEPS.find(
+			(s) => s.id === 'container-driver-digest'
+		) as ReconcileStep;
+		const host = fakeHost(1_000, { [DRIVER_DIGEST_KEY]: DRIVER_DIGEST });
+		const planned = planReconcile(
+			{ applied: [step.id], failed: {}, version: 0 } as never,
+			fakeSql({}),
+			host,
+			[step]
+		);
+		expect(planned.action).toBe('done');
 	});
 });

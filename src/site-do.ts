@@ -63,6 +63,7 @@ import {
 	reconcileReport,
 	reconciled,
 	recordStep,
+	recurringWork,
 	serialiseReconcileState,
 	type ReconcileHost,
 	type ReconcileState
@@ -4094,7 +4095,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (String(this.env?.RECONCILE ?? '1') === '0') return 'RECONCILE is off';
 		if (this.isPoolLane()) return 'a replica lane serves a copy and does not reconcile';
 		const state = this.reconcileState();
-		if (reconciled(state)) return 'already at the shipping version';
+		if (
+			reconciled(state, this.metaGet(DRIVER_DIGEST_KEY)) &&
+			!recurringWork(state, this.sql, this.reconcileHost())
+		) {
+			return 'already at the shipping version';
+		}
 		// The fourth null path, and the first version of this reported the third one for it. A
 		// deferred step answers null too, so a site parked at version 0 of 2 was told it was already
 		// at the shipping version: a false reason on exactly the case that needs reading carefully
@@ -4121,9 +4127,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// authoritative rows from two places at once
 		if (this.isPoolLane()) return null;
 		let state = this.reconcileState();
-		if (reconciled(state)) return null;
-
 		const host = this.reconcileHost();
+		// the version gate cannot retire the recurring pair; see `recurringWork()`
+		if (
+			reconciled(state, this.metaGet(DRIVER_DIGEST_KEY)) &&
+			!recurringWork(state, this.sql, host)
+		) {
+			return null;
+		}
 		// Marks are drained in a loop rather than one per firing. A `mark` is the verdict answering
 		// "this site already matches", which is what a site provisioned after the fix answers to every
 		// step -- so paying a firing each would spend four invocations to discover there is nothing to

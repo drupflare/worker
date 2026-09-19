@@ -83,6 +83,15 @@ export type StepVerdict =
 	| { state: 'deferred'; detail: string };
 
 export interface ReconcileStep {
+	/**
+	 * Whether this step's answer can change after it has once been satisfied.
+	 *
+	 * Most steps fix a defect the pack could not carry backwards: once applied they are done, and
+	 * re-asking costs a query per firing forever. A step keyed on something that MOVES -- the driver
+	 * digest, the routes a pack declares -- is the opposite, and retiring one silently strands every
+	 * site that reconciled against an older pack.
+	 */
+	recurring?: boolean;
 	/** stable forever; it is what a site records as done */
 	id: string;
 	/** the pack version this step was introduced at */
@@ -261,8 +270,10 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 	{
 		id: 'container-driver-digest',
 		since: 2,
+		// the digest moves with every pack, so this question has a new answer on every release
+		recurring: true,
 		describe:
-			'a compiled container that predates the driver pack, so a newer hook class is invisible',
+			'a compiled container and discovery cache that predate the driver pack, so a newer hook class or tab is invisible',
 		/**
 		 * The general close for the baked-hook problem.
 		 *
@@ -280,6 +291,17 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		},
 		sql(sql, host) {
 			sql.exec('DELETE FROM cache_container');
+			// AND THE DISCOVERY CACHE, which is where a LOCAL TASK lives. A tab declared in a
+			// links.task.yml file is a discovery-cached plugin definition, so a pack can deliver the
+			// route, the route can resolve, and the tab leading to it stays absent -- which is what
+			// the modules page showed after the Code Delivery route landed.
+			//
+			// It belongs HERE rather than in the router step, and putting it there first was the
+			// mistake. That step's verdict counts ROUTES; once the routes land it reads satisfied and
+			// never runs again, so a site whose routes arrived before the tabs is stuck forever. This
+			// step is keyed on the driver digest, so it fires whenever the packed modules change at
+			// all, which is exactly the condition under which discovery has to run again.
+			sql.exec('DELETE FROM cache_discovery');
 			host.setMeta(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
 		}
 		// NO `php()` HERE, AND ADDING ONE WAS A MISTAKE WORTH RECORDING. Recompiling the container
@@ -293,6 +315,8 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 	{
 		id: 'router-driver-routes',
 		since: 3,
+		// `DRIVER_ROUTES` grows whenever a sibling module declares a route, so this must stay askable
+		recurring: true,
 		describe: "a route table that predates the driver pack, so a module's own paths are 404",
 		/**
 		 * The other half of the baked-container problem, and it was live on every site.
@@ -392,8 +416,44 @@ export function serialiseReconcileState(state: ReconcileState): string {
  * The steady-state cost of reconciliation is this comparison and the one `cfw_meta` read that feeds
  * it. A site at the current version asks no SQL question of any step.
  */
-export function reconciled(state: ReconcileState): boolean {
+export function reconciled(state: ReconcileState, recordedDriverDigest?: string | null): boolean {
+	// THE DRIVER PACK MOVES WITHOUT `PACK_VERSION` MOVING, and that is what made every fix above
+	// this line unreachable. `PACK_VERSION` is bumped by hand when a STEP is added; the packed
+	// modules change on every sibling release. A site stamped at the current version short-circuited
+	// here and no step's verdict was ever asked again -- so a route a newer pack declares stayed 404
+	// on it forever, and the reconciliation designed to deliver exactly that never looked.
+	//
+	// One string compare against a value the caller already holds, so the steady state still asks no
+	// SQL question of any step; it is the same `cfw_meta` read that feeds `state`.
+	if (recordedDriverDigest !== undefined && recordedDriverDigest !== DRIVER_DIGEST) return false;
 	return state.version >= PACK_VERSION && Object.keys(state.failed).length === 0;
+}
+
+/**
+ * Whether any RECURRING step still owes this site work, whatever the version says.
+ *
+ * `reconciled()` is a two-integer comparison and deliberately asks no step anything, which is right
+ * for a chain of one-shot migrations. It is wrong for the recurring pair, and a fresh site is the
+ * case that proves it: provisioning stamps the driver digest because the packed modules and the
+ * packed container come from one build, so both the version and the digest say "current" -- while
+ * the ROUTER inside the packed database was baked from whatever module set existed when that
+ * database was built. The two disagree and nothing was allowed to notice.
+ *
+ * Only recurring steps are asked, so the steady-state cost is their verdicts alone: one `SELECT
+ * COUNT` over `router` and one meta compare. A one-shot step that has been applied stays untouched.
+ */
+export function recurringWork(
+	state: ReconcileState,
+	sql: ReconcileSql,
+	host: ReconcileHost,
+	steps: readonly ReconcileStep[] = RECONCILE_STEPS
+): boolean {
+	for (const step of steps) {
+		if (!step.recurring) continue;
+		if ((state.failed[step.id]?.attempts ?? 0) >= STEP_ATTEMPT_LIMIT) continue;
+		if (step.verdict(sql, host).state === 'owed') return true;
+	}
+	return false;
 }
 
 /** how many attempts a step gets before it stops being retried on every firing */
@@ -424,12 +484,25 @@ export function planReconcile(
 	// nothing else has work
 	let waiting: { step: ReconcileStep; reason: string } | null = null;
 	for (const step of steps) {
-		if (applied.has(step.id)) continue;
+		// A RECURRING STEP IS NEVER RETIRED, and treating one as a one-shot migration is what made
+		// a pack change unreachable on every already-reconciled site. Most steps here fix a defect
+		// once and are done; `container-driver-digest` and `router-driver-routes` answer a question
+		// whose ANSWER MOVES -- the packed modules change on every release, and their verdicts are
+		// written to compare against the digest that ships today. Marking them applied short-circuits
+		// the verdict before it can ever notice, so a site that reconciled against an older pack
+		// skipped both forever: the routes a new pack adds were 404 on it and nothing said why.
+		const settled = applied.has(step.id);
+		if (settled && !step.recurring) continue;
 		// a step that has spent its attempts stops owning the chain; it stays visible as `failed` on
 		// the status report rather than being retried on every firing forever
 		if ((state.failed[step.id]?.attempts ?? 0) >= STEP_ATTEMPT_LIMIT) continue;
 		const verdict = step.verdict(sql, host);
-		if (verdict.state === 'satisfied') return { action: 'mark', step, reason: 'satisfied' };
+		if (verdict.state === 'satisfied') {
+			// already recorded, so there is nothing to write and the chain must move on rather than
+			// re-marking it on every pass and never reporting `done`
+			if (settled) continue;
+			return { action: 'mark', step, reason: 'satisfied' };
+		}
 		if (verdict.state === 'deferred') {
 			waiting ??= { step, reason: verdict.detail };
 			continue;

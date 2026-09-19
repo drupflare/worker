@@ -21,6 +21,13 @@ const SITE = process.env.CFW_BROWSER_SITE ?? 'browser';
 
 // outside the repo: one Durable Object namespace was measured at 970 MB under `.wrangler/state`
 const STATE_DIR = process.env.CFW_BROWSER_STATE ?? join(tmpdir(), 'drupflare-browser-state');
+/**
+ * Where the worker's own output is kept, because Playwright's `[WebServer]` capture is not enough
+ * to diagnose one. A run carrying 118 500s recorded zero error lines through it, and the parse
+ * error behind them could not be traced without the bytes the worker actually held.
+ */
+const WORKER_LOG =
+	process.env.CFW_BROWSER_WORKER_LOG ?? join(tmpdir(), 'drupflare-browser-worker.log');
 
 /**
  * The OIDC rig, which is opt-in because it needs a container.
@@ -53,7 +60,7 @@ if (isCI) {
  * Playwright kills the process group on teardown, so the loop dies with the run.
  */
 const supervised = (command: string) =>
-	`bash -c 'while true; do ${command}; echo "[supervisor] wrangler exited $?; restarting"; sleep 2; done'`;
+	`bash -c 'while true; do ${command}; echo "[supervisor] wrangler exited $?; restarting"; sleep 2; done' 2>&1 | tee ${JSON.stringify(WORKER_LOG)}`;
 
 export default defineConfig({
 	testDir: './tests/e2e/browser',

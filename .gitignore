@@ -72,3 +72,6 @@ dist/
 .contrib-fixture/
 .cdn-archive/
 .refresh/
+
+# staged build context for the Cloudflare Container VPS arm; rebuilt by `vps:cf:up`
+.vps-context/

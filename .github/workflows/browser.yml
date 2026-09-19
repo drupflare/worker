@@ -143,6 +143,11 @@ jobs:
         run: bun run test:browser
         env:
           CFW_BROWSER_REQUIRE_OIDC: '1'
+          CFW_BROWSER_WORKER_LOG: /tmp/browser-worker.log
+
+      - name: Worker Log on Failure
+        if: ${{ failure() }}
+        run: tail -400 /tmp/browser-worker.log || true
 
       - name: Stop the Identity Provider
         if: ${{ always() }}

@@ -78,6 +78,12 @@
 		"measure:bench-site": "bun scripts/measure/bench-site.ts",
 		"vps:up": "docker compose -f docker/vps.yml up -d --build",
 		"vps:down": "docker compose -f docker/vps.yml down -v",
+		"vps:plan": "bun scripts/measure/vps-container.ts plan",
+		"vps:cf:up": "bun scripts/measure/vps-container.ts up",
+		"vps:cf:budget": "bun scripts/measure/vps-container.ts budget",
+		"vps:cf:drive": "bun scripts/measure/vps-container.ts drive",
+		"vps:cf:down": "bun scripts/measure/vps-container.ts down",
+		"provision:lanes": "bun scripts/measure/provision-lanes.ts",
 		"measure:blake2b-parity": "bun scripts/measure/blake2b-parity.ts",
 		"measure:mb-parity": "bun scripts/measure/mb-parity.ts",
 		"measure:unicode": "bun scripts/measure/unicode-corpus.ts",
@@ -88,6 +94,7 @@
 		"assets:agg": "bun scripts/pack-aggregates.ts"
 	},
 	"devDependencies": {
+		"@cloudflare/containers": "^0.3.7",
 		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@cloudflare/workers-types": "^5.20260829.1",
 		"@playwright/test": "^1.62.1",

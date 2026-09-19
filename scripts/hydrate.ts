@@ -268,6 +268,35 @@ async function assetExists(url: string): Promise<boolean> {
 }
 
 /** Extracts a verified payload over the checkout, writing only what the manifest names. */
+/**
+ * Files the REPOSITORY owns, which the payload may never overwrite.
+ *
+ * A payload carries a snapshot of `assets/`, and some of those paths are tracked in git: the
+ * repository is authoritative for those and the payload is a stale copy of them by construction.
+ * Overwriting one silently reverts whatever the tree deliberately holds.
+ *
+ * **THIS IS THE SAME DEFECT `restore-artifacts.ts` WAS FIXED FOR, one tool over.** A
+ * `cdn-manifest.json` entry used to overwrite the tracked `assets/drupal/site.sqlite` on every
+ * `bun install`, turning a spec red on a tree nobody had edited; that entry is marked `tracked` and
+ * the restore verifies and leaves it alone. Hydrate never got the same treatment and clobbers three
+ * tracked files today.
+ *
+ * Asked of git rather than hard-coded, because a hard-coded list is the thing that drifts. A tree
+ * with no git (an unpacked tarball, a container) reports nothing tracked and keeps the old
+ * behaviour, which is the safe direction: the payload is then the only source there is.
+ */
+function trackedFiles(root: string): Set<string> {
+	try {
+		const out = execFileSync('git', ['-C', root, 'ls-files', '-z'], {
+			encoding: 'utf8',
+			maxBuffer: 1 << 26
+		});
+		return new Set(out.split('\0').filter(Boolean));
+	} catch {
+		return new Set();
+	}
+}
+
 function landPayload(root: string, tarball: string, work: string): PayloadManifest {
 	const staged = join(work, 'staged');
 	mkdirSync(staged, { recursive: true });
@@ -279,10 +308,31 @@ function landPayload(root: string, tarball: string, work: string): PayloadManife
 		throw new Error(`the payload does not match its manifest:\n  ${problems.join('\n  ')}`);
 	}
 
+	const tracked = trackedFiles(root);
+	const kept: string[] = [];
+	const drifted: string[] = [];
 	for (const file of manifest.files) {
 		const dest = join(root, file.path);
+		if (tracked.has(file.path) && existsSync(dest)) {
+			// verified rather than skipped in silence: a disagreement means the payload was built
+			// from a different tree, and the pack and the database it was baked against have to
+			// agree or every first kernel boot rebuilds a 482 KB container
+			if (sha256(dest) !== sha256(join(staged, file.path))) drifted.push(file.path);
+			kept.push(file.path);
+			continue;
+		}
 		mkdirSync(dirname(dest), { recursive: true });
 		cpSync(join(staged, file.path), dest);
+	}
+	if (kept.length) {
+		console.log(
+			`hydrate: kept ${kept.length} tracked file(s) the repository owns: ${kept.join(', ')}`
+		);
+	}
+	for (const path of drifted) {
+		console.log(
+			`hydrate: WARNING ${path} differs from the payload's copy; the tree's is in force`
+		);
 	}
 	return manifest;
 }

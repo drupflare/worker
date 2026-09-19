@@ -22,6 +22,11 @@ drupal-min-src
 assets/*
 !assets/.assetsignore
 !assets/robots.txt
+# built from the sibling checkouts at the versions composer.lock pins, so the repository can
+# produce it and is authoritative for it. Tracked because the DEPLOY build has no siblings and no
+# composer, so without this the only copy it can reach is whatever a published payload happens to
+# carry -- and a sibling fix then needs a payload republish to reach a site.
+!assets/driver.json
 !assets/drupal/
 assets/drupal/*
 !assets/drupal/site.sqlite

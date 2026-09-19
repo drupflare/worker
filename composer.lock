@@ -1152,16 +1152,16 @@
         },
         {
             "name": "drupflare/drupflare",
-            "version": "v0.3.2",
+            "version": "v0.3.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/drupflare.git",
-                "reference": "505bc65503aa0ae0376fa2ea9c23865e4acf46d9"
+                "reference": "df0751a8d4e5468a29d707be142d6c296c56e5ec"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/505bc65503aa0ae0376fa2ea9c23865e4acf46d9",
-                "reference": "505bc65503aa0ae0376fa2ea9c23865e4acf46d9",
+                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/df0751a8d4e5468a29d707be142d6c296c56e5ec",
+                "reference": "df0751a8d4e5468a29d707be142d6c296c56e5ec",
                 "shasum": ""
             },
             "require": {
@@ -1231,20 +1231,20 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-09-18T04:36:12+00:00"
+            "time": "2026-09-19T17:38:55+00:00"
         },
         {
             "name": "drupflare/rom",
-            "version": "v0.2.2",
+            "version": "v0.2.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/rom.git",
-                "reference": "2836f5a25376bced1f2a20156d98825d0a72c30b"
+                "reference": "ba695d5f16b5f7629e9c75bb46b99683188a6c88"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/rom/zipball/2836f5a25376bced1f2a20156d98825d0a72c30b",
-                "reference": "2836f5a25376bced1f2a20156d98825d0a72c30b",
+                "url": "https://api.github.com/repos/drupflare/rom/zipball/ba695d5f16b5f7629e9c75bb46b99683188a6c88",
+                "reference": "ba695d5f16b5f7629e9c75bb46b99683188a6c88",
                 "shasum": ""
             },
             "require": {
@@ -1312,7 +1312,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-09-12T01:06:42+00:00"
+            "time": "2026-09-19T17:38:37+00:00"
         },
         {
             "name": "drupflare/stream-http",

@@ -26,7 +26,7 @@ re-arm, measured across 71 consecutive alarms. Rows written is the meter that bi
 <p>A site is one Durable Object by default and does not have to be. <code>REPLICA_COUNT</code> gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
 so an authenticated read workload scales past one thread. See
-<a href="#-read-replicas">Read Replicas</a>.</p>
+<a href="#-replica-lanes">Replica Lanes</a>.</p>
 <hr>
 <h2 id="⚖️-drupflare-vs-a-traditional-vps" class="tsd-anchor-link">⚖️ Drupflare vs a Traditional VPS<a href="#⚖️-drupflare-vs-a-traditional-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Drupflare targets <strong>solo, enterprise, indie and budget-bound sites</strong>, where the cost is the hours rather than the
@@ -97,9 +97,14 @@ against nginx and 1,231 against the front worker, so it constrains neither arm.<
 <td><strong>438 req/s</strong>, 62 ms</td>
 </tr>
 <tr>
-<td>Re-render, Drupal bins warm</td>
-<td><strong>25 ms</strong> (22-69, n=8)</td>
-<td>32 ms (29-37, n=8)</td>
+<td>Re-render, tag-invalidated</td>
+<td><strong>24 ms</strong></td>
+<td>30 ms</td>
+</tr>
+<tr>
+<td>Re-render, page cache hit</td>
+<td>24 ms</td>
+<td><strong>22 ms</strong></td>
 </tr>
 </tbody>
 </table>
@@ -145,10 +150,12 @@ region; Drupflare answers from the visitor's own colo. The network term a real u
 VPS request is absent from the tables above. It is measured separately in
 <a href="#-geography-the-term-localhost-leaves-out">Geography</a>, and it is the largest term in the
 comparison.</p>
-<p><strong>A re-render is 1.28x, not two orders of magnitude.</strong> The larger ratios elsewhere in this file are
-a warm-kernel interpreter comparison and a both-bins-emptied edge render, which are different
-workloads on different instruments and do not divide into each other. The authenticated rows are not
-a runtime ratio either: they are a hop that does not happen.</p>
+<p><strong>A re-render is 1.21x on the pages a save invalidates, and Drupflare is faster on the rest.</strong> A save
+purges only the cache entries matching its tags, so every other page re-renders from a warm dynamic
+page cache. The larger ratios elsewhere in this file are a warm-kernel interpreter comparison and a
+both-bins-emptied edge render, which are different workloads on different instruments and do not
+divide into each other. The authenticated rows are not a runtime ratio either: they are a hop that
+does not happen.</p>
 <p><strong>The authenticated arm is one Durable Object with no replica lanes.</strong> A four-lane pool measured
 3.29x on real authenticated renders and none of it is in the numbers above. Bodies agree to within
 10 bytes on the anonymous arms; on the authenticated arms Drupflare serves the larger page
@@ -410,9 +417,15 @@ on regardless of plan.</p>
 <td>M edge</td>
 </tr>
 <tr>
-<td>Re-render after a save</td>
-<td><strong>32 ms</strong></td>
-<td><strong>25 ms</strong></td>
+<td>Re-render, tag-invalidated</td>
+<td><strong>30 ms</strong></td>
+<td><strong>24 ms</strong></td>
+<td>M local</td>
+</tr>
+<tr>
+<td>Re-render, page cache hit</td>
+<td><strong>22 ms</strong></td>
+<td>24 ms</td>
 <td>M local</td>
 </tr>
 <tr>
@@ -435,7 +448,7 @@ on regardless of plan.</p>
 </tr>
 <tr>
 <td>Cold boot</td>
-<td><strong>1,398 ms</strong>, amortised off the request path</td>
+<td><strong>1,264 ms</strong>, amortised off the request path</td>
 <td>~0</td>
 <td>M edge</td>
 </tr>
@@ -444,12 +457,6 @@ on regardless of plan.</p>
 <td><strong>208 ms</strong> p50 from a client, both levers on</td>
 <td>tens of ms, warm pool</td>
 <td>M edge</td>
-</tr>
-<tr>
-<td>Authenticated page, derived</td>
-<td>~467 ms, across instruments; superseded by the row above</td>
-<td>n/a</td>
-<td>D</td>
 </tr>
 </tbody>
 </table>
@@ -461,15 +468,14 @@ render with both bins emptied. Dividing an edge cold figure by a local warm one 
 review published a 225x that this project had to retract; the technical report keeps that correction
 at its Provenance section.</p>
 <p>Authenticated traffic is the harder case. Shell assembly and a resident interpreter put a logged-in
-page at ~467 ms against 3,525, and a replica pool spreads authenticated reads across objects instead
+page at ~467 ms against 3,391, and a replica pool spreads authenticated reads across objects instead
 of queueing them behind one. A VPS with a warm PHP-FPM pool is still ahead on a single request. What
 it does not have is the concurrency answer: adding lanes is a config change and a provisioning call,
 not a resize.</p>
-<p>Write-heavy traffic is the narrower loss it used to be stated as. A lane runs a write locally,
-discards its own effect and forwards the statement list to the primary, which sequences it, so the
-work spreads and only the commit serialises. What cannot spread is the class of write that
-ORIGINATES a value two objects would mint differently; those are refused rather than retried,
-because a retry cannot repair them.</p>
+<p>Write-heavy traffic is a narrow loss. A lane runs a write locally, discards its own effect and
+forwards the statement list to the primary, which sequences it, so the work spreads and only the
+commit serialises. What cannot spread is the class of write that originates a value two objects
+would mint differently; those are refused rather than retried, because a retry cannot repair them.</p>
 <p>A raw uncached render is slower than native PHP, by a ratio the technical report keeps current. The
 architecture wins by not rendering: the tiers above answer without one, and where a logged-in visitor
 forces a render, shell assembly cuts the render rather than the boot. What remains slower is listed
@@ -480,9 +486,9 @@ else, and a single-region VPS answers all of them from one place while Cloudflar
 colo nearest each. That difference is the largest term in the comparison and it is measured rather
 than argued: <code>scripts/measure/delay-proxy.mjs</code> puts a real delaying proxy in front of the VPS arm, so
 its connection pays the network instead of having a number added afterwards.</p>
-<p>Distances are Azure's published P50 round-trip figures between regions, 30-day window ending
-2026-07-30. From US-East: West US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia
-201 ms, Southeast Asia 224 ms.</p>
+<p>The injected delays are Azure's published P50 round-trip figures between regions. From US-East:
+West US 69 ms, West Europe 83 ms, Brazil 117 ms, India 198 ms, Australia 201 ms, Southeast Asia
+224 ms.</p>
 <table>
 <thead>
 <tr>
@@ -520,39 +526,228 @@ its connection pays the network instead of having a number added afterwards.</p>
 </tbody>
 </table>
 <p>Traffic-weighted across the workload mix, three replica lanes, <code>viable: true</code> with zero regressions
-on all three network arms. Drupflare's figure barely moves across them, because the term being added
-is one a single-region VPS pays and an edge network does not.</p>
-<p>Four things bound the claim.</p>
-<p><strong>The advantage is not uniform. It is zero for a visitor in the VPS's own city and largest for one
-on the other side of the world.</strong> A site whose audience sits beside its VPS gains nothing here.</p>
-<p><strong>A weighted global average is not available.</strong> The ITU publishes internet penetration by region and
-not users per region, so any single worldwide figure needs a population table this project does not
-have. The per-distance rows above are the honest form.</p>
-<p><strong>The proxy understates, twice.</strong> It delays data rather than the TCP handshake, so a real first visit
-pays a handshake and a TLS round trip this does not model; and Drupflare's own arm stays on localhost
-and pays no network at all.</p>
-<p><strong>Drupflare's edge is not zero either.</strong> Cloudflare's own real-user measurements, published
-2026-09-26 over the top 964 networks, put its median connect time at 49 ms including the last mile,
-and 113 ms in India. The last mile is paid by both arms and cancels; what does not cancel is the
-distance to the origin.</p>
+on all three network arms. Drupflare's figure barely moves, because the term being added is one a
+single-region VPS pays and an edge network does not.</p>
+<p>Cloudflare Containers accept a placement constraint, so the same comparison runs on real
+infrastructure rather than an injected delay. The VPS arm was pinned first to western Europe and then
+to eastern North America, same image and same instance type, driven from a US-East client, n=15
+interleaved with the arm order alternating:</p>
+<table>
+<thead>
+<tr>
+<th>VPS placement</th>
+<th>VPS floor</th>
+<th>Drupflare floor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Western Europe</td>
+<td>174.3 ms</td>
+<td>82.6 ms</td>
+</tr>
+<tr>
+<td>Eastern North America</td>
+<td>111.7 ms</td>
+<td>78.0 ms</td>
+</tr>
+</tbody>
+</table>
+<p>Minima rather than medians, because the client's own round trip is in both and the floor is where it
+shows. Moving the container across the Atlantic costs 62.6 ms on an otherwise identical arm, and a
+same-continent VPS still sits about 34 ms above Drupflare, because a region is not the visitor's own
+colo. Subtracting the shared client round trip leaves figures that agree with the proxy table above,
+which is two instruments reaching the same answer.</p>
+<p>The advantage is zero for a visitor in the VPS's own city and largest for one on the other side of
+the world, so a site whose audience sits beside its VPS gains nothing here. There is no single
+worldwide number to quote in place of the rows above: internet penetration is published by region,
+users per region are not, and averaging without that table would invent a figure. The proxy also
+understates the gap, since it delays data rather than the TCP handshake and Drupflare's own arm
+stays on localhost.</p>
 <hr>
-<h2 id="🧬-read-replicas" class="tsd-anchor-link">🧬 Read Replicas<a href="#🧬-read-replicas" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
-<p>A Durable Object is single-threaded. A site is not, because a namespace holds unlimited objects.
-<code>REPLICA_COUNT</code> gives a site lanes beyond its primary, each a separate object named <code>&lt;site&gt;#r&lt;n&gt;</code>,
-and the front worker spreads the serving path across them. Only <code>/serve</code> spreads: an owner or
-diagnostic route pins to the primary, so <code>/export</code> cannot answer from a lane's copy.</p>
-<p>Measured on real authenticated Drupal renders across a replicated pool, against a generator whose own
-ceiling was measured first at 121.9 req/s: <strong>1.00 / 2.03 / 3.29x at 1 / 2 / 4 lanes</strong>. On a deployed
-worker with <code>?lane=N</code> addressing each object directly, so routing is not a variable, the topology
-scales <strong>1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes</strong>, which is 95% at sixteen.</p>
-<p>That second curve replaces an earlier <code>1.00 / 2.05 / 3.16 / 5.72x at 1 / 2 / 4 / 8</code>, which measured
-something else: an ascending sweep with its baseline taken once at the start cannot separate a
-scaling limit from a decay in the thing being scaled, and a single object steps to roughly half its
-throughput after ~180 requests. A linear pool plus that decay reproduces the old numbers with no
-scaling limit existing. The decay itself is real, reaches this product, and is not attributed.</p>
+<h2 id="🧬-replica-lanes" class="tsd-anchor-link">🧬 Replica Lanes<a href="#🧬-replica-lanes" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>A Durable Object runs one request at a time, and a PHP render holds it for the whole render. A site
+is not confined to one object: a namespace holds unlimited objects, so a site spreads its serving
+path across lanes, each a separate object named <code>&lt;site&gt;#r&lt;n&gt;</code>. Only <code>/serve</code> spreads. Owner and
+diagnostic routes pin to the primary, so <code>/export</code> cannot answer from a lane's copy.</p>
+<p>A lane removes queueing rather than service time. A cached page is answered from the edge cache or
+the object's own SQLite without booting PHP, so a site taking 100 req/s of cached traffic queues
+nothing and needs no lane, while a site taking 20 req/s of authenticated renders may need several.</p>
 <p>This works because an authenticated GET writes no authoritative state under this SAPI. Measured
 per-table on real renders: no <code>sessions</code> row, no <code>users_field_data.access</code>, no <code>flood</code>. Core
-throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches.</p>
+throttles the access write on <code>KernelEvents::TERMINATE</code>, which this SAPI never dispatches. A lane
+does maintain its own copy, sweeping expired rows and applying the primary's replication log, and
+refuses anything authoritative with a 421 that the front worker retries against the primary.</p>
+<h3 id="scaling" class="tsd-anchor-link">Scaling<a href="#scaling" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>Two quantities carry different claims and are easy to conflate, so both are named here.</p>
+<p><strong>Per object, measured.</strong> One object is one Durable Object, and it serves one request at a time.
+Driven alone on a deployed paid worker, a lane answered <strong>31 authenticated renders per second at a
+p50 of 216 ms</strong>, with 8 concurrent clients and every response reporting <code>x-cfw-cache: RENDER</code>. The
+same object answered <strong>268 cached pages per second at a p50 near 20 ms</strong>, reporting
+<code>x-cfw-cache: HIT</code>. A render is roughly ten times the work of a cached hit, which is the ratio the
+whole architecture is built around.</p>
+<p><strong>Across a pool, by topology.</strong> Addressing each object directly and summing, a pool reaches
+<strong>1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16 lanes</strong>, which is 95% of perfect at
+sixteen. That is a statement about how many objects a site has and what each one serves, not about
+what a visitor gets; the routed figure below is the smaller one and is the one to quote.</p>
+<p><strong>Across a pool, as routed.</strong> Real traffic does not address a lane; it is hashed to one, and the
+primary serves bucket 0 as well as feeding replication. Driven that way against deployed sites with
+authenticated admin pages and a fixed 20 second window per cell:</p>
+<table>
+<thead>
+<tr>
+<th>lanes</th>
+<th>served, 16 clients</th>
+<th>p50</th>
+<th>served, 64 clients</th>
+<th>p50</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>62</td>
+<td>5969 ms</td>
+<td>98</td>
+<td>16048 ms</td>
+</tr>
+<tr>
+<td>1</td>
+<td>54</td>
+<td>7712 ms</td>
+<td>78</td>
+<td>33741 ms</td>
+</tr>
+<tr>
+<td>2</td>
+<td>79</td>
+<td>3172 ms</td>
+<td>154</td>
+<td>10431 ms</td>
+</tr>
+<tr>
+<td>4</td>
+<td>81</td>
+<td>2867 ms</td>
+<td>147</td>
+<td>6506 ms</td>
+</tr>
+<tr>
+<td>8</td>
+<td>128</td>
+<td>1715 ms</td>
+<td>220</td>
+<td>6125 ms</td>
+</tr>
+<tr>
+<td>16</td>
+<td><strong>294</strong></td>
+<td>364 ms</td>
+<td><strong>445</strong></td>
+<td>647 ms</td>
+</tr>
+</tbody>
+</table>
+<p>Served count rather than a rate, because every cell drives the same window and a rate computed over
+elapsed time charges an arm twice for its own tail. Sixteen lanes serve 4.74x and 4.54x what one
+object serves, and the latency effect is larger than the throughput one: p50 falls 16.4x at 16
+clients and 24.8x at 64.</p>
+<p><strong>Under saturation the baseline is zero.</strong> The table above drives 16 and 64 clients against admin
+pages. Driven instead at 512 concurrent clients over 200 distinct authenticated node pages, same 20
+second window:</p>
+<table>
+<thead>
+<tr>
+<th>lanes</th>
+<th>served, 512 clients</th>
+<th>vs one lane</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><strong>0</strong></td>
+<td>--</td>
+</tr>
+<tr>
+<td>1</td>
+<td>426</td>
+<td>1.00x</td>
+</tr>
+<tr>
+<td>2</td>
+<td>814</td>
+<td>1.91x</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>1,889</strong></td>
+<td>4.43x</td>
+</tr>
+</tbody>
+</table>
+<p>A single object serves nothing at this load; it sheds every request. The 4-lane cell is withheld
+because its site returned a 500 rate the other arms did not reproduce, and the rig was torn down
+before it could be re-driven. The two workloads are not comparable and their numbers must not be
+divided into each other.</p>
+<p><strong>A lane is paid for in rows written.</strong> Every row written on the primary is written again on each
+lane, so a pool of N costs N+1 rows for the same change. Rows written is the meter that bounds
+regeneration, so a pool buys read throughput at a write-amplification cost: an 8-lane pool reaches
+the daily row ceiling nine times sooner than one object. Size a pool against the write rate as well
+as the read rate; it is a lever for read-heavy sites and a penalty on write-heavy ones.</p>
+<p>What one lane is worth depends on whether the single object was already saturated. Below saturation
+it loses, 0.87x at 32 clients and 0.98x at 64: routing hashes over two buckets, so the lane takes
+about 60% of the traffic onto an object whose Drupal caches are colder than the primary's while
+adding no parallelism. Above saturation it is the difference between answering and not. At 128
+clients one lane serves 2.06x what no pool serves, and at 512 a single object sheds every request
+while one lane still serves 426. The load for this comes from a Worker rather
+than a laptop, driven through a service binding and fanned out across sub-invocations. A probe that
+holds service time fixed and sweeps only the fan-out puts that generator's own ceiling above 512
+concurrent subrequests, which is what makes the pool rather than the rig the thing being measured.</p>
+<p>What the rig does confirm is that the pool is addressed correctly: at 32 lanes all 33 objects answer,
+the distribution across buckets is even, and content writes forward from a lane to the primary
+without collision.</p>
+<h3 id="what-a-lane-buys-against-a-vps" class="tsd-anchor-link">What a Lane Buys Against a VPS<a href="#what-a-lane-buys-against-a-vps" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>A VPS has no lane axis. Its ceiling is the cores it was bought with, and raising it means resizing
+the box or putting a load balancer in front of several, with shared session and cache state behind
+them. That is an architecture change, done by hand, and it is the work Drupflare targets rather than
+the hosting bill.</p>
+<p>A lane is a Durable Object the primary copies itself into, addressed by a hash of the visitor's
+affinity key. Adding one changes no configuration a site owner writes. The comparison therefore
+splits by traffic shape rather than by hardware:</p>
+<ul>
+<li><strong>Anonymous cached traffic</strong>, which is most of it, never reaches an object on either side. Drupflare
+answers from the colo nearest the visitor and a VPS answers from its one region, so the difference
+is the network term in <a href="#-geography-the-term-localhost-leaves-out">Geography</a>.</li>
+<li><strong>Authenticated traffic</strong> is where lanes decide it. A converged session is answered from the
+compiled plan in the front worker's isolate, and the lanes exist for the requests that miss it.</li>
+</ul>
+<p>Economically the two bill on different axes. A VPS bills for its box whether or not anyone visits;
+Hetzner's CX22 is 2 vCPU and 4 GB for EUR 3.79 a month, and DigitalOcean's equivalent is $24.
+Drupflare bills per request and per row written on a $5 Workers Paid plan, which at fleet scale works
+out near $0.028 per site per month. For one busy site the monthly figures are close enough that the
+choice is not about price. For a fleet, or for a site whose traffic is bursty, they are not
+comparable: the VPS is paying for its peak all month.</p>
+<p>The goal this section exists to serve is in the roadmap, and it is narrow. Drupflare does not need to
+win a raw uncached render, and it does not; it needs to be the better answer for the traffic a real
+site receives. Where it is slower is listed under
+<a href="#-limitations">Limitations</a>.</p>
+<h3 id="autoscaling" class="tsd-anchor-link">Autoscaling<a href="#autoscaling" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<p>The primary counts, per alarm window, how many requests waited for its gate. Three consecutive
+windows must all show waiting before a lane is provisioned, and the target is the smallest queue
+depth across those three, one lane per sustained waiter. A burst that clears inside one window
+provisions nothing.</p>
+<p>Autoscaling stops at 32 lanes by default. That bound is per-lane idle cost, which is storage plus
+replication catch-up, rather than a throughput limit. <code>REPLICA_MAX_LANES</code> moves it and
+<code>REPLICA_AUTOSCALE=0</code> turns autoscaling off.</p>
+<p><code>REPLICA_COUNT</code> pins a size by hand, up to a hard ceiling of 256 lanes. That ceiling is arithmetic
+rather than policy: a lane mints forwarded row ids from its own residue class modulo the pool's
+partition, and the primary takes class 0, so 256 is the largest pool whose writers all hold a class
+of their own. Past it two writers would mint the same id. Set <code>REPLICA_COUNT</code> above the lanes a site
+has actually provisioned and the router hashes over buckets whose objects do not exist, which costs
+a wasted hop and a retry on the primary for each one. All three settings are KV-overridable, so a
+pool can be turned on, resized or turned off without a redeploy.</p>
+<h3 id="how-a-lane-is-built" class="tsd-anchor-link">How a Lane Is Built<a href="#how-a-lane-is-built" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <table>
 <thead>
 <tr>
@@ -563,7 +758,7 @@ throttles the access write on <code>KernelEvents::TERMINATE</code>, which this S
 <tbody>
 <tr>
 <td><strong>Provisioning</strong></td>
-<td><code>?action=provision&amp;lane=&lt;n&gt;</code> on the primary copies itself into a lane, bounded per invocation, resumable by a cursor it hands back</td>
+<td><code>?action=provision&amp;lane=&lt;n&gt;</code> on the primary copies itself into a lane, bounded per invocation and resumable by a cursor it hands back</td>
 </tr>
 <tr>
 <td><strong>Restore</strong></td>
@@ -575,11 +770,11 @@ throttles the access write on <code>KernelEvents::TERMINATE</code>, which this S
 </tr>
 <tr>
 <td><strong>Routing</strong></td>
-<td>a lane is chosen by hashing a stable per-visitor key; a shared counter measured a completely flat curve, per-client affinity gave the numbers above</td>
+<td>a lane is chosen by hashing a stable per-visitor key</td>
 </tr>
 <tr>
 <td><strong>Failover</strong></td>
-<td>a lane refuses work it may not do with 421 and a retry-safety flag it <strong>computes</strong>, and the worker retries the primary</td>
+<td>a lane refuses work it may not do with 421 and a retry-safety flag it computes</td>
 </tr>
 <tr>
 <td><strong>Staleness</strong></td>
@@ -588,19 +783,11 @@ throttles the access write on <code>KernelEvents::TERMINATE</code>, which this S
 </tbody>
 </table>
 <p>Three refusals hold it up. A torn copy, where table A is at generation 12 and table B at 13, is
-refused and the position stays in-flight until a whole consistent copy lands. A lane that has not
-finished cannot pass for one that has: the first chunk declares which tables the copy will deliver
-and the lane holds the driver to that. And no lane is admitted without <code>system.private_key</code> arriving
-from the primary, because two objects each minting their own issue CSRF tokens the other rejects.</p>
-<p><code>REPLICA_COUNT</code> and <code>REPLICA_LAG_MS</code> are both KV-overridable, so a pool can be turned on, resized or
-turned off without a redeploy.</p>
-<div class="tsd-alert tsd-alert-important"><div class="tsd-alert-title"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><use href="assets/icons.svg#icon-alertImportant"></use></svg><span>Important</span></div><p>
-<code>REPLICA_COUNT</code> defaults to 0, which makes the modulus 1 and sends every request to the primary.
-Raise it after <code>?action=provision</code> has run. An unfilled lane refuses everything and the router
-answers from the primary, which works and buys nothing.</p>
-<p>Autoscaling provisions a lane on its own once a site has been contended for several alarm windows,
-so raising the var by hand is the way to pin a pool size rather than the way to get one.</p>
-</div>
+refused and the position stays in flight until a whole consistent copy lands. A lane that has not
+finished cannot pass for one that has, because the first chunk declares which tables the copy will
+deliver and the lane holds the driver to that. And no lane is admitted until <code>system.private_key</code>
+arrives from the primary, since two objects each minting their own would issue CSRF tokens the other
+rejects.</p>
 <h3 id="what-the-self-repair-layer-replaces" class="tsd-anchor-link">What the Self-Repair Layer Replaces<a href="#what-the-self-repair-layer-replaces" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <p>It is not a monitoring dashboard; it acts. A capped, GC'd health ledger; 12 host tripwires
 (empty render, size anomaly, asyncify called, mask leaked, semaphore dirty, incomplete migration,
@@ -647,9 +834,9 @@ can be configured into.</p>
 <tbody>
 <tr>
 <td>neither lever</td>
-<td style="text-align:right">1,398 ms</td>
+<td style="text-align:right">1,264 ms</td>
 <td style="text-align:right">2,127 ms</td>
-<td style="text-align:right">3,525 ms</td>
+<td style="text-align:right">3,391 ms</td>
 <td style="text-align:right">-</td>
 </tr>
 <tr>
@@ -657,21 +844,21 @@ can be configured into.</p>
 <td style="text-align:right">0</td>
 <td style="text-align:right">2,127 ms</td>
 <td style="text-align:right">2,127 ms</td>
-<td style="text-align:right">-40%</td>
+<td style="text-align:right">-37%</td>
 </tr>
 <tr>
 <td>shell assembly only</td>
-<td style="text-align:right">1,398 ms</td>
+<td style="text-align:right">1,264 ms</td>
 <td style="text-align:right">~467 ms</td>
-<td style="text-align:right">~1,865 ms</td>
-<td style="text-align:right">-47%</td>
+<td style="text-align:right">~1,731 ms</td>
+<td style="text-align:right">-49%</td>
 </tr>
 <tr>
 <td><strong>both, on by default</strong></td>
 <td style="text-align:right">0</td>
 <td style="text-align:right">~467 ms</td>
 <td style="text-align:right"><strong>~467 ms</strong></td>
-<td style="text-align:right"><strong>-87%</strong></td>
+<td style="text-align:right"><strong>-86%</strong></td>
 </tr>
 </tbody>
 </table>
@@ -855,7 +1042,7 @@ carries both the origin and the site id. <code>tests/node/cache-partition.spec.t
 <h2 id="📋-table-of-contents" class="tsd-anchor-link">📋 Table of Contents<a href="#📋-table-of-contents" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <ul>
 <li><a href="#-drupflare-vs-a-traditional-vps">Drupflare vs a Traditional VPS</a></li>
-<li><a href="#-read-replicas">Read Replicas</a></li>
+<li><a href="#-replica-lanes">Replica Lanes</a></li>
 <li><a href="#-free-vs-paid">Free vs Paid</a></li>
 <li><a href="#-why">Why</a></li>
 <li><a href="#-how-it-works">How It Works</a></li>
@@ -2060,10 +2247,9 @@ and <code>SYSLOG_URL</code> rather than from the calling code, and administrativ
 a network round trip where SQLite is a local read.</li>
 <li><strong>Greek word-final sigma lowercases differently</strong> from native PHP, and <code>mb_strwidth</code>
 under-counts emoji. Neither affects Drupal core.</li>
-<li><strong>Writes do not scale, and a replica pool does not change that.</strong> A replica refuses an
-authoritative write and hands it back, so every write is still one object and one thread. What a
-pool does scale is authenticated READS -- see <a href="#-read-replicas">Read Replicas</a> -- and it needs
-provisioning per lane rather than a number you raise.</li>
+<li><strong>Writes do not scale, and a replica pool does not change that.</strong> A lane refuses an authoritative
+write and hands it back, so every write is still one object and one thread. What a pool scales is
+authenticated reads; see <a href="#-replica-lanes">Replica Lanes</a>.</li>
 <li><strong>A module install leaves the object with no room to do anything else.</strong> It is the most expensive
 thing a site can do, and it ends with the wasm heap near the isolate's 128 MB limit. <code>memory.grow</code>
 has no inverse, so the heap never shrinks; a further growth is served at a smaller step rather than
@@ -2133,9 +2319,13 @@ and are the authority on their own module.</p>
 <li><a href="#against-a-vps"><span>Against a <wbr/>VPS</span></a></li>
 <li><a href="#the-cost-model"><span>The <wbr/>Cost <wbr/>Model</span></a></li>
 <li><a href="#🌍-geography-the-term-localhost-leaves-out"><span>🌍 <wbr/>Geography, the term localhost leaves out</span></a></li></ul></li>
-<li><a href="#🧬-read-replicas"><span>🧬 <wbr/>Read <wbr/>Replicas</span></a></li>
+<li><a href="#🧬-replica-lanes"><span>🧬 <wbr/>Replica <wbr/>Lanes</span></a></li>
 <li>
 <ul>
+<li><a href="#scaling"><span>Scaling</span></a></li>
+<li><a href="#what-a-lane-buys-against-a-vps"><span>What a <wbr/>Lane <wbr/>Buys <wbr/>Against a <wbr/>VPS</span></a></li>
+<li><a href="#autoscaling"><span>Autoscaling</span></a></li>
+<li><a href="#how-a-lane-is-built"><span>How a <wbr/>Lane <wbr/>Is <wbr/>Built</span></a></li>
 <li><a href="#what-the-self-repair-layer-replaces"><span>What the <wbr/>Self-<wbr/>Repair <wbr/>Layer <wbr/>Replaces</span></a></li></ul></li>
 <li><a href="#🆓-free-vs-paid"><span>🆓 <wbr/>Free vs <wbr/>Paid</span></a></li>
 <li>

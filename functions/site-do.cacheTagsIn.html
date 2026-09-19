@@ -17,21 +17,13 @@
 <div class="tsd-signature tsd-anchor-link" id="cachetagsin"><span class="tsd-kind-call-signature">cacheTagsIn</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">params</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">unknown</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><a href="#cachetagsin" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Cache tag names among a statement's bound parameters.</p>
-<p><code>Connection::merge('cachetags')</code> binds the tag rather than inlining it, so the name is in
-<code>params</code> and never in the SQL text. Anything that does not look like a tag is dropped, and an
-empty result makes the caller fall back to purging everything.</p>
-<p><strong>IT READ ONLY A POSITIONAL ARRAY, AND SO IT MISSED EVERY INVALIDATION AFTER A TAG'S FIRST.</strong>
-<code>merge()</code> compiles to a SELECT then an INSERT or an UPDATE. The INSERT binds positionally
-(<code>[1, 'node_list']</code>) and was recorded; once the row exists every later invalidation takes the
-UPDATE branch, which binds by NAME (<code>{':db_condition_placeholder_0': 'node_list'}</code>), and an object
-is not an array so the tag was dropped. Measured on a populated site: a node save moved
-<code>node_list</code> from 1 to 4 while the host recorded only <code>node:20</code>, so <code>/</code> and <code>/node</code> were never
-purged and the front-page listing stayed stale. Three menu-item saves moved
-<code>config:system.menu.main</code> and purged nothing, and a repeat term save recorded no tag at all --
-where <code>flushTagPurge()</code> returns early on an empty set, so the invalidation is dropped rather than
-widened.</p>
-<p>Reading the VALUES of a named map is what fixes it. The filters below are unchanged and are what
-keeps a placeholder name or a checksum out of the result.</p>
+<p><code>Connection::merge('cachetags')</code> binds the tag rather than inlining it, so the name is in <code>params</code>
+and never in the SQL text. Anything that does not look like a tag is dropped, and an empty result
+makes the caller fall back to purging everything.</p>
+<p>Both binding shapes must be read. <code>merge()</code> compiles to a SELECT then an INSERT or an UPDATE: the
+INSERT binds positionally (<code>[1, 'node_list']</code>) and the UPDATE by NAME
+(<code>{':db_condition_placeholder_0': 'node_list'}</code>). Reading only the array missed every invalidation
+after a tag's first, so <code>/</code> and <code>/node</code> were never purged and the front page stayed stale.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -39,7 +31,7 @@ keeps a placeholder name or a checksum out of the result.</p>
 <li><span><span class="tsd-kind-parameter">params</span>: <span class="tsd-signature-type">unknown</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b5f9958f865e623146236f6f9db0b8602acf03d4/src/site-do.ts#L1531">src/site-do.ts:1531</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/efe1ec49def1304a0621c7b9caeac9ca8ee4a3f0/src/site-do.ts#L1513">src/site-do.ts:1513</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

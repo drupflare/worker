@@ -20,20 +20,21 @@ project shipped before it is gone from the path.
 
 | | measured | instrument |
 | --- | --- | --- |
-| Worker bundle, uncompressed | **14,824,387** of 67,108,864 (22.1%) | `wrangler deploy --dry-run` |
+| Worker bundle, uncompressed | **15,495,107** of 67,108,864 (23.1%) | `bun run release:check` |
 | PHP 8.5, `long64` variant | **2,671,745** bytes as a zstd frame; 12,234,575 raw | `interp.lock.json` |
 | Isolate startup | **5 ms** median (n=4) of a 1,000 ms budget, was 106 | Cloudflare `Worker Startup Time` |
 | Startup billed to a request | **0-1 ms**; it is not billed | edge `cpuTime`, 3 cold isolates |
-| Cold boot | **1,398 ms** (n=3); re-measured 2026-09-09 at **1,264** (n=4, 1,113-1,343) | edge `cpuTime` |
+| Cold boot | **1,264 ms** (n=4, 1,113-1,343), heap image off, which is the shipping default | edge `cpuTime` |
 | Cold boot from a stored heap image | **1,912 ms** (n=5, 1,561-2,020), so a restore COSTS ~648 ms | edge `cpuTime`, two deployed arms |
 | Cold boot, object held resident | **0 ms**; an 8 s alarm re-arm keeps one incarnation | 71 consecutive alarms, deployed |
 | Share of requests meeting a cold boot | **not yet read**; `src/ops/cold-encounter.ts` reports it | `/serve-stats`, per site |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
-| Authenticated page, both levers on | **~467 ms** against 3,525 with neither | derived; see Warming |
+| Authenticated page, both levers on | **~467 ms** against 3,391 with neither | derived; see Warming |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
 | Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
-| Re-render against a real VPS, Drupal bins warm | **32 ms against 25 ms**, 1.28x | `docker/vps.yml`, same machine |
+| Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
+| Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
 | Anonymous cached against the same VPS | **2 ms p50 / 4 ms p95** against 3 / 49 | same rig |
 
 The bundle figure moves whenever `src/` does. Run the command rather than carrying a number.
@@ -92,22 +93,56 @@ The exposure is hibernation eligibility rather than arithmetic; see Hibernation 
 The architecture wins by not rendering rather than by rendering faster. An uncached render costs
 **2,127 ms** of edge `cpuTime`, and one Durable Object is one thread that cannot be made bigger.
 
-**A SITE IS NO LONGER ONE OBJECT.** That sentence used to end here, and the second half of it -- "so
+**A site is no longer one object.** That sentence used to end here, and the second half of it -- "so
 a site is one thread" -- was a property of the topology rather than of the platform. A namespace
 holds unlimited objects, an authenticated GET writes no authoritative state under this SAPI, and a
-site now has replica lanes. Measured on a deployed free worker with the control repeated at both ends
-of the sweep: **1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 / 8 / 16, which is 95% at sixteen.**
-Content sites win decisively and authenticated reads scale with the pool. **Writes now spread too**, and this paragraph used to
-say they could not: a lane runs the write, discards its own effect and forwards the statements to
+site now has replica lanes. The measured curve -- **1.00 / 1.72 / 3.64 / 7.10 / 15.19x at 1 / 2 / 4 /
+8 / 16, 95% at sixteen** -- was taken with `?lane=N` addressing each object DIRECTLY, so it is a
+statement about the topology: N objects, driven separately, summed.
+
+**Routed throughput is a different and smaller number, and it is measured now: 4.74x at 16 lanes
+(16 clients) and 4.54x (64 clients)**, driven through the front worker with the affinity hash
+choosing the lane and the primary also serving bucket 0 and feeding replication. The latency effect
+is larger than the throughput one, p50 falling 16.4x and 24.8x. Four defects had to be fixed before
+any routed reading meant anything; see the Replica Scaling section.
+
+Per-object, driven alone on a deployed paid worker: **31 authenticated renders/s at p50 216 ms**, and
+**268 cached pages/s at p50 ~20 ms**.
+
+**Writes spread too**: a lane runs the write, discards its own effect and forwards the statements to
 the primary, which stays the sequencer. What still serialises there is the commit itself and any
 write whose target originates a value a lane may not mint.
 
-**THERE IS A VPS ARM AS OF 2026-09-07, and it moved the headline.** `docker/vps.yml` runs nginx and
-PHP 8.5 FPM with opcache and tracing JIT against the same Drupal tree and the same site database this
-project serves, so the runtime is the only variable. On one machine with Drupal's own bins warm on
-both sides, a re-render is **32 ms against 25 ms, 1.28x**, and drupflare's spread is tighter (29-37
-against 22-69). On the anonymous cached path drupflare wins outright: **2 ms p50 against 3, 4 ms p95
-against 49**, and at 32 concurrent clients it holds 438 req/s while the VPS falls to 122.
+**There is a VPS arm as of 2026-09-07.** `docker/vps.yml` runs nginx and PHP 8.5 FPM with opcache and
+tracing JIT against the same Drupal tree and the same site database this project serves, so the
+runtime is the only variable. On the anonymous cached path drupflare wins outright: **2 ms p50
+against 3, 4 ms p95 against 49**, and at 32 concurrent clients it holds 438 req/s while the VPS falls
+to 122.
+
+**THE RE-RENDER FIGURE THIS SECTION CARRIED WAS TAKEN THROUGH A BROKEN ARM, and all three parts of it
+were wrong.** It read 32 ms against 25 ms, 1.28x. Re-measured 2026-09-19 over n=25 with the arm order
+rotated per cell:
+
+- **The drupflare arm rendered nothing.** It drove `/bump` then `/fill` and timed a bare `/fill`; the
+  bump re-queues paths and arms the fill alarm, `fetch()` holds the gate, so the timed call waited
+  behind that batch and then found an empty queue. Six of seven samples answered
+  `{"filled":null,"remaining":0}`. The published number was gate-queue time.
+- **The VPS arm rendered a different page.** Its `vps-db` volume is not re-seeded by `vps:up`, so it
+  held content from an earlier run: 23,284 bytes and ten node teasers against drupflare's 17,692 and
+  none. After `vps:down -v`, the two agree to 0.2%.
+- **Nothing guarded either.** There was no check on cache state, body size, or whether a render
+  happened, and the render cells ran `vps` then `edge` in fixed order while the curve cells rotate.
+
+Corrected, on the arms' own server clocks with `X-Drupal-Dynamic-Cache: MISS` verified on both sides:
+**30 ms against 24 ms, 1.21x**, of which 1 ms is the no-work Durable Object hop. Two further runs the
+same day read 1.36x and 1.21x on a machine carrying 9.9 GB of swap, so treat that spread as the
+resolution rather than the measurement.
+
+**The ratio applies to fewer pages than it appears to.** A save calls `purgeForTags()`, and
+`bumpGeneration()` leaves `dynamic_page_cache` alone on that reason, so only tag-matched entries die.
+Every other re-queued page renders from a dynamic-page-cache hit at **22 ms against the VPS's 24**,
+which drupflare wins. The old rig purged the whole bin and so measured the worst case as if it were
+the common one.
 
 **An external review divided 2,127 ms by 9.47 ms and published 225x.** That is the both-bins-emptied
 edge render over the native warm-kernel render: two workloads, two instruments, two machines. It is
@@ -236,8 +271,8 @@ does not move it.
 A pre-built site is shipped and replayed rather than installed. `assets/drupal-sql/` holds the
 chunked SQL; `src/db/migrate-sql.ts` replays it as a JavaScript loop with a cursor in DO storage.
 
-The manifest records **62 chunks / 1,275 rows / 1,523 statements** as of 2026-09-08; it moves with
-the packed database, so read `assets/drupal-sql/manifest.json` rather than this line. A live
+The manifest records **75 chunks / 1,370 rows / 1,669 statements**; it moves with the packed
+database, so read `assets/drupal-sql/manifest.json` rather than this line. A live
 migration drove exactly 79 of the 79 a then-current manifest held, at **max 3 ms of edge cpuTime per
 chunk, 0 chunks over the 10 ms cap**. In one invocation the same work was 3,467 ms.
 
@@ -395,7 +430,7 @@ host function is a port scanner and a protocol-smuggling surface, strictly wider
 SSRF because it is not confined to HTTP semantics. Both are secrets and neither may join
 `KV_OVERRIDABLE`.
 
-**THIS SAID A REDIS CACHE BACKEND CANNOT BE BUILT, AND `drupal/redis` IS `verified`.** The reasoning
+**This said a Redis cache backend cannot be built, and `drupal/redis` is `verified`.** The reasoning
 was correct about the DEFERRED tier -- a cache get has to answer inside the request that asked, and a
 deferred exchange always misses the first time -- and it closed the objective along with the
 mechanism. `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and
@@ -414,7 +449,7 @@ are persisted to `cfw_meta` because the alarm re-resolves the transport and neve
 
 ### Identity
 
-**HOST-SIDE PRE-EXCHANGE IS NO LONGER THE ONLY ROUTE, AND THIS SECTION SAID IT WAS.** The argument
+**Host-side pre-exchange is not the only route.** The argument against the alternative
 was that `WITH_OPENSSL=0` leaves the interpreter unable to verify an RS256 `id_token` at all, so even
 a synchronous token fetch would hand PHP something it could not check -- and an unverified
 `id_token` is an unauthenticated login. Both halves have since moved. `src/drupal/openssl-fix.ts`
@@ -484,9 +519,7 @@ WebSocket, no request still being processed, no outbound TCP socket or WebSocket
 **A pending alarm is not on that list.** An armed-alarm object accrued 0.177 s over a 60 s pending
 window, so ARMING an alarm costs a row and a DO request and buys no residency.
 
-**The sentence that followed generalised that to the whole chain and was wrong**, and the correction
-is later in this file rather than here, which is the wrong order for a reader. Arming does not warm;
-FIRING under the hibernation threshold does, because the firing resets the idle clock. The threshold
+**Arming does not warm; firing under the hibernation threshold does**, because the firing resets the idle clock. The threshold
 is 10 s, measured: re-armed every 8 s one incarnation survived 71 consecutive alarms, while at 12,
 20, 30 and 45 s the constructor ran again on every probe. And the row cost was mostly the meters
 counting their own writes -- 3 charged rows per idle tick, of which 2 were `flushDailyRows()` and
@@ -564,7 +597,7 @@ The isolate ceiling is **134,217,728 bytes**. The heap starts at `INITIAL_MEMORY
 peaks where the growth step puts it; at the shipping configuration the authenticated peak is
 **113,770,496**, leaving 19.50 MiB.
 
-**THAT 19.50 MiB IS GROSS, AND EVERY MEMORY FIGURE BELOW MEASURES WASM LINEAR MEMORY ALONE.** The
+**That 19.50 MiB is gross, and every memory figure below measures wasm linear memory alone.** The
 isolate's budget also covers the JS heap, and the JS half is not small. Measured on a deployed
 worker 2026-09-11 by reading all four terms together for the first time:
 
@@ -587,7 +620,7 @@ now, and `/serve-stats` reports the four terms. And the index is measured by RET
 file size: 1,324,155 bytes of JSON retain 1,980,912, so the serialised size under-reads it by a
 third.
 
-**THAT PEAK IS PER WORKLOAD AND THE ISOLATE IS CHARGED PER INCARNATION.** `USE_ZEND_ALLOC=0` means
+**That peak is per workload and the isolate is charged per incarnation.** `USE_ZEND_ALLOC=0` means
 PHP returns nothing between requests, so demand inside one incarnation is the SUM of what it has
 done, and the growth step rounds every rise up. Measured on one object, MiB:
 
@@ -605,7 +638,7 @@ it exceeded the isolate by construction -- the first-run path of every new site.
 worker, and it takes every in-flight request on the object with it plus a cascade of
 `Internal error in Durable Object storage caused object to be reset`.
 
-**THE FIX IS AT PROVISIONING, NOT AT THE CEILING**, and the ceiling version was built first. A drop
+**The fix is at provisioning, NOT at the ceiling**, and the ceiling version was built first. A drop
 keyed on linear memory runs BETWEEN invocations, and on a deployed paid worker the reset happened
 INSIDE one: the first authenticated `/admin/content` on each of four freshly provisioned sites went
 from the install's 108.50 straight past the limit in a single render, 4,661-4,936 ms of cpuTime,
@@ -624,7 +657,7 @@ taken away the renderer it had installed. Reading `binary` unguarded threw
 `Cannot read properties of undefined` out of `fetch()` on the refusal path of a half-migrated site,
 which is a request that had been answering correctly before any of this was added.
 
-**CRON WAS THE FIRST HYPOTHESIS AND THE MEASUREMENT REFUTED IT.** Both resets landed on an alarm
+**Cron was the first hypothesis and the measurement refuted it.** Both resets landed on an alarm
 whose logs were full of the update module's deferred fetches, which reads as a cause and is not one:
 a sweep of 16 firings moves linear memory by nothing at all, on a cold interpreter and on a hot one.
 
@@ -634,7 +667,7 @@ the first over-large rung, so a serving object never recycles and one that has j
 does. It runs BETWEEN invocations because the old module's memory is reclaimed only once it is
 collected. Measured after: the ladder above ends at 96.00 and stays there.
 
-**A FILL BATCH IS N WORKLOADS IN ONE INVOCATION, so the recycle cannot reach it.** The batch was
+**A fill batch is n workloads in one invocation, so the recycle cannot reach it.** The batch was
 bounded by page count and nothing else -- the wall-clock guard cannot bind, because the clock does
 not advance across a synchronous `php._run()`. On paid, where `fillBatchSize` is 25, the first
 authenticated render on each of four freshly provisioned sites reset the object: cpuTime
@@ -664,7 +697,7 @@ request.
 
 ### Bundle Size
 
-**THE CEILING IS 67,108,864 BYTES UNCOMPRESSED, THE SAME ON FREE AND PAID, AS OF 2026-09-04.**
+**The ceiling is 67,108,864 bytes uncompressed, the same on free and paid, as of 2026-09-04.**
 Cloudflare removed the compressed limit that day: "There is no compressed size limit. Only the
 uncompressed bundle size counts." The tree measures a fifth of that; `bun run release:check` prints
 the current figure, which moves whenever `src/` does.
@@ -681,7 +714,7 @@ raw `CompiledWasm` import, and startup fell from 106 ms to 5 ms with it.
 figure against 3,145,728 and therefore FAILED a bundle that deploys. A gate enforcing a dead limit
 reads exactly like a real regression; when a platform limit moves, grep for the constant.
 
-**AND THE GREP MISSED TWO, which is the part worth carrying.** `scripts/measure/php-version-headroom.ts`
+**And the grep missed two, which is the part worth carrying.** `scripts/measure/php-version-headroom.ts`
 and `scripts/measure/size-report.mjs` held their own copies of the same constant, and the first
 carried a 148-assertion spec whose verdicts included *"reports both versions as not fitting"* and
 *"clears the ceiling on the WASM ALONE, so no bundle accounting can rescue either"* -- for **PHP 8.5,
@@ -741,14 +774,14 @@ So brotli is **+10.2 ms against what shipped before** and **+16.4 ms against nat
 available for free once `node:zlib` turned out to work at module scope. **The same mechanism produces
 both effects**: brotli's context modelling is what buys the smaller frame and what costs the decode.
 
-**THE METER IS ISOLATE STARTUP, NOT COLD BOOT, and confusing the two overstates the headroom by an
+**The meter is isolate startup, NOT cold boot, and confusing the two overstates the headroom by an
 order of magnitude in the flattering direction.** This inflate runs at module scope, so it is charged
 to `Worker Startup Time`, not to the 1,398 ms figure -- which is a different meter, PHP's boot plus
 Drupal's bootstrap, charged per invocation on a cold OBJECT, and one the warm and shell levers
-already took from 3,525 ms to ~467 ms with boot at 0. An earlier draft divided by 1,398 and called
-the cost 0.7%.
+already took from 3,391 ms to ~467 ms with boot at 0. Dividing by 1,398 instead gives 0.7%, which
+prices it against the wrong meter.
 
-**AND ON THE EDGE THE DIFFERENCE IS NOT MEASURABLE.** Deployed to a throwaway on 2026-08-30, the two
+**And on the edge the difference is NOT measurable.** Deployed to a throwaway on 2026-08-30, the two
 seams alternated so Cloudflare-side drift hits both arms, `Worker Startup Time` read off each
 deploy, n=9 each:
 
@@ -770,7 +803,7 @@ magnitude more deploys, and nothing turns on the answer.
 Isolate startup is also the RAREST of the three paths -- an isolate outlives an object incarnation,
 which outlives a request -- so this is the cost paid least often of anything measured here.
 
-**AN EARLIER READING SAID "essentially a wash" AND WAS TAKEN UNDER LOAD**, with the full vitest gate
+**An earlier reading said "essentially a wash" and was taken under load**, with the full vitest gate
 running; every arm was inflated about 3.5x and their order survived but their differences did not.
 Measure an inflate on an idle machine.
 
@@ -807,7 +840,7 @@ answer, `x-cfw-cache: RENDER` asserted on the responses, n=20 per arm:
 **Identical p50 and identical minimum.** The minimum is the least noisy statistic available and the
 one a 10% gain moves first; it did not move at all.
 
-**THAT INSTRUMENT IS DILUTED AND THE NEGATIVE IS WEAKER THAN IT LOOKS.** The figure is a curl wall
+**That instrument is diluted and the negative is weaker than it looks.** The figure is a curl wall
 clock, and a matched measurement on 2026-08-30 put the RENDER at 23 ms while curl total was ~70 ms on
 the same request -- local `wrangler dev` HTTP, the front worker and the edge-cache layer are the
 rest, and a static asset with no PHP at all costs 4.5-13.1 ms through the same server. So roughly
@@ -939,12 +972,12 @@ Boot is one synchronous `php._run()`. No cursor design cuts it up; it needs a JS
 permanently warm object, and **the warm object is now the one that exists** - see "Warming and the
 10-Second Threshold".
 
-**WHY IT CANNOT BE SPLIT**, because "run it in slices" is the first thing anyone proposes. `_run()`
+**Why it cannot be split**, because "run it in slices" is the first thing anyone proposes. `_run()`
 enters wasm and the wasm stack runs to completion. A wasm module compiled `ASYNCIFY=0` has no
 suspension point in it, so there is nothing for a cursor to resume FROM: the JavaScript event loop
 cannot interrupt a synchronous wasm call, and PHP's own execution has no yield primitive the host can
 reach. Every other sliced thing here - the migration, `updb`, the cron chain - is divisible because
-the DIVISION IS IN THE HOST: each unit is a separate `_run()` with its state in SQL between them. A
+the division is in the host: each unit is a separate `_run()` with its state in SQL between them. A
 boot has no such seam, because the thing being built IS the in-memory state.
 
 The two mechanisms that would add a seam are the two named above. JSPI compiles in real suspension
@@ -958,7 +991,7 @@ duration is wall clock, a suspension trips two hibernation disqualifiers, and on
 means a suspended render stalls every other request to that site. A warm object removes the need for
 a seam instead of adding one, which is why it is the answer that shipped.
 
-**THE LAZY MOUNT WAS NAMED HERE AS THE DECISIVE BLOCKER AND IT IS THE WRONG FRAME.** This paragraph
+**The lazy mount was named here as the decisive blocker and it is the wrong frame.** This paragraph
 used to end "the lazy mount puts a JS frame under the PHP stack that JSPI cannot suspend across". Six
 call sites put a JS frame under that stack and the lazy mount is the least dangerous of them, because
 `materialise()` is a LEAF -- fflate and an assignment, nothing that re-enters wasm, so no suspension
@@ -971,7 +1004,7 @@ build. The refcounted mask seam recorded as "designed and unbuilt" is `cartridge
 at six call sites and pinned by its own spec; what is unbuilt is `zend_wasm_slice_raise` alone, which
 costs latency rather than correctness.
 
-**ASYNCIFY IS REFUSED, AND NOT FOR THE REASON THAT EXPIRED.** The bundle argument died with the
+**Asyncify is refused, and NOT for the reason that expired.** The bundle argument died with the
 compressed size limit on 2026-09-04 -- the tree is 20.2% of a 64 MiB ceiling and could absorb the
 growth. The reason it stays refused is per-call cost. `-sJSPI` aliases to `ASYNCIFY=2`, native stack
 switching with no Binaryen instrumentation, and measures **-0.35%** on the bundle across phasm's own
@@ -987,7 +1020,7 @@ So the surviving objective is unchanged -- a PHP request obtaining an answer tha
 it finishes -- and the mechanism to reach for is JSPI, not Asyncify. It stays closed on the four
 refusals above plus the reopening condition already recorded: a named site with a Tier C need.
 
-**ZEND FIBERS ARE NOT AN ALTERNATIVE, AND THE REASON IS ONE LEVEL BELOW WHERE IT WAS LOOKED FOR.**
+**Zend fibers are NOT an alternative, and the reason is one level below where it was looked for.**
 Proposed on the grounds that Zend already manages the continuation, so the wasm engine would not have
 to. Measured on the shipping 8.5 binary: the class exists and is fully declared, and `->start()`
 aborts the runtime with `Aborted(missing function: getcontext)`. php-src's ucontext branch calls
@@ -1003,7 +1036,7 @@ way -- `FIBER_SHIM` / `PhpWasmSyncFiber` exists in `src/drupal/site-php.ts` and
 `scripts/patch-drupal.mjs` rewrites Drupal core's five `new \Fiber(` sites onto it, so core's own
 fiber use is excised from the shipping tree.
 
-**A ZEND VM CONTINUATION IS THE FIRST MECHANISM TO SURVIVE ITS GATE.** Measured 2026-09-08 on local
+**A Zend VM continuation is the first mechanism to survive its gate.** Measured 2026-09-08 on local
 PHP 8.5.7 with `phpize`, a 200-line extension, **zero php-src changes and no wasm toolchain session.**
 
 Every mechanism above assumed the external operation must happen while the PHP computation is still
@@ -1039,7 +1072,7 @@ every call site. The predicate refuses nothing the three libraries do. Guzzle's
 frame and DO read 1, so a park there throws instead of returning a wrong answer; the transport call
 site above them reads 0, so the refusal guards a site the design does not use.
 
-**THE COST IS MEASURED, and a park is not a network round trip.** Count-and-continue against the
+**The cost is measured, and a park is not a network round trip.** Count-and-continue against the
 GreenMail and Keycloak containers pinned in `docker/compose.yml`: PHPMailer delivered a real message
 on 3025, Guzzle took a 200 carrying an `id_token` from Keycloak on 8081, and Predis drove the rig's
 Redis.
@@ -1067,12 +1100,12 @@ read one park per operation; a live `PING` is the control now. `fwrite` and `fre
 streams, and Guzzle writes each response body to a `php://temp`, so the counter reads the stream's own
 `ops->label` and counts only `*socket*`.
 
-**THAT BUILD ORDER WAS DERIVED FROM THE TRIP COUNTS AND THE TRIP COUNTS DO NOT DECIDE IT.** It read
+**That build order was derived from the trip counts and the trip counts DO NOT decide it.** It read
 `openid_connect` first at 3 trips, `smtp` second at 13, `redis` third at 9 per render -- ranking three
 modules by cost without asking whether the park reaches any of them. Two of the three it does not,
 and the order came out exactly backwards.
 
-- **`openid_connect` cannot be parked THROUGH GUZZLE'S OWN TRANSPORT**, which is a narrower claim
+- **`openid_connect` cannot be parked through guzzle's own transport**, which is a narrower claim
   than the one first written here and it took two corrections to get to. The trip count came from a
   NATIVE php with ext-curl; the shipping interpreter has no curl, so Guzzle picks its `StreamHandler`
   and the call goes through a userland stream wrapper PHP invokes from inside the internal `fopen`.
@@ -1093,7 +1126,7 @@ So `blocking-outbound` and `blocking-socket` are two capabilities in `catalog.ts
 satisfies the second only. One flag would have said the runtime can make a blocking HTTP call because
 it can make a blocking socket one.
 
-**AND IT NOW DELIVERS, measured 2026-09-08 on the long64 build against the rig's Redis.** PHP opens
+**And it now delivers, measured 2026-09-08 on the long64 build against the rig's Redis.** PHP opens
 a socket, writes and reads twice, and receives `+OK|+PONG` -- five parks, each performed in
 JavaScript on a LATER invocation and resumed back into the same PHP chain. A real Drupal render with
 the traps armed reports `done`, which is the check that has to pass before arming anything: the
@@ -1106,7 +1139,7 @@ parked chain into reused VM stack memory -- reading first as a refusal and then 
 `RuntimeError: memory access out of bounds`. A resumed chain now relinks its root to the resuming
 frame, which is what `zend_generator_resume` does.
 
-**THREE INSTRUMENTS MEASURED THIS AND ALL THREE WERE WRONG, in both directions.** The mechanism was
+**Three instruments measured this and all three were wrong, in both directions.** The mechanism was
 declared working and then declared impossible before it was either:
 
 - **A flat native harness reported success.** Calling run and resume from the same scope puts the
@@ -1122,7 +1155,7 @@ declared working and then declared impossible before it was either:
   would not need a park at all. It is `socket.park.inline` now, named for what it measures, and
   `blockingSocket` is a literal beside `SHIPPED_CRON` for the same reason that one is.
 
-**AND IT WORKS ON WASM, measured 2026-09-08 on a PHP built for it.** The gate above ran on a native
+**And it works on wasm, measured 2026-09-08 on a PHP built for it.** The gate above ran on a native
 interpreter, which left one question: whether `EG(vm_stack)`, `EG(current_execute_data)` and the
 opline behave the same when the longjmp is emscripten's rather than the platform's. They do, and the
 output is byte-identical.
@@ -1174,7 +1207,7 @@ spends `13 x RTT` on an alarm rather than a visitor request, because Drupal's ma
 defers it. `redis` spends `9 x RTT` on **every render that misses the page cache**, which is where
 RTT multiplies.
 
-**RTT IS MEASURED, 2026-09-08**, on a throwaway free worker whose Durable Object made N SEQUENTIAL
+**RTT is measured, 2026-09-08**, on a throwaway free worker whose Durable Object made N sequential
 `fetch()` calls. Sequential because a park cannot pipeline: the PHP chain is frozen until its answer
 arrives, so N trips are N round trips and a parallel reading would understate them. `Date.now()` is
 the right instrument here and only here, for the reason RULE 0 was narrowed -- the clock is frozen
@@ -1289,7 +1322,7 @@ mechanism closes; the objective is the cold path and the stale read owns it.
 worker, and a median over both understates every phase. That mistake is what an unfiltered first pass
 produced.
 
-**Boot work is saturated FOR THE REGENERATION CEILING.** Once the fill window amortises the boot,
+**Boot work is saturated for the regeneration ceiling.** Once the fill window amortises the boot,
 that ceiling is bound by rows written, so a 20x reduction in boot cost per fill moves it about **1%**.
 Rows work first, and that is a statement about the CEILING.
 
@@ -1327,9 +1360,9 @@ n=116 firings across two objects, torn down afterwards:
 | wall time | 23.3 ms | 252 s | -- | -- |
 | duration | 2.9e-3 GB-s | 31.4 GB-s | 13,000 | 0.24% |
 
-**This paragraph said "one request and one row per firing", and the row half was wrong.** It was
-reasoned from the published "a `setAlarm()` is one row written" rather than measured, and
-`FREE_QUOTAS.rowsPerAlarmArm` carried the same 1. A firing charged THREE: the `setAlarm`, plus one
+**A firing is one request but three rows, not one.** The figure of 1 was reasoned from the published
+"a `setAlarm()` is one row written" rather than measured, and `FREE_QUOTAS.rowsPerAlarmArm` carried
+it. A firing charged three: the `setAlarm`, plus one
 row each for `flushDailyRows()` and `flushDailyDoRequests()`. **Two thirds of a warming tick's row
 cost was the daily meters recording their own writes** -- on an idle tick there is nothing else for
 them to record, so the counter sustained itself and was most of what it counted.
@@ -1357,9 +1390,9 @@ authenticated one, because a session-carrying response is never stored in the an
 
 | authenticated page | boot | render | total |
 | --- | ---: | ---: | ---: |
-| neither lever | 1,398 ms | 2,127 ms | 3,525 ms |
+| neither lever | 1,264 ms | 2,127 ms | 3,391 ms |
 | warm only | 0 | 2,127 ms | 2,127 ms |
-| shell assembly only | 1,398 ms | ~467 ms | ~1,865 ms |
+| shell assembly only | 1,264 ms | ~467 ms | ~1,731 ms |
 | both | 0 | ~467 ms | **~467 ms** |
 
 The boot column is a measured subtraction. **The render column is derived across instruments** and is
@@ -1413,18 +1446,18 @@ boot; reporting a mean would fold a 1.4 s boot into a 23 ms write.
 
 ### Rows Per Fill
 
-There is no single figure. A fill is **2 / 12 / 19 / 24 / 156 rows** depending on what is already
+There is no single figure. A fill is **2 / 9 / 19 / 14 / 91 rows** depending on what is already
 warm, and `ROWS_PER_FILL` in `scripts/measure/free-envelope.ts` names all five classes; the model
-defaults to `realRender: 12`. Every figure is counted at the storage handle, so it includes the
+defaults to `realRender`. Count them from that constant rather than from this line. Every figure is
+counted at the storage handle, so it includes the
 host's own writes -- notably the `cfw_page` insert that stores the whole rendered page.
 `tests/integration/rows-per-fill-audit.spec.ts` re-measures each class and pins it; three consecutive
 runs read identical counts, so these are exact charges rather than noisy readings.
 
-Two of those classes were wrong until 2026-08-28. `firstEverForPath` stood at 62 and measures 24, and
-the most expensive case had no class at all: the FIRST fill on a fresh object costs **156**, because
-`cache_discovery`, `cache_default` and `cache_routes` are populated once per OBJECT rather than once
-per path. Charging every new path the fresh-object figure overstates a fleet six-fold; leaving it out
-understates each new site by one 156-row event.
+The most expensive class is the FIRST fill on a fresh object, because `cache_discovery`,
+`cache_default` and `cache_routes` are populated once per OBJECT rather than once per path. It needs
+its own class: charging every new path the fresh-object figure overstates a fleet six-fold, and
+leaving it out understates each new site by one such event.
 
 **The serve tables are `WITHOUT ROWID`, which is worth a row per fill.** SQLite gives a rowid table's
 `TEXT PRIMARY KEY` its own unique index, so one logical write is charged twice. Measured on
@@ -1432,7 +1465,7 @@ understates each new site by one 156-row event.
 rows of 12 KB html cost +0.32% on disk. The cheapest class benefits most -- `warmReassemble` went
 3 -> 2 rows, its index charge to zero -- and the windowed regeneration ceiling moved 7,575 -> 8,196.
 
-**THE SAME SHAPE WAS WORTH MORE ON DRUPAL'S OWN CACHE BINS.** Every bin `DatabaseBackend` creates
+**The same shape was worth more on drupal's own cache bins.** Every bin `DatabaseBackend` creates
 keys on a TEXT `cid`, and `scripts/measure/index-audit.ts` reports 13 of the 14 with NO secondary
 index at all -- so the autoindex WAS their entire index cost. `scripts/pack-sql.ts` now emits the 14
 bins `WITHOUT ROWID`, and `Schema::createTableSql()` in the `cfw_do_sqlite` driver does the same for
@@ -1460,7 +1493,7 @@ responds to.
 the output byte-identical. Staleness was never the failure mode: tag invalidation reaches a warm
 entry through its checksum.
 
-**SCOPED INVALIDATION NEEDED AN INDEX, AND THE OBVIOUS INDEX COST MORE THAN THE FEATURE SAVED.** A
+**Scoped invalidation needed an index, and the obvious index cost more than the feature saved.** A
 content change used to bump the generation and purge every stored page, so a busy site spends most of
 its regeneration budget re-rendering pages the change did not touch. Purging only the paths whose tag
 set the write invalidated needs a `tag -> paths` mapping, and the natural implementation is a
@@ -1474,7 +1507,7 @@ null falls back to the wholesale purge. A scoped purge that misses a page serves
 see is wrong, which is worse than an extra fill, so an incomplete index must purge widely rather than
 narrowly.
 
-**A COMMIT CHARGES NO ROWS OF ITS OWN**, which closes batching as a lever on this meter. Forty
+**A commit charges no rows of its own**, which closes batching as a lever on this meter. Forty
 statements inside one `transactionSync` charged exactly what forty single-statement transactions
 charged, and doubling the statement count doubled the charge. The per-statement term is the only one
 that binds. The meter here is rows rather than a clock by necessity: `Date.now()` does not advance
@@ -1523,7 +1556,7 @@ Measured 2026-08-30 on the SHIPPING interpreter, per render. Route `/node`, `pag
 | residual           |       0.358 |     2.292 |     6.40x |                   - |                    |
 | **total**          |   **4.003** | **23.400** | **5.85x** |                      |                    |
 
-**THE TABLE ABOVE WAS MEASURED WITH THE SHIPPED CACHE-CONTEXT MEMO DISABLED BY THE PROBE ITSELF.**
+**The table above was measured with the shipped cache-context memo disabled by the probe itself.**
 `pw_install_probes()` swaps in a subclass derived from core's `CacheContextsManager`, which silently
 removes `Drupal\drupflare\Cache\MemoizedCacheContextsManager` -- the same container-swap-measures-the-
 wrong-object failure this document already records for the router and the census. Corrected by an A/B
@@ -1532,9 +1565,9 @@ on uninstrumented `renderMs` with no decorator on that service: **the memo is wo
 and the whole-render gap is **5.64x, not 5.85x**. The `cache_contexts` row above is the UN-memoized
 cost and must not be quoted as what ships.
 
-**THE RENDERER IS NOT 1.6x. IT IS 5.85x, AND IT IS THE LARGEST BUCKET ON BOTH SIDES.** The old figure
-was wrong by a factor of 3.7 and it is the number the whole "the renderer is nearly native, so attack
-the plumbing" framing rested on. That framing is retired: **everything is 3-6x except
+**The renderer is 5.85x, and it is the largest bucket on both sides.** A figure of 1.6x is out by a
+factor of 3.7, and it is what the "the renderer is nearly native, so attack the plumbing" framing
+rested on. That framing is retired: **everything is 3-6x except
 `assets.resolve` at 20x**, which is the only structural outlier in the system. Call counts agree
 bucket for bucket, so this is the same page rendered the same way; only the interpreter and the
 driver differ.
@@ -1572,12 +1605,12 @@ native-vs-native increments rather than cross-binary multipliers:
   fixed floor, not the rendering, is where the multiplier lives, and it is the thing to attribute
   next.
 
-**THE ONE MEASURED LEVER SO FAR: CSS/JS AGGREGATION, -3.2 ms/render, 14.3%.** `system.performance`
+**The one measured lever so far: CSS/JS aggregation, -3.2 ms/render, 14.3%.** `system.performance`
 ships `css.preprocess` and `js.preprocess` at `false`, which is Drupal's installer default and gives
 60 `<link>` + 11 `<script>` against 9 + 2, and 17,779 bytes against 12,304. Bracketed in both arm
 orders with no probe decorators, n=40 per arm: median 21 -> 18, minimum 19 -> 16, p25 20.3 -> 17.7,
 and the ON arm wins in both orders. It also removes ~5,400 bytes from every stored `cfw_page` row.
-**AND IT IS UNSHIPPABLE. The saving is real and the page it produces has no CSS and no JavaScript.**
+**And it is unshippable. The saving is real and the page it produces has no CSS and no JavaScript.**
 The route is fine: `AssetControllerBase::deliver()` preserves the whole query string through its
 redirect, the `include` parameter decodes to six real libraries, and the aggregate answers
 `200 text/css`. It answers 69 bytes, the licence header alone, because **the source files do not
@@ -1610,7 +1643,7 @@ memo**, because within-render repeats are 0.0% and across-render repeats are 87.
 keys. That split is the resident-interpreter advantage stated precisely, and it carries the
 cache-tag invalidation risk this project has already shipped a leak from.
 
-**A CROSS-PATH SHELL IS 80.5% OF THE BYTES AND 3-16% OF THE CPU. The direction is closed.** Anonymous
+**A cross-path shell is 80.5% of the bytes and 3-16% of the CPU. The direction is closed.** Anonymous
 pages are nearly identical -- censused over six pairs, overlap 85.0-97.8%, median 86.6%, and 14,305
 bytes common to all four paths in runs of 120 bytes or more. That reads like a large lever and is
 not one. Per-element self-time over 30 renders per path: the shell blocks plus `t:block` are
@@ -1633,7 +1666,7 @@ without a clock: `/node` runs 5.5 single `get()` calls and **1.1 `getMultiple()`
 items** per render -- `CachedStrategy` already doing it. Collapsing the remaining singles removes 4.5
 crossings at 0.074 ms. A third of the noise floor.
 
-**THE NOISE FLOOR, MEASURED ON TWO PROVABLY IDENTICAL ARMS.** A `cache.render` decorator that
+**The noise floor, measured on two provably identical arms.** A `cache.render` decorator that
 intercepted nothing -- `RenderCache::get()` resolves its bin through `variation_cache_factory`, so the
 swap could never fire, and the counters read `{served: 0, missed: 0, batches: 0}` -- gave two
 identical arms at n=100 each:
@@ -1648,7 +1681,7 @@ identical arms at n=100 each:
 **Median and mean drift by up to 1 ms on nothing at all; min and p25 do not.** That is the empirical
 basis for reporting minimums, and it means no lever under ~1 ms is measurable on a loaded machine.
 
-**WHY EVERY MEMO LEVER HAS FAILED, in one table.** The repeat shape is a property of the LAYER, not
+**Why every memo lever has failed, in one table.** The repeat shape is a property of the LAYER, not
 the subsystem, and there are only two layers:
 
 | layer                                   | within-render repeat | across-render | distinct keys |
@@ -1678,7 +1711,7 @@ response `json_encode`.
 interpreter multiplier on object-graph and hashtable work, which is what wasm is worst at, against
 Twig's string concatenation, which is what it is best at. The two numbers agree rather than conflict.
 
-**THAT MULTIPLIER IS NOT A SHARE, AND READING IT AS ONE MISRANKS THE WORK.** It is how much slower
+**That multiplier is NOT a share, and reading it as one misranks the work.** It is how much slower
 wasm is than native for that bucket. The share of a native steady-state render, measured per bucket
 by `scripts/bench/bench-render-breakdown.php` over 5 accumulated renders at 5.676 ms each:
 
@@ -1732,7 +1765,7 @@ getDefinition` 96.0% over 25, `current_user::id` 96.2% over 26 -- and the whole 
 property read. What made `convertTokensToKeys()` worth memoising was not its repeat rate but that
 each call did real work: `optimizeTokens()` plus a `getContext()` per token, 113 times.
 
-**AND THE CENSUS LIED UNTIL IT HAD A CONTROL.** Nine of fifteen services were swapped into the
+**And the census lied until it had A control.** Nine of fifteen services were swapped into the
 container and never called, because their consumers captured them at construction --
 `placeholder_strategy`, `html_response.attachments_processor`, `asset.resolver`, `render_cache`,
 `router.route_provider`, `module_handler` and three more. Each recorded nothing, which is
@@ -1813,7 +1846,7 @@ are shared.
 | seed database | 4,616,192, of which 1,320 of 1,321 rows are identical across sites |
 | filesystem in SQLite | **0** |
 
-**WHICH OF THOSE TWO THE PRODUCER ACTUALLY WRITES IS NOT A CHOICE, and that is what closed the heap
+**Which of those two the producer actually writes is NOT a choice, and that is what closed the heap
 image.** `snapshotStep()` fires on an alarm that arrives with no resident interpreter, boots
 `BOOT_KERNEL` and images. It does not require the site to have been configured or served, so on a
 fresh site it captures the COLD shape. A deployed probe on 2026-09-09 read **37,158,912 restored
@@ -1831,8 +1864,8 @@ Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
 `tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;
 nothing guarded the figure, which is how it drifted.
 
-**IT WAS THEN PINNED TO 37.79% ON THE STRENGTH OF THREE IDENTICAL RUNS, AND THAT WAS THE NEXT
-ERROR.** "n=3 with zero spread" was read as an exact property of the pack and written into the spec
+**It was then pinned to 37.79% on the strength of three identical runs, and that was the next
+error.** "n=3 with zero spread" was read as an exact property of the pack and written into the spec
 with a tolerance of 0.00005. Seven runs read 0.3472, 0.3779 five times, and 0.3797 -- the outliers
 appeared only once the full suite ran the spec under load, which is also why it passed alone and
 failed in the gate. **Three identical readings are evidence of a mode, not of zero variance**, and a
@@ -1878,8 +1911,8 @@ bytes, 768x512, all four shipped styles as WebP:
 have been scaled into a threshold. `INLINE_TRANSFORM_MAX_EDGE` is 480 from this reading: `large` at
 63.5 ms is produced during the request and `wide` at 188.2 ms goes to the fill queue.
 
-**The first instrument was wrong and read flat.** Building the source PNG in JS dominated every cell
-and gave ~130 ms across three styles that differ by 6x in real work. Caching the source and adding
+**Build the source image once, outside the timed region.** Building the source PNG in JS dominates
+every cell and reads ~130 ms flat across three styles that differ by 6x in real work. Caching it and adding
 `?only=source` as a control is what separated the transform from its setup, and it is the same
 shared-instrument shape as every other one on this list.
 
@@ -1945,7 +1978,7 @@ load is constant at 48 connections, zero errors:
 p50 is flat across every arm, so per-request service time does not degrade as the pool grows. The
 primary fed every pull with no measurable degradation; replication lag was 13-87 ms.
 
-**AND THE SAME SHAPE SURVIVED REAL REPLICATION, which is the claim the table above cannot make.**
+**And the same shape survived real replication, which is the claim the table above cannot make.**
 That arm ran a fixed CPU burn on independent objects; this one ran authenticated Drupal renders
 across a replicated pool, with the generator's own ceiling measured first at 121.9 req/s so the
 numbers mean something:
@@ -1966,8 +1999,8 @@ the terminal-`WITHDRAWN` defect, reproduced under load rather than reasoned abou
 4-lane arms lost runs to the same cause. Re-measure the curve now that readmission exists; the ratios
 above are a floor rather than a ceiling, because each arm was scored on the runs that survived.
 
-**THE SHORTFALL AT 4 AND 8 WAS THE INSTRUMENT, AND THE POOL SCALES TO 16.** This paragraph said the
-gap was "not attributed" and that 16 and 32 were not worth building until a distributed generator
+**The shortfall at 4 and 8 was the instrument, and the pool scales to 16.** The gap read as "not
+attributed", and 16 and 32 as not worth building until a distributed generator
 separated it. Re-measured 2026-09-10 on a deployed free worker with `?lane=N` addressing an object
 directly so routing is not a variable, a fixed iteration count rather than a wall-clock loop, arms
 interleaved, and an N=1 control on BOTH sides of the sweep:
@@ -2012,7 +2045,7 @@ ends, or interleave.
 The control that makes the numbers mean anything: the same generator against an endpoint doing no
 work reached **958 req/s**, which is what rules it out as the cap at N<=4.
 
-**THE SAME CURVE ON REAL DRUPAL, PAID, AUTHENTICATED.** The arm above burns fixed CPU; this one
+**The same curve on real Drupal, paid, authenticated.** The arm above burns fixed CPU; this one
 renders `/admin/content` on N independently provisioned sites with a session, 6 connections per site
 so per-site offered load is constant. Run in both arm orders on the SAME four objects, because
 ascending order is a warming ramp:
@@ -2059,14 +2092,14 @@ position stays marked in-flight until the whole copy has landed. That is the sam
 log apply uses, so `positionTrust()` already refuses both and there is one answer to "is this
 replica's number real" rather than two that can disagree.
 
-**A FRESH INSTALL DOES NOT HOLD `system.private_key`, so no replica could ever have been admitted
+**A fresh install does not hold `system.private_key`, so no replica could ever have been admitted
 from one.** Drupal mints it on first use rather than at install. Enumerated on a just-provisioned
 site, `key_value` carries `state:system.cron_key`, `state:install_time` and `state:install_task` --
 and not that one. It is in `MANDATORY_STATE` because two objects each minting their own issue CSRF
 tokens the other rejects, so `admissionVerdict()` refused every replica of a new site forever, for a
 value the primary did not have either.
 
-**THIS PARAGRAPH CLAIMED THE FIX FOR THREE WEEKS AND THE FIX DID NOT EXIST.** It read "the primary
+**This paragraph claimed the fix for three weeks and the fix did NOT exist.** It read "the primary
 mints with `\Drupal::service('private_key')->get()`", and no call to that service appeared anywhere
 under `src/`. What surfaced it was a local rig rather than a re-read: three lanes provisioned against
 a migrated and claimed site sat at stage `CREATED` through **40** provision steps each, then reached
@@ -2108,7 +2141,7 @@ every warm cache while replicas boot cold, and it makes `REPLICA_COUNT=0` arithm
 on its own -- the modulus is 1 and every request lands on the primary -- rather than a special case
 the caller has to remember.
 
-**A LANE'S READINESS IS NOT ROUTING STATE.** The obvious design gives the front worker a cache of
+**A lane's readiness is NOT routing state.** The obvious design gives the front worker a cache of
 which lanes are `SERVING`, which then needs something to invalidate it. Instead a lane that is not
 `SERVING` answers the handoff that already exists: 421 with `x-cfw-retry-safe` computed from
 `didMutate()`, and the router retries on the primary. One extra hop, only while a lane is not ready,
@@ -2133,7 +2166,7 @@ caller can reach. Reaching `VERIFIED` arms the lane's alarm; each firing pulls `
 applies it; `admissionVerdict()` decides the promotion to `SERVING`. A lane below `SERVING` owns its
 alarm chain at 2 s.
 
-**A `WITHDRAWN` LANE USED TO STAY THAT WAY, AND A DEPLOYED POOL PROVED IT.** The stage machine has
+**A `WITHDRAWN` lane used to stay that way, and A deployed pool proved it.** The stage machine has
 permitted `WITHDRAWN -> CREATED` since it shipped and nothing performed the move; the lane's alarm
 stopped re-arming on the reasoning that a withdrawn lane needs a restore and re-arming only
 re-learns that; and the primary picks lanes above its `lanes_provisioned` high-water mark, so a
@@ -2205,7 +2238,7 @@ depending on the page**.
 sizing table used -- so the pool sizes derived from 2.14 are upper bounds and the real ones are
 smaller. Latency and throughput both move; the sizing rule itself does not.
 
-**THOSE FIGURES REQUIRE A QUIET OBJECT, AND SERVEABLE IS NOT QUIET.** A Durable Object is
+**Those figures require A quiet object, and serveable is NOT quiet.** A Durable Object is
 single-threaded and a fill batch may hold it for `fillBatchWallMs`, 5,000 ms on free, so every
 request queued behind one waits that long. Measured on the same site, same data, same build,
 `/admin/content` sequential n=12: **p50 2,742 ms while its alarm chain was draining and p50 214 ms
@@ -2330,7 +2363,7 @@ authenticated render does not:
 
 | authenticated render | service time | per-replica req/s |
 | --- | ---: | ---: |
-| neither lever | 3,525 ms | 0.28 |
+| neither lever | 3,391 ms | 0.29 |
 | warm only | 2,127 ms | 0.47 |
 | both levers | ~467 ms | 2.14 |
 
@@ -2357,7 +2390,7 @@ section checked only the request meter and put the ceiling at 9 objects. It is 7
 | **7** | 75,600 | **95,760** | **yes, the ceiling** |
 | 8 | 86,400 | 109,440 | no, 9% over on rows |
 
-**A COLD REPLICA COSTS NOTHING.** It arms no alarm, serves no request and is not billed for duration
+**A cold replica costs nothing.** It arms no alarm, serves no request and is not billed for duration
 while hibernating, so the pool size and the hot count are separate numbers. Free's shape is therefore
 a small hot pool plus cold burst capacity:
 
@@ -2375,7 +2408,7 @@ So a replica count belongs in configuration with a hard maximum and a separate h
 demand-driven rather than fixed. Free's always-hot maximum is 7 objects total; its cold pool is
 bounded by the daily request budget it would spend when actually used, not by its size.
 
-**AND THE ROW METER IS A CLIFF, NOT A THROTTLE.** Spending it stops the whole namespace for the rest
+**And the row meter is A cliff, NOT A throttle.** Spending it stops the whole namespace for the rest
 of the UTC day: every route on every site answered `error code: 1101` with none of the worker's own
 headers, and the tail records
 `Exceeded allowed rows written in Durable Objects free tier.` thrown out of `ensureMigrateTable()`
@@ -2403,7 +2436,7 @@ Three replica lanes, traffic-weighted across the workload mix, zero regressions 
 arms. The edge figure barely moves because the term being added is one a single-region host pays and
 an edge network does not.
 
-**THE FIRST VERSION OF THIS INSTRUMENT INFLATED THE RESULT AND ITS DOCBLOCK ASSERTED THE OPPOSITE.**
+**The first version of this instrument inflated the result and its docblock asserted the opposite.**
 It delayed every TCP chunk and claimed that was "exactly as a real path does". A real path pipelines
 segments: a multi-segment response pays about one round trip to first byte and then streams. Charging
 each chunk a full round trip makes a large response pay N times over, and the tell was in the numbers
@@ -2412,9 +2445,9 @@ the 42 ms difference can explain. It delays per FLIGHT now: a chunk arriving wit
 previous one is forwarded without further delay. The same cell reads 106 ms at 40 ms injection, which
 is its 66 ms of service plus one round trip.
 
-The published ratios moved 6.61 -> 6.35 and 12.78 -> 11.32. A hand correction made before the re-run
-estimated "nearer 9x" for the second and was wrong in the other direction, which is why it was
-labelled arithmetic rather than a result.
+The published ratios moved 6.61 -> 6.35 and 12.78 -> 11.32. An estimate of "nearer 9x" for the
+second, made by hand before the re-run, missed in the other direction; it was labelled arithmetic
+rather than a result for that reason.
 
 Two limits travel with these figures. The proxy delays data rather than the TCP handshake, so a real
 first visit pays a handshake and a TLS round trip this does not model. And the edge arm stays on
@@ -2500,8 +2533,113 @@ generator saw 1,438 of 2,880 requests fail at N=2, and the run counted non-200 r
 capturing the status, the Cloudflare error code, or the account's usage at that moment. Cloudflare
 documents no general requests-per-second limit on Workers -- free has a 100,000/day request quota
 that answers Error 1027 when exhausted -- so "free-plan rate limiting" was a guess and stays
-withdrawn. The scaling question it was blocking is answered above: **15.19x at 16 lanes, 95%**, on a
-deployed free worker with the control repeated at both ends of the sweep.
+withdrawn. The topology question it was blocking is answered above: **15.19x at 16 lanes, 95%**, on a
+deployed free worker with the control repeated at both ends of the sweep. That is N objects driven
+separately and summed; what a visitor gets is the routed figure in the next section, and it is
+smaller.
+
+### The Routed Pool, and Four Defects That Made Every Earlier Reading Meaningless
+
+The figures above address each object directly, so they measure topology rather than the product. A
+routed measurement drives the front worker and lets affinity choose. Every attempt at one before
+2026-09-19 measured a pool that was broken in four independent ways, and each had to be fixed before
+the next became visible.
+
+1. **A lane pinned its own origin.** Drupal derives the session cookie NAME from the request host,
+   and `canonicalOrigin()` pins trust-on-first-use PER OBJECT. Every lane had pinned the load
+   generator's service-binding host, so each looked for a cookie no browser sends and resolved every
+   visitor as uid 0 while holding the session row. The control: same cookie, same second, a lane with
+   the pin repaired answered 200 `administrator,authenticated` and one left alone answered 421.
+2. **`malformed()` required `generation === parent + 1`.** `sealGeneration()` seals one record per
+   INVOCATION, so a sparse log is the normal shape and the shipped one held 360 records across
+   generations 30 to 901. The first skipped generation refused a record, and a refusal withdraws the
+   lane into a full re-copy.
+3. **A snapshot was not sealed**, so a fresh lane landed off a record boundary and withdrew on its
+   first record.
+4. **`bufferForReplication()` opened a record with `parent: commitSeq() - 1`.** That assumes the
+   invocation seals at the current sequence; it seals at whatever the sequence reached by the end, so
+   a buffer opened at 69 could seal as `{parent: 68, generation: 70}` while record 69 already chained
+   from 68. Two records claiming one parent, and a lane on the first met the second as `out of order`.
+   This was the root cause; the three above were each necessary and none sufficient.
+
+The instruments mattered as much as the fixes. `x-cfw-replica` named the ROUTING DECISION rather than
+the object that answered, so a pool serving nothing read as one carrying the traffic; it names the
+answering object now, with `x-cfw-failover` and `x-cfw-failover-reason` beside it. `lastCatchUp` is
+overwritten by readmission before anyone can read it, so `lastWithdrawal` records why a lane left.
+
+Measured with all four closed, authenticated admin pages, a fixed 20 second window per cell, served
+count rather than a rate because a rate over elapsed time charges an arm twice for its own tail:
+
+| lanes | served c=16 | vs 0      | p50 c=16 | served c=64 | vs 0      | p50 c=64 |
+| ----: | ----------: | --------- | -------: | ----------: | --------- | -------: |
+|     0 |          62 | 1.00x     |  5969 ms |          98 | 1.00x     | 16048 ms |
+|     1 |          54 | 0.87x     |  7712 ms |          78 | 0.80x     | 33741 ms |
+|     2 |          79 | 1.27x     |  3172 ms |         154 | 1.57x     | 10431 ms |
+|     4 |          81 | 1.31x     |  2867 ms |         147 | 1.50x     |  6506 ms |
+|     8 |         128 | 2.06x     |  1715 ms |         220 | 2.24x     |  6125 ms |
+|    16 |         294 | **4.74x** |   364 ms |         445 | **4.54x** |   647 ms |
+
+Zero failovers in all twelve cells, and all 31 lanes across the five sites were still `SERVING`
+afterwards. Latency is the larger effect: p50 falls 16.4x at 16 clients and 24.8x at 64.
+
+**What one lane is worth flips with saturation, and reading only the low-concurrency half of that
+produced a wrong rule.** It loses below saturation, 0.87x at 32 clients and 0.98x at 64: affinity
+hashes over two buckets, so the lane takes about 60% of the traffic onto an object with colder Drupal
+bins while adding no parallelism. Above saturation it is decisive -- 2.06x at 128 clients, and at 512
+a single object sheds every request as 503 while one lane serves 426. An `atLeastTwo()` floor was
+briefly added to `laneTarget()` on the strength of the first two rows and removed when the 512-client
+arm arrived; autoscaling fires on sustained queueing, which is the saturated regime.
+
+**The saturated curve, driven separately.** 512 concurrent clients over 200 distinct authenticated
+node pages per site, same 20 second window, on a generator carrying the shard-rotation fix:
+
+| lanes | served c=512 | vs 1 lane | 500s |
+| ----: | -----------: | --------- | ---: |
+|     0 |        **0** | --        |    0 |
+|     1 |          426 | 1.00x     |    1 |
+|     2 |          814 | 1.91x     |   26 |
+|     8 |    **1,889** | **4.43x** |    0 |
+
+The 8-lane cell is the cleanest in the set: 1,889 served, 90.2% of them by lanes across all eight
+objects, zero failovers and zero 500s at the highest load driven. **The 4-lane cell is withheld.**
+Its site returned 199 500s in 1,518 requests where neither the smaller nor the larger pool returned
+any, two hypotheses for it (per-object load, then lane count) were each refuted by the next cell, and
+the rig was torn down before a re-drive could settle it. A site-specific fault is the surviving
+explanation and it is unproven. The 32-lane cell is also withheld: it read zero lane-served requests
+against a healthy pool, which is the routing defect recorded below rather than a throughput reading.
+Arms at 64, 128 and 192 lanes were not completed.
+
+This workload and the admin-page workload above are different measurements and must not be divided
+into each other.
+
+### A lane is paid for on the rows-written meter
+
+Replication writes every primary row again on each lane, so a pool of N costs **N+1 rows per
+change**. Rows written is the meter that bounds regeneration at 10,869 rows/day windowed, so an
+8-lane pool reaches that ceiling nine times sooner than a single object, and it is also the dominant
+Durable Object cost line on paid -- requests, duration and storage are not close to it.
+
+That makes the pool a lever for READ-heavy sites and a penalty on write-heavy ones, which no
+document stated until 2026-09-19. `laneTarget()` scores read contention only: correct for what it
+measures, incomplete as a sizing rule, since a write-heavy site can be told to grow a pool costing
+it more than the queueing did. Sizing against the write rate is not built; `REPLICA_MAX_LANES`
+is the manual bound meanwhile.
+
+It is also what makes a scaling ladder expensive to measure. A lane provision is a full database
+copy, so re-driving an arm after a fix re-pays that copy for every lane. Freeze the build before
+measuring a pool, and price the ladder by lane count before provisioning it.
+
+The errors in those cells are 503s rather than failures: the fill chain shedding rather than queueing
+unboundedly. A status histogram from the 8-lane arm reads `{"200": 109, "404": 3, "503": 54}`. Shed
+load belongs beside throughput, because a rate that discards a fifth of the offered load silently is
+not a rate.
+
+**Why one defect took the whole pool down, which is separate from the defects.** `catchUpOnce()`
+answers ANY refused record with `WITHDRAWN`; readmission sets `CREATED`; a `CREATED` lane needs a
+full 4.7 MB re-copy. A positional disagreement therefore gets the same response as database
+corruption. `autoScaleStep()` then repairs one lane per alarm at a 4,000-row budget, so eight
+withdrawn lanes take dozens of alarm cycles to return while the primary copies instead of serving.
+That policy is unchanged and now has nothing to fire on.
 
 ---
 

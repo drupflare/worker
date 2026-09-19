@@ -18,10 +18,72 @@
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The ceiling autoscaling will not grow past. <code>0</code> turns it off; the default is three.</p>
 <p>Clamped at 32 because that is where <code>replicaCount()</code> clamps, and a cap the router would not honour
-is a cap that lies. <strong>The MEASURED range is narrower than the clamp</strong>: the scaling curve covers
-1 / 2 / 4 / 8 replicas at 1.00 / 2.05 / 3.16 / 5.72x, and it was taken on independent objects with
-a synthetic burn rather than on a replicating pool. Past 8 nothing is measured, and where the
-curve stops paying is not established at any size.</p>
+is a cap that lies.</p>
+<p><strong>MEASURED ON A REAL REPLICATING POOL, 2026-09-19</strong>, authenticated renders against deployed sites,
+served count over a fixed 20 s window, zero failovers in every cell:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">lanes</th>
+<th style="text-align:right">vs 0, c=16</th>
+<th style="text-align:right">p50 c=16</th>
+<th style="text-align:right">vs 0, c=64</th>
+<th style="text-align:right">p50 c=64</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1</td>
+<td style="text-align:right">0.87x</td>
+<td style="text-align:right">7712 ms</td>
+<td style="text-align:right">0.80x</td>
+<td style="text-align:right">33741 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">2</td>
+<td style="text-align:right">1.27x</td>
+<td style="text-align:right">3172 ms</td>
+<td style="text-align:right">1.57x</td>
+<td style="text-align:right">10431 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">4</td>
+<td style="text-align:right">1.31x</td>
+<td style="text-align:right">2867 ms</td>
+<td style="text-align:right">1.50x</td>
+<td style="text-align:right">6506 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">8</td>
+<td style="text-align:right">2.06x</td>
+<td style="text-align:right">1715 ms</td>
+<td style="text-align:right">2.24x</td>
+<td style="text-align:right">6125 ms</td>
+</tr>
+<tr>
+<td style="text-align:right">16</td>
+<td style="text-align:right">4.74x</td>
+<td style="text-align:right">364 ms</td>
+<td style="text-align:right">4.54x</td>
+<td style="text-align:right">647 ms</td>
+</tr>
+</tbody>
+</table>
+<p>Latency is the larger effect: p50 falls 16.4x at 16 clients and 24.8x at 64. The earlier figures
+quoted here (1.00 / 2.05 / 3.16 / 5.72x) were taken on independent objects with a synthetic burn
+rather than on a pool that replicates, and they are superseded. Past 16 nothing is measured.</p>
+<p><strong>UNDER SATURATION THE BASELINE IS ZERO</strong>, which the table above cannot show because 16 and 64
+clients do not saturate. Re-driven at 512 concurrent clients over 200 distinct authenticated node
+pages, same 20 s window: 0 lanes serves <strong>0</strong> (every request shed), then 426 / 814 / 1,889 at
+1 / 2 / 8 lanes, which is 1.00 / 1.91 / 4.43x. The 4-lane cell is withheld -- its site returned a
+500 rate no other arm reproduced and the rig was torn down before a re-drive. Two workloads, so
+these do not divide into the figures above.</p>
+<p><strong>AND A LANE IS PAID FOR ON THE ROWS-WRITTEN METER, at N+1 rows per change.</strong> Replication writes
+every primary row again on each lane, so a pool trades write budget for read throughput: an
+8-lane pool reaches the daily row ceiling nine times sooner than one object. <a href="ops_replica-demand.laneTarget.html" class="tsd-kind-function">laneTarget</a>
+scores READ contention only, which is correct for what it measures and incomplete as a sizing
+rule -- a write-heavy site can be told to grow a pool that costs it more than the queueing did.
+Sizing against the write rate is not built; <code>REPLICA_MAX_LANES</code> is the manual bound meanwhile.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -29,7 +91,7 @@ curve stops paying is not established at any size.</p>
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../types/ops_replica-demand.DemandEnv.html" class="tsd-signature-type tsd-kind-type-alias">DemandEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b5f9958f865e623146236f6f9db0b8602acf03d4/src/ops/replica-demand.ts#L77">src/ops/replica-demand.ts:77</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/efe1ec49def1304a0621c7b9caeac9ca8ee4a3f0/src/ops/replica-demand.ts#L103">src/ops/replica-demand.ts:103</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

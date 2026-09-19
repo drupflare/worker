@@ -16,7 +16,22 @@
 <li class="">
 <div class="tsd-signature tsd-anchor-link" id="replicacount"><span class="tsd-kind-call-signature">replicaCount</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">env</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">REPLICA_COUNT</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><a href="#replicacount" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
-<div class="tsd-comment tsd-typography"><p>how many replica lanes a site has, beyond the primary; unset, unparseable and negative are 0</p>
+<div class="tsd-comment tsd-typography"><p>How many replica lanes a site has, beyond the primary; unset, unparseable and negative are 0.</p>
+<p><strong>The ceiling is <a href="../variables/ops_write-forwarding.ID_PARTITION_LANES.html" class="tsd-kind-variable">ID_PARTITION_LANES</a>, and it is a mechanism rather than a taste.</strong> This
+used to clamp at 32 on the reasoning that a larger pool is &quot;past what the measured curve covers&quot;,
+which is a statement about what had been measured rather than a limit of anything. Removing it
+outright was worse: a lane mints forwarded ids from its residue class modulo
+<code>ID_PARTITION_LANES + 1</code>, so lane 257 wraps onto lane 0's class -- the PRIMARY's -- and two
+writers mint the same id. <code>write-forwarding.spec.ts</code> is what caught that, by comparing the
+router's reach against the partition rather than trusting either alone.</p>
+<p>So the number is bounded by the arithmetic that keeps ids disjoint, and the two are linked here
+rather than restated. <code>replica-demand.ts</code> carries a different and smaller ceiling:
+<code>REPLICA_MAX_LANES</code> bounds what AUTOSCALING creates, where the binding cost is per-lane idle
+storage and catch-up rather than correctness.</p>
+<p>What this number does is tell the ROUTER how many buckets to hash over, and setting it above the
+lanes a site has provisioned routes to objects that do not exist -- each one a wasted hop and a
+retry on the primary. That is an operator error a ceiling cannot prevent; <code>chooseTarget()</code> takes
+<code>max(this, believedLanes)</code> so the provisioned count is the floor either way.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -24,7 +39,7 @@
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <span class="tsd-signature-symbol">{</span> <span class="tsd-kind-property">REPLICA_COUNT</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/b5f9958f865e623146236f6f9db0b8602acf03d4/src/ops/replica-routing.ts#L39">src/ops/replica-routing.ts:39</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/efe1ec49def1304a0621c7b9caeac9ca8ee4a3f0/src/ops/replica-routing.ts#L60">src/ops/replica-routing.ts:60</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

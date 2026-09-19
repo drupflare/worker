@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { drupalOp } from '../../src/drupal/site-php';
 import type { RestoreChunk, TableVerdict } from '../../src/ops/replica-restore';
 import { positionTrust, readPosition } from '../../src/ops/replication-log';
+import { ORIGIN_KEY } from '../../src/ops/site-origin';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -115,6 +116,17 @@ function privateKeyOf(site: ServeDo): unknown {
 		)
 		.toArray()[0] as { value: unknown } | undefined;
 	return row?.value;
+}
+
+/** the host the deployed pool actually pinned: a load generator's service-binding URL */
+const POISON = 'https://arm.invalid';
+/** what the primary renders against, and therefore what every lane must */
+const INHERITED = 'https://primary.example';
+
+function originOf(site: ServeDo): string | null {
+	const row = site.sql.exec(`SELECT v FROM cfw_meta WHERE k = ?`, ORIGIN_KEY).toArray()[0] as
+		{ v: string } | undefined;
+	return row?.v ?? null;
 }
 
 type Landing = { ok: boolean; reason: string; stage: string; missing: string[] };
@@ -377,6 +389,78 @@ describe('a replica reaches VERIFIED only by a whole consistent copy', () => {
 			});
 			expect(out.owned).toBe(409);
 			expect(out.seeded).toBe(200);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The origin a lane renders against, which decides whether it can see a session at all.
+ *
+ * Drupal builds the session cookie NAME from the request host, so two objects rendering against
+ * different hosts look for differently-named cookies. A lane that pinned its own therefore held
+ * every replicated session row and still resolved every visitor as uid 0 -- measured on a deployed
+ * 32-lane pool, where all 32 pinned the load generator's service-binding host.
+ */
+describe('a lane inherits the origin rather than pinning one of its own', () => {
+	it(
+		'lands the primary origin, and a later request on another host cannot overwrite it',
+		async () => {
+			const src = await primary();
+			const out = await inObject(freshSite(), async (site) => {
+				role(site, 'primary');
+				await install(site, 'Origin Replica');
+
+				// THE CONTROL: a PRIMARY observing this host does pin it, so the assertion below
+				// is about lanes rather than about pinning having stopped working
+				site.canonicalOrigin(POISON);
+				const primaryPinned = originOf(site);
+
+				role(site, 'replica');
+
+				// A LANE PROVISIONED BEFORE THE INHERIT HAS NO PIN AT ALL, which is the only state
+				// the guard in `canonicalOrigin()` can be reached in: once a pin exists
+				// `chooseOrigin()` answers `pinned` and never reaches the write at all
+				site.sql.exec(`DELETE FROM cfw_meta WHERE k = ?`, ORIGIN_KEY);
+				const unpinnedRender = site.canonicalOrigin(POISON);
+				const unpinnedStored = originOf(site);
+
+				const landings: Landing[] = [];
+				for (const [i, page] of src.pages.entries()) {
+					landings.push(
+						await land(site, {
+							...page,
+							...(i === 0 ? { origin: INHERITED } : {}),
+							done: i === src.pages.length - 1
+						})
+					);
+				}
+				const afterCopy = originOf(site);
+
+				// the shape that broke the pool: a request arrives on a host no browser sends
+				const rendered = site.canonicalOrigin(POISON);
+				return {
+					primaryPinned,
+					unpinnedRender,
+					unpinnedStored,
+					afterCopy,
+					rendered,
+					settled: originOf(site),
+					landings
+				};
+			});
+
+			expect(out.landings.filter((l) => !l.ok).map((l) => l.reason)).toEqual([]);
+			expect(out.primaryPinned).toBe(POISON);
+			// an unpinned lane renders against what it sees, which is right, and writes down
+			// nothing, which is what stops one stray request fixing the host forever
+			expect(out.unpinnedRender).toBe(POISON);
+			expect(out.unpinnedStored).toBeNull();
+			// the copy replaced the lane's own pin with the primary's
+			expect(out.afterCopy).toBe(INHERITED);
+			// and the stray host neither renders against nor overwrites it
+			expect(out.rendered).toBe(INHERITED);
+			expect(out.settled).toBe(INHERITED);
 		},
 		TIMEOUT
 	);

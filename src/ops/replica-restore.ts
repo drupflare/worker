@@ -126,6 +126,23 @@ export type RestoreChunk = {
 	 * copy that stopped after `config` has a valid private key and no content.
 	 */
 	expect?: readonly string[];
+	/**
+	 * On the first chunk: the origin the PRIMARY renders against.
+	 *
+	 * Drupal derives the session cookie name from the request host --
+	 * `substr(hash('sha256', $request->getHost() . $base_path), 0, 32)` in `SessionConfiguration` --
+	 * so an object rendering against a different host looks for a cookie no browser sends and
+	 * resolves every authenticated visitor as uid 0. `canonicalOrigin()` pins trust-on-first-use PER
+	 * OBJECT, and a lane is its own object, so whatever request first touched a lane fixed its host
+	 * forever. Measured on a deployed 32-lane pool: the primary pinned
+	 * `https://cfw-pool.gmitch215.workers.dev` and every lane pinned `https://arm.invalid` from the
+	 * load generator's own service-binding URL, so all 32 held the session row and rendered anonymous.
+	 *
+	 * The origin is authoritative SITE state, like `system.private_key` in `MANDATORY_STATE`, and a
+	 * lane must inherit it rather than mint one. It rides here because `cfw_meta` is lane-local and
+	 * is deliberately not copied.
+	 */
+	origin?: string;
 	/** the last chunk of the whole copy */
 	done?: boolean;
 };

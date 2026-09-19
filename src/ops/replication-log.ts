@@ -185,8 +185,23 @@ function malformed(record: LogRecord): string | null {
 	}
 	if (record.parent < 0 || record.generation < 0)
 		return 'the record carries a negative generation';
-	if (record.generation !== record.parent + 1) {
-		return `the record claims ${record.parent} -> ${record.generation}, which is not one step`;
+	// A RECORD SPANS AN INVOCATION, NOT A GENERATION, so `parent + 1` was never the invariant and
+	// requiring it evicted the entire pool. `sealGeneration()` opens a buffer at `parent`, lets the
+	// invocation advance `commitSeq()` as far as it needs, and seals ONE record at the sequence it
+	// reached -- its own docblock says why: twelve rows written by one request are one atomic change
+	// from a replica's point of view. So a gap is the normal shape of the log, and the shipped one
+	// held 360 records across generations 30..901.
+	//
+	// Measured on a deployed 32-lane pool: the first skipped generation refused a record as
+	// malformed, `catchUpOnce()` answered that refusal by setting the lane WITHDRAWN, readmission
+	// put it back to CREATED needing a full restore, and under authenticated load every lane cycled
+	// out. The pool served 0% while reporting itself healthy.
+	//
+	// The real chain check is exact and already runs below: `planApply()` refuses a record whose
+	// parent is not precisely the replica's applied position, in BOTH directions. Contiguity of the
+	// numbers was a second, wrong, statement of it.
+	if (record.generation <= record.parent) {
+		return `the record claims ${record.parent} -> ${record.generation}, which does not advance`;
 	}
 	if (record.overflowed === true) {
 		return 'the record overflowed and carries no statements; this replica must restore';

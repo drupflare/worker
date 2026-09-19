@@ -222,10 +222,25 @@ describe('out-of-order and missing generations', () => {
 		// re-delivery of settled history and skipping it is safe
 		expect(out.action).toBe('duplicate');
 
-		// a record AHEAD whose parent is behind is the genuine out-of-order shape
+		// a record AHEAD whose parent is behind is the genuine out-of-order shape, and the reason
+		// is the POSITION check rather than arithmetic on the record's own numbers: 4 -> 11 is a
+		// perfectly legal span for one invocation, it is just not this replica's next step
 		const ahead = apply(store, record({ generation: 11, parent: 4 }));
 		expect(ahead.action).toBe('refuse');
-		expect(ahead.reason).toContain('not one step');
+		expect(ahead.reason).toContain('out of order');
+	});
+
+	it('applies a record that spans several generations, which one invocation produces', () => {
+		// `sealGeneration()` opens a buffer at `parent` and seals at whatever `commitSeq()` reached,
+		// so a request writing twelve rows is ONE record from 5 to 17. Requiring `parent + 1` here
+		// refused that as malformed, and `catchUpOnce()` answers a refusal by WITHDRAWING the lane:
+		// on a deployed 32-lane pool every lane cycled out and the pool served 0% of authenticated
+		// traffic while reporting itself healthy
+		const store = seeded(5);
+		const out = apply(store, record({ generation: 17, parent: 5 }));
+		expect(out.action).toBe('apply');
+		expect(out.applied).toBe(17);
+		expect(positionTrust(readPosition(store))).toEqual({ trusted: true, validAt: 17 });
 	});
 
 	it('refuses a gap rather than closing it', () => {
@@ -241,8 +256,10 @@ describe('out-of-order and missing generations', () => {
 	it('refuses a record whose own numbers do not agree', () => {
 		const store = seeded(5);
 		for (const bad of [
-			record({ generation: 7, parent: 5 }),
+			// `{generation: 7, parent: 5}` used to sit here and is LEGAL: a sparse log is the
+			// normal shape, not a corrupt one
 			record({ generation: 6, parent: 6 }),
+			record({ generation: 4, parent: 5 }),
 			record({ generation: Number.NaN, parent: 5 }),
 			record({ generation: 6, parent: Number.POSITIVE_INFINITY })
 		]) {

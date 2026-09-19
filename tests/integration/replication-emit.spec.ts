@@ -283,3 +283,61 @@ $out['slogan'] = \\Drupal::config('system.site')->get('slogan');`)
 		TIMEOUT
 	);
 });
+
+/**
+ * The write that advances nothing.
+ *
+ * `bufferForReplication()` chains a record to the LAST SEALED RECORD, because chaining it to
+ * `commitSeq() - 1` let two records claim one parent and withdrew every lane in the pool. That made
+ * an existing early return reachable for the first time: `sealGeneration()` clears the buffer and
+ * THEN returns when the generation has not advanced past the parent, so a buffered write made
+ * without an invalidation went nowhere and no replica ever saw it.
+ *
+ * The sequence only advances on an invalidation, and not every authoritative write is one.
+ */
+describe('a buffered write is never discarded', () => {
+	it(
+		'seals a record even when nothing invalidated and the sequence did not move',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				markProvisioned(site);
+				role(site, 'primary');
+				site.ensureReplicationLog();
+
+				// settle a first record so `copyableGeneration()` has something to chain from, and
+				// so the case below is about the SECOND write rather than about an empty log
+				site.bufferForReplication('INSERT INTO key_value VALUES (?, ?, ?)', [
+					's',
+					'a',
+					'1'
+				]);
+				site.advanceCommit();
+				const first = await site.sealGeneration();
+
+				// an authoritative write with NO `advanceCommit()`: this is the shape that used to
+				// vanish, and the whole point is that nothing here moves the sequence
+				const before = site.commitSeq();
+				site.bufferForReplication('INSERT INTO key_value VALUES (?, ?, ?)', [
+					's',
+					'b',
+					'2'
+				]);
+				const second = await site.sealGeneration();
+
+				return { first, second, before, after: site.commitSeq(), log: await log(site) };
+			});
+
+			expect(out.first?.generation).toBeGreaterThan(0);
+			// the control: the write really did not advance the sequence on its own
+			expect(out.before).toBe(out.first?.generation);
+			// and it still got a record, which is the whole assertion
+			expect(out.second, 'the second write was discarded').not.toBeNull();
+			expect(out.second?.statements).toBe(1);
+			expect(out.log.records).toHaveLength(2);
+			// chained exactly, so `planApply()` accepts it: parent is the previous record
+			expect(out.log.records[1]?.parent).toBe(out.first?.generation);
+			expect(out.after).toBeGreaterThan(out.before);
+		},
+		TIMEOUT
+	);
+});

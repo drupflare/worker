@@ -227,6 +227,40 @@ describe('the ids a forwarded batch spent', () => {
 		).toEqual([]);
 	});
 
+	it('drops a table the lane does not replicate, however the driver reported it', () => {
+		// `watchdog` is PRIMARY_ONLY_SIDE_EFFECT, so `planRestore()` refuses to copy it and the lane
+		// holds none of its rows. Its high-water mark is therefore 0 and the first id it mints in its
+		// residue class is `wid = lane`, which the primary used when the site was new. Measured on a
+		// provisioned lane: `count 0, seq null` against a primary at 61.
+		expect(
+			partitionedTables([
+				{
+					sql: 'INSERT INTO watchdog ("wid", "type") VALUES (5, ?)',
+					table: 'watchdog',
+					minted: 'watchdog'
+				}
+			])
+		).toEqual([]);
+	});
+
+	it('refuses a forwarded batch carrying one, rather than committing a colliding id', () => {
+		const plan = planForward({
+			statements: [
+				{
+					sql: 'INSERT INTO watchdog ("wid", "type") VALUES (5, ?)',
+					table: 'watchdog',
+					minted: 'watchdog'
+				}
+			],
+			parent: 4,
+			primaryGeneration: 4,
+			// the lane claims it partitioned the table; the primary re-filters and must not believe it
+			partitioned: ['watchdog']
+		});
+		expect(plan.action).toBe('refuse');
+		expect(plan.reason).toContain('watchdog');
+	});
+
 	it('reads nothing from a statement that mints nothing', () => {
 		const out = laneHighWater([
 			{ sql: 'UPDATE node_field_data SET title = ? WHERE nid = 1', table: 'node_field_data' },

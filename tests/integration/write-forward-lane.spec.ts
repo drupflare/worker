@@ -295,7 +295,10 @@ describe('the lane identity the driver mints from', () => {
 			// the cases below passed on a count set by hand
 			const out = await partition(replicaName('fwid.unset', 2), { WRITE_FORWARD: '1' });
 			expect(out).toEqual({ lane: 2, lanes: ID_PARTITION_LANES });
-			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 2, stride: 33 });
+			expect(idStride(out.lane, out.lanes)).toEqual({
+				offset: 2,
+				stride: ID_PARTITION_LANES + 1
+			});
 		},
 		TIMEOUT
 	);
@@ -344,7 +347,8 @@ describe('the lane identity the driver mints from', () => {
 			// and none of them is the unpartitioned class, so a lane never mints where an
 			// unstrided writer would land first
 			expect(offsets).not.toContain(0);
-			for (const w of lanes) expect(idStride(w.lane, w.lanes).stride).toBe(33);
+			for (const w of lanes)
+				expect(idStride(w.lane, w.lanes).stride).toBe(ID_PARTITION_LANES + 1);
 
 			const minted = lanes.map((w) => nextLaneId(5, w.lane, w.lanes));
 			expect(new Set(minted).size, `two lanes mint the same id: ${minted}`).toBe(3);
@@ -356,7 +360,8 @@ describe('the lane identity the driver mints from', () => {
 		'holds at the top of the range, where a modulus would wrap onto the primary',
 		async () => {
 			// `replicaCount()` and `rememberLanes()` both clamp at 32, so lane 32 is reachable. With
-			// a stride of 32 it would land on offset 0; the stride is 33 for exactly this reason
+			// at a stride of ID_PARTITION_LANES the last lane lands on offset 0, which is the
+			// PRIMARY's class; the stride is one larger for exactly this reason
 			const top = await partition(replicaName('fwid.top', 32), { WRITE_FORWARD: '1' });
 			expect(idStride(top.lane, top.lanes).offset).toBe(32);
 			expect(idStride(top.lane, top.lanes).offset).not.toBe(0);
@@ -451,7 +456,10 @@ describe('the lane identity the driver mints from', () => {
 				REPLICA_COUNT: ''
 			});
 			expect(out).toEqual({ lane: 1, lanes: ID_PARTITION_LANES });
-			expect(idStride(out.lane, out.lanes)).toEqual({ offset: 1, stride: 33 });
+			expect(idStride(out.lane, out.lanes)).toEqual({
+				offset: 1,
+				stride: ID_PARTITION_LANES + 1
+			});
 		},
 		TIMEOUT
 	);

@@ -99,7 +99,7 @@ export function idStride(lane: number, lanes: number): { offset: number; stride:
  * lane cannot read the primary's `lanes_provisioned` at all, because `cfw_meta` is replica-local by
  * design and is deliberately not copied.
  */
-export const ID_PARTITION_LANES = 32;
+export const ID_PARTITION_LANES = 256;
 
 /** the next id this lane may mint at or above `after`, honouring its stride */
 export function nextLaneId(after: number, lane: number, lanes: number): number {
@@ -139,9 +139,26 @@ export function partitionedTables(statements: readonly ForwardStatement[]): stri
 	return [...out].sort();
 }
 
-/** whether a reported table may stand on the allow-list at all; the primary re-applies this */
+/**
+ * Whether a reported table may stand on the allow-list at all; the primary re-applies this.
+ *
+ * **A LANE CANNOT MINT FOR A TABLE IT DOES NOT HOLD.** A residue class only keeps two writers apart
+ * when both count from the same base, and a lane's base is the maximum in its OWN copy. For a table
+ * the restore refuses to copy that maximum is zero, so the lane mints the first id in its class --
+ * `wid = lane` -- which the primary used when the site was new.
+ *
+ * `watchdog` is the case that proved it: `planRestore()` answers
+ * `copy: false, "an effect a replica must never perform"`, and a provisioned lane read
+ * `count 0, seq null` against a primary at 61. Every authenticated POST on a pooled site answered
+ * 500 with `UNIQUE constraint failed: watchdog.wid`, because a login writes a dblog row.
+ *
+ * Refusing here sends the batch back for the primary to serve, which is the right answer twice over:
+ * the id becomes the primary's to allocate, and a PRIMARY_ONLY_SIDE_EFFECT is by definition work a
+ * lane was never allowed to perform.
+ */
 function originable(table: string): boolean {
-	return table !== '' && !ALLOCATION_TABLES.has(table);
+	if (table === '' || ALLOCATION_TABLES.has(table)) return false;
+	return classifyState(table) !== 'PRIMARY_ONLY_SIDE_EFFECT';
 }
 
 /** the `cfw_meta` key prefix a lane records a forwarded rowid under; `LANE_HIGH_PREFIX` in the driver */

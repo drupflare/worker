@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { replicaName } from '../../src/ops/replica-routing';
+import { ID_PARTITION_LANES, idStride } from '../../src/ops/write-forwarding';
 import { inObject, markProvisioned, namedSite, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -222,4 +223,58 @@ describe('what the primary refuses', () => {
 		},
 		TIMEOUT
 	);
+});
+
+/**
+ * The residue classes, and the writer that was left out of them.
+ *
+ * Lanes mint forwarded ids from class `lane mod (ID_PARTITION_LANES + 1)`. That is only disjoint if
+ * EVERY writer strides, and the primary did not: it minted plain sequential ids and so reached a
+ * lane's reserved value within one stride. Measured on four deployed pools, where every
+ * authenticated POST answered 500 with `UNIQUE constraint failed: watchdog.wid` -- a login writes a
+ * dblog row and `wid` is AUTOINCREMENT.
+ */
+describe('the primary takes a residue class of its own', () => {
+	it(
+		'does not stride a site that has no pool',
+		async () => {
+			const partition = await inObject(namedSite('partition.nopool'), (site) => {
+				role(site, 'primary');
+				site.ensureServeTables();
+				return site.idPartition();
+			});
+			// a site that never provisions a lane would pay sparser ids for nothing to be disjoint from
+			expect(partition).toEqual({ lane: 0, lanes: 0 });
+		},
+		TIMEOUT
+	);
+
+	it(
+		'strides once the site has provisioned a lane',
+		async () => {
+			const partition = await inObject(namedSite('partition.pooled'), (site) => {
+				role(site, 'primary');
+				site.ensureServeTables();
+				site.metaSet('lanes_provisioned', '4');
+				return site.idPartition();
+			});
+			// WITHOUT THE PRIMARY STRIDING THIS IS `{ lane: 0, lanes: 0 }` and the classes overlap
+			expect(partition).toEqual({ lane: 0, lanes: ID_PARTITION_LANES });
+		},
+		TIMEOUT
+	);
+
+	it('keeps the primary class clear of every lane the router can address', () => {
+		const primary = idStride(0, ID_PARTITION_LANES);
+		expect(primary.offset).toBe(0);
+		const seen = new Set<number>([primary.offset]);
+		for (let lane = 1; lane <= ID_PARTITION_LANES; lane += 1) {
+			const { offset, stride } = idStride(lane, ID_PARTITION_LANES);
+			expect(stride).toBe(primary.stride);
+			expect(seen.has(offset), `lane ${lane} reuses residue ${offset}`).toBe(false);
+			seen.add(offset);
+		}
+		// every writer the router can address, the primary included, holds one class
+		expect(seen.size).toBe(ID_PARTITION_LANES + 1);
+	});
 });

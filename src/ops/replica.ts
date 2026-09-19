@@ -216,6 +216,24 @@ export function fenceAllows(appliedGeneration: number, requiredGeneration: numbe
 	return appliedGeneration >= requiredGeneration;
 }
 
+/**
+ * Drupal's own session id, which is what `sessions.sid` holds.
+ *
+ * `SessionHandler::read()` looks the row up by `Crypt::hashBase64($sid)` -- base64 of the RAW
+ * sha256, with `+/` mapped to `-_` and padding stripped -- never by the cookie value itself. So a
+ * lane can ask whether it holds a visitor's session with one indexed read, without rendering
+ * anything and without the cookie value ever being compared against stored bytes.
+ *
+ * Verified against a deployed site: cookie value `78e0948463...` hashes to
+ * `TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI`, which is the row the primary had written.
+ */
+export async function drupalSessionRowId(cookieValue: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(cookieValue));
+	let raw = '';
+	for (const byte of new Uint8Array(digest)) raw += String.fromCharCode(byte);
+	return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 /** why a replica refused; the sentence a caller logs and the reason it fails over */
 export class ReplicaRequiresPrimary extends Error {
 	readonly capability: string;
@@ -253,6 +271,10 @@ export const REPLICA_SAFE_CAPABILITIES: ReadonlySet<string> = new Set([
 	'cfwFileStat',
 	// a configured string, identical on every lane
 	'cfwFilePublicBase',
+	// a read of this object's own replicated `cfw_module_rev` rows. Its sibling `cfwSettings` is
+	// deliberately NOT here: it writes account KV, which is off this object entirely, so a lane
+	// must refuse it and the Drupal settings form is served from the primary
+	'cfwModules',
 	// classified per statement rather than wholesale; see below
 	'cfwSqlExec',
 	'cfwSqlTxn'

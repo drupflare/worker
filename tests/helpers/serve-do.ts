@@ -126,6 +126,9 @@ export type ServeDo = {
 	/** the memoised park state; `stubRender` sets it so a stubbed interpreter is not driven */
 	parkInstall?: { state: 'installed' | 'ready' | 'absent' | 'failed'; armed: string[] };
 	runJson: (code: string) => Promise<Record<string, unknown>>;
+	/** the raw fragment seam under `runJson`; a spec reaches it to drive a trap */
+	run: (code: string) => Promise<string>;
+	ensurePhp: () => Promise<{ php: { _run: (code: string) => Promise<unknown> } }>;
 	fetch: (request: Request) => Promise<Response>;
 	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };
 	/** how many result sets needed a wide-integer re-read this lifetime; see `src/db/wide-integers.ts` */
@@ -160,6 +163,12 @@ export type ServeDo = {
 	/** persists what `advanceCommit()` buffered; `/__replica` answers the PERSISTED value, so a
 	 * spec writing log rows past an unflushed sequence leaves them unreachable */
 	flushCommitSeq: () => void;
+	/** the origin Drupal renders against; a lane inherits the primary's and never pins its own */
+	canonicalOrigin: (observed?: string | null) => string;
+	/** whether this lane holds the session a cookie names, chasing one catch-up when it does not */
+	sessionReach: (cookie: string) => Promise<'held' | 'absent' | 'unknown'>;
+	/** how often chasing a missing session was tried and how often it worked */
+	sessionCatchUps?: { tried: number; found: number };
 	/** the replica stage, which is durable and only moves through a legal transition */
 	replicaStage: () => string;
 	setReplicaStage: (next: string) => { stage: string; moved: boolean; reason: string };

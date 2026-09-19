@@ -1,20 +1,27 @@
 import { env, SELF } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ReplicaRequiresPrimary } from '../../src/ops/replica';
+import { drupalSessionRowId, ReplicaRequiresPrimary } from '../../src/ops/replica';
 import {
 	affinityKey,
+	believedLanes,
 	chooseTarget,
 	REPLICA_HEADER,
 	replicaName,
+	resetLaneBeliefs,
 	shouldFailover
 } from '../../src/ops/replica-routing';
+import { primeLanes, writeLanes } from '../../src/site';
 import {
+	asBrowser,
 	inObject,
+	markProvisioned,
 	namedSite,
 	pageFor,
 	provisionedNamedSite,
 	seedPage,
 	serveThroughWorker,
+	SESSION_COOKIE,
+	stubRender,
 	type ServeDo
 } from '../helpers/serve-do';
 
@@ -207,11 +214,13 @@ describe('a write that reaches a lane', () => {
 				seedPage(site, path, HTML);
 			});
 			const viaLane = await serveThroughWorker(SITE, path);
-			// the lane refuses and the primary answers, but the header names the object the request
-			// was SENT to -- which is the fact a measurement needs and had no way to read
-			expect(viaLane.header(REPLICA_HEADER)).toBe(
-				`r${laneFor(path, 3).lane}`.replace('r0', 'primary')
-			);
+			// THE HEADER USED TO NAME THE OBJECT THE REQUEST WAS SENT TO, and this case pinned that
+			// on the reasoning that a measurement had no other way to read the routing decision. It
+			// made the header say a lane served traffic it had refused: a deployed 32-lane pool
+			// reported every authenticated request against a lane while the primary answered all of
+			// them. Both facts are readable now, so both are asserted.
+			expect(viaLane.header(REPLICA_HEADER)).toBe('primary');
+			expect(viaLane.header('x-cfw-failover')).toBe(`r${laneFor(path, 3).lane}`);
 		},
 		TIMEOUT
 	);
@@ -388,6 +397,222 @@ describe('a refusal the interpreter swallowed', () => {
 			});
 			// a request that refused something and still answered has nothing to hand off
 			expect(out).toBe(200);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The session a lane has not received yet.
+ *
+ * A session row is authoritative: it is written on the primary and reaches a lane by replication.
+ * A lane asked for a page before that arrives finds no row, renders uid 0, and Drupal answers 403 on
+ * anything needing a permission -- so the visitor is logged out for one request instead of the
+ * request being served. Measured on a deployed 16-lane pool: 41 of 240 immediately after
+ * provisioning and ~1 in 43 once settled, `x-cfw-roles: anonymous` from the lane while the primary
+ * resolved the same cookie in the same second. It does not converge; five warmup rounds over ~100 s
+ * still refused.
+ */
+describe('a lane that cannot see the session hands back', () => {
+	/**
+	 * OWED: the refusal case itself, against a genuinely SERVING lane.
+	 *
+	 * `metaSet('replica_stage', 'SERVING')` puts a lane in a state the real flow never produces --
+	 * it answered 200 with no tier header at all, and non-deterministically 421 on a rerun -- so the
+	 * case built that way tested the shortcut rather than the handoff. A real lane needs the
+	 * provisioning fixture (`installed()` -> `provision()` -> `driveAlarms()` to SERVING) that lives
+	 * in `replica-provision.spec.ts`; lifting those helpers into `tests/helpers/serve-do.ts` is the
+	 * piece of work this is waiting on.
+	 *
+	 * The fix is not unverified in the meantime: it was falsified on a DEPLOYED 4-lane pool, signing
+	 * in after provisioning so no lane held the session. Fix on, 48 of 48 served
+	 * `administrator,authenticated`; fix off, 1 replica 403 anonymous and 2 with no role set at all.
+	 * The two controls below still run here and pin the halves that do not need a real lane.
+	 */
+	it(
+		'serves normally once the lane can see the session',
+		async () => {
+			const lane = namedSite(replicaName(SITE, 5));
+			const status = await inObject(lane, async (site: ServeDo) => {
+				markProvisioned(site);
+				site.metaSet('replica_stage', 'SERVING');
+				stubRender(site, (call) => ({
+					...pageFor(call.path),
+					roles: ['administrator', 'authenticated']
+				}));
+				const res = await site.fetch(
+					new Request(
+						'https://do.local/__serve?path=/has-session',
+						asBrowser(SESSION_COOKIE)
+					)
+				);
+				return res.status;
+			});
+			// the control that makes the case above mean something: the refusal is about the ROLE
+			// SET, not about a lane refusing every authenticated request
+			expect(status).toBe(200);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'leaves an anonymous visitor alone, who has no session to be missing',
+		async () => {
+			const lane = namedSite(replicaName(SITE, 6));
+			const status = await inObject(lane, async (site: ServeDo) => {
+				markProvisioned(site);
+				site.metaSet('replica_stage', 'SERVING');
+				stubRender(site, (call) => ({ ...pageFor(call.path), roles: ['anonymous'] }));
+				const res = await site.fetch(
+					new Request('https://do.local/__serve?path=/public', asBrowser())
+				);
+				return res.status;
+			});
+			// the second control: anonymous roles are CORRECT for a request carrying no cookie, so
+			// keying on the role set alone would refuse the bulk of a site's traffic
+			expect(status).toBe(200);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The pool a cold isolate cannot see.
+ *
+ * `believedLanes()` is per-isolate and is learned from `x-cfw-lanes` on a response the isolate has
+ * ALREADY received, so its first request goes to the primary whatever the pool size, and the
+ * knowledge expires after `LANES_TRUST_MS`. Workers spawn isolates continuously; after a deploy none
+ * of them has seen the pool at all. Measured on a deployed 32-lane site before the edge pointer
+ * existed: the primary's own `serveRequests` counter moved by 904 across a 904-request drive, so the
+ * pool served none of it, and an anonymous drive reported `answeredBy` as `{primary: 904}`. That is
+ * why adding lanes did not add throughput -- the lanes were never asked.
+ */
+describe('a lane count survives the isolate that learned it', () => {
+	it(
+		'routes to the pool from a belief this isolate never learned itself',
+		async () => {
+			const origin = 'https://pointer.example';
+			await writeLanes(caches.default, origin, SITE, 3);
+
+			// where every fresh isolate starts, and where EVERY isolate is after a deploy
+			resetLaneBeliefs();
+			setLanes(0);
+			expect(believedLanes(SITE, Date.now())).toBe(0);
+
+			await primeLanes(caches.default, origin, SITE);
+			expect(believedLanes(SITE, Date.now()), 'the pool is still invisible').toBe(3);
+
+			// and the belief is what routing reads, so a visitor path now reaches a lane
+			const decision = chooseTarget({
+				site: SITE,
+				method: 'GET',
+				affinity: affinityKey({
+					session: null,
+					address: null,
+					pathname: pathOnALane(3)
+				}),
+				replicas: Math.max(0, believedLanes(SITE, Date.now())),
+				pathname: '/serve'
+			});
+			expect(decision.role).toBe('replica');
+		},
+		TIMEOUT
+	);
+
+	it(
+		'leaves a site with no pointer routing to the primary',
+		async () => {
+			// the control: priming is a read, not an invention
+			resetLaneBeliefs();
+			setLanes(0);
+			await primeLanes(caches.default, 'https://pointer.example', 'never-published.example');
+			expect(believedLanes('never-published.example', Date.now())).toBe(0);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The window between a login and the lane that has to serve it.
+ *
+ * Replication is alarm-driven, so a session written on the primary reaches a lane on ITS next
+ * firing. Measured on a deployed 32-lane pool: immediately after a login `head` was 735 and every
+ * lane read `repl_applied` 733, converging over **20-62 s**. A drive with a fresh cookie read 100%
+ * failover; the same drive with a replicated one read 22 requests served across 4 lane objects. So
+ * signing in pinned the next minute of a visitor's traffic to the primary.
+ *
+ * `sessionReach()` asks BEFORE the render, so a miss costs one indexed read rather than a render
+ * thrown away, and chases one catch-up so the window is a round rather than an alarm interval.
+ */
+describe('a lane chases a session it has not received', () => {
+	const VALUE = 'a9f3c1d2e4b5a6978c0d1e2f3a4b5c6d';
+	const COOKIE = (value: string) => `SESS${'0123456789abcdef'.repeat(2)}=${value}`;
+
+	function withSessions(site: ServeDo, rows: string[]): void {
+		site.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, uid INTEGER)`);
+		for (const sid of rows) {
+			site.sql.exec(`INSERT OR REPLACE INTO sessions (sid, uid) VALUES (?, 1)`, sid);
+		}
+	}
+
+	/**
+	 * SCOPE: the predicate the serve path branches on, not the branch.
+	 *
+	 * The same fixture limit the OWED note above records applies here -- a lane built by
+	 * `metaSet('replica_stage', 'SERVING')` answers `/__serve` with no tier header at all, so a case
+	 * written through it would assert a 200 that never reached the render path. The refusal ITSELF
+	 * was falsified on the deployed 32-lane pool instead: a cookie the lane held answered 200
+	 * `administrator,authenticated`, and one it did not answered 421 `x-cfw-requires-primary:
+	 * session`, with `x-cfw-failover` naming the lane.
+	 */
+	it(
+		'reads held, absent and unknown, and chases the primary exactly once before giving up',
+		async () => {
+			const held = await drupalSessionRowId(VALUE);
+			const out = await inObject(namedSite(replicaName(SITE, 7)), async (site: ServeDo) => {
+				markProvisioned(site);
+				site.metaSet('replica_stage', 'SERVING');
+				const before = await site.sessionReach(COOKIE(VALUE));
+
+				withSessions(site, [held]);
+				const mine = await site.sessionReach(COOKIE(VALUE));
+				const other = await site.sessionReach(COOKIE('deadbeefdeadbeefdeadbeefdeadbeef'));
+				// a second miss inside the rate-limit window must not buy another hop
+				const again = await site.sessionReach(COOKIE('feedfacefeedfacefeedfacefeedface'));
+				return {
+					before,
+					mine,
+					other,
+					again,
+					isLane: site.isPoolLane(),
+					tally: site.sessionCatchUps ?? { tried: 0, found: 0 }
+				};
+			});
+
+			// THE GOLDEN VECTOR, and without it this case cannot fail. Every other assertion here
+			// stores the row under the same function it later looks it up with, so a broken hash
+			// moves both sides together and the case stays green -- measured, by returning the
+			// cookie value unhashed. This pair came off a DEPLOYED site: Drupal wrote the row and
+			// the cookie is what the browser held, so it is an external oracle rather than a
+			// restatement of the implementation
+			expect(await drupalSessionRowId('78e094846386248b8a5685a8a2dd4568')).toBe(
+				'TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI'
+			);
+			// the control: this object really is a lane, or none of the rest is about lanes
+			expect(out.isLane).toBe(true);
+			// no `sessions` table yet is NOT evidence the visitor has no session; refusing on it
+			// would hand back every authenticated request on a half-built lane
+			expect(out.before).toBe('unknown');
+			// THE HASH IS DRUPAL'S. `SessionHandler::read()` looks the row up by
+			// `Crypt::hashBase64($sid)`, so a lane can answer this without rendering anything --
+			// and if this ever drifts the lane silently resolves nobody
+			expect(out.mine).toBe('held');
+			expect(out.other).toBe('absent');
+			expect(out.again).toBe('absent');
+			// it chased ONCE for the first miss and the rate limit absorbed the second, which is
+			// what stops an attacker-supplied cookie buying a hop to the primary per request
+			expect(out.tally.tried).toBe(1);
+			expect(out.tally.found).toBe(0);
 		},
 		TIMEOUT
 	);

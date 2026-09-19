@@ -72,7 +72,10 @@ const CAPABILITY_EFFECT: Record<string, EffectClass> = {
 	cfwFileWrite: 'file',
 	cfwFileDelete: 'file',
 	cfwFileRename: 'file',
-	cfwOidcClaims: 'security-state'
+	cfwOidcClaims: 'security-state',
+	// a lever write lands in account KV rather than in this object, so a replica applying the same
+	// statements must not repeat it
+	cfwSettings: 'security-state'
 };
 
 /**

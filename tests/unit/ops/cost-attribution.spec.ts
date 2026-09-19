@@ -10,6 +10,7 @@ import {
 	type SpendLine,
 	type SpendReport
 } from '../../../src/ops/cost-attribution';
+import { ID_PARTITION_LANES } from '../../../src/ops/write-forwarding';
 
 /**
  * Why THIS site spent what it spent.
@@ -161,10 +162,16 @@ describe('several dimensions draw on one meter, which is the whole point', () =>
 		expect(lineFor(report, 'replica-copies').quantity).toBeNull();
 	});
 
-	it('clamps a pool size the router would not honour', () => {
-		// replicaCount() caps at 32, and a cost report must charge what the router actually routes to
+	it('charges exactly the pool the router will address, ceiling included', () => {
+		// The report follows `replicaCount()` rather than the raw var, so it charges what the router
+		// routes to. That number is clamped at `ID_PARTITION_LANES`, because past it two lanes share
+		// a residue class and mint the same forwarded id -- so a bill for 900 lanes would be for a
+		// pool that cannot exist.
 		const report = attributeSpend(full, { REPLICA_COUNT: '900' });
-		expect(lineFor(report, 'replica-copies').quantity).toBe(14_000_000 * 32);
+		expect(lineFor(report, 'replica-copies').quantity).toBe(14_000_000 * ID_PARTITION_LANES);
+		// and below the ceiling it is still the number asked for
+		const small = attributeSpend(full, { REPLICA_COUNT: '12' });
+		expect(lineFor(small, 'replica-copies').quantity).toBe(14_000_000 * 12);
 	});
 });
 

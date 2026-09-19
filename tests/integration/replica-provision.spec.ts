@@ -454,3 +454,135 @@ describe('a cached page advertises the pool too', () => {
 		TIMEOUT
 	);
 });
+
+/**
+ * A copy the primary interrupted, and the restart that has to survive it.
+ *
+ * `budget` bounds a copy per invocation, so any site past it needs several -- and the primary's own
+ * alarm chain commits between them, which tears the resume. The driver's answer to a tear is to
+ * start again from the beginning, and that is the path this covers: the lane still holds
+ * `restore_generation` from the attempt that was cut short, and every chunk of the new attempt is
+ * refused against it. Measured on a deployed arm before the fix: 0 lanes provisioned across 66
+ * attempts on four separate sites, each one answering `torn copy` at chunk 0 with `copied: 0`.
+ */
+describe('a copy interrupted by the primary', () => {
+	/** what the alarm chain does between two invocations of a bounded copy */
+	/**
+	 * A commit the way a real one lands: the sequence AND the record it leaves behind.
+	 *
+	 * Bumping `commit_seq` alone used to be enough, because a copy took its generation from the
+	 * sequence. It takes it from the last sealed RECORD now -- an invocation can advance the
+	 * sequence without writing anything replicable, and a lane copied at the sequence then landed
+	 * one ahead of the log and was withdrawn as out of order on its first record. A bare bump moves
+	 * nothing a replica can observe, so as a fixture it had stopped describing a commit at all.
+	 */
+	async function commitOnPrimary(primary: string): Promise<number> {
+		return inObject(namedSite(primary), (site) => {
+			role(site, 'primary');
+			const prev = site.commitSeq();
+			const next = prev + 1;
+			site.metaSet('commit_seq', String(next));
+			site.ensureReplicationLog();
+			site.sql.exec(
+				`INSERT INTO cfw_repl_log (generation, parent, schema_version, fingerprint,
+					overflowed, statements, sealed_at)
+				 VALUES (?, ?, ?, ?, 0, ?, ?)`,
+				next,
+				prev,
+				site.packGeneration() ?? '',
+				`torn-fixture-${next}`,
+				'[]',
+				next
+			);
+			return next;
+		});
+	}
+
+	async function restoreGenerationOf(primary: string, lane: number): Promise<string | null> {
+		return inObject(namedSite(replicaName(primary, lane)), (site) =>
+			site.metaGet('restore_generation')
+		);
+	}
+
+	it(
+		'tears the resume rather than landing a mixed copy',
+		async () => {
+			const primary = await installed('provision.torn.detect');
+			// a budget below the row count, so the first call hands back a cursor instead of finishing
+			const first = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const res = await site.fetch(
+					new Request('https://do.local/__replica?action=provision&lane=1&budget=50')
+				);
+				return (await res.json()) as ProvisionOutcome;
+			});
+			expect(first.ok, first.reason).toBe(true);
+			expect(first.done).toBe(false);
+			expect(first.cursor).toBeTruthy();
+
+			await commitOnPrimary(primary);
+
+			const resumed = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const res = await site.fetch(
+					new Request(
+						`https://do.local/__replica?action=provision&lane=1&budget=50&cursor=${encodeURIComponent(JSON.stringify(first.cursor))}`
+					)
+				);
+				return (await res.json()) as ProvisionOutcome;
+			});
+			// refusing is CORRECT: half the rows at one generation and half at another is not a copy
+			expect(resumed.ok).toBe(false);
+			expect(resumed.torn).toBe(true);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'starts a fresh copy over a lane an interrupted one left markers on',
+		async () => {
+			const primary = await installed('provision.torn.restart');
+			const partial = await inObject(namedSite(primary), async (site) => {
+				role(site, 'primary');
+				const res = await site.fetch(
+					new Request('https://do.local/__replica?action=provision&lane=1&budget=50')
+				);
+				return (await res.json()) as ProvisionOutcome;
+			});
+			expect(partial.done).toBe(false);
+
+			// the marker the cut-short attempt left, which is what refused every later chunk
+			const stale = await restoreGenerationOf(primary, 1);
+			expect(
+				stale,
+				'the interrupted copy left no marker, so this proves nothing'
+			).toBeTruthy();
+
+			await commitOnPrimary(primary);
+
+			// exactly what `autoScaleStep()` does after a refusal: clear the cursor and begin again
+			const { last } = await provision(primary, 1);
+
+			// WITHOUT `restart=1` ON THE FIRST CHUNK THIS IS `torn copy: the restore began at ...`
+			expect(last.ok, last.reason).toBe(true);
+			expect(last.done).toBe(true);
+			expect(last.stage).toBe('VERIFIED');
+			expect(String((await restoreGenerationOf(primary, 1)) ?? '')).toBe('');
+		},
+		TIMEOUT
+	);
+
+	it(
+		'clears only on the first chunk, so a copy does not drop its own markers',
+		async () => {
+			const primary = await installed('provision.torn.midcopy');
+			// a budget small enough that one invocation sends many chunks; if `restart=1` went on
+			// every one of them the lane would forget the generation it is mid-copy on and refuse
+			const { last, steps } = await provision(primary, 1, 200);
+			expect(last.ok, last.reason).toBe(true);
+			expect(last.done).toBe(true);
+			expect(steps).toBeGreaterThan(1);
+		},
+		TIMEOUT
+	);
+});

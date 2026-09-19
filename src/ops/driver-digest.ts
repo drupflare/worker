@@ -2,7 +2,7 @@
  * The packed driver's identity. GENERATED -- run `bun run assets:driver` after any change in a
  * sibling; `tests/node/driver-pack.spec.ts` fails on drift.
  */
-export const DRIVER_DIGEST = '6b070ec30dc201fc';
+export const DRIVER_DIGEST = '500cfbee03de15ff';
 
 /**
  * The route names the packed modules declare, so a site can be asked whether its router has them.
@@ -13,7 +13,9 @@ export const DRIVER_DIGEST = '6b070ec30dc201fc';
  */
 export const DRIVER_ROUTES: readonly string[] = [
 	'drupflare.admin',
+	'drupflare.modules',
 	'drupflare.oidc_complete',
 	'drupflare.ops_terminal',
+	'drupflare.settings',
 	'drupflare.status'
 ];

@@ -70,7 +70,11 @@ export const CROSSING_NAMES = [
 	// both were installed on the module and absent here, which is the drift this list exists to
 	// prevent: the census under-reported the bridge by two capabilities, and both of them mutate
 	'cfwOidcClaims',
-	'cfwTcp'
+	'cfwTcp',
+	// the runtime levers, read and written from Drupal's own settings form
+	'cfwSettings',
+	// what code has been delivered here, read by the Modules tab
+	'cfwModules'
 ] as const;
 
 export type CrossingName = (typeof CROSSING_NAMES)[number];
@@ -164,7 +168,11 @@ export const BATCHABLE: Record<CrossingName, boolean> = {
 	// one ticket, redeemed once; there is never a second call to coalesce with
 	cfwOidcClaims: false,
 	// syslog fires and forgets, but redis reads its reply and decides the next call from it
-	cfwTcp: false
+	cfwTcp: false,
+	// one form build reads the whole lever set in a single call; there is no second to coalesce
+	cfwSettings: false,
+	// a read of this object's own tables; one page build asks once
+	cfwModules: true
 };
 
 /** how many of a tally's crossings a batching change could remove, at best */

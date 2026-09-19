@@ -287,6 +287,51 @@ describe('the interpreter recycle', () => {
 		REQUEST_TIMEOUT
 	);
 
+	/**
+	 * A trap is a FAULT, and every other drop here is about size.
+	 *
+	 * Found by `tests/e2e/leak.spec.ts` against the park's socket traps: `memory access out of
+	 * bounds` through `invoke_iiii`, then three consecutive 500s. Nothing dropped the instance,
+	 * so a VM that had trapped mid-execution stayed eligible to serve the next request with a
+	 * half-finished Zend state in linear memory.
+	 *
+	 * The throw still propagates; what this pins is that the instance does not survive it.
+	 */
+	it(
+		'drops the interpreter when the VM traps, which no size check can see',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await provision(site);
+				const before = Number((await stats(site)).trappedRuns ?? 0);
+
+				const inst = await site.ensurePhp();
+				const real = inst.php._run.bind(inst.php);
+				let thrown = '';
+				inst.php._run = () => {
+					throw new WebAssembly.RuntimeError('memory access out of bounds');
+				};
+				try {
+					await site.run('<?php echo 1;');
+				} catch (e) {
+					thrown = String((e as Error)?.message ?? e);
+				}
+				const dropped = site.php === null;
+				inst.php._run = real;
+
+				const after = Number((await stats(site)).trappedRuns ?? 0);
+				// the control: a clean run after the trap must work, or "dropped" proves nothing
+				const recovered = await site.run('<?php echo "ok";');
+				return { before, after, thrown, dropped, recovered };
+			});
+
+			expect(out.thrown, 'the trap must still reach the caller').toContain('out of bounds');
+			expect(out.dropped, 'a trapped VM stayed eligible to serve').toBe(true);
+			expect(out.after).toBe(out.before + 1);
+			expect(out.recovered).toContain('ok');
+		},
+		REQUEST_TIMEOUT
+	);
+
 	it(
 		'ends a fill batch early rather than accumulating across it',
 		async () => {

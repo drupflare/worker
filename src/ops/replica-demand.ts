@@ -69,10 +69,36 @@ export function autoScaleEnabled(env?: DemandEnv | null): boolean {
  * The ceiling autoscaling will not grow past. `0` turns it off; the default is three.
  *
  * Clamped at 32 because that is where `replicaCount()` clamps, and a cap the router would not honour
- * is a cap that lies. **The MEASURED range is narrower than the clamp**: the scaling curve covers
- * 1 / 2 / 4 / 8 replicas at 1.00 / 2.05 / 3.16 / 5.72x, and it was taken on independent objects with
- * a synthetic burn rather than on a replicating pool. Past 8 nothing is measured, and where the
- * curve stops paying is not established at any size.
+ * is a cap that lies.
+ *
+ * **MEASURED ON A REAL REPLICATING POOL, 2026-09-19**, authenticated renders against deployed sites,
+ * served count over a fixed 20 s window, zero failovers in every cell:
+ *
+ * | lanes | vs 0, c=16 | p50 c=16 | vs 0, c=64 | p50 c=64 |
+ * | ----: | ---------: | -------: | ---------: | -------: |
+ * |     1 |      0.87x |  7712 ms |      0.80x | 33741 ms |
+ * |     2 |      1.27x |  3172 ms |      1.57x | 10431 ms |
+ * |     4 |      1.31x |  2867 ms |      1.50x |  6506 ms |
+ * |     8 |      2.06x |  1715 ms |      2.24x |  6125 ms |
+ * |    16 |      4.74x |   364 ms |      4.54x |   647 ms |
+ *
+ * Latency is the larger effect: p50 falls 16.4x at 16 clients and 24.8x at 64. The earlier figures
+ * quoted here (1.00 / 2.05 / 3.16 / 5.72x) were taken on independent objects with a synthetic burn
+ * rather than on a pool that replicates, and they are superseded. Past 16 nothing is measured.
+ *
+ * **UNDER SATURATION THE BASELINE IS ZERO**, which the table above cannot show because 16 and 64
+ * clients do not saturate. Re-driven at 512 concurrent clients over 200 distinct authenticated node
+ * pages, same 20 s window: 0 lanes serves **0** (every request shed), then 426 / 814 / 1,889 at
+ * 1 / 2 / 8 lanes, which is 1.00 / 1.91 / 4.43x. The 4-lane cell is withheld -- its site returned a
+ * 500 rate no other arm reproduced and the rig was torn down before a re-drive. Two workloads, so
+ * these do not divide into the figures above.
+ *
+ * **AND A LANE IS PAID FOR ON THE ROWS-WRITTEN METER, at N+1 rows per change.** Replication writes
+ * every primary row again on each lane, so a pool trades write budget for read throughput: an
+ * 8-lane pool reaches the daily row ceiling nine times sooner than one object. {@link laneTarget}
+ * scores READ contention only, which is correct for what it measures and incomplete as a sizing
+ * rule -- a write-heavy site can be told to grow a pool that costs it more than the queueing did.
+ * Sizing against the write rate is not built; `REPLICA_MAX_LANES` is the manual bound meanwhile.
  */
 export function maxLanes(env?: DemandEnv | null): number {
 	// `Number('')` is 0 and finite, so an unset var read as a cap of ZERO and autoscaling never ran
@@ -124,6 +150,29 @@ export function laneTarget(windows: readonly DemandWindow[], cap: number): numbe
 	// one request in flight is the uncontended case and needs no lane
 	return Math.max(0, Math.min(ceiling, Math.floor(sustained) - 1));
 }
+
+/**
+ * WHETHER ONE LANE HELPS DEPENDS ENTIRELY ON WHETHER THE PRIMARY IS SATURATED, measured 2026-09-19
+ * on deployed sites over authenticated renders, served count in a fixed 20 s window:
+ *
+ * | clients | no pool | one lane | one lane vs none |
+ * | ------: | ------: | -------: | ---------------- |
+ * |      32 |     352 |      ~54 | 0.87x            |
+ * |      64 |     347 |      339 | 0.98x            |
+ * |     128 |     256 |      528 | **2.06x**        |
+ * |     512 |       0 |      426 | from nothing     |
+ *
+ * Below saturation a single lane LOSES: routing hashes over two buckets, so it pulls ~60% of the
+ * traffic onto an object whose Drupal bins are colder than the primary's while adding no
+ * parallelism the primary did not already have. Above saturation the primary sheds everything --
+ * 512 clients against one object served ZERO, all 503 -- and one lane is the difference between a
+ * site that answers and a site that does not.
+ *
+ * **So autoscaling does NOT need a floor of two, and a guard that forced one was briefly shipped
+ * here on the strength of the 32- and 64-client rows alone.** {@link laneTarget} fires on SUSTAINED
+ * QUEUEING, which is the saturated regime by definition, and that is exactly where one lane is
+ * transformative. The losing rows describe a pool nobody would have provisioned.
+ */
 
 /**
  * The mean wait a queued request saw, in ms, or null when nothing queued.

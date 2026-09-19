@@ -115,7 +115,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: drupal-src
-          key: drupal-${{ steps.drupalver.outputs.version }}
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
       - name: Build the Packs
         run: bun run build:local
       - name: Build the Payload

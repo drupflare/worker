@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 
 /**
@@ -71,6 +71,12 @@ const MODULE_PARTS = [
 	'.routing.yml',
 	'.permissions.yml',
 	'.links.menu.yml',
+	// AND THE TASK LINKS, which are the TABS. `.links.menu.yml` was here and this was not, so the
+	// Settings and Code Delivery routes packed and resolved while the tabs leading to them were
+	// absent from every deployed site -- the modules page rendered its usual two tabs and the
+	// feature looked unbuilt. Exactly the failure the note above this list describes, one file over.
+	'.links.task.yml',
+	'.links.action.yml',
 	// `help_topics` joined it when the module grew one. A topic Drupal cannot read is a help page
 	// that is absent on every deployed site and present in every checkout
 	'help_topics'
@@ -260,6 +266,17 @@ ${routes.map((r) => `\t'${r}'`).join(',\n')}
 export async function writeDriverTree(root: string): Promise<string[]> {
 	const files = await buildDriverAssets();
 	const written: string[] = [];
+	// EVERY MOUNTED MODULE DIRECTORY IS CLEARED FIRST, because this writes into a tree CI caches.
+	// `writeFile` replaces the files it knows about and leaves behind anything the previous mount
+	// wrote that this one no longer has -- a class the autoloader still finds, at a path no sibling
+	// produces. The pack lane mounts into `drupal-src`, whose cache key is the Drupal version alone,
+	// so that residue survives a sibling bump and is baked into the from-source pack.
+	const roots = new Set(
+		Object.keys(files)
+			.map((rel) => rel.split('/').slice(0, 3).join('/'))
+			.filter((dir) => dir.startsWith('modules/'))
+	);
+	for (const dir of roots) await rm(join(root, dir), { recursive: true, force: true });
 	for (const [rel, body] of Object.entries(files)) {
 		const target = join(root, rel);
 		await mkdir(dirname(target), { recursive: true });

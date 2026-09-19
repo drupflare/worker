@@ -84,7 +84,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: drupal-src
-          key: drupal-${{ steps.drupalver.outputs.version }}
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
       - name: Cache the Built Pack
         if: ${{ !env.HAVE_PAYLOAD }}
         uses: actions/cache@v6

@@ -589,6 +589,38 @@ export function bodyTooLarge(
 }
 
 /**
+ * Where a core PHP entry point should send a visitor instead of a bare 404.
+ *
+ * `/update.php` and `/install.php` are matched by the `\.php$` deny pattern with every scanner
+ * probe, so they answered `not found` in plain text. **Drupal's own admin UI links to
+ * `/update.php`** -- the Extend page says "Always run the update script each time you update
+ * software" -- so a site administrator following a link core rendered met a bare 404 that did not
+ * even look like the site.
+ *
+ * A redirect rather than a rewrite: neither script exists here and neither can. Installation is
+ * provisioning, which has already happened by the time anything can be requested, and the database
+ * update chain is host-driven through the operations surface rather than through a web script. So
+ * the honest answer is to send the visitor to the page that does the job.
+ *
+ * Only the paths core actually links are listed. Everything else ending in `.php` is a scanner and
+ * keeps the cheap deny, which is what protects the permanent `cache_data` row per distinct URL.
+ */
+const PHP_ENTRY_REDIRECTS: Record<string, string> = {
+	'/update.php': '/admin/config/drupflare/status',
+	'/core/update.php': '/admin/config/drupflare/status',
+	'/install.php': '/',
+	'/core/install.php': '/',
+	// cron is driven by the alarm chain on a schedule, so there is nothing for a visitor to trigger
+	'/cron.php': '/admin/config/drupflare/status',
+	'/core/cron.php': '/admin/config/drupflare/status'
+};
+
+/** the redirect target for a core entry point, or null when the path is an ordinary deny */
+export function phpEntryRedirect(pathname: string): string | null {
+	return PHP_ENTRY_REDIRECTS[pathname.toLowerCase()] ?? null;
+}
+
+/**
  * True when the path cannot be a Drupal route under any configuration.
  *
  * The query string is stripped first, and that is a fix rather than a tidy-up. Four of the six
@@ -1129,6 +1161,22 @@ export default {
 		// ONE SCAN, not two. It is a `split(/[?#]/)` plus up to six regex tests, and it ran here and
 		// again on the authenticated check below over the same string for the same answer
 		const neverDrupal = isNeverDrupal(path);
+
+		// A core entry point is a LINK a visitor followed, not a probe, so it is answered before the
+		// deny below. `/update.php` is linked from the Extend page by core itself
+		const entryRedirect =
+			serving && neverDrupal ? phpEntryRedirect(path.split(/[?#]/)[0] ?? '') : null;
+		if (entryRedirect) {
+			return new Response(null, {
+				status: 302,
+				headers: {
+					location: entryRedirect,
+					'x-cfw-cache': 'DENY',
+					'x-cfw-deny': 'php-entry-point',
+					'cache-control': `public, max-age=${EDGE_PAGE_TTL_S}`
+				}
+			});
+		}
 
 		// the cheapest request in the system.
 		if (serving && neverDrupal) {

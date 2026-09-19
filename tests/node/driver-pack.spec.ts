@@ -1,4 +1,7 @@
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	DRIVER_ASSET_PATH,
@@ -201,5 +204,42 @@ describe('the userland PDO reaches the mounted tree and is required from it', ()
 		// served path and needs its own require
 		const source = await readFile(`${ROOT}src/drupal/site-php.ts`, 'utf8');
 		expect(source).toContain(`require_once '/drupal/${MOUNTED}'`);
+	});
+});
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+describe('the packer carries every declaration file a sibling module has', () => {
+	/**
+	 * A hand-kept allow-list drifts from the modules it is meant to describe, silently.
+	 *
+	 * `.links.menu.yml` was on the list and `.links.task.yml` was not, so the Settings and Code
+	 * Delivery ROUTES packed and resolved while the TABS leading to them were absent from every
+	 * deployed site. Nothing failed: the module loaded, the paths answered, and the modules page
+	 * rendered the two tabs it always had. The allow-list's own docblock predicted this class and
+	 * the list still missed a member of it.
+	 *
+	 * So the guard is the general one rather than a line per suffix: every `*.yml` a sibling module
+	 * declares at its root must reach the pack. A file the packer should genuinely skip has to be
+	 * named here, which makes the omission a decision somebody wrote down.
+	 */
+	const SKIPPABLE = new Set(['drupflare.libraries.yml']);
+
+	it('packs every root-level yml declaration the drupflare module ships', () => {
+		const src = process.env.DRUPFLARE_SRC ?? join(root, '..', 'drupflare');
+		if (!existsSync(src)) return;
+		// `<machine name>.*.yml` at the root is what Drupal reads as a module declaration; a
+		// `codecov.yml` beside it is repository config and has no business on a deployed site
+		const declared = readdirSync(src).filter(
+			(f) => f.startsWith('drupflare.') && f.endsWith('.yml') && !SKIPPABLE.has(f)
+		);
+		expect(declared.length).toBeGreaterThan(0);
+
+		const packed = JSON.stringify(readFileSync(join(root, 'assets', 'driver.json'), 'utf8'));
+		const missing = declared.filter((f) => !packed.includes(f));
+		expect(
+			missing,
+			`these declarations never reach a deployed site: ${missing.join(', ')}`
+		).toEqual([]);
 	});
 });

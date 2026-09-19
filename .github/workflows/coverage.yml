@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: drupal-src
-          key: drupal-${{ steps.drupalver.outputs.version }}
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
       - name: Fetch Drupal Tree
         run: bun run fetch:drupal
       - name: Pack the Drupal Modules
@@ -122,7 +122,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: drupal-src
-          key: drupal-${{ steps.drupalver.outputs.version }}
+          key: drupal-${{ steps.drupalver.outputs.version }}-${{ hashFiles('composer.lock') }}
       - name: Fetch Drupal Tree
         run: bun run fetch:drupal
       - name: Pack the Drupal Modules

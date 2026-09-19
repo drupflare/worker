@@ -89,6 +89,7 @@ import {
 	believedLanes,
 	chooseTarget,
 	LANES_HEADER,
+	LANES_TRUST_MS,
 	rememberLanes,
 	REPLICA_HEADER,
 	replicaCount,
@@ -129,23 +130,14 @@ export { SitePhpDurableObject };
  * ctx.storage.sql is synchronous only from inside the DO and PHP's PDO is
  * blocking.
  *
- * What it DOES own is the tier above the DO. A `caches.default` hit costs no
- * Durable Object request and no Durable Object wall-clock -- two separately
- * billed budgets this architecture otherwise spends on every page view -- and it
- * takes hit traffic off the DO's FIFO gate, which is single-threaded by
- * construction. It is also the only layer that scales across colos; DO storage is
- * one location.
+ * What it owns is the tier above the DO. A `caches.default` hit costs no Durable Object request and
+ * no Durable Object wall-clock -- two separately billed budgets -- and takes hit traffic off the
+ * DO's single-threaded gate. It is also the only layer that scales across colos; DO storage is one
+ * location.
  *
- * The route set is split. Every route used to be gated behind
- * PW_DIAGNOSTICS, `/serve` included, so a deployed worker had two states and both were
- * wrong: with the flag set, `/php` and `/sql` -- arbitrary PHP and arbitrary SQL against
- * the site database -- answered any request on the internet; without it, the site did not
- * serve at all. The default config shipped the flag ON, so the deployable artifact was the
- * first of those. Found 2026-08-11.
- *
- * So: PUBLIC routes are the ones a visitor legitimately reaches, and they are never gated.
- * DIAGNOSTIC routes still fail closed without PW_DIAGNOSTICS, because a diagnostic that
- * renders or profiles can permanently degrade the isolate it runs in.
+ * Routes are split by who may reach them. PUBLIC routes are the ones a visitor legitimately reaches
+ * and are never gated; DIAGNOSTIC routes fail closed without PW_DIAGNOSTICS, because a diagnostic
+ * that renders or profiles can permanently degrade the isolate it runs in.
  */
 /**
  * Routes reachable without diagnostics and without a credential.
@@ -180,18 +172,13 @@ const PUBLIC_ROUTES = new Set([
 /**
  * Routes that must never be reachable without PW_DIAGNOSTICS.
  *
- * Read the list as a threat model rather than a menu. `/php` reports the interpreter version
- * and the mount -- it runs ONE fixed statement and evaluates nothing a caller supplies, which
- * this comment used to claim it did; the mistake matters because this is the file a reader
- * consults for the threat model, and it overstated one route while the real arbitrary-code
- * surface sits next to it. `/sql` runs arbitrary SQL; `/export` dumps the whole database and
- * `/restore` overwrites it from a body;
- * `/savenode` writes content; `/migrate` and `/bump` can wipe
- * the page cache or re-run migration; `/nativefetch` reaches outbound.
+ * Read the list as a threat model rather than a menu. `/sql` runs arbitrary SQL, `/export` dumps the
+ * whole database and `/restore` overwrites it from a body, `/savenode` writes content, `/migrate`
+ * and `/bump` can wipe the page cache or re-run migration, and `/nativefetch` reaches outbound.
+ * `/php` reports the interpreter version and the mount: one fixed statement, nothing caller-supplied.
  *
- * `/firstrun` used to be in this set and is now in {@link PUBLIC_ROUTES}; the reasoning is there.
- * `/migrate`, `/bump`, `/invalidate` and `/armfill` are still here AND are owner routes now, which
- * narrows nothing: an owner token is per site where this flag is per deployment.
+ * `/migrate`, `/bump`, `/invalidate` and `/armfill` are owner routes as well, which narrows nothing:
+ * an owner token is per site where this flag is per deployment.
  */
 const DIAGNOSTIC_ROUTES = new Set([
 	'/php',
@@ -241,16 +228,12 @@ const DIAGNOSTIC_ROUTES = new Set([
 /**
  * Routes an OWNER reaches with a per-site token, without turning on diagnostics.
  *
- * `/export` is the "a customer can leave" property, and it was reachable only with
- * `PW_DIAGNOSTICS=1` -- one boolean that simultaneously exposes `/sql` (arbitrary SQL against the
- * site database), `/restore` (a whole-database overwrite) and `/php`. So the supported way to take
- * your own data out was to open a remote shell to the internet first, which is not a supported way
- * to do anything.
+ * `/export` is the "a customer can leave" property, and a token is what makes it reachable without
+ * `PW_DIAGNOSTICS=1` -- one boolean that also exposes arbitrary SQL, a whole-database overwrite and
+ * `/php`. Taking your own data out should not require opening a remote shell first.
  *
- * Most of these stay in `DIAGNOSTIC_ROUTES` as well, so `PW_DIAGNOSTICS=1` still reaches them and
- * nothing that worked stops working. The token is an ADDITIONAL way in rather than a replacement.
- * `/updb` and `/modify` are the exception and are owner-only: neither existed before, so there is no
- * caller to keep working, and both change what the site runs.
+ * Most of these stay in `DIAGNOSTIC_ROUTES` too, so the token is an additional way in rather than a
+ * replacement. `/updb` and `/modify` are owner-only, because both change what the site runs.
  */
 const OWNER_ROUTES = new Set([
 	'/export',
@@ -283,7 +266,7 @@ const OWNER_ROUTES = new Set([
 	// `site-do.ts` refused a sliced `updb` operation by naming "/updb" as its driver while no such
 	// route existed anywhere, which is a 501 pointing at a door that is not there
 	'/updb',
-	// THE OPERATION REGISTRY ITSELF. It was diagnostic-only, so an owner token answered 404 and the
+	// The operation registry itself. It was diagnostic-only, so an owner token answered 404 and the
 	// only reader was the Commands page reaching `/__ops` internally -- which meant `drangler`
 	// could not list what a site can run without turning on the flag that also opens `/sql`.
 	'/ops',
@@ -300,29 +283,29 @@ const OWNER_ROUTES = new Set([
 	// FLEET RECONCILIATION. The pack delivers only at provisioning, so a fix that lands in it reaches
 	// new sites and no existing one. This reports what a site still owes and drives one step of it
 	'/reconcile',
-	// THE ADDRESSABLE SWEEP. Coverage was demand-driven, so nothing knew how much of a site was
+	// The addressable sweep. Coverage was demand-driven, so nothing knew how much of a site was
 	// covered and nothing bounded what an indexer could make it spend
 	'/sweep',
-	// THE FILL QUEUE, and it is a RECOVERY route rather than a diagnostic one. A queue deeper than
+	// The fill queue, and it is a RECOVERY route rather than a diagnostic one. A queue deeper than
 	// a batch can survive resets the isolate inside the alarm, which leaves the queue at its old
 	// depth and the next alarm attempting the same batch: measured on a deployed free worker at 103
 	// entries, every render answering 500 across three redeploys. `recycleIfOversized()` cannot
 	// reach it because it runs between invocations and the death is inside one. Draining the queue
 	// is the only lever an operator has, and until now there was none
 	'/queue',
-	// UPLOADED MODULE REVISIONS. `/git` delivers a tree from a git host and `/install` delivers one
+	// Uploaded module revisions. `/git` delivers a tree from a git host and `/install` delivers one
 	// from a registry; there was no way to deliver a tree that is on a developer's disk, and no
 	// history behind either -- `gitRestore()` restores within the same call and then the previous
 	// state is gone
 	'/modify',
-	// THE RUNTIME LEVERS, WHICH WERE READABLE FROM KV AND WRITABLE BY NOBODY. `resolvePlan()` and
+	// The runtime levers, which were readable from KV and writable by nobody. `resolvePlan()` and
 	// `resolveSettings()` have read the `plan` and `settings` keys since they shipped, and nothing
 	// in `src/` ever called `CONFIG_KV.put()` -- so changing a lever meant editing `wrangler.jsonc`
 	// and redeploying, which is a deploy to change a fact the deploy does not control. Owner rather
 	// than diagnostic for the reason `/serve-stats` is: a site owner tuning their own site should
 	// not need the flag that also opens `/sql`
 	'/settings',
-	// THE PRODUCT SURFACES, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
+	// The product surfaces, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
 	// also reach. They used to sit in the diagnostic set alone, so the pages that install code were
 	// open to anybody who could reach a worker with the flag on, and each button's
 	// `window.prompt('Owner token')` was accepted without being checked against anything
@@ -396,7 +379,7 @@ async function ownerCredential(
 		adminCookieToken(request.headers.get('cookie'));
 	if (!presented) return null;
 
-	// BEFORE THE OBJECT HOP, WHICH IS THE WHOLE POINT. Every presented token cost one Durable
+	// Before the object hop, which is the whole point. Every presented token cost one Durable
 	// Object request whether or not it was right, so an unauthenticated client could drive the
 	// meter the free-plan model is scored against until the site went read-only. Refusing here
 	// spends nothing. See `OWNER_FAIL_LIMIT` for why this is not a brute-force defence.
@@ -505,22 +488,16 @@ const EDGE_PAGE_TTL_S = 300;
 /**
  * Width of the window the generation pointer is discovered once per, in ms.
  *
- * The Worker has to know the generation to build a cache key, and asking the DO
- * for it on every request would spend a DO request to save a DO request. So the
- * pointer is itself an edge-cache entry whose KEY contains the window index: the
- * first request in a window finds no pointer, goes to the DO it was going to have
- * to reach anyway, and reads the generation off that response's header. Every
- * later request in the window reads the pointer for free.
+ * The Worker needs the generation to build a cache key, and asking the DO for it every request would
+ * spend a DO request to save one. So the pointer is itself an edge-cache entry whose key contains the
+ * window index: the first request in a window reads the generation off a response it had to fetch
+ * anyway, and every later one reads the pointer for free.
  *
- * The key is bucketed rather than left to `max-age` expiry because
- * Cloudflare's edge applies its own minimum TTLs to cached responses, and a
- * pointer whose freshness silently outlived its window would serve a stale
- * generation indefinitely.
+ * Bucketed rather than left to `max-age` expiry, because Cloudflare applies its own minimum TTLs and
+ * a pointer outliving its window would serve a stale generation indefinitely.
  *
- * Cost: at most one extra DO request per window per colo, independent of traffic.
- * Lag: a bump reaches other colos within two windows. The bumping colo sees it
- * immediately, because the /bump response rewrites the pointer for the current
- * window.
+ * Costs at most one extra DO request per window per colo, independent of traffic. A bump reaches
+ * other colos within two windows; the bumping colo sees it immediately.
  */
 const GEN_BUCKET_MS = 5000;
 
@@ -539,21 +516,15 @@ const genMemo = new Map<string, number>();
 /**
  * Paths Drupal can never legitimately serve, refused in JS before any DO hop.
  *
- * This is a storage fix, not just a saving. `PageCache` writes one PERMANENT
- * `cache_data` row per distinct URL -- measured, cid
- * `route:[language]=en:[query_parameters]=:<path>`, about 215 B including the views
- * results row. Nothing garbage-collects it, because expire-based GC only deletes rows
- * with a finite expire and a 2xx page is stored `Cache::PERMANENT`. So a scanner
- * walking `/.env`, `/wp-login.php`, `/.git/config` writes a permanent row for every
- * probe: an attacker-influenceable, unbounded growth vector against a 5 GB
- * account-wide free storage limit.
+ * A storage fix rather than a saving. `PageCache` writes one PERMANENT `cache_data` row per distinct
+ * URL, about 215 B, and nothing collects it: expire-based GC only deletes rows with a finite expire.
+ * So a scanner walking `/.env`, `/wp-login.php`, `/.git/config` writes a permanent row per probe --
+ * attacker-influenceable unbounded growth against a 5 GB account-wide limit.
  *
- * A DENY list, not the router's own path table. A
- * manifest of real routes cannot be authoritative at the edge: path ALIASES live in
- * `path_alias` and are created at runtime, so `/about` is a valid URL that appears in
- * no packed route table. An allowlist would 404 it. These patterns instead match only
- * things Drupal has no route for under any configuration, so the false-positive risk
- * is zero, which is what lets this run before the DO rather than after.
+ * A DENY list rather than the router's own path table, because a manifest of real routes cannot be
+ * authoritative at the edge: path aliases live in `path_alias` and are created at runtime, so
+ * `/about` is valid and appears in no packed table. These patterns match only what Drupal has no
+ * route for under any configuration, which is what lets this run before the DO rather than after.
  */
 const NEVER_DRUPAL = [
 	/\.(?:env|git|sql|bak|old|swp|ini|log|sh|yml~|zip|tar|gz|tgz|rar|7z)$/i,
@@ -693,6 +664,85 @@ async function readGeneration(
 	return n;
 }
 
+/**
+ * The lane-count pointer, at the edge rather than only in this isolate's memory.
+ *
+ * `believedLanes()` is learned from an `x-cfw-lanes` header on a response the isolate has ALREADY
+ * received, so a cold isolate routes its first request to the primary whatever the pool size, and
+ * forgets again after `LANES_TRUST_MS`. Workers spawn isolates continuously, so under real spread
+ * load most requests arrive at an isolate that has never seen the pool -- and after a deploy, none
+ * of them has. Measured on a deployed 32-lane site: the primary's own `serveRequests` counter moved
+ * by 904 across a 904-request drive, so the pool served none of it, and an anonymous drive reported
+ * `answeredBy` as `{primary: 904}`.
+ *
+ * Same shape as the generation pointer above and for the same reason: a value every isolate can
+ * read before it decides anything, rather than one each isolate has to rediscover.
+ */
+function laneKey(origin: string, site: string): string {
+	return `${origin}/__cfw/lanes/${encodeURIComponent(site)}`;
+}
+
+/**
+ * How long the EDGE pointer lives, deliberately far longer than {@link LANES_TRUST_MS}.
+ *
+ * The two answer different questions and tying them together collapsed a pool under exactly the
+ * load it exists for. In-isolate belief is short so a SHRUNK pool stops being routed to quickly.
+ * The edge pointer is a hint, and the two ways it can be wrong are not symmetric:
+ *
+ * - **stale-high** (the pool shrank): a request hashes to a lane that no longer serves, the lane
+ *   refuses, and the router retries the primary. One wasted hop, on a path that already exists.
+ * - **stale-absent** (the pointer expired): every cold isolate believes there is no pool at all and
+ *   sends everything to the primary, which is the whole pool lost.
+ *
+ * Measured 2026-09-19: a 32-lane site answered 294 requests with **zero** served by lanes while all
+ * sampled lanes were `SERVING` and a manual request routed to `r30`. Under saturation the primary
+ * sheds, a shed answer carried no `x-cfw-lanes`, so nothing refreshed the pointer inside 60 s, and
+ * the pool went invisible precisely when it was needed. The shed path now carries the header too,
+ * which is the other half of this fix.
+ */
+const LANE_POINTER_TTL_S = 900;
+
+/**
+ * Seeds this isolate's belief from the edge, so the FIRST request routes on it.
+ *
+ * @internal exported for `replica-failover.spec.ts`, which cannot reach it through a request: the
+ * primary memoises `lanesProvisioned()` per incarnation, so a fixture cannot make it report a pool
+ * it did not actually provision.
+ */
+export async function primeLanes(cache: Cache, origin: string, site: string): Promise<void> {
+	if (believedLanes(site, Date.now()) > 0) return;
+	try {
+		const hit = await cache.match(laneKey(origin, site));
+		if (!hit) return;
+		const n = Number((await hit.text()).trim());
+		if (Number.isFinite(n) && n > 0) rememberLanes(site, n, Date.now());
+	} catch {
+		// no pointer just means this isolate learns from the response the way it always did
+	}
+}
+
+/** publishes what the primary reported, so the next cold isolate does not have to ask; @internal */
+export async function writeLanes(
+	cache: Cache,
+	origin: string,
+	site: string,
+	lanes: number
+): Promise<void> {
+	try {
+		await cache.put(
+			laneKey(origin, site),
+			new Response(String(lanes), {
+				headers: {
+					'content-type': 'text/plain; charset=utf-8',
+					'cache-control': `public, max-age=${LANE_POINTER_TTL_S}`
+				}
+			})
+		);
+	} catch {
+		// the pointer is an optimisation; routing still works off the header
+	}
+}
+
 async function writeGeneration(
 	cache: Cache,
 	origin: string,
@@ -790,17 +840,15 @@ async function writeAuthSpend(
  * with Retry-After) and every other non-200 is refused. Caching a placeholder is how a site serves
  * placeholders forever.
  *
- * `cache.put()` rejects several header combinations (206 responses, `Vary: *`,
- * `Set-Cookie` without a matching `Cache-Control: private=set-cookie`), so the
- * stored copy is built from an explicit allow-list of headers rather than from
- * whatever the DO sent, and a rejection degrades to "no edge cache" instead of
- * failing the request.
+ * `cache.put()` rejects several header combinations (206 responses, `Vary: *`, `Set-Cookie` without
+ * a matching `Cache-Control: private=set-cookie`), so the stored copy is built from an explicit
+ * allow-list rather than from whatever the DO sent, and a rejection degrades to "no edge cache"
+ * instead of failing the request.
  *
- * EVERY REFUSAL IS SYNCHRONOUS AND THE WRITE IS NOT, which is why this returns the write rather than
- * awaiting it. Measured on a deployed worker: an awaited `cache.put` of a 97 KB body costs 12.5 ms
- * before the response leaves, and the same put handed to `waitUntil` costs 0. The header still
- * reports the refusal by name; a stored page reports `deferred`, because "it was handed off" is what
- * this function knows and "it landed" is not.
+ * Every refusal is synchronous and the write is not, so this returns the write rather than awaiting
+ * it: an awaited `cache.put` of a 97 KB body costs 12.5 ms before the response leaves, and the same
+ * put handed to `waitUntil` costs 0. A stored page reports `deferred`, because "it was handed off"
+ * is what this function knows and "it landed" is not.
  *
  * @returns an x-cfw-edge-put value, and the write to defer when there is one
  */
@@ -842,7 +890,7 @@ function putPage(
 	// cloned HERE rather than inside the deferred write: the body below is returned to the caller and
 	// a clone taken after the response has been consumed is empty
 	const copy = new Response(res.clone().body, { status: 200, headers });
-	// **SEEDING THE ISOLATE MEMO FROM HERE WAS TRIED AND REVERTED.** The memo only ever warms from a
+	// **Seeding the isolate memo from here was tried and reverted.** The memo only ever warms from a
 	// `caches.default` HIT, so the isolate that just produced a page pays one `cache.match` on its
 	// next request for it. Seeding it here removes that read -- ONCE per isolate per page, after
 	// which the memo is warm either way -- and in exchange the EDGE tier stops being observable
@@ -860,23 +908,32 @@ function putPage(
 export default {
 	async fetch(request: Request, env: SiteWorkerEnv, ctx?: ExecutionContext): Promise<Response> {
 		let url = new URL(request.url);
-		// STARTED HERE RATHER THAN AFTER THE ROUTE MATCH, because the two KV reads below and the
+		// Started here rather than after the route match, because the two KV reads below and the
 		// catch-all's site resolution sat in front of it -- so `x-worker-ms` reported a front worker
 		// that had already spent 8-12 ms on a cold isolate and left it out of its own number
 		const t0 = Date.now();
 		// ISSUED TOGETHER, because they read two keys from one namespace and neither needs the other's
 		// answer. Measured on a deployed worker: a WARM `CONFIG_KV.get()` costs 4-6 ms, ten in series
 		// cost 54.5 ms and the same ten together cost 15. A key the colo has not seen costs 46-140 ms
+		// THE TENANT THIS REQUEST BELONGS TO, for scoping the two KV documents.
+		//
+		// **NOT `siteFor(url, env)` HERE, and the difference is a privilege boundary.** That helper
+		// honours `?site=` on any path outside `PUBLIC_ROUTES`, and it is called further down
+		// AFTER the catch-all rewrite has set `url.pathname` to `/serve`, which is public. Called
+		// here, before the rewrite, an ordinary page path is not in the set -- so a visitor's own
+		// `?site=` would have chosen which tenant's levers this request runs under.
+		// `serve-edge.spec.ts` catches exactly that.
+		const { site: resolvedSite } = await resolveSite(url, env, { allowParam: false });
 		const [plan, settings] = await Promise.all([
 			// resolved ONCE and overlaid, so the 16 `isPaid(env)` call sites downstream need no change
 			// and cannot disagree with each other about which plan this request is on
-			resolvePlan(env, env.CONFIG_KV),
+			resolvePlan(env, env.CONFIG_KV, Date.now(), resolvedSite),
 			// the numeric levers ride the same namespace, behind an allow-list: KV is operator-writable,
 			// so a blanket merge would let a KV write set PW_DIAGNOSTICS and reach /sql and /restore
-			resolveSettings(env.CONFIG_KV)
+			resolveSettings(env.CONFIG_KV, Date.now(), resolvedSite)
 		]);
 		env = withSettings(withPlan(env, plan), settings);
-		// A WRITE THAT NOTHING DOWNSTREAM READS DOES NOT BELONG BEFORE THE RESPONSE. Measured on a
+		// A write that nothing downstream reads does not belong before the response. Measured on a
 		// deployed worker: an awaited `caches.default.put` costs 9 ms for a small body and 12.5 ms for
 		// a 97 KB one, and the same put through `waitUntil` costs 0 before the response leaves. It
 		// does not reduce the invocation's billed wall time, only the time to answer.
@@ -886,7 +943,7 @@ export default {
 			else void p;
 		};
 
-		// DRUPAL OWNS THE URL SPACE, so anything this Worker does not claim is a page request. Before
+		// Drupal owns the URL space, so anything this Worker does not claim is a page request. Before
 		// this, `/` answered 404 on a deployed site as well as locally -- the only serving route was
 		// `/serve?site=X&path=Y`, so the premise of the product was reachable only by query string.
 		//
@@ -900,7 +957,7 @@ export default {
 		// with a render rather than a refusal, which reads as "the route exists and something went
 		// wrong" instead of "there is no such route here"
 		const internal = url.pathname.startsWith('/__');
-		// IMAGE DERIVATIVES, ANSWERED HERE. In the front worker rather than in the object for two
+		// Image derivatives, answered here. In the front worker rather than in the object for two
 		// reasons: the wasm decoder never meets PHP's heap, and a derivative is a static byte range
 		// that has no reason to enter a single-threaded object at all. Before the `/serve` rewrite,
 		// because this path is its own route rather than a Drupal one
@@ -928,12 +985,12 @@ export default {
 		if (!ROUTES.has(url.pathname)) {
 			return new Response('not found\n', { status: 404 });
 		}
-		// THE ADMIN SURFACE IS NOT A DIAGNOSTIC, so the flag is not a way into it. Everywhere else
+		// The admin surface is not a diagnostic, so the flag is not a way into it. Everywhere else
 		// `PW_DIAGNOSTICS=1` still opens what it always opened
 		const surface = SURFACE_ROUTES.has(url.pathname);
 		let ownerToken: string | null = null;
 		if (surface || (!PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1')) {
-			// AN OWNER ROUTE IS NOT A DIAGNOSTIC. `/export` sat in the diagnostic set beside `/sql`
+			// An owner route is not A DIAGNOSTIC. `/export` sat in the diagnostic set beside `/sql`
 			// (arbitrary SQL) and `/restore` (a whole-database overwrite), all behind one boolean --
 			// so the supported way to get your own data out was to expose a remote shell to the
 			// internet first. Export is an owner operation and takes a credential instead of a mode.
@@ -968,7 +1025,7 @@ export default {
 		// one object per site; the name is the site identity, and a replica lane is that name plus a
 		// suffix. With no replicas configured `chooseTarget()` always answers the site itself
 		const site = await siteFor(url, env);
-		// THE VISITOR'S OWN PATH, which `url.pathname` no longer holds: the rewrite above moved it
+		// The visitor's own path, which `url.pathname` no longer holds: the rewrite above moved it
 		// into `?path=` and made every serving request read `/serve`. So the path fallback in
 		// `affinityKey()` -- what a request with no session and no `cf-connecting-ip` spreads on --
 		// was one constant string, and every such request piled onto whichever lane it hashes to.
@@ -996,7 +1053,10 @@ export default {
 				// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or
 				// owner route reads as itself; those pin to the primary
 				pathname: url.pathname,
-				writeForward: writeForwardEnabled(env)
+				writeForward: writeForwardEnabled(env),
+				// a write arriving without one may MINT one, and a lane's mint never reaches the
+				// primary; see the docblock on the field
+				hasSession: sessionCookieValue(request.headers.get('cookie')) !== null
 			}));
 		let stubMemo: DurableObjectStub | null = null;
 		const stubOf = (): DurableObjectStub =>
@@ -1237,11 +1297,15 @@ export default {
 
 		const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
 
+		// BEFORE the first routing decision, so a cold isolate routes to the pool on request one
+		// rather than sending it to the primary and learning afterwards
+		if (serving) await primeLanes(cache, origin, site);
+
 		let generation = null;
 		if (edgeWanted) {
 			generation = await readGeneration(cache, origin, site, bucket);
 			if (generation !== null) {
-				// THE STRING BEFORE THE REQUEST, because the memo below is the tier that answers
+				// The string before the request, because the memo below is the tier that answers
 				// almost all of this path and it reads only the string. Building the `Request` first
 				// made every MEM hit pay a URL parse and an object allocation it never used
 				const memoKey = pageKeyUrl(origin, site, generation, path);
@@ -1316,7 +1380,7 @@ export default {
 					}
 				});
 			}
-			// THE PREVIOUS GENERATION, which is already in KV and was never read. A bump changes the
+			// The previous generation, which is already in KV and was never read. A bump changes the
 			// key rather than deleting anything, so the last answer for this path is sitting there
 			// on its own TTL -- and the cold path it replaces is 802 ms at p50 against 4-5 ms warm.
 			// The regeneration goes to the object's own fill queue, so the visitor waits for
@@ -1412,7 +1476,7 @@ export default {
 		}
 		// Built BEFORE the send, because a replica that refuses has already consumed the request.
 		//
-		// A BODY IS REBUILT FROM `buffered`, NEVER CLONED. This was `innerRequest.clone()` under a
+		// A body is rebuilt from `buffered`, NEVER CLONED. This was `innerRequest.clone()` under a
 		// comment asserting only GET and HEAD could arrive, which `chooseTarget()` guaranteed until
 		// write forwarding let a POST reach a lane -- and nothing revisited it. `clone()` tees the
 		// body, the retry branch is read only on a failover, and an unread tee never releases: the
@@ -1430,7 +1494,16 @@ export default {
 							redirect: 'manual'
 						});
 		let res = await stubOf().fetch(innerRequest);
+		// which lane handed back, so the header below can name the object that ANSWERED rather than
+		// the one routing chose; they differ on exactly the requests a pool measurement cares about
+		let failedOverFrom: number | null = null;
+		// WHY it handed back, which the retry otherwise discards with the lane's own response. A
+		// failover rate says a pool is not carrying traffic; only the reason says which of the
+		// several refusals is doing it, and reading that off the lane afterwards is impossible
+		let failoverReason: string | null = null;
 		if (retryOnPrimary !== null && shouldFailover(res)) {
+			failedOverFrom = laneOf().lane;
+			failoverReason = res.headers.get('x-cfw-requires-primary');
 			// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
 			// from the status alone
 			res = await env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env)).fetch(
@@ -1438,22 +1511,11 @@ export default {
 			);
 		}
 
-		// A MODULE INSTALL CANNOT WAKE ITS OWN FILL CHAIN, so this does it in a second event.
-		// `setAlarm()` from inside the install's own event resets the object and rolls the whole
-		// install back -- measured 0/6 landing with it and 6/6 without. The install answers
-		// `armFill: true` when it purged pages it wants re-rendered; poking `/__armfill` is one
-		// `setAlarm()` in an event of its own, which is the part that makes it safe.
-		// AN INSTALL LEAVES ITS OBJECT UNABLE TO DO ANYTHING ELSE, so the refill is NOT woken
-		// from here. The install ends with the isolate at ~110 MB of a 128 MB cap --
-		// wasm linear memory never shrinks -- and the next event in that isolate is refused:
-		// poking `/__armfill` immediately returned "Durable Object's isolate exceeded its memory
-		// limit and was reset" on 6 of 6 deployed installs. Armed from INSIDE the install's own
-		// event it is worse still: that reset rolls the whole install back.
-		//
-		// So the queue rows are written and left. The chain wakes on the next thing that arms it
-		// -- a visitor MISS, a save, or an explicit `/armfill` -- by which point the object has
-		// been re-created with a clean isolate. The cost is a cold cache after an install, which
-		// is what a cache is for.
+		// an install leaves its object at ~110 MB of a 128 MB cap and wasm memory never shrinks, so
+		// the refill is NOT woken here: the next event in that isolate is refused, and a `setAlarm()`
+		// from inside the install's own event resets the object and rolls the install back (0/6
+		// landed with it, 6/6 without). The queue rows are written and left; the chain wakes on the
+		// next visitor MISS, save or explicit `/armfill`, by which point the isolate is clean.
 		let armedFill = 'n/a';
 		if (url.pathname === '/enable' && res.ok) {
 			try {
@@ -1479,22 +1541,15 @@ export default {
 			if (reported) defer(writeAuthSpend(cache, origin, site, reported));
 		}
 
-		// the generation rides along on a response we already paid for, so learning
-		// it -- including learning that a bump happened -- costs nothing extra
+		// the generation rides along on a response we already paid for, so learning it costs nothing
 		//
-		// FORWARD ONLY, AND `!==` HERE EMPTIED THE EDGE TIER WHENEVER LANES EXISTED. The generation is
-		// per OBJECT and a lane converges on the primary's value only by applying the replication log,
-		// bounded by `DEFAULT_REPLICA_LAG_MS`. The front worker's pointer is per SITE and single
-		// valued, so with `!==` a primary response set it to G, pages were stored under
-		// `pageKey(..., G, ...)`, and the next response from a lane still at G-1 rewrote it backwards
-		// -- after which every `cache.match` asked for a key nothing had ever been stored under, and
-		// every anonymous request fell through to a Durable Object hop. Then a primary response
-		// flipped it forward again and orphaned the pages written under G-1. It oscillated for as
-		// long as the lag lasted, which is why adding lanes made the anonymous arm WORSE.
+		// forward only: the generation is per OBJECT and a lane trails the primary by up to
+		// `DEFAULT_REPLICA_LAG_MS`, while this pointer is per SITE and single valued. With `!==` a
+		// lane's older value rewrote it backwards, every `cache.match` then asked for a key nothing
+		// had been stored under, and the edge tier emptied for as long as the lag lasted.
 		//
-		// Monotonic within the bucket rather than forever: `bucket` is in the key, so a genuine
-		// backwards move (a restore) is picked up at the next `GEN_BUCKET_MS` boundary instead of
-		// being pinned out. That bounds the cost of being wrong to one bucket.
+		// monotonic within the BUCKET rather than forever, so a genuine backwards move (a restore) is
+		// picked up at the next boundary instead of being pinned out
 		if (doGeneration !== null && (generation === null || doGeneration > generation)) {
 			defer(writeGeneration(cache, origin, site, bucket, doGeneration));
 		}
@@ -1505,6 +1560,8 @@ export default {
 		const reportedLanes = Number(res.headers.get(LANES_HEADER) ?? '');
 		if (Number.isFinite(reportedLanes) && reportedLanes > 0) {
 			rememberLanes(site, reportedLanes, Date.now());
+			// and at the edge, so the next COLD isolate routes on it rather than rediscovering it
+			defer(writeLanes(cache, origin, site, reportedLanes));
 		}
 
 		// #region compiling a plan out of the render that just happened
@@ -1654,11 +1711,24 @@ export default {
 			headers.set('cache-control', 'private, no-store');
 		}
 		headers.set('x-worker-ms', String(Date.now() - t0));
-		// WHICH OBJECT ANSWERED, because nothing reported it and a whole class of measurement was
+		// Which object ANSWERED, because nothing reported it and a whole class of measurement was
 		// taken without it. A driven copy left `lanes_provisioned` unwritten, so the router never
 		// learned the pool existed and every "with lanes" arm served from the primary while the rig
-		// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object
-		headers.set(REPLICA_HEADER, laneOf().lane === 0 ? 'primary' : `r${laneOf().lane}`);
+		// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object.
+		//
+		// IT NAMED THE ROUTING DECISION UNTIL NOW, AND THAT IS NOT THE SAME OBJECT. A lane that
+		// refuses hands back and the primary re-serves, and this still reported the lane -- so a
+		// pool whose lanes served nothing read as one carrying most of the traffic. The failover is
+		// reported beside it rather than hidden, because the RATE of handing back is the number
+		// that says whether a pool is working.
+		headers.set(
+			REPLICA_HEADER,
+			laneOf().lane === 0 || failedOverFrom !== null ? 'primary' : `r${laneOf().lane}`
+		);
+		if (failedOverFrom !== null) {
+			headers.set('x-cfw-failover', `r${failedOverFrom}`);
+			if (failoverReason !== null) headers.set('x-cfw-failover-reason', failoverReason);
+		}
 		if (armedFill !== 'n/a') headers.set('x-cfw-arm-fill', armedFill);
 		return new Response(res.body, { status: res.status, headers });
 	},
@@ -1724,20 +1794,21 @@ function safeNext(value: string | null): string | null {
 /**
  * Reads and writes the runtime levers, which had a resolver and no writer.
  *
- * GET reports every allow-listed name with the value in force AND WHERE IT CAME FROM. The source is
- * the half that matters: "we think you are on free" is only useful with the reason, and
- * `ResolvedPlan` has carried `kv` / `var` / `default` since it shipped with nothing rendering it.
+ * GET reports every allow-listed name with the value in force and where it came from. The source is
+ * the half that matters: "we think you are on free" is only useful with the reason.
  *
- * PUT takes a JSON object and merges it. `PLAN` is accepted only under its own top-level key rather
- * than alongside the levers, because the two are different authorisations: every name on
- * `KV_OVERRIDABLE` has a worst case of a slow site, and `PLAN` selects a limits profile whose quotas
- * are account-wide.
+ * PUT merges a JSON object. `PLAN` is accepted only under its own top-level key, because the two are
+ * different authorisations: every name on `KV_OVERRIDABLE` has a worst case of a slow site, and
+ * `PLAN` selects a limits profile whose quotas are account-wide.
  *
- * A binding with no `put` answers 501 rather than throwing. That is the local-dev and
- * no-namespace case, and it has to read as "this deployment cannot store an override" rather than
- * as a fault.
+ * A binding with no `put` answers 501 rather than throwing, so local dev reads as "this deployment
+ * cannot store an override" rather than as a fault.
  */
 async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Promise<Response> {
+	// the SAME site the owner credential was checked against, so a token for A cannot read or write
+	// B's document. Both documents used to be deployment-wide, which made one tenant's owner an
+	// operator for every other tenant
+	const site = await siteFor(url, env);
 	const kv = env.CONFIG_KV;
 	if (!kv) {
 		return Response.json(
@@ -1750,7 +1821,10 @@ async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Pr
 		);
 	}
 
-	const [plan, settings] = await Promise.all([resolvePlan(env, kv), resolveSettings(kv)]);
+	const [plan, settings] = await Promise.all([
+		resolvePlan(env, kv, Date.now(), site),
+		resolveSettings(kv, Date.now(), site)
+	]);
 	const view = () => ({
 		ok: true,
 		plan,
@@ -1803,11 +1877,11 @@ async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Pr
 				{ status: 400 }
 			);
 		}
-		planResult = await writePlan(kv, asked === '' ? null : (asked as 'free' | 'paid'));
+		planResult = await writePlan(kv, asked === '' ? null : (asked as 'free' | 'paid'), site);
 	}
 
 	const { PLAN: _plan, plan: _lower, ...levers } = patch;
-	const written = await writeSettings(kv, levers);
+	const written = await writeSettings(kv, levers, site);
 	return Response.json({ ok: true, plan: planResult, ...written });
 }
 
@@ -1856,6 +1930,16 @@ async function renderAdmin(
 		if (presented === '') {
 			return html(renderLogin(wanted, 'Enter the owner token.'), {}, 400);
 		}
+		// THE SAME FAILURE BUDGET `ownerCredential()` USES, and this door had none.
+		// `LOGIN_PATH` is public, so the gate above requires no credential and this branch reached
+		// `/__ownercheck` once per HTTP request, unbounded -- exactly the amplification the budget
+		// was added to remove, through the one route that never consults it. Guessing the token is
+		// not the risk; driving the object's request meter for free is
+		const failKey = ownerFailKey(request);
+		const now = Date.now();
+		if (ownerRefusedForNow(failKey, now)) {
+			return html(renderLogin(wanted, 'Too many attempts. Wait a minute.'), {}, 429);
+		}
 		const inner = new URL(url);
 		inner.pathname = '/__ownercheck';
 		inner.search = '';
@@ -1863,8 +1947,10 @@ async function renderAdmin(
 			new Request(inner, { headers: { authorization: `Bearer ${presented}` } })
 		);
 		if (checked.status !== 200) {
+			noteOwnerFailure(failKey, now);
 			return html(renderLogin(wanted, 'That is not the owner token for this site.'), {}, 401);
 		}
+		clearOwnerFailures(failKey);
 		return new Response(null, {
 			status: 303,
 			headers: {
@@ -2017,7 +2103,7 @@ async function renderAdmin(
 			// the registry always answers, so the table renders even when the typed command goes
 			// somewhere else
 			const res = await stub.fetch(asOwner(inner));
-			// AN OBJECT, KEYED BY NAME, and this read it as an array for the whole life of the
+			// An object, keyed by name, and this read it as an array for the whole life of the
 			// surface. `OpsRegistry::operations()` returns a string-keyed PHP array, so `json_encode`
 			// emits an object and `for...of` over it throws `is not iterable`. The throw landed in
 			// the catch below, so `entries` stayed empty AND the typed command never ran: every visit
@@ -2108,20 +2194,14 @@ async function renderAdmin(
 			? { images, styles, alreadyUsed: Number(url.searchParams.get('used')) || 0 }
 			: null;
 
-	// THREE of the meters now have real counters behind them; this page used to pass `{}` and report
-	// "nothing measures this yet" for every row, which beside a measured row reads as the healthy one.
+	// `worker-requests` is blank and that is structural: a request answered by the edge cache never
+	// enters an isolate that could count it, so any number derived here would undercount the serving
+	// ceiling by exactly the traffic the cache exists to absorb. It comes from Cloudflare's analytics
+	// or nowhere.
 	//
-	// `worker-requests` is STILL blank, and that is structural rather than a gap. A request answered
-	// by the edge cache never enters an isolate that could count it, so any number this Worker
-	// derived would undercount the serving ceiling by exactly the traffic the cache exists to absorb
-	// -- a confident wrong number about the meter that binds at 3M visits/month. It comes from
-	// Cloudflare's analytics or nowhere.
-	//
-	// `image-transforms` is a function of CONTENT rather than traffic -- one transformation per style
-	// per image -- so it is counted from the database instead of projected. It is also the only hard
-	// cap here: past it images silently stop being transformed until the first of the month.
-	// which plan is in force AND where it came from, because "we think you are on free" is only
-	// useful with the reason: a KV override, the deployed var, or nothing set at all
+	// `image-transforms` is a function of CONTENT rather than traffic -- one per style per image -- so
+	// it is counted from the database. It is also the only hard cap here: past it images silently stop
+	// being transformed until the first of the month.
 	const resolvedPlan = await resolvePlan(env, env.CONFIG_KV);
 
 	const used: Record<string, number> = {};
@@ -2150,7 +2230,7 @@ async function renderAdmin(
 /**
  * One image derivative, produced here rather than bought from a delivery product.
  *
- * IN THE FRONT WORKER, and that placement is the decision. The decoder is a second wasm module; in
+ * In the front worker, and that placement is the decision. The decoder is a second wasm module; in
  * the object it would share an isolate with PHP's 96 MiB linear memory against a 128 MiB cap, and a
  * derivative is a static byte range that has no reason to enter a single-threaded object at all.
  * Measured on the published module: 1 MiB initial linear memory, 4 MiB after 56 transforms, and a
@@ -2306,14 +2386,12 @@ export interface FillWindowFailure {
 /**
  * Drives one warm window: connect, pump one message per fill, close.
  *
- * The driver has to live OUTSIDE the Durable Object, because the budget resets on an
- * INCOMING message and an object cannot send itself one. The Worker's own cost is a
- * relay -- it does no PHP and no rendering -- and its wall time is not charged.
+ * The driver lives OUTSIDE the Durable Object, because the budget resets on an incoming message and
+ * an object cannot send itself one. The Worker's own cost is a relay and its wall time is not charged.
  *
- * Bounded three ways, because a window spends three different budgets: `maxFills` bounds
- * DO requests (100k/day) and rows written (100k/day), `wallBudgetMs` bounds billed
- * duration (13,000 GB-s/day, and a held socket is non-hibernatable so it IS billed), and
- * the 15-minute platform maximum on a connection keeping an object alive caps the rest.
+ * Bounded three ways, because a window spends three budgets: `maxFills` bounds DO requests and rows
+ * written (100k/day each), `wallBudgetMs` bounds billed duration (a held socket is non-hibernatable
+ * so it IS billed), and the 15-minute platform maximum on a connection caps the rest.
  *
  * @returns the two cases are discriminated by `ok`, because a window that could not open has no
  *   outcomes rather than an empty list of them

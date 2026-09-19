@@ -198,3 +198,27 @@ describe('the owner-token failure budget', () => {
 		expect(ownerRefusedForNow('ip-0', 1_000)).toBe(false);
 	});
 });
+
+describe('the login form shares the owner failure budget', () => {
+	/**
+	 * `LOGIN_PATH` is public, so the route gate requires no credential and the POST branch reached
+	 * `/__ownercheck` once per HTTP request with nothing bounding it. That is the amplification
+	 * `ownerCredential()`'s budget exists to remove, left open on the one door that never consulted
+	 * it: an unauthenticated client could drive the object's request meter, which is the meter the
+	 * whole free-plan model is scored against, until the site degraded to read-only.
+	 */
+	it('refuses a browser login once the budget is spent, before any object hop', () => {
+		resetOwnerFailures();
+		const key = 'login-form-probe';
+		const at = Date.now();
+		for (let i = 0; i < OWNER_FAIL_LIMIT; i += 1) {
+			expect(ownerRefusedForNow(key, at)).toBe(false);
+			noteOwnerFailure(key, at);
+		}
+		// the (limit + 1)th attempt never reaches the Durable Object
+		expect(ownerRefusedForNow(key, at)).toBe(true);
+		// and a correct token afterwards clears it, so an operator who typo'd is not locked out
+		clearOwnerFailures(key);
+		expect(ownerRefusedForNow(key, at)).toBe(false);
+	});
+});

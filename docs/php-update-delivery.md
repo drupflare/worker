@@ -17,8 +17,7 @@ A running Worker cannot swap its PHP binary. The change unit is a redeploy.
   API adds a module to a deployed bundle.
 - **There is no compile step to pay.** A `CompiledWasm` import arrives already compiled, so the seam
   performs no codegen at all. That matters because `workerd` permits codegen during startup and
-  refuses it at request time, which is what a compressed frame had to work around. Startup went from
-  ~106 ms to ~5 ms when the compressed seam was replaced on 2026-09-07.
+  refuses it at request time, which is what a compressed frame had to work around. Replacing the compressed seam took startup from ~106 ms to ~5 ms.
 - **Startup cannot fetch.** Cloudflare refuses asynchronous I/O in global scope: "Disallowed
   operation called within global scope. Asynchronous I/O (ex: fetch() or connect()), setting a
   timeout, and generating random values are not allowed within global scope." `env` is importable at
@@ -90,12 +89,6 @@ is recorded before the swap.
 
 Two checks stand between the download and the pull request. Each throws, each fails its step, and
 a failed step ends the run: no payload is uploaded and no branch is pushed.
-
-There used to be a third. `assertDeclaredSize()` read the inflated length out of the zstd frame
-header and compared it to the file that was packed, which caught a frame compressed from a stream
-rather than a file: zstd omits the field there, and the symptom on the edge is an exit code with
-nothing else. Nothing is compressed now, so the check has no subject. What replaces it is
-`files[].sha256` in `interp.lock.json`, which content-addresses the binary.
 
 1. **The seam imports what was fetched.** `assertSeamImports()` in `scripts/fetch-interpreter.ts`
    reads the interpreter imports out of the seam `wrangler.jsonc` aliases and requires the fetched

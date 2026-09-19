@@ -50,7 +50,7 @@ The restore applies on the object's next start. The undo bookmark is obtainable 
 that schedules the restore, so it is returned rather than logged.
 
 **It is unsupported in local development, and the local runtime signals that badly.** Cloudflare's
-wording is that "a durable log of data changes is not stored locally". Measured 2026-08-24: all three
+wording is that "a durable log of data changes is not stored locally". Measured: all three
 methods EXIST in the local runtime. `getBookmarkForTime()` throws "This Durable Object's storage
 back-end does not implement point-in-time recovery", while `getCurrentBookmark()` answers
 `00000000-00000000-00000000-00000000000000000000000000000000` and throws nothing.

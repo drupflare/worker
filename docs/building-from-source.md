@@ -126,11 +126,11 @@ normal clone the step is a no-op. When the CDN cannot be reached the step falls 
 workflow artifacts over `gh`: a different host on a different domain, so it is a second source and
 never a retry.
 
-`frame` compresses the binary to `.interp/php8.5.wasm.br`, and **the shipping bundle no longer needs
-it.** Cloudflare removed the compressed size limit on 2026-09-04; the limit is 64 MiB uncompressed,
-the tree measures a fifth of that (`bun run release:check`), and the interpreter travels as a raw
-`CompiledWasm` import. Startup fell from 106 ms to 5 ms with the inflate, measured on a deployed free
-worker.
+`frame` compresses the binary to `.interp/php8.5.wasm.br`, and **the shipping bundle does not need
+it.** The Worker size limit is 64 MiB uncompressed with no compressed limit beside it, the tree
+measures a fifth of that (`bun run release:check`), and the interpreter travels as a raw
+`CompiledWasm` import. Dropping the inflate took startup from 106 ms to 5 ms, measured on a deployed
+free worker.
 
 The step stays because three configs under `experiments/wrangler/` still name the brotli seam, and it
 is the rollback path if the raw import ever has to be reverted. It is brotli at quality 11 and window
@@ -243,14 +243,13 @@ aggregates over 6.57 MB for 725 libraries, where a given site uses a few dozen. 
 off unless `ASSET_AGGREGATES=1`, and with no manifest present it changes nothing rather than breaking
 a page.
 
-**It was outside the numbered sequence until 2026-09-12, and `wrangler.jsonc` ships
-`ASSET_AGGREGATES: "1"`.** So every from-source tree ran the lever with nothing to substitute. That
-degrades quietly by design, which is why nothing reported it for as long as it was true; the pack
-lane found it once that lane began asserting the artifacts, with `/agg/manifest.json` answering 404.
+**It belongs in the numbered sequence, because `wrangler.jsonc` ships `ASSET_AGGREGATES: "1"`.** A
+tree that builds the pack without it runs the lever with nothing to substitute, and the lever
+degrades quietly by design, so nothing reports it. The symptom is `/agg/manifest.json` answering 404.
 
-The output has to be published as well as built. `assets/.assetsignore` denies by default, and until
-2026-09-09 it did not carry `!/agg/`, so the aggregates uploaded nowhere and a page with the lever on
-had no CSS. The 6.57 MB is charged to the Workers Assets store, not to the 64 MiB bundle: a dry run
+The output has to be published as well as built. `assets/.assetsignore` denies by default, so it
+needs `!/agg/`; without that line the aggregates upload nowhere and a page with the lever on has no
+CSS. The 6.57 MB is charged to the Workers Assets store rather than to the 64 MiB bundle: a dry run
 of the canonical config reads 5,788 asset files and reports a 14,476.94 KiB upload.
 
 ## Why The Order Is The Order
@@ -369,7 +368,7 @@ not on disk fails by name before it runs.
 
 ## Upgrading Drupal Core
 
-Rehearsed on 2026-08-21 against the real thing: the shipped tree was downgraded to 11.4.4 and
+Rehearsed against the real thing: the shipped tree was downgraded to 11.4.4 and
 upgraded back to 11.4.5 six times, in a throwaway copy of the repository. **Every figure below is
 wall clock** on one machine; none of them is a CPU number and none is comparable to a deployed one.
 

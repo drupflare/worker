@@ -1,36 +1,20 @@
 # Repository Layout
 
 Every path outside `src/`, how it arrives on a clean clone, and what breaks without it. Sizes are
-`du -sh` on the development machine, 2026-08-18.
+`du -sh` on a development machine.
 
 ## Data Risk
 
-Three versions of `assets/drupal/site.sqlite` existed. The SQLite header change counter orders them:
+`assets/drupal/site.sqlite` is the packed Drupal database and its trim recipe is written down
+nowhere, so the live copy in the tree is canonical and nothing regenerates it. Two other lineages
+exist in the `drupflare-cdn` bucket: `.pack-backup/site.sqlite.bak`, which is the rollback point for
+the current lineage, and an older hand-trimmed artifact from a different one. The SQLite header
+change counter is what orders them.
 
-| copy                              | mtime            | bytes     | pages | change counter | writer |
-| --------------------------------- | ---------------- | --------- | ----- | -------------- | ------ |
-| `assets/drupal/site.sqlite`       | 2026-08-18 18:54 | 7,585,792 | 1852  | **26**         | 3.50.4 |
-| `.pack-backup/site.sqlite.bak`    | 2026-08-12 03:10 | 7,585,792 | 1852  | **16**         | 3.50.4 |
-| the previous `drupflare-cdn` copy | --               | 6,627,328 | 1618  | **13**         | 3.53.4 |
-
-**The live tree is canonical.** The 6.6 MB copy is a different lineage rather than an older revision:
-1618 pages against 1852, written by a newer SQLite, and it is the original hand-trimmed artifact the
-report describes. `.pack-backup/site.sqlite.bak` is the rollback point for the current lineage.
-
-All three are in the bucket and none was replaced:
-
-| key                                            | bytes     | is                              |
-| ---------------------------------------------- | --------- | ------------------------------- |
-| `assets/drupal/site.sqlite`                    | 7,585,792 | the canonical live copy         |
-| `snapshots/site.sqlite.a18db26a417b`           | 7,585,792 | the counter-19 bytes, by digest |
-| `snapshots/site.sqlite.064105ca7223`           | 7,585,792 | the counter-16 rollback point   |
-| `assets/drupal/site.sqlite.trimmed-1618p-cc13` | 6,627,328 | the original trimmed lineage    |
-
-The live copy has advanced since those digests were recorded, so the `assets/drupal/site.sqlite`
-key is only current if it has been re-uploaded. `bun run backup:cdn --upload` archives a key's
-remote bytes to `snapshots/<name>.<sha12>` before replacing them, so nothing is lost by replacing
-one; it refuses only for a tracked file with uncommitted changes, where the bytes going up are
-recorded nowhere. `bun run backup:verify` compares every key by size and ETag.
+`bun run backup:cdn --upload` archives a key's remote bytes to `snapshots/<name>.<sha12>` before
+replacing them, so nothing is lost by replacing one. It refuses for a tracked file with uncommitted
+changes, where the bytes going up are recorded nowhere. `bun run backup:verify` compares every key by
+size and ETag.
 
 ## `.pack-backup/`
 
@@ -45,9 +29,7 @@ A deploy reads `src/`, `assets/` and `.interp/`. The rest of the untracked bulk 
 measurement state, or regenerable output.
 
 **Measure the counts rather than reading them here.** `git ls-files | wc -l` and `du -sh` are the
-instruments, and this table has been stale by 280 files and an order of magnitude of disk before. The
-figures below were taken on 2026-09-07 against **662 tracked files**; the shape of the table is what
-is meant to last, not the numbers in it.
+instruments. The shape of the table is what is meant to last; the numbers in it go stale.
 
 | path                | size | tracked          | how it arrives on a clean clone                                              | delete?          |
 | ------------------- | ---- | ---------------- | ---------------------------------------------------------------------------- | ---------------- |
@@ -79,12 +61,6 @@ comparison arm: nginx and PHP 8.5 FPM against the same `drupal-src` tree and the
 `assets/drupal/site.sqlite` this project serves, so a measurement isolates the runtime. Both mount the
 tracked database read-only and copy it, because SQLite writes to the file it reads and a benchmark
 must not mutate what it measures.
-
-Two paths this table used to carry are gone. `drupal-min-src/` had no producer and was read only by
-`src/probes/min.ts`. `build/` was a stale copy of phasm's toolchain: 9 rc files against phasm's 16,
-three shared scripts all smaller than their upstream, and nothing under `src/`, `scripts/` or
-`tests/` reading any of it. Its one live subdirectory, `build/wasm/`, is now `.interp/`, a build
-output in its own top-level directory with one producer, `bun run build:wasm`.
 
 phasm should not become a submodule. The worker consumes its output rather than its source, and a
 submodule would put a Docker toolchain in a clean clone's dependency path.
@@ -204,25 +180,21 @@ Three classes:
 - **(b) artifact** -- needs bytes on disk; runs in the release lane, which hydrates the payload.
 - **(c) edge** -- needs a deployed worker. An absolute CPU figure comes only from `cpuTime` on one.
 
-| #   | claim                                                                    | class | caught?                                                                                                                                                                                                                                                                                     |
-| --- | ------------------------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | the bundle fits the 64 MiB Worker size limit                             | b     | **yes.** `bun run release:check` parses wrangler's printed uncompressed figure and fails over the limit; the release lane runs it. `tests/unit/bundle-size.spec.ts` covers the arithmetic. Cloudflare removed the compressed ceiling this used to score on 2026-09-04.                      |
-| 2   | PHP 8.5 ships with nothing dropped to fit                                | b     | **yes, both halves since 2026-08-22.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
-| 3   | serving 3.0M visits/month, regeneration 10,869 renders/day               | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                                        |
-| 4   | a fill costs 2 / 12 / 19 / 24 / 156 rows                                 | a     | **yes.** `tests/integration/rows-per-fill-audit.spec.ts` drives every class on one object and pins it; three consecutive runs read identical counts.                                                                                                                                        |
-| 5   | first-run migration is 62 chunks                                         | a     | **yes.** `assets/drupal-sql/manifest.json` reports `"chunks": 62`. The count moves with the packed database, so quote the manifest rather than a document.                                                                                                                                  |
-| 6   | `assets/driver.json` is the code that executes, and is current           | b     | **yes.** `tests/node/driver-pack.spec.ts`, byte for byte.                                                                                                                                                                                                                                   |
-| 7   | the canonical config reaches its own code                                | a     | **yes.** `tests/node/wrangler-reachability.spec.ts` covers five defects of that shape, including the binary alias.                                                                                                                                                                          |
-| 8   | the compiled Twig cache is reachable at the key the runtime asks for     | b     | **yes, in the release lane.** `tests/node/twig-bake.spec.ts` with `REQUIRE_ARTIFACTS=1`.                                                                                                                                                                                                    |
-| 9   | DO SQLite: 100 bound params, 50-byte LIKE, lossy above 2^53              | a     | **yes.** `tests/unit/db/do-sqlite.spec.ts` and `tests/unit/db/file-store.spec.ts`, inside workerd against the real limits.                                                                                                                                                                  |
-| 10  | cold boot 1,398 ms, `page_cache` hit 1 ms, render 2,127 ms, startup 5 ms | c     | **no.** In-PHP `microtime()` and `Date.now()` do not ADVANCE on the edge, so a delta from either reads 0. The absolute is a real epoch; only the duration is unmeasurable there. The render figure read `34 ms` until 2026-08-29, which was `9.47 x 3.57` -- a local ratio, not this meter. |
-| 11  | the shipping asset set is exactly what the runtime fetches               | a     | **yes.** `tests/unit/runtime/assets-ignore.spec.ts` through the real `ASSETS` binding, plus the payload's bidirectional check against the same file.                                                                                                                                        |
-| 12  | 19 tripwires, and the repair ladder fails closed mid-transaction         | a     | **yes.** `tests/unit/ops/repair.spec.ts`. 12 in `HOST_TRIPWIRES`, 7 under `drupflare/src/Health/Tripwire/`.                                                                                                                                                                                 |
-| 13  | the render origin is a property of the site, not of the request          | a     | **yes.** `tests/unit/ops/site-origin.spec.ts` and `tests/integration/render-origin.spec.ts`.                                                                                                                                                                                                |
-
-Claim 2's gap is closed. It used to read: the extension set is asserted in phasm and nowhere here,
-so a binary swap that dropped `opcache` would pass this repository's gate and change PHP boot by
-~70 ms. `/__php` now reports `get_loaded_extensions()` and the release lane asserts against it.
+| #   | claim                                                                    | class | caught?                                                                                                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | the bundle fits the 64 MiB Worker size limit                             | b     | **yes.** `bun run release:check` parses wrangler's printed uncompressed figure and fails over the limit; the release lane runs it. `tests/unit/bundle-size.spec.ts` covers the arithmetic.                                                                                 |
+| 2   | PHP 8.5 ships with nothing dropped to fit                                | b     | **yes, both halves.** `interp.lock.json` and the payload manifest pin the frame's sha256; `tests/integration/loaded-extensions.spec.ts` reads `get_loaded_extensions()` out of the running binary and asserts opcache and lexbor by name, plus the platform map both ways. |
+| 3   | serving 3.0M visits/month, regeneration 10,869 renders/day               | a     | **yes.** `tests/unit/free-envelope.spec.ts` over `scripts/measure/free-envelope.ts`.                                                                                                                                                                                       |
+| 4   | the per-class row cost of a fill                                         | a     | **yes.** `tests/integration/rows-per-fill-audit.spec.ts` drives every class on one object and pins it; three consecutive runs read identical counts.                                                                                                                       |
+| 5   | the first-run migration chunk count                                      | a     | **yes.** `assets/drupal-sql/manifest.json` reports it. The count moves with the packed database, so read the manifest rather than a document.                                                                                                                              |
+| 6   | `assets/driver.json` is the code that executes, and is current           | b     | **yes.** `tests/node/driver-pack.spec.ts`, byte for byte.                                                                                                                                                                                                                  |
+| 7   | the canonical config reaches its own code                                | a     | **yes.** `tests/node/wrangler-reachability.spec.ts` covers five defects of that shape, including the binary alias.                                                                                                                                                         |
+| 8   | the compiled Twig cache is reachable at the key the runtime asks for     | b     | **yes, in the release lane.** `tests/node/twig-bake.spec.ts` with `REQUIRE_ARTIFACTS=1`.                                                                                                                                                                                   |
+| 9   | DO SQLite: 100 bound params, 50-byte LIKE, lossy above 2^53              | a     | **yes.** `tests/unit/db/do-sqlite.spec.ts` and `tests/unit/db/file-store.spec.ts`, inside workerd against the real limits.                                                                                                                                                 |
+| 10  | cold boot 1,398 ms, `page_cache` hit 1 ms, render 2,127 ms, startup 5 ms | c     | **no.** In-PHP `microtime()` and `Date.now()` do not ADVANCE on the edge, so a delta from either reads 0. The absolute is a real epoch; only the duration is unmeasurable there.                                                                                           |
+| 11  | the shipping asset set is exactly what the runtime fetches               | a     | **yes.** `tests/unit/runtime/assets-ignore.spec.ts` through the real `ASSETS` binding, plus the payload's bidirectional check against the same file.                                                                                                                       |
+| 12  | 19 tripwires, and the repair ladder fails closed mid-transaction         | a     | **yes.** `tests/unit/ops/repair.spec.ts`. 12 in `HOST_TRIPWIRES`, 7 under `drupflare/src/Health/Tripwire/`.                                                                                                                                                                |
+| 13  | the render origin is a property of the site, not of the request          | a     | **yes.** `tests/unit/ops/site-origin.spec.ts` and `tests/integration/render-origin.spec.ts`.                                                                                                                                                                               |
 
 ## Nightly Automation
 

@@ -1,7 +1,8 @@
 # The Site Database
 
-`assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is 7,585,792
-bytes, it is the only tracked artifact under `assets/`, and this page is how it is built.
+`assets/drupal/site.sqlite` is the Drupal database every new site is created from. It is the only
+tracked artifact under `assets/`, and this page is how it is built. Read its current size and shape
+off the file rather than from here; `bun run check:site-db` diffs a fresh build against it.
 
 One command produces it:
 
@@ -73,7 +74,7 @@ object, a password hash and per-row timestamps, so two correct runs differ in th
 while describing the same site. `scripts/diff-site-db.ts` compares the table set, the module set,
 the config names and five row counts.
 
-Measured on 2026-09-09, a fresh build against the shipped file: **41 modules against 41, 175 config
+Measured against the shipped file, a fresh build gives: **41 modules against 41, 175 config
 rows against 175, and every table present.** The differences that remain are these, and each is
 accounted for:
 

@@ -56,7 +56,7 @@ drupal-src` to re-append the twig `php_storage` pin.
 
 Measured 2026-09-07, both arms on localhost: anonymous cached p50 **3 ms VPS against 2 ms drupflare**
 and p95 **49 against 4**; at 32 clients the VPS collapses to 122 req/s while drupflare holds 438; a
-re-render with Drupal's bins warm is **25 ms against 32**.
+re-render on a tag-invalidated page is **24 ms against 30** on the arms' own server clocks, n=25.
 
 **THE AUTHENTICATED ARM'S FIRST READING WAS MEASURING A TIER THAT COULD NOT RUN.** It read 9 ms VPS
 against 31 drupflare. The rig was discarding `x-cfw-plan`; capturing it showed `skip:set-cookie` on
@@ -75,7 +75,23 @@ generator's real 1,231.
 
 **THE "225x" AN EXTERNAL REVIEW COMPUTED IS THIS PROJECT'S OWN SIGNATURE ERROR.** It divided the
 2,127 ms edge `cpuTime` for a BOTH-BINS-EMPTIED render by the 9.47 ms native WARM-KERNEL render: two
-workloads, two instruments, two machines. Same machine and same bins, a re-render is **1.28x**.
+workloads, two instruments, two machines. Same machine and same bins, a re-render is **1.21x**.
+
+**AND THE 1.28x THAT NUMBER REPLACED WAS ITSELF TAKEN THROUGH A BROKEN ARM, all three parts of it.**
+`renderArm()` drove `/bump` then `/fill` and timed a bare `/fill`: the bump arms the fill alarm,
+`fetch()` holds the gate, so the timed call waited behind that batch and found an empty queue -- six
+of seven samples answered `{"filled":null,"remaining":0}`, so the figure was gate-queue time and not
+a render. The VPS side meanwhile rendered a DIFFERENT PAGE, because `vps-db` is a docker volume
+`vps:up` does not re-seed and it held an earlier run's content: 23,284 bytes and ten teasers against
+17,692 and none. Nothing guarded either half, and the render cells ran in fixed arm order while the
+curve cells rotate. **Run `bun run vps:down -v` before a comparison, and check the two bodies agree
+before believing any ratio.**
+
+**A SAVE DOES NOT PURGE `dynamic_page_cache` WHOLESALE, so the 1.21x describes fewer pages than it
+looks like.** `bumpGeneration()` leaves that bin alone on the `cachetags` reason; only tag-matched
+entries die. Every other re-queued page renders from a warm dynamic page cache at **22 ms against the
+VPS's 24**, which drupflare wins. The old rig purged the whole bin and measured the worst case as
+though it were the common one.
 
 Three things the rig cannot say, and each has bitten a comparison before:
 
@@ -215,6 +231,109 @@ packed tree IS the vendor directory. `drupflare` requires `drupflare/stream-http
 Adding a dependency means all three steps; the manifest line alone is a fatal on a missing class.
 It is read from the sibling rather than copied under `drupal/`, because a fourth copy is what
 created the drift the subclass removed.
+
+## THE POOL EVICTED ITSELF, AND THREE INSTRUMENTS HAD TO BE BUILT BEFORE THAT WAS READABLE
+
+Found 2026-09-19 on a deployed 32-lane site. Under ordinary authenticated load every lane cycled
+`SERVING -> WITHDRAWN -> CREATED -> full restore -> SERVING`, so the pool answered **0%** and the
+primary carried all of it, while `/serve-stats` reported lanes at the head generation with
+`refusals: 0`.
+
+**`malformed()` required `record.generation === record.parent + 1`, and that was never the
+invariant.** `sealGeneration()` seals ONE record per INVOCATION -- it opens a buffer at `parent`,
+lets the invocation advance `commitSeq()` as far as it needs, and seals at whatever it reached; its
+own docblock says why, that twelve rows written by one request are one atomic change from a
+replica's point of view. So `parent + N` is the normal shape, and the shipped log held **360 records
+across generations 30..901**. The first skipped generation answered `the record claims 901 -> 903,
+which is not one step`, `catchUpOnce()` turns a refusal into `WITHDRAWN`, and readmission turns that
+into `CREATED`, which refuses every request until the primary re-copies the whole database.
+
+The real chain check already existed and is exact: `planApply()` refuses a record whose `parent` is
+not precisely the replica's applied position, in BOTH directions. Contiguity of the numbers was a
+second and wrong statement of the same rule.
+
+**Two wrong diagnoses came first and both are cheap to repeat.** The code comment at the withdrawal
+site says "an overflowed record is the common case here", which reads as the answer -- 0 of 360
+records were overflowed. And the window 30..901 holding 360 records looks pruned; it is sparse.
+
+**Nothing could name the cause until three instruments existed**, and each hid it differently:
+
+- **`x-cfw-replica` named the ROUTING DECISION, not the serving object.** A lane that refuses hands
+  back and the primary re-serves, and the header still named the lane -- so a pool serving nothing
+  read as one carrying the traffic. It names the answering object now. A spec was PINNING the old
+  behaviour with a comment admitting it, which is the shape to watch for.
+- **`x-cfw-failover-reason` did not exist.** The lane's 421 carries `x-cfw-requires-primary` and the
+  retry discards it. The reason read `serve`, not `session`, which is what redirected the search.
+- **`lastCatchUp` is overwritten by readmission** before anyone can read it. `lastWithdrawal`
+  survives, and it printed the sentence that ended the investigation.
+
+**THE ROOT CAUSE WAS `parent: this.commitSeq() - 1` IN `bufferForReplication()`, and the two fixes
+above did not stop the churn.** That subtraction assumes the invocation will seal at exactly the
+current sequence; `sealGeneration()` seals at whatever the sequence reached by the END of the
+invocation, so a buffer opened at 69 could seal as `{parent: 68, generation: 70}` while record 69
+already chained from 68. Two records claiming one parent, and a lane on the first met the second as
+`out of order: applied 69, record builds on 68`. The parent has to be the LAST SEALED RECORD, which
+is by definition where a caught-up replica sits -- that makes `planApply()`'s
+`record.parent === pos.applied` exact by construction rather than by luck.
+
+Measured on one 8-lane site, same workload, before and after:
+
+| arm    | rps c=16 | lanes served | rps c=64 | lanes served | lanes withdrawn |
+| ------ | -------- | ------------ | -------- | ------------ | --------------- |
+| before | 2.5      | 0.0%         | 2.4      | 0.0%         | 8 of 8          |
+| after  | 4.8      | 88.8%        | **10.5** | 79.4%        | **0**           |
+
+**8.1x over the 0-lane baseline at 64 clients**, zero failovers, all eight lanes still SERVING
+afterwards. Three off-by-one assumptions about the log's own shape, in three files, cost the entire
+replica feature.
+
+**AND THE WITHDRAWAL POLICY IS WHAT MADE EACH ONE AN OUTAGE.** `catchUpOnce()` answers ANY refused
+record with `WITHDRAWN`, readmission sets `CREATED`, and a `CREATED` lane needs a full 4.7 MB
+re-copy -- so a positional disagreement gets the same response as database corruption. `autoScaleStep()`
+then repairs ONE lane per alarm at a 4,000-row budget, so eight withdrawn lanes take dozens of alarm
+cycles to return while the primary copies instead of serving. The policy is unchanged; it simply has
+nothing to fire on now.
+
+## A LANE PINNED ITS OWN ORIGIN, SO IT COULD NOT SEE ANY SESSION
+
+Same day, same site. Drupal derives the session cookie NAME from the request host --
+`substr(hash('sha256', $request->getHost() . $base_path), 0, 32)` in `SessionConfiguration` -- and
+`canonicalOrigin()` pins trust-on-first-use PER OBJECT. A lane is its own object, so the first
+request to touch one fixed its host forever. Every lane had pinned the load generator's
+service-binding URL, looked for a cookie no browser sends, and rendered uid 0 while holding every
+replicated session row.
+
+The control, same cookie and same second: a lane with the pin repaired answered 200
+`administrator,authenticated`; one left alone answered 421 `x-cfw-requires-primary: session`.
+
+The origin is authoritative SITE state, like `system.private_key`, so a replica INHERITS it on the
+first restore chunk and `canonicalOrigin()` refuses to pin on any `isReplica()` object.
+**`isReplica()` rather than `isPoolLane()`**: a var-configured replica has the identical defect, and
+the narrow predicate made the falsification run pass, which is what exposed it.
+
+**A measurement rig can write a fact into the product it is measuring.** The generator's comment said
+"the host is arbitrary over a service binding". It is not, and nothing else in the system would ever
+have written `arm.invalid` into a site.
+
+## A FRESH SESSION IS NOT ON ANY LANE, and the fix must not be awaited
+
+Replication is alarm-driven, so a session written on the primary reaches a lane on ITS next firing:
+measured, `head` 735 against every lane at 733, converging over **20-62 s**. A drive with a fresh
+cookie read 100% failover against 25% lane share with a replicated one.
+
+`sessionReach()` asks BEFORE the render, so a miss costs one indexed read rather than a render thrown
+away, and it nudges one catch-up. **The nudge is NOT awaited, and awaiting it was measured harmful**:
+it is a hop to the primary taken from inside a serve, so under 64 clients every lane that missed
+queued behind the object the pool exists to relieve and errors went 21 -> 134 on the same drive.
+Scheduled instead, convergence is 1 of 6 lanes at round 1 and 6 of 6 by round 4.
+
+It is rate-limited because the cookie is attacker-supplied, which is the amplification shape
+`adminSessionBudget()` removes one door over.
+
+**The first version of its test could not fail.** It stored the session row under the same function
+it later looked the row up with, so returning the cookie value unhashed kept it green. A golden
+vector off a deployed site fixed that: `78e094846386248b8a5685a8a2dd4568` hashes to
+`TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI`, which is the row Drupal itself wrote.
 
 ## A PLAUSIBLE CAUSE THAT FITS THE SYMPTOM IS THE EXPENSIVE KIND OF WRONG
 
@@ -1265,12 +1384,15 @@ specs failed the first time that lane got as far as running the gate, and only o
 repository produces `assets/probe/pw-probe.php`, so the pack lane built every artifact and still read
 `ENOENT` on it.
 
-**THE COVERAGE LANE BUILDS THE PACK AS OF 2026-09-14, so the paragraph below is history.** It was
-dropping **104 spec files** every run -- every `park-*`, `crossings`, `opcache-ab`, `effect-census`
-and the integration half of `fragment-index` -- which is why those modules read as coverage gaps
-when each of them has a spec. The gap was lane scope, not missing tests. `coverage.yml` now resolves
-a release payload and hydrates, or runs `bun run build:local`, exactly as the browser lane does, and
-its `timeout-minutes` went 20 -> 45 to pay for it.
+**THE COVERAGE LANE DOES NOT BUILD THE PACK, AND THAT IS NOW DELIBERATE.** It was dropping **104
+spec files** every run -- every `park-*`, `crossings`, `opcache-ab`, `effect-census` and the
+integration half of `fragment-index` -- so those modules read as coverage gaps when each of them has
+a spec. The gap was lane scope, not missing tests.
+
+Making `coverage.yml` build the pack was tried and REPLACED on 2026-09-18 by `b5f9958f8`, which
+moved the pack-dependent coverage onto the lanes that already build it rather than paying for a
+second build. This paragraph asserted the opposite for a day; check `coverage.yml` itself before
+citing either shape, because the claim has now been wrong in both directions.
 
 **THE COVERAGE THRESHOLD IS MEASURED ON A LANE WHOSE SCOPE SHRINKS, so adding to `ARTIFACT_SPECS`
 lowers it.** `coverage.yml` never builds the pack, so every pack-dependent spec is excluded and the
@@ -1640,6 +1762,20 @@ offered load stays constant: **1.00 / 2.05 / 3.16 / 5.72x at 1 / 2 / 4 / 8**, p5
 zero errors. Little's Law closes at 1 and 2 and opens a gap at 4 and 8, so something above the
 service-time path constrains aggregate concurrency past N=2 -- **not attributed**, and 16/32 are not
 worth building until a distributed generator separates the load generator from the topology.
+
+**SUPERSEDED FOR THE REAL PRODUCT, 2026-09-19.** That curve is a synthetic CPU burn on independent
+objects. Driven through the front worker against real Drupal renders, with the six defects in
+`## THE POOL EVICTED ITSELF` closed, a pool reaches **3.12x at 16 lanes** on served count over a
+fixed window at 64 clients, p50 falling 3549 ms to 1129, with zero failovers. The generator runs
+INSIDE Cloudflare (`scripts/measure/loadgen-worker.ts` fanned across sub-invocations), which is the
+distributed generator this paragraph was waiting for.
+
+**AND THE RIG WAS WRONG SIX TIMES BEFORE THE CURVE MEANT ANYTHING**, which is the part to carry: a
+12-path workload reaching ~12 buckets however large the pool, a `requests` field that is a TOTAL
+across shards rather than per shard, no settle after seeding, `/node/N` against a container with no
+nodes, a failed settle read counting as settled, and `applied >= head` as a settle criterion that
+cannot converge while the primary still seals meter rows. Every one produced a plausible curve.
+Before recording that a pool does not scale, price the rig.
 
 **An authenticated GET writes no authoritative state under this SAPI**, which is what makes any of it
 possible. No `sessions`, no `users_field_data.access`, no `flood`. Core throttles the access write by
@@ -2239,6 +2375,25 @@ needed: bytes the site does not hold are new to it, so the path being stored is 
   an `eval`, which is why `ZLIB_FIX` is in the fragment gate and `MB_FIX` cannot be.
 - `experiments/` is prettier-ignored: probe configs kept for reproduction, not maintained.
 - Comments: lowercase, terse, one line, no trailing period, only where the WHY is non-obvious.
+
+## A POOL MULTIPLIES THE ROWS-WRITTEN METER BY THE LANE COUNT
+
+Every row written on a primary is written again on every lane, so N lanes cost N+1 rows. Rows written
+is the meter that binds regeneration, and it is also the dominant Durable Object cost on paid --
+requests, duration and storage are not close.
+
+**The pool therefore trades rows written for read throughput at N+1 to 1**, which no document said
+until 2026-09-19. Regeneration is bound by 10,869 rows/day windowed, so an 8-lane pool reaches that
+ceiling nine times sooner. The pool is a lever for READ-heavy sites and is actively harmful to
+write-heavy ones; score a proposed pool against the write rate, not only the read rate.
+
+**A scaling ladder is priced by the multiplier, and the arithmetic is available before the run.** A
+node save is 299 rows, recorded above, so seeding 200 nodes is ~59,800 rows on a primary -- and a
+192-lane arm multiplies that to **11.5M rows for the seeding alone**, before any authenticated
+drive. Nine arms at 0/1/2/4/8/32/64/128/192 is 431 lanes. Compute that total before provisioning,
+and poll `durableObjectsPeriodicGroups { sum { rowsWritten } }` DURING a long run rather than
+reading the total afterwards. That query takes `datetime_geq`, not `datetimeMinute_geq`, and its
+dimension is `namespaceId` rather than `scriptName`.
 
 ## Deploying, when authorized
 

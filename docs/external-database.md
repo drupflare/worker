@@ -12,7 +12,7 @@ and it gives a Worker a pooled connection string on `env.HYPERDRIVE.connectionSt
 driver such as `pg` connects to. The pooling is the primary value: a Worker that dials a remote
 database directly pays TCP, TLS and authentication on every request.
 
-Current Cloudflare documentation, checked 2026-08-23:
+Current Cloudflare documentation:
 
 | Property                   | Value                                                      |
 | -------------------------- | ---------------------------------------------------------- |
@@ -41,8 +41,7 @@ query uncacheable; Cloudflare does not document SQL comments as a cache-control 
 cache-disabled configuration where a guaranteed fresh read is needed.
 
 **Local development is documented two ways and they disagree.** The Workers local-development page
-lists Hyperdrive among the bindings with no local simulation ("currently unsupported"), while a
-2025-12-04 changelog and the Hyperdrive local-development page describe `localConnectionString` and
+lists Hyperdrive among the bindings with no local simulation ("currently unsupported"), while a changelog entry and the Hyperdrive local-development page describe `localConnectionString` and
 `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_<BINDING_NAME>` connecting `wrangler dev` to a real
 database, including a remote one over TLS. Treat the `localConnectionString` mechanism as the working
 answer and the local-development page as stale.
@@ -66,10 +65,9 @@ Today a new site costs one Durable Object and no account-level resource at all.
 
 ### The Statement Boundary, Not the Await
 
-This section said the interpreter cannot await, and that is no longer the constraint.
-`ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and lets the Worker perform
-I/O in JavaScript before resuming the same PHP call. A Promise-based client is therefore reachable
-from PHP, and `drupal/redis` proves it against a real server.
+The interpreter can await. `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`,
+and lets the Worker perform I/O in JavaScript before resuming the same PHP call, so a Promise-based
+client is reachable from PHP; `drupal/redis` runs on that path against a real server.
 
 What survives is narrower and sits one level down. `SqlLike.exec()` in `src/db/migrate-sql.ts` is
 synchronous and returns a cursor, and every write path runs inside `ctx.storage.transactionSync()`.
@@ -126,7 +124,7 @@ failure rather than a staleness tradeoff. What remains after disabling the cache
 pooling, which buys back a TCP, TLS and authentication handshake the current architecture never
 pays.
 
-Cache eligibility is also decided by text matching: since 2026-02-23 both `VOLATILE` and `STABLE`
+Cache eligibility is also decided by text matching: both `VOLATILE` and `STABLE`
 PostgreSQL functions make a query uncacheable, and a function name such as `NOW()` appearing in a SQL
 comment is enough to trigger it.
 
@@ -176,12 +174,10 @@ analytics sink or an external content feed has that shape. The site's own databa
 answer has to arrive inside the request that asked, and a deferred exchange always misses the first
 time.
 
-`drupal/redis` used to be cited here as refused for that reason. It is not refused any more, and the
-mechanism that changed is worth knowing before this is priced again: a trapped socket call now
-freezes PHP where it stands, the Worker performs the exchange, and the call returns with the answer
-in the same request. So "the answer must arrive inside the request" is no longer the same thing as
-"impossible" — for a socket protocol. What it costs is a network round trip per exchange where the
-Durable Object's own SQLite costs a local read, which is why SQLite is still the cache backend.
+A socket protocol escapes this. A trapped socket call freezes PHP where it stands, the Worker
+performs the exchange, and the call returns with the answer in the same request, which is how
+`drupal/redis` runs. It costs a network round trip per exchange where the Durable Object's own
+SQLite costs a local read, which is why SQLite is still the cache backend.
 
 It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
 rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer

@@ -30,20 +30,13 @@ it is bound and absent otherwise.
 | `PAGE_KV`             | KV               | declared         | the cross-colo page tier is absent, and so is the stale-generation serve             |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
-`FILES` was undeclared until 2026-09-07, and the whole R2 tier was unreachable because of it:
-`drainMirrors()` and `drainPageMirrors()` were both gated on a binding the config never named, so they
-ran on no deploy.
+**`FILES` is the one binding the shipping config leaves out, because naming it breaks the deploy
+button.** R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
+config that names one is refused with _"Please enable R2 through the Cloudflare Dashboard.
+[code: 10042]"_ on every account that has not done that. KV and D1 have no such requirement:
+wrangler creates `CONFIG_KV` and `FLEET_DB` on first deploy.
 
-**IT IS UNDECLARED AGAIN, AND THIS TIME IT IS THE ONE-CLICK DEPLOY THAT DECIDED IT.** Measured
-2026-09-11 against a fresh free account: the canonical config uploaded all 4,749 assets and was then
-refused with _"Please enable R2 through the Cloudflare Dashboard. [code: 10042]"_ on
-`/r2/buckets/drupflare-files`. R2 has to be enabled from the dashboard before a bucket can exist, so
-naming one in the shipping config makes the deploy button fail for every account that has not done
-that. The control is the same deploy with only `r2_buckets` removed: it succeeded, and wrangler
-**auto-provisioned both of the others** -- `CONFIG_KV` came back with a new namespace id and
-`FLEET_DB` was created by name. KV and D1 were never the problem.
-
-Add it back yourself when you want the mirror:
+Add it when you want the mirror:
 
 ```jsonc
 "r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }]
@@ -256,20 +249,20 @@ The substitution is **all or nothing per library**: either every tag in the run 
 The previous attempt at this shipped a page that loaded faster and had no CSS, and a partial
 replacement is how that happens.
 
-On `KV_OVERRIDABLE` since 2026-09-07, so turning it on needs no redeploy. It met that list's own test
-from the start and was left off it, so `assets/agg/` shipped built with no runtime way to reach it.
+It is on `KV_OVERRIDABLE`, so turning it on needs no redeploy.
 
-**Until 2026-09-09 the lever could not work at any setting.** `assets/.assetsignore` denies by default
-and never allowed `/agg/`, so the substitution rewrote every asset tag to a URL the asset layer did not
-publish, the Worker answered it as a Drupal path, and the page rendered with no CSS. That is the same
-failure the all-or-nothing rule above exists to prevent, arriving from the other side.
+**The aggregates have to be published as well as built, or the lever cannot work at any setting.**
+`assets/.assetsignore` denies by default, so it must carry `!/agg/`. Without that the substitution
+rewrites every asset tag to a URL the asset layer does not publish, the Worker answers it as a Drupal
+path, and the page renders with no CSS. That is the same failure the all-or-nothing rule above exists
+to prevent, arriving from the other side.
 `tests/unit/runtime/assets-ignore.spec.ts` now resolves every URL the substitution emits, so a page
 whose stylesheets 404 fails the gate rather than shipping.
 
 Turning it on without running `assets:agg` changes nothing rather than breaking a page: an absent
 manifest means no library matches.
 
-**What it buys is render time and stored bytes, not Worker requests.** Measured 2026-09-09 against
+**What it buys is render time and stored bytes, not Worker requests.** Measured against
 `bun run dev`: an unaggregated core stylesheet at `/core/themes/olivero/css/base/base.css` answers
 200 with no `x-cfw-*` header at all, so the Worker never runs and the file already costs nothing. The
 individual files were on the free path the whole time.
@@ -346,10 +339,6 @@ have different failure modes. `/install` also accepts `version=<constraint>` and
 `drupal/*` resolves against `packages.drupal.org/8` and everything else against
 `repo.packagist.org`.
 
-Until 2026-09-07 there was no install route at all: `installPackage()` existed with no caller, and
-`/enable` was reachable only with `PW_DIAGNOSTICS=1`, which a deployed configuration must not set. So
-a site could be told whether a module was installable and had no way to install one.
-
 A module you wrote yourself arrives through a git remote, or through `/modify` when it is not on a
 host at all. `/enable` is the same next step either way.
 
@@ -387,19 +376,15 @@ client batches to stay under both.
 
 ## Site Maintenance
 
-`/armfill`, `/invalidate`, `/bump`, `/migrate` and `/updb` take the owner token. Before 2026-09-08
-they were reachable only with `PW_DIAGNOSTICS=1`, so purging your own page cache meant exposing
-arbitrary SQL and a whole-database overwrite alongside it.
+`/armfill`, `/invalidate`, `/bump`, `/migrate` and `/updb` take the owner token, so purging your own
+page cache does not mean exposing arbitrary SQL and a whole-database overwrite alongside it.
 
-`/updb` is new rather than moved. `GET` reports the update run and its units; `POST` advances exactly
+`/updb` drives a database update run. `GET` reports the run and its units; `POST` advances exactly
 one beat and re-arms nothing, so a caller that wants the chain finished polls. The alarm chain drives
-the same step, and it was the only thing that could: `OPS_DRIVERS` refused a sliced operation by
-naming a route that did not exist.
+the same step.
 
-`POST` also takes an `action`, and without it a beat could only ever advance a run nothing was able
-to start. `updbPrepare()` had no caller anywhere in `src/`, so pressing **Database Updates** on a
-site that had never run one answered `{"beat":"none","reason":"no-run"}`, which reads the same as
-nothing to do.
+`POST` takes an `action`, which is what starts a run rather than advancing one. Without it a beat has
+nothing to advance and answers `{"beat":"none","reason":"no-run"}`.
 
 | action              | what it does                                                                |
 | ------------------- | --------------------------------------------------------------------------- |
@@ -482,10 +467,6 @@ afterwards. A bearer header reaches the same pages, so a script needs no browser
 
 **`PW_DIAGNOSTICS` does not open these pages.** It opens everything else it always opened; the surface
 is the one owner set it does not reach, because the pages install code and run privileged operations.
-Until 2026-09-07 the flag was the only way in, which meant they were reachable by anybody who could
-reach a worker with it set, and each button prompted for a token that nothing then compared against
-anything.
-
 `SameSite=Strict` is what stands in for a CSRF token: several owner routes act on a GET, so a
 cross-site request carrying the cookie would be enough to install a module. Strict means no
 cross-site request carries it, including a top-level link.
@@ -545,6 +526,14 @@ stale one with 503 when the caller sent `x-cfw-require-generation`.
 How many lanes a site has beyond the primary. **0 is the default and means one object per site**, in
 which case every routing decision resolves to the primary and nothing changes.
 
+**One lane helps only once the single object is saturated.** Measured through the front worker on
+authenticated pages: one lane serves 0.87x what no pool serves at 32 clients and 0.98x at 64, because
+affinity hashes over two buckets and the lane takes about 60% of the traffic onto an object whose
+Drupal caches are colder than the primary's while adding no parallelism. At 128 clients the same lane
+serves 2.06x, and at 512 a single object sheds every request as 503 while one lane still serves 426.
+Set this above 1 for a site that is not yet contended; autoscaling only provisions on sustained
+queueing, which is the regime where even one lane pays.
+
 Lane 0 is the primary; lanes 1..n are objects named `<site>#r<lane>`. `#` is outside the set
 `encodeSiteId()` keeps and outside its `_<hex>` escape, so a replica name cannot collide with a site
 id however a hostname is spelled.
@@ -587,12 +576,30 @@ least 2 and may still grow. `REPLICA_AUTOSCALE=0` is how an operator pins the nu
 
 ### `REPLICA_MAX_LANES`
 
-The ceiling autoscaling will not grow past, defaulting to the router's own clamp of 32.
+The ceiling autoscaling will not grow past, defaulting to 32.
 
-**Throughput gives no reason to cap.** Measured on deployed workers at 8 / 16 / 32 / 48 replicas,
-efficiency against perfect scaling is 100 / 95 / 90 / 85% -- a flat ~5 points per doubling with no
-knee, and saturation was checked rather than assumed: N=32 returned 183.2 req/s at 128 offered
-clients against 183.4 at 64. A linear decline never crosses zero, so any number here is arbitrary.
+**Throughput gives no reason to cap.** Addressing objects directly and summing, efficiency against
+perfect scaling reads 100 / 95 / 90 / 85% at 8 / 16 / 32 / 48 replicas -- a flat ~5 points per
+doubling with no knee. That is a topology figure, and routed throughput is measured separately with
+a Worker-hosted generator whose own ceiling is established first.
+
+**Pin `REPLICA_AUTOSCALE=0` before measuring anything against lane count.** Autoscaling builds lanes
+under exactly the load a rig offers, so a control arm provisioned with zero lanes answered from `r1`
+and `r2` on its first run. Read `x-cfw-lanes` back at drive time rather than trusting the number the
+rig set.
+
+**A pool is reached only by isolates that have already seen it.** `believedLanes()` is per isolate
+and is set from the `x-cfw-lanes` the primary reports on a response, so the first request a cold
+isolate makes goes to the primary whatever the pool size, and the belief expires after
+`LANES_TRUST_MS`. Measured on a 4-lane site: five consecutive requests all answered `primary`, and
+twenty answered `primary 13 / r2 1 / r3 1 / r4 5`. Sustained traffic keeps every isolate warm and
+this is invisible; a low-rate or bursty client sees a larger share answered by the primary. Count
+distinct `x-cfw-replica` values across a burst to read a pool -- a single response cannot.
+
+**The hard ceiling is 256 and it is arithmetic.** `replicaCount()` clamps to `ID_PARTITION_LANES`,
+which it imports rather than restates: a lane mints forwarded row ids from its residue class modulo
+the partition, the primary takes class 0, and past 256 two writers would share a class and mint the
+same id. The default of 32 is a cost bound below that, not a correctness one.
 
 An earlier default of 3 existed for a different reason and is worth recording, because it read as a
 performance limit and was not one. Warming is per OBJECT, so a warmed pool multiplied it: 32 idle
@@ -662,10 +669,9 @@ refusing in a way that reads like a bug. Restart the copy; there is no resume.
 first use and never at install. `action=snapshot` answers 409 naming the gap;
 `\Drupal::service('private_key')->get()` on the primary closes it.
 
-Cron defaults to on, and it used to default to off. Six of twenty-five surveyed contrib modules were
-classified as needing cron for that reason: the capability was built and wired into the alarm, and
-nothing turned it on. A module that depends on cron does not fail when cron never runs, it silently
-does nothing.
+Cron defaults to on. Leave it on unless a site has a reason not to: a module that depends on cron
+does not fail when cron never runs, it silently does nothing. Six of twenty-five surveyed contrib
+modules need it.
 
 ### Warming
 
@@ -802,41 +808,28 @@ A generation bump drops every stored shell, including a `cachetags` bump. A shel
 region of a page and Drupal has no cache tag pointing at it, so nothing else would invalidate it.
 Assembly stops on that path until the shell is harvested again.
 
-**`HEAP_SNAPSHOT` gates the RESTORE and `HEAP_IMAGE` gates the producer. THE PRODUCER IS OFF BY
-DEFAULT since 2026-09-09, and it used to be on.** `HEAP_IMAGE=1` opts back in.
+`HEAP_SNAPSHOT` gates the restore and `HEAP_IMAGE` gates the producer. **The producer is off by
+default**; `HEAP_IMAGE=1` opts back in.
 
-Two deployed free workers differing only in these two vars, `cpuTime` on the cold render, nothing
-asked of either object during the idle:
+It is off because a restore costs more than the boot it replaces. Two deployed free workers differing
+only in these two vars, `cpuTime` on the cold render, nothing asked of either object during the idle:
 
 | arm                                  | cpuTime (ms)                 |   n | median |
 | ------------------------------------ | ---------------------------- | --: | -----: |
 | `HEAP_IMAGE=1` and `HEAP_SNAPSHOT=1` | 2020, 1908, 1937, 1561, 1912 |   5 |  1,912 |
 | both `0`                             | 1277, 1343, 1113, 1251       |   4 |  1,264 |
 
-The ranges do not overlap, so restoring costs about 648 ms more than booting from scratch. It also
-costs storage against an account-wide 5 GB cap. The likely mechanism is `digestBytes`, a per-byte JS
-loop over the restored bytes, which is why deflating the stored chunks does not help: the digest is
-taken over HEAP bytes rather than stored ones, deliberately, so it catches a bad inflate too.
+The ranges do not overlap, so a restore costs about 648 ms more than booting from scratch, and it
+consumes storage against an account-wide 5 GB cap. The likely mechanism is `digestBytes`, a per-byte
+JS loop over the restored bytes. That is also why deflating the stored chunks does not help: the
+digest is taken over heap bytes rather than stored ones, so it catches a bad inflate as well as bad
+storage.
 
-**AN EARLIER RUN MEASURED THE OPPOSITE, and reconciling the two is what settles the default.** It read
-a cold serve at 1,218.5 ms with no image (n=8, 1,099-1,397) against 904 ms with one (n=8), so the
-image SAVED 314.5 ms. Both readings are real and they are of different images:
-
-| where the figure comes from                           | image bytes | verdict        |
-| ----------------------------------------------------- | ----------: | -------------- |
-| the earlier deployed run, post-kernel-boot            |   9,699,328 | saved 314.5 ms |
-| `SITE_STORAGE_BYTES.heapSnapshot`, measured           |  11,206,656 | storage only   |
-| the 2026-09-09 arms, written by the shipping producer |  37,158,912 | cost 648 ms    |
-
-**The producer does not choose which of those it writes, and that is the whole finding.**
-`snapshotStep()` fires on an alarm arriving with no resident interpreter, boots `BOOT_KERNEL` and
-images; it does not require the site to have been configured or served. So on a fresh site it captures
-the COLD shape, which the technical report's storage table measures at 36,175,872 bytes over 552 pages
-against 9,699,328 over 148 for a configured-and-served object. The 2026-09-09 arms restored 37,158,912
-bytes, so they measured the cold shape, and the earlier saving was measured on the other one.
-
-Both readings are correct about the image they took. The producer takes the expensive one on the path
-that matters, a fresh site's first alarm, so the default is off.
+**The size of the image depends on when it is taken, and the producer takes the expensive one.**
+`snapshotStep()` fires on an alarm arriving with no resident interpreter, so on a fresh site it
+captures the cold shape at 37,158,912 bytes. An image taken after a kernel boot and a serve is
+9,699,328. The measurement above is of the cold one, which is what ships, and a run against the
+post-serve image reads a 314.5 ms saving instead. `TECHNICAL_REPORT.md` carries both.
 
 `snapshotStep()` still takes one image per pack generation from the alarm when opted in, and `/heap`
 reports `imagedGeneration`, `imageAttempts` and `lastHeapImage`. It never drops the interpreter: it
@@ -1501,6 +1494,25 @@ The route is answered by the front Worker with no object hop: `CONFIG_KV` is a f
 so reaching it through the Durable Object would spend a request to get at a namespace the isolate
 already holds.
 
+### From Drupal, Without the Owner Token
+
+The same levers are editable at `/admin/config/drupflare/settings`, gated on the
+`administer drupflare settings` permission. Each field shows its value and its source, so an
+operator can tell an override they chose from a default nobody has looked at. Only the fields that
+changed are sent, because a patch carrying every field would turn a deployed value into a stored
+override by the act of pressing save.
+
+**`PLAN` is not on that form and cannot be written through it.** Every lever there has a worst case
+of a slower site; `PLAN` selects a limits profile whose quotas are account-wide, while whoever
+reaches a Drupal form administers one tenant. It stays on the owner-token route above, and the host
+capability behind the form refuses it at every spelling.
+
+`/admin/modules/drupflare` is the matching read-only page for code delivery: it names the three
+delivery paths and lists what has been delivered to this site. Delivering code stays an owner action
+on `/_cfw/git`, for the same tenancy reason. Within the operations terminal, `en` and any package
+line now additionally require `administer drupflare code`, so a site can grant the terminal without
+granting the ability to add code to the runtime.
+
 **Every one of them reaches a reader inside the Durable Object, and for a while only two did.**
 `withSettings()` is applied in `src/site.ts`, to the front Worker's env, and the object receives its
 own copy of the bindings, so most of them were knobs nothing read: `RENDER_BUDGET_MS`,
@@ -1535,7 +1547,7 @@ them. How much of that traffic Cloudflare's CDN absorbs in front of the bucket d
 off-Worker lever is worth anything: an absorbed read costs neither a Worker request nor an R2 Class B
 operation.
 
-**Absorption is 0 without a Cache Rule and about 7/8 with one.** Measured 2026-08-21 with GET against
+**Absorption is 0 without a Cache Rule and about 7/8 with one.** Measured with GET against
 a cold object each time:
 
 | Condition                   | Result                       |

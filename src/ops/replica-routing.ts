@@ -5,6 +5,7 @@
  * branch in the caller. Lanes are chosen by affinity: a shared counter measured a flat scaling curve
  * on the rig, per-client pinning measured 1.00 / 1.80 / 2.14.
  */
+import { ID_PARTITION_LANES } from './write-forwarding.js';
 
 /** what a routing decision was, and why */
 export type RoutingDecision = {
@@ -35,12 +36,31 @@ export function replicaOf(name: string): { site: string; lane: number } | null {
 	return { site: name.slice(0, at), lane };
 }
 
-/** how many replica lanes a site has, beyond the primary; unset, unparseable and negative are 0 */
+/**
+ * How many replica lanes a site has, beyond the primary; unset, unparseable and negative are 0.
+ *
+ * **The ceiling is {@link ID_PARTITION_LANES}, and it is a mechanism rather than a taste.** This
+ * used to clamp at 32 on the reasoning that a larger pool is "past what the measured curve covers",
+ * which is a statement about what had been measured rather than a limit of anything. Removing it
+ * outright was worse: a lane mints forwarded ids from its residue class modulo
+ * `ID_PARTITION_LANES + 1`, so lane 257 wraps onto lane 0's class -- the PRIMARY's -- and two
+ * writers mint the same id. `write-forwarding.spec.ts` is what caught that, by comparing the
+ * router's reach against the partition rather than trusting either alone.
+ *
+ * So the number is bounded by the arithmetic that keeps ids disjoint, and the two are linked here
+ * rather than restated. `replica-demand.ts` carries a different and smaller ceiling:
+ * `REPLICA_MAX_LANES` bounds what AUTOSCALING creates, where the binding cost is per-lane idle
+ * storage and catch-up rather than correctness.
+ *
+ * What this number does is tell the ROUTER how many buckets to hash over, and setting it above the
+ * lanes a site has provisioned routes to objects that do not exist -- each one a wasted hop and a
+ * retry on the primary. That is an operator error a ceiling cannot prevent; `chooseTarget()` takes
+ * `max(this, believedLanes)` so the provisioned count is the floor either way.
+ */
 export function replicaCount(env?: { REPLICA_COUNT?: string | null }): number {
 	const raw = Number(String(env?.REPLICA_COUNT ?? '').trim());
 	if (!Number.isFinite(raw) || raw < 1) return 0;
-	// a modest ceiling; a pool this size is already past what the measured curve covers
-	return Math.min(Math.floor(raw), 32);
+	return Math.min(Math.floor(raw), ID_PARTITION_LANES);
 }
 
 /** the header a primary reports its provisioned lane count on */
@@ -78,7 +98,11 @@ const lanesSeen = new Map<string, { lanes: number; at: number }>();
 export function rememberLanes(site: string, lanes: number, nowMs: number): void {
 	if (!Number.isFinite(lanes) || lanes < 1) return;
 	if (lanesSeen.size > 64) lanesSeen.clear();
-	lanesSeen.set(site, { lanes: Math.min(Math.floor(lanes), 32), at: nowMs });
+	// the SAME ceiling {@link replicaCount} applies, imported rather than restated. This held a
+	// separate literal 32, so a primary that reported a larger pool was believed at 32 and the router
+	// hashed over a fraction of the objects the site had paid to build -- the lane count is defined
+	// in several places and this is one of the two the router actually reads.
+	lanesSeen.set(site, { lanes: Math.min(Math.floor(lanes), ID_PARTITION_LANES), at: nowMs });
 }
 
 /** the lane count this isolate may route against, or 0 when it has not learned one recently */
@@ -197,6 +221,21 @@ export function chooseTarget(input: {
 	 * Drupal write is form processing and the response render, and neither is authoritative.
 	 */
 	writeForward?: boolean;
+	/**
+	 * Whether the request already carries a session.
+	 *
+	 * A WRITE THAT CARRIES NO SESSION MAY ESTABLISH ONE, AND A LANE CANNOT. Forwarding executes the
+	 * write on the lane, discards its own effect and sends the statements to the primary -- but the
+	 * `Set-Cookie` handed back was minted during the lane's speculative run, so the client leaves
+	 * holding a session id the primary does not have. Observed over six consecutive logins on a
+	 * 4-lane site: five answered by the primary, one by `r3`, and after that one the PRIMARY itself
+	 * read `x-cfw-roles: anonymous` on 125 of 200 samples. It presents as "the site stopped
+	 * accepting the password".
+	 *
+	 * Login, registration and password reset are exactly the writes that arrive without a session,
+	 * so pinning on this covers the class without naming any route.
+	 */
+	hasSession?: boolean;
 }): RoutingDecision {
 	const primary: RoutingDecision = {
 		target: input.site,
@@ -209,7 +248,8 @@ export function chooseTarget(input: {
 	if (lanes === 1) return { ...primary, reason: 'no replicas configured' };
 
 	const method = input.method.toUpperCase();
-	if (method !== 'GET' && method !== 'HEAD' && input.writeForward !== true) {
+	const write = method !== 'GET' && method !== 'HEAD';
+	if (write && input.writeForward !== true) {
 		return { ...primary, reason: 'a write goes to the primary without asking a replica first' };
 	}
 
@@ -218,6 +258,12 @@ export function chooseTarget(input: {
 			...primary,
 			reason: `${input.pathname ?? 'an unnamed route'} is not the serving path`
 		};
+	}
+
+	// after the route check, so a write to a route that was never spreadable still reports the
+	// reason it was never spreadable
+	if (write && input.hasSession !== true) {
+		return { ...primary, reason: 'a write carrying no session may establish one' };
 	}
 
 	const lane = hash(input.affinity) % lanes;

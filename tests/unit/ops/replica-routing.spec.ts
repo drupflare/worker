@@ -11,6 +11,7 @@ import {
 	shouldFailover
 } from '../../../src/ops/replica-routing';
 import { encodeSiteId } from '../../../src/ops/site-id';
+import { ID_PARTITION_LANES, idStride } from '../../../src/ops/write-forwarding';
 
 /**
  * The rule that picks an object, tested without a pool.
@@ -57,9 +58,31 @@ describe('how many lanes there are', () => {
 		expect(replicaCount({ REPLICA_COUNT: '0' })).toBe(0);
 	});
 
-	it('reads a number and clamps it', () => {
+	// It clamped to 32 for no stated reason and truncated silently, so an operator who set 64 got 32
+	// with nothing saying so. Removing the clamp outright was worse: a lane mints forwarded ids from
+	// its class modulo `ID_PARTITION_LANES + 1`, so lane 257 wraps onto the PRIMARY's class and two
+	// writers mint the same id. The bound is that arithmetic, imported rather than restated.
+	it('honours an explicit number up to the id partition', () => {
 		expect(replicaCount({ REPLICA_COUNT: '3' })).toBe(3);
-		expect(replicaCount({ REPLICA_COUNT: '4096' })).toBe(32);
+		expect(replicaCount({ REPLICA_COUNT: '33' })).toBe(33);
+		expect(replicaCount({ REPLICA_COUNT: '7.9' })).toBe(7);
+		// past 32, which the old clamp refused, and still honoured
+		expect(replicaCount({ REPLICA_COUNT: '200' })).toBe(200);
+	});
+
+	it('clamps at the largest pool whose writers each hold a residue class', () => {
+		expect(replicaCount({ REPLICA_COUNT: String(ID_PARTITION_LANES) })).toBe(
+			ID_PARTITION_LANES
+		);
+		expect(replicaCount({ REPLICA_COUNT: '4096' })).toBe(ID_PARTITION_LANES);
+		// the property the number stands for: every lane inside the clamp has a class of its own, and
+		// none of them is the primary's
+		const seen = new Set<number>([0]);
+		for (let lane = 1; lane <= replicaCount({ REPLICA_COUNT: '4096' }); lane += 1) {
+			const { offset } = idStride(lane, ID_PARTITION_LANES);
+			expect(seen.has(offset), `lane ${lane} reuses residue ${offset}`).toBe(false);
+			seen.add(offset);
+		}
 	});
 });
 
@@ -94,8 +117,12 @@ describe('a lane count learned from the primary', () => {
 			rememberLanes(SITE, bad, at);
 			expect(believedLanes(SITE, at)).toBe(0);
 		}
+		// the same ceiling `replicaCount()` applies; a separate literal here meant a primary
+		// reporting a larger pool was believed at 32 and most of its objects were never addressed
 		rememberLanes(SITE, 4096, at);
-		expect(believedLanes(SITE, at)).toBe(32);
+		expect(believedLanes(SITE, at)).toBe(ID_PARTITION_LANES);
+		rememberLanes(SITE, 200, at);
+		expect(believedLanes(SITE, at)).toBe(200);
 	});
 
 	it('separates two sites', () => {
@@ -200,9 +227,54 @@ describe('which lane answers', () => {
 				affinity: `visitor-${i}`,
 				replicas: 4,
 				pathname: '/serve',
-				writeForward: true
+				writeForward: true,
+				hasSession: true
 			});
 			seen.add(out.lane);
+		}
+		expect(seen.size).toBeGreaterThan(1);
+	});
+
+	/**
+	 * A LOGIN ROUTED TO A LANE MINTS A SESSION THE PRIMARY CANNOT SEE.
+	 *
+	 * Forwarding runs the write on the lane, discards its own effect and sends the statements on --
+	 * but the `Set-Cookie` was minted during the lane's speculative run, so the client leaves holding
+	 * an id the primary never stored. Measured over six consecutive logins on a deployed 4-lane site:
+	 * five answered by the primary, one by `r3`, and after that one the PRIMARY read
+	 * `x-cfw-roles: anonymous` on 125 of 200 samples.
+	 */
+	it('pins a write that carries no session, because it may establish one', () => {
+		for (let i = 0; i < 200; i++) {
+			const out = chooseTarget({
+				site: SITE,
+				method: 'POST',
+				affinity: `visitor-${i}`,
+				replicas: 4,
+				pathname: '/serve',
+				writeForward: true,
+				hasSession: false
+			});
+			expect(out.role).toBe('primary');
+			expect(out.reason).toContain('may establish one');
+		}
+	});
+
+	it('still spreads a READ that carries no session', () => {
+		// the control: pinning is about the WRITE, and anonymous reads are the bulk of the traffic
+		const seen = new Set<number>();
+		for (let i = 0; i < 200; i++) {
+			seen.add(
+				chooseTarget({
+					site: SITE,
+					method: 'GET',
+					affinity: `visitor-${i}`,
+					replicas: 4,
+					pathname: '/serve',
+					writeForward: true,
+					hasSession: false
+				}).lane
+			);
 		}
 		expect(seen.size).toBeGreaterThan(1);
 	});

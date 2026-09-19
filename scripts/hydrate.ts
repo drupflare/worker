@@ -220,12 +220,16 @@ const DOWNLOAD_ATTEMPTS = 3;
  * too, and so a short read is caught here by length instead of two steps later as a sha256 mismatch,
  * which reads as a corrupt release.
  */
-async function download(url: string, to: string): Promise<void> {
+async function download(url: string, to: string, fresh = false): Promise<void> {
 	let last = 'no attempt was made';
 	for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
 		const started = Date.now();
 		try {
-			const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+			const res = await fetch(url, {
+				signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+				// the nonce below is what actually defeats an edge cache; this is the local half
+				...(fresh ? { cache: 'no-store' as const } : {})
+			});
 			if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 			const declared = Number(res.headers.get('content-length') ?? 0);
 			const body = new Uint8Array(await res.arrayBuffer());
@@ -292,6 +296,25 @@ function buildFromSource(root: string, forwarded: string[]): void {
 	});
 }
 
+/**
+ * The URL a payload is fetched from, carrying its own digest.
+ *
+ * `SHA256SUMS` is served uncached and the tarball is not (`max-age=14400`), so for up to four hours
+ * after a republish a colo can hold the PREVIOUS tarball while every reader already has the new
+ * digest. The build then fails on bytes that are fine at origin, and it fails only in the colos
+ * holding the stale copy -- which is why the same pair verified clean from another machine minutes
+ * later.
+ *
+ * Putting the digest in the query string gives each published version its own cache key, so a hit
+ * can only ever be bytes fetched while that digest was current. It is not a cache-buster: the URL is
+ * stable for a given payload and stays cacheable, which is the point.
+ *
+ * @internal exported for its test
+ */
+export function payloadUrl(base: string, asset: string, sha256: string): string {
+	return `${base}/${asset}?sha256=${sha256}`;
+}
+
 /** Downloads, verifies and lands a payload that is known to exist. */
 async function hydrateFrom(
 	root: string,
@@ -311,9 +334,25 @@ async function hydrateFrom(
 
 			tarball = join(work, asset);
 			console.log(`fetching ${found.base}/${asset} (${found.via})`);
-			await download(`${found.base}/${asset}`, tarball);
+			// THE DIGEST IS IN THE URL, and that is what makes a mismatched pair unreachable rather
+			// than merely unlikely. `SHA256SUMS` is served uncached (`cf-cache-status: DYNAMIC`) and
+			// the tarball is not, so after a republish a colo can hold the PREVIOUS tarball while
+			// every reader gets the new digest -- and the build fails on bytes that were fine at
+			// origin. Observed on a Pages build while the same pair verified clean from another
+			// colo. A per-digest query string gives each published version its own cache key, so a
+			// hit can only ever be bytes fetched while that digest was current.
+			const versioned = payloadUrl(found.base, asset, expected);
+			await download(versioned, tarball);
 
-			const actual = sha256(tarball);
+			let actual = sha256(tarball);
+			if (expected !== actual) {
+				// a cache entry under the new key that predates the new bytes, which is possible if
+				// something warmed it between the two uploads. One forced revalidation separates
+				// that from real corruption; a second mismatch is not a caching problem
+				console.log(`hydrate: ${actual} is not ${expected}; refetching without the cache`);
+				await download(`${versioned}&fresh=${Date.now()}`, tarball, true);
+				actual = sha256(tarball);
+			}
 			if (expected !== actual) {
 				throw new Error(`SHA256SUMS says ${expected}, the download is ${actual}`);
 			}

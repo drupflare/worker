@@ -1,0 +1,23 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-loadgen",
+	"main": "../../scripts/measure/loadgen-worker.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": false },
+	"services": [
+		{ "binding": "ARM_L001", "service": "cfw-l001" },
+		{ "binding": "ARM_L002", "service": "cfw-l002" },
+		{ "binding": "ARM_L004", "service": "cfw-l004" },
+		{ "binding": "ARM_L008", "service": "cfw-l008" },
+		{ "binding": "ARM_L016", "service": "cfw-l016" },
+		{ "binding": "ARM_L032", "service": "cfw-l032" },
+		{ "binding": "ARM_L048", "service": "cfw-l048" },
+		{ "binding": "ARM_L064", "service": "cfw-l064" },
+		{ "binding": "ARM_L096", "service": "cfw-l096" },
+		{ "binding": "ARM_L128", "service": "cfw-l128" },
+		{ "binding": "ARM_L160", "service": "cfw-l160" },
+		{ "binding": "ARM_L192", "service": "cfw-l192" },
+		{ "binding": "SELF", "service": "cfw-loadgen" }
+	]
+}

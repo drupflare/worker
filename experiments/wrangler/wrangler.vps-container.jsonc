@@ -1,0 +1,27 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-vps",
+	"main": "../../scripts/measure/vps-container-worker.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": false },
+	"vars": {
+		"VPS_INSTANCE_TYPE": "standard-2",
+		"VPS_BUDGET_ENFORCE": "1",
+		"VPS_BUDGET_RESERVE": "0.5"
+	},
+	"containers": [
+		{
+			"class_name": "VpsArm",
+			"image": "../../docker/vps-container/Dockerfile",
+			"image_build_context": "../../.vps-context",
+			"instance_type": "standard-2",
+			"max_instances": 1,
+			"constraints": { "regions": ["ENAM"] }
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "class_name": "VpsArm", "name": "VPS_ARM" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["VpsArm"] }]
+}

@@ -1,0 +1,9 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-fanout",
+	"main": "../../scripts/measure/fanout-probe.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": false },
+	"services": [{ "binding": "SELF", "service": "cfw-fanout" }]
+}

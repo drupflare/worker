@@ -398,44 +398,123 @@ function meanOf(values: readonly (number | null)[]): number | null {
 	return present.reduce((n, v) => n + v, 0) / present.length;
 }
 
+/** one render, with the evidence that it WAS one attached to it */
+export interface RenderSample {
+	/** the client-side round trip, a `Date.now()` delta spanning I/O */
+	ms: number;
+	/** the host's own clock: `x-worker-ms` on the edge, nginx `$request_time` on the VPS */
+	serverMs: number | null;
+	/** rendered HTML bytes, so a caller can refuse a ratio taken on two different pages */
+	bytes: number;
+	/** Drupal's `X-Drupal-Dynamic-Cache` on both arms; a cell is comparable only when both MISS */
+	dynamicCache: string;
+}
+
 /**
  * How long each arm takes to PRODUCE a page, rather than to serve a stored one.
  *
  * The two arms reach it differently, because each does what it does in production. The VPS renders
- * on the request, so a unique query string is a render. drupflare refuses to render on the request
- * for an anonymous path it has never seen -- it answers 503 and queues -- so its render is driven:
- * bump the generation to invalidate the stored page, enqueue the path, then time the drain.
+ * on the request, so a unique query string is a render -- verified rather than assumed, since it has
+ * to miss nginx, Drupal's `page_cache` AND `dynamic_page_cache` to be one. drupflare refuses to
+ * render on the request for an anonymous path it has never seen, so its render is driven through
+ * `/assemble`, which deletes the stored row, empties the same two bins and fills SYNCHRONOUSLY.
  *
  * BOTH TIMES SPAN I/O, which is the `Date.now()` shape RULE 0 permits. Neither is taken across a
  * synchronous `php._run()`; the drupflare figure brackets an HTTP call to the object from outside it.
  *
- * WHICH BINS ARE WARM. Neither arm empties Drupal's own `render` or `dynamic_page_cache`, so both
- * measure a re-render with Drupal's internal caches warm. That is the workload a content change
- * produces and it is NOT the 2,127 ms "both bins emptied" figure in the report, which is a colder
- * thing measured on the edge. Do not subtract one from the other.
+ * **IT USED TO MEASURE NOTHING AT ALL, AND THAT IS WHERE THE PUBLISHED 1.28x CAME FROM.** The
+ * drupflare arm was `/bump`, then `/fill?path=/` to enqueue, then a timed bare `/fill` to drain.
+ * Three mechanisms defeat that and they compound:
+ *
+ * - `bumpGeneration()` re-queues up to `PREFILL_ON_SAVE` paths and arms the fill alarm, so the
+ *   queue the timed call meant to drain holds a batch it never asked for.
+ * - the alarm fires at +1 ms, which is before the caller's next round trip can arrive, and
+ *   `/__fill`'s own docblock already says so.
+ * - `fetch()` holds the object's gate, so the timed call then waits behind that whole batch.
+ *
+ * Measured against a live `wrangler dev` on 2026-09-19: 6 of 7 samples answered `{"filled":null}`
+ * at 189-214 ms, having rendered NOTHING. The number was the caller's wait behind an alarm batch.
+ * `/assemble` takes all three out -- no bump, no queue, no alarm -- and every sample is checked.
+ *
+ * WHICH BINS ARE WARM. Both arms leave Drupal's `render` bin alone and meet `dynamic_page_cache`
+ * cold, which is the state a content save leaves behind on either host. It is NOT the 2,127 ms
+ * "both bins emptied" figure in the report, which is a colder thing measured on the edge. Do not
+ * subtract one from the other.
  */
 export async function renderArm(
 	base: string,
 	kind: 'vps' | 'drupflare',
 	n: number
-): Promise<number[]> {
-	const times: number[] = [];
+): Promise<RenderSample[]> {
+	const samples: RenderSample[] = [];
 	for (let i = 0; i < n; i++) {
 		if (kind === 'vps') {
 			const t0 = Date.now();
 			const res = await fetch(`${base}/?renderprobe=${Date.now()}-${i}`, { headers: EXTRA });
-			await res.arrayBuffer();
-			times.push(Date.now() - t0);
+			const body = await res.arrayBuffer();
+			const ms = Date.now() - t0;
+			// a cell answered by any of the three caches in front of the renderer is not a render,
+			// and it reads as a fast one
+			for (const header of ['x-fastcgi-cache', 'x-drupal-cache', 'x-drupal-dynamic-cache']) {
+				const value = res.headers.get(header) ?? '';
+				if (value.toUpperCase() === 'HIT') {
+					throw new Error(
+						`the vps render arm was answered from cache (${header}: ${value}), so ` +
+							'this sample measured a lookup and not a render'
+					);
+				}
+			}
+			const vpsMs = Number(res.headers.get('x-vps-ms') ?? NaN);
+			samples.push({
+				ms,
+				serverMs: Number.isFinite(vpsMs) ? Math.round(vpsMs * 1000) : null,
+				bytes: body.byteLength,
+				dynamicCache: res.headers.get('x-drupal-dynamic-cache') ?? ''
+			});
 			continue;
 		}
-		await fetch(`${base}/bump?reason=renderprobe`, { headers: EXTRA });
-		await fetch(`${base}/fill?path=${encodeURIComponent('/')}`, { headers: EXTRA });
 		const t0 = Date.now();
-		const res = await fetch(`${base}/fill`, { headers: EXTRA });
-		await res.arrayBuffer();
-		times.push(Date.now() - t0);
+		const res = await fetch(
+			`${base}/assemble?path=${encodeURIComponent('/')}&bins=page,dynamic_page_cache`,
+			{ headers: EXTRA }
+		);
+		const outcome = (await res.json()) as {
+			filled?: string | null;
+			bytes?: number;
+			dynamicCache?: string | null;
+		};
+		const ms = Date.now() - t0;
+		if ((outcome.filled ?? null) === null || (outcome.bytes ?? 0) === 0) {
+			throw new Error(
+				`the drupflare render arm rendered nothing: ${JSON.stringify(outcome).slice(0, 200)}`
+			);
+		}
+		const workerMs = Number(res.headers.get('x-worker-ms') ?? NaN);
+		samples.push({
+			ms,
+			serverMs: Number.isFinite(workerMs) ? workerMs : null,
+			bytes: outcome.bytes ?? 0,
+			dynamicCache: outcome.dynamicCache ?? ''
+		});
 	}
-	return times;
+	return samples;
+}
+
+/**
+ * Whether two arms rendered the same page, which no earlier version of this rig asked.
+ *
+ * The VPS keeps its database in a docker volume that `vps:up` does NOT re-seed -- the entrypoint
+ * copies the pack only when the file is absent -- so a benchmark that writes content leaves it
+ * there for every later run. Found 2026-09-19: the VPS arm was rendering a front page carrying ten
+ * node teasers at 23,284 bytes against drupflare's empty welcome page at 17,692, and the ratio
+ * taken across them was published. `vps:down -v` then `vps:up` put both at ~17.7 KB.
+ *
+ * A percentage rather than a byte count, because the arms legitimately differ by the query string
+ * the VPS carries in its canonical and shortlink tags -- 30 bytes on 17.7 KB when they agree.
+ */
+export function bodiesAgree(a: number, b: number, tolerance = 0.02): boolean {
+	if (a <= 0 || b <= 0) return false;
+	return Math.abs(a - b) / Math.max(a, b) <= tolerance;
 }
 
 /**
@@ -571,15 +650,28 @@ if (import.meta.main) {
 		const n = Number(arg('n', '9'));
 		// the first sample on either arm is a cold interpreter or a cold opcache and is reported
 		// separately rather than folded into a median, the way every other cold reading here is
-		const times = await renderArm(base, renderKind as 'vps' | 'drupflare', n);
-		const cold = times[0] as number;
-		const warm = times.slice(1).sort((a, b) => a - b);
+		const samples = await renderArm(base, renderKind as 'vps' | 'drupflare', n);
+		const cold = (samples[0] as RenderSample).ms;
+		const rest = samples.slice(1);
+		const warm = rest.map((s) => s.ms).sort((a, b) => a - b);
+		const server = rest
+			.map((s) => s.serverMs)
+			.filter((v): v is number => v !== null)
+			.sort((a, b) => a - b);
 		console.error(
 			`[${label}] render cold=${cold}ms warm n=${warm.length} ` +
 				`min=${warm[0]} p50=${percentile(warm, 50)} max=${warm[warm.length - 1]} ` +
+				`serverP50=${server.length === 0 ? '-' : percentile(server, 50)}ms ` +
+				`bytes=${rest[0]?.bytes ?? 0} dpc=${rest[0]?.dynamicCache ?? '-'} ` +
 				`all=[${warm.join(', ')}]`
 		);
-		console.log(JSON.stringify({ target: base, label, kind: renderKind, cold, warm }, null, 2));
+		console.log(
+			JSON.stringify(
+				{ target: base, label, kind: renderKind, cold, warm, samples: rest },
+				null,
+				2
+			)
+		);
 		process.exit(0);
 	}
 

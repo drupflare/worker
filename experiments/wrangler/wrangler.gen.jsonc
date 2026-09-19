@@ -1,0 +1,13 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-gen",
+	"main": "../../scripts/measure/loadgen-worker.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": false },
+	"services": [
+		{ "binding": "ARM", "service": "cfw-pool" },
+		{ "binding": "VPS", "service": "cfw-vps" },
+		{ "binding": "SELF", "service": "cfw-gen" }
+	]
+}

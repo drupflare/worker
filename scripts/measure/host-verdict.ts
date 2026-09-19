@@ -12,6 +12,7 @@ import {
 	type Sample,
 	type Summary,
 	WORKLOADS,
+	bodiesAgree,
 	isLocalTarget as isLocal,
 	login,
 	one,
@@ -770,18 +771,40 @@ for (const [kind, base] of [
 // #endregion
 
 // #region the render arm, which is the same workload on both sides
-const renders: Record<string, { cold: number; warm: number[] }> = {};
-for (const [kind, base] of [
+//
+// EDGE FIRST ON ODD RUNS, for the reason the curve cells rotate: a fixed order lands every drift
+// inside the block -- a cache filling, memory pressure building -- on whichever arm goes second,
+// and this arm ran vps-then-edge on every run it ever made.
+const renders: Record<string, { cold: number; warm: number[]; bytes: number; dpc: string }> = {};
+const renderOrder = [
 	['vps', VPS],
 	['edge', EDGE]
-] as const) {
+] as const;
+for (const [kind, base] of Date.now() % 2 === 0 ? renderOrder : [...renderOrder].reverse()) {
 	setExtraHeaders(kind === 'edge' ? HEADERS.edge : HEADERS.vps);
-	const times = await renderArm(base, kind === 'edge' ? 'drupflare' : 'vps', 7);
-	renders[kind] = { cold: times[0] as number, warm: times.slice(1).sort((a, b) => a - b) };
+	const samples = await renderArm(base, kind === 'edge' ? 'drupflare' : 'vps', 7);
+	const rest = samples.slice(1);
+	renders[kind] = {
+		cold: samples[0]?.ms ?? 0,
+		warm: rest.map((s) => s.ms).sort((a, b) => a - b),
+		bytes: rest[0]?.bytes ?? 0,
+		dpc: rest[0]?.dynamicCache ?? ''
+	};
 	const w = renders[kind]?.warm ?? [];
 	console.error(
 		`[host-verdict] ${kind} re-render cold=${renders[kind]?.cold}ms ` +
-			`warm p50=${percentile(w, 50)}ms all=[${w.join(', ')}]`
+			`warm p50=${percentile(w, 50)}ms bytes=${renders[kind]?.bytes} ` +
+			`dpc=${renders[kind]?.dpc} all=[${w.join(', ')}]`
+	);
+}
+// A RATIO ACROSS TWO DIFFERENT PAGES IS NOT A RATIO, and this rig published one. The VPS keeps its
+// database in a docker volume `vps:up` does not re-seed, so content a benchmark wrote survives every
+// later run; see `bodiesAgree()`.
+if (!bodiesAgree(renders.vps?.bytes ?? 0, renders.edge?.bytes ?? 0)) {
+	notes.push(
+		`THE RENDER ARMS RENDERED DIFFERENT PAGES: vps ${renders.vps?.bytes} bytes against edge ` +
+			`${renders.edge?.bytes}. The re-render ratio is not comparable. Re-seed the VPS with ` +
+			'`bun run vps:down && bun run vps:up`, which drops the volume, and re-run.'
 	);
 }
 // #endregion

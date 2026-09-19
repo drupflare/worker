@@ -1,0 +1,29 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-pool",
+	"main": "../../src/site.ts",
+	"minify": true,
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"vars": {
+		"LAZY_MOUNT": "1",
+		"LAZY_FS_BUDGET_BYTES": "4194304",
+		"PLAN": "paid",
+		"ASSET_AGGREGATES": "1",
+		"EDGE_PLAN": "0",
+		"PW_DIAGNOSTICS": "1",
+		"SITE_WARM": "1",
+		"REPLICA_AUTOSCALE": "0"
+	},
+	"rules": [
+		{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true },
+		{ "type": "Data", "globs": ["**/*.zst", "**/*.br"], "fallthrough": true }
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"assets": { "directory": "../../assets", "binding": "ASSETS" },
+	"observability": { "enabled": false },
+	"alias": { "./runtime/php-binary.js": "../../src/runtime/php-binary-raw.ts" }
+}

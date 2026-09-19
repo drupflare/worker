@@ -9,7 +9,14 @@ import {
 	withRtt,
 	type Cell
 } from '../../scripts/measure/verdict-math';
-import { isLocalTarget, spreadHeaders, type Summary } from '../../scripts/measure/vps-compare';
+import {
+	bodiesAgree,
+	isLocalTarget,
+	renderArm,
+	setExtraHeaders,
+	spreadHeaders,
+	type Summary
+} from '../../scripts/measure/vps-compare';
 
 /**
  * The viability predicate, driven over fixtures rather than over two live hosts.
@@ -419,5 +426,123 @@ describe('which quantity the verdict decided on', () => {
 			'service-time'
 		);
 		expect(out.weighted.vps).toBe(35);
+	});
+});
+
+/**
+ * The render arm, which is the one cell in this rig that had no check on it at all.
+ *
+ * Its drupflare half was `/bump`, an enqueue, then a timed bare `/fill` -- and measured against a
+ * live `wrangler dev` on 2026-09-19, 6 of 7 samples answered `{"filled":null}` having rendered
+ * nothing, because the bump re-queues a batch and arms the alarm, the alarm fires at +1 ms, and
+ * `fetch()` holds the gate the caller then waits on. The published 1.28x is that wait.
+ *
+ * Driven over a stub `fetch` rather than two hosts, because what is being pinned is the REFUSAL:
+ * an arm that rendered nothing, and an arm answered from a cache, must both fail loudly.
+ */
+describe('the render arm refuses a sample that is not a render', () => {
+	const stub = (reply: (url: string) => Response) => {
+		const real = globalThis.fetch;
+		globalThis.fetch = ((input: RequestInfo | URL) =>
+			Promise.resolve(reply(String(input)))) as typeof fetch;
+		return () => {
+			globalThis.fetch = real;
+		};
+	};
+
+	const assembled = (body: Record<string, unknown>, workerMs = '31') =>
+		new Response(JSON.stringify(body), {
+			headers: { 'content-type': 'application/json', 'x-worker-ms': workerMs }
+		});
+
+	it('throws when the object filled nothing, which is what the old arm timed', async () => {
+		const restore = stub(() => assembled({ filled: null, remaining: 0 }));
+		try {
+			await expect(renderArm('http://edge', 'drupflare', 1)).rejects.toThrow(
+				/rendered nothing/
+			);
+		} finally {
+			restore();
+		}
+	});
+
+	it('drives /assemble, so no bump re-queues a batch and no alarm can take it', async () => {
+		const seen: string[] = [];
+		const restore = stub((url) => {
+			seen.push(url);
+			return assembled({ filled: '/', bytes: 17692, dynamicCache: 'MISS' });
+		});
+		try {
+			const samples = await renderArm('http://edge', 'drupflare', 2);
+			expect(samples).toHaveLength(2);
+			expect(seen.every((u) => u.includes('/assemble'))).toBe(true);
+			expect(seen.some((u) => u.includes('/bump'))).toBe(false);
+			expect(samples[0]?.bytes).toBe(17692);
+			expect(samples[0]?.serverMs).toBe(31);
+			expect(samples[0]?.dynamicCache).toBe('MISS');
+		} finally {
+			restore();
+		}
+	});
+
+	it('refuses a vps sample any of the three caches in front of the renderer answered', async () => {
+		setExtraHeaders({});
+		for (const header of ['x-fastcgi-cache', 'x-drupal-cache', 'x-drupal-dynamic-cache']) {
+			const restore = stub(
+				() => new Response('<html>a page</html>', { headers: { [header]: 'HIT' } })
+			);
+			try {
+				await expect(renderArm('http://vps', 'vps', 1)).rejects.toThrow(
+					new RegExp(`answered from cache \\(${header}`)
+				);
+			} finally {
+				restore();
+			}
+		}
+	});
+
+	it('keeps a vps sample that missed every one of them, with nginx own clock', async () => {
+		const restore = stub(
+			() =>
+				new Response('<html>a page</html>', {
+					headers: {
+						'x-fastcgi-cache': 'MISS',
+						'x-drupal-cache': 'MISS',
+						'x-drupal-dynamic-cache': 'MISS',
+						'x-vps-ms': '0.025'
+					}
+				})
+		);
+		try {
+			const samples = await renderArm('http://vps', 'vps', 1);
+			// seconds on the wire, milliseconds in the reading
+			expect(samples[0]?.serverMs).toBe(25);
+			expect(samples[0]?.dynamicCache).toBe('MISS');
+		} finally {
+			restore();
+		}
+	});
+});
+
+/**
+ * Whether the two arms rendered the same page.
+ *
+ * The VPS database lives in a docker volume `vps:up` does not re-seed, and the entrypoint copies the
+ * pack only when the file is absent -- so content a benchmark wrote survives every later run. Found
+ * 2026-09-19 with the VPS arm on a ten-teaser front page at 23,284 bytes against drupflare's welcome
+ * page at 17,692, a 35% difference that no output of this rig mentioned.
+ */
+describe('bodiesAgree', () => {
+	it('tolerates the query string the vps arm carries in its canonical tag', () => {
+		expect(bodiesAgree(17692, 17722)).toBe(true);
+	});
+
+	it('refuses the drift that a persisted vps volume produces', () => {
+		expect(bodiesAgree(17692, 23284)).toBe(false);
+	});
+
+	it('refuses an arm that measured no page at all', () => {
+		expect(bodiesAgree(17692, 0)).toBe(false);
+		expect(bodiesAgree(0, 0)).toBe(false);
 	});
 });

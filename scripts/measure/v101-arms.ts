@@ -54,29 +54,119 @@ const ADMIN_PASS = a['pass'] ?? 'cfw-Measure-2260';
  */
 const PER_LANE = Number(a['perLane'] ?? 6);
 /**
- * The paths the load rotates over, which is what spreads the AUTHENTICATED arm.
+ * The router's own FNV-1a, copied so the spread is computed against the real function.
  *
- * `affinityKey()` keys a session-carrying request on the path, so these are eight distinct keys.
- * Whether eight keys can cover a pool is arithmetic rather than a guess: FNV-1a mod (lanes+1) over
- * them covers 4 of 4 buckets at 3 lanes and 6 of 8 at 7, so the list is enough up to 4 and short of
- * full coverage above it. Add paths before blaming a pool that has lanes idle at 7.
+ * `src/ops/replica-routing.ts` cannot be imported here: it pulls the worker's module graph.
+ * `tests/node/spread-coverage.spec.ts` asserts the two agree, which is what makes a copy safe.
+ */
+function laneHash(value: string): number {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < value.length; i++) {
+		h ^= value.charCodeAt(i);
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return h >>> 0;
+}
+
+/**
+ * One path per lane, chosen so every lane in the pool receives offered load.
+ *
+ * **A FIXED PATH LIST SILENTLY UNDER-COVERS A POOL, AND THE OLD EIGHT DID.** `affinityKey()` keys a
+ * session-carrying request on the path and the router takes `hash(key) % (lanes + 1)`, so the list
+ * has to cover every bucket or the idle lanes read as a pool that will not scale. Computed against
+ * the hash above, the previous eight paths covered 6 of 9 buckets at 8 lanes, **7 of 17 at 16** and
+ * 8 of 33 at 32 -- so any curve this rig produced above 4 lanes was measuring a fraction of the pool
+ * it named.
+ *
+ * Coverage is chosen rather than hoped for: walk a candidate pool, keep the first path that lands in
+ * each bucket, and refuse the run if any bucket is still empty. A refusal here is cheaper than a
+ * published curve that under-measured.
  *
  * It does NOT spread the anonymous arm, which keys on the client address; `--clients=N` is that one.
  */
-const SPREAD = [
-	'/',
-	'/node',
-	'/rss.xml',
-	'/user/login',
-	'/node/1',
-	'/node/2',
-	'/node/3',
-	'/node/4'
-];
+export function coveringSpread(
+	lanes: number,
+	candidates: readonly string[]
+): { paths: string[]; covered: number; buckets: number; missing: number[] } {
+	const buckets = lanes + 1;
+	const byBucket = new Map<number, string>();
+	for (const path of candidates) {
+		const bucket = laneHash(`p:${path}`) % buckets;
+		if (!byBucket.has(bucket)) byBucket.set(bucket, path);
+	}
+	const missing: number[] = [];
+	for (let i = 0; i < buckets; i++) if (!byBucket.has(i)) missing.push(i);
+	return {
+		paths: [...byBucket.values()],
+		covered: byBucket.size,
+		buckets,
+		missing
+	};
+}
 
-if (!BASE) {
-	console.error('--base is required');
-	process.exit(1);
+/**
+ * Every candidate path that hashes to ONE lane bucket.
+ *
+ * Driving a single bucket isolates one object, which is the only way to read per-object throughput
+ * without a route that pins a lane -- `?site=<site>#r<n>` is not honoured, so the topology ceiling
+ * cannot be addressed directly. `solo x (lanes + 1)` is then the ceiling a pool would reach if
+ * distribution were perfect, and the routed measurement divided by it is what distribution actually
+ * costs. Reporting only the routed number and comparing it against a directly-addressed one from
+ * another run is how two different questions get one answer.
+ */
+export function pathsForBucket(
+	lanes: number,
+	bucket: number,
+	candidates: readonly string[],
+	want: number
+): string[] {
+	const buckets = lanes + 1;
+	const out: string[] = [];
+	for (const path of candidates) {
+		if (out.length >= want) break;
+		if (laneHash(`p:${path}`) % buckets === bucket) out.push(path);
+	}
+	return out;
+}
+
+/**
+ * Where the candidate paths come from.
+ *
+ * `/node/N` is the only family that scales to an arbitrary pool AND does comparable work per
+ * request, which a mixed list of `/`, `/rss.xml` and `/user/login` does not. The pool is widened
+ * until every bucket is filled; `--nodes` says how many nodes the site actually has, because a path
+ * with no node renders a 404 and a 404 is not the workload.
+ */
+const NODES = Number(a['nodes'] ?? 200);
+
+function candidatePaths(): string[] {
+	const out = ['/', '/node'];
+	for (let i = 1; i <= NODES; i++) out.push(`/node/${i}`);
+	return out;
+}
+
+const COVER = coveringSpread(LANES, candidatePaths());
+const SPREAD = COVER.paths;
+
+// guarded so `coveringSpread` can be imported by its spec without the rig running
+if (import.meta.main) {
+	if (!BASE) {
+		console.error('--base is required');
+		process.exit(1);
+	}
+
+	// a pool with idle lanes reads as a pool that will not scale, so this refuses rather than reports
+	if (COVER.missing.length > 0) {
+		console.error(
+			`spread covers ${COVER.covered} of ${COVER.buckets} lane buckets; ` +
+				`${COVER.missing.length} would receive no load (${COVER.missing.slice(0, 12).join(', ')}` +
+				`${COVER.missing.length > 12 ? ', ...' : ''}). Raise --nodes above ${NODES}.`
+		);
+		process.exit(1);
+	}
+	console.log(
+		`[spread] ${COVER.paths.length} paths cover ${COVER.covered}/${COVER.buckets} buckets at ${LANES} lanes`
+	);
 }
 
 const url = (path: string, q: Record<string, string | number> = {}) => {
@@ -106,7 +196,7 @@ type Reply = { status: number; body: string; headers: Headers; wallMs: number };
  * one page carrying a form before provisioning lanes.
  */
 const SYNTHETIC_CLIENTS = Number(
-	process.argv.find((a) => a.startsWith('--clients='))?.split('=')[1] ?? '1'
+	process.argv.find((arg: string) => arg.startsWith('--clients='))?.split('=')[1] ?? '1'
 );
 
 let clientSeq = 0;
@@ -242,10 +332,14 @@ async function staleSample(path: string, i: number): Promise<void> {
 
 /** the session the load is driven under; without one every request stops at the front worker */
 async function signIn(): Promise<string> {
+	// MANUAL, because a successful login is a 303 and fetch follows it by default -- the redirect
+	// carries the Set-Cookie and the hop after it answers 403, so a followed login reads as a failed
+	// one and every later request drives ANONYMOUSLY, which keys on the address and never spreads
 	const res = await fetch(url('/serve', { path: '/user/login' }), {
 		method: 'POST',
 		headers: { 'content-type': 'application/x-www-form-urlencoded' },
 		body: `name=admin&pass=${encodeURIComponent(ADMIN_PASS)}&form_id=user_login_form&op=Log+in`,
+		redirect: 'manual',
 		signal: AbortSignal.timeout(240_000)
 	});
 	const set = res.headers.getSetCookie?.() ?? [];
@@ -327,29 +421,31 @@ async function drive(
 
 // #endregion
 
-if (ONLY === '' || ONLY === 'amort') {
-	await seed(Math.max(...KS) + 6);
-	for (let i = 0; i < N; i++) for (const k of KS) await amortSample(k, i);
-}
+if (import.meta.main) {
+	if (ONLY === '' || ONLY === 'amort') {
+		await seed(Math.max(...KS) + 6);
+		for (let i = 0; i < N; i++) for (const k of KS) await amortSample(k, i);
+	}
 
-if (ONLY === '' || ONLY === 'stale') {
-	for (let i = 0; i < N * 2; i++) await staleSample('/', i);
-}
+	if (ONLY === '' || ONLY === 'stale') {
+		for (let i = 0; i < N * 2; i++) await staleSample('/', i);
+	}
 
-if (ONLY === '' || ONLY === 'replica') {
-	const jar = await signIn();
-	emit({ arm: 'replica-auth', signedIn: jar !== '' });
-	// the control FIRST, so the curve has a zero-lane baseline taken on the same object and the same
-	// day rather than one quoted from an earlier run
-	emit({ arm: 'replica', lanes: 0, ...(await drive(PER_LANE, 10, jar)) });
-	for (let lane = 1; lane <= LANES; lane++) {
-		const out = await provisionLane(lane);
-		emit({
-			arm: 'replica-provision',
-			lane,
-			stage: out['stage'] ?? null,
-			ok: out['ok'] ?? null
-		});
-		emit({ arm: 'replica', lanes: lane, ...(await drive(PER_LANE * (lane + 1), 10, jar)) });
+	if (ONLY === '' || ONLY === 'replica') {
+		const jar = await signIn();
+		emit({ arm: 'replica-auth', signedIn: jar !== '' });
+		// the control FIRST, so the curve has a zero-lane baseline taken on the same object and the
+		// same day rather than one quoted from an earlier run
+		emit({ arm: 'replica', lanes: 0, ...(await drive(PER_LANE, 10, jar)) });
+		for (let lane = 1; lane <= LANES; lane++) {
+			const out = await provisionLane(lane);
+			emit({
+				arm: 'replica-provision',
+				lane,
+				stage: out['stage'] ?? null,
+				ok: out['ok'] ?? null
+			});
+			emit({ arm: 'replica', lanes: lane, ...(await drive(PER_LANE * (lane + 1), 10, jar)) });
+		}
 	}
 }

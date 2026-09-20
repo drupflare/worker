@@ -162,6 +162,27 @@ export function maskNonces(pair: Pair<string>): Pair<string> {
  * the request origin, the front page differs from the pack by exactly the origin string and nothing
  * else.
  */
+/** every loopback origin a document names; a loopback origin can only be a harness */
+export function loopbackOrigins(html: string): string[] {
+	return [
+		...new Set(
+			[...html.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/g)].map((m) => m[0])
+		)
+	];
+}
+
+/**
+ * Deduped and LONGEST FIRST, which is the half that makes the masking correct.
+ *
+ * {@link maskOrigins} replaces in list order, so masking `http://localhost` before
+ * `http://localhost:8812` leaves a bare `:8812` behind -- `<origin>/rss.xml` against
+ * `<origin>:8801/rss.xml`. Both e2e specs that compare two renders have now hit that, which is what
+ * moved these two out of `lifecycle.spec.ts` rather than leaving a second copy in `leak.spec.ts`.
+ */
+export function longestFirst(origins: string[]): string[] {
+	return [...new Set(origins.filter(Boolean))].sort((a, b) => b.length - a.length);
+}
+
 export function maskOrigins(pair: Pair<string>, origins: string[]): Pair<string> {
 	let out = pair;
 	for (const origin of origins) {

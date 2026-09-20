@@ -19,7 +19,14 @@ import {
 	type ServeStats,
 	type Transport
 } from './helpers/lifecycle';
-import { firstDifference, maskNonces, maskOrigins, stripAssetTags } from './helpers/twice';
+import {
+	firstDifference,
+	longestFirst,
+	loopbackOrigins,
+	maskNonces,
+	maskOrigins,
+	stripAssetTags
+} from './helpers/twice';
 
 /**
  * ONE Drupal lifecycle, driven end to end against a running worker: provision, migrate, prefill,
@@ -89,26 +96,6 @@ const PACKED = process.env.PACK_FROM_SOURCE !== '1';
 
 /** the site name the pack ships with; firstrun is what changes it, and it changes the bytes too */
 const PACK_SITE_NAME = 'CFW Bench';
-
-/** every loopback origin a document names; a loopback origin can only be a harness */
-function loopbackOrigins(html: string): string[] {
-	return [
-		...new Set(
-			[...html.matchAll(/https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/g)].map((m) => m[0])
-		)
-	];
-}
-
-/**
- * Deduped and LONGEST FIRST, which is the half that makes the masking correct.
- *
- * `maskOrigins()` replaces in list order, so masking `http://localhost` before
- * `http://localhost:8812` leaves a bare `:8812` behind -- the exact shape of the CI failure this
- * exists for, `<origin>/rss.xml` against `<origin>:8801/rss.xml`.
- */
-function longestFirst(origins: string[]): string[] {
-	return [...new Set(origins.filter(Boolean))].sort((a, b) => b.length - a.length);
-}
 
 const site = newSiteName('lifecycle');
 let t: Transport;

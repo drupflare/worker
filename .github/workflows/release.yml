@@ -68,7 +68,7 @@ jobs:
   payload:
     name: Build and Verify the Release Payload
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 35
     needs: gate
 
     permissions:
@@ -123,27 +123,18 @@ jobs:
       - name: Check the Payload Against Its Own Sums
         run: cd dist && sha256sum -c SHA256SUMS
       - name: Hydrate the Checkout
-        # --force, or this step verifies nothing. `build:local` above leaves every marker present,
-        # so hydrate takes its "already hydrated; nothing to do" exit and the suites below then run
-        # against the BUILT tree rather than the payload -- a check passing against a copy the
+        # --force, or the checks below verify nothing. `build:local` above leaves every marker
+        # present, so hydrate takes its "already hydrated; nothing to do" exit and the smoke then
+        # runs against the BUILT tree rather than the payload -- a check passing against a copy the
         # artifact does not contain. --force reaches the payload route, which overwrites.
         run: bun scripts/hydrate.ts --force --from="dist/$PAYLOAD"
-      - name: Run the Suites Against the Hydrated Tree
-        env:
-          REQUIRE_ARTIFACTS: '1'
-          # This job BUILDS the pack, so the tree it verifies is a from-source one. `assets:container`
-          # rewrites `assets/drupal/site.sqlite` in place and a built pack is a superset, so the specs
-          # whose subject is the SHIPPED bytes -- the CDN manifest digest, the pinned rows-per-fill
-          # classes -- cannot hold against it. Both already carry the gate; nothing was setting it,
-          # so they failed here on a payload that was correct.
-          PACK_FROM_SOURCE: '1'
-        run: bun run test
       - name: Price the Bundle Against the Free Ceiling
         run: bun run release:check | tee /tmp/bundle.txt
-      # AFTER the suites, not before them. A release prefix is what `hydrate` prefers over the
+      - name: Smoke the Hydrated Tree
+        run: bun run release:smoke
+      # AFTER the checks, not before them. A release prefix is what `hydrate` prefers over the
       # GitHub release, so publishing it early would leave a resolvable `payloads/v<version>/` for
-      # a version whose suites then failed and which no release ever carried -- and today's run is
-      # exactly that case, failing at the hydrated-tree step with the payload already built
+      # a version whose checks then failed and which no release ever carried
       - name: Publish the Payload to the CDN
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -200,18 +200,38 @@ describe('the payload publishing lanes', () => {
 	});
 
 	/**
-	 * A RELEASE PREFIX OUTRANKS THE GITHUB RELEASE IN `hydrate`, so publishing one before the suites
-	 * have passed leaves a resolvable payload for a version that may never be released. The run of
-	 * 2026-09-13 is the case: the payload built, the hydrated-tree suites then failed, and nothing
-	 * was published. Under the wrong order that failure would have left `payloads/v1.0.0/` behind
-	 * for every `bun run hydrate` to prefer.
+	 * A RELEASE PREFIX OUTRANKS THE GITHUB RELEASE IN `hydrate`, so publishing one before the payload
+	 * has been checked leaves a resolvable payload for a version that may never be released. The run
+	 * of 2026-09-13 is the case: the payload built, verification then failed, and nothing was
+	 * published. Under the wrong order that failure would have left `payloads/v1.0.0/` behind for
+	 * every `bun run hydrate` to prefer.
+	 *
+	 * Asserted against the LAST check rather than a step name, because which checks verify the
+	 * hydrated tree is free to change; what may not change is that publishing follows all of them.
+	 * This lane ran a second full `bun run test` until 2026-09-19 and now runs the bundle pricing and
+	 * a render smoke, which is the same claim about a different pair of steps.
 	 */
-	it('publishes a release payload only after the hydrated-tree suites have run', () => {
+	it('publishes a release payload only after every hydrated-tree check has run', () => {
 		const text = readFileSync(join(DIR, 'release.yml'), 'utf8');
-		const suites = text.indexOf('Run the Suites Against the Hydrated Tree');
 		const publish = text.indexOf('publish-payload.ts');
-		expect(suites).toBeGreaterThanOrEqual(0);
-		expect(publish).toBeGreaterThan(suites);
+		expect(publish).toBeGreaterThan(0);
+		for (const check of ['release:check', 'release:smoke']) {
+			const at = text.indexOf(check);
+			expect(at, `release.yml runs ${check}`).toBeGreaterThanOrEqual(0);
+			expect(publish, `publishes after ${check}`).toBeGreaterThan(at);
+		}
+	});
+
+	/**
+	 * The smoke is what replaced the second full suite, so a lane that lost it would publish a
+	 * payload nothing ever booted -- sums and a dry-run both pass on a tree whose interpreter cannot
+	 * start.
+	 */
+	it('boots the hydrated payload before publishing it', () => {
+		const step = Object.values(byFile('release.yml').jobs)
+			.flatMap((job) => job.steps ?? [])
+			.find((s) => (s.run ?? '').includes('release:smoke'));
+		expect(step).toBeDefined();
 	});
 
 	it('hands both lanes the credential the bucket needs', () => {

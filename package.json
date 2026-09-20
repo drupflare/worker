@@ -65,6 +65,7 @@
 		"check:driver-drift": "bun scripts/driver-drift.ts",
 		"release:payload": "bun scripts/release-payload.ts",
 		"release:check": "bun scripts/release-payload.ts --check-bundle",
+		"release:smoke": "bun scripts/release-smoke.ts",
 		"backup:manifest": "bun scripts/backup-cdn.ts --write",
 		"backup:drift": "bun scripts/backup-cdn.ts",
 		"backup:cdn": "bun scripts/backup-cdn.ts --upload",

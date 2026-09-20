@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { FALLBACK_ORIGIN } from '../../src/ops/site-origin.js';
 import { ENDPOINT, e2eGate } from './helpers/endpoint.js';
 import {
 	migrate,
@@ -9,7 +10,7 @@ import {
 	type Transport
 } from './helpers/lifecycle.js';
 import { saveNode, serveAs, sessionCookie, type IdentityShot } from './helpers/operate.js';
-import { firstDifference, maskNonces } from './helpers/twice.js';
+import { firstDifference, maskNonces, maskOrigins } from './helpers/twice.js';
 
 /**
  * The identity leak differential: does one identity's content ever reach another's response?
@@ -144,8 +145,16 @@ describe.skipIf(skip)('the identity leak differential', () => {
 			expect(b, identity).toBeDefined();
 			// the known per-render nonces are masked and everything else must match. Comparing raw
 			// digests read as a leak when the only difference was a form_build_id, which is minted
-			// per render and cannot be equal across two objects
-			const masked = maskNonces({ first: a?.body ?? '', second: b?.body ?? '' });
+			// per render and cannot be equal across two objects.
+			//
+			// THE ORIGINS ARE MASKED TOO, the way `operate.spec.ts` and `lifecycle.spec.ts` mask
+			// them: a page filled by the ALARM has no request to take an origin from and falls back
+			// to `http://localhost`, while a live render uses the endpoint's. Measured here as the
+			// rss alternate link, and it read as an identity leak for 15+ runs
+			const masked = maskOrigins(
+				maskNonces({ first: a?.body ?? '', second: b?.body ?? '' }),
+				[new URL(ENDPOINT).origin, FALLBACK_ORIGIN]
+			);
 			expect(
 				firstDifference(masked.first, masked.second),
 				`${identity} differs between the interleaved run and a fresh object: ` +
@@ -166,7 +175,10 @@ describe.skipIf(skip)('the identity leak differential', () => {
 		const after = map['anon-after'];
 		expect(before).toBeDefined();
 		expect(after).toBeDefined();
-		const masked = maskNonces({ first: before?.body ?? '', second: after?.body ?? '' });
+		const masked = maskOrigins(
+			maskNonces({ first: before?.body ?? '', second: after?.body ?? '' }),
+			[new URL(ENDPOINT).origin, FALLBACK_ORIGIN]
+		);
 		expect(
 			firstDifference(masked.first, masked.second),
 			`anonymous output changed after privileged traffic: ${before?.byteLength} -> ${after?.byteLength} bytes`

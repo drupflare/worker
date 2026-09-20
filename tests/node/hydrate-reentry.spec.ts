@@ -145,11 +145,10 @@ describe('the aggregates the shipping config expects', () => {
 /**
  * The release lane's own verification step, which was verifying the wrong tree.
  *
- * `release.yml` builds every artifact with `build:local`, then hydrates from the payload, then runs
- * the suites "against the hydrated tree". Without `--force` the middle step takes hydrate's
- * already-hydrated exit and returns 0, so the suites assert the BUILT tree and the payload's
- * completeness is never tested -- the same shape as a `--verify` that passes against a file the
- * artifact does not contain.
+ * `release.yml` builds every artifact with `build:local`, then hydrates from the payload, then
+ * checks the hydrated tree. Without `--force` the middle step takes hydrate's already-hydrated exit
+ * and returns 0, so the checks assert the BUILT tree and the payload's completeness is never tested
+ * -- the same shape as a `--verify` that passes against a file the artifact does not contain.
  */
 describe('the release lane hydrates from the payload it just built', () => {
 	const release = readFileSync(resolve(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -167,9 +166,16 @@ describe('the release lane hydrates from the payload it just built', () => {
 		expect(step, 'without --force this exits on "already hydrated"').toContain('--force');
 	});
 
-	it('runs the suites with the artifacts asserted, after the hydrate', () => {
-		expect(release.indexOf('bun scripts/hydrate.ts')).toBeLessThan(
-			release.indexOf("REQUIRE_ARTIFACTS: '1'")
-		);
+	it('verifies the tree after the hydrate, never the one it built', () => {
+		// named by SCRIPT rather than by step name or env var. This asserted `REQUIRE_ARTIFACTS: '1'`
+		// until 2026-09-19, when the second full suite came out of this lane and took that env block
+		// with it -- `indexOf` then answered -1 and the comparison passed the wrong way round.
+		const hydrate = release.indexOf('bun scripts/hydrate.ts');
+		expect(hydrate).toBeGreaterThanOrEqual(0);
+		for (const check of ['release:check', 'release:smoke']) {
+			const at = release.indexOf(check);
+			expect(at, `release.yml runs ${check}`).toBeGreaterThanOrEqual(0);
+			expect(hydrate, `${check} runs after the hydrate`).toBeLessThan(at);
+		}
 	});
 });

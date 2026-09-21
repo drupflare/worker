@@ -1,7 +1,7 @@
 {
 	"private": true,
 	"name": "@drupflare/worker",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"type": "module",
 	"description": "Drupal on Cloudflare Workers",
 	"module": "src/index.js",

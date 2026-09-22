@@ -1,13 +1,16 @@
 import { SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { emptyTally } from '../../src/db/write-tally';
 import {
 	driveAlarms,
 	freshSite,
 	inObject,
+	invalidateTag,
 	markProvisioned,
 	namedSite,
 	pageFor,
 	seedPage,
+	seedTaggedPage,
 	serveDirect,
 	serveThroughWorker,
 	statsOf,
@@ -516,3 +519,129 @@ __afterAll(() => {
 	console.log(`ASSERTIONS tests/integration/serve-invalidation.spec.ts ${__asserts}`);
 });
 // #endregion
+
+/**
+ * Staleness derived from tag state, which is what stops a save charging a row per page it reached.
+ *
+ * `UPDATE cfw_page SET stale_at = ?` is charged per ROW, so a save reaching 34 pages spent 34 rows
+ * saying so -- on the meter that binds regeneration, before regenerating anything. The page already
+ * carries the sum of its tags' invalidation counters, which is Drupal's own freshness test, so the
+ * marking is derivable and the write can wait for the serve that first meets the page stale. A page
+ * refilled before anyone asks for it never pays it.
+ */
+describe('a bump does not write a row per page it superseded', () => {
+	const TAGS = ['node_list', 'config:system.site'];
+
+	it('charges nothing to mark, and marks once at the first stale serve', async () => {
+		const seen = await inObject(freshSite(), (site: ServeDo) => {
+			markProvisioned(site);
+			for (let i = 0; i < 12; i++) {
+				seedTaggedPage(site, `/tagged-${i}`, `<p>page ${i}</p>`, TAGS);
+			}
+			// and one stored before the column existed, which cannot be derived
+			seedPage(site, '/legacy', '<p>legacy</p>');
+
+			site.writeTally = emptyTally();
+			site.bumpGeneration('cachetags');
+			const bumpRows = site.writeTally?.byTable?.['cfw_page'] ?? 0;
+			site.writeTally = undefined;
+
+			const markedBySave = site.sql
+				.exec('SELECT path FROM cfw_page WHERE stale_at IS NOT NULL')
+				.toArray()
+				.map((r) => String(r['path']));
+
+			// now a real invalidation moves the counters the checksum is taken over
+			invalidateTag(site, 'node_list');
+
+			site.writeTally = emptyTally();
+			const first = site.serveFromStorage(new URL('https://do.local/__serve?path=/tagged-0'));
+			const serveRows = site.writeTally?.byTable?.['cfw_page'] ?? 0;
+			site.writeTally = undefined;
+
+			site.writeTally = emptyTally();
+			const second = site.serveFromStorage(
+				new URL('https://do.local/__serve?path=/tagged-0')
+			);
+			const repeatRows = site.writeTally?.byTable?.['cfw_page'] ?? 0;
+			site.writeTally = undefined;
+
+			return {
+				bumpRows,
+				markedBySave,
+				serveRows,
+				repeatRows,
+				firstTier: first?.headers.get('x-cfw-cache') ?? null,
+				secondTier: second?.headers.get('x-cfw-cache') ?? null,
+				markedAfterServe: site.sql
+					.exec('SELECT path FROM cfw_page WHERE stale_at IS NOT NULL')
+					.toArray()
+					.map((r) => String(r['path']))
+					.sort()
+			};
+		});
+
+		// THE CONTROL: the legacy row has no checksum to derive from, so it IS marked at the
+		// save -- one row, not the thirteen the old statement charged
+		expect(seen.markedBySave).toEqual(['/legacy']);
+		expect(seen.bumpRows).toBe(1);
+
+		// the first serve of a superseded page pays the mark, and answers AGED rather than
+		// pretending the page is current
+		expect(seen.firstTier).toBe('AGED');
+		expect(seen.serveRows).toBe(1);
+		// and the second pays nothing: the transition happened once
+		expect(seen.secondTier).toBe('AGED');
+		expect(seen.repeatRows).toBe(0);
+
+		// eleven pages nobody asked for are still unmarked, which is the whole saving
+		expect(seen.markedAfterServe).toEqual(['/legacy', '/tagged-0']);
+	}, 600_000);
+
+	/**
+	 * THE DERIVATION IS ONLY VALID FOR A TAG INVALIDATION, and this is the control.
+	 *
+	 * A module install, a firstrun or a manual bump changes what a page renders without moving any
+	 * `cachetags` counter, so a checksum comparison would answer "current" for a page the install
+	 * changed. Those reasons mark eagerly, exactly as before.
+	 */
+	it('still marks every page eagerly on a bump no counter can speak for', async () => {
+		const seen = await inObject(freshSite(), (site: ServeDo) => {
+			markProvisioned(site);
+			for (let i = 0; i < 4; i++) {
+				seedTaggedPage(site, `/install-${i}`, `<p>page ${i}</p>`, TAGS);
+			}
+			site.bumpGeneration('install');
+			const marked = site.sql
+				.exec('SELECT path FROM cfw_page WHERE stale_at IS NOT NULL')
+				.toArray().length;
+			const tier =
+				site
+					.serveFromStorage(new URL('https://do.local/__serve?path=/install-0'))
+					?.headers.get('x-cfw-cache') ?? null;
+			return { marked, tier };
+		});
+
+		expect(seen.marked).toBe(4);
+		expect(seen.tier).toBe('AGED');
+	}, 600_000);
+
+	it('answers HIT while the tags have not moved, so the derivation is not a blanket stale', async () => {
+		const seen = await inObject(freshSite(), (site: ServeDo) => {
+			markProvisioned(site);
+			seedTaggedPage(site, '/fresh', '<p>fresh</p>', TAGS);
+			site.bumpGeneration('cachetags');
+			const before = site.serveFromStorage(new URL('https://do.local/__serve?path=/fresh'));
+			invalidateTag(site, 'config:system.site');
+			const after = site.serveFromStorage(new URL('https://do.local/__serve?path=/fresh'));
+			return {
+				before: before?.headers.get('x-cfw-cache') ?? null,
+				after: after?.headers.get('x-cfw-cache') ?? null
+			};
+		});
+
+		// a bump alone does not make a page stale any more; moving the counter does
+		expect(seen.before).toBe('HIT');
+		expect(seen.after).toBe('AGED');
+	}, 600_000);
+});

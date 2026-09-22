@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { emptyTally } from '../../src/db/write-tally';
+import { ABSORBED_HEADER } from '../../src/ops/cold-encounter';
+import { dayMetersKey } from '../../src/ops/day-meters';
+import { freshSite, inObject, markProvisioned, seedPage, type ServeDo } from '../helpers/serve-do';
 
 /**
  * The cold-encounter rate, counted at the boundary that knows.
@@ -14,10 +17,18 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * against.
  */
 
-type Rate = {
-	today: { noPhp: number; warm: number; cold: number; coldOfPhp: number | null };
-	incarnation: { noPhp: number; warm: number; cold: number; coldOfPhp: number | null };
+type Share = {
+	noPhp: number;
+	warm: number;
+	cold: number;
+	absorbed: number;
+	traffic: number;
+	coldOfPhp: number | null;
+	coldOfObject: number | null;
+	coldOfTraffic: number | null;
 };
+
+type Rate = { today: Share; incarnation: Share };
 
 const ORIGIN = 'https://do.local';
 const TIMEOUT = 900_000;
@@ -107,6 +118,131 @@ describe('the cold-encounter rate, wired', () => {
 			// meter cost one row on a firing rather than one per request
 			expect(seen.afterFlush.incarnation.cold).toBe(0);
 			expect(seen.afterFlush.today.cold).toBe(seen.beforeFlush.today.cold);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * The denominator, which was about 5x too small and looked like a measurement.
+ *
+ * A plan hit, an isolate memo hit, a `caches.default` hit and a KV page read all return from the
+ * front worker, so the object cannot see any of them -- and they are most of the traffic. The count
+ * rides in on the next request that hops anyway.
+ */
+describe('what the front worker absorbed', () => {
+	it(
+		'reaches the object on a request it was making regardless',
+		async () => {
+			const seen = await inObject(freshSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				seedPage(site, '/counted', '<html><body>counted</body></html>');
+				const rate = () =>
+					(site as unknown as { coldEncounterRate(): Rate }).coldEncounterRate();
+
+				await site.fetch(new Request(`${ORIGIN}/__serve?path=/counted`));
+				const unreported = rate();
+
+				await site.fetch(
+					new Request(`${ORIGIN}/__serve?path=/counted`, {
+						headers: { [ABSORBED_HEADER]: '400' }
+					})
+				);
+				const reported = rate();
+
+				// attacker-supplied, because every inbound header is
+				await site.fetch(
+					new Request(`${ORIGIN}/__serve?path=/counted`, {
+						headers: { [ABSORBED_HEADER]: '-1' }
+					})
+				);
+				const afterNonsense = rate();
+				return { unreported, reported, afterNonsense };
+			});
+
+			// THE CONTROL: with nothing reported the share is withheld rather than reported 5x high
+			expect(seen.unreported.incarnation.absorbed).toBe(0);
+			expect(seen.unreported.incarnation.coldOfTraffic).toBeNull();
+
+			expect(seen.reported.incarnation.absorbed).toBe(400);
+			expect(seen.reported.incarnation.traffic).toBeGreaterThan(
+				seen.unreported.incarnation.traffic + 400
+			);
+			expect(seen.afterNonsense.incarnation.absorbed).toBe(400);
+		},
+		TIMEOUT
+	);
+});
+
+/**
+ * Four counters, one row.
+ *
+ * Each had a `cfw_meta` key of its own, so a flush on a trafficked site wrote four rows to record a
+ * batch of writes, under comments saying the folding cost no row of its own. The folding saved the
+ * ALARM and never the rows.
+ */
+describe('the packed meter row', () => {
+	it(
+		'charges one row for all four counters',
+		async () => {
+			const seen = await inObject(freshSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				seedPage(site, '/packed', '<html><body>packed</body></html>');
+				site.flushMeters();
+				for (let i = 0; i < 4; i++) {
+					await site.fetch(
+						new Request(`${ORIGIN}/__serve?path=/packed`, {
+							headers: { [ABSORBED_HEADER]: '9' }
+						})
+					);
+				}
+				site.writeTally = emptyTally();
+				const total = site.flushMeters();
+				const rows = site.writeTally?.rowsWritten ?? -1;
+				const byTable = { ...(site.writeTally?.byTable ?? {}) };
+				site.writeTally = undefined;
+				return { rows, byTable, total };
+			});
+
+			// THE CONTROL: a flush with nothing pending writes nothing and proves nothing
+			expect(seen.total.serveTotal, 'nothing was pending').toBeGreaterThan(0);
+			expect(seen.total.doRequests).toBeGreaterThan(0);
+			expect(seen.total.encounters.absorbed).toBe(36);
+			// ONE, against the four keys this replaced
+			expect(seen.rows, JSON.stringify(seen.byTable)).toBe(1);
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * An object upgraded mid-day would otherwise restart its daily counters at zero, and the row
+	 * budget is what the degrade guard reads. The legacy read writes nothing and stops mattering as
+	 * soon as the day has been flushed once.
+	 */
+	it(
+		'reads the four keys it replaced while the packed row is absent',
+		async () => {
+			const seen = await inObject(freshSite(), (site: ServeDo) => {
+				const day = new Date().toISOString().slice(0, 10);
+				site.metaSet(`rows_written_${day}`, 4_100);
+				site.metaSet(`do_requests_${day}`, 900);
+				site.metaSet(`encounters_${day}`, '40,8,2');
+				site.metaSet('serve_requests', 71_004);
+				const legacy = site.storedMeters();
+
+				site.metaSet(dayMetersKey(Date.now()), '1:2:3:0,0,0,0');
+				return { legacy, packed: site.storedMeters() };
+			});
+
+			expect(seen.legacy).toEqual({
+				rows: 4_100,
+				doRequests: 900,
+				serveTotal: 71_004,
+				encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 0 }
+			});
+			// and the packed row supersedes them the moment it exists
+			expect(seen.packed.rows).toBe(1);
+			expect(seen.packed.serveTotal).toBe(3);
 		},
 		TIMEOUT
 	);

@@ -17,6 +17,58 @@ import { inObject, markProvisioned, provisionedSite, type ServeDo } from '../hel
 
 const REQUEST_TIMEOUT = 300_000;
 
+/** how `write-tally.ts` names a `setAlarm` in `byTable`; it is a storage op rather than a table */
+const ALARM_ROW = '?storage.setAlarm';
+
+/**
+ * The other half of an alarm's row cost, and the one a docblock claimed for a year.
+ *
+ * `armFillAlarm()` sat under "Arms the fill alarm without disturbing one that is already sooner" and
+ * called `setAlarm()` unconditionally. Every call is one charged row, on paths that are hot: an
+ * aged-page serve, every deferred HTTP call inside one render, and the mail queue. The
+ * `ON CONFLICT DO NOTHING` beside the first of those is what made its INSERT cost one row per burst,
+ * and the arm on the next line cost one per hit.
+ */
+describe('a burst of fill enqueues', () => {
+	it(
+		'charges one alarm row for the burst rather than one per path',
+		async () => {
+			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				site.ensureServeTables();
+				// consume whatever provisioning armed, so the burst below starts from a clean memo
+				await site.alarm();
+				site.alarmDueMs = undefined;
+
+				site.writeTally = emptyTally();
+				for (let i = 0; i < 12; i++) site.enqueueRefill(`/burst-${i}`);
+				const byTable = { ...(site.writeTally?.byTable ?? {}) };
+				site.writeTally = undefined;
+
+				// a later alarm set by anything else has to clear the memo, or the next MISS sits
+				// behind a keep-warm arm for four minutes -- the failure `/__fill`'s `getAlarm()`
+				// check already exists to fix
+				site.alarmDueMs = site.nowMs() + 240_000;
+				site.writeTally = emptyTally();
+				site.enqueueRefill('/after-a-later-alarm');
+				const afterLater = { ...(site.writeTally?.byTable ?? {}) };
+				site.writeTally = undefined;
+
+				return { byTable, afterLater, queue: site.queueDepth() };
+			});
+
+			// the control: every INSERT landed, so what the guard deduped was the arms
+			expect(seen.byTable.cfw_fill_queue).toBe(12);
+			expect(seen.queue).toBe(13);
+			// twelve enqueues, ONE arm
+			expect(seen.byTable[ALARM_ROW]).toBe(1);
+			// and the memo does not survive a later alarm, so the thirteenth arms again
+			expect(seen.afterLater[ALARM_ROW]).toBe(1);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
 describe('an idle warming tick', () => {
 	it(
 		'writes a bounded number of rows per firing',

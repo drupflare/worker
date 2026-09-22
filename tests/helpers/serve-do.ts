@@ -2,6 +2,12 @@ import { SELF, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test
 import { env } from 'cloudflare:workers';
 import { MIGRATE_TABLE, type SqlLike, ensureMigrateTable } from '../../src/db/migrate-sql';
 import type { RenderRequest } from '../../src/drupal/site-php';
+import {
+	ZERO_DAY_METERS,
+	dayMetersKey,
+	readDayMeters,
+	writeDayMeters
+} from '../../src/ops/day-meters';
 
 /**
  * The harness the ported serve-chain specs drive: a REAL `SitePhpDurableObject`, with the PHP
@@ -146,7 +152,21 @@ export type ServeDo = {
 	alarm: () => Promise<unknown>;
 	/** the fleet inventory write the alarm performs; see `tests/integration/fleet-wire.spec.ts` */
 	reportToFleet: () => Promise<void>;
+	/** outbound calls the render in flight has deferred; see the re-drive in `fillOne()` */
+	deferredInRender?: number;
+	/** the last request-level re-drive, as `/serve-stats` reports it */
+	lastRedrive?: {
+		path: string;
+		deferred: number;
+		drained: number;
+		deferredAgain: number;
+		at: number;
+		seq: number;
+	};
 	armFillAlarm: () => void;
+	enqueueRefill: (path: string) => void;
+	/** when the alarm this object last set is due; `armFillAlarm()`'s guard reads it */
+	alarmDueMs?: number;
 	ensureServeTables: () => void;
 	ensureHttpTables: () => void;
 	queueDepth: () => number;
@@ -288,6 +308,9 @@ export type ServeDo = {
 	/** the daily rows meter: the accumulator, its flush, and the read that does not write */
 	rowsSinceFlush?: number;
 	flushDailyRows: (nowMs?: number) => number;
+	/** the four daily counters as one packed `cfw_meta` row; see `src/ops/day-meters.ts` */
+	storedMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
+	flushMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
 	dailyRows: (nowMs?: number) => number;
 	bumpGeneration: (reason?: string) => BumpResult;
 	/**
@@ -699,6 +722,23 @@ export function queuePath(site: ServeDo, path: string, { arm = true }: { arm?: b
 		Date.now()
 	);
 	if (arm) site.armFillAlarm();
+}
+
+/**
+ * Puts a chosen number on a day's row counter, the way the object stores it.
+ *
+ * The four daily meters share one packed `cfw_meta` row now, so a spec that writes
+ * `rows_written_<date>` is writing a key the object only reads while that row is absent -- which is
+ * a migration path, not the steady state, and a spec resting on it would pass for the wrong reason.
+ */
+export function seedDailyRows(
+	site: Pick<ServeDo, 'metaGet' | 'metaSet'>,
+	rows: number,
+	atMs = Date.now()
+): void {
+	const key = dayMetersKey(atMs);
+	const stored = readDayMeters(site.metaGet(key)) ?? ZERO_DAY_METERS;
+	site.metaSet(key, writeDayMeters({ ...stored, rows }));
 }
 
 /** `Date.now()` cannot be advanced here, so a render that must be timeable awaits a real tick */

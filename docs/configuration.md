@@ -843,8 +843,14 @@ which is the reason the code images before the first render.
 
 **What replaces this as the number to watch is the cold-encounter share**, not the cold-boot duration.
 `src/ops/cold-encounter.ts` classifies every request the object handles and `/serve-stats` reports
-`coldOfPhp` and `coldOfAll`. 1,264 ms is the floor for an object `thermal.ts` decided not to keep
-warm, and that policy already ships.
+`coldOfPhp`, `coldOfObject` and `coldOfTraffic`. 1,264 ms is the floor for an object `thermal.ts`
+decided not to keep warm, and that policy already ships.
+
+Read `coldOfTraffic`, not `coldOfObject`. A plan hit, an isolate memo hit, a `caches.default` hit and
+a KV page read all return from the front worker, so the object's own denominator is the leftovers and
+a share taken against it reads several times high. The front worker reports what it absorbed on the
+next request that hops anyway, under `x-cfw-absorbed`, and `coldOfTraffic` is null until it has --
+because a worker too old to report and a site with nothing absorbed are otherwise the same reading.
 
 **A pack-generic image cannot ship in the bundle, and it fails on size.** Two sites provisioned from
 one pack with the hash salt and pinned origin forced equal share 70.27% of pages once rendered, and

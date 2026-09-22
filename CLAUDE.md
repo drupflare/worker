@@ -148,9 +148,12 @@ must not lock its owner out of the routes they need to repair it.
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
-serving is bound by Worker requests at 100,000/day, regeneration by rows written at 10,869/day
-windowed and 2,777 on the alarm chain -- so regeneration is the tighter one by 12x and 36x
-respectively. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
+serving is bound by Worker requests at 100,000/day, regeneration by rows written at 9,539/day
+windowed and 2,477 on the alarm chain -- so regeneration is the tighter one by 10x and 40x
+respectively. **Those two moved on 2026-09-22 and the figures they replaced are in every older
+document**: `envelope()` divided the whole row budget as though warming were free, and a warmed
+object is the shipping default at 12,240 rows/day. `envelope({ warmed: false })` answers the old
+10,869. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
 either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
 
 **The 10 ms cap does not fail a request, measured 2026-09-07: a 1,882 ms `cpuTime` invocation
@@ -353,6 +356,14 @@ than no explanation at all.
 **The affinity fact still holds for ANONYMOUS load** and is measured: a one-address drive answered
 `{r3: 662}`, one object for every sample. `v101-arms.ts --clients=N` presents N synthetic addresses,
 honoured by a local `wrangler dev` only.
+
+**A SCHEDULED ALARM FIRES BY ITSELF IN THE WORKERS POOL, so an assertion taken after
+`runDurableObjectAlarm()` races whatever that firing re-armed.** Verified: a `+300 ms` alarm raises
+`alarmFirings` with no `runDurableObjectAlarm` call at all. `heap-image-producer.spec.ts` asserted a
+queue was still queued after the imaging firing, which re-arms at +1,000 ms; the second firing images
+nothing and therefore fills, and the spec passed alone and failed in a full run. Cancel the armed
+alarm (`ctx.storage.deleteAlarm()`) before reading, and take every reading in ONE `inObject` round
+trip -- a second round trip is a second wall-clock window.
 
 **AND NEVER RUN THE RIG BESIDE A VITEST RUN.** `wrangler dev` died mid-measurement under 24
 concurrent while the gate had the memory, which this file already records for `bun run test` and is
@@ -2383,7 +2394,7 @@ is the meter that binds regeneration, and it is also the dominant Durable Object
 requests, duration and storage are not close.
 
 **The pool therefore trades rows written for read throughput at N+1 to 1**, which no document said
-until 2026-09-19. Regeneration is bound by 10,869 rows/day windowed, so an 8-lane pool reaches that
+until 2026-09-19. Regeneration is bound by 9,539 rows/day windowed, so an 8-lane pool reaches that
 ceiling nine times sooner. The pool is a lever for READ-heavy sites and is actively harmful to
 write-heavy ones; score a proposed pool against the write rate, not only the read rate.
 

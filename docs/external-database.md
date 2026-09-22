@@ -154,8 +154,8 @@ measured on a deployed throwaway with the `page` and `dynamic_page_cache` bins e
 warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 queries is roughly
 **6,666 renders/day**.
 
-Score that against the two ceilings. The regeneration ceiling is **2,777 renders/day** cold and
-**10,869** windowed, bound by rows written. Hyperdrive's free query budget lands inside that
+Score that against the two ceilings. The regeneration ceiling is **2,477 renders/day** cold and
+**9,539** windowed, bound by rows written once warming is subtracted. Hyperdrive's free query budget lands inside that
 range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
 lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.

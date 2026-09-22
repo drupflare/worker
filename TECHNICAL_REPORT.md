@@ -27,11 +27,11 @@ project shipped before it is gone from the path.
 | Cold boot | **1,264 ms** (n=4, 1,113-1,343), heap image off, which is the shipping default | edge `cpuTime` |
 | Cold boot from a stored heap image | **1,912 ms** (n=5, 1,561-2,020), so a restore COSTS ~648 ms | edge `cpuTime`, two deployed arms |
 | Cold boot, object held resident | **0 ms**; an 8 s alarm re-arm keeps one incarnation | 71 consecutive alarms, deployed |
-| Share of requests meeting a cold boot | **not yet read**; `src/ops/cold-encounter.ts` reports it | `/serve-stats`, per site |
+| Share of requests meeting a cold boot | **not yet read**; `coldOfTraffic` in `src/ops/cold-encounter.ts` | `/serve-stats`, per site |
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
-| Authenticated page, both levers on | **~467 ms** against 3,391 with neither | derived; see Warming |
+| Authenticated page, RENDER path | **208 ms p50**, and it is the render path rather than the median | see the mixture below |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **10,869 renders/day** windowed, **2,777** on the alarm chain | rows written binds |
+| Regeneration ceiling, free | **9,539 renders/day** windowed, **2,477** on the alarm chain | rows written binds, warming subtracted |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 | Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
 | Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
@@ -53,7 +53,20 @@ against a limit nobody measured.
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **10,869/day** |
+| **Regeneration** | distinct pages re-rendered per day | **rows written** | **9,539/day** |
+
+**The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
+divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
+`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default,
+and at the 8 s interval it spends **12,240 rows/day and 10,800 DO requests/day** keeping itself
+resident. The published ceiling was therefore the ceiling of a configuration the product does not
+ship. Subtracting it takes the windowed figure **10,869 -> 9,539/day**, which is **12.2% lower**,
+and the alarm-chain figure 2,777 -> 2,477.
+
+`thermal.ts` declines to warm a site below about 505 renders/day, so this is not every site. A site
+AT the regeneration ceiling is rendering far above that crossing by construction, which is what makes
+the subtraction right for the ceiling specifically. `envelope({ warmed: false })` is the control and
+answers 10,869.
 
 Score any proposal with `bun scripts/measure/free-envelope.ts`; it fails a workload that misses
 either ceiling, and `tests/unit/free-envelope.spec.ts` covers the arithmetic. Two properties decide
@@ -1474,7 +1487,8 @@ Measured on a steady-state render at **8 charged rows -> 6**, bins' index
 charge **3 -> 0**, n=3 with zero spread. Every warmth class fell with it: `firstFillOnFreshObject`
 156 -> **103**, `firstEverForPath` 24 -> **14**, `realRender` 12 -> **9**, and `warmReassemble`
 alone unchanged at 2 because it writes only `cfw_page`. The windowed regeneration ceiling moved
-**8,196 -> 10,869/day**.
+**8,196 -> 10,869/day**. Both of those are pre-warming figures: the ceiling is 9,539 now, for the
+reason the next section gives, and the 1.33x this conversion bought is unaffected by it.
 
 Two things that were nearly reported wrong here. A first pass read 11 -> 6 and **3 of those 5 rows
 were warmth, not the conversion**: one warming render leaves `cache_menu` and `cache_discovery` cold,
@@ -2203,8 +2217,8 @@ shipped default is what made it fail correctly. A lane's own configuration was m
 ### Counting a Page View Cost a Row Per View
 
 `serve_requests` ran an unconditional `INSERT ... ON CONFLICT DO UPDATE` on both serving lanes,
-outside the `shouldFlushMeters()` gate the daily meters go through. Against free's 10,869 rows/day
-windowed budget that bound serving at ~10,869 views/day rather than the 100,000 Worker requests/day
+outside the `shouldFlushMeters()` gate the daily meters go through. Against the 10,869 rows/day
+windowed budget of the day that bound serving at ~10,869 views/day rather than the 100,000 Worker requests/day
 the tier is sized for -- a 9.2x reduction to count something already counted in memory for nothing.
 
 The tell was two lines below the write: a comment explaining that `pageHits` is kept in memory and
@@ -2215,6 +2229,55 @@ own writes.
 It now accumulates in memory and folds into one row every 50 views or on the meters' own interval,
 whichever comes first. The threshold bounds what an eviction can lose; the interval is what a quiet
 site relies on.
+
+### Four Counters, Four Rows, and Comments Saying Otherwise
+
+The fix above left `serve_requests` beside three other keys -- `rows_written_<date>`,
+`do_requests_<date>` and `encounters_<date>` -- each written on its own `cfw_meta` row at every meter
+flush. The inline comments read "folded in the same firing, so the counter costs no row of its own".
+The folding saved the ALARM. Nothing folded the rows, so a flush on a trafficked site wrote **four**,
+and rows written is the meter the counters exist to count.
+
+`src/ops/day-meters.ts` packs all four into one dated row, the way `writeRenderWindow()` already
+packs its two values. An idle warming tick's flush goes **2 rows -> 1** and a trafficked site's
+**4 -> 1**, which is what moves `FREE_QUOTAS.rowsPerMeterFlush` to 1 and takes a warmed site from
+13,680 rows/day to **12,240**. `serveTotal` stays a lifetime figure inside the daily row and carries
+forward, so `/serve-stats` reports the quantity it always did rather than quietly becoming a daily
+count. The four keys are still READ while a day has no packed row, so an object upgraded mid-day does
+not restart the counter its own degrade guard reads.
+
+### An Arm Whose Docblock Described a Guard Nobody Wrote
+
+`armFillAlarm()` sat under "Arms the fill alarm **without disturbing one that is already sooner**",
+with a paragraph explaining why it could not await `getAlarm()`, above a body that called
+`setAlarm()` unconditionally. Each call is one charged row and the callers are the hot ones: an
+aged-page serve, every deferred HTTP call inside one render, and the mail queue. The comment beside
+the first of those says "ON CONFLICT DO NOTHING, so a burst costs one row, not one per hit", which is
+true of the INSERT and was false of the `setAlarm` on the next line.
+
+The guard is an in-memory note of when the alarm this object last set is due, so it needs no await. A
+twelve-path burst charges **12 alarm rows before and 1 after**, falsified both ways in
+`warm-alarm-cost.spec.ts`. Every `setAlarm()` in `site-do.ts` records the note, which is what keeps
+the guard from skipping an arm the chain needs: without that, a keep-warm re-arm 240 s out would
+leave a pending +1 ms alarm believed, and the next MISS would sit behind the wrong one for four
+minutes -- the exact failure `/__fill`'s own `getAlarm()` check was added to fix once already. A memo
+lost to hibernation costs one extra arm and never a missed one.
+
+### The Cold-Boot Share Was Counted Against the Leftovers
+
+`coldOfAll` divided cold boots by the requests that reached the DURABLE OBJECT, under a module
+docblock promising a denominator of "every request the front worker sees". A plan hit, an isolate
+memo hit, a `caches.default` hit and a KV page read all return from the front worker: measured, the
+edge tier alone answers **82%** of anonymous traffic. So the published share would have read several
+times high the first time anyone read it.
+
+The front worker now counts what it answers per isolate, per site, and reports it under
+`x-cfw-absorbed` on the next request that hops anyway -- no extra request, the same trade as the
+generation pointer and the auth-spend counter that ride the same response. `coldOfAll` is split into
+`coldOfObject` and `coldOfTraffic`, and `coldOfTraffic` is **null until something has been reported**,
+because a front worker too old to report and a site with nothing absorbed are otherwise the same
+reading. An isolate that dies before hopping loses its count, which biases the denominator down and
+the share up: the direction a missing reading has to fail in.
 
 ### The Warm Authenticated Render, Measured on a Deployed Worker
 
@@ -2232,6 +2295,20 @@ shipping artifact on a deployed worker, both levers on, every response marked `R
 End-to-end from a client, n=20 each after three warming requests. Client RTT to the colo is ~47 ms,
 measured separately against an endpoint doing no work, so **server time is roughly 161-345 ms
 depending on the page**.
+
+**THAT TABLE IS THE RENDER PATH, NOT THE MEDIAN AUTHENTICATED RESPONSE, and its own selection
+criterion says so.** Every sample in it was filtered to `RENDER` rather than `HIT`, deliberately, so
+that each one is a genuine render. What the filter discards is the compiled-plan tier, which answers
+an authenticated page **in the front worker with no object hop at all** -- measured at 0 ms median
+and 0 ms max, n=57 deployed. So a visitor's median authenticated response on a site whose plan has
+compiled is a plan hit, and 208 ms is the p50 of the requests that missed it.
+
+Quote it as "the authenticated render path", never as "an authenticated page". The mixture itself is
+now counted rather than estimated: the front worker reports what it answered by itself on the next
+request that hops anyway, and `coldOfTraffic` in `src/ops/cold-encounter.ts` is the share against
+that denominator. Until a deployed site has reported one, the mixture is **unmeasured here** -- an
+earlier audit put the plan tier at 429 of 600 authenticated samples, and that figure has no
+instrument in this repository behind it.
 
 **That is faster than the 467 ms figure, which was pessimistic.** Per-lane throughput therefore runs
 2.9 req/s on a heavy admin page to 6.2 req/s on a light authenticated one, against the 2.14 the
@@ -2615,7 +2692,7 @@ into each other.
 ### A lane is paid for on the rows-written meter
 
 Replication writes every primary row again on each lane, so a pool of N costs **N+1 rows per
-change**. Rows written is the meter that bounds regeneration at 10,869 rows/day windowed, so an
+change**. Rows written is the meter that bounds regeneration at 9,539 rows/day windowed, so an
 8-lane pool reaches that ceiling nine times sooner than a single object, and it is also the dominant
 Durable Object cost line on paid -- requests, duration and storage are not close to it.
 

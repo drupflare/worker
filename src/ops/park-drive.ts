@@ -4,6 +4,13 @@ import {
 	type ConnectOptions,
 	type CoreSocket
 } from 'edgeport/core';
+import {
+	backendNeedsPark,
+	selectBackend,
+	type BackendEnv,
+	type BackendSelection
+} from '../db/backend.js';
+import { backendExec } from '../db/pg-exec.js';
 import { outboundGuardEnabled, refuseOutbound } from './outbound-guard.js';
 import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp.js';
 
@@ -35,6 +42,7 @@ export type ParkEnv = TcpEnv & { OUTBOUND_GUARD?: string | null };
 export type ParkOp =
 	| { kind: 'open'; endpoint: TcpEndpoint }
 	| { kind: 'fetch'; request: ParkFetch }
+	| { kind: 'sql'; statement: ParkSql; selection: BackendSelection }
 	| { kind: 'write'; id: number; bytes: Uint8Array }
 	| { kind: 'read'; id: number; max: number }
 	| { kind: 'line'; id: number }
@@ -97,6 +105,16 @@ export type ParkFetch = {
  * of thing that reads as a bug to the next person.
  */
 export const PARK_FETCH_SCHEME = 'cfwpark+fetch://';
+
+/**
+ * The scheme a parked SQL statement arrives under; must match `CfwSqlClient`'s copy in `rom`.
+ *
+ * A SECOND SCHEME RATHER THAN A SECOND TRAP, for the reason the fetch one exists: `ext/cfwpark`
+ * needs no change to serve either, because both are a userland call to `stream_socket_client` and
+ * the descriptor rides in the target string. That is what makes an external database reachable
+ * without a phasm rebuild.
+ */
+export const PARK_SQL_SCHEME = 'cfwpark+sql://';
 
 /** a read that has not arrived in this long is a hung peer holding the object; give up on it */
 export const PARK_IO_TIMEOUT_MS = 10_000;
@@ -259,6 +277,22 @@ export function classifyParkOp(
 			const refusal = outboundGuardEnabled(env) ? refuseOutbound(request.url) : null;
 			if (refusal) return { kind: 'refused', why: `${refusal.reason}: ${refusal.url}` };
 			return { kind: 'fetch', request };
+		}
+		if (target.startsWith(PARK_SQL_SCHEME)) {
+			const statement = parseParkSql(target.slice(PARK_SQL_SCHEME.length));
+			if (!statement) return { kind: 'refused', why: 'unreadable sql descriptor' };
+			const selection = selectBackend(env as BackendEnv);
+			// A REFUSED SQL PARK CANNOT DEGRADE, which is the one place this differs from the fetch
+			// scheme. A refused fetch falls back to the deferred transport; there is no local copy
+			// of an external database to fall back to, so the refusal has to be a named error the
+			// driver reports rather than a silent second path
+			if (!backendNeedsPark(selection)) {
+				return {
+					kind: 'refused',
+					why: selection.why || 'no external database backend is selected'
+				};
+			}
+			return { kind: 'sql', statement, selection };
 		}
 		const parsed = parseSocketTarget(target);
 		if (!parsed) return { kind: 'refused', why: `unparseable socket target: ${target}` };
@@ -518,6 +552,9 @@ async function perform(
 	if (op.kind === 'fetch') {
 		return await collect(parkResumeBytes(await performFetch(op.request, doFetch)));
 	}
+	if (op.kind === 'sql') {
+		return await collect(parkResumeBytes(await performSql(op.statement, op.selection)));
+	}
 	if (op.kind === 'passthrough') return await collect(PARK_RESUME_PASSTHROUGH);
 	if (op.kind === 'write') {
 		return await collect(parkResumeValue(await sockets.write(op.id, op.bytes)));
@@ -548,6 +585,29 @@ async function unwind(binary: ParkBinary): Promise<number> {
 }
 
 // #endregion
+
+/**
+ * One statement against the selected external database, answered as a JSON string.
+ *
+ * The SAME SHAPE ON BOTH OUTCOMES, which is what lets the driver treat a transport failure like any
+ * other SQL error: an exception that reaches Drupal as a database error rather than as a PHP fatal
+ * halfway through a render. A thrown error here would unwind the park loop instead, and the chain
+ * that is frozen mid-statement would never be resumed.
+ */
+export async function performSql(
+	statement: ParkSql,
+	selection: BackendSelection,
+	exec: typeof backendExec = backendExec
+): Promise<Uint8Array> {
+	const reply = await exec(selection, statement.sql, statement.params).then(
+		(result) => ({ error: '', result }),
+		(e: unknown) => ({
+			error: String((e as { message?: string })?.message ?? e).slice(0, 400),
+			result: null
+		})
+	);
+	return new TextEncoder().encode(JSON.stringify(reply));
+}
 
 /**
  * One HTTP exchange, answered as a JSON string the module's handler decodes.
@@ -584,6 +644,29 @@ export async function performFetch(
 }
 
 /** the descriptor a `cfwpark+fetch://` target carries, base64 of JSON */
+/** one statement a parked render asked the host to run against an external database */
+export type ParkSql = { sql: string; params: unknown[] };
+
+/**
+ * Decodes one, or null when it is not readable.
+ *
+ * Null rather than a throw, and rather than a partial statement: the caller turns it into a named
+ * refusal, and a half-read statement is the one thing that must never reach a database.
+ */
+export function parseParkSql(packed: string): ParkSql | null {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(new TextDecoder().decode(bytes(packed)));
+	} catch {
+		return null;
+	}
+	if (raw === null || typeof raw !== 'object') return null;
+	const sql = (raw as { sql?: unknown }).sql;
+	if (typeof sql !== 'string' || sql === '') return null;
+	const params = (raw as { params?: unknown }).params;
+	return { sql, params: Array.isArray(params) ? params : [] };
+}
+
 export function parseParkFetch(packed: string): ParkFetch | null {
 	let raw: unknown;
 	try {

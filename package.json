@@ -101,6 +101,7 @@
 		"@playwright/test": "^1.62.1",
 		"@prettier/plugin-php": "^0.25.0",
 		"@types/bun": "latest",
+		"@types/pg": "^8.23.1",
 		"@vitest/coverage-istanbul": "^4.1.11",
 		"husky": "^9.1.7",
 		"lint-staged": "^17.4.1",
@@ -124,6 +125,8 @@
 		"edgeport": "^1.0.6",
 		"fflate": "^0.8.3",
 		"fzstd": "^0.1.1",
+		"mysql2": "^3.24.4",
+		"pg": "^8.23.0",
 		"php-wasm": "0.1.0"
 	},
 	"lint-staged": {

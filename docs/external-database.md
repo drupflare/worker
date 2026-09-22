@@ -1,10 +1,80 @@
 # External Databases and Hyperdrive
 
 Drupflare stores a site in the Durable Object that serves it. There is one object per site and it
-holds both the interpreter and the SQLite database. This page explains why an external database is
-not an option the product offers, and what Hyperdrive is for.
+holds both the interpreter and the SQLite database. That is the default and it stays the default.
 
-## What Hyperdrive Is
+**This page used to say an external database was not an option the product offers. It is one now,
+for the self-hosted tier, and the reasons below are why it is not one for the managed tier.** Every
+blocker this page lists is a property of a Cloudflare account -- the configuration cap, the daily
+query limit, the missing MySQL `COM_STMT_PREPARE` -- and a workerd an operator runs has no account
+behind it. An external database is also what makes a site portable in the sense the self-hosted tier
+promises, and it removes the 5 GB account-wide storage cap that is otherwise the only hard limit on
+fleet size.
+
+## Selecting One
+
+`DB_BACKEND` chooses: `do-sqlite` (the default, the object's own storage) or `hyperdrive`. Choosing
+`hyperdrive` with no `HYPERDRIVE` binding is reported as misconfigured rather than falling back
+silently, because a site running on a different database from the one its operator chose is worse
+than one that refuses to start.
+
+The clients are `pg` and `mysql2`, ordinary npm dependencies in the Worker. **Hyperdrive supplies no
+client** -- it supplies a pooled endpoint and a connection string, and Cloudflare's own get-started
+says "you will need a database driver". Together they cost about 1.1 MB of the 65,536 KiB bundle
+ceiling, and both are imported dynamically so a deployment that never selects this backend evaluates
+neither.
+
+Which one answers is read from the connection string's scheme rather than from a second setting,
+because a setting that can disagree with the string is one that will. `postgres://`,
+`postgresql://` and `mysql://` are what Hyperdrive itself accepts.
+
+Two differences between them are handled here rather than in the driver, which stays ignorant of
+which backend it is on:
+
+- **Placeholders.** The driver emits `?`, which MySQL takes as-is and PostgreSQL does not, so a
+  PostgreSQL statement is rewritten to `$1..$n`. A `?` inside a string literal is left alone, which
+  is the case a regex gets wrong on the first row of real content.
+- **No prepared statements on MySQL.** `mysql2`'s `execute()` sends `COM_STMT_PREPARE`, which
+  Hyperdrive does not support; `query()` interpolates client-side and sends one text statement,
+  which is what survives the pool. This is the blocker listed further down, met in code.
+
+The two result shapes were measured against the rig rather than assumed. PostgreSQL 17.6 answers a
+`SELECT` as `{rows: [...], rowCount: n}` and an `INSERT` as `{rows: [], rowCount: n}`; MySQL 9.5
+answers a `SELECT` as an array and an `INSERT` as a header object carrying `affectedRows`. The
+adapter reduces both to the one shape the host's own SQL seam uses.
+
+What made this reachable is the park. `cfwSqlExec` is synchronous by construction -- the same
+property that puts KV, R2, D1 and `env.ASSETS.fetch()` out of reach of a read -- and a `pg` query is
+not. So the driver yields the statement instead: `rom`'s `CfwSqlClient` opens a
+`cfwpark+sql://` pseudo-socket, `ext/cfwpark` freezes the continuation, the Worker runs the query,
+and the chain resumes inside the same invocation. It needs no change to the extension, because the
+HTTP transport already rides the same trap under a different scheme.
+
+**A refused yield is an error rather than a fallback**, and that is the one place this differs from
+the parked HTTP transport. A refused fetch falls back to the deferred one; there is no local copy of
+an external database to answer from, so a refusal reaches Drupal as a database error instead of
+quietly answering from the wrong store.
+
+### Verifying It Without A Deploy
+
+`localConnectionString` makes `wrangler dev` connect straight to a database, so the whole path is
+drivable against the rig:
+
+```sh
+docker compose -f docker/compose.yml up -d postgres # or: mysql
+export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgres://drupflare:drupflarepass@127.0.0.1:5432/drupflare"
+# mysql://drupflare:drupflarepass@127.0.0.1:3306/drupflare
+```
+
+The `hyperdrive` binding is deliberately NOT in the canonical `wrangler.jsonc`. A binding naming a
+configuration that does not exist refuses the deploy, which is what `r2_buckets` did to the one-click
+button; it is an opt-in addition for a deployment that has one.
+
+**What still needs a deployed worker** is the one thing the rig cannot answer: whether a Hyperdrive
+binding works from inside a Durable Object rather than from a plain fetch handler. That is the
+roadmap's own gating experiment and it costs one throwaway deploy.
+
+## What Hyperdrive Is For
 
 Hyperdrive is connection pooling and query caching in front of a database you already run. It does
 not store data. You point it at a PostgreSQL or PostgreSQL-compatible database, or a MySQL database,
@@ -155,7 +225,7 @@ warm (14 without the theme reset; 20 with `bootstrap` also emptied). So 100,000 
 **6,666 renders/day**.
 
 Score that against the two ceilings. The regeneration ceiling is **2,477 renders/day** cold and
-**9,539** windowed, bound by rows written once warming is subtracted. Hyperdrive's free query budget lands inside that
+**9,685** windowed, bound by rows written once warming is subtracted. Hyperdrive's free query budget lands inside that
 range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
 lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
 database query under either design, so 100,000 Worker requests/day still binds first.

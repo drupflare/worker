@@ -152,21 +152,23 @@ value all fall through to the var.
 
 ## Serving and Caching
 
-| var                | default  | what it does                                                                   |
-| ------------------ | -------- | ------------------------------------------------------------------------------ |
-| `GEN_BUCKET_MS`    | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
-| `MAX_BODY_BYTES`   | 2 MiB    | largest non-file request body the edge forwards                                |
-| `OUTBOUND_GUARD`   | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off   |
-| `PAGE_KV_ENABLED`  | per plan | force the cross-colo KV page tier on (`1`) or off (`0`)                        |
-| `PAGE_KV_TTL`      | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
-| `EDGE_PLAN`        | on       | serve an authenticated page from a compiled plan in the front worker; `0` off  |
-| `NEVER_STALE`      | unset    | extra path prefixes that may never be served from a previous generation        |
-| `ASSET_AGGREGATES` | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on        |
-| `RENDER_BUDGET_MS` | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm       |
-| `FILL_BATCH_SIZE`  | per plan | pages one alarm firing may fill before re-arming; capped at 50                 |
-| `WINDOW_SITES`     | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet |
-| `WINDOW_MAX_FILLS` | 50       | fills one window may drive                                                     |
-| `WINDOW_WALL_MS`   | 60,000   | wall-clock ms one window may run                                               |
+| var                      | default  | what it does                                                                   |
+| ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
+| `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                |
+| `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off   |
+| `PAGE_KV_ENABLED`        | per plan | force the cross-colo KV page tier on (`1`) or off (`0`)                        |
+| `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
+| `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off  |
+| `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation        |
+| `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on        |
+| `MEMORY_CACHE_BINS`      | unset    | cache bins the interpreter holds in memory instead of in SQL, comma-separated  |
+| `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                  |
+| `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm       |
+| `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                 |
+| `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet |
+| `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                     |
+| `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                               |
 
 ### `OUTBOUND_GUARD`
 
@@ -236,6 +238,55 @@ prefixes and is **added to** that list rather than replacing it, so a site canno
 page staleable by configuring badly.
 
 Consumers: `staleAllowed()` and `readStalePage()` in `src/ops/page-store.ts`.
+
+### `MEMORY_CACHE_BINS`
+
+A cache bin named here is held in the interpreter's memory for the life of the incarnation instead of
+in the tenant's SQLite. `pib_run` performs no request shutdown, so a class static survives from one
+Worker invocation to the next, which is what makes this a real tier here and a test double on an
+ordinary PHP host.
+
+What it buys, measured in workerd on the shipping pack with the two arms differing by this variable
+and nothing else: a real re-render after a tag invalidation charges **8 rows with the bin in SQL and
+4 with it in memory**, for a byte-identical page. Four of the eight are the `dynamic_page_cache` bin,
+and rows written is the meter that bounds regeneration.
+
+It is ON by default for `dynamic_page_cache`, and `MEMORY_CACHE_BINS=none` is the off switch -- an
+unset variable and an empty one are the same string in a Worker env, so turning a default off needs
+a word rather than an absence.
+
+**The default shipped off until the cost was measured rather than reasoned about.** The argument for
+leaving it off was that the bin dies with the interpreter, so a render after an eviction could no
+longer reassemble and would pay more. Measured with both arms dropping the interpreter between two
+fills: **6 charged rows with the bin in SQL against 2 in memory**. A cold render REWRITES the SQL bin
+rather than reading it, so surviving the drop buys that render nothing. The lever is cheaper in both
+states.
+
+What it still costs is CPU on that render and isolate memory for what it holds, and neither is the
+binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.
+
+**The published ceiling has NOT been re-derived against this default yet, deliberately.**
+`ROWS_PER_FILL.realRender` is 9, which describes `MEMORY_CACHE_BINS=none`; at the default a real
+re-render measures 3 to 4. Quoting the lower figure would take the ceiling 9,685 -> 27,845/day and
+invert the safety property it rests on -- a realistic warmth mix prices 3.20 against that class's
+3.00, where it used to sit below, so the headline would become optimistic rather than a floor.
+`tests/integration/rows-per-fill-audit.spec.ts` measures both configurations and prints the gap.
+
+Bin names are bare, without the `cache_` prefix: `MEMORY_CACHE_BINS=dynamic_page_cache,render`.
+
+An entry is validated against the cache-tag checksum on every read, the same test the database
+backend applies, so an invalidation that arrives as replicated SQL rather than as a PHP call still
+refuses it. That is the property a read replica depends on and the reason this is not core's
+`MemoryBackend`.
+
+`MEMORY_CACHE_MAX_ITEMS` bounds each bin. It is a count rather than a byte budget because measuring
+bytes means serialising the value, which is the cost moving the bin out of SQL removes; the isolate's
+own 112 MiB recycle is the backstop underneath it.
+
+Both are on `KV_OVERRIDABLE`. The value is read when `settings.php` is composed, which happens on
+every boot because the pack's filesystem is remounted each time, so a change takes effect on the
+next interpreter boot rather than needing a redeploy. Consumers: `memoryCacheBins()` in
+`src/site-do.ts` and `CfwCacheBackendFactory` in the `drupflare` module.
 
 ### `ASSET_AGGREGATES`
 
@@ -1031,6 +1082,16 @@ the only general answer on free, and a rejected Cloudflare send says so in its e
 status code to read.
 
 ### SMTP
+
+**A `send_email` binding can be added later, and it is not in the canonical config for a different
+reason than you would guess.** Checked against Cloudflare's own configuration reference: `send_email`
+is an ordinary Wrangler array entry, so adding one is a redeploy rather than a recreate, and
+`allowed_destination_addresses` / `destination_address` narrow what it may reach. What stops it
+shipping by default is that its prerequisites are ACCOUNT state the control plane cannot provision
+on an operator's behalf -- Email Routing enabled, at least one verified destination address, and the
+sending domain onboarded -- which is the same shape that made `r2_buckets` refuse the one-click
+deploy. `api` needs none of that beyond the token `/setup/cf` already grants, so it is the transport
+the product provisions and the binding is an opt-in.
 
 Port 25 is blocked on Workers; `MAIL_TRANSPORT=smtp` with `SMTP_PORT=25` is refused by name, before
 any attempt. `smtp.mx.cloudflare.net` is refused too: it resolves inside `162.158.0.0/15`, a

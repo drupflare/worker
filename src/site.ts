@@ -26,6 +26,7 @@ import {
 } from './ops/auth-budget.js';
 import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit.js';
 import { isCacheTier } from './ops/cache-tiers.js';
+import { ABSORBED_HEADER, ABSORBED_REPORT_MAX } from './ops/cold-encounter.js';
 import {
 	believedCsrf,
 	believedGeneration,
@@ -659,6 +660,38 @@ const pageKey = (origin: string, site: string, generation: number, path: string)
 	new Request(pageKeyUrl(origin, site, generation, path), { method: 'GET' });
 
 /**
+ * Page requests this isolate has answered, per site, waiting for a hop to carry the count in.
+ *
+ * The object cannot see a plan hit, an isolate memo hit, a `caches.default` hit or a KV page read,
+ * because all four return from here -- and they are most of the traffic, so a cold-boot share taken
+ * against what reached the object is a share of the leftovers. This rides on the next inner request,
+ * which is a hop already paid for: the same trade as the generation pointer and the auth-spend
+ * counter beside it.
+ *
+ * An isolate that dies before hopping loses its count. That biases the denominator DOWN and the
+ * reported cold rate UP, which is the direction a missing reading has to fail in.
+ */
+const absorbedSinceHop = new Map<string, number>();
+
+/** the key is a resolved hostname, so the map is bounded the way `adminSessionBudget()`'s is */
+const ABSORBED_SITES_MAX = 1024;
+
+function noteAbsorbed(site: string): void {
+	if (absorbedSinceHop.size >= ABSORBED_SITES_MAX && !absorbedSinceHop.has(site)) return;
+	absorbedSinceHop.set(
+		site,
+		Math.min(ABSORBED_REPORT_MAX, (absorbedSinceHop.get(site) ?? 0) + 1)
+	);
+}
+
+/** what to report on a hop, excluding the hopping request itself -- the object counts that one */
+function drainAbsorbed(site: string, self: boolean): number {
+	const held = absorbedSinceHop.get(site) ?? 0;
+	absorbedSinceHop.delete(site);
+	return Math.max(0, held - (self ? 1 : 0));
+}
+
+/**
  * A generation, or null. Never a number that is not one.
  *
  * `Number(null)` is 0, not NaN, so reading a missing header straight into
@@ -1190,6 +1223,11 @@ export default {
 			});
 		}
 
+		// Counted once here rather than at each tier's return, so a tier added later is counted
+		// without anybody remembering to. Everything below either answers from this isolate or hops,
+		// and the hop subtracts its own request back out.
+		if (serving) noteAbsorbed(site);
+
 		// #region the authenticated allowance, decided before ANY DO hop
 		//
 		// An authenticated request can never be answered from a shared cache -- the page is per-user
@@ -1512,6 +1550,10 @@ export default {
 		// cleared first, always: every inbound header is copied onto the subrequest, so a client
 		// could otherwise send this one and have the object read it as this worker's own decision
 		innerRequest.headers.delete(AUTH_REQUEST_HEADER);
+		innerRequest.headers.delete(ABSORBED_HEADER);
+		// the count rides along on a hop already being paid for, same as the generation below
+		const absorbed = drainAbsorbed(site, serving);
+		if (absorbed > 0) innerRequest.headers.set(ABSORBED_HEADER, String(absorbed));
 		if (personalised) {
 			// the object charges the allowance and reports the counter back on this same response, so
 			// learning the spend costs no extra hop

@@ -15,6 +15,35 @@ services:
       timeout: 5s
       retries: 40
 
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment:
+      POSTGRES_PASSWORD: 'drupflarepass'
+      POSTGRES_USER: 'drupflare'
+      POSTGRES_DB: 'drupflare'
+    ports:
+      - '127.0.0.1:5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U drupflare -d drupflare']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mysql:
+    image: mysql@sha256:57c892ddeb17e6c7dddf219914db017b2cf3e2797806a75424444b83622cc8ef
+    environment:
+      MYSQL_ROOT_PASSWORD: 'drupflarepass'
+      MYSQL_DATABASE: 'drupflare'
+      MYSQL_USER: 'drupflare'
+      MYSQL_PASSWORD: 'drupflarepass'
+    ports:
+      - '127.0.0.1:3306:3306'
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-pdrupflarepass']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
   redis:
     image: redis:8.10.1-alpine@sha256:ef216d85ec44f4fdf7c0e6df2d1757a4734ed32fbb278cabd3181b5a27353b79
     command: ['redis-server', '--requirepass', 'testpass']

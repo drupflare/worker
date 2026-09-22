@@ -1,9 +1,10 @@
 /**
  * What a Cloudflare Container arm has spent, and whether it must stop.
  *
- * Pure arithmetic, deliberately separated from the Worker that enforces it. A guard that decides
- * when to stop spending someone else's money is the kind of thing that has to be falsifiable
- * without deploying anything, and `tests/node/container-budget.spec.ts` is where it is falsified.
+ * Pure arithmetic and the one bit of parsing the teardown depends on, deliberately separated from
+ * the Worker that enforces it and the CLI that drives it. Anything deciding when to stop spending
+ * someone else's money has to be falsifiable without deploying anything, and
+ * `tests/node/container-budget.spec.ts` is where it is falsified.
  *
  * THREE METERS, AND THEY DO NOT BILL ALIKE. Cloudflare bills memory and disk on the resources
  * PROVISIONED for the instance type, for as long as the instance is awake; CPU bills on ACTIVE
@@ -142,4 +143,34 @@ export function budgetedRuntimeMs(
 	reserve = 0.5
 ): number {
 	return budgetVerdict(spec, 0, allowance, reserve).remainingMs;
+}
+
+export type ContainerApplication = { id: string; name: string };
+
+/**
+ * The container applications a worker owns, out of `wrangler containers list --json`.
+ *
+ * DELETING THE WORKER DOES NOT DELETE THE CONTAINER, so a teardown has to find these and delete
+ * them by id. The platform names an application `<worker>-<class>` lowercased, which is why the
+ * match is a prefix rather than equality -- one worker may declare several container classes.
+ *
+ * Wrangler prints a banner before the JSON, so the parse starts at the first bracket. A run that
+ * cannot be parsed returns nothing, and the caller treats that as "could not prove it is gone"
+ * rather than as "it is gone".
+ */
+export function armApplications(stdout: string, worker: string): ContainerApplication[] {
+	const start = stdout.indexOf('[');
+	if (start < 0) return [];
+	try {
+		const all = JSON.parse(stdout.slice(start)) as ContainerApplication[];
+		if (!Array.isArray(all)) return [];
+		return all.filter(
+			(a) =>
+				typeof a?.id === 'string' &&
+				typeof a?.name === 'string' &&
+				a.name.startsWith(worker)
+		);
+	} catch {
+		return [];
+	}
 }

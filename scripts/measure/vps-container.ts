@@ -23,6 +23,7 @@ import { resolve } from 'node:path';
 import {
 	INCLUDED_ALLOWANCE,
 	INSTANCE_TYPES,
+	armApplications,
 	budgetedRuntimeMs,
 	resolveInstance
 } from './container-budget.js';
@@ -187,20 +188,43 @@ async function budget(args: Args) {
 	console.log(JSON.stringify(body, null, 2));
 }
 
+function listArmApplications(worker: string) {
+	const r = run('bunx', ['wrangler', 'containers', 'list', '--json'], { quiet: true });
+	return r.status === 0 ? armApplications(r.stdout ?? '', worker) : [];
+}
+
+/**
+ * Deletes the worker AND the container application behind it, then proves both are gone.
+ *
+ * DELETING THE WORKER DOES NOT DELETE THE CONTAINER. Measured 2026-09-21: `wrangler delete`
+ * reported "Successfully deleted" while `wrangler containers list` still showed the application
+ * `active` with 1 live instance, and the next deploy was refused because the name was taken. An
+ * instance left awake bills memory and disk for as long as it is up, so a teardown that reports
+ * success on half the job is the most expensive shape this rig has.
+ */
 async function down(args: Args) {
+	const worker = typeof args.name === 'string' ? args.name : 'cfw-vps';
 	const argv = ['wrangler', 'delete', '-c', CONFIG, '--force'];
 	if (typeof args.name === 'string') argv.push('--name', args.name);
 	const r = run('bunx', argv);
 	clearContext();
-	if (r.status !== 0) {
+
+	for (const app of listArmApplications(worker)) {
+		console.log(`deleting container application ${app.name} (${app.id})`);
+		run('bunx', ['wrangler', 'containers', 'delete', app.id]);
+	}
+
+	const left = listArmApplications(worker);
+	if (r.status !== 0 || left.length) {
 		console.error(
-			'delete did not succeed. The container keeps billing while the worker exists, so check\n' +
-				'`bunx wrangler containers list` and the dashboard before leaving this.'
+			'teardown did not finish. An awake container bills memory and disk whether or not the\n' +
+				'worker exists, so clear these by hand before leaving it:\n' +
+				left.map((a) => `  bunx wrangler containers delete ${a.id}  # ${a.name}`).join('\n')
 		);
 		process.exitCode = 1;
 		return;
 	}
-	console.log('deleted, and the staged context is removed');
+	console.log('worker and container application deleted, and the staged context is removed');
 }
 
 /** one warm-up plus n timed samples of a path, reporting the arm's own service time beside total */

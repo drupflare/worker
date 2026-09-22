@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	INCLUDED_ALLOWANCE,
 	INSTANCE_TYPES,
+	armApplications,
 	budgetVerdict,
 	budgetedRuntimeMs,
 	resolveInstance,
@@ -101,5 +102,44 @@ describe('the stop line', () => {
 		expect(budgetedRuntimeMs(INSTANCE_TYPES['lite']!)).toBeGreaterThan(
 			budgetedRuntimeMs(INSTANCE_TYPES['standard-4']!) * 20
 		);
+	});
+});
+
+describe('which container applications a teardown still owes', () => {
+	// observed 2026-09-21: `wrangler delete` reported success while the application stayed active
+	// with one live instance, so the worker delete is half a teardown and this is the other half
+	const listing = JSON.stringify([
+		{ id: 'a1', name: 'cfw-vps-vpsarm' },
+		{ id: 'a2', name: 'drupflare-test_SitePhpDurableObject' },
+		{ id: 'a3', name: 'cfw-vps-second' }
+	]);
+
+	it('claims every application the worker prefixes and nothing else', () => {
+		expect(armApplications(listing, 'cfw-vps').map((a) => a.id)).toEqual(['a1', 'a3']);
+	});
+
+	it('leaves another worker alone', () => {
+		expect(armApplications(listing, 'cfw-energy-probe')).toEqual([]);
+	});
+
+	it('reads past the wrangler banner to the first bracket', () => {
+		const banner = 'wrangler 4.127.1\nupdate available\n' + listing;
+		expect(armApplications(banner, 'cfw-vps').map((a) => a.id)).toEqual(['a1', 'a3']);
+	});
+
+	it('claims nothing it cannot parse, so a broken listing never reads as a clean teardown', () => {
+		// a half-parsed listing would let the caller delete some and report all, which is the
+		// failure this whole path exists to remove
+		for (const bad of ['', 'Error: not authenticated', '[{"id":', '{"id":"a1"}']) {
+			expect(armApplications(bad, 'cfw-vps')).toEqual([]);
+		}
+	});
+
+	it('skips an entry missing an id, which cannot be deleted by id', () => {
+		const partial = JSON.stringify([
+			{ name: 'cfw-vps-vpsarm' },
+			{ id: 'a4', name: 'cfw-vps-x' }
+		]);
+		expect(armApplications(partial, 'cfw-vps').map((a) => a.id)).toEqual(['a4']);
 	});
 });

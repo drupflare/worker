@@ -53,6 +53,27 @@ export type GroupRow = { group: string; value: number };
  */
 export type InvocationRow = { tag: string | null; cpuMs: number; wallMs: number; outcome: string };
 
+/**
+ * The tag off the request URL, for the events whose `search` map is empty.
+ *
+ * **THE AUTO-EXTRACTION IS NOT RELIABLE AND THIS INSTRUMENT ASSUMED IT WAS.** Measured 2026-09-21
+ * against `cfw-m1`: of 500 stateless invocations in one window, **5** carried
+ * `$workers.event.request.search` and 500 carried `event.request.url`. Every one of the 1,942
+ * invocations in that window read as untagged, so the only tool this repo has for joining `cpuTime`
+ * to what it measured answered "N invocations carried no ?tag=" for a run where every request had
+ * one.
+ *
+ * A DURABLE OBJECT INVOCATION CARRIES NO REQUEST AT ALL -- `event.request` is null, not an object
+ * with an empty search -- so no tag can be recovered for one by any path. Attribute those by TIME
+ * WINDOW instead; a URL is not available to fall back to.
+ */
+export function tagFromUrl(url: unknown, param: string): string | null {
+	if (typeof url !== 'string') return null;
+	const q = url.indexOf('?');
+	if (q < 0) return null;
+	return new URLSearchParams(url.slice(q + 1)).get(param);
+}
+
 /** flattens the events response, keeping every invocation including the zero-cost ones */
 export function flattenEvents(body: any, groupParam = 'tag'): InvocationRow[] {
 	const events = body?.result?.events?.events ?? [];
@@ -64,7 +85,7 @@ export function flattenEvents(body: any, groupParam = 'tag'): InvocationRow[] {
 		// a dropped event carries no cpuTimeMs at all; that is absent, not zero
 		if (typeof cpuMs !== 'number') continue;
 		const search = w.event?.request?.search ?? {};
-		const raw = search[groupParam];
+		const raw = search[groupParam] ?? tagFromUrl(w.event?.request?.url, groupParam);
 		out.push({
 			tag: raw === undefined || raw === null ? null : String(raw),
 			cpuMs,

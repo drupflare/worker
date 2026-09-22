@@ -73,3 +73,65 @@ export function readDayMeters(raw: string | null | undefined): DayMeters | null 
 	if (![rows, doRequests, serveTotal].every((n) => Number.isFinite(n) && n >= 0)) return null;
 	return { rows, doRequests, serveTotal, encounters: parseEncounters(parts[3]) };
 }
+
+/**
+ * How much of the REMAINING daily row budget one eviction may lose unpersisted.
+ *
+ * The checkpoint exists for exactly one failure: a Durable Object is evicted whenever Cloudflare
+ * likes, and whatever has accumulated in memory since the last write is gone. A live read is not
+ * affected -- `dailyRows()` adds the pending counter to the stored one -- so the interval buys
+ * nothing except a bound on that loss.
+ *
+ * A bound stated as a CONSTANT is wrong at both ends of the day. Twenty-five rows is 0.025% of a
+ * fresh site's budget and 1% of what is left at 97.5%, and the second is the only reading that can
+ * change a decision.
+ */
+export const METER_LOSS_FRACTION = 0.01;
+
+/**
+ * The tightest checkpoint, which is what the two constants this replaces did unconditionally.
+ *
+ * Kept as the floor rather than tightened, so the change cannot weaken the accounting anywhere: at
+ * the ceiling the policy answers 25 rows and 60 s, which is byte for byte the old behaviour.
+ */
+export const METER_FLUSH_ROWS_MIN = 25;
+export const METER_FLUSH_MS_MIN = 60_000;
+
+/**
+ * The loosest, which is the render window's own 15-minute bucket.
+ *
+ * Borrowed rather than chosen: `flushRenderWindow()` already answers this question for the arrival
+ * rate and caps itself at 96 rows/day, and two checkpoints on the same object should not disagree
+ * about how long a gap is acceptable.
+ */
+export const METER_FLUSH_MS_MAX = 900_000;
+export const METER_FLUSH_ROWS_MAX =
+	METER_FLUSH_ROWS_MIN * (METER_FLUSH_MS_MAX / METER_FLUSH_MS_MIN);
+
+/**
+ * When the day meters may next pay for a row, from how much budget is left.
+ *
+ * Both triggers state the same bound in different units, so both scale together: the row trigger is
+ * what catches a busy object and the interval is what catches an idle one, and a warmed object at
+ * one row per 8 s tick reaches neither quickly.
+ *
+ * At the shipping interval this is 1,440 flushes a day against 96, which is 1,344 rows returned to
+ * the meter that binds regeneration. It moves the published free-plan ceiling by about 1.5% and
+ * that is the whole of it; the reason to do it is that a counter should not be a measurable share
+ * of what it counts.
+ *
+ * @param rowsToday what the day meter already holds, `dailyRows()`.
+ * @param budgetRows the daily cap; `DAILY_ROWS_QUOTA` on free, and the same figure on paid because
+ *   a paid site has nothing to protect and fewer writes are strictly cheaper there.
+ */
+export function meterFlushBudget(
+	rowsToday: number,
+	budgetRows: number
+): { rows: number; intervalMs: number } {
+	const remaining = Math.max(0, budgetRows - Math.max(0, rowsToday));
+	const rows = Math.min(
+		METER_FLUSH_ROWS_MAX,
+		Math.max(METER_FLUSH_ROWS_MIN, Math.round(remaining * METER_LOSS_FRACTION))
+	);
+	return { rows, intervalMs: METER_FLUSH_MS_MIN * (rows / METER_FLUSH_ROWS_MIN) };
+}

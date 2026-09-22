@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ZERO_ENCOUNTERS } from '../../../src/ops/cold-encounter';
 import {
+	METER_FLUSH_MS_MAX,
+	METER_FLUSH_MS_MIN,
+	METER_FLUSH_ROWS_MAX,
+	METER_FLUSH_ROWS_MIN,
 	ZERO_DAY_METERS,
 	dayMetersKey,
+	meterFlushBudget,
 	readDayMeters,
 	writeDayMeters
 } from '../../../src/ops/day-meters';
@@ -54,5 +59,75 @@ describe('the packed day row', () => {
 	it('starts at zero on every counter', () => {
 		expect(ZERO_DAY_METERS.encounters).toEqual(ZERO_ENCOUNTERS);
 		expect(writeDayMeters(ZERO_DAY_METERS)).toBe('0:0:0:0,0,0,0');
+	});
+});
+
+/**
+ * How often that row is paid for, which was two constants and is now a function of the headroom.
+ *
+ * The checkpoint bounds one thing only: how much counting an eviction may lose. A constant states
+ * that bound in absolute rows, which is 0.025% of a fresh day's budget and 1% of what is left near
+ * the ceiling -- so the flat 25 was far too tight at one end and no tighter at the other.
+ */
+describe('the sparse meter checkpoint', () => {
+	const QUOTA = 100_000;
+
+	it('is the loosest bucket on a site that has written nothing', () => {
+		const b = meterFlushBudget(0, QUOTA);
+		expect(b.rows).toBe(METER_FLUSH_ROWS_MAX);
+		expect(b.intervalMs).toBe(METER_FLUSH_MS_MAX);
+		// 96 checkpoints a day against the 1,440 a flat 60 s charged, which is the whole saving
+		expect(86_400_000 / b.intervalMs).toBe(96);
+	});
+
+	/**
+	 * THE FLOOR IS THE OLD BEHAVIOUR EXACTLY, which is what makes this safe to ship.
+	 *
+	 * A site near the daily cap is the only one whose lost count can change a decision, and there
+	 * the policy answers the same 25 rows and 60 s the constants did. Nothing is loosened where it
+	 * would matter.
+	 */
+	it('degrades to the constants it replaced as the budget runs out', () => {
+		const b = meterFlushBudget(QUOTA - 2_500, QUOTA);
+		expect(b.rows).toBe(METER_FLUSH_ROWS_MIN);
+		expect(b.intervalMs).toBe(METER_FLUSH_MS_MIN);
+		// and past the cap it cannot go looser again
+		expect(meterFlushBudget(QUOTA * 2, QUOTA)).toEqual(b);
+	});
+
+	it('tightens monotonically as the day is spent', () => {
+		let previous = Infinity;
+		for (let spent = 0; spent <= QUOTA; spent += 2_500) {
+			const b = meterFlushBudget(spent, QUOTA);
+			expect(b.intervalMs).toBeLessThanOrEqual(previous);
+			previous = b.intervalMs;
+			expect(b.rows).toBeGreaterThanOrEqual(METER_FLUSH_ROWS_MIN);
+			expect(b.intervalMs).toBeGreaterThanOrEqual(METER_FLUSH_MS_MIN);
+		}
+		// the control: it did move, so the loop above is not asserting a constant
+		expect(meterFlushBudget(QUOTA, QUOTA).intervalMs).toBeLessThan(
+			meterFlushBudget(0, QUOTA).intervalMs
+		);
+	});
+
+	/** both triggers state one bound in two units, so they have to stay in step */
+	it('keeps the row trigger and the interval in the same ratio', () => {
+		for (const spent of [0, 40_000, 62_500, 80_000, 95_000, 99_000]) {
+			const b = meterFlushBudget(spent, QUOTA);
+			expect(b.rows / METER_FLUSH_ROWS_MIN).toBeCloseTo(b.intervalMs / METER_FLUSH_MS_MIN, 6);
+		}
+	});
+
+	/**
+	 * Where the tightening starts, stated so a fleet reading can be checked against it.
+	 *
+	 * A warmed idle site spends about 10,900 rows a day on its own chain, which is nowhere near
+	 * this, so the fleet figure `keepWarmFleetCost()` computes is the loosest bucket and not an
+	 * average across the ladder.
+	 */
+	it('holds the loosest bucket until 62.5% of the budget is gone', () => {
+		expect(meterFlushBudget(62_500, QUOTA).intervalMs).toBe(METER_FLUSH_MS_MAX);
+		expect(meterFlushBudget(63_000, QUOTA).intervalMs).toBeLessThan(METER_FLUSH_MS_MAX);
+		expect(meterFlushBudget(10_896, QUOTA).intervalMs).toBe(METER_FLUSH_MS_MAX);
 	});
 });

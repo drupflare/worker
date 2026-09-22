@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
-import { inObject, markProvisioned, provisionedSite, type ServeDo } from '../helpers/serve-do';
+import {
+	inObject,
+	markProvisioned,
+	provisionedSite,
+	seedDailyRows,
+	type ServeDo
+} from '../helpers/serve-do';
 
 /**
  * What one IDLE warming tick writes, which is the meter `SITE_WARM` is priced against.
@@ -126,6 +132,50 @@ describe('an idle warming tick', () => {
 			// steady rather than growing: a tick whose cost climbs is an accumulating write, and it
 			// would not show up in a single reading
 			expect(new Set(seen.perFiring).size, `not steady: ${seen.perFiring}`).toBe(1);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * When the object pays for its day row, which used to be a flat 60 s and 25 pending.
+ *
+ * The constants are the reason a warmed site spent 1,440 rows a day recording a counter that moves
+ * by one per tick. `meterFlushBudget()` scales both triggers with the remaining budget, and this
+ * asserts the OBJECT reads it -- a policy function nothing calls is this repository's most repeated
+ * defect, and the arithmetic is already pinned in `tests/unit/ops/day-meters.spec.ts`.
+ */
+describe('the checkpoint the object actually applies', () => {
+	it(
+		'holds a count the old constant would have written, and writes it near the ceiling',
+		async () => {
+			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				site.ensureServeTables();
+				await site.alarm();
+
+				// 26 pending, which is over the 25 the flat trigger used and far under the 375 a
+				// fresh day allows. The clock cannot be advanced inside a Worker, so the interval
+				// half is exercised in the unit spec and this is the volume half
+				const arrange = (rowsToday: number) => {
+					seedDailyRows(site, rowsToday);
+					site.rowsSinceFlush = 26;
+					site.doRequestsSinceFlush = 0;
+					site.lastMeterFlushMs = site.nowMs();
+					return site.shouldFlushMeters();
+				};
+
+				const fresh = arrange(0);
+				const nearCeiling = arrange(99_000);
+				site.rowsSinceFlush = 0;
+				site.doRequestsSinceFlush = 0;
+				return { fresh, nearCeiling };
+			});
+
+			expect(seen.fresh).toBe(false);
+			// THE CONTROL: the same 26 rows on a site with no headroom still checkpoints, so what
+			// changed is the policy rather than the trigger being switched off
+			expect(seen.nearCeiling).toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

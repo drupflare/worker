@@ -231,7 +231,13 @@ export const KV_OVERRIDABLE = [
 	// the baked asset aggregates. It met this list's own test and was left off it, so `assets/agg/`
 	// shipped built and there was no way to turn it on without a redeploy -- an oversight rather
 	// than a decision. A wrong value is a fatter or slower page, never a changed reachability
-	'ASSET_AGGREGATES'
+	'ASSET_AGGREGATES',
+	// which cache bins live in the interpreter instead of in the tenant's SQLite, and how large each
+	// may grow. Same test: an in-memory bin validates against the same cache-tag checksum the
+	// database one does, so a wrong value costs a rebuilt bin after an eviction and never a changed
+	// reachability
+	'MEMORY_CACHE_BINS',
+	'MEMORY_CACHE_MAX_ITEMS'
 ] as const;
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];

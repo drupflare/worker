@@ -53,7 +53,10 @@ import {
  * reason each is there. `LAZY_FS_BUDGET_BYTES` is read by the lazy filesystem at mount time, so its
  * pair is `tests/integration/lazy-fs-budget.spec.ts` in the artifact lane; `ARGON2` and
  * `OPCACHE_MODE` reach PHP through `settings.php` and the interpreter constructor, so what is
- * drivable here is the decision each one feeds.
+ * drivable here is the decision each one feeds. `MEMORY_CACHE_BINS` reaches PHP the same way and
+ * its pair is `tests/integration/memory-cache-bin.spec.ts`, which drives two arms differing by that
+ * variable alone and reads the charged rows; `MEMORY_CACHE_MAX_ITEMS` bounds a PHP-side store and
+ * its pair is the eviction case in the sibling's `tests/health-suite.php`.
  *
  * WRITING THIS FOUND A DEAD LEVER. `FILL_BATCH_WALL_MS` was on the allow-list, resolved per plan,
  * copied onto the object env and asserted through the plumbing by `kv-levers.spec.ts` -- and read by
@@ -190,7 +193,13 @@ describe('the fixture covers the allow-list', () => {
 			'ASSET_AGGREGATES'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
-		const elsewhere = ['LAZY_FS_BUDGET_BYTES', 'ARGON2', 'OPCACHE_MODE'];
+		const elsewhere = [
+			'LAZY_FS_BUDGET_BYTES',
+			'ARGON2',
+			'OPCACHE_MODE',
+			'MEMORY_CACHE_BINS',
+			'MEMORY_CACHE_MAX_ITEMS'
+		];
 		// on the allow-list, adopted onto the object env, and read by nothing in `src/`
 		const unread: string[] = [];
 		expect([...driven, ...elsewhere, ...unread].sort()).toEqual([...KV_OVERRIDABLE].sort());
@@ -664,6 +673,38 @@ describe('SITE_WARM decides the idle re-arm', () => {
 		expect(siteWarmEnabled({ SITE_WARM: '0' })).toBe(false);
 		expect(idleRearmMs({ SITE_WARM: '1' })).toBe(8_000);
 		expect(idleRearmMs({ SITE_WARM: '0' })).toBe(240_000);
+	});
+
+	/**
+	 * THE WARM BRANCH READS WHAT THE SOLVER STORED, which is the wiring half of the item.
+	 *
+	 * `solveWarmInterval()`'s arithmetic is pinned in `tests/unit/ops/thermal.spec.ts`. What a unit
+	 * test cannot ask is whether the object consults it at all -- and a policy function nothing
+	 * calls is the defect class this repository has shipped most often.
+	 */
+	it('re-arms at the interval the object solved, and never past an explicit one', async () => {
+		const stub = freshSite();
+		const seen = await inObject(stub, async (site) => {
+			site.env = { ...site.env, SITE_WARM: '1' };
+			markProvisioned(site);
+			const obj = site as unknown as {
+				thermalRearmMs(): number;
+				metaSet(k: string, v: string): void;
+			};
+			const before = obj.thermalRearmMs();
+			// a window that has already climbed two steps, written the way the roll writes it
+			obj.metaSet('render_window', `${site.nowMs() - 1_000}:900:9000:1`);
+			const climbed = obj.thermalRearmMs();
+			site.env = { ...site.env, WARM_INTERVAL_MS: '6000' };
+			const stated = obj.thermalRearmMs();
+			return { before, climbed, stated };
+		});
+
+		// the control: with nothing solved it is the verified interval, exactly as before
+		expect(seen.before).toBe(8_000);
+		expect(seen.climbed).toBe(9_000);
+		// an operator who stated an interval is not overruled by what the object worked out
+		expect(seen.stated).toBe(6_000);
 	});
 });
 

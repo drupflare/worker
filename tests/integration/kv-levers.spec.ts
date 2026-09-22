@@ -49,7 +49,9 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
 	EDGE_PLAN: '0',
-	ASSET_AGGREGATES: '1'
+	ASSET_AGGREGATES: '1',
+	MEMORY_CACHE_BINS: 'dynamic_page_cache',
+	MEMORY_CACHE_MAX_ITEMS: '32'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {

@@ -62,7 +62,45 @@ export type FleetRow = {
 	 * cannot distinguish, because the pack generation of an old site never moves.
 	 */
 	reconcileVersion: number;
+	/**
+	 * Which shape this row was written in.
+	 *
+	 * THE FIELD THAT MAKES THE SCHEMA EVOLVABLE RATHER THAN REPLACEABLE, which is the whole reason
+	 * the inventory was promoted ahead of the control plane: a schema designed against a consumer
+	 * that does not exist yet is one that gets replaced, and a consumer reading rows written by
+	 * three different Worker versions has no way to tell which fields it can trust without this.
+	 * A reader compares it; it does not parse it.
+	 */
+	schemaVersion: number;
+	/**
+	 * Which CMS this site runs.
+	 *
+	 * One value today and the column exists anyway. Adding it after a second CMS ships means a
+	 * migration on every live site, which is the stated reason the site-kind record was promoted
+	 * out of v1.1: the cost is a column now against a fleet-wide migration later.
+	 */
+	cms: string;
+	/** managed on a Cloudflare account, or self-hosted on the operator's own workerd */
+	tier: 'managed' | 'self-hosted';
+	/**
+	 * What the site's own supervisor thinks of it.
+	 *
+	 * Here rather than only on the object, because the question a control plane asks first is "which
+	 * sites are unwell" and answering it by asking every object is one Durable Object request per
+	 * site per refresh. A site that cannot report is `stale`, which is a different answer from
+	 * `degraded` and must not be folded into it.
+	 */
+	health: 'ok' | 'degraded' | 'quarantined';
 };
+
+/** the shape {@link FleetRow} is written in today; bump it when a field's MEANING changes */
+export const FLEET_SCHEMA_VERSION = 2;
+
+/** an unknown value reads as `ok` rather than throwing; an inventory must not fail on a new word */
+function readHealth(value: unknown): FleetRow['health'] {
+	const v = String(value ?? 'ok');
+	return v === 'degraded' || v === 'quarantined' ? v : 'ok';
+}
 
 /** how long a site may go unreported before it reports again even with nothing changed */
 export const FLEET_HEARTBEAT_MS = 24 * 60 * 60 * 1000;
@@ -74,7 +112,11 @@ export const FLEET_DDL = `CREATE TABLE IF NOT EXISTS cfw_fleet (
   worker_version TEXT NOT NULL,
   plan TEXT NOT NULL,
   last_seen_ms INTEGER NOT NULL,
-  reconcile_version INTEGER NOT NULL DEFAULT 0
+  reconcile_version INTEGER NOT NULL DEFAULT 0,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  cms TEXT NOT NULL DEFAULT 'drupal',
+  tier TEXT NOT NULL DEFAULT 'managed',
+  health TEXT NOT NULL DEFAULT 'ok'
 )`;
 
 /**
@@ -91,7 +133,13 @@ export function shouldReport(previous: FleetRow | null, current: FleetRow, nowMs
 		previous.coreVersion !== current.coreVersion ||
 		previous.workerVersion !== current.workerVersion ||
 		previous.plan !== current.plan ||
-		previous.reconcileVersion !== current.reconcileVersion
+		previous.reconcileVersion !== current.reconcileVersion ||
+		// every identity field, or a site that changed one of them waits out the heartbeat before
+		// the inventory knows. `health` is the one a control plane is watching in real time
+		previous.schemaVersion !== current.schemaVersion ||
+		previous.cms !== current.cms ||
+		previous.tier !== current.tier ||
+		previous.health !== current.health
 	) {
 		return true;
 	}
@@ -102,21 +150,31 @@ export function shouldReport(previous: FleetRow | null, current: FleetRow, nowMs
 export async function ensureFleetTable(db: FleetDb): Promise<void> {
 	await db.prepare(FLEET_DDL).bind().run();
 	await addColumnIfMissing(db, 'cfw_fleet', 'reconcile_version', 'INTEGER NOT NULL DEFAULT 0');
+	// the defaults are what an already-written row means: it was reported by a Worker that knew
+	// only schema 1, which ran one CMS on a Cloudflare account and had no health to report
+	await addColumnIfMissing(db, 'cfw_fleet', 'schema_version', 'INTEGER NOT NULL DEFAULT 1');
+	await addColumnIfMissing(db, 'cfw_fleet', 'cms', "TEXT NOT NULL DEFAULT 'drupal'");
+	await addColumnIfMissing(db, 'cfw_fleet', 'tier', "TEXT NOT NULL DEFAULT 'managed'");
+	await addColumnIfMissing(db, 'cfw_fleet', 'health', "TEXT NOT NULL DEFAULT 'ok'");
 }
 
 /** Writes one site's row, replacing whatever was there. */
 export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 	await db
 		.prepare(
-			`INSERT INTO cfw_fleet (site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO cfw_fleet (site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version, schema_version, cms, tier, health)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(site) DO UPDATE SET
          pack_generation = excluded.pack_generation,
          core_version = excluded.core_version,
          worker_version = excluded.worker_version,
          plan = excluded.plan,
          last_seen_ms = excluded.last_seen_ms,
-         reconcile_version = excluded.reconcile_version`
+         reconcile_version = excluded.reconcile_version,
+         schema_version = excluded.schema_version,
+         cms = excluded.cms,
+         tier = excluded.tier,
+         health = excluded.health`
 		)
 		.bind(
 			row.site,
@@ -125,7 +183,11 @@ export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 			row.workerVersion,
 			row.plan,
 			Math.floor(row.lastSeenMs),
-			Math.floor(row.reconcileVersion)
+			Math.floor(row.reconcileVersion),
+			Math.floor(row.schemaVersion),
+			row.cms,
+			row.tier,
+			row.health
 		)
 		.run();
 }
@@ -134,7 +196,7 @@ export async function reportSite(db: FleetDb, row: FleetRow): Promise<void> {
 export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 	const { results } = await db
 		.prepare(
-			'SELECT site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version FROM cfw_fleet ORDER BY site'
+			'SELECT site, pack_generation, core_version, worker_version, plan, last_seen_ms, reconcile_version, schema_version, cms, tier, health FROM cfw_fleet ORDER BY site'
 		)
 		.bind()
 		.all<Record<string, unknown>>();
@@ -145,7 +207,13 @@ export async function listSites(db: FleetDb): Promise<FleetRow[]> {
 		workerVersion: String(r.worker_version),
 		plan: String(r.plan) === 'paid' ? 'paid' : 'free',
 		lastSeenMs: Number(r.last_seen_ms),
-		reconcileVersion: Number(r.reconcile_version ?? 0)
+		reconcileVersion: Number(r.reconcile_version ?? 0),
+		// a row written before these columns existed reads as schema 1, which is what it is; the
+		// defaults describe that Worker's world rather than guessing at this one
+		schemaVersion: Number(r.schema_version ?? 1),
+		cms: String(r.cms ?? 'drupal'),
+		tier: String(r.tier) === 'self-hosted' ? 'self-hosted' : 'managed',
+		health: readHealth(r.health)
 	}));
 }
 
@@ -214,6 +282,20 @@ export type FleetSummary = {
 	byCoreVersion: VersionShare[];
 	/** sites whose last report is older than the heartbeat, so their state is not current */
 	stale: string[];
+	/**
+	 * The rollups the control plane opens with, rather than ones it derives from every row.
+	 *
+	 * `byHealth` answers "which sites are unwell" without one Durable Object request per site, and
+	 * `bySchemaVersion` answers "can I trust the fields I am about to read" -- a fleet mid-rollout
+	 * carries rows from two Worker versions and a consumer that assumes one shape reads the other
+	 * one's defaults as data.
+	 */
+	byHealth: VersionShare[];
+	bySchemaVersion: VersionShare[];
+	byCms: VersionShare[];
+	byTier: VersionShare[];
+	/** sites the inventory believes are unwell, named rather than counted */
+	unhealthy: string[];
 };
 
 /**
@@ -240,8 +322,19 @@ export function fleetSummary(rows: FleetRow[], nowMs: number): FleetSummary {
 		sites: total,
 		byPackGeneration: share((r) => r.packGeneration),
 		byCoreVersion: share((r) => r.coreVersion),
+		byHealth: share((r) => r.health),
+		bySchemaVersion: share((r) => String(r.schemaVersion)),
+		byCms: share((r) => r.cms),
+		byTier: share((r) => r.tier),
 		stale: rows
 			.filter((r) => nowMs - r.lastSeenMs >= FLEET_HEARTBEAT_MS)
+			.map((r) => r.site)
+			.sort(),
+		// STALE IS NOT UNHEALTHY and the two lists stay apart for the reason `stale` already gives:
+		// a site nobody has heard from is evidence of nothing, and folding it in would make "the
+		// fleet is healthy" a claim about sites that never answered
+		unhealthy: rows
+			.filter((r) => r.health !== 'ok')
 			.map((r) => r.site)
 			.sort()
 	};

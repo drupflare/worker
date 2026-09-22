@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_MAX_BODY_BYTES } from '../../src/ops/body-limit';
 import { isCacheTier } from '../../src/ops/cache-tiers';
 import { resetEdgePlans, SAMPLES_PER_COMPILE } from '../../src/ops/edge-plan';
-import { ensureFleetTable, reportSite, type FleetDb } from '../../src/ops/fleet';
+import {
+	ensureFleetTable,
+	FLEET_SCHEMA_VERSION,
+	reportSite,
+	type FleetDb
+} from '../../src/ops/fleet';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
 import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
 import {
@@ -1001,7 +1006,11 @@ describe('the fleet inventory a security rollout scores against', () => {
 			workerVersion: 'v2',
 			plan: 'free',
 			lastSeenMs: Date.now(),
-			reconcileVersion: 0
+			reconcileVersion: 0,
+			schemaVersion: FLEET_SCHEMA_VERSION,
+			cms: 'drupal',
+			tier: 'managed',
+			health: 'ok'
 		});
 		await reportSite(db, {
 			site: 'b',
@@ -1010,7 +1019,11 @@ describe('the fleet inventory a security rollout scores against', () => {
 			workerVersion: 'v1',
 			plan: 'free',
 			lastSeenMs: Date.now(),
-			reconcileVersion: 0
+			reconcileVersion: 0,
+			schemaVersion: FLEET_SCHEMA_VERSION,
+			cms: 'drupal',
+			tier: 'managed',
+			health: 'ok'
 		});
 
 		const res = await worker.fetch(new Request('https://cfw.local/fleet?target=new'), {

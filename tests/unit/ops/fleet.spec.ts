@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	FLEET_HEARTBEAT_MS,
+	FLEET_SCHEMA_VERSION,
 	ensureFleetTable,
 	fleetSummary,
 	listSites,
@@ -32,7 +33,12 @@ function fakeDb(): FleetDb & { rows: Map<string, Record<string, unknown>>; queri
 									core_version: v[2],
 									worker_version: v[3],
 									plan: v[4],
-									last_seen_ms: v[5]
+									last_seen_ms: v[5],
+									reconcile_version: v[6],
+									schema_version: v[7],
+									cms: v[8],
+									tier: v[9],
+									health: v[10]
 								});
 							}
 							return {};
@@ -59,6 +65,10 @@ const row = (over: Partial<FleetRow> = {}): FleetRow => ({
 	plan: 'free',
 	lastSeenMs: 1_000,
 	reconcileVersion: 0,
+	schemaVersion: FLEET_SCHEMA_VERSION,
+	cms: 'drupal',
+	tier: 'managed',
+	health: 'ok',
 	...over
 });
 
@@ -142,7 +152,12 @@ describe('fleetSummary', () => {
 			sites: 0,
 			byPackGeneration: [],
 			byCoreVersion: [],
-			stale: []
+			byHealth: [],
+			bySchemaVersion: [],
+			byCms: [],
+			byTier: [],
+			stale: [],
+			unhealthy: []
 		});
 	});
 });
@@ -175,6 +190,10 @@ describe('warmTargets', () => {
 	const NOW = 1_700_000_000_000;
 	const row = (site: string, ageMs = 0): FleetRow => ({
 		site,
+		schemaVersion: FLEET_SCHEMA_VERSION,
+		cms: 'drupal',
+		tier: 'managed',
+		health: 'ok',
 		packGeneration: 'p1',
 		coreVersion: '11.0.0',
 		workerVersion: 'w1',

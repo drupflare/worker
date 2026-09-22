@@ -1103,12 +1103,16 @@ export default {
 		// on first read, so every path that does need them sees one construction and the same
 		// values, and the routing decision still happens before any request reaches an object.
 		let laneMemo: ReturnType<typeof chooseTarget> | null = null;
+		// ONCE. It was read twice inside the same object literal -- for the affinity key and for
+		// `hasSession` -- and the read is a regex over the whole cookie header, on the path that
+		// runs for every request that reaches an object
+		const sessionValue = sessionCookieValue(request.headers.get('cookie'));
 		const laneOf = (): ReturnType<typeof chooseTarget> =>
 			(laneMemo ??= chooseTarget({
 				site,
 				method: request.method,
 				affinity: affinityKey({
-					session: sessionCookieValue(request.headers.get('cookie')),
+					session: sessionValue,
 					address: request.headers.get('cf-connecting-ip'),
 					pathname: visitorPath
 				}),
@@ -1121,7 +1125,7 @@ export default {
 				writeForward: writeForwardEnabled(env),
 				// a write arriving without one may MINT one, and a lane's mint never reaches the
 				// primary; see the docblock on the field
-				hasSession: sessionCookieValue(request.headers.get('cookie')) !== null
+				hasSession: sessionValue !== null
 			}));
 		let stubMemo: DurableObjectStub | null = null;
 		const stubOf = (): DurableObjectStub =>

@@ -157,16 +157,18 @@ if (installAnomalies.length) {
 	);
 }
 
-const best = [...arms].sort(
-	(a, b) => Math.max(a.peak, a.installPeak) - Math.max(b.peak, b.installPeak)
-)[0]!;
-console.log(
-	`lowest worst-case peak: step ${best.step} at ${Math.max(best.peak, best.installPeak)} bytes`
-);
+// `authPeak` belongs in this max, and omitting it made the summary contradict the table above it by
+// 4.88 MiB on a step-0 run. The authenticated render is the binding workload, which this file's own
+// docblock says, so a summary that drops it ranks the arms on the wrong quantity.
+const worstOf = (a: (typeof arms)[number]) => Math.max(a.peak, a.installPeak, a.authPeak);
+const best = [...arms].sort((a, b) => worstOf(a) - worstOf(b))[0]!;
+console.log(`lowest worst-case peak: step ${best.step} at ${worstOf(best)} bytes`);
 
 if (demand !== null) {
 	const shipping = arms.find((a) => a.step === 0.2);
-	console.log(`\nlive demand at the peak: <= ${demand} bytes (${mib(demand)} MiB)`);
+	// named for the workload it came from: an unqualified "live demand" reads as the binding one,
+	// and the binding one is the authenticated render
+	console.log(`\nlive RENDER demand at the peak: <= ${demand} bytes (${mib(demand)} MiB)`);
 	if (shipping) {
 		console.log(
 			`shipping over-reservation: ${shipping.peak - demand} bytes ` +

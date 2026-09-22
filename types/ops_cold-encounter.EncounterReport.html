@@ -11,17 +11,39 @@
 <li><a href="../modules/ops_cold-encounter.html">ops/cold-encounter</a></li>
 <li><a href="" aria-current="page">EncounterReport</a></li></ul>
 <h1>Type Alias EncounterReport</h1></div>
-<div class="tsd-signature"><span class="tsd-kind-type-alias">EncounterReport</span><span class="tsd-signature-symbol">:</span> <a href="ops_cold-encounter.EncounterCounts.html" class="tsd-signature-type tsd-kind-type-alias">EncounterCounts</a> <span class="tsd-signature-symbol">&amp;</span> <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">coldOfAll</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">coldOfPhp</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">php</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">total</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
-<div class="tsd-comment tsd-typography"><p>What an object's own counters say, plus the two shares worth reporting.</p>
+<div class="tsd-signature"><span class="tsd-kind-type-alias">EncounterReport</span><span class="tsd-signature-symbol">:</span> <a href="ops_cold-encounter.EncounterCounts.html" class="tsd-signature-type tsd-kind-type-alias">EncounterCounts</a> <span class="tsd-signature-symbol">&amp;</span> <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">coldOfObject</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">coldOfPhp</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">coldOfTraffic</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">php</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">total</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">traffic</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div>
+<div class="tsd-comment tsd-typography"><p>What an object's own counters say, plus the three shares worth reporting.</p>
 <p><code>coldOfPhp</code> scores the THERMAL POLICY: of the requests that needed PHP, how many found none. That
-is the number a residency change moves. <code>coldOfAll</code> scores the ARCHITECTURE: of every request that
-reached the object, how many paid a boot, which is what the page and plan tiers move.</p>
-<p>Both are <code>null</code> rather than 0 on an empty denominator. A site that has served nothing has not
+is the number a residency change moves. <code>coldOfObject</code> scores what the page and plan tiers move
+INSIDE the object. <code>coldOfTraffic</code> is the visitor-facing one, and it is the only one of the three
+whose denominator is every request made for the site.</p>
+<p>The three are <code>null</code> rather than 0 on an empty denominator. A site that has served nothing has not
 demonstrated a 0% cold rate, and reporting one would make an unused site look like a well-tuned
 one -- the same distinction <code>rolloutProgress()</code> draws for a fleet nobody has heard from.</p>
-</div><aside class="tsd-sources">
+<p><code>coldOfTraffic</code> is additionally null while <code>absorbed</code> is 0, because a site whose front worker has
+reported nothing has not demonstrated that nothing was absorbed: it is indistinguishable from one
+running a worker too old to report. An absent reading is visibly absent; a plausible wrong one is
+not, and this field's whole purpose is that the wrong one reads about 5x too high.</p>
+</div>
+<div class="tsd-type-declaration">
+<h4>Type Declaration</h4>
+<ul class="tsd-parameters">
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">coldOfObject</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h5></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">coldOfPhp</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h5></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">coldOfTraffic</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></h5></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">php</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span></h5></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">total</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span></h5></li>
+<li class="tsd-parameter">
+<h5><span class="tsd-kind-property">traffic</span><span class="tsd-signature-symbol">: </span><span class="tsd-signature-type">number</span></h5>
+<div class="tsd-comment tsd-typography"><p>requests made for the site, including the ones the front worker answered by itself</p>
+</div></li></ul></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/cold-encounter.ts#L49">src/ops/cold-encounter.ts:49</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/cold-encounter.ts#L65">src/ops/cold-encounter.ts:65</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

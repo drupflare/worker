@@ -11,9 +11,9 @@
 <li><a href="../modules/ops_fleet.html">ops/fleet</a></li>
 <li><a href="" aria-current="page">FleetSummary</a></li></ul>
 <h1>Type Alias FleetSummary</h1></div>
-<div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">FleetSummary</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#bycoreversion">byCoreVersion</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bypackgeneration">byPackGeneration</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sites">sites</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#stale">stale</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
+<div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">FleetSummary</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#bycms">byCms</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bycoreversion">byCoreVersion</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#byhealth">byHealth</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bypackgeneration">byPackGeneration</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#byschemaversion">bySchemaVersion</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#bytier">byTier</a><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#sites">sites</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#stale">stale</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#unhealthy">unhealthy</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fleet.ts#L211">src/ops/fleet.ts:211</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L279">src/ops/fleet.ts:279</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -21,36 +21,74 @@
 <div class="tsd-accordion-details">
 <section class="tsd-index-section">
 <h3 class="tsd-index-heading tsd-anchor-link" id="properties">Properties<a href="#properties" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<div class="tsd-index-list"><a href="#bycoreversion" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Core<wbr/>Version</span></a>
+<div class="tsd-index-list"><a href="#bycms" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Cms</span></a>
+<a href="#bycoreversion" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Core<wbr/>Version</span></a>
+<a href="#byhealth" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Health</span></a>
 <a href="#bypackgeneration" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Pack<wbr/>Generation</span></a>
+<a href="#byschemaversion" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Schema<wbr/>Version</span></a>
+<a href="#bytier" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Tier</span></a>
 <a href="#sites" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>sites</span></a>
 <a href="#stale" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>stale</span></a>
+<a href="#unhealthy" class="tsd-index-link"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>unhealthy</span></a>
 </div></section></div></details></section></section>
 <details class="tsd-panel-group tsd-member-group tsd-accordion" open><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
 <h2 class="tsd-anchor-link" id="properties-1">Properties<a href="#properties-1" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2></summary>
 <section>
 <section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="bycms"><span>by<wbr/>Cms</span><a href="#bycms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">byCms</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L295">src/ops/fleet.ts:295</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="bycoreversion"><span>by<wbr/>Core<wbr/>Version</span><a href="#bycoreversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">byCoreVersion</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fleet.ts#L214">src/ops/fleet.ts:214</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L282">src/ops/fleet.ts:282</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="byhealth"><span>by<wbr/>Health</span><a href="#byhealth" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">byHealth</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div>
+<div class="tsd-comment tsd-typography"><p>The rollups the control plane opens with, rather than ones it derives from every row.</p>
+<p><code>byHealth</code> answers &quot;which sites are unwell&quot; without one Durable Object request per site, and
+<code>bySchemaVersion</code> answers &quot;can I trust the fields I am about to read&quot; -- a fleet mid-rollout
+carries rows from two Worker versions and a consumer that assumes one shape reads the other
+one's defaults as data.</p>
+</div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L293">src/ops/fleet.ts:293</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="bypackgeneration"><span>by<wbr/>Pack<wbr/>Generation</span><a href="#bypackgeneration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">byPackGeneration</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fleet.ts#L213">src/ops/fleet.ts:213</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L281">src/ops/fleet.ts:281</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="byschemaversion"><span>by<wbr/>Schema<wbr/>Version</span><a href="#byschemaversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">bySchemaVersion</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L294">src/ops/fleet.ts:294</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="bytier"><span>by<wbr/>Tier</span><a href="#bytier" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">byTier</span><span class="tsd-signature-symbol">:</span> <a href="ops_fleet.VersionShare.html" class="tsd-signature-type tsd-kind-type-alias">VersionShare</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L296">src/ops/fleet.ts:296</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="sites"><span>sites</span><a href="#sites" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">sites</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fleet.ts#L212">src/ops/fleet.ts:212</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L280">src/ops/fleet.ts:280</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="stale"><span>stale</span><a href="#stale" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">stale</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
 <div class="tsd-comment tsd-typography"><p>sites whose last report is older than the heartbeat, so their state is not current</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fleet.ts#L216">src/ops/fleet.ts:216</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L284">src/ops/fleet.ts:284</a></li></ul></aside></section>
+<section class="tsd-panel tsd-member">
+<h3 class="tsd-anchor-link" id="unhealthy"><span>unhealthy</span><a href="#unhealthy" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
+<div class="tsd-signature"><span class="tsd-kind-property">unhealthy</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></div>
+<div class="tsd-comment tsd-typography"><p>sites the inventory believes are unwell, named rather than counted</p>
+</div><aside class="tsd-sources">
+<ul>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fleet.ts#L298">src/ops/fleet.ts:298</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -67,7 +105,7 @@
 <h3>On This Page</h3></summary>
 <div class="tsd-accordion-details">
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
-<div><a href="#bycoreversion"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Core<wbr/>Version</span></a><a href="#bypackgeneration"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Pack<wbr/>Generation</span></a><a href="#sites"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>sites</span></a><a href="#stale"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>stale</span></a></div></details></div></details></div>
+<div><a href="#bycms"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Cms</span></a><a href="#bycoreversion"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Core<wbr/>Version</span></a><a href="#byhealth"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Health</span></a><a href="#bypackgeneration"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Pack<wbr/>Generation</span></a><a href="#byschemaversion"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Schema<wbr/>Version</span></a><a href="#bytier"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>by<wbr/>Tier</span></a><a href="#sites"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>sites</span></a><a href="#stale"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>stale</span></a><a href="#unhealthy"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>unhealthy</span></a></div></details></div></details></div>
 <div class="site-menu">
 <nav class="tsd-navigation"><a href="../modules.html">drupflare/worker - v1.0.2</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">

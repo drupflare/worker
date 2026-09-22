@@ -15,7 +15,9 @@
 <div class="tsd-comment tsd-typography"><p>Eleven owner routes reached the product with no control anywhere.</p>
 <p><code>/export</code>, <code>/health</code>, <code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code>, <code>/updb</code>, <code>/reconcile</code>,
 <code>/sweep</code>, <code>/modify</code> and <code>/setup/mail</code> were all owner-gated, all documented, all driven by
-<code>drangler</code> -- and unreachable from a browser. Taking your own data out, seeing whether the site
+<code>drangler</code> -- and unreachable from a browser. <strong><code>/setup/mail</code> was named in this list and absent
+from the table underneath it for as long as the list existed</strong>, which is the shape the list was
+written to prevent. Taking your own data out, seeing whether the site
 is healthy and purging your own cache needed a terminal.</p>
 <p>Two more were worse than that: <code>/pitr</code> and <code>/restore</code> are the BACKUP AND RECOVERY pair and were
 reachable only with <code>PW_DIAGNOSTICS=1</code>, the same flag that opens arbitrary SQL. <code>/pitr</code>'s own
@@ -24,7 +26,7 @@ bookmark window, which is the whole reason the route exists.</p>
 <p>The list is data rather than markup so the page and its test read the same thing.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ui/admin.ts#L542">src/ui/admin.ts:542</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ui/admin.ts#L544">src/ui/admin.ts:544</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

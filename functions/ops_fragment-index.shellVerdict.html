@@ -17,13 +17,22 @@
 <div class="tsd-signature tsd-anchor-link" id="shellverdict"><span class="tsd-kind-call-signature">shellVerdict</span><span class="tsd-signature-symbol">(</span><br/>    <span class="tsd-kind-parameter">input</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-symbol">{</span><br/>        <span class="tsd-kind-property">fragmentTags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">invalidated</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>        <span class="tsd-kind-property">shellTags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-signature-symbol">}</span><span class="tsd-signature-symbol">,</span><br/><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_fragment-index.ShellVerdict.html" class="tsd-signature-type tsd-kind-type-alias">ShellVerdict</a><a href="#shellverdict" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>Whether a save's tags reach a stored shell's own bytes.</p>
-<p>REFUSES BY DEFAULT, the same asymmetry <code>shellSafety()</code> keeps and for the same reason: a shell kept
-when it should have gone is a visitor reading content they can see is wrong, and a shell dropped
-when it could have stayed is one harvest. So an unrecorded tag set drops, and a tag this page can
-account for NOWHERE drops.</p>
-<p>A tag that belongs only to a FRAGMENT does not drop. The fragment is not stored -- <code>assembleFor()</code>
-renders every hole on every request -- so the invalidation reaches it through Drupal's own render
-cache on the next request, and the shell around it is unaffected.</p>
+<p>REFUSES ON AN UNKNOWN, which is a narrower rule than the one this shipped with. An unrecorded tag
+set still drops: a shell stored before the column existed cannot speak for itself, and that is a
+genuine unknown rather than a judgement.</p>
+<p><strong>A TAG ON NEITHER THE SHELL NOR A FRAGMENT NO LONGER DROPS, and the old rule made the whole
+scoped purge inert.</strong> <code>shellTags</code> is Drupal's own <code>cacheTags</code> for the shell render, taken from the
+response's cacheability metadata rather than derived here -- the same set Drupal uses to decide
+whether its own <code>dynamic_page_cache</code> entry for that response is still valid. A tag outside it
+cannot invalidate that response by Drupal's rules, so dropping on one was stricter than Drupal
+itself.</p>
+<p>Measured with the old rule wired, on a fresh site: creating two users invalidates <code>user_list</code>, the
+front page's shell records six tags and none of them is <code>user_list</code>, and the shell was dropped
+with <code>user_list is not accounted for on this page</code>. Every save carries at least one tag no other
+page depends on, so the scoped purge behaved like the wholesale purge it replaces.</p>
+<p>A tag that belongs only to a FRAGMENT does not drop either. The fragment is not stored --
+<code>assembleFor()</code> renders every hole on every request -- so the invalidation reaches it through
+Drupal's own render cache on the next request, and the shell around it is unaffected.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -31,7 +40,7 @@ cache on the next request, and the shell around it is unaffected.</p>
 <li><span><span class="tsd-kind-parameter">input</span>: <span class="tsd-signature-symbol">{</span><br/>    <span class="tsd-kind-property">fragmentTags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">invalidated</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <span class="tsd-kind-property">shellTags</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_fragment-index.ShellVerdict.html" class="tsd-signature-type tsd-kind-type-alias">ShellVerdict</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/fragment-index.ts#L279">src/ops/fragment-index.ts:279</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fragment-index.ts#L310">src/ops/fragment-index.ts:310</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

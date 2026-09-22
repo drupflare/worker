@@ -19,6 +19,8 @@
 <div class="tsd-comment tsd-typography"><p>Reads the counters back, defaulting to zero on anything unexpected.</p>
 <p>A corrupt row loses a day of counting rather than reporting a wrong share, which is the safe
 direction: an absent reading is visibly absent, and a plausible wrong one is not.</p>
+<p>Three fields is a row written before <code>absorbed</code> existed, and it reads as <code>absorbed: 0</code> -- which is
+exactly what it means, and what makes <code>coldOfTraffic</code> null on it rather than wrong.</p>
 </div>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
@@ -26,7 +28,7 @@ direction: an absent reading is visibly absent, and a plausible wrong one is not
 <li><span><span class="tsd-kind-parameter">raw</span>: <span class="tsd-signature-type">string</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">undefined</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <a href="../types/ops_cold-encounter.EncounterCounts.html" class="tsd-signature-type tsd-kind-type-alias">EncounterCounts</a></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/cold-encounter.ts#L85">src/ops/cold-encounter.ts:85</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/cold-encounter.ts#L130">src/ops/cold-encounter.ts:130</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -12,6 +12,7 @@
  * The measurements behind each figure are in `TECHNICAL_REPORT.md`.
  */
 
+import { meterFlushBudget } from '../../src/ops/day-meters.js';
 import { GENERATED_FREE_QUOTAS } from '../generated/quotas.js';
 
 /**
@@ -147,8 +148,17 @@ export const KEEP_WARM_MS = 240_000;
  */
 export const WARM_INTERVAL_MS = 8_000;
 
-/** how often the daily meters pay for their two rows, `METER_FLUSH_MS` in `src/site-do.ts` */
-export const METER_FLUSH_SECONDS = 60;
+/**
+ * How often the daily meters pay for a row, read off the policy the object itself applies.
+ *
+ * IT WAS A CONSTANT 60 AND THE OBJECT NO LONGER USES ONE. `meterFlushBudget()` scales both flush
+ * triggers with the remaining row budget, so the interval a warming chain pays is the loosest one:
+ * the chain spends about 10,900 rows a day and the policy does not begin tightening until 62,500,
+ * which no warmed-but-idle site reaches. Taking the figure from the function rather than restating
+ * it is what stops this drifting the way the flat 60 did.
+ */
+export const METER_FLUSH_SECONDS =
+	meterFlushBudget(0, FREE_QUOTAS.rowsWrittenPerDay).intervalMs / 1000;
 
 /**
  * What the keep-warm chain costs a FLEET before a single visitor arrives.
@@ -463,6 +473,24 @@ export const ROWS_PER_FILL = {
 	 * 12 -> 9 when the cache bins became `WITHOUT ROWID` in the pack. Every bin keys on a TEXT
 	 * `cid`, which a rowid table gives its own unique index, so one stored row was charged twice;
 	 * 13 of the 14 bins carry no secondary index, so that autoindex WAS their whole index cost.
+	 *
+	 * **THIS FIGURE DESCRIBES `MEMORY_CACHE_BINS=none` AND THE SHIPPING DEFAULT IS NOT THAT.**
+	 * Measured 2026-09-22 with `dynamic_page_cache` in memory, which is the default now: a real
+	 * re-render charges **3**, because four of the nine rows were that bin and it no longer reaches
+	 * SQL. The constant is deliberately left at the SQL figure, and the reason is a safety property
+	 * rather than inertia.
+	 *
+	 * At 3 the ceiling computed from this class is 27,845/day against a realistic warmth mix of
+	 * 26,207 -- so quoting it would make the headline 6.3% OPTIMISTIC, where today it is a floor.
+	 * `rowsForWarmthMix(STEADY_STATE_WARMTH)` sat below this class and now sits above it, because
+	 * the in-memory bin makes the common case much cheaper and barely moves the cold tail. Three
+	 * other findings invert with it: the windowed path goes DO-bound again, the queue arm's message
+	 * quota starts binding before regeneration does, and one replica scenario becomes
+	 * duration-bound.
+	 *
+	 * Re-deriving the published model against the new default is a piece of work with its own
+	 * measurement pass, and shipping a 2.87x ceiling increase on a hurried one is how a wrong
+	 * published figure ships. `rows-per-fill-audit.spec.ts` measures BOTH arms and prints the gap.
 	 */
 	realRender: 9,
 	/**
@@ -600,6 +628,42 @@ export type TrafficMix = {
 /** the report's realistic mix */
 export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 };
 
+/**
+ * What an editorial write costs, measured on a deployed object.
+ *
+ * `TECHNICAL_REPORT.md`'s Writes table, n=8 per class, medians. Every figure is charged rows rather
+ * than statements, because the driver replays a speculative transaction and a replayed row is
+ * billed like any other.
+ */
+export const ROWS_PER_WRITE = {
+	nodeCreate: 103,
+	nodeRevision: 218,
+	userCreate: 33,
+	fileCreate: 14,
+	aliasCreate: 41
+} as const;
+
+export type EditorialDay = Partial<Record<keyof typeof ROWS_PER_WRITE, number>>;
+
+/**
+ * The rows a day of editing spends before anything is regenerated.
+ *
+ * THE MODEL PRICED NONE OF THIS, which is what makes the published figure a renders/day number
+ * rather than a budget. A daily row quota is spent by three things and regeneration is only one of
+ * them: the warming chain, the editors, and the fills. Quoting the third as though it had the whole
+ * 100,000 describes a site nobody edits.
+ *
+ * Defaults to nothing rather than to a guess. There is no measured editorial rate for any real
+ * site, so an invented one would be a plausible number attached to a real model -- the shape this
+ * project has been bitten by. A caller who knows their rate passes it.
+ */
+export function editorialRowsPerDay(perDay: EditorialDay = {}): number {
+	return (Object.keys(ROWS_PER_WRITE) as (keyof typeof ROWS_PER_WRITE)[]).reduce(
+		(total, kind) => total + Math.max(0, perDay[kind] ?? 0) * ROWS_PER_WRITE[kind],
+		0
+	);
+}
+
 export type Envelope = {
 	/** max page views/day before the first meter runs out, and which meter that is */
 	servingViewsPerDay: number;
@@ -621,6 +685,22 @@ export type Envelope = {
 	 * described a site nobody runs.
 	 */
 	warming: { rowsPerDay: number; doRequestsPerDay: number; rowShare: number };
+	/**
+	 * The daily row quota, split by what spends it.
+	 *
+	 * The free-plan headline is a WRITE budget and was being quoted as a renders/day number. Three
+	 * claimants share one meter -- the warming chain, the editors and the fills -- and reporting
+	 * only the third is what made a site with an editor on it read as though it had the whole
+	 * 100,000 to regenerate with.
+	 */
+	writeBudget: {
+		quotaRows: number;
+		warmingRows: number;
+		editorialRows: number;
+		regenerationRows: number;
+		/** rows per regeneration at this warmth, so the two halves can be reconciled by hand */
+		rowsPerFill: number;
+	};
 	regenerationBoundBy: 'do' | 'rows' | 'r2ClassA' | 'duration';
 	windowed: boolean;
 	/**
@@ -716,6 +796,14 @@ export function envelope(
 		warmed?: boolean;
 		/** the warming interval, when it is not the shipping `WARM_INTERVAL_MS` */
 		keepWarmMs?: number;
+		/**
+		 * What the editors do in a day, which the model used to price at nothing.
+		 *
+		 * A node revision is 218 charged rows, so 50 a day is 10,900 -- larger than the warming
+		 * chain and comparable to the whole regeneration ceiling. Left empty by default because no
+		 * real site's rate has been measured here.
+		 */
+		editorial?: EditorialDay;
 	} = {}
 ): Envelope {
 	// the batch amortises the re-arm row across N pages, so rows/fill is per-page rows + 1/N rather
@@ -776,7 +864,13 @@ export function envelope(
 		(opts.warmed ?? true)
 			? keepWarmFleetCost(1, opts.keepWarmMs ?? WARM_INTERVAL_MS)
 			: { rowsPerDay: 0, doRequestsPerDay: 0 };
-	const rowsAvailable = Math.max(0, FREE_QUOTAS.rowsWrittenPerDay - warming.rowsPerDay);
+	// the editors' share, taken off the same meter and before the same division. Zero by default,
+	// so nothing moves for a caller who does not state a rate
+	const editorialRows = editorialRowsPerDay(opts.editorial);
+	const rowsAvailable = Math.max(
+		0,
+		FREE_QUOTAS.rowsWrittenPerDay - warming.rowsPerDay - editorialRows
+	);
 	const doAvailable = Math.max(0, FREE_QUOTAS.doRequestsPerDay - warming.doRequestsPerDay);
 
 	const ceilings = {
@@ -853,6 +947,13 @@ export function envelope(
 			rowsPerDay: warming.rowsPerDay,
 			doRequestsPerDay: warming.doRequestsPerDay,
 			rowShare: warming.rowsPerDay / FREE_QUOTAS.rowsWrittenPerDay
+		},
+		writeBudget: {
+			quotaRows: FREE_QUOTAS.rowsWrittenPerDay,
+			warmingRows: warming.rowsPerDay,
+			editorialRows,
+			regenerationRows: rowsAvailable,
+			rowsPerFill
 		},
 		regenerationBoundBy: (['do', 'rows', 'r2ClassA', 'duration'] as const).reduce(
 			(best, meter) => (regenCeilings[meter] < regenCeilings[best] ? meter : best),
@@ -1347,6 +1448,12 @@ if (import.meta.main) {
 		);
 		console.log(
 			`regen ceiling     ${v.envelope.regenerationsPerDay.toLocaleString()}/day (bound by ${v.envelope.regenerationBoundBy}) -> ${v.regenerationFits ? 'FITS' : 'OVER'} (${v.headroom.regenerationRatio.toFixed(2)}x)`
+		);
+		// THE ROW QUOTA IS A WRITE BUDGET and the line above is only one claimant on it. Printed as
+		// the split so a reader can see what regeneration is actually being handed
+		const w = v.envelope.writeBudget;
+		console.log(
+			`write budget      ${w.quotaRows.toLocaleString()} rows/day = ${w.warmingRows.toLocaleString()} warming + ${w.editorialRows.toLocaleString()} editorial + ${w.regenerationRows.toLocaleString()} regeneration, at ${w.rowsPerFill.toFixed(2)} rows/fill`
 		);
 		// reported whether or not it binds; a meter nobody looks at is how the first four were missed
 		const d = v.envelope.duration;

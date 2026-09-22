@@ -163,14 +163,15 @@ describe('authAllowance: the reservation splits the meter', () => {
 		// the whole reservation is only safe if what remains still clears the real workload
 		const a = authAllowance({ PLAN: 'free' });
 		const full = envelope(undefined, { windowed: true });
-		// 10,869 until `envelope()` subtracted what keeping the object resident spends
-		expect(full.regenerationsPerDay).toBe(9_539);
+		// 10,869 until `envelope()` subtracted what keeping the object resident spends, then 9,539
+		// until the meter checkpoint stopped being a flat 60 s -- `meterFlushBudget()`
+		expect(full.regenerationsPerDay).toBe(9_685);
 		expect(full.regenerationBoundBy).toBe('rows');
 		// rows scale linearly, so the anonymous slice is the same ceiling times the leftover fraction
 		const anonymous = Math.floor(
 			full.regenerationsPerDay * (a.rowsForAnonymous / DAILY_ROWS_QUOTA)
 		);
-		expect(anonymous).toBe(7_154);
+		expect(anonymous).toBe(7_263);
 		// 1,000/day is the need at 3M visits/month and 1% dynamic. It was 8.1x before warming was
 		// subtracted; the reservation still clears the workload it exists to protect
 		expect(anonymous / 1_000).toBeGreaterThan(5);

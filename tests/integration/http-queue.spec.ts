@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { driveAlarms, freshSite, inObject, statsOf } from '../helpers/serve-do';
+import {
+	driveAlarms,
+	freshSite,
+	inObject,
+	markProvisioned,
+	pageFor,
+	statsOf,
+	stubRender
+} from '../helpers/serve-do';
 
 /**
  * Ported from the `the deferred HTTP queue drains unattended` region of
@@ -264,6 +272,42 @@ describe('the SSRF guard, through the real capability', () => {
 		expect(calls('169.254.169.254')).toEqual([]);
 		expect(out.stats.httpQueue).toBe(0);
 		expect(String(out.drained.drained?.[0]?.refused ?? '')).not.toBe('');
+	});
+});
+
+describe('the re-drive record says a re-drive HAPPENED, not what one looks like', () => {
+	/**
+	 * Every re-drive of the same path produces identical counts, so without `seq` a reader polling
+	 * `/serve-stats` cannot tell a second occurrence from the first record still sitting there.
+	 * Measured on a deployed worker before this field existed: four consecutive re-driven renders
+	 * of `/admin/reports/status` reported one, because the harness compared the records.
+	 */
+	it('advances seq on every re-drive, so a repeat is distinguishable from a leftover', async () => {
+		const stub = freshSite();
+		stubFetch(async () => new Response('landed', { status: 200 }));
+		const seen = await inObject(stub, async (site) => {
+			markProvisioned(site);
+			// the stub stands in for `cfwFetch` reporting a cache miss, which is the only thing
+			// that arms the re-drive; the real one increments this from inside the render
+			stubRender(site, (call) => {
+				site.deferredInRender = 1;
+				return pageFor(call.path);
+			});
+			const out: unknown[] = [];
+			for (const path of ['/redrive-a', '/redrive-b']) {
+				site.queueHttp(`https://redrive.test${path}`);
+				await site.fillOne(path);
+				out.push(site.lastRedrive);
+			}
+			return out as { path: string; seq: number; at: number }[];
+		});
+
+		expect(seen[0]?.seq).toBe(1);
+		expect(seen[1]?.seq).toBe(2);
+		expect(seen[1]?.at).toBeGreaterThanOrEqual(seen[0]?.at as number);
+		// the counts alone are what could not tell the two apart
+		expect(seen[0]?.path).toBe('/redrive-a');
+		expect(seen[1]?.path).toBe('/redrive-b');
 	});
 });
 

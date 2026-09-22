@@ -73,6 +73,86 @@ export const WARM_FIRING_COST_MS = 79;
 /** the crossing the constant above reproduces, kept so the derivation is checkable */
 export const BREAK_EVEN_RENDERS_PER_DAY = 505;
 
+/**
+ * The re-arm that is MEASURED to hold an object resident, and the one to retreat to.
+ *
+ * 8,000 against a 10,000 ms hibernation threshold: one incarnation survived 71 consecutive firings
+ * at this interval, and 12,000 lost the isolate on every probe. Nothing between 8,000 and 12,000
+ * was ever driven, so this is the largest interval with evidence behind it rather than the largest
+ * that works.
+ */
+export const WARM_INTERVAL_VERIFIED_MS = 8_000;
+
+/**
+ * The top of the band, and the margin is the only free parameter in the whole model.
+ *
+ * Any interval below the threshold prevents every cold boot equally well, so the benefit does not
+ * vary across the band and the cost is one firing per interval. That makes the optimum the LARGEST
+ * safe interval, not a point somewhere inside: at 9,500 a warmed site fires 9,094 times a day
+ * against 10,800, which is 1,706 rows returned.
+ *
+ * Whether 9,500 is safe is an empirical question about how late a Cloudflare alarm may fire, and
+ * this project has not measured it. So it is a ceiling to climb toward on observed evidence rather
+ * than a new default; {@link solveWarmInterval} is what does the climbing.
+ */
+export const WARM_MARGIN_MIN_MS = 500;
+
+/**
+ * The hibernation threshold this module solves against, mirroring `HIBERNATION_IDLE_MS`.
+ *
+ * Restated rather than imported so a thermal spec does not pull `cron.ts` and the PHP cron
+ * fragments behind it into its import graph, which is 34% of the gate's lane-work. Pinned against
+ * the original in `tests/unit/ops/cron-step.spec.ts`, which already imports both.
+ */
+export const HIBERNATION_ASSUMED_MS = 10_000;
+
+/** one probe step, which is 1.5 hours from the verified interval to the ceiling */
+export const WARM_INTERVAL_STEP_MS = 500;
+
+/** clean windows before a climb; two, so one lucky window cannot move the interval */
+export const WARM_CLEAN_WINDOWS = 2;
+
+/** what a window carries before anything has been solved */
+const ZERO_SOLVED = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+
+/** the feasible band, which a stored value is forced back into on every read */
+export function clampWarmInterval(ms: number, thresholdMs = HIBERNATION_ASSUMED_MS): number {
+	const ceiling = Math.max(1, thresholdMs - WARM_MARGIN_MIN_MS);
+	return Math.min(ceiling, Math.max(1, Math.round(ms)));
+}
+
+/**
+ * The next warm interval, from whether the last window's warming chain actually held.
+ *
+ * SOLVED RATHER THAN PICKED, which is the whole item: `thermalRearmMs()` chose between two
+ * constants, and the one it chose when warming was the smallest interval anybody had evidence for.
+ * The band above it is worth 1,706 rows a day and nothing in this repository knows whether it is
+ * safe, so the object finds out for itself and pays for being wrong exactly once.
+ *
+ * Climbs one step after {@link WARM_CLEAN_WINDOWS} windows that ONE incarnation spanned, and
+ * retreats all the way to {@link WARM_INTERVAL_VERIFIED_MS} on a window it did not. The retreat is
+ * to the verified value rather than one step back because a broken chain says the current interval
+ * is unsafe on this object and the next-lower step has no more evidence behind it than the one that
+ * just failed.
+ *
+ * @param survived whether a single incarnation spanned the window that is closing. A re-created
+ *   object cannot have stayed resident, so this is the observation and not a proxy for one.
+ */
+export function solveWarmInterval(
+	state: { intervalMs: number; clean: number },
+	survived: boolean,
+	thresholdMs = HIBERNATION_ASSUMED_MS
+): { intervalMs: number; clean: number } {
+	const current = clampWarmInterval(state.intervalMs, thresholdMs);
+	if (!survived) return { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+	const clean = state.clean + 1;
+	if (clean < WARM_CLEAN_WINDOWS) return { intervalMs: current, clean };
+	return {
+		intervalMs: clampWarmInterval(current + WARM_INTERVAL_STEP_MS, thresholdMs),
+		clean: 0
+	};
+}
+
 export type WarmDecision = {
 	warm: boolean;
 	/** renders per second over the window, which is what the model is driven by */
@@ -114,21 +194,51 @@ export function renderRate(
  * lesson the expensive way -- a counter written on every idle tick was 32.4% of free's row budget
  * recording its own bookkeeping.
  */
-export type RenderWindow = { startedAt: number; renders: number };
+export type RenderWindow = {
+	startedAt: number;
+	renders: number;
+	/** the warm re-arm this object has converged on; see {@link solveWarmInterval} */
+	intervalMs: number;
+	/** consecutive whole windows the warming chain survived without a re-creation */
+	clean: number;
+};
 
-/** parses the packed `<startedAt>:<renders>` meta value; null for anything malformed */
+/**
+ * Parses the packed meta value; null for anything malformed.
+ *
+ * Two fields or four. The two-field form is what shipped, and it is read rather than discarded
+ * because discarding it would reset every warmed object's rate estimate on the deploy that added
+ * the interval -- which is the one reading the thermal decision cannot do without.
+ */
 export function readRenderWindow(value: string | null | undefined): RenderWindow | null {
 	const parts = String(value ?? '').split(':');
-	if (parts.length !== 2) return null;
+	if (parts.length !== 2 && parts.length !== 4) return null;
 	const startedAt = Number(parts[0]);
 	const renders = Number(parts[1]);
 	if (!Number.isFinite(startedAt) || !Number.isFinite(renders)) return null;
 	if (startedAt <= 0 || renders < 0) return null;
-	return { startedAt, renders };
+	const solved = parts.length === 4 ? readSolvedInterval(parts[2], parts[3]) : null;
+	return { startedAt, renders, ...(solved ?? ZERO_SOLVED) };
+}
+
+function readSolvedInterval(
+	rawInterval: string | undefined,
+	rawClean: string | undefined
+): { intervalMs: number; clean: number } | null {
+	const intervalMs = Number(rawInterval);
+	const clean = Number(rawClean);
+	if (!Number.isFinite(intervalMs) || !Number.isFinite(clean)) return null;
+	if (intervalMs <= 0 || clean < 0) return null;
+	return { intervalMs: clampWarmInterval(intervalMs), clean: Math.round(clean) };
 }
 
 export function writeRenderWindow(window: RenderWindow): string {
-	return `${Math.round(window.startedAt)}:${Math.round(window.renders)}`;
+	return [
+		Math.round(window.startedAt),
+		Math.round(window.renders),
+		Math.round(window.intervalMs),
+		Math.round(window.clean)
+	].join(':');
 }
 
 /**
@@ -140,12 +250,29 @@ export function foldRenderWindow(
 	stored: RenderWindow | null,
 	pending: number,
 	nowMs: number,
-	windowMs = RATE_WINDOW_MS
+	windowMs = RATE_WINDOW_MS,
+	/** whether ONE incarnation spanned the window that is closing; see {@link solveWarmInterval} */
+	survived = false
 ): RenderWindow {
 	if (stored === null || nowMs - stored.startedAt >= windowMs) {
-		return { startedAt: nowMs, renders: pending };
+		const carried = stored ?? ZERO_SOLVED;
+		return {
+			startedAt: nowMs,
+			renders: pending,
+			...(stored === null
+				? ZERO_SOLVED
+				: solveWarmInterval(
+						{ intervalMs: carried.intervalMs, clean: carried.clean },
+						survived
+					))
+		};
 	}
-	return { startedAt: stored.startedAt, renders: stored.renders + pending };
+	return {
+		startedAt: stored.startedAt,
+		renders: stored.renders + pending,
+		intervalMs: stored.intervalMs,
+		clean: stored.clean
+	};
 }
 
 /**
@@ -187,7 +314,7 @@ export function warmDecision(
 		/** what survived the last hibernation; without it the ring is empty on every wake */
 		stored?: RenderWindow | null;
 	} = {
-		thresholdMs: 10_000
+		thresholdMs: HIBERNATION_ASSUMED_MS
 	}
 ): WarmDecision {
 	const windowMs = opts.windowMs ?? RATE_WINDOW_MS;

@@ -4,14 +4,21 @@ import {
 	AUTH_WARM_WINDOW_MS,
 	BREAK_EVEN_RENDERS_PER_DAY,
 	COLD_BOOT_MS,
+	HIBERNATION_ASSUMED_MS,
 	RATE_WINDOW_MS,
+	WARM_CLEAN_WINDOWS,
 	WARM_FIRING_COST_MS,
+	WARM_INTERVAL_STEP_MS,
+	WARM_INTERVAL_VERIFIED_MS,
+	WARM_MARGIN_MIN_MS,
 	arrivalProbability,
+	clampWarmInterval,
 	foldRenderWindow,
 	readRenderWindow,
 	recordArrival,
 	renderRate,
 	routeFamilies,
+	solveWarmInterval,
 	warmDecision,
 	windowRate,
 	writeRenderWindow,
@@ -243,9 +250,27 @@ describe('prewarming a route family rather than a URL', () => {
 describe('the render window that outlives an incarnation', () => {
 	const NOW = 1_700_000_000_000;
 
+	/** a stored window carries the solver's state too; these cases are about the rate half */
+	const win = (startedAt: number, renders: number) => ({
+		startedAt,
+		renders,
+		intervalMs: WARM_INTERVAL_VERIFIED_MS,
+		clean: 0
+	});
+
 	it('round trips through the packed meta value', () => {
-		const window = { startedAt: NOW, renders: 12 };
+		const window = win(NOW, 12);
 		expect(readRenderWindow(writeRenderWindow(window))).toEqual(window);
+	});
+
+	/**
+	 * The two-field value every warmed object already has stored.
+	 *
+	 * Dropping it would reset the rate estimate on the deploy that adds the interval, which is the
+	 * one reading `warmDecision()` cannot take after a hibernation without.
+	 */
+	it('reads the shape that shipped, and defaults the solver state', () => {
+		expect(readRenderWindow(`${NOW}:12`)).toEqual(win(NOW, 12));
 	});
 
 	it.each([null, undefined, '', 'nonsense', '123', 'a:b', '-1:4', `${NOW}:-2`])(
@@ -259,26 +284,26 @@ describe('the render window that outlives an incarnation', () => {
 	it('divides by the WINDOW, not by how long the bucket has been open', () => {
 		// a bucket three seconds old holding two renders is not 0.67 renders/second, and reading it
 		// that way is how a burst talks a predictor into warming a site that had one visitor
-		const rate = windowRate({ startedAt: NOW - 3_000, renders: 2 }, NOW);
+		const rate = windowRate(win(NOW - 3_000, 2), NOW);
 		expect(rate).toBeCloseTo(2 / (RATE_WINDOW_MS / 1000), 10);
 	});
 
 	it('answers zero for a window that has aged out', () => {
-		expect(windowRate({ startedAt: NOW - RATE_WINDOW_MS, renders: 500 }, NOW)).toBe(0);
+		expect(windowRate(win(NOW - RATE_WINDOW_MS, 500), NOW)).toBe(0);
 	});
 
 	it('rolls the bucket rather than accumulating, so last month cannot keep a site warm', () => {
-		const old = { startedAt: NOW - RATE_WINDOW_MS - 1, renders: 900 };
-		expect(foldRenderWindow(old, 1, NOW)).toEqual({ startedAt: NOW, renders: 1 });
+		const old = win(NOW - RATE_WINDOW_MS - 1, 900);
+		expect(foldRenderWindow(old, 1, NOW)).toEqual(win(NOW, 1));
 	});
 
 	it('folds into an open bucket without moving its start', () => {
-		const open = { startedAt: NOW - 1_000, renders: 4 };
-		expect(foldRenderWindow(open, 3, NOW)).toEqual({ startedAt: NOW - 1_000, renders: 7 });
+		const open = win(NOW - 1_000, 4);
+		expect(foldRenderWindow(open, 3, NOW)).toEqual(win(NOW - 1_000, 7));
 	});
 
 	it('starts a bucket when nothing is stored', () => {
-		expect(foldRenderWindow(null, 2, NOW)).toEqual({ startedAt: NOW, renders: 2 });
+		expect(foldRenderWindow(null, 2, NOW)).toEqual(win(NOW, 2));
 	});
 
 	/** the pair that is the whole point: the same site, decided with and without the survivor */
@@ -286,7 +311,7 @@ describe('the render window that outlives an incarnation', () => {
 		// a rate comfortably inside the measured band, arriving as a stored window because the ring
 		// died with the previous incarnation
 		const renders = Math.round((BREAK_EVEN_RENDERS_PER_DAY * 4 * RATE_WINDOW_MS) / 86_400_000);
-		const stored = { startedAt: NOW - 1_000, renders };
+		const stored = win(NOW - 1_000, renders);
 
 		const withoutIt = warmDecision([], NOW, { thresholdMs: 10_000 });
 		expect(withoutIt.warm, 'the empty ring must be what refused, or this proves nothing').toBe(
@@ -308,7 +333,7 @@ describe('the render window that outlives an incarnation', () => {
 		);
 		const decision = warmDecision([], NOW, {
 			thresholdMs: 10_000,
-			stored: { startedAt: NOW - 1_000, renders }
+			stored: win(NOW - 1_000, renders)
 		});
 		expect(decision.warm).toBe(false);
 		expect(decision.expected).toBeLessThan(0);
@@ -322,17 +347,116 @@ describe('the render window that outlives an incarnation', () => {
 		const fromRing = warmDecision(busy, NOW, { thresholdMs: 10_000 });
 		const withStale = warmDecision(busy, NOW, {
 			thresholdMs: 10_000,
-			stored: { startedAt: NOW - 1_000, renders: 1 }
+			stored: win(NOW - 1_000, 1)
 		});
 		expect(withStale.rate).toBe(fromRing.rate);
 		expect(withStale.warm).toBe(fromRing.warm);
 	});
 
 	it('leaves an explicit SITE_WARM in charge in both directions', () => {
-		const stored = { startedAt: NOW - 1_000, renders: 900 };
+		const stored = win(NOW - 1_000, 900);
 		expect(warmDecision([], NOW, { thresholdMs: 10_000, forced: false, stored }).warm).toBe(
 			false
 		);
 		expect(warmDecision([], NOW, { thresholdMs: 10_000, forced: true }).warm).toBe(true);
+	});
+});
+
+/**
+ * The interval, solved rather than picked between two constants.
+ *
+ * `thermalRearmMs()` answered `warm ? 8000 : 240000`, and 8,000 is the largest interval anybody has
+ * driven rather than the largest that works. Every interval below the hibernation threshold
+ * prevents the same cold boots, so the benefit is flat across the band and the cost is one firing
+ * per interval -- which makes the optimum the top of the band. 9,500 fires 9,094 times a day
+ * against 10,800.
+ *
+ * Nothing here measures whether 9,500 is safe; the object finds out on its own traffic and retreats
+ * to the verified value the first window its chain breaks.
+ */
+describe('the warm interval, solved from what the object survived', () => {
+	it('mirrors the hibernation threshold it solves against', () => {
+		// pinned in `tests/unit/ops/cron-step.spec.ts` against `HIBERNATION_IDLE_MS` itself
+		expect(HIBERNATION_ASSUMED_MS).toBe(10_000);
+		expect(WARM_INTERVAL_VERIFIED_MS).toBeLessThan(HIBERNATION_ASSUMED_MS);
+	});
+
+	it('never exceeds the threshold, whatever is stored', () => {
+		const ceiling = HIBERNATION_ASSUMED_MS - WARM_MARGIN_MIN_MS;
+		expect(clampWarmInterval(45_000)).toBe(ceiling);
+		expect(clampWarmInterval(HIBERNATION_ASSUMED_MS)).toBe(ceiling);
+		// an interval at or above the threshold spends a row per firing and warms nothing, which is
+		// the worst of both and the reason the clamp is at the read rather than at the write
+		expect(clampWarmInterval(-1)).toBeGreaterThan(0);
+	});
+
+	it('holds still until enough clean windows, then climbs one step', () => {
+		let state = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+		for (let i = 1; i < WARM_CLEAN_WINDOWS; i++) {
+			state = solveWarmInterval(state, true);
+			expect(state.intervalMs, `climbed after ${i} clean window(s)`).toBe(
+				WARM_INTERVAL_VERIFIED_MS
+			);
+		}
+		state = solveWarmInterval(state, true);
+		expect(state.intervalMs).toBe(WARM_INTERVAL_VERIFIED_MS + WARM_INTERVAL_STEP_MS);
+		expect(state.clean).toBe(0);
+	});
+
+	it('reaches the ceiling and stops there', () => {
+		let state = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+		for (let i = 0; i < 100; i++) state = solveWarmInterval(state, true);
+		expect(state.intervalMs).toBe(HIBERNATION_ASSUMED_MS - WARM_MARGIN_MIN_MS);
+	});
+
+	/**
+	 * THE RETREAT IS ALL THE WAY BACK, not one step.
+	 *
+	 * A window the chain did not survive says the interval in force is unsafe on this object, and
+	 * the step below it has exactly as little evidence behind it as the one that just failed. The
+	 * verified value is the only one with a measurement.
+	 */
+	it('retreats to the verified interval on the first broken window', () => {
+		let state = { intervalMs: WARM_INTERVAL_VERIFIED_MS, clean: 0 };
+		for (let i = 0; i < 100; i++) state = solveWarmInterval(state, true);
+		// the control: it had climbed, so the retreat below is moving something
+		expect(state.intervalMs).toBeGreaterThan(WARM_INTERVAL_VERIFIED_MS);
+
+		const after = solveWarmInterval(state, false);
+		expect(after.intervalMs).toBe(WARM_INTERVAL_VERIFIED_MS);
+		expect(after.clean).toBe(0);
+	});
+
+	it('costs fewer firings at the ceiling than at the verified interval', () => {
+		const perDay = (ms: number) => Math.floor(86_400_000 / ms);
+		expect(perDay(WARM_INTERVAL_VERIFIED_MS)).toBe(10_800);
+		expect(perDay(HIBERNATION_ASSUMED_MS - WARM_MARGIN_MIN_MS)).toBe(9_094);
+	});
+
+	/** the solver state rides in the row the window roll was already paying for */
+	it('carries through a window roll and survives the round trip', () => {
+		const NOW = 1_700_000_000_000;
+		const climbed = {
+			startedAt: NOW - RATE_WINDOW_MS - 1,
+			renders: 900,
+			intervalMs: 9_000,
+			clean: 1
+		};
+		const rolled = foldRenderWindow(climbed, 1, NOW, RATE_WINDOW_MS, true);
+		expect(rolled.intervalMs).toBe(9_500);
+		expect(readRenderWindow(writeRenderWindow(rolled))).toEqual(rolled);
+
+		// and a roll the incarnation did not span retreats, in the same row
+		const broken = foldRenderWindow(climbed, 1, NOW, RATE_WINDOW_MS, false);
+		expect(broken.intervalMs).toBe(WARM_INTERVAL_VERIFIED_MS);
+	});
+
+	/** an open bucket is not a decision point, so it must leave the solver alone */
+	it('leaves the interval untouched when the window has not rolled', () => {
+		const NOW = 1_700_000_000_000;
+		const open = { startedAt: NOW - 1_000, renders: 4, intervalMs: 9_000, clean: 1 };
+		const folded = foldRenderWindow(open, 3, NOW, RATE_WINDOW_MS, false);
+		expect(folded.intervalMs).toBe(9_000);
+		expect(folded.clean).toBe(1);
 	});
 });

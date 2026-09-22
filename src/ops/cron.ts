@@ -381,6 +381,20 @@ export function warmIntervalMs(env?: CronEnv | null): number {
 }
 
 /**
+ * The same value, or null when nobody stated one.
+ *
+ * `warmIntervalMs()` cannot answer this because it folds the default in, and the two questions are
+ * different: an operator who set the interval has made a decision the solver must not overrule,
+ * while an unset variable is the case the solver exists for.
+ */
+export function warmIntervalConfigured(env?: CronEnv | null): number | null {
+	const set = env?.WARM_INTERVAL_MS;
+	if (set === undefined || set === null || String(set) === '') return null;
+	const n = Number(set);
+	return Number.isFinite(n) && n >= 1 ? warmIntervalMs(env) : null;
+}
+
+/**
  * Whether this site re-arms fast enough to stay resident.
  *
  * On by default on both plans. One site is the case to price, and there warming costs 10.8% of

@@ -15,9 +15,11 @@ import {
 	readCursor,
 	siteWarmEnabled,
 	skippedCronHooks,
+	warmIntervalConfigured,
 	warmIntervalMs,
 	writeCursor
 } from '../../../src/ops/cron';
+import { HIBERNATION_ASSUMED_MS } from '../../../src/ops/thermal';
 
 describe('cronUnits: the chain and what it omits', () => {
 	const units = cronUnits();
@@ -294,6 +296,32 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 
 	it('ignores nonsense rather than producing 0 or NaN', () => {
 		expect(warmIntervalMs({ WARM_INTERVAL_MS: 'abc' })).toBeGreaterThan(0);
+	});
+
+	/**
+	 * `thermal.ts` restates this threshold rather than importing it, so that a thermal spec does not
+	 * pull the PHP cron fragments into its import graph. This is the pin that makes the copy safe.
+	 */
+	it('agrees with the copy thermal.ts solves the warm interval against', () => {
+		expect(HIBERNATION_ASSUMED_MS).toBe(HIBERNATION_IDLE_MS);
+	});
+
+	/**
+	 * The solver may only move an interval nobody stated.
+	 *
+	 * A predictor overruling an operator is the failure `warmDecision()`'s `forced` branch exists to
+	 * prevent, and the interval needs the same boundary: `warmIntervalMs()` folds the default in, so
+	 * it cannot tell a stated 8,000 from an unset one.
+	 */
+	it('separates a stated interval from an unset one', () => {
+		expect(warmIntervalConfigured({})).toBeNull();
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '' })).toBeNull();
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: 'abc' })).toBeNull();
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '6000' })).toBe(6000);
+		// still clamped, because a stated value that cannot warm is still a value that cannot warm
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '45000' })).toBeLessThan(
+			HIBERNATION_IDLE_MS
+		);
 	});
 });
 

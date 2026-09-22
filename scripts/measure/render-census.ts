@@ -66,12 +66,22 @@ export type Arm = Census & {
 /**
  * Charged rows a `cfw_page` upsert costs, derived from the schema rather than measured.
  *
- * `path TEXT PRIMARY KEY` is NOT the rowid, so sqlite keeps a separate index for it and one stored
- * row is charged twice; the table declares no other index. Labelled as derived because it is: on the
- * shipped pack a fill stores no page at all -- every arm reports `stored: false` -- so there is
- * nothing to read this off, and `chargePerInsertedRow()` in `index-audit.ts` is the model it follows.
+ * **IT WAS 2 AND THE REASON GIVEN FOR THE 2 HAD EXPIRED.** The docblock here said "`path TEXT
+ * PRIMARY KEY` is NOT the rowid, so sqlite keeps a separate index for it and one stored row is
+ * charged twice". That was true of a rowid table; `cfw_page` is declared `WITHOUT ROWID`, which
+ * makes the primary key the b-tree itself -- one logical row, one charged row, and no separate
+ * index to pay for. The table still declares no other index.
+ *
+ * Nothing downstream of the published ceiling moved with it: `ROWS_PER_FILL.realRender` is measured
+ * against real fills by `rows-per-fill-audit.spec.ts` and already reflects one row. What this
+ * constant feeds is LEVER SCORING below, which overstated the saving from removing the page row by
+ * exactly 2x.
+ *
+ * Labelled as derived because it is: on the shipped pack a fill stores no page at all -- every arm
+ * reports `stored: false` -- so there is nothing to read this off, and `chargePerInsertedRow()` in
+ * `index-audit.ts` is the model it follows.
  */
-export const CFW_PAGE_CHARGED_ROWS = 2;
+export const CFW_PAGE_CHARGED_ROWS = 1;
 
 /** what a lever would remove from ONE fill */
 export type Removal = {

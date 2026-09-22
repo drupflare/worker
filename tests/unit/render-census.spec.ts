@@ -160,9 +160,16 @@ describe('the spread a figure is quoted with', () => {
 });
 
 describe('the cfw_page charge', () => {
-	it('is the schema factor for a TEXT primary key, which is not the rowid', () => {
-		// one stored row plus one index entry. Named as a constant rather than measured because
-		// on the shipped pack a fill stores no page at all, so there is nothing to read it off
-		expect(CFW_PAGE_CHARGED_ROWS).toBe(2);
+	/**
+	 * ONE, not two. `cfw_page` is declared `WITHOUT ROWID`, so its TEXT primary key IS the b-tree and
+	 * there is no separate index to charge for. The 2 was the rowid-table reading and outlived the
+	 * schema, with this assertion holding it in place -- which is why the reason is asserted here
+	 * rather than only the number.
+	 *
+	 * Named as a constant rather than measured because on the shipped pack a fill stores no page at
+	 * all, so there is nothing to read it off.
+	 */
+	it('is one row, because the table has no rowid for a second index to hang off', () => {
+		expect(CFW_PAGE_CHARGED_ROWS).toBe(1);
 	});
 });

@@ -305,16 +305,27 @@ describe('the alarm produces this site one heap image', () => {
 			// one firing on purpose: the subject is that the IMAGING firing ends after imaging
 			await runDurableObjectAlarm(stub);
 
-			const after = await inObject(stub, (site) => ({
-				php: (site as any).php !== null,
-				outcome: (site as any).lastAlarmOutcome,
-				imaged: (site as any).metaGet('heap_image_gen')
-			}));
+			// EVERYTHING IN ONE ROUND TRIP, and the alarm cancelled first. The imaging firing
+			// re-arms at +1,000 ms and this pool fires a scheduled alarm on its own -- verified,
+			// a +300 ms alarm raises `alarmFirings` with no `runDurableObjectAlarm` at all. So a
+			// second firing, which images nothing and therefore DOES fill, was racing the assertion
+			// below: it held on an idle machine and drained the queue under a loaded suite.
+			const after = await inObject(stub, async (site) => {
+				await (
+					site.ctx.storage as unknown as { deleteAlarm(): Promise<void> }
+				).deleteAlarm();
+				return {
+					php: (site as any).php !== null,
+					outcome: (site as any).lastAlarmOutcome,
+					imaged: (site as any).metaGet('heap_image_gen'),
+					queued: (site as any).queueDepth()
+				};
+			});
 			expect(after.imaged).not.toBe(null);
 			expect(after.php).toBe(false);
 			expect(after.outcome?.heapImage?.ok).toBe(true);
 			// the queued page is still queued -- it did not get rendered on the imaging firing
-			expect(await inObject(stub, (site) => (site as any).queueDepth())).toBeGreaterThan(0);
+			expect(after.queued).toBeGreaterThan(0);
 		},
 		TIMEOUT
 	);

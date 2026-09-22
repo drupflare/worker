@@ -148,11 +148,11 @@ must not lock its owner out of the routes they need to repair it.
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
-serving is bound by Worker requests at 100,000/day, regeneration by rows written at 9,539/day
+serving is bound by Worker requests at 100,000/day, regeneration by rows written at 9,685/day
 windowed and 2,477 on the alarm chain -- so regeneration is the tighter one by 10x and 40x
 respectively. **Those two moved on 2026-09-22 and the figures they replaced are in every older
 document**: `envelope()` divided the whole row budget as though warming were free, and a warmed
-object is the shipping default at 12,240 rows/day. `envelope({ warmed: false })` answers the old
+object is the shipping default at 10,896 rows/day. `envelope({ warmed: false })` answers the old
 10,869. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
 either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
 
@@ -2394,7 +2394,7 @@ is the meter that binds regeneration, and it is also the dominant Durable Object
 requests, duration and storage are not close.
 
 **The pool therefore trades rows written for read throughput at N+1 to 1**, which no document said
-until 2026-09-19. Regeneration is bound by 9,539 rows/day windowed, so an 8-lane pool reaches that
+until 2026-09-19. Regeneration is bound by 9,685 rows/day windowed, so an 8-lane pool reaches that
 ceiling nine times sooner. The pool is a lever for READ-heavy sites and is actively harmful to
 write-heavy ones; score a proposed pool against the write rate, not only the read rate.
 

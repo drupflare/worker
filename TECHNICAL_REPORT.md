@@ -31,7 +31,7 @@ project shipped before it is gone from the path.
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Authenticated page, RENDER path | **208 ms p50**, and it is the render path rather than the median | see the mixture below |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **9,539 renders/day** windowed, **2,477** on the alarm chain | rows written binds, warming subtracted |
+| Regeneration ceiling, free | **9,685 renders/day** windowed, **2,477** on the alarm chain | rows written binds, warming subtracted |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 | Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
 | Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
@@ -53,15 +53,20 @@ against a limit nobody measured.
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **9,539/day** |
+| **Regeneration** | distinct pages re-rendered per day | **rows written** | **9,685/day** |
 
 **The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
 divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
 `siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default,
-and at the 8 s interval it spends **12,240 rows/day and 10,800 DO requests/day** keeping itself
+and at the 8 s interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
 resident. The published ceiling was therefore the ceiling of a configuration the product does not
-ship. Subtracting it takes the windowed figure **10,869 -> 9,539/day**, which is **12.2% lower**,
+ship. Subtracting it takes the windowed figure **10,869 -> 9,685/day**, which is **10.9% lower**,
 and the alarm-chain figure 2,777 -> 2,477.
+
+The row half of that was 12,240 until the daily meters stopped checkpointing on a flat 60 s clock.
+`meterFlushBudget()` scales both flush triggers with the remaining budget and answers the old 25
+rows and 60 s at the ceiling, where a lost count could change a decision; a warmed site now
+checkpoints 96 times a day rather than 1,440.
 
 `thermal.ts` declines to warm a site below about 505 renders/day, so this is not every site. A site
 AT the regeneration ceiling is rendering far above that crossing by construction, which is what makes
@@ -1487,7 +1492,7 @@ Measured on a steady-state render at **8 charged rows -> 6**, bins' index
 charge **3 -> 0**, n=3 with zero spread. Every warmth class fell with it: `firstFillOnFreshObject`
 156 -> **103**, `firstEverForPath` 24 -> **14**, `realRender` 12 -> **9**, and `warmReassemble`
 alone unchanged at 2 because it writes only `cfw_page`. The windowed regeneration ceiling moved
-**8,196 -> 10,869/day**. Both of those are pre-warming figures: the ceiling is 9,539 now, for the
+**8,196 -> 10,869/day**. Both of those are pre-warming figures: the ceiling is 9,685 now, for the
 reason the next section gives, and the 1.33x this conversion bought is unaffected by it.
 
 Two things that were nearly reported wrong here. A first pass read 11 -> 6 and **3 of those 5 rows
@@ -2241,7 +2246,7 @@ and rows written is the meter the counters exist to count.
 `src/ops/day-meters.ts` packs all four into one dated row, the way `writeRenderWindow()` already
 packs its two values. An idle warming tick's flush goes **2 rows -> 1** and a trafficked site's
 **4 -> 1**, which is what moves `FREE_QUOTAS.rowsPerMeterFlush` to 1 and takes a warmed site from
-13,680 rows/day to **12,240**. `serveTotal` stays a lifetime figure inside the daily row and carries
+13,680 rows/day to **12,240**, and to **10,896** once the checkpoint left its flat 60 s clock. `serveTotal` stays a lifetime figure inside the daily row and carries
 forward, so `/serve-stats` reports the quantity it always did rather than quietly becoming a daily
 count. The four keys are still READ while a day has no packed row, so an object upgraded mid-day does
 not restart the counter its own degrade guard reads.
@@ -2692,7 +2697,7 @@ into each other.
 ### A lane is paid for on the rows-written meter
 
 Replication writes every primary row again on each lane, so a pool of N costs **N+1 rows per
-change**. Rows written is the meter that bounds regeneration at 9,539 rows/day windowed, so an
+change**. Rows written is the meter that bounds regeneration at 9,685 rows/day windowed, so an
 8-lane pool reaches that ceiling nine times sooner than a single object, and it is also the dominant
 Durable Object cost line on paid -- requests, duration and storage are not close to it.
 

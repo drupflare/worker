@@ -1,5 +1,5 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>ResidencyState | drupflare/worker - v1.0.1</title><meta name="description" content="Documentation for drupflare/worker"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
-<div class="tsd-toolbar-contents container"><a href="../index.html" class="title">drupflare/worker - v1.0.1</a>
+<!DOCTYPE html><html class="default" lang="en" data-base="../"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>ResidencyState | drupflare/worker - v1.0.2</title><meta name="description" content="Documentation for drupflare/worker"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="../assets/style.css"/><link rel="stylesheet" href="../assets/highlight.css"/><script defer src="../assets/main.js"></script><script async src="../assets/icons.js" id="tsd-icons-script"></script><script async src="../assets/search.js" id="tsd-search-script"></script><script async src="../assets/navigation.js" id="tsd-nav-script"></script><script async src="../assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<div class="tsd-toolbar-contents container"><a href="../index.html" class="title">drupflare/worker - v1.0.2</a>
 <div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
 <ul role="listbox" id="tsd-search-results"></ul>
 <div id="tsd-search-status" aria-live="polite" aria-atomic="true">
@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">ResidencyState</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#inflightfetch">inflightFetch</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#outboundsocket">outboundSocket</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pendingalarm">pendingAlarm</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#pendingtimer">pendingTimer</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#requestinflight">requestInFlight</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#standardwebsocket">standardWebSocket</a><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L35">src/ops/hibernation.ts:35</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L35">src/ops/hibernation.ts:35</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -40,42 +40,42 @@
 <div class="tsd-comment tsd-typography"><p>an awaited <code>fetch()</code> still in flight</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L39">src/ops/hibernation.ts:39</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L39">src/ops/hibernation.ts:39</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="outboundsocket"><code class="tsd-tag">Optional</code><span>outbound<wbr/>Socket</span><a href="#outboundsocket" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">outboundSocket</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>an outbound TCP socket from <code>connect()</code>, or an outbound WebSocket</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L45">src/ops/hibernation.ts:45</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L45">src/ops/hibernation.ts:45</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pendingalarm"><code class="tsd-tag">Optional</code><span>pending<wbr/>Alarm</span><a href="#pendingalarm" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pendingAlarm</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>an armed alarm; present here and not disqualifying</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L47">src/ops/hibernation.ts:47</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L47">src/ops/hibernation.ts:47</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="pendingtimer"><code class="tsd-tag">Optional</code><span>pending<wbr/>Timer</span><a href="#pendingtimer" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">pendingTimer</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>a <code>setTimeout</code> or <code>setInterval</code> callback that has not fired</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L37">src/ops/hibernation.ts:37</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L37">src/ops/hibernation.ts:37</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="requestinflight"><code class="tsd-tag">Optional</code><span>request<wbr/>In<wbr/>Flight</span><a href="#requestinflight" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">requestInFlight</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>a request or event whose handler has not returned</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L43">src/ops/hibernation.ts:43</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L43">src/ops/hibernation.ts:43</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="standardwebsocket"><code class="tsd-tag">Optional</code><span>standard<wbr/>Web<wbr/>Socket</span><a href="#standardwebsocket" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">standardWebSocket</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">boolean</span></div>
 <div class="tsd-comment tsd-typography"><p>the standard WebSocket API, as opposed to the hibernatable one</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/2e7df05124ba218218fa747513546c54cb34d401/src/ops/hibernation.ts#L41">src/ops/hibernation.ts:41</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/74dea63f0b227b2b06c506b2ea9bf81461106ffc/src/ops/hibernation.ts#L41">src/ops/hibernation.ts:41</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">
@@ -94,7 +94,7 @@
 <details open class="tsd-accordion tsd-page-navigation-section"><summary class="tsd-accordion-summary" data-key="section-Properties"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>Properties</summary>
 <div><a href="#inflightfetch"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>inflight<wbr/>Fetch</span></a><a href="#outboundsocket"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>outbound<wbr/>Socket</span></a><a href="#pendingalarm"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>pending<wbr/>Alarm</span></a><a href="#pendingtimer"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>pending<wbr/>Timer</span></a><a href="#requestinflight"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>request<wbr/>In<wbr/>Flight</span></a><a href="#standardwebsocket"><svg class="tsd-kind-icon" viewBox="0 0 24 24" aria-label="Property"><use href="../assets/icons.svg#icon-1024"></use></svg><span>standard<wbr/>Web<wbr/>Socket</span></a></div></details></div></details></div>
 <div class="site-menu">
-<nav class="tsd-navigation"><a href="../modules.html">drupflare/worker - v1.0.1</a>
+<nav class="tsd-navigation"><a href="../modules.html">drupflare/worker - v1.0.2</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
 <li>Loading...</li></ul></nav></div></div></div><footer>
 <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer>

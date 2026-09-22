@@ -1,4 +1,5 @@
 import '@drupflare/cartridge/shim';
+import { backendNeedsPark, selectBackend, type BackendEnv } from './db/backend.js';
 import type { SiteEnv } from './env.js';
 import { substituteAggregates, type AggregateIndex } from './ops/aggregates.js';
 import type { CacheTier } from './ops/cache-tiers.js';
@@ -15,6 +16,7 @@ import {
 import {
 	DAY_METERS_PREFIX,
 	dayMetersKey,
+	meterFlushBudget,
 	readDayMeters,
 	writeDayMeters,
 	type DayMeters
@@ -30,8 +32,14 @@ import {
 	ttlFor
 } from './ops/deferred-post.js';
 import { DRIVER_DIGEST } from './ops/driver-digest.js';
-import { fanoutDecision } from './ops/fanout.js';
-import { ensureFragmentTables, indexFragments } from './ops/fragment-index.js';
+import { ROWS_PER_TAGGED_PAGE, ROWS_PER_UNTAGGED_PAGE, fanoutDecision } from './ops/fanout.js';
+import {
+	ensureFragmentTables,
+	indexFragments,
+	purgeShellsForTags,
+	readTagList,
+	tagChecksum
+} from './ops/fragment-index.js';
 import { engineFeatures } from './ops/image-runtime.js';
 import {
 	imageEngine,
@@ -100,6 +108,8 @@ import {
 } from './ops/tcp.js';
 import {
 	RATE_WINDOW_MS,
+	WARM_INTERVAL_VERIFIED_MS,
+	clampWarmInterval,
 	foldRenderWindow,
 	readRenderWindow,
 	recordArrival,
@@ -302,7 +312,7 @@ import {
 	gcPass,
 	idleRearmMs,
 	keepWarmMs,
-	warmIntervalMs,
+	warmIntervalConfigured,
 	writeCursor,
 	type CronHookCache
 } from './ops/cron.js';
@@ -321,6 +331,7 @@ import {
 	type Degradation
 } from './ops/degrade.js';
 import {
+	FLEET_SCHEMA_VERSION,
 	ensureFleetTable,
 	reportSite,
 	shouldReport,
@@ -379,8 +390,10 @@ import {
 	listSendingSubdomains,
 	onboardState,
 	requiredDns,
+	senderDomainVerdict,
 	zoneRecords,
-	type RecordAction
+	type RecordAction,
+	type TokenGrants
 } from './ops/mail-onboard.js';
 import {
 	drainMailQueue,
@@ -390,7 +403,10 @@ import {
 	mergeMailEnv,
 	queueMail,
 	resolveMailTransport,
-	type MailEnv
+	sendMail,
+	senderFor,
+	type MailEnv,
+	type MailMessage
 } from './ops/mail.js';
 import {
 	REVISION_RETENTION,
@@ -578,6 +594,14 @@ const CF_OAUTH_PENDING_KEY = 'cf_oauth_pending';
 const CF_OAUTH_TOKEN_KEY = 'cf_oauth_token';
 const CF_OAUTH_ACCOUNT_KEY = 'cf_oauth_account';
 const MAIL_ZONE_KEY = 'mail_sending_zone';
+
+/**
+ * The sending domain this site onboarded, recorded when onboarding sees one.
+ *
+ * Kept so the commit path can compare a message's From against it. Empty for a site that never
+ * onboarded a Cloudflare sending domain, which is the case `senderDomainVerdict()` answers ok for.
+ */
+const MAIL_SENDING_DOMAIN_KEY = 'mail_sending_domain';
 /** the site's own `smtp.settings`, mapped to transport vars; the alarm reads it, see `mailEnv()` */
 const SITE_SMTP_KEY = 'site_smtp_settings';
 /** Tier B's OIDC provider, the login in flight, and the single-use claims ticket; see `src/ops/oidc.ts` */
@@ -1428,6 +1452,67 @@ export function argon2Enabled(env?: SiteEnv | null): boolean {
 }
 
 /**
+ * The bins held in memory when nobody says otherwise.
+ *
+ * ON BY DEFAULT, AND IT SHIPPED OFF UNTIL THE COST WAS MEASURED RATHER THAN REASONED ABOUT. The
+ * saving was never in doubt: a real re-render charges 8 charged rows with the bin in SQL and 4 with
+ * it in memory, on the meter that binds regeneration. What was in doubt was the cost after an
+ * interpreter drop, since the bin dies with the interpreter -- and the argument for leaving it off
+ * was that a render which could no longer reassemble would pay more.
+ *
+ * It does not. Measured with both arms dropping the interpreter between two fills: **6 charged rows
+ * with the bin in SQL against 2 in memory**. A cold render REWRITES the SQL bin rather than reading
+ * it, so surviving the drop buys that render nothing, while the memory arm writes no SQL at all.
+ * The lever is cheaper in both states and the conditional default had no evidence under it.
+ *
+ * What it still costs is CPU on that render and isolate memory for what it holds, and neither is
+ * the binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.
+ */
+export const DEFAULT_MEMORY_CACHE_BINS = ['dynamic_page_cache'] as const;
+
+/**
+ * Cache bins the interpreter keeps in memory instead of in this tenant's SQLite.
+ *
+ * `MEMORY_CACHE_BINS=none` is the off switch. An unset variable and an empty one are the same
+ * string in a Worker env, so turning a default off needs a word rather than an absence.
+ *
+ * Comma-separated bin names WITHOUT the `cache_` prefix, which is how Drupal names them in
+ * `$settings['cache']['bins']`. Filtered to a conservative character set because the value reaches
+ * generated PHP.
+ */
+export function memoryCacheBins(env?: SiteEnv | null): string[] {
+	const stated = (env as { MEMORY_CACHE_BINS?: string } | null | undefined)?.MEMORY_CACHE_BINS;
+	const raw = String(stated ?? '');
+	// unset takes the default; `none` is the off switch, because an empty var and an unset one are
+	// the same string in a Worker env and an operator turning this off needs a word to say it with
+	if (raw.trim() === '') return [...DEFAULT_MEMORY_CACHE_BINS];
+	if (raw.trim().toLowerCase() === 'none') return [];
+	return raw
+		.split(',')
+		.map((bin) => bin.trim())
+		.filter((bin) => bin !== '' && /^[a-z0-9_]{1,40}$/.test(bin));
+}
+
+/** entries one in-memory bin may hold; see `CfwMemoryBackend::DEFAULT_MAX_ITEMS` for the bound */
+export function memoryCacheMaxItems(env?: SiteEnv | null): number {
+	const n = Number(
+		(env as { MEMORY_CACHE_MAX_ITEMS?: string } | null | undefined)?.MEMORY_CACHE_MAX_ITEMS ?? 0
+	);
+	return Number.isFinite(n) && n > 0 ? Math.floor(n) : 64;
+}
+
+/**
+ * A PHP array literal from a list of already-filtered names.
+ *
+ * `JSON.stringify` would produce a JavaScript array, which is not PHP. The values are constrained
+ * to `[a-z0-9_]` by the filter above, so the quoting cannot be escaped out of -- which is the
+ * property to keep if that filter is ever widened.
+ */
+function phpStringList(values: readonly string[]): string {
+	return `[${values.map((v) => `'${v}'`).join(', ')}]`;
+}
+
+/**
  * How long a superseded page may still be answered, in ms.
  *
  * A row is served while its age is BELOW this, so 0 is a real off switch rather than a window of
@@ -1544,16 +1629,6 @@ const CACHETAG_WRITE =
  */
 const INSTALL_FILL_DELAY_MS = 1000;
 
-/**
- * How often the daily meters may pay for a row, and how many pending rows override that.
- *
- * 60 s against an 8 s warming tick means one flush per 7.5 firings rather than one per firing. The
- * volume trigger is what keeps a busy site prompt; a warming tick charges one row, so 25 is far
- * above anything an idle object can accumulate inside the interval.
- */
-const METER_FLUSH_MS = 60_000;
-const METER_FLUSH_ROWS = 25;
-
 /** the authoritative commit sequence a replica fences on; see `advanceCommit()` */
 const COMMIT_SEQ_KEY = 'commit_seq';
 
@@ -1662,6 +1737,20 @@ $settings['enable_html5_validation'] = false;
 // so -- turning it on rehashes every password at its owner's next login, and on the free plan a
 // 19 MiB two-pass hash is CPU a login invocation does not have
 $settings['drupflare.argon2'] = CFW_ARGON2_PLACEHOLDER;
+// Cache bins the interpreter keeps in memory instead of in this tenant's SQLite, from
+// MEMORY_CACHE_BINS. Empty by default. Measured on the shipping pack: a real re-render after a tag
+// invalidation charges 9 rows, of which 6 are the dynamic_page_cache bin -- two thirds of the
+// operation the free plan's regeneration ceiling is computed from, in one bin. What it costs back
+// is a rebuild after every interpreter drop, which is a property of a site's own traffic, so the
+// default is a decision an operator makes rather than one shipped for them
+// NOT $settings['cache']['bins'], which names a SERVICE. A service is resolved out of the compiled
+// container, the pack ships that container prebuilt, and its cache key does not move when the
+// driver pack does -- so the settings route names something the container has never heard of and
+// the boot throws. Measured on a fresh site: the arm with a bin selected rendered nothing at all,
+// 0 rows and 0 bytes, against 8 rows on the control. CfwCacheBackendFactory reads this instead, and
+// its body is remounted from the pack on every boot
+$settings['drupflare']['memory_cache_bins'] = CFW_MEMORY_BINS_PLACEHOLDER;
+$settings['drupflare']['memory_cache_max_items'] = CFW_MEMORY_ITEMS_PLACEHOLDER;
 `;
 
 /**
@@ -1824,6 +1913,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** when that window last paid for a write */
 	lastRenderWindowFlushMs?: number;
+
+	/**
+	 * Writes this incarnation did not make because the row already held the value.
+	 *
+	 * In memory and reported on `/serve-stats` rather than persisted: it prices a lever, and a
+	 * counter that costs a row to record how many rows it saved would be the shape
+	 * `counter-counts-itself` already names.
+	 */
+	elidedWrites?: number;
 
 	/**
 	 * When an authenticated request last reached this object.
@@ -2221,6 +2319,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the object rather than the flag and this coupling is reasoned rather than observed.
 		(binary as unknown as Record<string, unknown>)['cfwParkFetch'] =
 			SHIPPED_CAPABILITIES.blockingOutbound && parkEnabled(this.env);
+		// AND THE SAME FLAG FOR SQL, on the same two conditions plus a third: the deployment has to
+		// have selected a backend the host can actually reach. `rom`'s client reads this to decide
+		// whether to yield a statement instead of calling the synchronous bridge, and a yield the
+		// host will not answer is a hang rather than a degradation -- there is no local copy of an
+		// external database to fall back to the way a refused fetch falls back to the deferred
+		// transport
+		(binary as unknown as Record<string, unknown>)['cfwSqlPark'] =
+			SHIPPED_CAPABILITIES.blockingOutbound &&
+			parkEnabled(this.env) &&
+			backendNeedsPark(selectBackend(this.env as unknown as BackendEnv));
 		// LAST, after every installer. A wrapper applied before one is silently overwritten by it,
 		// and the tally then reads 0 for a capability being called constantly -- which is the
 		// failure this instrument exists to avoid in the first place
@@ -2304,6 +2412,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				JSON.stringify(this.canonicalOrigin(null))
 			)
 				.replace('CFW_ARGON2_PLACEHOLDER', argon2Enabled(this.env) ? 'true' : 'false')
+				.replace('CFW_MEMORY_BINS_PLACEHOLDER', phpStringList(memoryCacheBins(this.env)))
+				.replace('CFW_MEMORY_ITEMS_PLACEHOLDER', String(memoryCacheMaxItems(this.env)))
 				.replace('CFW_LANE_PLACEHOLDER', String(partition.lane))
 				.replace('CFW_LANES_PLACEHOLDER', String(partition.lanes));
 			binary.FS.writeFile(settingsPath, existing + override + salt);
@@ -2769,6 +2879,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 			const plan = resolveMailTransport(this.mailEnv());
 			if ('refusal' in plan) return refuse(plan.refusal);
+
+			// THE FROM DOMAIN, against the one this account onboarded. Only for the Cloudflare
+			// transports: an SMTP relay has its own idea of what it will send as, and a site that
+			// never onboarded a sending domain records none, so both answer ok by construction
+			if (plan.transport.kind !== 'smtp') {
+				const verdict = senderDomainVerdict(
+					senderFor(plan.transport, message),
+					this.metaGet(MAIL_SENDING_DOMAIN_KEY) ?? ''
+				);
+				if (!verdict.ok) return refuse(verdict.reason);
+			}
 
 			const queued = queueMail(this.sql, message, plan.transport, this.nowMs());
 			if ('refusal' in queued) return refuse(queued.refusal);
@@ -3429,6 +3550,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// count is what separates that from the one drop a fresh site takes
 			recycles: this.recycles ?? 0,
 			lastRecycle: this.lastRecycle ?? null,
+			// what conditional writes saved this incarnation: one read spent to avoid one charged
+			// row. Reported because the share of rewrites that store an unchanged value is a
+			// property of a real workload, and asserting a figure for it would be a guess
+			elidedWrites: this.elidedWrites ?? 0,
 			// a SIZE drop is routine and a TRAP drop is a defect, so they are counted apart;
 			// a non-zero tally here is the interpreter faulting under something this site enabled
 			trappedRuns: this.trappedRuns ?? 0,
@@ -5723,10 +5848,16 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			.map((r) => String(r.name));
 		if (!pageColumns.includes('tags'))
 			this.sql.exec('ALTER TABLE cfw_page ADD COLUMN tags TEXT');
-		// when a bump superseded this row, or NULL while it is current. A bump SETS this rather than
-		// deleting, so the drain window has something to answer with; see `bumpGeneration()`
+		// when a bump superseded this row, or NULL while it is current. A bump used to SET this on
+		// every affected row, which is one charged row each; it is written lazily now, by the serve
+		// that first meets the page stale -- see `pageStaleness()`
 		if (!pageColumns.includes('stale_at')) {
 			this.sql.exec('ALTER TABLE cfw_page ADD COLUMN stale_at INTEGER');
+		}
+		// the sum of this page's tags' invalidation counters when it was rendered, which is Drupal's
+		// own freshness test. In the row the fill writes anyway, so it costs no row of its own
+		if (!pageColumns.includes('tag_checksum')) {
+			this.sql.exec('ALTER TABLE cfw_page ADD COLUMN tag_checksum INTEGER');
 		}
 		this.sql.exec(
 			`CREATE TABLE IF NOT EXISTS cfw_plan (
@@ -5933,6 +6064,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 *
 	 * An idle site accumulates no renders, so `pending` is 0 and nothing is written -- which is what
 	 * keeps a warming tick at the one row `warm-alarm-cost.spec.ts` pins.
+	 *
+	 * THE ROLL IS ALSO WHERE THE WARM INTERVAL IS SOLVED, because it is the only moment the object
+	 * can tell whether its warming chain held: `lastRenderWindowFlushMs` lives in memory, so it is
+	 * set here only if THIS incarnation performed the previous roll. A re-created object reads
+	 * undefined and cannot have stayed resident. The observation costs nothing and rides in the row
+	 * the roll was already paying for.
 	 */
 	flushRenderWindow(nowMs = this.nowMs()): RenderWindow | null {
 		const pending = this.rendersSinceFlush ?? 0;
@@ -5943,11 +6080,26 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const held = this.lastRenderWindowFlushMs ?? 0;
 			if (nowMs - held < RATE_WINDOW_MS) return stored;
 		}
+		const survived = this.incarnationSpanned(stored, nowMs);
 		this.rendersSinceFlush = 0;
 		this.lastRenderWindowFlushMs = nowMs;
-		const folded = foldRenderWindow(stored, pending, nowMs);
+		const folded = foldRenderWindow(stored, pending, nowMs, RATE_WINDOW_MS, survived);
 		this.metaSet(RENDER_WINDOW_KEY, writeRenderWindow(folded));
 		return folded;
+	}
+
+	/**
+	 * Whether ONE incarnation covered the window that is closing.
+	 *
+	 * The two halves are both necessary. `lastRenderWindowFlushMs` being set says this incarnation
+	 * opened the window; it being no later than the window's start says the window is the one this
+	 * incarnation opened rather than a later one it inherited after a re-creation.
+	 */
+	private incarnationSpanned(stored: RenderWindow | null, nowMs: number): boolean {
+		if (stored === null) return false;
+		const opened = this.lastRenderWindowFlushMs;
+		if (opened === undefined) return false;
+		return opened <= stored.startedAt && nowMs - stored.startedAt >= RATE_WINDOW_MS;
 	}
 
 	/**
@@ -5957,12 +6109,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * moved rows flushes at once, an idle warming tick waits for the interval. The accumulator lives
 	 * in memory, so an eviction loses at most one interval of counting -- acceptable for a figure
 	 * whose job is "is this site trending over", and the alternative is a write on every tick.
+	 *
+	 * BOTH TRIGGERS ARE NOW A FUNCTION OF THE REMAINING BUDGET rather than constants. They were 25
+	 * rows and 60 s, which on a warmed site is 1,440 checkpoints a day to record a counter moving by
+	 * one per tick; `meterFlushBudget()` holds the arithmetic and the reason. At the ceiling it
+	 * answers those same two numbers, so nothing is loosened where a lost count could matter.
 	 */
 	shouldFlushMeters(nowMs = this.nowMs()): boolean {
 		const pending = (this.rowsSinceFlush ?? 0) + (this.doRequestsSinceFlush ?? 0);
 		if (pending === 0) return false;
-		if (pending >= METER_FLUSH_ROWS) return true;
-		return nowMs - (this.lastMeterFlushMs ?? 0) >= METER_FLUSH_MS;
+		const budget = meterFlushBudget(this.dailyRows(nowMs), DAILY_ROWS_QUOTA);
+		if (pending >= budget.rows) return true;
+		return nowMs - (this.lastMeterFlushMs ?? 0) >= budget.intervalMs;
 	}
 
 	/**
@@ -6741,6 +6899,30 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
+	 * This site's own verdict on itself, for the inventory.
+	 *
+	 * Three values rather than the finding list, because the consumer is a fleet view answering
+	 * "which sites are unwell" and a list of findings per site is the thing it would have to reduce
+	 * anyway. The findings stay on `/health`, where an operator who has picked a site can read them.
+	 *
+	 * Quarantine outranks degradation: a quarantined site is refusing requests and a degraded one is
+	 * serving them more cheaply, and reporting the second for a site doing the first would put it in
+	 * the wrong bucket of the only view that looks at every site at once.
+	 */
+	fleetHealth(): FleetRow['health'] {
+		try {
+			if (isQuarantined(parseState(this.metaGet('repair_state')))) return 'quarantined';
+			// `level` rather than a pair of booleans: the level is what `degradation()` decides and
+			// the booleans are what it hands out, so reading two of them would be a second and
+			// disagreeing answer to the same question
+			return this.degradation().level === 'normal' ? 'ok' : 'degraded';
+		} catch {
+			// an inventory value must never be the thing that fails the alarm that writes it
+			return 'ok';
+		}
+	}
+
+	/**
 	 * Writes this site's row into the fleet inventory, when there is anything worth writing.
 	 *
 	 * Silent when no D1 binding exists, which is the free-tier default and not an error: a single
@@ -6765,7 +6947,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				// what makes time-to-patch measurable: the pack generation says which pack this site
 				// was PROVISIONED from and never moves afterwards, so on its own it cannot tell a
 				// patched old site from an unpatched one
-				reconcileVersion: this.reconcileState().version
+				reconcileVersion: this.reconcileState().version,
+				schemaVersion: FLEET_SCHEMA_VERSION,
+				// one value today, and the column exists so a second CMS is not a migration on every
+				// live site; see the site-kind record in the roadmap's promoted list
+				cms: 'drupal',
+				// self-hosted is a workerd the operator runs, which has no Cloudflare account behind
+				// it -- `CF_VERSION_METADATA` is injected by the platform and absent there
+				tier:
+					(this.env as { SELF_HOSTED?: string } | null)?.SELF_HOSTED === '1'
+						? 'self-hosted'
+						: 'managed',
+				health: this.fleetHealth()
 			};
 			const raw = this.metaGet('fleet_last');
 			const previous = (raw ? JSON.parse(raw) : null) as FleetRow | null;
@@ -7013,6 +7206,59 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * around: an operator who fixes a credential drains the queue that was refused under the old
 	 * one.
 	 */
+	/**
+	 * Sends one message now, so `ready` can mean delivered rather than inferred.
+	 *
+	 * EVERY STAGE BELOW `ready` IS A CLAIM ABOUT CONFIGURATION and none of them is evidence that a
+	 * message arrives: the DNS can be right, the destination verified, the token permitted, and the
+	 * send still refused for a reason only the send reports -- an un-onboarded From domain, a plan
+	 * that forbids the recipient, a quota. This is smoke's precedent, and it is the shape this
+	 * project has shipped wrong most often: a status that reads ready while nothing was tried.
+	 *
+	 * Sent rather than queued, because a queued message is answered by the alarm and the operator
+	 * would be reading the same inference one layer down.
+	 */
+	async sendMailTest(to: string): Promise<Payload> {
+		const recipient = String(to ?? '').trim();
+		if (recipient === '') return { ok: false, error: 'a test send needs a recipient' };
+		const plan = resolveMailTransport(this.mailEnv());
+		if ('refusal' in plan) return { ok: false, error: plan.refusal };
+		const from = senderFor(plan.transport, { from: '' });
+		if (from === '') {
+			return {
+				ok: false,
+				error: 'no sender address; set MAIL_FROM or the site mail address'
+			};
+		}
+		const message: MailMessage = {
+			to: recipient,
+			from,
+			subject: 'drupflare test message',
+			text: 'This message was sent by the drupflare mail setup page to prove delivery works.',
+			html: null,
+			headers: {}
+		};
+		try {
+			const id = await sendMail(
+				plan.transport,
+				message,
+				undefined,
+				isPaid(this.env) ? 'paid' : 'free'
+			);
+			return { ok: true, transport: plan.transport.kind, from, to: recipient, id };
+		} catch (e: any) {
+			// the transport is reported on the failure too: "which one refused" is the first
+			// question an operator asks and a bare message does not answer it
+			return {
+				ok: false,
+				transport: plan.transport.kind,
+				from,
+				to: recipient,
+				error: String(e?.message ?? e).slice(0, 400)
+			};
+		}
+	}
+
 	mailEnv(): MailEnv {
 		let fromSite: Partial<MailEnv> = {};
 		try {
@@ -7020,7 +7266,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		} catch {
 			fromSite = {};
 		}
-		return mergeMailEnv(this.env ?? {}, fromSite);
+		// AND THE CLOUDFLARE GRANT, which nothing merged. `/setup/cf` persists the token in
+		// `cfw_meta` and `/setup/mail` onboards a sending subdomain against it, and then the
+		// transport resolver looked for `env.CF_EMAIL_TOKEN`, which no deploy sets -- so the api
+		// transport was unreachable on every site that used the supported path
+		const grant = this.cfCredentialsSync();
+		const merged = mergeMailEnv(this.env ?? {}, fromSite);
+		if (grant.token !== '' && String(merged.CF_EMAIL_TOKEN ?? '') === '') {
+			merged.CF_EMAIL_TOKEN = grant.token;
+		}
+		if (grant.accountId !== '' && String(merged.CF_EMAIL_ACCOUNT_ID ?? '') === '') {
+			merged.CF_EMAIL_ACCOUNT_ID = grant.accountId;
+		}
+		return merged;
 	}
 
 	/**
@@ -7072,12 +7330,30 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		return row === undefined ? fallback : String(row.v);
 	}
 
+	/**
+	 * Writes a `cfw_meta` value, and does not write one that is already there.
+	 *
+	 * ONE READ TO SAVE ONE WRITE, and the two meters are not comparable: the free plan allows
+	 * 5,000,000 rows read a day against 100,000 written, so a read is 1/50th of a write and rows
+	 * written is what binds regeneration. An UPDATE that stores the value already in the column is
+	 * charged in full, so the trade only has to be right occasionally to pay.
+	 *
+	 * Counted rather than claimed. `elidedWrites` rides on `/serve-stats`, because the share of
+	 * rewrites that are no-ops is a property of a real workload and nothing here has measured it --
+	 * two callers were already doing this by hand (`noteStorable()`, `clearPendingTags()`), which
+	 * says the shape is common and says nothing about how common.
+	 */
 	metaSet(key: string, value: unknown): void {
 		this.ensureServeTables();
+		const next = String(value);
+		if (this.metaGet(key) === next) {
+			this.elidedWrites = (this.elidedWrites ?? 0) + 1;
+			return;
+		}
 		this.sql.exec(
 			'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
 			key,
-			String(value)
+			next
 		);
 	}
 
@@ -7100,30 +7376,54 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * caller's own 401 is a better signal than a guess taken from a clock.
 	 */
 	async cfCredentials(): Promise<{ token: string; accountId: string }> {
-		const env = this.env as unknown as Record<string, string | undefined>;
-		const accountOf = (): string =>
-			env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
-
-		const raw = this.metaGet(CF_OAUTH_TOKEN_KEY);
-		if (!raw) return { token: env.CF_EMAIL_TOKEN ?? '', accountId: accountOf() };
-
-		let set: TokenSet | null = null;
-		try {
-			set = JSON.parse(raw) as TokenSet;
-		} catch {
-			set = null;
-		}
-		if (!set?.accessToken) return { token: env.CF_EMAIL_TOKEN ?? '', accountId: accountOf() };
-
-		const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY) ?? '';
-		if (clientId && set.refreshToken && needsRefresh(set, this.nowMs())) {
-			const next = await refresh({ clientId, refreshToken: set.refreshToken });
-			if (!isTokenError(next)) {
-				this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
-				set = next;
+		const stored = this.storedGrant();
+		if (stored.set !== null) {
+			const clientId = this.metaGet(CF_OAUTH_CLIENT_ID_KEY) ?? '';
+			if (clientId && stored.set.refreshToken && needsRefresh(stored.set, this.nowMs())) {
+				const next = await refresh({ clientId, refreshToken: stored.set.refreshToken });
+				if (!isTokenError(next)) {
+					this.metaSet(CF_OAUTH_TOKEN_KEY, JSON.stringify(next));
+					return {
+						token: next.accessToken,
+						accountId: this.cfCredentialsSync().accountId
+					};
+				}
 			}
 		}
-		return { token: set.accessToken, accountId: accountOf() };
+		return this.cfCredentialsSync();
+	}
+
+	/** the stored grant, parsed; `set` is null when there is none or it is unreadable */
+	private storedGrant(): { set: TokenSet | null } {
+		const raw = this.metaGet(CF_OAUTH_TOKEN_KEY);
+		if (!raw) return { set: null };
+		try {
+			const set = JSON.parse(raw) as TokenSet;
+			return { set: set?.accessToken ? set : null };
+		} catch {
+			return { set: null };
+		}
+	}
+
+	/**
+	 * The same credentials without the refresh, for a caller that cannot await.
+	 *
+	 * ONE RULE FOR WHICH CREDENTIAL THIS SITE USES, and there were two. `cfCredentials()` prefers
+	 * the durable grant and `mailEnv()` read only `this.env`, so a site whose Cloudflare account was
+	 * connected through `/setup/cf` -- the documented path, and the one `/setup/mail` onboards
+	 * against -- resolved its mail transport against a token that was never set. `auto` then walked
+	 * past `api` to SMTP, found no `SMTP_HOST`, and refused with "no mail transport is configured"
+	 * on a site that had just finished onboarding one.
+	 *
+	 * Skipping the refresh is safe here for the reason `cfCredentials()` already gives: an expired
+	 * access token answers 401 and the caller's own 401 is a better signal than a guess taken from a
+	 * clock. The drain refreshes before it resolves, because it is the path that can await.
+	 */
+	cfCredentialsSync(): { token: string; accountId: string } {
+		const env = this.env as unknown as Record<string, string | undefined>;
+		const accountId = env.CF_EMAIL_ACCOUNT_ID ?? this.metaGet(CF_OAUTH_ACCOUNT_KEY) ?? '';
+		const set = this.storedGrant().set;
+		return { token: set?.accessToken ?? env.CF_EMAIL_TOKEN ?? '', accountId };
 	}
 
 	/**
@@ -8234,9 +8534,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	purgeForTags(tags: readonly string[], reason = 'cachetags', { bump = true } = {}) {
 		const paths = this.pathsForTags(tags);
 		this.ensureServeTables();
-		// reported, not applied: `purgeShellsForTags()` is what a per-fragment purge would use and it
-		// is wired to nothing yet. See the note in `bumpGeneration()` for why
-		const shells = { dropped: 0, kept: 0, reasons: [] as string[] };
+		// APPLIED, and this is the only caller that may. `purgeShellsForTags()` refuses by default --
+		// a tag on neither the shell nor one of its fragments drops the shell as unaccounted-for --
+		// so it is only correct where the invalidated set is COMPLETE, which is here and not at the
+		// `cachetags` bump. It was wired to nothing for as long as the bump was purging wholesale.
+		const shells = this.purgeShellsFor(tags, paths === null);
 		if (paths === null) {
 			const out = bump
 				? this.bumpGeneration(reason)
@@ -8244,7 +8546,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						this.sql
 							.exec<Row<{ path: string }>>('SELECT path FROM cfw_page')
 							.toArray()
-							.map((r) => String(r.path))
+							.map((r) => String(r.path)),
+						true,
+						// the index could not say which pages depend on these tags, so most of what
+						// this re-queues does not: a `cachetags` bump leaves `dynamic_page_cache`
+						// alone except for tag-matched entries, and those pages reassemble
+						ROWS_PER_UNTAGGED_PAGE
 					);
 			return {
 				...out,
@@ -8256,8 +8563,40 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		}
 		const out = bump
 			? this.bumpGeneration(reason, { scopedTo: paths })
-			: this.purgeScopedPaths(paths);
+			: // every one of these was selected BECAUSE it depends on an invalidated tag, so each is
+				// a real re-render rather than a reassemble
+				this.purgeScopedPaths(paths, true, ROWS_PER_TAGGED_PAGE);
 		return { ...out, scoped: true, tags: tags.length, purged: paths.length, shells };
+	}
+
+	/**
+	 * Drops the shells this invalidation reaches, or all of them when the index could not answer.
+	 *
+	 * `wholesale` follows the page decision rather than being decided again: {@link pathsForTags}
+	 * answering null means the index cannot speak for every stored page, and a shell index built on
+	 * the same harvest cannot be trusted any further than the page one. Deciding it separately would
+	 * let a scoped shell purge survive a wholesale page purge, which is the disagreeing-answer shape
+	 * this file already has a rule about.
+	 */
+	private purgeShellsFor(
+		tags: readonly string[],
+		wholesale: boolean
+	): { dropped: number; kept: number; reasons: string[] } {
+		if (!this.hasTable('cfw_shell')) return { dropped: 0, kept: 0, reasons: [] };
+		if (!wholesale && tags.length > 0) return purgeShellsForTags(this.sql, tags);
+		const dropped = Number(
+			this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_shell').toArray()[0]
+				?.c ?? 0
+		);
+		if (dropped > 0) {
+			this.sql.exec('DELETE FROM cfw_shell');
+			this.sql.exec('DELETE FROM cfw_shell_verified');
+		}
+		return {
+			dropped,
+			kept: 0,
+			reasons: wholesale ? ['the tag index could not speak for every stored page'] : []
+		};
 	}
 
 	/**
@@ -8267,7 +8606,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * new value, and moving it a second time here would leave the front worker believing a number
 	 * one behind the object for the length of its trust window.
 	 */
-	purgeScopedPaths(paths: readonly string[], arm = true) {
+	purgeScopedPaths(
+		paths: readonly string[],
+		arm = true,
+		rowsPerPage: number = ROWS_PER_TAGGED_PAGE
+	) {
 		this.ensureServeTables();
 		let purgedPages = 0;
 		for (const path of paths) {
@@ -8288,10 +8631,15 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// the third argument is whether the stale tier the lazy branch leaves those pages to exists
 		// at all; without `PAGE_KV` bound it does not, and lazy would mean a cold render for every
 		// visitor after a config change
+		// WEIGHTED BY ROWS, not by page count. The thresholds were counts, and a page costs 2 rows
+		// when its `dynamic_page_cache` entry survived the invalidation and 9 when it did not -- so
+		// the same 34 pages is 68 rows or 306 depending on which set they are, and one count could
+		// not be right for both
 		const decision = fanoutDecision(
 			paths.length,
 			prefillOnSaveLimit(this.env),
-			pageKvEnabled(this.env as never)
+			pageKvEnabled(this.env as never),
+			rowsPerPage
 		);
 		let requeued = 0;
 		if (prefillOnSave(this.env)) {
@@ -8379,22 +8727,42 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// {@link AGED_SERVE_MAX_MS} and queues the refill, so the visitor gets content that is one
 		// save old rather than an error. `putPage()` refuses any tier that is not HIT or RENDER, so
 		// an aged body cannot reach `caches.default`, the KV tier or the isolate page memo.
+		//
+		// AND IT IS NOT MARKED PER PAGE ANY MORE, which is where the rows went. `UPDATE cfw_page SET
+		// stale_at = ?` is charged per ROW, so a save reaching 34 pages spent 34 rows saying so --
+		// on the meter that binds regeneration, before regenerating anything. A page already carries
+		// the sum of its tags' invalidation counters, which is Drupal's own freshness test, so the
+		// marking is derivable and `pageStaleness()` derives it. The write happens once, on the
+		// serve that first meets the page stale, and a page refilled before anyone asks never pays
+		// it at all: per transition rather than per save.
+		//
+		// A row with no usable checksum -- stored before the column existed, or rendered declaring
+		// no tags -- cannot be derived and is still marked here. That is the fail-closed half, and
+		// it is what the `tag_checksum IS NULL` filter selects.
+		//
+		// AND ONLY ON THE `cachetags` REASON. The checksum can speak for an invalidation Drupal
+		// recorded as a tag; it cannot speak for a module install, a firstrun or a manual bump,
+		// because none of those moves a counter. Deriving there would answer HIT for a page the
+		// install changed -- so every other reason marks eagerly, exactly as before.
 		const now = this.nowMs();
+		const derivable = reason === 'cachetags';
+		const wholesale = derivable
+			? 'UPDATE cfw_page SET stale_at = ? WHERE stale_at IS NULL AND tag_checksum IS NULL'
+			: 'UPDATE cfw_page SET stale_at = ? WHERE stale_at IS NULL';
+		const scoped = derivable
+			? 'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL AND tag_checksum IS NULL'
+			: 'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL';
 		let purgedPages: number;
 		if (scopedTo === undefined) {
 			purgedPages = Number(
 				this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_page').toArray()[0]
 					?.c ?? 0
 			);
-			this.sql.exec('UPDATE cfw_page SET stale_at = ? WHERE stale_at IS NULL', now);
+			this.sql.exec(wholesale, now);
 		} else {
 			purgedPages = 0;
 			for (const path of scopedTo) {
-				this.sql.exec(
-					'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL',
-					now,
-					path
-				);
+				this.sql.exec(scoped, now, path);
 				purgedPages++;
 			}
 		}
@@ -8407,19 +8775,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// at the first content save on every live site and never restarted without a human.
 		//
 		// A `cachetags` bump fires on the FIRST tag written and the rest of the invocation's tags do
-		// Still wholesale, including on `cachetags`, and the per-fragment purge is built but NOT
-		// wired. `purgeShellsForTags()` refuses by default: a tag on neither the shell nor one of its
-		// fragments drops it as unaccounted-for. That asymmetry is right, and today it fires on almost
-		// every save, because until `cacheTagsIn()` was widened the host recorded only a tag's FIRST
-		// invalidation, so any shell harvested before that has an incomplete tag set. Wiring it here
-		// dropped the shell on every save and turned `shell.spec.ts` red at `rows === 1`.
+		// not exist yet, so it cannot decide anything about a shell either -- exactly the reason the
+		// page purge above already passes `scopedTo: []` on that reason. `flushTagPurge()` runs
+		// `purgeShellsForTags()` once the set is whole, and `drainPendingTags()` settles it at boot
+		// if this invocation dies in between.
 		//
-		// Wholesale costs the same and fails in the safe direction; per-fragment goes in once a
-		// shell's recorded tags can be trusted to be complete.
-		const purgedShells = Number(
-			this.sql.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_shell').toArray()[0]
-				?.c ?? 0
-		);
+		// Every other reason -- a module install, firstrun, a manual bump -- carries no tags at all,
+		// and a shell caches the shared region Drupal knows nothing about, so nothing else would
+		// ever invalidate it. Those still take the wholesale delete.
+		const purgedShells =
+			reason === 'cachetags'
+				? 0
+				: Number(
+						this.sql
+							.exec<Row<{ c: number }>>('SELECT COUNT(*) AS c FROM cfw_shell')
+							.toArray()[0]?.c ?? 0
+					);
 		if (purgedShells > 0) {
 			this.sql.exec('DELETE FROM cfw_shell');
 			this.sql.exec('DELETE FROM cfw_shell_verified');
@@ -9207,10 +9578,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 		}
 
+		// NOT ELIDED WHEN THE BODY IS UNCHANGED, and the reason is `rendered_at`. `metaSet()` skips a
+		// write that would store the value already in the column, which is worth one charged row
+		// against one read; a page row carries its own freshness, and leaving that timestamp behind
+		// would age the page out again at once and re-render it on every alarm. One row saved
+		// against an unbounded number of renders. See `tests/integration/conditional-writes.spec.ts`
 		if (cacheable) {
+			const pageTags = Array.isArray(result.cacheTags)
+				? result.cacheTags.map((t) => String(t))
+				: [];
 			this.sql.exec(
-				`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+				`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags, tag_checksum)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(path) DO UPDATE SET
          status = excluded.status,
          content_type = excluded.content_type,
@@ -9218,6 +9597,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
          rendered_at = excluded.rendered_at,
          render_ms = excluded.render_ms,
          tags = excluded.tags,
+         tag_checksum = excluded.tag_checksum,
          stale_at = NULL`,
 				path,
 				status,
@@ -9228,7 +9608,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				// In the same statement, not a second UPDATE: the row is written either way, and a
 				// separate write charged a row per fill against the meter this lever exists to
 				// protect -- measured, 9 to 10
-				pageTagList(result.cacheTags)
+				pageTagList(pageTags),
+				// and the same argument for the checksum, which is what lets an invalidation write
+				// nothing per page. Null for a render that declared no tags: zero is a usable sum
+				// and would read as "this page depends on nothing and is therefore never stale"
+				pageTags.length === 0 ? null : tagChecksum(this.sql, pageTags)
 			);
 		}
 		// What the chain learned, recorded rather than discarded. A render that succeeded and could
@@ -9619,6 +10003,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 *
 	 * Falls back to the configured interval whenever the predictor has nothing to say, so a site
 	 * with no history behaves exactly as it did before rather than un-warming itself on no evidence.
+	 *
+	 * THE WARM BRANCH IS SOLVED RATHER THAN CONSTANT. `warmIntervalMs()` answered 8,000 for every
+	 * warmed site, which is the largest interval this project has evidence for and not the largest
+	 * that works; `solveWarmInterval()` climbs toward 9,500 on windows the object observed itself
+	 * surviving. An explicit `WARM_INTERVAL_MS` still wins outright.
 	 */
 	thermalRearmMs(): number {
 		const headroom = this.degradation().cron;
@@ -9629,14 +10018,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			stated === undefined || stated === null || String(stated) === ''
 				? null
 				: String(stated) === '1';
+		const stored = this.storedRenderWindow();
 		const decision = warmDecision(this.arrivals ?? [], this.nowMs(), {
 			thresholdMs: HIBERNATION_IDLE_MS,
 			forced,
 			lastAuthenticatedAt: this.lastAuthenticatedAt ?? null,
-			stored: this.storedRenderWindow()
+			stored
 		});
 		this.lastWarmDecision = decision;
-		return decision.warm ? warmIntervalMs(this.env) : keepWarmMs(this.env);
+		if (!decision.warm) return keepWarmMs(this.env);
+		return (
+			warmIntervalConfigured(this.env) ??
+			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, HIBERNATION_IDLE_MS)
+		);
 	}
 
 	/** the origin public bytes are served from, or '' when everything goes through the Worker */
@@ -10464,6 +10858,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// records which KIND was resolved at commit, which is diagnostics, not a routing decision.
 		if (mailDrainEnabled(this.env ?? {}) && (this.countOrNull('cfw_mail_queue') ?? 0) > 0) {
 			await this.adoptSettings();
+			// refresh the Cloudflare grant HERE, because this is the mail path that can await.
+			// `mailEnv()` reads the stored token without refreshing, which is right for the
+			// synchronous commit path and would send a long-idle site's queue under an expired one
+			await this.cfCredentials().catch(() => ({ token: '', accountId: '' }));
 			const plan = resolveMailTransport(this.mailEnv());
 			if ('refusal' in plan) {
 				this.lastMailDrain = { refusal: plan.refusal };
@@ -11157,14 +11555,57 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * path so a request is still counted exactly once whichever lane takes it.
 	 *
 	 */
+	/**
+	 * When this page became superseded, derived from tag state rather than written per save.
+	 *
+	 * A marked row answers immediately. An unmarked one is checked against Drupal's own freshness
+	 * test -- the sum of its tags' invalidation counters, stored in the row the fill wrote anyway --
+	 * and marked HERE if the sum has moved. That is one charged row per page a visitor actually
+	 * asks for, against one per page a save reached: a save touching 34 pages of which two are
+	 * visited before the refill drains pays 2 rows instead of 34.
+	 *
+	 * The read is one indexed statement over `cachetags`, and the two meters are not comparable:
+	 * free allows 5,000,000 rows read a day against 100,000 written.
+	 *
+	 * Null for a row with no usable checksum, which `bumpGeneration()` still marks eagerly -- a page
+	 * stored before the column existed, or one whose render declared no tags at all.
+	 */
+	private pageStaleness(
+		path: string,
+		row: { stale_at?: number | null; tags?: unknown; tag_checksum?: number | null }
+	): number | null {
+		if (typeof row.stale_at === 'number') return row.stale_at;
+		const stored = typeof row.tag_checksum === 'number' ? row.tag_checksum : null;
+		if (stored === null) return null;
+		const tags = readTagList(row.tags);
+		if (tags === null || tags.length === 0) return null;
+		if (tagChecksum(this.sql, tags) === stored) return null;
+		const now = this.nowMs();
+		// the one write, taken at the transition rather than at the save
+		this.sql.exec(
+			'UPDATE cfw_page SET stale_at = ? WHERE path = ? AND stale_at IS NULL',
+			now,
+			path
+		);
+		return now;
+	}
+
 	serveFromStorage(url: URL): Response | null {
 		const path = url.searchParams.get('path') ?? '/';
 		const t0 = Date.now();
-		let row: (PageRow & { stale_at?: number | null }) | undefined;
+		let row:
+			| (PageRow & { stale_at?: number | null; tags?: unknown; tag_checksum?: number | null })
+			| undefined;
 		try {
 			row = this.sql
-				.exec<PageRow & { stale_at?: number | null }>(
-					'SELECT status, content_type, html, rendered_at, render_ms, stale_at FROM cfw_page WHERE path = ?',
+				.exec<
+					PageRow & {
+						stale_at?: number | null;
+						tags?: unknown;
+						tag_checksum?: number | null;
+					}
+				>(
+					'SELECT status, content_type, html, rendered_at, render_ms, stale_at, tags, tag_checksum FROM cfw_page WHERE path = ?',
 					path
 				)
 				.toArray()[0];
@@ -11181,7 +11622,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// old and its refill is queued. Answering it beats the 503 that used to be the only other
 		// option, and the window is bounded so an object whose alarm chain has stopped degrades to
 		// that 503 rather than serving last week's page forever.
-		const staleAt = typeof row.stale_at === 'number' ? row.stale_at : null;
+		const staleAt = this.pageStaleness(path, row);
 		let aged = false;
 		if (staleAt !== null) {
 			const age = this.nowMs() - staleAt;
@@ -11656,8 +12097,20 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const zoneId =
 						url.searchParams.get('zone') ?? this.metaGet(MAIL_ZONE_KEY) ?? '';
 					if (!token) {
+						// the STAGE rather than a bare error, so one surface reads every step of
+						// this flow the same way; the status stays 400 because nothing can proceed
 						return Response.json(
-							{ ok: false, error: 'no Cloudflare token; connect an account first' },
+							{
+								ok: false,
+								error: 'no Cloudflare token; connect an account first',
+								...onboardState({
+									zoneId: null,
+									subdomain: null,
+									plan: [],
+									destination: undefined,
+									hasToken: false
+								})
+							},
 							{ status: 400 }
 						);
 					}
@@ -11684,6 +12137,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						}
 					}
 
+					// recorded for the commit path, which compares a message's From against it. A
+					// mismatch is what makes Cloudflare restrict delivery to verified destinations
+					// rather than refuse, so the send looks fine and the mail does not arrive
+					if (subdomain?.name) this.metaSet(MAIL_SENDING_DOMAIN_KEY, subdomain.name);
+
 					let plan: RecordAction[] = [];
 					if (subdomain) {
 						const [want, have] = await Promise.all([
@@ -11704,10 +12162,36 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						? dests.value.find((d) => (wanted ? d.email === wanted : isVerified(d)))
 						: undefined;
 
+					// PROBED, not assumed. `dests` failing used to be swallowed into an undefined
+					// destination, which is indistinguishable from an unverified one -- so a token
+					// that could not read Email Routing was reported as "click the link Cloudflare
+					// emailed you" about a link nobody had sent
+					const grants: TokenGrants = {
+						zone: subs === null ? null : subs.ok,
+						destinations: dests !== null && dests.ok,
+						...(dests && !dests.ok ? { refusal: dests.error } : {})
+					};
+
+					// a live send through the transport this site actually resolved, because `ready`
+					// meant "every precondition looks satisfied" and never "a message arrived"
+					const test =
+						url.searchParams.get('action') === 'test'
+							? await this.sendMailTest(url.searchParams.get('to') ?? '')
+							: null;
+
 					return Response.json({
 						ok: true,
-						...onboardState({ zoneId: zoneId || null, subdomain, plan, destination }),
-						applied
+						...onboardState({
+							zoneId: zoneId || null,
+							subdomain,
+							plan,
+							destination,
+							grants,
+							hasToken: true
+						}),
+						grants,
+						applied,
+						...(test ? { test } : {})
 					});
 				}
 

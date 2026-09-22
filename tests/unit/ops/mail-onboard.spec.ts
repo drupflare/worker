@@ -11,6 +11,7 @@ import {
 	onboardState,
 	ownedByOnboarding,
 	requiredDns,
+	senderDomainVerdict,
 	zoneRecords,
 	type DnsRecord,
 	type ZoneRecord
@@ -484,5 +485,111 @@ describe('records drupflare does not own', () => {
 		});
 		expect(state.stage).toBe('ready');
 		expect(state.advisories).toHaveLength(1);
+	});
+});
+
+/**
+ * A token that cannot see is not evidence about the account.
+ *
+ * `listDestinations()` failing was swallowed into an undefined destination, which is what an
+ * UNVERIFIED address also looks like -- so a token with no Email Routing read produced
+ * `awaiting-verification` and told the operator to click a link Cloudflare had never sent. The
+ * stage has to be able to say the token is short.
+ */
+describe('the onboarding stage reports a short permission as one', () => {
+	const base = {
+		zoneId: 'zone-1',
+		subdomain: null,
+		plan: [],
+		destination: undefined,
+		hasToken: true
+	};
+
+	it('says insufficient-grants rather than awaiting-verification', () => {
+		const short = onboardState({
+			...base,
+			grants: { zone: true, destinations: false, refusal: 'Authentication error (10000)' }
+		});
+		expect(short.stage).toBe('insufficient-grants');
+		expect(short.waitingOn).toContain('destination addresses');
+		// the API's own words travel, because "reconnect with more permissions" alone sends an
+		// operator to guess which one
+		expect(short.waitingOn).toContain('10000');
+		expect(short.settled).toBe(false);
+	});
+
+	/** THE CONTROL: the same inputs with the grants satisfied take the stage they always did */
+	it('takes the ordinary stage once the grants are there', () => {
+		const ok = onboardState({ ...base, grants: { zone: true, destinations: true } });
+		expect(ok.stage).toBe('needs-subdomain');
+	});
+
+	it('reports a zone the token cannot read', () => {
+		const short = onboardState({ ...base, grants: { zone: false, destinations: true } });
+		expect(short.stage).toBe('insufficient-grants');
+		expect(short.waitingOn).toContain('sending subdomains');
+	});
+
+	/** a caller that never probed must keep the behaviour it had, or every existing surface moves */
+	it('cannot fire for a caller that passed no grants', () => {
+		expect(onboardState(base).stage).toBe('needs-subdomain');
+	});
+
+	it('names no token at all before it names a permission', () => {
+		const none = onboardState({ ...base, zoneId: null, hasToken: false });
+		expect(none.stage).toBe('no-token');
+		expect(none.waitingOn).toContain('Deploy');
+	});
+});
+
+/**
+ * The From domain, against the one the account onboarded.
+ *
+ * Cloudflare accepts a send from an un-onboarded domain and then restricts delivery to verified
+ * destination addresses, so the mismatch reads as working: the API answers 200 and the visitor's
+ * password reset never arrives.
+ */
+describe('the sender has to be on the onboarded sending domain', () => {
+	it('passes an address on the domain', () => {
+		expect(senderDomainVerdict('site@send.example.com', 'send.example.com').ok).toBe(true);
+	});
+
+	it('passes a subdomain of it, which Cloudflare authorises', () => {
+		expect(senderDomainVerdict('a@bounce.send.example.com', 'send.example.com').ok).toBe(true);
+	});
+
+	it('refuses another domain and names both', () => {
+		const v = senderDomainVerdict('site@example.org', 'send.example.com');
+		expect(v.ok).toBe(false);
+		if (v.ok) return;
+		expect(v.reason).toContain('example.org');
+		expect(v.reason).toContain('send.example.com');
+		// the reason has to say WHY it matters, or it reads as pedantry about a working send
+		expect(v.reason).toContain('verified destination');
+	});
+
+	/** a site with no onboarded domain sends through a relay and must not be refused for it */
+	it('passes anything when no sending domain was onboarded', () => {
+		expect(senderDomainVerdict('site@example.org', '').ok).toBe(true);
+		expect(senderDomainVerdict('site@example.org', '   ').ok).toBe(true);
+	});
+
+	it('refuses a sender with no domain at all', () => {
+		expect(senderDomainVerdict('nobody', 'send.example.com').ok).toBe(false);
+	});
+
+	/** `Name <addr>` is what Drupal's own site mail carries, so the bare form alone is not enough */
+	it('reads the address out of a display-name sender', () => {
+		expect(senderDomainVerdict('Site <a@send.example.com>', 'send.example.com').ok).toBe(true);
+		expect(senderDomainVerdict('Site <a@example.org>', 'send.example.com').ok).toBe(false);
+	});
+
+	it('is case and dot insensitive, because a hostname is', () => {
+		expect(senderDomainVerdict('A@SEND.Example.COM', 'send.example.com.').ok).toBe(true);
+	});
+
+	/** a near-miss must not pass: `notsend.example.com` ends with the string but is another domain */
+	it('refuses a domain that merely ends with the same text', () => {
+		expect(senderDomainVerdict('a@notsend.example.com', 'send.example.com').ok).toBe(false);
 	});
 });

@@ -107,6 +107,193 @@ describe('a refusal is a first-class outcome, and it names what is missing', () 
 	});
 });
 
+/**
+ * THE CONNECTED ACCOUNT REACHES THE SENDER, and it did not.
+ *
+ * `/setup/cf` persists the Cloudflare grant in `cfw_meta` and `/setup/mail` onboards a sending
+ * subdomain against it. `mailEnv()` then merged `this.env` with the site's own `smtp.settings` and
+ * nothing else, so `resolveMailTransport()` looked for `CF_EMAIL_TOKEN` -- which no deploy sets on
+ * the supported path -- walked past `api`, found no `SMTP_HOST` and refused. A site that had just
+ * finished onboarding a transport was told none was configured.
+ */
+describe('the Cloudflare grant is a credential the sender can see', () => {
+	const grant = (site: ServeDo, accessToken: string) => {
+		site.metaSet('cf_oauth_token', JSON.stringify({ accessToken, tokenType: 'bearer' }));
+		site.metaSet('cf_oauth_account', 'acct-from-oauth');
+	};
+
+	it('resolves the api transport from a connected account with no CF_EMAIL_ vars', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, (site) => {
+			site.env = { ...site.env, MAIL_DRAIN_ON_ALARM: '0' };
+			// THE CONTROL: the same site, same message, before the account is connected
+			const before = callMail(site, MESSAGE);
+			grant(site, 'oauth-access-token');
+			return { before, after: callMail(site, MESSAGE) };
+		});
+
+		expect(out.before.ok, 'the control must refuse, or the grant proves nothing').toBe(false);
+		expect(String(out.before.error)).toContain('no mail transport is configured');
+		expect(out.after.ok).toBe(true);
+	});
+
+	it('queues it against the api transport rather than some other one', async () => {
+		const stub = freshSite();
+		const seen = await inObject(stub, (site) => {
+			site.env = { ...site.env, MAIL_DRAIN_ON_ALARM: '0' };
+			grant(site, 'oauth-access-token');
+			callMail(site, MESSAGE);
+			return {
+				kinds: site.sql
+					.exec('SELECT transport FROM cfw_mail_queue')
+					.toArray()
+					.map((r) => String(r['transport'])),
+				resolved: site.mailEnv()
+			};
+		});
+		expect(seen.kinds).toEqual(['api']);
+		expect(seen.resolved.CF_EMAIL_TOKEN).toBe('oauth-access-token');
+		expect(seen.resolved.CF_EMAIL_ACCOUNT_ID).toBe('acct-from-oauth');
+	});
+
+	/** a deployed credential is an operator's explicit statement and must not be overridden */
+	it('leaves a deployed CF_EMAIL_TOKEN in charge of the grant', async () => {
+		const stub = freshSite();
+		const resolved = await inObject(stub, (site) => {
+			site.env = { ...site.env, CF_EMAIL_TOKEN: 'from-wrangler', MAIL_DRAIN_ON_ALARM: '0' };
+			grant(site, 'oauth-access-token');
+			return site.mailEnv();
+		});
+		expect(resolved.CF_EMAIL_TOKEN).toBe('from-wrangler');
+		// and the account still fills from the grant, which the deploy does not carry
+		expect(resolved.CF_EMAIL_ACCOUNT_ID).toBe('acct-from-oauth');
+	});
+
+	it('ignores an unreadable grant rather than sending with a broken token', async () => {
+		const stub = freshSite();
+		const resolved = await inObject(stub, (site) => {
+			site.env = { ...site.env, MAIL_DRAIN_ON_ALARM: '0' };
+			site.metaSet('cf_oauth_token', 'not json');
+			return site.mailEnv();
+		});
+		expect(resolved.CF_EMAIL_TOKEN ?? '').toBe('');
+	});
+});
+
+/**
+ * `ready` meant every precondition looked satisfied, and never that a message arrived.
+ *
+ * Each stage below `ready` is a claim about configuration. None of them is evidence of delivery: the
+ * DNS can be right, the destination verified and the token permitted, and the send still refused for
+ * a reason only the send reports. This is the defect class the project keeps finding, one layer up.
+ */
+describe('a test send, so ready means delivered', () => {
+	it('sends through the resolved transport and reports which one', async () => {
+		const calls = stubFetch(200, '{"success":true}');
+		const stub = freshSite();
+		const out = await inObject(stub, (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-test',
+				CF_EMAIL_TOKEN: 'tok',
+				MAIL_FROM: 'site@send.example.com',
+				MAIL_DRAIN_ON_ALARM: '0'
+			};
+			return site.sendMailTest('someone@example.com');
+		});
+
+		expect(out.ok, String(out.error)).toBe(true);
+		expect(out.transport).toBe('api');
+		// SENT rather than queued: a queued message is answered by the alarm, and the operator
+		// would be reading the same inference one layer down
+		expect(calls('acct-test').length).toBe(1);
+	});
+
+	it('reports the transport on a refusal too, because that is the first question', async () => {
+		stubFetch(403, '{"success":false,"errors":[{"message":"forbidden"}]}');
+		const stub = freshSite();
+		const out = await inObject(stub, (site) => {
+			site.env = {
+				...site.env,
+				CF_EMAIL_ACCOUNT_ID: 'acct-test',
+				CF_EMAIL_TOKEN: 'tok',
+				MAIL_FROM: 'site@send.example.com',
+				MAIL_DRAIN_ON_ALARM: '0'
+			};
+			return site.sendMailTest('someone@example.com');
+		});
+		expect(out.ok).toBe(false);
+		expect(out.transport).toBe('api');
+		expect(String(out.error).length).toBeGreaterThan(0);
+	});
+
+	it('refuses with no recipient and with no transport, without throwing', async () => {
+		const stub = freshSite();
+		const out = await inObject(stub, async (site) => {
+			site.env = { ...site.env, MAIL_DRAIN_ON_ALARM: '0' };
+			return {
+				noRecipient: await site.sendMailTest(''),
+				noTransport: await site.sendMailTest('someone@example.com')
+			};
+		});
+		expect(out.noRecipient.ok).toBe(false);
+		expect(String(out.noRecipient.error)).toContain('recipient');
+		expect(out.noTransport.ok).toBe(false);
+		expect(String(out.noTransport.error)).toContain('no mail transport is configured');
+	});
+});
+
+/**
+ * The From domain, bounded to what the account onboarded.
+ *
+ * Cloudflare accepts a send from an un-onboarded domain and then delivers it only to verified
+ * destination addresses. So the mismatch reads as working -- 200 from the API, nothing in the
+ * visitor's inbox -- which is why this is a refusal at commit rather than a hint after a failure.
+ */
+describe('the sender is bounded to the onboarded sending domain', () => {
+	const armed = (site: ServeDo, from: string, sending: string) => {
+		site.env = {
+			...site.env,
+			CF_EMAIL_ACCOUNT_ID: 'acct-bound',
+			CF_EMAIL_TOKEN: 'tok',
+			MAIL_FROM: from,
+			MAIL_DRAIN_ON_ALARM: '0'
+		};
+		if (sending) site.metaSet('mail_sending_domain', sending);
+	};
+
+	it('refuses a message from a domain the account did not onboard', async () => {
+		const stub = freshSite();
+		const reply = await inObject(stub, (site) => {
+			armed(site, 'site@example.org', 'send.example.com');
+			// the MESSAGE's own from wins in `senderFor()`, so it is what has to be bounded
+			return callMail(site, { ...MESSAGE, from: 'Site <site@example.org>' });
+		});
+		expect(reply.ok).toBe(false);
+		expect(String(reply.error)).toContain('send.example.com');
+	});
+
+	// THE CONTROL: the same site with the sender on the onboarded domain commits
+	it('accepts one from the onboarded domain', async () => {
+		const stub = freshSite();
+		const reply = await inObject(stub, (site) => {
+			armed(site, 'site@send.example.com', 'send.example.com');
+			return callMail(site, { ...MESSAGE, from: 'Site <site@send.example.com>' });
+		});
+		expect(reply.ok, String(reply.error)).toBe(true);
+	});
+
+	/** a site that never onboarded one has no domain to be bounded to, and must still send */
+	it('does not refuse a site that onboarded no sending domain', async () => {
+		const stub = freshSite();
+		const reply = await inObject(stub, (site) => {
+			armed(site, 'site@example.org', '');
+			return callMail(site, { ...MESSAGE, from: 'Site <site@example.org>' });
+		});
+		expect(reply.ok, String(reply.error)).toBe(true);
+	});
+});
+
 describe('a queued message really leaves the Worker', () => {
 	it('commits on the host call and POSTs to the Email Sending API on the alarm', async () => {
 		const stub = freshSite();

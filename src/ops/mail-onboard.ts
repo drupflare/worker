@@ -266,6 +266,59 @@ export async function applyDnsPlan(
 	return { created, updated, kept, advised, errors };
 }
 
+/**
+ * Whether a message's From address belongs to the domain this account onboarded for sending.
+ *
+ * A MISMATCH RESTRICTS DELIVERY RATHER THAN FAILING, which is why nothing noticed. Cloudflare will
+ * accept a send from a domain it has no SPF or DKIM for and then deliver it only to verified
+ * destination addresses -- so registration mail to a real visitor is accepted by the API and never
+ * arrives, and the site's own status says the transport is configured.
+ *
+ * A subdomain of the sending domain passes: onboarding `send.example.com` authorises
+ * `bounce.send.example.com`, and refusing that would be stricter than Cloudflare.
+ *
+ * @param from the effective sender, which is `senderFor()`'s answer rather than `MAIL_FROM`.
+ * @param sending the onboarded sending domain, or '' when this site has never onboarded one. Empty
+ *   answers ok: a site sending through a third-party relay has no Cloudflare sending domain and
+ *   must not be refused for the absence of one.
+ */
+export function senderDomainVerdict(
+	from: string,
+	sending: string
+): { ok: true } | { ok: false; reason: string } {
+	const want = String(sending ?? '')
+		.trim()
+		.toLowerCase()
+		.replace(/^\.+|\.+$/g, '');
+	if (want === '') return { ok: true };
+	// `Name <addr@host>` as well as a bare address: `senderFor()` hands over whatever Drupal set as
+	// the site mail, and Drupal's own default carries a display name
+	const raw = String(from ?? '').trim();
+	const angled = raw.match(/<([^>]*)>\s*$/);
+	const address = (angled?.[1] ?? raw).trim();
+	const at = address.lastIndexOf('@');
+	const domain =
+		at === -1
+			? ''
+			: address
+					.slice(at + 1)
+					.trim()
+					.toLowerCase()
+					.replace(/\.+$/, '');
+	if (domain === '') {
+		return { ok: false, reason: `the sender ${from || '(empty)'} carries no domain` };
+	}
+	if (domain === want || domain.endsWith(`.${want}`)) return { ok: true };
+	return {
+		ok: false,
+		reason:
+			`the sender is ${domain} and this account onboarded ${want} for sending. Cloudflare ` +
+			`accepts a send from an un-onboarded domain and then delivers it only to verified ` +
+			`destination addresses, so this would look sent and not arrive. Set the site mail ` +
+			`address or MAIL_FROM to an address at ${want}`
+	};
+}
+
 export type DestinationAddress = {
 	id: string;
 	email: string;
@@ -318,8 +371,34 @@ export function isVerified(address: DestinationAddress | undefined): boolean {
 	return typeof address.verified === 'string' && address.verified !== '';
 }
 
+/**
+ * What the token is actually allowed to do, probed rather than assumed.
+ *
+ * A SHORT PERMISSION USED TO SURFACE AS THE WRONG STAGE. `listDestinations()` failing was swallowed
+ * -- `dests?.ok ? ... : undefined` -- so a token with no Email Routing read produced an undefined
+ * destination, which reads exactly like an unverified one, and the flow told the operator to click
+ * a link Cloudflare had never sent. The stage has to be able to say "this token cannot see".
+ *
+ * Each field is the verdict of a real call the flow makes anyway, so probing costs nothing extra
+ * and cannot disagree with what the flow then does.
+ */
+export type TokenGrants = {
+	/** can list sending subdomains on the zone; null when no zone has been chosen yet */
+	zone: boolean | null;
+	/** can list the account's destination addresses */
+	destinations: boolean;
+	/** what the API said when one was refused, for the operator rather than for a log */
+	refusal?: string;
+};
+
 export type OnboardStage =
-	'no-zone' | 'needs-subdomain' | 'needs-dns' | 'awaiting-verification' | 'ready';
+	| 'no-token'
+	| 'insufficient-grants'
+	| 'no-zone'
+	| 'needs-subdomain'
+	| 'needs-dns'
+	| 'awaiting-verification'
+	| 'ready';
 
 export type OnboardState = {
 	stage: OnboardStage;
@@ -345,7 +424,36 @@ export function onboardState(input: {
 	subdomain: SendingSubdomain | null;
 	plan: RecordAction[];
 	destination: DestinationAddress | undefined;
+	/** omitted by a caller that has not probed; then the grant branches cannot fire */
+	grants?: TokenGrants;
+	/** false when no Cloudflare account is connected at all */
+	hasToken?: boolean;
 }): OnboardState {
+	if (input.hasToken === false) {
+		return {
+			stage: 'no-token',
+			waitingOn: 'connect a Cloudflare account on the Deploy page',
+			settled: false
+		};
+	}
+	// BEFORE every stage below, because each of those is a claim about the ACCOUNT and a token that
+	// cannot read is not evidence about the account. This is the branch that stops a short
+	// permission being reported as "click the link Cloudflare emailed you"
+	const grants = input.grants;
+	if (grants && (grants.zone === false || !grants.destinations)) {
+		const missing = [
+			grants.zone === false ? 'read the sending subdomains on that zone' : '',
+			grants.destinations ? '' : 'read the account destination addresses'
+		].filter((m) => m !== '');
+		return {
+			stage: 'insufficient-grants',
+			waitingOn:
+				`the connected token cannot ${missing.join(' or ')}. Reconnect with Email ` +
+				`Routing and Zone DNS permissions` +
+				(grants.refusal ? `; the API said: ${grants.refusal}` : ''),
+			settled: false
+		};
+	}
 	if (!input.zoneId) {
 		return {
 			stage: 'no-zone',

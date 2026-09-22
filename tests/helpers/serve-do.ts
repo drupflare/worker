@@ -262,6 +262,10 @@ export type ServeDo = {
 	};
 	metaGet: (key: string, fallback?: string | null) => string | null;
 	metaSet: (key: string, value: unknown) => void;
+	/** the deployment's mail vars merged with the site's settings and the Cloudflare grant */
+	mailEnv: () => import('../../src/ops/mail').MailEnv;
+	/** one live send, so `ready` can mean delivered rather than inferred */
+	sendMailTest: (to: string) => Promise<Record<string, unknown>>;
 	nowMs: () => number;
 	harvestShellFor: (
 		path: string,
@@ -307,6 +311,11 @@ export type ServeDo = {
 	_migrator?: unknown;
 	/** the daily rows meter: the accumulator, its flush, and the read that does not write */
 	rowsSinceFlush?: number;
+	doRequestsSinceFlush?: number;
+	/** writes not made because the row already held the value; see `metaSet()` */
+	elidedWrites?: number;
+	lastMeterFlushMs?: number;
+	shouldFlushMeters: (nowMs?: number) => boolean;
 	flushDailyRows: (nowMs?: number) => number;
 	/** the four daily counters as one packed `cfw_meta` row; see `src/ops/day-meters.ts` */
 	storedMeters: (nowMs?: number) => import('../../src/ops/day-meters').DayMeters;
@@ -343,6 +352,8 @@ export type ServeDo = {
 	crossings?: import('../../src/ops/crossings').CrossingTally;
 	/** the per-table write tally, armed by assigning `emptyTally()` and read back in place */
 	writeTally?: import('../../src/db/write-tally').WriteTally;
+	/** the synchronous fast lane; a spec drives it directly to read the tier it chose */
+	serveFromStorage: (url: URL) => Response | null;
 	/** the in-memory attempt log `/__capability` reports; refusals carry their reason */
 	mails?: Array<{
 		to: unknown;
@@ -700,6 +711,55 @@ export function seedPage(site: ServeDo, path: string, html: string, renderMs = 1
 		html,
 		Date.now(),
 		renderMs
+	);
+}
+
+/**
+ * The same, stored the way a real fill stores one: with its tags and their checksum.
+ *
+ * A page seeded without them has no usable checksum, so `bumpGeneration()` still marks it eagerly
+ * and a spec resting on `seedPage()` alone cannot see the lazy path at all. Creates the `cachetags`
+ * rows too, because the checksum is a sum over them and a page whose tags have no counters is
+ * indistinguishable from one whose counters are all zero.
+ */
+export function seedTaggedPage(site: ServeDo, path: string, html: string, tags: readonly string[]) {
+	site.ensureServeTables();
+	site.sql.exec(
+		`CREATE TABLE IF NOT EXISTS cachetags (tag TEXT PRIMARY KEY, invalidations INTEGER NOT NULL DEFAULT 0)`
+	);
+	for (const tag of tags) {
+		site.sql.exec(
+			'INSERT INTO cachetags (tag, invalidations) VALUES (?, 0) ON CONFLICT(tag) DO NOTHING',
+			tag
+		);
+	}
+	const checksum = Number(
+		site.sql
+			.exec(
+				`SELECT COALESCE(SUM(invalidations), 0) AS s FROM cachetags WHERE tag IN (${tags.map(() => '?').join(',')})`,
+				...tags
+			)
+			.toArray()[0]?.['s'] ?? 0
+	);
+	site.sql.exec(
+		`INSERT INTO cfw_page (path, status, content_type, html, rendered_at, render_ms, tags, tag_checksum)
+		 VALUES (?, 200, 'text/html; charset=utf-8', ?, ?, 120, ?, ?)
+		 ON CONFLICT(path) DO UPDATE SET
+		   html = excluded.html, tags = excluded.tags, tag_checksum = excluded.tag_checksum,
+		   stale_at = NULL`,
+		path,
+		html,
+		Date.now(),
+		JSON.stringify([...tags]),
+		checksum
+	);
+}
+
+/** moves a tag's counter the way `Cache::invalidateTags()` does, without running Drupal */
+export function invalidateTag(site: ServeDo, tag: string) {
+	site.sql.exec(
+		'INSERT INTO cachetags (tag, invalidations) VALUES (?, 1) ON CONFLICT(tag) DO UPDATE SET invalidations = invalidations + 1',
+		tag
 	);
 }
 

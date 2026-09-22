@@ -39,7 +39,13 @@ import { isPaid, type PlanEnv } from './plan.js';
  */
 export const DAILY_ROWS_QUOTA = 100_000;
 
-/** `ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs */
+/**
+ * `ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs.
+ *
+ * It describes `MEMORY_CACHE_BINS=none`; with the shipping default an authenticated view is 3, and
+ * this tracks `ROWS_PER_FILL.realRender` rather than leading it. See that class for why the model
+ * has not been re-derived against the new default yet.
+ */
 export const ROWS_PER_AUTH_RENDER = 9;
 
 /** `FREE_QUOTAS.doRequestsPerDay`, same quota shape as rows */

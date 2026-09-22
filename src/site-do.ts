@@ -3,14 +3,22 @@ import type { SiteEnv } from './env.js';
 import { substituteAggregates, type AggregateIndex } from './ops/aggregates.js';
 import type { CacheTier } from './ops/cache-tiers.js';
 import {
+	ABSORBED_HEADER,
 	ZERO_ENCOUNTERS,
 	addEncounters,
 	encounterReport,
+	foldAbsorbed,
 	parseEncounters,
 	recordEncounter,
-	serialiseEncounters,
 	type EncounterCounts
 } from './ops/cold-encounter.js';
+import {
+	DAY_METERS_PREFIX,
+	dayMetersKey,
+	readDayMeters,
+	writeDayMeters,
+	type DayMeters
+} from './ops/day-meters.js';
 import {
 	attemptBudget,
 	deferredKey,
@@ -1791,8 +1799,22 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** outbound calls the render in flight has deferred; see the re-drive in {@link fillOne} */
 	deferredInRender?: number;
 
-	/** the last request-level re-drive, reported at `/serve-stats` so its cost has an n */
-	lastRedrive?: { path: string; deferred: number; drained: number; deferredAgain: number };
+	/**
+	 * The last request-level re-drive, reported at `/serve-stats` so its cost has an n.
+	 *
+	 * `at` and `seq` are what make it an OCCURRENCE record rather than a shape. Every re-drive of
+	 * the same path produces byte-identical counts, so a reader polling this could not tell a
+	 * second re-drive from the first one still sitting there -- measured on a local rig, four
+	 * consecutive re-driven renders reported one.
+	 */
+	lastRedrive?: {
+		path: string;
+		deferred: number;
+		drained: number;
+		deferredAgain: number;
+		at: number;
+		seq: number;
+	};
 
 	/** the arrivals the thermal predictor reads; a ring, so it costs no rows */
 	arrivals?: Arrival[];
@@ -2018,6 +2040,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * per-UTC-day total on the alarm, where one row is already being written.
 	 */
 	doRequestsSinceFlush?: number;
+	/**
+	 * When the alarm this object last set is due, in memory only.
+	 *
+	 * `armFillAlarm()` reads it to tell a pending alarm that is already sooner from one that is
+	 * later, which is the whole difference between one charged row per burst and one per hit. Lost
+	 * to hibernation, and that costs one extra arm and never a missed one.
+	 */
+	alarmDueMs?: number;
+
+	/** `carriedServeTotal()`'s memo; the lifetime serve total moves only through `flushMeters()` */
+	carriedServe?: number;
 	phpLaneEntries?: number;
 	storageLaneServes?: number;
 	/**
@@ -2321,7 +2354,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// the binary and its mount survive to the next firing; the cursor is what makes this
 			// object unservable until the remaining chunks land.
 			if (this.heapRestoreCursor) {
-				await this.storage.setAlarm(this.nowMs() + 1);
+				await this.setAlarmAt(this.nowMs() + 1);
 				throw new HeapRestoreIncomplete(this.heapRestoreCursor);
 			}
 		}
@@ -5805,15 +5838,83 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * @returns the running total for today, after folding in whatever had accumulated.
 	 */
 	flushDailyRows(nowMs = this.nowMs()): number {
-		const today = new Date(nowMs).toISOString().slice(0, 10);
-		const key = `rows_written_${today}`;
-		const pending = this.rowsSinceFlush ?? 0;
-		if (pending === 0) return Number(this.metaGet(key, '0') ?? 0);
+		return this.flushMeters(nowMs).rows;
+	}
+
+	/**
+	 * What the packed day row holds, or what the four keys that preceded it held.
+	 *
+	 * The legacy read is not a migration step and writes nothing: an object upgraded mid-day would
+	 * otherwise restart its daily counters at zero, and the row budget is the one the degrade guard
+	 * reads. Once this day has been flushed once the packed row answers and the old keys are ignored.
+	 */
+	storedMeters(nowMs = this.nowMs()): DayMeters {
+		const packed = readDayMeters(this.metaGet(dayMetersKey(nowMs)));
+		if (packed) return packed;
+		const day = new Date(nowMs).toISOString().slice(0, 10);
+		return {
+			rows: Number(this.metaGet(`rows_written_${day}`, '0') ?? 0),
+			doRequests: Number(this.metaGet(`do_requests_${day}`, '0') ?? 0),
+			serveTotal: this.carriedServeTotal(),
+			encounters: parseEncounters(this.metaGet(`encounters_${day}`))
+		};
+	}
+
+	/**
+	 * The lifetime serve total, from whichever day last recorded one.
+	 *
+	 * Memoised for the incarnation because it only ever moves through `flushMeters()`, which writes
+	 * today's row and so stops this being consulted at all. One GLOB over a table of tens of rows,
+	 * at most once per object lifetime.
+	 */
+	carriedServeTotal(): number {
+		if (this.carriedServe !== undefined) return this.carriedServe;
+		let latest = 0;
+		try {
+			const row = this.sql
+				.exec(
+					`SELECT v FROM cfw_meta WHERE k GLOB '${DAY_METERS_PREFIX}*' ORDER BY k DESC LIMIT 1`
+				)
+				.toArray()[0] as { v?: string } | undefined;
+			latest = readDayMeters(row?.v ?? null)?.serveTotal ?? 0;
+		} catch {
+			/* no cfw_meta yet; the total is zero and the next flush writes one */
+		}
+		this.carriedServe = Math.max(latest, Number(this.metaGet('serve_requests', '0') ?? 0));
+		return this.carriedServe;
+	}
+
+	/**
+	 * Folds every pending counter into ONE row, which is the whole point of the packing.
+	 *
+	 * Returns the totals after folding, so the four callers that used to each write their own key
+	 * can each read the one they care about off it.
+	 */
+	flushMeters(nowMs = this.nowMs()): DayMeters {
+		const rowsPending = this.rowsSinceFlush ?? 0;
+		const doPending = this.doRequestsSinceFlush ?? 0;
+		const servePending = this.serveRequestsPending ?? 0;
+		const seen = this.encounters;
+		const encountersPending =
+			seen.noPhp !== 0 || seen.warm !== 0 || seen.cold !== 0 || seen.absorbed !== 0;
+		const stored = this.storedMeters(nowMs);
+		if (rowsPending === 0 && doPending === 0 && servePending === 0 && !encountersPending) {
+			return stored;
+		}
 		this.rowsSinceFlush = 0;
-		const total = Number(this.metaGet(key, '0') ?? 0) + pending;
-		this.metaSet(key, total);
+		this.doRequestsSinceFlush = 0;
+		this.serveRequestsPending = 0;
+		this.encounters = { ...ZERO_ENCOUNTERS };
+		const total: DayMeters = {
+			rows: stored.rows + rowsPending,
+			doRequests: stored.doRequests + doPending,
+			serveTotal: stored.serveTotal + servePending,
+			encounters: addEncounters(stored.encounters, seen)
+		};
+		this.carriedServe = total.serveTotal;
 		// yesterday's key is left in place: one row per day is nothing, and a
 		// history of daily totals is what makes "is this site trending over" answerable at all
+		this.metaSet(dayMetersKey(nowMs), writeDayMeters(total));
 		return total;
 	}
 
@@ -5876,25 +5977,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	flushServeRequests(): number {
 		const pending = this.serveRequestsPending ?? 0;
 		if (pending === 0) return 0;
-		this.sql.exec(
-			`INSERT INTO cfw_meta (k, v) VALUES ('serve_requests', ?)
-			 ON CONFLICT(k) DO UPDATE SET v = CAST(cfw_meta.v AS INTEGER) + ?`,
-			String(pending),
-			pending
-		);
-		this.serveRequestsPending = 0;
+		this.flushMeters();
 		return pending;
 	}
 
 	/** the durable total plus what has not been paid for yet; for a read that must not write */
 	serveRequests(): number {
-		return Number(this.metaGet('serve_requests', '0') ?? 0) + (this.serveRequestsPending ?? 0);
+		return this.storedMeters().serveTotal + (this.serveRequestsPending ?? 0);
 	}
 
 	/** today's rows written, without flushing -- for a read that must not write */
 	dailyRows(nowMs = this.nowMs()): number {
-		const today = new Date(nowMs).toISOString().slice(0, 10);
-		return Number(this.metaGet(`rows_written_${today}`, '0') ?? 0) + (this.rowsSinceFlush ?? 0);
+		return this.storedMeters(nowMs).rows + (this.rowsSinceFlush ?? 0);
 	}
 
 	/**
@@ -5909,14 +6003,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * meter. Conflating them would report a confident wrong number for the serving ceiling.
 	 */
 	flushDailyDoRequests(nowMs = this.nowMs()): number {
-		const today = new Date(nowMs).toISOString().slice(0, 10);
-		const key = `do_requests_${today}`;
-		const pending = this.doRequestsSinceFlush ?? 0;
-		if (pending === 0) return Number(this.metaGet(key, '0') ?? 0);
-		this.doRequestsSinceFlush = 0;
-		const total = Number(this.metaGet(key, '0') ?? 0) + pending;
-		this.metaSet(key, total);
-		return total;
+		return this.flushMeters(nowMs).doRequests;
 	}
 
 	/**
@@ -5927,14 +6014,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 * rate costs nothing of its own.
 	 */
 	flushEncounters(nowMs = this.nowMs()): EncounterCounts {
-		const key = `encounters_${new Date(nowMs).toISOString().slice(0, 10)}`;
-		const stored = parseEncounters(this.metaGet(key));
-		const pending = this.encounters;
-		if (pending.noPhp === 0 && pending.warm === 0 && pending.cold === 0) return stored;
-		const total = addEncounters(stored, pending);
-		this.encounters = { ...ZERO_ENCOUNTERS };
-		this.metaSet(key, serialiseEncounters(total));
-		return total;
+		return this.flushMeters(nowMs).encounters;
 	}
 
 	/**
@@ -5948,10 +6028,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		today: ReturnType<typeof encounterReport>;
 		incarnation: ReturnType<typeof encounterReport>;
 	} {
-		const key = `encounters_${new Date(nowMs).toISOString().slice(0, 10)}`;
 		return {
 			today: encounterReport(
-				addEncounters(parseEncounters(this.metaGet(key)), this.encounters)
+				addEncounters(this.storedMeters(nowMs).encounters, this.encounters)
 			),
 			incarnation: encounterReport(this.encounters)
 		};
@@ -6658,11 +6737,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 	/** today's DO invocations, without flushing */
 	dailyDoRequests(nowMs = this.nowMs()): number {
-		const today = new Date(nowMs).toISOString().slice(0, 10);
-		return (
-			Number(this.metaGet(`do_requests_${today}`, '0') ?? 0) +
-			(this.doRequestsSinceFlush ?? 0)
-		);
+		return this.storedMeters(nowMs).doRequests + (this.doRequestsSinceFlush ?? 0);
 	}
 
 	/**
@@ -8445,14 +8520,6 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	}
 
 	/**
-	 * Arms the fill alarm without disturbing one that is already sooner.
-	 *
-	 * Extracted because `bumpGeneration()` is synchronous and cannot await
-	 * `getAlarm()`; overwriting an existing alarm here would push a pending fill
-	 * chain out. Fire-and-forget is safe: the worst case is an alarm at +1 ms that
-	 * finds nothing to do.
-	 */
-	/**
 	 * Queues a refill for one path and wakes the chain, from the fast lane.
 	 *
 	 * Await-free by construction -- one indexed INSERT and a `setAlarm` that is not awaited -- because
@@ -8470,9 +8537,38 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.armFillAlarm();
 	}
 
+	/**
+	 * Arms the fill alarm without disturbing one that is already sooner.
+	 *
+	 * `bumpGeneration()` is synchronous and cannot await `getAlarm()`, so the guard is an in-memory
+	 * note of what this object last armed rather than a read. That is what makes the sentence true:
+	 * it said this for a year while the body called `setAlarm()` unconditionally, and each call is
+	 * one charged row on paths that are hot -- an aged-page serve, every deferred HTTP call inside a
+	 * render, and the mail queue. The `ON CONFLICT DO NOTHING` beside the first of those made the
+	 * INSERT cost one row per burst and the `setAlarm` on the next line cost one per hit.
+	 *
+	 * Fire-and-forget is safe both ways: a memo lost to hibernation costs one extra arm, and a later
+	 * alarm set by anything else clears it, so this can never skip an arm the chain needs.
+	 */
+	/**
+	 * Sets an alarm and remembers when it is due.
+	 *
+	 * The note is what makes `armFillAlarm()`'s guard safe: without it, a keep-warm re-arm 240 s out
+	 * would leave the guard believing a +1 ms alarm was still pending, and the next visitor MISS
+	 * would sit behind the wrong one for four minutes. That is the failure the `/__fill` route's
+	 * `getAlarm()` check was added to fix once already.
+	 */
+	private async setAlarmAt(atMs: number): Promise<void> {
+		this.alarmDueMs = atMs;
+		await this.storage.setAlarm(atMs);
+	}
+
 	armFillAlarm(): void {
+		const at = this.nowMs() + 1;
+		if (this.alarmDueMs !== undefined && this.alarmDueMs <= at) return;
 		try {
-			const armed = this.storage.setAlarm(this.nowMs() + 1);
+			this.alarmDueMs = at;
+			const armed = this.storage.setAlarm(at);
 			if (armed && typeof armed.catch === 'function') armed.catch(() => {});
 		} catch {
 			/* an unschedulable alarm must not fail the save that triggered it */
@@ -8971,7 +9067,9 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						path,
 						deferred,
 						drained: drained?.drained?.length ?? 0,
-						deferredAgain: this.deferredInRender ?? 0
+						deferredAgain: this.deferredInRender ?? 0,
+						at: this.nowMs(),
+						seq: (this.lastRedrive?.seq ?? 0) + 1
 					};
 				}
 			} catch {
@@ -9449,7 +9547,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			`INSERT INTO cfw_meta (k, v) VALUES ('provision_requested', '1')
 			 ON CONFLICT(k) DO NOTHING`
 		);
-		await this.storage.setAlarm(this.nowMs() + 1);
+		await this.setAlarmAt(this.nowMs() + 1);
 	}
 
 	async hasMigrationManifest(): Promise<boolean> {
@@ -9738,7 +9836,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// arm the continuation here rather than only in alarm(), so the very first /migrate
 		// call is enough to finish the job unattended
 		if (!out.done && migrationSelfDrives(this.env)) {
-			await this.storage.setAlarm(this.nowMs() + 1);
+			await this.setAlarmAt(this.nowMs() + 1);
 			out.continuation = 'alarm armed';
 		}
 		return { ...out, engine: 'sql' };
@@ -9913,11 +10011,13 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const bound = this.nowMs() + replicaLagMs(this.env);
 		const armed = await this.storage.getAlarm();
 		if (armed !== null && armed <= bound) return;
-		await this.storage.setAlarm(bound);
+		await this.setAlarmAt(bound);
 	}
 
 	private async alarmBody(): Promise<any> {
 		this.lastAlarmAt = this.nowMs();
+		// the alarm this firing consumed; whatever `alarmBody()` sets on its way out replaces it
+		this.alarmDueMs = undefined;
 		// an alarm is a billed Durable Object invocation too, and the quota docs say so explicitly --
 		// which is why slicing work into more alarms spends the meter it is trying to dodge
 		this.doRequestsSinceFlush = (this.doRequestsSinceFlush ?? 0) + 1;
@@ -9959,7 +10059,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			}
 
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			await this.storage.setAlarm(this.nowMs() + decision.delayMs);
+			await this.setAlarmAt(this.nowMs() + decision.delayMs);
 			return outcome;
 		}
 
@@ -9985,7 +10085,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				const waiting = readmission !== null || this.awaitingCopy();
 				if (caught.ran || waiting) {
 					this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-					await this.storage.setAlarm(
+					await this.setAlarmAt(
 						this.nowMs() + (waiting ? this.copyBackoffMs() : CATCH_UP_INTERVAL_MS)
 					);
 				}
@@ -10020,7 +10120,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					this.migrateFailures = 0;
 				}
 				const delay = migrateAlarmDelayMs(pending.migrate, this.migrateFailures);
-				await this.storage.setAlarm(this.nowMs() + delay);
+				await this.setAlarmAt(this.nowMs() + delay);
 				return pending;
 			}
 		}
@@ -10041,7 +10141,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.lastAlarmOutcome = outcome;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			await this.storage.setAlarm(
+			await this.setAlarmAt(
 				this.nowMs() + updbAlarmDelayMs(outcome?.updb, updbOptions(this.env))
 			);
 			return outcome;
@@ -10077,7 +10177,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				this.lastAlarmOutcome = { rollback: decision, restore: out };
 				this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 				this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-				await this.storage.setAlarm(this.nowMs() + (out.done ? 60_000 : 1));
+				await this.setAlarmAt(this.nowMs() + (out.done ? 60_000 : 1));
 				return this.lastAlarmOutcome;
 			}
 			this.lastAlarmOutcome = {
@@ -10090,7 +10190,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
 			// a slow tick: nothing here is urgent, because the site is still serving
-			await this.storage.setAlarm(this.nowMs() + 60_000);
+			await this.setAlarmAt(this.nowMs() + 60_000);
 			return this.lastAlarmOutcome;
 		}
 
@@ -10101,7 +10201,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (this.migratePartial()) {
 			this.lastAlarmOutcome = { skipped: 'migration incomplete' };
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
-			await this.storage.setAlarm(this.nowMs() + 1000);
+			await this.setAlarmAt(this.nowMs() + 1000);
 			return this.lastAlarmOutcome;
 		}
 
@@ -10114,7 +10214,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		if (scaled) {
 			this.lastAutoScale = scaled;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
-			await this.storage.setAlarm(this.nowMs() + 1000);
+			await this.setAlarmAt(this.nowMs() + 1000);
 			return (this.lastAlarmOutcome = scaled);
 		}
 
@@ -10133,7 +10233,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.lastAlarmOutcome = reconcile;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			await this.storage.setAlarm(this.nowMs() + 1000);
+			await this.setAlarmAt(this.nowMs() + 1000);
 			return reconcile;
 		}
 
@@ -10147,7 +10247,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.dropInterpreter();
 			this.lastAlarmOutcome = imaged;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
-			await this.storage.setAlarm(this.nowMs() + 1000);
+			await this.setAlarmAt(this.nowMs() + 1000);
 			return this.lastAlarmOutcome;
 		}
 
@@ -10485,15 +10585,11 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// its own interval, so it is outside the meter gate; an idle tick writes nothing here
 		this.flushRenderWindow();
 		if (this.shouldFlushMeters()) {
-			this.flushDailyRows();
-			// folded in the same firing, so the counter costs no row of its own
-			this.flushDailyDoRequests();
-			// same firing again: served requests used to buy a row per page view, on a lane whose
-			// whole purpose is to answer without writing
-			this.flushServeRequests();
-			// and the cold-encounter rate, on the same firing for the same reason. It is the metric a
-			// boot proposal is scored against, so it must not cost a row per request to collect
-			this.flushEncounters();
+			// ONE row for all four counters. They had a key each, so a flush on a trafficked site
+			// wrote four rows to record a batch of writes -- while the comments here claimed the
+			// folding cost no row of its own. The folding saved the ALARM; `src/ops/day-meters.ts`
+			// is what saves the rows
+			this.flushMeters();
 			this.lastMeterFlushMs = this.nowMs();
 		}
 
@@ -10560,7 +10656,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// after the re-arm is decided and before the firing ends: a fill, an install step and a cron
 		// hook all run here, and an alarm is the quiet moment the memory tripwire asks for
 		this.recycleIfOversized('alarm');
-		await this.storage.setAlarm(this.nowMs() + delayMs);
+		await this.setAlarmAt(this.nowMs() + delayMs);
 		return this.lastAlarmOutcome;
 	}
 
@@ -10755,6 +10851,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// counted HERE, before any lane splits: both the fast storage lane and the gated PHP lane are
 		// the same billed invocation, so counting inside either would undercount the meter
 		this.doRequestsSinceFlush = (this.doRequestsSinceFlush ?? 0) + 1;
+		// what the front worker answered by itself since its last hop, on the same request rather
+		// than one of its own. Read where the line above counts, because that is the one point both
+		// lanes pass through
+		this.encounters = foldAbsorbed(this.encounters, request.headers.get(ABSORBED_HEADER));
 
 		// The warm window. Handled before the gate: accepting the socket must
 		// not sit inside a gate entry, or the per-message work queued behind it deadlocks.
@@ -12162,7 +12262,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						source: '/__restore',
 						nowMs: this.nowMs()
 					});
-					await this.storage.setAlarm(this.nowMs() + 1);
+					await this.setAlarmAt(this.nowMs() + 1);
 					return Response.json({ ok: true, ...stored });
 				}
 
@@ -12410,7 +12510,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// armed here rather than left to the warming chain, because a site whose lanes
 						// have all withdrawn may have no other reason to wake
 						if ((await this.storage.getAlarm()) === null) {
-							await this.storage.setAlarm(this.nowMs() + 1000);
+							await this.setAlarmAt(this.nowMs() + 1000);
 						}
 						return Response.json({ ok: true, lane, queue });
 					}
@@ -12590,7 +12690,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						// nothing else arms a finished lane, so it would refuse every request
 						// while waiting for an alarm no-one sets
 						if (outcome.stage === 'VERIFIED' && before !== 'VERIFIED') {
-							await this.storage.setAlarm(this.nowMs() + 1);
+							await this.setAlarmAt(this.nowMs() + 1);
 						}
 						return Response.json(outcome, { status: outcome.ok ? 200 : 409 });
 					}
@@ -13715,7 +13815,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					const soon = this.nowMs() + 1;
 					const existing = await this.storage.getAlarm();
 					if (existing === null || existing > soon + 50) {
-						await this.storage.setAlarm(soon);
+						await this.setAlarmAt(soon);
 					}
 
 					// Rendering here is safe against the gate: fetch() takes the one gate
@@ -14838,7 +14938,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				 */
 				case '/__armfill': {
 					const queued = this.queueDepth();
-					if (queued > 0) await this.storage.setAlarm(this.nowMs() + 1);
+					if (queued > 0) await this.setAlarmAt(this.nowMs() + 1);
 					return Response.json({ ok: true, queued, armed: queued > 0 });
 				}
 

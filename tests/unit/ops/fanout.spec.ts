@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { ROWS_PER_FILL } from '../../../scripts/measure/free-envelope';
 import {
 	FANOUT_MEDIUM,
+	FANOUT_MEDIUM_ROWS,
 	FANOUT_SMALL,
+	FANOUT_SMALL_ROWS,
+	ROWS_PER_TAGGED_PAGE,
+	ROWS_PER_UNTAGGED_PAGE,
 	fanoutDecision,
 	type FanoutPolicy
 } from '../../../src/ops/fanout';
@@ -103,5 +108,76 @@ describe('the fanout decides how a content change is scheduled', () => {
 			expect(fanoutDecision(1, 25, stale).policy).toBe('immediate');
 			expect(fanoutDecision(FANOUT_SMALL + 1, 25, stale).policy).toBe('background');
 		}
+	});
+});
+
+/**
+ * The same policy, decided in the unit the budget is spent in.
+ *
+ * FANOUT WAS A PAGE COUNT. A page costs 2 charged rows when its `dynamic_page_cache` entry survived
+ * the invalidation and 9 when it did not, and across the whole measured table a fill is 2 to 91 --
+ * so one count could not be right for both, and the thresholds were being applied to whichever set
+ * a purge happened to produce.
+ */
+describe('the fanout is weighted by rows, not by page count', () => {
+	/** copied into `src/` to keep a CLI script out of the Worker bundle; this is the pin */
+	it('uses the measured fill costs rather than restating them', () => {
+		expect(ROWS_PER_TAGGED_PAGE).toBe(ROWS_PER_FILL.realRender);
+		expect(ROWS_PER_UNTAGGED_PAGE).toBe(ROWS_PER_FILL.warmReassemble);
+		expect(FANOUT_SMALL_ROWS).toBe(FANOUT_SMALL * ROWS_PER_TAGGED_PAGE);
+		expect(FANOUT_MEDIUM_ROWS).toBe(FANOUT_MEDIUM * ROWS_PER_TAGGED_PAGE);
+	});
+
+	/** the property that makes this safe to ship: nothing moves for the case the counts were set on */
+	it('reproduces the old boundaries exactly at the default cost', () => {
+		expect(fanoutDecision(FANOUT_SMALL, 100).policy).toBe('immediate');
+		expect(fanoutDecision(FANOUT_SMALL + 1, 100).policy).toBe('background');
+		expect(fanoutDecision(FANOUT_MEDIUM, 100).policy).toBe('background');
+		expect(fanoutDecision(FANOUT_MEDIUM + 1, 100).policy).toBe('lazy');
+	});
+
+	/**
+	 * A WHOLESALE PURGE OF CHEAP PAGES IS PAID FOR IMMEDIATELY NOW, which is the change that matters
+	 * most: 34 reassembles is 68 rows, and deferring 68 rows to the stale tier bought nothing.
+	 */
+	it('pays for a wide purge of reassembles that the count would have deferred', () => {
+		const byCount = fanoutDecision(34, 100);
+		const byRows = fanoutDecision(34, 100, true, ROWS_PER_UNTAGGED_PAGE);
+		expect(byCount.policy).toBe('lazy');
+		expect(byRows.policy).toBe('immediate');
+		expect(byRows.rows).toBe(68);
+	});
+
+	/** and the other direction: expensive pages stop being treated as a small change */
+	it('defers a narrow purge of expensive pages that the count would have paid for', () => {
+		const expensive = fanoutDecision(8, 100, true, 91);
+		expect(expensive.policy).toBe('lazy');
+		expect(expensive.rows).toBe(728);
+		// the control: the same eight pages at the ordinary cost is still immediate
+		expect(fanoutDecision(8, 100).policy).toBe('immediate');
+	});
+
+	it('reports the rows it decided on, so the choice is checkable', () => {
+		expect(fanoutDecision(0, 25).rows).toBe(0);
+		expect(fanoutDecision(5, 25).rows).toBe(5 * ROWS_PER_TAGGED_PAGE);
+		expect(fanoutDecision(5, 25, true, ROWS_PER_UNTAGGED_PAGE).rows).toBe(10);
+		expect(fanoutDecision(5, 25).reason).toContain(String(5 * ROWS_PER_TAGGED_PAGE));
+	});
+
+	it('stays monotonic in rows at any per-page cost', () => {
+		const rank: Record<FanoutPolicy, number> = { immediate: 2, background: 1, lazy: 0 };
+		for (const cost of [ROWS_PER_UNTAGGED_PAGE, ROWS_PER_TAGGED_PAGE, 91]) {
+			let previous = rank[fanoutDecision(1, 100, true, cost).policy];
+			for (let n = 1; n <= 120; n++) {
+				const here = rank[fanoutDecision(n, 100, true, cost).policy];
+				expect(here, `${n} pages at ${cost} rows`).toBeLessThanOrEqual(previous);
+				previous = here;
+			}
+		}
+	});
+
+	it('treats a free page as free rather than as an error', () => {
+		expect(fanoutDecision(1000, 100, true, 0).policy).toBe('immediate');
+		expect(fanoutDecision(10, 100, true, -5).rows).toBe(0);
 	});
 });

@@ -529,7 +529,9 @@ export interface OperateAction {
  *
  * `/export`, `/health`, `/armfill`, `/invalidate`, `/bump`, `/migrate`, `/updb`, `/reconcile`,
  * `/sweep`, `/modify` and `/setup/mail` were all owner-gated, all documented, all driven by
- * `drangler` -- and unreachable from a browser. Taking your own data out, seeing whether the site
+ * `drangler` -- and unreachable from a browser. **`/setup/mail` was named in this list and absent
+ * from the table underneath it for as long as the list existed**, which is the shape the list was
+ * written to prevent. Taking your own data out, seeing whether the site
  * is healthy and purging your own cache needed a terminal.
  *
  * Two more were worse than that: `/pitr` and `/restore` are the BACKUP AND RECOVERY pair and were
@@ -646,6 +648,21 @@ export const OPERATE_ACTIONS: readonly OperateAction[] = [
 		detail: 'empty the fill queue; a queue too deep to drain resets the object on every alarm, and this is the only way out',
 		query: 'action=drop',
 		writes: true
+	},
+	// MAIL, and the docblock above listed it among the routes this page covers while the list did
+	// not carry it. Registration and password-reset mail is the one thing a site cannot do without
+	{
+		path: '/setup/mail',
+		label: 'Mail Setup',
+		detail: 'which step sending is waiting on, and whether the connected token can see enough to tell',
+		writes: false
+	},
+	{
+		path: '/setup/mail',
+		label: 'Apply Mail DNS',
+		detail: 'create the sending subdomain and write the SPF and DKIM records this site needs',
+		query: 'action=apply',
+		writes: true
 	}
 ];
 
@@ -670,6 +687,14 @@ export function renderOperate(): string {
 <tbody>${OPERATE_ACTIONS.map(row).join('')}</tbody></table>
 <p id="operate-out" class="sub"></p>
 <div id="operate-result"></div>
+
+<h2>Mail</h2>
+<p class="sub">Mail Setup reports which step sending is waiting on. It reads the Cloudflare account connected on the Deploy page, so connect one first; a token that cannot read Email Routing is reported as a short permission rather than as a step you are waiting on.</p>
+<p class="sub"><strong>On the free Workers plan there is no outbound sending except to verified destination addresses on your own routing domains.</strong> Registration and password-reset mail goes to addresses your visitors chose, and those are not verified destinations, so on free those messages are refused rather than delivered. Reaching an arbitrary recipient needs a third-party relay through <code>MAIL_TRANSPORT=smtp</code>, or a paid plan.</p>
+<p class="sub">Ready means every precondition is satisfied. It does not mean a message arrived, so send one:</p>
+<form id="mailtest-form"><input type="email" name="to" placeholder="a verified destination address" spellcheck="false" autocomplete="off">
+<button type="submit">Send A Test Message</button></form>
+<p id="mailtest-out" class="sub"></p>
 
 <h2>Take Your Data Out</h2>
 <p class="sub">The whole site database as replayable SQL. It is a plain download and it takes the same owner token these pages did.</p>
@@ -714,6 +739,24 @@ export function renderOperate(): string {
         show(data);
       } catch (err) { out.textContent = 'Failed: ' + err.message; }
     });
+  });
+  document.getElementById('mailtest-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const o = document.getElementById('mailtest-out');
+    const to = String(new FormData(e.target).get('to') || '');
+    if (!to) { o.textContent = 'Enter an address to send the test to.'; return; }
+    o.textContent = 'Sending...';
+    try {
+      const res = await fetch('/setup/mail?action=test&to=' + encodeURIComponent(to), {
+        method: 'POST', credentials: 'same-origin'
+      });
+      const data = await res.json();
+      const t = data.test || data;
+      // the TRANSPORT either way: "which one refused" is the first thing an operator asks
+      o.textContent = t.ok
+        ? 'Sent through ' + (t.transport || 'the configured transport') + ' as ' + (t.from || '?') + '. Check the inbox; delivery is the proof, not this line.'
+        : 'Refused' + (t.transport ? ' by ' + t.transport : '') + ': ' + (t.error || 'no reason given');
+    } catch (err) { o.textContent = 'Failed: ' + err.message; }
   });
   document.getElementById('restore-form').addEventListener('submit', async (e) => {
     e.preventDefault();

@@ -49,3 +49,22 @@ export function r(s: string | number, width: number): string {
 export function l(s: string | number, width: number): string {
 	return String(s).padEnd(width);
 }
+
+/**
+ * A magnitude with a suffix and two decimals: 150988573.16 becomes `150.98M`.
+ *
+ * Wide tables of raw dollars are unreadable at fleet scale; the digits past the third are noise
+ * against inputs that are themselves modelled to one or two figures.
+ */
+export function sfx(x: number, decimals = 2): string {
+	const abs = Math.abs(x);
+	for (const [limit, suffix] of [
+		[1e12, 'T'],
+		[1e9, 'B'],
+		[1e6, 'M'],
+		[1e3, 'K']
+	] as const) {
+		if (abs >= limit) return (x / limit).toFixed(decimals) + suffix;
+	}
+	return x.toFixed(decimals);
+}

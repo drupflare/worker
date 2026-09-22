@@ -61,10 +61,36 @@ export const PARK_TAX_MS = 11.0;
 
 // --- energy, measured on bare metal -------------------------------------------------------------
 
-/** RAPL package, 2-CPU VPS arm, idle subtracted, n=7. A FLOOR: PSU, fans, drives and DRAM are out. */
-export const MJ_RENDER_VPS = 368.96;
-export const MJ_CACHED_VPS = 55.07;
-export const IDLE_W_VPS_ARM = 18.85;
+/**
+ * MARGINAL RAPL package energy: what ONE more request costs a busy host.
+ *
+ * NOT the whole-window figure divided by the request count, and the difference is not small. A load
+ * of any size lifts the package out of its idle C-states, and that step costs the same whether the
+ * window carried 300 requests or 1,100 -- so a single-rate reading divides one fixed cost across
+ * whatever throughput it reached. The same VPS arm reads 279, 202 and 131 mJ per cached request at
+ * 29, 57 and 114 req/s. These are the slopes at the busy end of the ladder, which is the right input
+ * for a host that serves continuously.
+ *
+ * SUPERSEDES 368.96 and 55.07, which were single-rate readings at 112 and 474 req/s. A FLOOR in
+ * both cases: PSU loss, fans, drives and DRAM sit outside the RAPL domains.
+ *
+ * `scripts/measure/vps-energy.ts --ladder=2,4,8`, 3-CPU cgroup, generator off-box, n=5 per rung.
+ */
+export const MJ_RENDER_VPS = 219.3;
+export const MJ_CACHED_VPS = 59.7;
+
+/**
+ * drupflare's own marginals are deliberately NOT exported, because this ladder cannot read them.
+ *
+ * Its top rung saturated: throughput moved 332 to 409 requests while energy moved 248.63 to 253.31 J,
+ * so the slope there is a measurement of the ceiling rather than of a request. What IS clean is the
+ * comparison at MATCHED request count, where the two runtimes land within 13% of each other on both
+ * tiers over two independent runs. Use {@link DRUPFLARE_ENERGY_PARITY} for the relationship and the
+ * VPS marginals above for the magnitude.
+ */
+export const DRUPFLARE_ENERGY_PARITY = 1.06;
+
+export const IDLE_W_VPS_ARM = 18.17;
 
 // --- the constraint -------------------------------------------------------------------------
 

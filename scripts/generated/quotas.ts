@@ -18,8 +18,8 @@ export const GENERATED_FREE_QUOTAS = {
 	rowsReadPerDay: 5000000,
 	/** what ONE idle warming tick charges, measured. It charged three until the daily meters were rate-limited, which was 32.4% of the row budget to count almost nothing; warm-alarm-cost.spec.ts pins it at 1 */
 	rowsPerAlarmArm: 1,
-	/** the two daily-meter rows, charged once per METER_FLUSH_SECONDS rather than per tick */
-	rowsPerMeterFlush: 2,
+	/** the packed daily-meter row, charged once per METER_FLUSH_SECONDS rather than per tick. It was 2, and 4 on a trafficked site, because each counter had a cfw_meta key of its own; src/ops/day-meters.ts packs them and cold-encounter-wire.spec.ts pins the flush at one row */
+	rowsPerMeterFlush: 1,
 	/** one message costs three: a write, a read and a delete, each per 64 KB */
 	queueOperationsPerDay: 10000,
 	/** the write, the read and the delete */

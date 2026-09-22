@@ -71,16 +71,18 @@ describe('the SERVING ceiling, where a cache hit is not free', () => {
 });
 
 describe('the REGENERATION ceiling, which is the one that decides the product', () => {
-	it('is ~2,777 renders/day on the alarm chain with the shipped batch of 5', () => {
-		// 180 sliced invocations per cold fill over a batch of 5; read 1,052 until C176
+	it('is ~2,477 renders/day on the alarm chain with the shipped batch of 5', () => {
+		// 180 sliced invocations per cold fill over a batch of 5; read 1,052 until C176, then 2,777
+		// until warming was subtracted -- `SITE_WARM` is on by default and spends 10,800 of the
+		// 100,000 DO requests this divides, which nothing in the model removed
 		const env = envelope(DEFAULT_MIX, { windowed: false });
-		expect(env.regenerationsPerDay).toBe(2_777);
+		expect(env.regenerationsPerDay).toBe(2_477);
 		expect(env.regenerationBoundBy).toBe('do');
 	});
 
-	it('is ~7.2x better with the fill window, and ROWS still bind rather than DO', () => {
+	it('is ~6.4x better with the fill window, and ROWS still bind rather than DO', () => {
 		const env = envelope(DEFAULT_MIX, { windowed: true });
-		expect(env.regenerationsPerDay).toBe(10_869);
+		expect(env.regenerationsPerDay).toBe(9_539);
 		expect(env.regenerationBoundBy).toBe('rows');
 	});
 
@@ -114,13 +116,14 @@ describe('scoring the target workload, which is what the roadmap should be grade
 		expect(v.headroom.servingRatio).toBeCloseTo(1.0, 5);
 	});
 
-	it('at 1% dynamic the alarm chain covers it 2.8x over', () => {
-		// corrected twice: 4.8x FAIL, 1.05x once batching was modelled, 2.78x once the cold boot was
+	it('at 1% dynamic the alarm chain covers it 2.5x over', () => {
+		// corrected three times: 4.8x FAIL, 1.05x once batching was modelled, 2.78x once the cold
+		// boot was, and 2.48x once warming stopped being left out of the budget it spends
 		const v = scoreWorkload(3_000_000, 0.01, { windowed: false });
 		expect(v.fillsNeededPerDay).toBe(1_000);
 		expect(v.regenerationFits).toBe(true);
-		expect(v.headroom.regenerationRatio).toBeGreaterThan(2.5);
-		expect(v.headroom.regenerationRatio).toBeLessThan(3);
+		expect(v.headroom.regenerationRatio).toBeGreaterThan(2.2);
+		expect(v.headroom.regenerationRatio).toBeLessThan(2.8);
 	});
 
 	it('PASSES at 1% dynamic with the fill window, with ~7x headroom', () => {
@@ -228,15 +231,17 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
 	});
 
-	it('does not bind regeneration either, but the margin NARROWED to 4.4x', () => {
-		// 5.8x while a fill cost 12 rows, 4.4x at 9. Cheaper rows raise the rows ceiling toward the
-		// duration one, so each further row saved buys less than the last and duration is what takes
-		// over. Asserted as a band rather than a floor, because the direction is the finding
+	it('does not bind regeneration either, but the margin NARROWED to 5.0x', () => {
+		// 5.8x while a fill cost 12 rows, 4.4x at 9, and 5.0x once warming was subtracted -- that
+		// last one moves the ROWS ceiling and not the duration one, so the margin widens back.
+		// Cheaper rows raise the rows ceiling toward the duration one, so each further row saved
+		// buys less than the last and duration is what takes over. Asserted as a band rather than a
+		// floor, because the direction is the finding
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		const byDuration = Math.floor(e.duration.availableGbS / e.duration.perFillGbS);
 		expect(e.regenerationBoundBy).toBe('rows');
 		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 4);
-		expect(byDuration).toBeLessThan(e.regenerationsPerDay * 5);
+		expect(byDuration).toBeLessThan(e.regenerationsPerDay * 6);
 	});
 
 	it('charges a cold fill ~2.9x a warm one, because boot is wall clock too', () => {
@@ -433,8 +438,8 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 		expect(base.servingBoundBy).toBe('worker');
 		expect(off.servingBoundBy).toBe('r2ClassB');
 		expect(off.perMeterViewCeiling.worker).toBe(666_666);
-		expect(off.perMeterViewCeiling.rows).toBe(1_086_956);
-		expect(off.perMeterViewCeiling.do).toBe(588_235);
+		expect(off.perMeterViewCeiling.rows).toBe(953_913);
+		expect(off.perMeterViewCeiling.do).toBe(524_705);
 	});
 
 	it('but trimming rows STOPS paying on the serving ceiling once DO binds', () => {
@@ -545,9 +550,9 @@ describe('the fill BATCH, which the model shipped without and the code already h
 	 */
 	it('raises the cold ceiling 5x over an unbatched firing', () => {
 		expect(envelope(DEFAULT_MIX, { windowed: false, fillBatch: 1 }).regenerationsPerDay).toBe(
-			555
+			495
 		);
-		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationsPerDay).toBe(2_777);
+		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationsPerDay).toBe(2_477);
 	});
 
 	it('moves the windowed path from DO-bound to ROWS-bound', () => {
@@ -560,7 +565,7 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		const shipped = envelope(DEFAULT_MIX, { windowed: true });
 		expect(unbatched.regenerationBoundBy).toBe('rows');
 		expect(shipped.regenerationBoundBy).toBe('rows');
-		expect(shipped.regenerationsPerDay).toBe(10_869);
+		expect(shipped.regenerationsPerDay).toBe(9_539);
 	});
 
 	it('shows boot work is still nearly saturated, but LESS so since rows-per-fill fell', () => {
@@ -727,9 +732,9 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 			windowed: true,
 			warmthMix: STEADY_STATE_WARMTH
 		}).regenerationsPerDay;
-		expect(base).toBe(10_869);
-		// 9,708 against 8,196: the real steady state regenerates MORE than the quoted figure, so
-		// the number in the docs is a floor. A ceiling that is too high is the dangerous direction
+		expect(base).toBe(9_539);
+		// the real steady state regenerates MORE than the quoted figure, so the number in the docs
+		// is a floor. A ceiling that is too high is the dangerous direction
 		expect(mixed).toBeGreaterThan(base);
 	});
 
@@ -848,29 +853,33 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 	 * their flush interval has elapsed. At 240 s every firing is past the interval, so all three
 	 * are charged; at the 8 s warming interval the flush is amortised across 7.5 firings.
 	 */
-	it('costs 360 arms a day per site and three rows on each of them', () => {
+	it('costs 360 arms a day per site and two rows on each of them', () => {
 		const one = keepWarmFleetCost(1);
 		expect(one.armsPerSitePerDay).toBe(360);
-		expect(one.rowsPerDay).toBe(1_080);
-		expect(one.rowShare).toBeCloseTo(0.0108, 6);
+		// 360 setAlarm rows + 360 packed meter rows. It was three until the four daily counters
+		// stopped taking a `cfw_meta` key each; see `src/ops/day-meters.ts`
+		expect(one.rowsPerDay).toBe(720);
+		expect(one.rowShare).toBeCloseTo(0.0072, 6);
 	});
 
 	it('spends TWO account-wide meters, not one', () => {
 		const fleet = keepWarmFleetCost(100);
-		expect(fleet.rowsPerDay).toBe(108_000);
+		expect(fleet.rowsPerDay).toBe(72_000);
 		// the DO request quota "includes alarm invocations", so the same 360 arms are charged
 		// twice over -- the model had a line for neither
 		expect(fleet.doRequestsPerDay).toBe(36_000);
-		expect(fleet.rowShare).toBeCloseTo(1.08, 6);
+		expect(fleet.rowShare).toBeCloseTo(0.72, 6);
 		expect(fleet.doRequestShare).toBeCloseTo(0.36, 6);
 	});
 
 	/** rows bind before requests, which is what makes the meter flush worth its own term */
-	it('saturates a free account at 92 sites with ZERO visitors', () => {
-		expect(keepWarmFleetCost(1).saturatingSites).toBe(92);
-		const saturated = keepWarmFleetCost(92);
+	it('saturates a free account at 138 sites with ZERO visitors', () => {
+		// 92 until the meter flush stopped costing two rows. Still rows rather than requests, which
+		// is what makes the flush worth its own term
+		expect(keepWarmFleetCost(1).saturatingSites).toBe(138);
+		const saturated = keepWarmFleetCost(138);
 		expect(saturated.rowShare).toBeLessThanOrEqual(1);
-		expect(keepWarmFleetCost(93).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
+		expect(keepWarmFleetCost(139).rowsPerDay).toBeGreaterThan(FREE_QUOTAS.rowsWrittenPerDay);
 	});
 
 	/**
@@ -880,10 +889,43 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 	it('amortises the meter flush at the 8 s warming interval', () => {
 		const warm = keepWarmFleetCost(1, 8_000);
 		expect(warm.armsPerSitePerDay).toBe(10_800);
-		// 10,800 setAlarm rows + 1,440 flushes x 2
-		expect(warm.rowsPerDay).toBe(13_680);
-		expect(warm.rowShare).toBeCloseTo(0.1368, 4);
+		// 10,800 setAlarm rows + 1,440 flushes x 1. The flush was x2 while the daily counters had a
+		// key each, and this is the figure `envelope()` now subtracts before dividing
+		expect(warm.rowsPerDay).toBe(12_240);
+		expect(warm.rowShare).toBeCloseTo(0.1224, 4);
 		expect(warm.doRequestShare).toBeCloseTo(0.108, 4);
+	});
+
+	/**
+	 * The published ceiling was the ceiling of a site that does not keep itself resident.
+	 *
+	 * `siteWarmEnabled()` returns true when the var is unset, so warming is the shipping default and
+	 * spends 12,240 rows and 10,800 DO requests a day before a visitor arrives -- and `envelope()`
+	 * divided the whole 100,000 as though none of that had been spent. `thermal.ts` declines to warm
+	 * a site below ~505 renders/day, but a site AT the regeneration ceiling is far above that
+	 * crossing by construction, which is what makes the subtraction right here specifically.
+	 */
+	it('is subtracted from the budget the regeneration ceiling divides', () => {
+		const warmed = envelope(DEFAULT_MIX, { windowed: true });
+		const unwarmed = envelope(DEFAULT_MIX, { windowed: true, warmed: false });
+
+		// the control: with warming off the model answers what it published for a year
+		expect(unwarmed.warming.rowsPerDay).toBe(0);
+		expect(unwarmed.regenerationsPerDay).toBe(10_869);
+
+		expect(warmed.warming.rowsPerDay).toBe(12_240);
+		expect(warmed.warming.doRequestsPerDay).toBe(10_800);
+		expect(warmed.warming.rowShare).toBeCloseTo(0.1224, 4);
+		// 12.2% of the row budget gone, so the ceiling is 12.2% lower and not a rounding difference
+		expect(warmed.regenerationsPerDay).toBe(9_539);
+		expect(warmed.regenerationsPerDay / unwarmed.regenerationsPerDay).toBeCloseTo(0.8776, 3);
+	});
+
+	it('prices a longer interval as cheaper, so an operator can buy the ceiling back', () => {
+		const shipped = envelope(DEFAULT_MIX, { windowed: true });
+		const slower = envelope(DEFAULT_MIX, { windowed: true, keepWarmMs: 16_000 });
+		expect(slower.warming.rowsPerDay).toBeLessThan(shipped.warming.rowsPerDay);
+		expect(slower.regenerationsPerDay).toBeGreaterThan(shipped.regenerationsPerDay);
 	});
 
 	it('scales inversely with the interval, so the lever is arithmetic rather than a rewrite', () => {
@@ -944,7 +986,7 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 	// the refutation survives on a new mechanism: close to free, and close to worthless
 	it('moves the windowed ceiling by about 1.5%, not by 2.27x in either direction', () => {
 		const arm = queueArm(undefined, { windowed: true });
-		expect(arm.alarmRegenerationsPerDay).toBe(10_869);
+		expect(arm.alarmRegenerationsPerDay).toBe(9_539);
 		expect(arm.ratio).toBeGreaterThan(1);
 		expect(arm.ratio).toBeLessThan(1.05);
 	});

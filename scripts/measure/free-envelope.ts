@@ -138,6 +138,15 @@ export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 /** the keep-warm chain's re-arm interval, `KEEP_WARM_MS` in `src/ops/cron.ts` */
 export const KEEP_WARM_MS = 240_000;
 
+/**
+ * The interval that actually keeps an object resident, and the one a warmed site pays.
+ *
+ * `KEEP_WARM_MS` above is 240,000, which is 24x the 10 s hibernation threshold -- it re-arms an idle
+ * alarm and warms nothing. `warmIntervalMs()` in `src/ops/cron.ts` defaults to this, and it is the
+ * number a warming cost has to be priced at.
+ */
+export const WARM_INTERVAL_MS = 8_000;
+
 /** how often the daily meters pay for their two rows, `METER_FLUSH_MS` in `src/site-do.ts` */
 export const METER_FLUSH_SECONDS = 60;
 
@@ -604,6 +613,14 @@ export type Envelope = {
 	};
 	/** distinct pages that can be RENDERED per day, which is the real product question */
 	regenerationsPerDay: number;
+	/**
+	 * What keeping the object resident spends before any traffic arrives.
+	 *
+	 * Reported rather than folded in silently, because the figure this project published for a year
+	 * was the one with `rowsPerDay` at 0 -- and `SITE_WARM` is on by default, so that ceiling
+	 * described a site nobody runs.
+	 */
+	warming: { rowsPerDay: number; doRequestsPerDay: number; rowShare: number };
 	regenerationBoundBy: 'do' | 'rows' | 'r2ClassA' | 'duration';
 	windowed: boolean;
 	/**
@@ -680,6 +697,25 @@ export function envelope(
 		replicaMode?: ReplicaMode;
 		/** which render a fill pays for; a cold object pays the boot again */
 		fillWarmth?: 'warm' | 'cold';
+		/**
+		 * Whether this site keeps itself resident, which SPENDS the budget being divided up.
+		 *
+		 * Defaults to true because `siteWarmEnabled()` returns true when the var is unset, so the
+		 * shipping default is a warmed site -- and the published ceiling was computed as though it
+		 * were not. At `WARM_INTERVAL_MS` that is 12,240 rows/day and 10,800 DO requests/day gone
+		 * before a visitor arrives, which is 12.2% of the row budget the regeneration ceiling
+		 * divides.
+		 *
+		 * `thermal.ts` declines to warm a site below ~505 renders/day, so this is not true of every
+		 * site -- but a site AT the regeneration ceiling is rendering far above that crossing by
+		 * construction, which is what makes the subtraction right for the ceiling specifically.
+		 *
+		 * A NUMBER rather than a boolean would be the interval, and `keepWarmMs` is that; this is
+		 * the switch, because `SITE_WARM=0` is a real configuration and it changes the answer.
+		 */
+		warmed?: boolean;
+		/** the warming interval, when it is not the shipping `WARM_INTERVAL_MS` */
+		keepWarmMs?: number;
 	} = {}
 ): Envelope {
 	// the batch amortises the re-arm row across N pages, so rows/fill is per-page rows + 1/N rather
@@ -732,10 +768,21 @@ export function envelope(
 	);
 	const availableGbS = FREE_QUOTAS.durationGbSPerDay - alwaysWarmGbS;
 
+	// WARMING IS SPENT BEFORE ANY TRAFFIC, and nothing removed it until 2026-09-22. `SITE_WARM` is on
+	// by default, so the published 10,869 rows/day regeneration ceiling was the ceiling of a site
+	// that does not keep itself resident -- a configuration the product does not ship. One term,
+	// taken off the two meters warming actually spends.
+	const warming =
+		(opts.warmed ?? true)
+			? keepWarmFleetCost(1, opts.keepWarmMs ?? WARM_INTERVAL_MS)
+			: { rowsPerDay: 0, doRequestsPerDay: 0 };
+	const rowsAvailable = Math.max(0, FREE_QUOTAS.rowsWrittenPerDay - warming.rowsPerDay);
+	const doAvailable = Math.max(0, FREE_QUOTAS.doRequestsPerDay - warming.doRequestsPerDay);
+
 	const ceilings = {
 		worker: perView.worker > 0 ? FREE_QUOTAS.workerRequestsPerDay / perView.worker : Infinity,
-		do: perView.do > 0 ? FREE_QUOTAS.doRequestsPerDay / perView.do : Infinity,
-		rows: perView.rows > 0 ? FREE_QUOTAS.rowsWrittenPerDay / perView.rows : Infinity,
+		do: perView.do > 0 ? doAvailable / perView.do : Infinity,
+		rows: perView.rows > 0 ? rowsAvailable / perView.rows : Infinity,
 		r2ClassB:
 			perView.r2ClassB > 0
 				? FREE_QUOTAS.r2ClassBPerMonth / DAYS_PER_MONTH / perView.r2ClassB
@@ -766,8 +813,8 @@ export function envelope(
 	// wake -- so multiplying them is only valid while a windowed firing still fills a full batch.
 	const amortisation = (opts.windowed ? FILL_WINDOW_AMORTISATION : 1) * batch;
 	const invocationsPerFill = DO_INVOCATIONS_PER_COLD_FILL / amortisation;
-	const byDo = FREE_QUOTAS.doRequestsPerDay / invocationsPerFill;
-	const byRows = FREE_QUOTAS.rowsWrittenPerDay / rowsPerFill;
+	const byDo = doAvailable / invocationsPerFill;
+	const byRows = rowsAvailable / rowsPerFill;
 	const byR2ClassA = FREE_QUOTAS.r2ClassAPerMonth / DAYS_PER_MONTH;
 	const byDuration = perFillGbS > 0 ? Math.max(0, availableGbS) / perFillGbS : Infinity;
 	const regenCeilings = { do: byDo, rows: byRows, r2ClassA: byR2ClassA, duration: byDuration };
@@ -802,6 +849,11 @@ export function envelope(
 		// fill. 1M/month is 33,333/day against a rows-bound ceiling of ~10,869, so it is not close --
 		// but it is in the model now rather than assumed away
 		regenerationsPerDay: Math.floor(Math.min(byDo, byRows, byR2ClassA, byDuration)),
+		warming: {
+			rowsPerDay: warming.rowsPerDay,
+			doRequestsPerDay: warming.doRequestsPerDay,
+			rowShare: warming.rowsPerDay / FREE_QUOTAS.rowsWrittenPerDay
+		},
 		regenerationBoundBy: (['do', 'rows', 'r2ClassA', 'duration'] as const).reduce(
 			(best, meter) => (regenCeilings[meter] < regenCeilings[best] ? meter : best),
 			'do' as const

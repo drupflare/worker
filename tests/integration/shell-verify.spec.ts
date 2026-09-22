@@ -227,10 +227,26 @@ describe('P92: a shell is proven per visitor before it is assembled for them', (
 				const shellTags = readTagList(
 					site.sql.exec('SELECT tags FROM cfw_shell').toArray()[0]?.['tags']
 				);
+				// the bump alone must NOT touch it any more: it fires on the first tag of a save and
+				// cannot scope anything, which is why it dropped every shell on every live site
 				const bump = site.bumpGeneration('cachetags');
+				const afterBump = counts();
+
+				// and the completed set does, through the seam that has the whole set
+				const own = (shellTags ?? [])[0] as string;
+				const purge = site.purgeForTags([own], 'cachetags', { bump: false });
 				const after = counts();
-				const empty = site.bumpGeneration('cachetags');
-				return { before, bump, after, shellTags, emptyBump: empty.purgedShells };
+				const empty = site.purgeForTags([own], 'cachetags', { bump: false });
+				return {
+					before,
+					bump,
+					afterBump,
+					purge,
+					after,
+					shellTags,
+					own,
+					emptyPurge: empty.shells.dropped
+				};
 			});
 
 			expect(seen.before.shells).toBe(1);
@@ -240,12 +256,59 @@ describe('P92: a shell is proven per visitor before it is assembled for them', (
 			expect(seen.shellTags, 'the shell recorded no tags').not.toBeNull();
 			expect((seen.shellTags ?? []).length).toBeGreaterThan(0);
 
-			expect(seen.bump.purgedShells).toBe(1);
+			// the incomplete-set path leaves it alone, which is the whole point of moving the purge
+			expect(seen.bump.purgedShells).toBe(0);
+			expect(seen.afterBump.shells).toBe(1);
+
+			expect(seen.purge.shells.dropped).toBe(1);
+			expect(seen.purge.shells.reasons[0]).toContain(seen.own);
 			expect(seen.after.shells).toBe(0);
 			// the proofs go with it; they were taken against an artifact that no longer exists
 			expect(seen.after.proofs).toBe(0);
-			// and a bump with nothing left to purge reports nothing rather than a fixed number
-			expect(seen.emptyBump).toBe(0);
+			// and a purge with nothing left to drop reports nothing rather than a fixed number
+			expect(seen.emptyPurge).toBe(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * AND IT SURVIVES A SAVE THAT REACHES NOTHING ON IT, which is the half that makes the scoping
+	 * worth wiring.
+	 *
+	 * `shellVerdict()` used to drop on a tag the page could account for nowhere. Measured with that
+	 * rule live: creating a user invalidates `user_list`, the front page's shell records six tags
+	 * and none is `user_list`, and the shell went -- so the scoped purge dropped every shell on
+	 * every save, exactly like the wholesale purge it replaces.
+	 */
+	it(
+		'keeps the shell when the completed tag set reaches nothing on it',
+		async () => {
+			const seen = await inObject(freshSite(), async (site: ServeDo) => {
+				const jars = await siteWithShell(site, ['alice', 'bob', 'carol']);
+				await site.harvestShellFor(
+					'/',
+					[jars['alice'] as string, jars['bob'] as string],
+					ORIGIN
+				);
+				await site.assembleFor('/', jars['carol'] as string, ORIGIN);
+				const shellTags = readTagList(
+					site.sql.exec('SELECT tags FROM cfw_shell').toArray()[0]?.['tags']
+				);
+				const shells = () => site.sql.exec('SELECT * FROM cfw_shell').toArray().length;
+				const before = shells();
+				// the tags creating a user writes; neither is on a front-page shell
+				const unrelated = site.purgeForTags(['user_list', 'user:9'], 'cachetags', {
+					bump: false
+				});
+				return { before, after: shells(), unrelated, shellTags };
+			});
+
+			// THE CONTROL: a shell that was never stored cannot demonstrate surviving anything
+			expect(seen.before).toBe(1);
+			expect(seen.shellTags).not.toContain('user_list');
+			expect(seen.unrelated.shells.dropped).toBe(0);
+			expect(seen.unrelated.shells.kept).toBe(1);
+			expect(seen.after).toBe(1);
 		},
 		REQUEST_TIMEOUT
 	);

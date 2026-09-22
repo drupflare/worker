@@ -131,6 +131,26 @@ export function dependencyValues(sql: FragmentSql, tags: readonly string[]): Tag
 	return out;
 }
 
+/**
+ * The sum of a page's tags' invalidation counters, which is Drupal's own freshness test.
+ *
+ * `DatabaseCacheTagsChecksum` decides a cache entry is valid by comparing the checksum it stored
+ * against this same sum, so a page whose sum has not moved cannot have been invalidated. Stored on
+ * the page row at fill time and compared at serve time, it replaces a WRITE per affected page with
+ * a READ per served page -- and the free plan allows 5,000,000 rows read a day against 100,000
+ * written.
+ *
+ * Zero for a page with no recorded tags, which is not a usable checksum and is why the caller has
+ * to tell that case apart rather than compare against 0.
+ */
+export function tagChecksum(sql: FragmentSql, tags: readonly string[]): number {
+	if (tags.length === 0) return 0;
+	const counts = dependencyValues(sql, tags);
+	let sum = 0;
+	for (const tag of tags) sum += Number(counts[String(tag)] ?? 0);
+	return sum;
+}
+
 const HEX = (buf: ArrayBuffer): string =>
 	[...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -267,14 +287,25 @@ export type ShellVerdict = { drop: boolean; reason: string };
 /**
  * Whether a save's tags reach a stored shell's own bytes.
  *
- * REFUSES BY DEFAULT, the same asymmetry `shellSafety()` keeps and for the same reason: a shell kept
- * when it should have gone is a visitor reading content they can see is wrong, and a shell dropped
- * when it could have stayed is one harvest. So an unrecorded tag set drops, and a tag this page can
- * account for NOWHERE drops.
+ * REFUSES ON AN UNKNOWN, which is a narrower rule than the one this shipped with. An unrecorded tag
+ * set still drops: a shell stored before the column existed cannot speak for itself, and that is a
+ * genuine unknown rather than a judgement.
  *
- * A tag that belongs only to a FRAGMENT does not drop. The fragment is not stored -- `assembleFor()`
- * renders every hole on every request -- so the invalidation reaches it through Drupal's own render
- * cache on the next request, and the shell around it is unaffected.
+ * **A TAG ON NEITHER THE SHELL NOR A FRAGMENT NO LONGER DROPS, and the old rule made the whole
+ * scoped purge inert.** `shellTags` is Drupal's own `cacheTags` for the shell render, taken from the
+ * response's cacheability metadata rather than derived here -- the same set Drupal uses to decide
+ * whether its own `dynamic_page_cache` entry for that response is still valid. A tag outside it
+ * cannot invalidate that response by Drupal's rules, so dropping on one was stricter than Drupal
+ * itself.
+ *
+ * Measured with the old rule wired, on a fresh site: creating two users invalidates `user_list`, the
+ * front page's shell records six tags and none of them is `user_list`, and the shell was dropped
+ * with `user_list is not accounted for on this page`. Every save carries at least one tag no other
+ * page depends on, so the scoped purge behaved like the wholesale purge it replaces.
+ *
+ * A tag that belongs only to a FRAGMENT does not drop either. The fragment is not stored --
+ * `assembleFor()` renders every hole on every request -- so the invalidation reaches it through
+ * Drupal's own render cache on the next request, and the shell around it is unaffected.
  */
 export function shellVerdict(input: {
 	invalidated: readonly string[];
@@ -290,13 +321,13 @@ export function shellVerdict(input: {
 	for (const raw of input.invalidated) {
 		const tag = String(raw);
 		if (own.has(tag)) return { drop: true, reason: `the shell depends on ${tag}` };
-		if (!fragments.has(tag)) {
-			return { drop: true, reason: `${tag} is not accounted for on this page` };
-		}
 	}
+	const onFragment = input.invalidated.some((t) => fragments.has(String(t)));
 	return {
 		drop: false,
-		reason: 'every invalidated tag belongs to a fragment rendered per request'
+		reason: onFragment
+			? 'every invalidated tag belongs to a fragment rendered per request'
+			: 'no invalidated tag is on this shell'
 	};
 }
 

@@ -152,7 +152,7 @@ describe('dependency values come from Drupal own invalidation counters', () => {
 	});
 });
 
-describe('a shell is dropped unless every invalidated tag is accounted for', () => {
+describe('a shell is dropped when an invalidated tag is on its own bytes', () => {
 	const fragmentTags = ['config:block_list', 'config:system.menu.main', 'local_task'];
 	const shellTags = ['config:block_list', 'node_list', 'config:system.site'];
 
@@ -171,10 +171,32 @@ describe('a shell is dropped unless every invalidated tag is accounted for', () 
 		expect(verdict.reason).toContain('node_list');
 	});
 
-	it('drops it on a tag the page cannot account for at all', () => {
+	/**
+	 * KEEPS IT, and the opposite rule is what made the scoped purge inert.
+	 *
+	 * `shellTags` is Drupal's own `cacheTags` for the shell render, so a tag outside it cannot
+	 * invalidate that response by Drupal's own rules. Measured with the old rule wired: creating a
+	 * user invalidates `user_list`, which is on no front-page shell, and the shell was dropped --
+	 * so every save dropped every shell and the scoping bought nothing.
+	 */
+	it('keeps it on a tag the page cannot account for at all', () => {
 		const verdict = shellVerdict({ invalidated: ['node:41'], shellTags, fragmentTags });
+		expect(verdict.drop).toBe(false);
+		expect(verdict.reason).toContain('no invalidated tag is on this shell');
+	});
+
+	/**
+	 * THE SAVE THAT PRODUCES THAT TAG STILL DROPS IT, which is what stops the narrowing being a
+	 * hole. A node save writes `node:41` and `node_list` together, and `node_list` is on the shell.
+	 */
+	it('still drops it when the same save carries a tag the shell does depend on', () => {
+		const verdict = shellVerdict({
+			invalidated: ['node:41', 'node_list'],
+			shellTags,
+			fragmentTags
+		});
 		expect(verdict.drop).toBe(true);
-		expect(verdict.reason).toContain('not accounted for');
+		expect(verdict.reason).toContain('node_list');
 	});
 
 	it('drops it when one tag of several reaches the shell', () => {

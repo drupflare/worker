@@ -69,7 +69,7 @@ async function untilTier(
 }
 
 const serveRequestsOf = (site: string) =>
-	inObject(namedSite(site), (obj) => Number(obj.metaGet('serve_requests', '0')));
+	inObject(namedSite(site), (obj) => obj.storedMeters().serveTotal);
 
 /**
  * An oversized body is refused at the edge, before any Durable Object hop.

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { LADDER } from '../../src/ops/supervisor';
-import { type ServeDo, freshSite, inObject, pageFor, stubRender } from '../helpers/serve-do';
+import {
+	type ServeDo,
+	freshSite,
+	inObject,
+	pageFor,
+	seedDailyRows,
+	stubRender
+} from '../helpers/serve-do';
 
 /**
  * The health layer, driven through a REAL Durable Object rather than as pure functions.
@@ -168,7 +175,7 @@ describe('the health layer is reachable from the object, not only from its own s
 			// striking on it would quarantine exactly the sites that are working hardest
 			h.env.PLAN = 'free';
 			for (let i = 0; i < 5; i++) {
-				h.metaSet(`rows_written_${new Date().toISOString().slice(0, 10)}`, 95_000 + i);
+				seedDailyRows(h, 95_000 + i);
 				h.supervise([{ filled: '/a', bytes: 4096, remaining: 0 }]);
 			}
 			const found = h.lastFindings ?? [];

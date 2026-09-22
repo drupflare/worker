@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/degrade';
-import { freshSite, inObject, markProvisioned, seedPage } from '../helpers/serve-do';
+import {
+	type ServeDo,
+	freshSite,
+	inObject,
+	markProvisioned,
+	seedDailyRows,
+	seedPage
+} from '../helpers/serve-do';
 
 /**
  * The ladder, reached through the object rather than called directly.
@@ -11,9 +18,8 @@ import { freshSite, inObject, markProvisioned, seedPage } from '../helpers/serve
  */
 
 /** puts today's row counter at a chosen fraction of the daily allowance */
-function spendRows(site: { metaSet: (k: string, v: unknown) => void }, fraction: number): void {
-	const today = new Date().toISOString().slice(0, 10);
-	site.metaSet(`rows_written_${today}`, Math.ceil(dailyLimit('rows-written') * fraction));
+function spendRows(site: ServeDo, fraction: number): void {
+	seedDailyRows(site, Math.ceil(dailyLimit('rows-written') * fraction));
 }
 
 describe('the object reads its own meters', () => {
@@ -53,8 +59,7 @@ describe('the object reads its own meters', () => {
 	it('recovers on its own when the day rolls over', async () => {
 		const d = await inObject(freshSite(), (obj) => {
 			// yesterday's spend, which must not count toward today
-			const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-			obj.metaSet(`rows_written_${yesterday}`, dailyLimit('rows-written'));
+			seedDailyRows(obj, dailyLimit('rows-written'), Date.now() - 86_400_000);
 			return obj.degradation();
 		});
 		expect(d.level).toBe('normal');

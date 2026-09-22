@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { freshSite, inObject, seedDailyRows, type ServeDo } from '../helpers/serve-do';
 
 /**
  * The sweep, driven through the real object rather than through its planner.
@@ -119,12 +119,7 @@ describe('the addressable sweep, wired', () => {
 				env.SWEEP = '1';
 				// spend the day, so the governor's floor is the thing under test rather than an empty
 				// candidate set
-				const today = new Date(Date.now()).toISOString().slice(0, 10);
-				site.sql.exec(
-					'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
-					`rows_written_${today}`,
-					'99000'
-				);
+				seedDailyRows(site, 99_000);
 				const report = await sweepReport(site, true);
 				return (report.sweep ?? null) as Payload | null;
 			});

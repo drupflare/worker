@@ -144,11 +144,11 @@ describe('a cold MISS costs no interpreter and no render', () => {
 		// 120 tries rather than the default 25. The alarm is armed at +1 ms, but under a loaded
 		// suite the runtime does not always get to it inside ~125 ms of ticking, and then the
 		// eviction below measures the accumulator instead of the counter and reads 0
-		await driveAlarms(stub, (site) => Number(site.metaGet('serve_requests', '0')) > 0, 120);
+		await driveAlarms(stub, (site) => site.storedMeters().serveTotal > 0, 120);
 		// driveAlarms gives up SILENTLY at its budget and returns a firing count nobody checks, so
 		// assert the precondition it was driving toward; without this the failure names the counter
 		// when the cause is the flush never having happened
-		const flushed = await inObject(stub, (site) => Number(site.metaGet('serve_requests', '0')));
+		const flushed = await inObject(stub, (site) => site.storedMeters().serveTotal);
 		expect(
 			flushed,
 			'the +1 ms alarm never flushed the accumulator before the eviction'

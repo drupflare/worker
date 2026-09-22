@@ -38,7 +38,9 @@ describe('serving a cached page does not buy a row per view', () => {
 				return {
 					rows: site.dailyRows() - before,
 					counted: site.serveRequests(),
-					durable: Number(site.metaGet('serve_requests', '0'))
+					// read off the PACKED day row; the four meters share one key, see
+					// `src/ops/day-meters.ts`
+					durable: site.storedMeters().serveTotal
 				};
 			});
 
@@ -67,7 +69,9 @@ describe('serving a cached page does not buy a row per view', () => {
 				return {
 					pendingBefore,
 					wrote,
-					durable: Number(site.metaGet('serve_requests', '0')),
+					// read off the PACKED day row; the four meters share one key, see
+					// `src/ops/day-meters.ts`
+					durable: site.storedMeters().serveTotal,
 					reported: site.serveRequests()
 				};
 			});

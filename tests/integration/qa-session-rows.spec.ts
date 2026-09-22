@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { drupalOp } from '../../src/drupal/site-php';
 import { dailyLimit, READ_ONLY_AT, REDUCE_AT } from '../../src/ops/degrade';
-import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
+import { freshSite, inObject, seedDailyRows, type ServeDo } from '../helpers/serve-do';
 
 /**
  * What an operator setting a site up costs on the meter that binds regeneration.
@@ -125,9 +125,8 @@ describe('a setup session against the daily row meter', () => {
 				// THE OTHER DIRECTION, and it is what says the row tracks the meter rather than
 				// existing. The counter is forced past the read-only fraction and the report is read
 				// again; a row that cannot change severity is decoration
-				const today = new Date(site.nowMs()).toISOString().slice(0, 10);
 				const limit = dailyLimit('rows-written', site.env as never);
-				site.metaSet(`rows_written_${today}`, Math.ceil(limit * READ_ONLY_AT) + 1);
+				seedDailyRows(site, Math.ceil(limit * READ_ONLY_AT) + 1, site.nowMs());
 				const saturated = await readReport(site);
 				const saturatedRows = site.dailyRows();
 

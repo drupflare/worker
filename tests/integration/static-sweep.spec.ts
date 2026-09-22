@@ -977,6 +977,18 @@ describe('the blind half: every static property of every declared class', () => 
 			'Symfony\\Polyfill\\Mbstring\\Mbstring::iconvSupportsIgnore',
 			'a one-time capability probe of the runtime, not of the request'
 		],
+		[
+			'Drupal\\drupflare\\Cache\\CfwMemoryBackend::store',
+			// THE ONE ENTRY HERE THAT CROSSES THE BOUNDARY ON PURPOSE. It is a cache bin held in the
+			// interpreter instead of in SQL, so surviving a request is the entire mechanism -- see
+			// `MEMORY_CACHE_BINS`. It is a named cache in the sense this list means: every entry is
+			// keyed by the cid Drupal asked for and carries the cache-tag checksum it was stored
+			// under, which is validated on every read, so it holds exactly what the SQL bin it
+			// replaces would hold and is refused on the same terms. A visitor cannot reach an entry
+			// that Drupal's own contexts did not key to them, which is the property this sweep is
+			// protecting.
+			'a cache bin held in the interpreter; entries are cid-keyed and checksum-validated on read'
+		],
 		['MabeEnum\\Enum::constants', 'enum reflection keyed by class name'],
 		['MabeEnum\\Enum::instances', 'enum reflection keyed by class name'],
 		['MabeEnum\\Enum::names', 'enum reflection keyed by class name'],

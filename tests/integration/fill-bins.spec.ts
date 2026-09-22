@@ -41,6 +41,12 @@ let cached: Promise<{ narrow: Arm; wide: Arm }> | null = null;
 
 async function measure(): Promise<{ narrow: Arm; wide: Arm }> {
 	return inObject(freshSite(), async (site: ServeDo) => {
+		// THE SUBJECT IS WHAT EMPTYING `dynamic_page_cache` COSTS IN SQL, so the arm has to be a
+		// site whose `dynamic_page_cache` is in SQL. It is an in-memory bin by default now, and at
+		// the default both arms write the same rows because emptying a memory bin charges nothing --
+		// which is not this file's finding being refuted, it is this file measuring a configuration
+		// that no longer exists. `MEMORY_CACHE_BINS` is what selects between them
+		site.env = { ...site.env, MEMORY_CACHE_BINS: 'none' };
 		await call(site, '/__migrate?all=1&prefill=0');
 		// NO `/__firstrun`. It is not needed for an anonymous page fill, and the render it leaves
 		// behind sets a cookie -- which `cacheable` refuses, so the page would never be stored and

@@ -159,6 +159,11 @@ describe.skipIf(FROM_SOURCE)(
 			'measures each warmth class and reports it beside the constant',
 			async () => {
 				const out = await inObject(freshSite(), async (site: ServeDo) => {
+					// THE CONSTANTS DESCRIBE `MEMORY_CACHE_BINS=none` AND THE DEFAULT IS NOT THAT.
+					// Driving the default here would compare a measurement of one configuration
+					// against a constant describing another, which is the drift this file exists to
+					// catch rather than to commit. The default's own figures are the arm below
+					site.env = { ...site.env, MEMORY_CACHE_BINS: 'none' };
 					await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 					const first = await site.fetch(
 						new Request('https://do.local/__firstrun', {
@@ -253,6 +258,84 @@ describe.skipIf(FROM_SOURCE)(
 				expect(out.firstEver.rows).toBeGreaterThan(out.anotherNewPath.rows);
 				expect(out.anotherNewPath.rows).toBeGreaterThan(out.realRender.rows);
 				expect(out.realRender.rows).toBeGreaterThan(out.warmReassemble.rows);
+			},
+			TIMEOUT
+		);
+
+		/**
+		 * And the same classes at the SHIPPING DEFAULT, which is a different configuration.
+		 *
+		 * `dynamic_page_cache` is an in-memory bin by default, so the rows above describe a site
+		 * that turned that off. The gap is not a regression and not a saving to quote yet: taking
+		 * `realRender` from 9 to 3 moves the published ceiling 9,685 -> 27,845/day, and it inverts
+		 * the safety property the headline rests on -- a realistic warmth mix prices 3.20 against
+		 * this class's 3.00, where it used to sit below, so quoting the class would make the ceiling
+		 * optimistic. Re-deriving the model against the default is its own measurement pass. This
+		 * arm exists so the gap is a number somebody can act on rather than a surprise.
+		 */
+		it(
+			'measures the same classes at the default, and prints the gap',
+			async () => {
+				const out = await inObject(freshSite(), async (site: ServeDo) => {
+					await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+					const first = await site.fetch(
+						new Request('https://do.local/__firstrun', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								adminPass: 'cfw-Audit-9912-pass',
+								siteName: 'Audit'
+							})
+						})
+					);
+					expect(first.status, await first.clone().text()).toBe(200);
+					const arm = async (path: string, bins?: string[]): Promise<Arm> => {
+						await site.fetch(new Request('https://do.local/__writes?op=off'));
+						await site.fetch(new Request('https://do.local/__writes?op=on'));
+						site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
+						await site.fillOne(path, bins);
+						const t = (await (
+							await site.fetch(new Request('https://do.local/__writes'))
+						).json()) as {
+							rowsWritten: number;
+							statements: number;
+							indexSplit: { rows: { table: string; chargedRows: number }[] };
+						};
+						return {
+							rows: t.rowsWritten,
+							index: 0,
+							statements: t.statements,
+							perTable: t.indexSplit.rows.filter((r) => r.chargedRows > 0)
+						} as Arm;
+					};
+					await arm('/user/login', ['page', 'dynamic_page_cache']);
+					const realRender = await arm('/user/login', ['page', 'dynamic_page_cache']);
+					const warmReassemble = await arm('/user/login', ['page']);
+					return { realRender, warmReassemble };
+				});
+
+				console.log(
+					`[rows-per-fill-default] ${JSON.stringify({
+						realRender: {
+							measured: out.realRender.rows,
+							sqlConstant: ROWS_PER_FILL.realRender
+						},
+						warmReassemble: {
+							measured: out.warmReassemble.rows,
+							sqlConstant: ROWS_PER_FILL.warmReassemble
+						}
+					})}`
+				);
+
+				// the default is CHEAPER on the meter that binds regeneration, which is the whole
+				// reason it is the default
+				expect(out.realRender.rows).toBeLessThan(ROWS_PER_FILL.realRender);
+				// and the bin is genuinely absent rather than merely smaller
+				expect(
+					out.realRender.perTable.some((r) => r.table === 'cache_dynamic_page_cache')
+				).toBe(false);
+				// a reassemble does not move: it never wrote that bin
+				expect(out.warmReassemble.rows).toBe(ROWS_PER_FILL.warmReassemble);
 			},
 			TIMEOUT
 		);

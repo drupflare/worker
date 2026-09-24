@@ -246,9 +246,11 @@ describe('the row cost of a text primary key', () => {
 				expect(first.status, await first.clone().text()).toBe(200);
 
 				const armed = async (path: string) => {
+					// the DELETE goes BEFORE the reset: it is charged and a fill upserts, so inside
+					// the window it read the WARM arm one high (the cold one deleted a row not yet there)
+					site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 					await site.fetch(new Request('https://do.local/__writes?op=off'));
 					await site.fetch(new Request('https://do.local/__writes?op=on'));
-					site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 					await site.fillOne(path);
 					return (await (
 						await site.fetch(new Request('https://do.local/__writes'))

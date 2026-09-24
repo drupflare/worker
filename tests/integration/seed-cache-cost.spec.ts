@@ -60,9 +60,11 @@ async function drive(trim: boolean): Promise<Arm> {
 		if (trim) for (const bin of bins) site.sql.exec(`DELETE FROM ${bin}`);
 		const afterMigrate = stage(site, bins);
 
+		// the DELETE goes BEFORE the reset: it is charged and a fill upserts. With `prefill=0` there is
+		// no row for `/` yet so it charged nothing here, but the order was the one that cost other specs
+		site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/');
 		await site.fetch(new Request('https://do.local/__writes?op=off'));
 		await site.fetch(new Request('https://do.local/__writes?op=on'));
-		site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/');
 		await site.fillOne('/', ['page', 'dynamic_page_cache', 'render']);
 		const counted = (await (
 			await site.fetch(new Request('https://do.local/__writes'))

@@ -10,9 +10,11 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * autoindex WAS their entire index cost. `scripts/pack-sql.ts` emits them `WITHOUT ROWID`.
  *
  * **MEASURED AS A CONVERSION BEFORE IT SHIPPED**, on one object and paired: a steady-state render
- * went **8 charged rows -> 6** and the bins' index charge **3 -> 0**, n=3 with zero spread. That A/B
- * cannot be re-run now that the pack ships converted -- the control arm no longer exists -- so this
- * asserts the END STATE instead: the bins carry no autoindex and a render pays no index row for them.
+ * went **8 charged rows -> 6** and the bins' index charge **3 -> 0**, n=3 with zero spread. Both arms
+ * included the harness's own DELETE of the page row, which was taken inside the tracked window, so
+ * the render itself was 7 -> 5; the 2-row saving is unaffected. That A/B cannot be re-run now that
+ * the pack ships converted -- the control arm no longer exists -- so this asserts the END STATE
+ * instead: the bins carry no autoindex and a render pays no index row for them.
  *
  * The first version of that A/B read **11 -> 6 and was wrong**. A single warming render leaves
  * `cache_menu` and `cache_discovery` cold, so they are written in the control arm and not in the
@@ -29,6 +31,11 @@ describe('the cache bins ship WITHOUT ROWID, and a render is not charged an auto
 		'stores every bin as its key and charges one row per stored row',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				// THE SUBJECT IS HOW A BIN IS STORED IN SQL, so the bins have to be in SQL. At the
+				// shipping default `dynamic_page_cache` and `menu` are in memory, a steady-state
+				// render then writes NO bin row at all, and every check below would pass on a
+				// render that stored nothing it could have got wrong
+				site.env = { ...site.env, MEMORY_CACHE_BINS: 'none' };
 				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
 				const first = await site.fetch(
 					new Request('https://do.local/__firstrun', {
@@ -62,9 +69,10 @@ describe('the cache bins ship WITHOUT ROWID, and a render is not charged an auto
 				site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/user/login');
 				await site.fillOne('/user/login', ['page', 'dynamic_page_cache']);
 
+				// the harness's DELETE goes BEFORE the reset: it is a charged write and a fill upserts
+				site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/user/login');
 				await site.fetch(new Request('https://do.local/__writes?op=off'));
 				await site.fetch(new Request('https://do.local/__writes?op=on'));
-				site.sql.exec('DELETE FROM cfw_page WHERE path = ?', '/user/login');
 				await site.fillOne('/user/login', ['page', 'dynamic_page_cache']);
 
 				const tally = (await (
@@ -102,6 +110,12 @@ describe('the cache bins ship WITHOUT ROWID, and a render is not charged an auto
 				out.bins.filter((b) => !b.withoutRowid).map((b) => b.name),
 				'a cache bin still ships as a rowid table'
 			).toEqual([]);
+			// THE CONTROL: a bin has to have been written, or the zero below is a render that
+			// touched no bin rather than a bin with no autoindex
+			expect(
+				out.tally.indexSplit.rows.some((r) => CACHE_BIN.test(r.table)),
+				'no cache bin was written, so the index checks below measure nothing'
+			).toBe(true);
 			// and the consequence on the meter, which is the reason the DDL is that way
 			expect(binIndexRows, 'a bin was charged an autoindex row').toBe(0);
 			for (const r of out.tally.indexSplit.rows) {
@@ -109,7 +123,9 @@ describe('the cache bins ship WITHOUT ROWID, and a render is not charged an auto
 					1
 				);
 			}
-			expect(out.tally.rowsWritten).toBe(6);
+			// 6 until 2026-09-23, and one of the six was the harness's own DELETE of the page row,
+			// taken inside the tracked window. The conversion A/B in the docblock had it on both arms
+			expect(out.tally.rowsWritten).toBe(5);
 		},
 		TIMEOUT
 	);

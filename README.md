@@ -482,7 +482,7 @@ drops back to the slow re-arm on its own and recovers at midnight UTC.
 | ceiling          | what it limits                     | bound by                  | free today                         |
 | ---------------- | ---------------------------------- | ------------------------- | ---------------------------------- |
 | **Serving**      | visits/month that can be answered  | Worker requests, 100k/day | **3.0M/month**, saturated at 1.00x |
-| **Regeneration** | distinct pages re-rendered per day | **rows written**          | **9,685/day**                      |
+| **Regeneration** | distinct pages re-rendered per day | **duration**              | **47,749/day**                     |
 
 Serving has a way out. Pages served from an R2 public bucket on a custom domain are answered
 through the CDN without invoking the Worker. But "requests to static assets are free and unlimited"

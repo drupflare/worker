@@ -148,13 +148,43 @@ must not lock its owner out of the routes they need to repair it.
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
-serving is bound by Worker requests at 100,000/day, regeneration by rows written at 9,685/day
-windowed and 2,477 on the alarm chain -- so regeneration is the tighter one by 10x and 40x
-respectively. **Those two moved on 2026-09-22 and the figures they replaced are in every older
-document**: `envelope()` divided the whole row budget as though warming were free, and a warmed
-object is the shipping default at 10,896 rows/day. `envelope({ warmed: false })` answers the old
-10,869. Score with `bun scripts/measure/free-envelope.ts`, which fails a workload that misses
-either. (This paragraph carried an unsourced "476x" that no file derived and neither ratio produces.)
+serving is bound by Worker requests at 100,000/day, and regeneration at **47,749/day at the shipping
+default** (`dynamic_page_cache` and `menu` in memory, priced on the warmth mix at 1.75 rows/fill) and
+**10,866/day on the conservative `MEMORY_CACHE_BINS=none` arm** -- the SAME on the alarm chain and
+the fill window. Score with `bun scripts/measure/free-envelope.ts`, which prints both and fails a
+workload that misses either.
+
+**AT THE SHIPPING DEFAULT ROWS NO LONGER BIND; DURATION DOES, AND ON A PESSIMISTIC FIGURE.** The
+duration term prices every fill at `SECONDS_PER.warmRender`, 2.127 s, which is the cold-bins mixture
+and overstates a steady-state re-render (60.2 ms on warm bins) -- so 47,749 is a floor. Rows would bind
+at 50,916 if that term were right, so the ceiling is ~48-51k either way. Do not "fix" the constant to
+a smaller guess: that moves a headline in the flattering direction on no evidence. Measure the
+steady-state fill's wall clock first.
+
+**THOSE FIGURES WERE 9,685 WINDOWED AND 2,477 ON THE ALARM CHAIN UNTIL 2026-09-23, and four
+modelling defects produced them**, each found by predicting the mechanism and confirming it with a
+control. They are the case study for "a number outlives its mechanism":
+
+- **`DO_INVOCATIONS_PER_COLD_FILL = 180`** priced a cold boot sliced across alarms at 8 ms each.
+  No slicing code exists, the Boot section says a boot has no seam to resume from, and a deployed
+  FREE worker drains a batch in exactly one invocation, verified to k=20. It is 1. That single
+  constant was the whole 4x gap between the two paths and the whole reason the alarm chain read
+  DO-bound -- which made every row saving look worthless on the path a default deploy takes.
+- **The audit harness charged its own DELETE.** It deleted the page row inside the tracked window;
+  a DELETE is charged and a fill upserts. `realRender` and `warmReassemble` each read one row high.
+  The control was that both cold classes did not move, because a DELETE matching no row writes
+  nothing.
+- **`byR2ClassA` was unconditional**, capping regeneration at 33,333/day on a config with no
+  `r2_buckets` binding. It only became visible once the in-memory bins took rows/fill below 2.65.
+- **The class was quoted instead of the mix.** At SQL bins the `realRender` class sits below the
+  mix, so quoting it was conservative; at the shipping default it sits above, so it would have been
+  optimistic. The mix is honest in both.
+
+**Every class is priced on its DEARER path, and the two classes disagree about which that is.**
+`/user/login` realRenders in 8 and reassembles in 1; `/` realRenders in 3 and reassembles in 2. So
+`realRender` comes from login and `warmReassemble` from the front page. Measure both paths before
+moving either -- the reassemble was briefly set to the login figure and `fill-bins.spec.ts` caught it
+undercutting a real fill. (This paragraph once carried an unsourced "476x" that no file derived.)
 
 **The 10 ms cap does not fail a request, measured 2026-09-07: a 1,882 ms `cpuTime` invocation
 SUCCEEDED on a deployed free worker.** Before refusing anything because "it will not fit in 10 ms",
@@ -2394,8 +2424,8 @@ is the meter that binds regeneration, and it is also the dominant Durable Object
 requests, duration and storage are not close.
 
 **The pool therefore trades rows written for read throughput at N+1 to 1**, which no document said
-until 2026-09-19. Regeneration is bound by 9,685 rows/day windowed, so an 8-lane pool reaches that
-ceiling nine times sooner. The pool is a lever for READ-heavy sites and is actively harmful to
+until 2026-09-19. Every row a lane replicates still spends the row budget regeneration shares, so an
+8-lane pool reaches that ceiling nine times sooner. The pool is a lever for READ-heavy sites and is actively harmful to
 write-heavy ones; score a proposed pool against the write rate, not only the read rate.
 
 **A scaling ladder is priced by the multiplier, and the arithmetic is available before the run.** A

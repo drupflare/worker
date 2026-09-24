@@ -73,23 +73,27 @@ describe('the SERVING ceiling, where a cache hit is not free', () => {
 });
 
 describe('the REGENERATION ceiling, which is the one that decides the product', () => {
-	it('is ~2,477 renders/day on the alarm chain with the shipped batch of 5', () => {
-		// 180 sliced invocations per cold fill over a batch of 5; read 1,052 until C176, then 2,777
-		// until warming was subtracted -- `SITE_WARM` is on by default and spends 10,800 of the
-		// 100,000 DO requests this divides, which nothing in the model removed
+	it('is ROWS-bound on the alarm chain, which is the path a default deploy takes', () => {
+		// READ 2,477 AND DO-BOUND UNTIL 2026-09-23, and that was an artifact of
+		// `DO_INVOCATIONS_PER_COLD_FILL = 180` -- a boot sliced across alarms at 8 ms, which no code
+		// under `src/` performs and which a deployed FREE worker refutes directly: every batch
+		// drains exactly k in ONE invocation, verified to k=20. See that constant for the full
+		// refutation. `SITE_WARM` is still subtracted, and still spends 10,800 DO requests
 		const env = envelope(DEFAULT_MIX, { windowed: false });
-		expect(env.regenerationsPerDay).toBe(2_477);
-		expect(env.regenerationBoundBy).toBe('do');
-	});
-
-	it('is ~6.4x better with the fill window, and ROWS still bind rather than DO', () => {
-		const env = envelope(DEFAULT_MIX, { windowed: true });
-		expect(env.regenerationsPerDay).toBe(9_685);
+		expect(env.regenerationsPerDay).toBe(10_866);
 		expect(env.regenerationBoundBy).toBe('rows');
 	});
 
-	it('is DO-bound cold and ROWS-bound windowed, which is what decides the work order', () => {
-		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationBoundBy).toBe('do');
+	it('gives the fill window the SAME ceiling, because the gap was the slicing artifact', () => {
+		// the window used to divide invocations by a further 25, which is how two paths over one
+		// mechanism came to report ceilings 4x apart. A firing is one invocation either way
+		const env = envelope(DEFAULT_MIX, { windowed: true });
+		expect(env.regenerationsPerDay).toBe(10_866);
+		expect(env.regenerationBoundBy).toBe('rows');
+	});
+
+	it('is ROWS-bound on BOTH paths, which is what decides the work order', () => {
+		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationBoundBy).toBe('rows');
 		expect(envelope(DEFAULT_MIX, { windowed: true }).regenerationBoundBy).toBe('rows');
 	});
 
@@ -124,8 +128,9 @@ describe('scoring the target workload, which is what the roadmap should be grade
 		const v = scoreWorkload(3_000_000, 0.01, { windowed: false });
 		expect(v.fillsNeededPerDay).toBe(1_000);
 		expect(v.regenerationFits).toBe(true);
-		expect(v.headroom.regenerationRatio).toBeGreaterThan(2.2);
-		expect(v.headroom.regenerationRatio).toBeLessThan(2.8);
+		// 2.48x -> 10.87x when the 180-slice model was replaced by the measured one invocation
+		expect(v.headroom.regenerationRatio).toBeGreaterThan(10.5);
+		expect(v.headroom.regenerationRatio).toBeLessThan(11.2);
 	});
 
 	it('PASSES at 1% dynamic with the fill window, with ~7x headroom', () => {
@@ -154,8 +159,11 @@ describe('scoring the target workload, which is what the roadmap should be grade
 
 	it('requires BOTH ceilings, so a servable-but-unregenerable site is not a pass', () => {
 		// a site serving 3M cached visits it cannot refresh is a static site with a stale cache.
-		// 3% rather than 2%: 2,777 fills/day now covers 2%, so the case had to move
-		const v = scoreWorkload(3_000_000, 0.03, { windowed: false });
+		// THE CASE HAS MOVED THREE TIMES and each move is the ceiling rising under it: 2%, then 3%
+		// once 2,777 fills/day covered 2%, and now 20% because the measured one-invocation firing
+		// took the alarm chain to 10,866/day. The ASSERTION is unchanged and that is the point --
+		// serving fits and the verdict still refuses, so the two-ceiling rule holds at any ceiling
+		const v = scoreWorkload(3_000_000, 0.2, { windowed: false });
 		expect(v.servingFits).toBe(true);
 		expect(v.verdict).not.toBe('fits');
 	});
@@ -206,8 +214,10 @@ describe('the constants are the measured ones', () => {
 		expect(COST_PER_VIEW.edgeHit).toEqual({ worker: 1, do: 0, rows: 0 });
 	});
 
-	it('carries the cold-fill slicing cost and the window amortisation', () => {
-		expect(DO_INVOCATIONS_PER_COLD_FILL).toBe(180);
+	it('charges ONE invocation per firing, because that is what a deployed free worker does', () => {
+		expect(DO_INVOCATIONS_PER_COLD_FILL).toBe(1);
+		// still exported, and no longer divides the invocation term: it has no docblock and no
+		// measurement behind it, so neutralising it was preferred to deleting someone's reasoning
 		expect(FILL_WINDOW_AMORTISATION).toBe(25);
 	});
 });
@@ -406,7 +416,7 @@ describe('rejecting bad traffic, scored against the meters rather than counted',
 		// 13% until the serve tables became WITHOUT ROWID and a fill stopped paying an index row
 		const saving = scoreRejection(1_000, 'edge');
 		expect(saving.savedShare.rows).toBeGreaterThan(saving.savedShare.worker * 5);
-		expect(saving.savedShare.rows).toBeCloseTo(0.09, 5);
+		expect(saving.savedShare.rows).toBeCloseTo(0.08, 5);
 	});
 
 	it('is zero on every meter for zero traffic, so the model cannot flatter a rule', () => {
@@ -442,7 +452,7 @@ describe('the off-Worker path, the ONLY lever on the serving ceiling', () => {
 		expect(off.perMeterViewCeiling.worker).toBe(666_666);
 		// moves with the warming subtraction, which the DO figure beside it does not: sparse meter
 		// checkpointing returned 1,344 rows a day and spends no DO request either way
-		expect(off.perMeterViewCeiling.rows).toBe(968_521);
+		expect(off.perMeterViewCeiling.rows).toBe(1_086_634);
 		expect(off.perMeterViewCeiling.do).toBe(524_705);
 	});
 
@@ -552,11 +562,15 @@ describe('the fill BATCH, which the model shipped without and the code already h
 	 * already beat -- the same stale-metric failure the model was written to prevent, pointing the other
 	 * way. An external review caught it, not these tests, which is why they exist now.
 	 */
-	it('raises the cold ceiling 5x over an unbatched firing', () => {
+	it('barely moves the ceiling now, because rows bind at either batch size', () => {
+		// WAS 5x (495 -> 2,477) AND THAT WAS THE SLICING MODEL SPEAKING. With a firing costing one
+		// invocation the batch only amortises the alarm RE-ARM row, so it is worth 1.1x on the
+		// ceiling. It remains a latency and isolate-memory lever -- a batch is N workloads in ONE
+		// invocation, which is what reset four sites at 25 -- and those are the bounds that size it
 		expect(envelope(DEFAULT_MIX, { windowed: false, fillBatch: 1 }).regenerationsPerDay).toBe(
-			495
+			9_900
 		);
-		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationsPerDay).toBe(2_477);
+		expect(envelope(DEFAULT_MIX, { windowed: false }).regenerationsPerDay).toBe(10_866);
 	});
 
 	it('moves the windowed path from DO-bound to ROWS-bound', () => {
@@ -569,7 +583,7 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		const shipped = envelope(DEFAULT_MIX, { windowed: true });
 		expect(unbatched.regenerationBoundBy).toBe('rows');
 		expect(shipped.regenerationBoundBy).toBe('rows');
-		expect(shipped.regenerationsPerDay).toBe(9_685);
+		expect(shipped.regenerationsPerDay).toBe(10_866);
 	});
 
 	it('shows boot work is still nearly saturated, but LESS so since rows-per-fill fell', () => {
@@ -583,20 +597,26 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		expect(at100 / at5).toBeLessThan(1.03);
 	});
 
-	it('shows rows work pays until ~2 rows/fill, where DO takes over', () => {
+	it('shows rows work pays until ~1.9 rows/fill, where duration takes over', () => {
 		const ladder = [17, 8, 4, 2, 1].map(
 			(rows) =>
 				envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: rows }).regenerationsPerDay
 		);
-		// monotonically better down to 2, then flat, because a THIRD meter takes over below that.
-		//
-		// the DO budget until the cold boot was corrected; R2 Class A binds first now
+		// the third meter has been DO requests, then R2 Class A, and is now duration: the first was
+		// the 180-slice model and the second charged an R2 write to a config with no bucket
 		expect(ladder[1]! / ladder[0]!).toBeGreaterThan(2);
 		expect(ladder[2]! / ladder[0]!).toBeGreaterThan(4);
-		expect(ladder[4]).toBe(ladder[3]);
+		// 2 -> 1 no longer flattens: it still gains, just less, because DURATION takes over rather
+		// than the R2 Class A term, which no longer applies to a config that writes nothing to R2
+		expect(ladder[4]!).toBeGreaterThan(ladder[3]!);
 		expect(envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 1 }).regenerationBoundBy).toBe(
-			'r2ClassA'
+			'duration'
 		);
+		// and the R2 term still applies when a mirror really exists
+		expect(
+			envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 1, mirror: true })
+				.regenerationBoundBy
+		).toBe('r2ClassA');
 	});
 
 	it('treats a batch below 1 as 1 rather than dividing by zero', () => {
@@ -736,7 +756,7 @@ describe('THE ANSWER: the realRender default is CONSERVATIVE once the classes ar
 			windowed: true,
 			warmthMix: STEADY_STATE_WARMTH
 		}).regenerationsPerDay;
-		expect(base).toBe(9_685);
+		expect(base).toBe(10_866);
 		// the real steady state regenerates MORE than the quoted figure, so the number in the docs
 		// is a floor. A ceiling that is too high is the dangerous direction
 		expect(mixed).toBeGreaterThan(base);
@@ -915,13 +935,13 @@ describe('the keep-warm chain, priced across a FLEET rather than one site', () =
 
 		// the control: with warming off the model answers what it published for a year
 		expect(unwarmed.warming.rowsPerDay).toBe(0);
-		expect(unwarmed.regenerationsPerDay).toBe(10_869);
+		expect(unwarmed.regenerationsPerDay).toBe(12_195);
 
 		expect(warmed.warming.rowsPerDay).toBe(10_896);
 		expect(warmed.warming.doRequestsPerDay).toBe(10_800);
 		expect(warmed.warming.rowShare).toBeCloseTo(0.10896, 4);
 		// 10.9% of the row budget gone, so the ceiling is 10.9% lower and not a rounding difference
-		expect(warmed.regenerationsPerDay).toBe(9_685);
+		expect(warmed.regenerationsPerDay).toBe(10_866);
 		expect(warmed.regenerationsPerDay / unwarmed.regenerationsPerDay).toBeCloseTo(0.8911, 3);
 	});
 
@@ -1006,16 +1026,21 @@ describe('a queue-backed fill, which is the lever Queues going free reopened', (
 	// the refutation survives on a new mechanism: close to free, and close to worthless
 	it('moves the windowed ceiling by about 1.5%, not by 2.27x in either direction', () => {
 		const arm = queueArm(undefined, { windowed: true });
-		expect(arm.alarmRegenerationsPerDay).toBe(9_685);
+		expect(arm.alarmRegenerationsPerDay).toBe(10_866);
 		expect(arm.ratio).toBeGreaterThan(1);
 		expect(arm.ratio).toBeLessThan(1.05);
 	});
 
-	// and on the cold arm it buys nothing rather than something: DO requests still bind
-	it('changes nothing on the cold arm, where DO requests bind first', () => {
+	// and the cold arm now behaves like the windowed one, for the reason the two converged
+	it('buys the same ~2.5% on the cold arm, because both paths are rows-bound now', () => {
+		// IT USED TO BUY EXACTLY NOTHING HERE, and that was DO requests binding under the
+		// 180-slice model. With a firing costing one invocation both paths are rows-bound, so the
+		// queue's only effect either way is dropping the amortised alarm re-arm row. The refutation
+		// is unchanged and is now uniform: a queue ADDS a meter and replaces none
 		const arm = queueArm();
-		expect(arm.queueRegenerationsPerDay).toBe(arm.alarmRegenerationsPerDay);
-		expect(arm.ratio).toBe(1);
+		expect(arm.queueRegenerationsPerDay).toBeGreaterThan(arm.alarmRegenerationsPerDay);
+		expect(arm.ratio).toBeGreaterThan(1);
+		expect(arm.ratio).toBeLessThan(1.05);
 	});
 
 	/**

@@ -178,13 +178,15 @@ describe('the constants carry their provenance', () => {
 		expect(fills / 1000).toBeGreaterThan(5);
 	});
 
-	it('caps a declared share where the remaining headroom would fall under 3x', () => {
+	it('keeps the demand-driven need covered 2x over at the largest declared share', () => {
+		// the property the cap exists for. The upper bound was 3x and the headroom at the cap is
+		// now 3.1x, because `realRender` lost a row the harness had been charging; the cap stayed
 		const fills = Math.floor(
 			(DAILY_ROWS_QUOTA - DAILY_ROWS_QUOTA * 0.25 - DAILY_ROWS_QUOTA * SWEEP_MAX_FRACTION) /
 				ROWS_PER_AUTH_RENDER
 		);
 		expect(fills / 1000).toBeGreaterThan(2);
-		expect(fills / 1000).toBeLessThan(3);
+		expect(fills / 1000).toBeLessThan(3.5);
 	});
 });
 

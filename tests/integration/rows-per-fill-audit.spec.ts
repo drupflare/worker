@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ROWS_PER_FILL } from '../../scripts/measure/free-envelope';
+import { ROWS_PER_FILL, ROWS_PER_FILL_MEMORY_BINS } from '../../scripts/measure/free-envelope';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 // injected by `vitest.config.ts`; workerd has no `process.env`, so reading it here would be false
@@ -7,6 +7,9 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 declare const __DRUPFLARE_PACK_FROM_SOURCE__: boolean;
 const FROM_SOURCE =
 	typeof __DRUPFLARE_PACK_FROM_SOURCE__ === 'boolean' ? __DRUPFLARE_PACK_FROM_SOURCE__ : false;
+
+// `/user/login` reassembles in the upsert alone; `warmReassemble` is priced on `/`, the dearer path
+const LOGIN_REASSEMBLE_ROWS = 1;
 
 /**
  * The four `ROWS_PER_FILL` classes, re-measured against the tree that ships.
@@ -178,9 +181,14 @@ describe.skipIf(FROM_SOURCE)(
 					expect(first.status, await first.clone().text()).toBe(200);
 
 					const arm = async (path: string, bins?: string[]): Promise<Arm> => {
+						// THE RESET GOES AFTER THE HARNESS'S OWN SETUP. A DELETE is a charged write,
+						// and this one landed inside the tracked window, so every class whose page
+						// row already existed read one row too high -- `realRender` and
+						// `warmReassemble`, which carry 95% of the steady-state mix between them. A
+						// fill UPSERTS (`ON CONFLICT(path) DO UPDATE`), so production never pays it
+						site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 						await site.fetch(new Request('https://do.local/__writes?op=off'));
 						await site.fetch(new Request('https://do.local/__writes?op=on'));
-						site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 						await site.fillOne(path, bins);
 						const t = (await (
 							await site.fetch(new Request('https://do.local/__writes'))
@@ -251,7 +259,11 @@ describe.skipIf(FROM_SOURCE)(
 				// PINNED, not ranged: three consecutive runs read identical counts in every class, so
 				// these are exact charges rather than noisy measurements and a drift is a real change
 				expect(out.realRender.rows).toBe(ROWS_PER_FILL.realRender);
-				expect(out.warmReassemble.rows).toBe(ROWS_PER_FILL.warmReassemble);
+				// the ONE class not pinned by equality: this arm reassembles `/user/login`, which is
+				// one row and the cheaper path, while the class is priced on `/` at two. Pin the
+				// login figure exactly so a drift still fails, and assert the class is not undercut
+				expect(out.warmReassemble.rows).toBe(LOGIN_REASSEMBLE_ROWS);
+				expect(out.warmReassemble.rows).toBeLessThanOrEqual(ROWS_PER_FILL.warmReassemble);
 				expect(out.anotherNewPath.rows).toBe(ROWS_PER_FILL.firstEverForPath);
 				expect(out.firstEver.rows).toBe(ROWS_PER_FILL.firstFillOnFreshObject);
 				// and the ordering, which is what the model's warmth classes mean
@@ -290,9 +302,14 @@ describe.skipIf(FROM_SOURCE)(
 					);
 					expect(first.status, await first.clone().text()).toBe(200);
 					const arm = async (path: string, bins?: string[]): Promise<Arm> => {
+						// THE RESET GOES AFTER THE HARNESS'S OWN SETUP. A DELETE is a charged write,
+						// and this one landed inside the tracked window, so every class whose page
+						// row already existed read one row too high -- `realRender` and
+						// `warmReassemble`, which carry 95% of the steady-state mix between them. A
+						// fill UPSERTS (`ON CONFLICT(path) DO UPDATE`), so production never pays it
+						site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 						await site.fetch(new Request('https://do.local/__writes?op=off'));
 						await site.fetch(new Request('https://do.local/__writes?op=on'));
-						site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 						await site.fillOne(path, bins);
 						const t = (await (
 							await site.fetch(new Request('https://do.local/__writes'))
@@ -308,14 +325,25 @@ describe.skipIf(FROM_SOURCE)(
 							perTable: t.indexSplit.rows.filter((r) => r.chargedRows > 0)
 						} as Arm;
 					};
-					await arm('/user/login', ['page', 'dynamic_page_cache']);
+					// the same four classes in the same order as the SQL arm above, so the two
+					// tables are comparable class by class rather than only on `realRender`
+					const firstEver = await arm('/user/login');
+					const anotherNewPath = await arm('/user/password');
 					const realRender = await arm('/user/login', ['page', 'dynamic_page_cache']);
 					const warmReassemble = await arm('/user/login', ['page']);
-					return { realRender, warmReassemble };
+					return { firstEver, anotherNewPath, realRender, warmReassemble };
 				});
 
 				console.log(
 					`[rows-per-fill-default] ${JSON.stringify({
+						firstFillOnFreshObject: {
+							measured: out.firstEver.rows,
+							sqlConstant: ROWS_PER_FILL.firstFillOnFreshObject
+						},
+						firstEverForPath: {
+							measured: out.anotherNewPath.rows,
+							sqlConstant: ROWS_PER_FILL.firstEverForPath
+						},
 						realRender: {
 							measured: out.realRender.rows,
 							sqlConstant: ROWS_PER_FILL.realRender
@@ -323,9 +351,19 @@ describe.skipIf(FROM_SOURCE)(
 						warmReassemble: {
 							measured: out.warmReassemble.rows,
 							sqlConstant: ROWS_PER_FILL.warmReassemble
-						}
+						},
+						detail: out
 					})}`
 				);
+
+				// the class ORDERING has to survive the configuration change, or the warmth mix
+				// is describing a different shape of day than the one it was written for
+				expect(out.firstEver.rows).toBeGreaterThan(out.anotherNewPath.rows);
+				expect(out.anotherNewPath.rows).toBeGreaterThan(out.realRender.rows);
+				// NOT STRICT AT THIS DEFAULT: with `dynamic_page_cache` and `menu` both in memory a
+				// re-render of `/user/login` writes the `cfw_page` upsert and nothing else, which is
+				// all a reassemble writes, so on the warm path the two classes converge on one row
+				expect(out.realRender.rows).toBeGreaterThanOrEqual(out.warmReassemble.rows);
 
 				// the default is CHEAPER on the meter that binds regeneration, which is the whole
 				// reason it is the default
@@ -334,8 +372,17 @@ describe.skipIf(FROM_SOURCE)(
 				expect(
 					out.realRender.perTable.some((r) => r.table === 'cache_dynamic_page_cache')
 				).toBe(false);
-				// a reassemble does not move: it never wrote that bin
-				expect(out.warmReassemble.rows).toBe(ROWS_PER_FILL.warmReassemble);
+				// a reassemble does not move between configurations: it never wrote that bin
+				expect(out.warmReassemble.rows).toBe(LOGIN_REASSEMBLE_ROWS);
+				// and every class is PINNED against the table the shipping headline is priced on,
+				// the same way the SQL arm above pins its own -- reassemble as a bound, for the
+				// front-page reason given there
+				expect(out.realRender.rows).toBe(ROWS_PER_FILL_MEMORY_BINS.realRender);
+				expect(out.warmReassemble.rows).toBeLessThanOrEqual(
+					ROWS_PER_FILL_MEMORY_BINS.warmReassemble
+				);
+				expect(out.anotherNewPath.rows).toBe(ROWS_PER_FILL_MEMORY_BINS.firstEverForPath);
+				expect(out.firstEver.rows).toBe(ROWS_PER_FILL_MEMORY_BINS.firstFillOnFreshObject);
 			},
 			TIMEOUT
 		);

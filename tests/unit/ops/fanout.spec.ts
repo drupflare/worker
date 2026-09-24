@@ -137,15 +137,20 @@ describe('the fanout is weighted by rows, not by page count', () => {
 	});
 
 	/**
-	 * A WHOLESALE PURGE OF CHEAP PAGES IS PAID FOR IMMEDIATELY NOW, which is the change that matters
-	 * most: 34 reassembles is 68 rows, and deferring 68 rows to the stale tier bought nothing.
+	 * A WIDE PURGE OF CHEAP PAGES IS PROMOTED OUT OF THE STALE TIER, which is the change that matters
+	 * most: 34 reassembles is 68 rows, and the count policy deferred all of them.
+	 *
+	 * IT WAS PROMOTED TO `immediate` UNTIL 2026-09-23. The tiers are "N tagged pages' worth of
+	 * rows", and a tagged page fell 9 -> 8 when the audit harness stopped charging its own DELETE, so
+	 * the immediate tier is 64 rows rather than 72 and 68 lands one tier lower. That is the policy
+	 * reading correct inputs: 64 is what eight tagged pages actually cost.
 	 */
-	it('pays for a wide purge of reassembles that the count would have deferred', () => {
+	it('promotes a wide purge of reassembles that the count would have deferred', () => {
 		const byCount = fanoutDecision(34, 100);
 		const byRows = fanoutDecision(34, 100, true, ROWS_PER_UNTAGGED_PAGE);
 		expect(byCount.policy).toBe('lazy');
-		expect(byRows.policy).toBe('immediate');
-		expect(byRows.rows).toBe(68);
+		expect(byRows.policy).toBe('background');
+		expect(byRows.rows).toBe(34 * ROWS_PER_UNTAGGED_PAGE);
 	});
 
 	/** and the other direction: expensive pages stop being treated as a small change */
@@ -160,7 +165,9 @@ describe('the fanout is weighted by rows, not by page count', () => {
 	it('reports the rows it decided on, so the choice is checkable', () => {
 		expect(fanoutDecision(0, 25).rows).toBe(0);
 		expect(fanoutDecision(5, 25).rows).toBe(5 * ROWS_PER_TAGGED_PAGE);
-		expect(fanoutDecision(5, 25, true, ROWS_PER_UNTAGGED_PAGE).rows).toBe(10);
+		expect(fanoutDecision(5, 25, true, ROWS_PER_UNTAGGED_PAGE).rows).toBe(
+			5 * ROWS_PER_UNTAGGED_PAGE
+		);
 		expect(fanoutDecision(5, 25).reason).toContain(String(5 * ROWS_PER_TAGGED_PAGE));
 	});
 

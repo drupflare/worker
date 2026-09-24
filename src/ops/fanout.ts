@@ -26,17 +26,19 @@ export const FANOUT_MEDIUM = 32;
  * against the original in `tests/unit/ops/fanout.spec.ts`, the same arrangement `auth-budget.ts`
  * uses for the two constants it copies.
  *
- * It describes `MEMORY_CACHE_BINS=none`; with the shipping default a tagged page is 3, and the
- * constant tracks `ROWS_PER_FILL.realRender` deliberately rather than leading it. See that class.
+ * It describes `MEMORY_CACHE_BINS=none`; with the shipping default a tagged page is 2, and the
+ * constant tracks `ROWS_PER_FILL.realRender` deliberately rather than leading it. See that class,
+ * which says why both of these lost a row on 2026-09-23.
  */
-export const ROWS_PER_TAGGED_PAGE = 9;
+export const ROWS_PER_TAGGED_PAGE = 8;
 
 /**
  * And what a re-queued page costs when the save did NOT reach its tags.
  *
  * `ROWS_PER_FILL.warmReassemble`. A `cachetags` bump leaves `dynamic_page_cache` alone except for
  * tag-matched entries, so a page re-queued by a wholesale purge re-renders from a warm bin: it
- * stores its row and writes nothing else.
+ * stores its row and writes nothing else. 2, priced on the front page: `/user/login` reassembles in
+ * one row and `/` in two, and the class takes the dearer path so it cannot undercut a real fill.
  */
 export const ROWS_PER_UNTAGGED_PAGE = 2;
 

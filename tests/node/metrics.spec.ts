@@ -141,8 +141,9 @@ describe('the collector produces only reproducible figures', () => {
 		const env = collectFreeEnvelope();
 		expect(env.servingViewsPerDay).toBe(100_000);
 		expect(env.servingBoundBy).toBe('worker');
-		// the windowed ceiling is the one RULE 0b quotes, and it is ~7x the cold one
-		expect(env.windowedRegenerationsPerDay).toBeGreaterThan(env.regenerationsPerDay);
+		// the two paths were ~7x apart while a cold fill was priced at 180 sliced invocations; a firing
+		// is one invocation on a deployed free worker, so they are the same ceiling
+		expect(env.windowedRegenerationsPerDay).toBe(env.regenerationsPerDay);
 	});
 
 	it('counts spec files off the filesystem rather than off a run', () => {

@@ -299,7 +299,18 @@ export const SECONDS_PER = {
 	edgeHit: 0,
 	/** one indexed read on the fast storage lane */
 	doHit: 0.003,
-	/** a warm render, 2,127 ms measured */
+	/**
+	 * LABELLED A WARM RENDER AND IT IS NOT ONE. 2,127 ms is `RENDER_COLD_BINS_MS` in
+	 * `scripts/economics/measured.ts`, whose own docblock says never to multiply it by an
+	 * invalidation frequency -- and a per-fill duration is exactly that. Re-measured 2026-09-23 it is
+	 * also a MIXTURE: 1,229 ms with a warm container, 3,080 with it emptied. The steady-state
+	 * re-render on a warm object is `RENDER_WARM_BIN_MS`, 60.2 ms.
+	 *
+	 * It matters now because duration BINDS at the shipping default, and this figure is why: it
+	 * overstates a fill, so the duration ceiling is conservative. Rows would bind about 7% higher if
+	 * it were right. Left in place until the steady-state fill's wall clock is measured, since a
+	 * smaller guess here would move a headline in the flattering direction on no evidence.
+	 */
 	warmRender: 2.127,
 	/** a cold render, 6,140 ms measured: boot plus render in one invocation */
 	coldRender: 6.14
@@ -439,20 +450,37 @@ export function coldUrlCost(rowsPerFill: number = ROWS_PER_FILL.realRender): Col
 }
 
 /**
- * DO invocations to complete ONE fill when every alarm pays the boot again.
+ * DO invocations one alarm FIRING costs, which is one.
  *
- * Hibernation discards the interpreter, so a cold fill pays the boot again: 1,398 ms of edge
- * cpuTime (n=3) at 8 ms a slice. **It was 475, from a 3,754 ms boot already cleared by per-file
- * compression and the lazy mount** -- understating the cold regeneration ceiling by ~2.6x.
+ * **WAS 180, AND THAT MODELLED A MECHANISM THIS PROJECT DOES NOT HAVE.** The old figure divided a
+ * 1,398 ms boot by an 8 ms slice, i.e. it assumed free's per-invocation CPU cap forces a cold fill
+ * to be spread across ~180 alarms. Three things refute it, and all three were already in the tree:
+ *
+ * - **No slicing code exists.** There is no `bootSlice`, no cursor, nothing under `src/` that
+ *   resumes a partial boot, and `TECHNICAL_REPORT.md`'s Boot section says why there cannot be:
+ *   `_run()` enters wasm and the stack runs to completion, so a boot has no seam to resume from.
+ * - **The cap does not fail a request**, measured 2026-09-07 -- a 1,882 ms `cpuTime` invocation
+ *   SUCCEEDED on a deployed free worker -- so the premise that forced the slicing is false.
+ * - **A batch drains in ONE invocation, measured on a deployed FREE worker**, n=5 per k with every
+ *   batch verified to drain exactly k: per-page wall 109 ms at k=1, 82 at k=5, 50 at k=10, 42.9 at
+ *   k=20. That is the direct observation, and `src/ops/plan-profile.ts` carries it.
+ *
+ * The consequence is not small. At 180 the alarm chain read 2,477 regenerations/day and reported
+ * itself DO-BOUND, which made every row saving look worthless on the shipping path. At the measured
+ * 1 it is **rows-bound**, and rows are what the whole regeneration model is about again.
  */
-export const DO_INVOCATIONS_PER_COLD_FILL = 180;
+export const DO_INVOCATIONS_PER_FIRING = 1;
 
-/** each message resets the CPU budget inside one object lifetime: ~25x the alarm chain */
+/** @deprecated the 180-slice model; kept so a reader who finds the old figure lands on the reason */
+export const DO_INVOCATIONS_PER_COLD_FILL = DO_INVOCATIONS_PER_FIRING;
+
 /**
  * The shipped `FILL_BATCH_SIZE` default.
  *
- * One firing fills N pages before re-arming, amortising the sliced boot and the `setAlarm()` row
- * across N. The model shipped without it and understated a ceiling the code already beat.
+ * One firing fills N pages before re-arming, amortising the `setAlarm()` row across N. It used to be
+ * credited with amortising a SLICED boot as well, and that was worth 5x on the ceiling; there is no
+ * sliced boot -- see {@link DO_INVOCATIONS_PER_FIRING} -- so on the ceiling it is now worth 1.1x and
+ * its real job is bounding HIT latency and isolate memory, which is what `plan-profile.ts` sizes.
  */
 export const DEFAULT_FILL_BATCH = 5;
 
@@ -465,7 +493,16 @@ export const DEFAULT_FILL_BATCH = 5;
  * re-render after invalidation. Every figure is POST-`cache_page`.
  */
 export const ROWS_PER_FILL = {
-	/** page bin only, dynamic_page_cache left warm: a reassemble rather than a render */
+	/**
+	 * page bin only, dynamic_page_cache left warm: a reassemble rather than a render.
+	 *
+	 * PRICED ON THE FRONT PAGE, which is the dearer path. `/user/login` reassembles in **1** row,
+	 * the upsert, once the audit harness stopped charging its own DELETE to it; `/` reassembles in
+	 * **2**, measured by `fill-bins.spec.ts`, whose harness reads `dailyRows()` only after its own
+	 * setup. Setting this to the login figure made the warmest priced class undercut a real fill,
+	 * which is the one thing a floor may not do -- so the class takes the dearer path. The old 2 was
+	 * right by coincidence: the login reading was inflated by exactly the row the paths differ by.
+	 */
 	warmReassemble: 2,
 	/**
 	 * both bins empty -- a real render, and what a tag invalidation costs to undo.
@@ -492,7 +529,12 @@ export const ROWS_PER_FILL = {
 	 * measurement pass, and shipping a 2.87x ceiling increase on a hurried one is how a wrong
 	 * published figure ships. `rows-per-fill-audit.spec.ts` measures BOTH arms and prints the gap.
 	 */
-	realRender: 9,
+	// 9 -> 8 ON 2026-09-23, and the row removed was the HARNESS'S. The audit arm deleted the page
+	// row inside the tracked window before re-filling, and a DELETE is a charged write; a fill
+	// UPSERTS (`ON CONFLICT(path) DO UPDATE`), so production never paid it. Only classes whose page
+	// row already existed were affected -- this one and `warmReassemble` -- because a DELETE matching
+	// no row writes nothing, which is the control: both cold classes read identically either way
+	realRender: 8,
 	/**
 	 * the front page on a freshly migrated object, which also writes cfw_meta and the queue.
 	 *
@@ -560,6 +602,35 @@ export const ROWS_PER_FILL = {
 	firstFillOnFreshObject: 91
 } as const;
 
+/**
+ * The same four classes at the SHIPPING DEFAULT, where `dynamic_page_cache` is an in-memory bin.
+ *
+ * MEASURED 2026-09-23 by `rows-per-fill-audit.spec.ts`, whose default arm now drives the same four
+ * classes in the same order as the SQL arm. Order matters and cost a wrong reading: an arm that
+ * takes `realRender` straight after a throwaway both-bins fill reads one row higher than the same
+ * class in the SQL arm's sequence, and the model is pinned to the latter.
+ *
+ * AT THE DEFAULT OF `dynamic_page_cache,menu` a real re-render is **1** row -- the `cfw_page`
+ * upsert and nothing else -- which reconciles exactly: {@link ROWS_PER_FILL}'s 8, minus the 6
+ * `cache_dynamic_page_cache` rows, minus the 1 `cache_menu` row. With `dynamic_page_cache` alone it
+ * was 2. The cold classes barely move, because the in-memory bins are most of a re-render and almost
+ * none of a cold one: a first fill is 87 against 91 and a never-routed path 11 against 14. That
+ * asymmetry is why the headline is priced on a MIX rather than on `realRender` alone -- see
+ * {@link rowsForWarmthMix}.
+ *
+ * `warmReassemble` stays at the front-page 2, for the reason on the SQL table's class, and it is
+ * the ONE figure here not re-measured with `menu` in memory: the front page's two rows were read by
+ * `fill-bins.spec.ts` with every bin in SQL. Holding it at 2 can only overstate, so the headline
+ * stays a floor while it is owed.
+ */
+export const ROWS_PER_FILL_MEMORY_BINS = {
+	warmReassemble: 2,
+	realRender: 1,
+	firstFillAfterMigrate: ROWS_PER_FILL.firstFillAfterMigrate,
+	firstEverForPath: 11,
+	firstFillOnFreshObject: 87
+} as const;
+
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
 
 /** how a day's fills are spread across the warmth classes; fractions, not counts */
@@ -591,17 +662,28 @@ export const STEADY_STATE_WARMTH: WarmthMix = {
  * @throws if a weight is negative, which cannot mean anything and would quietly cancel another
  *   class out.
  */
-export function rowsForWarmthMix(mix: WarmthMix): number {
+export function rowsForWarmthMix(
+	mix: WarmthMix,
+	table: Record<FillWarmth, number> = ROWS_PER_FILL
+): number {
 	let rows = 0;
 	for (const [warmth, weight] of Object.entries(mix) as Array<[FillWarmth, number]>) {
 		if (!Number.isFinite(weight) || weight < 0) {
 			throw new RangeError(`warmth weight for ${warmth} must be a non-negative number`);
 		}
-		rows += ROWS_PER_FILL[warmth] * weight;
+		rows += table[warmth] * weight;
 	}
 	return rows;
 }
 
+/**
+ * The fill window's multiplier, and it no longer changes any ceiling.
+ *
+ * Its stated basis was that each message resets the CPU budget inside one object lifetime, making
+ * the window ~25x the alarm chain. That was only true against the 180-slice model: once a firing is
+ * one invocation there is nothing left for it to divide, and `envelope()` no longer applies it.
+ * Kept exported because nothing measured it either way; delete it with its last reader.
+ */
 export const FILL_WINDOW_AMORTISATION = 25;
 
 export type TrafficMix = {
@@ -743,6 +825,12 @@ export function envelope(
 		 * that pins an exact figure always gets it.
 		 */
 		warmthMix?: WarmthMix;
+		/**
+		 * Whether a fill writes an R2 object, which is what makes the Class A meter apply at all.
+		 * Implied by `offWorker > 0`; set it outright to price a mirror that stores pages without
+		 * serving them off-Worker yet.
+		 */
+		mirror?: boolean;
 		/**
 		 * Fraction of off-Worker reads that Cloudflare's CDN answers in front of the bucket, so they
 		 * never become an R2 Class B operation.
@@ -905,11 +993,23 @@ export function envelope(
 	// well as by the window. Stated rather than assumed: the two amortise the same boot by different
 	// mechanisms -- the window keeps one object alive across messages, the batch does more work per
 	// wake -- so multiplying them is only valid while a windowed firing still fills a full batch.
-	const amortisation = (opts.windowed ? FILL_WINDOW_AMORTISATION : 1) * batch;
-	const invocationsPerFill = DO_INVOCATIONS_PER_COLD_FILL / amortisation;
+	// A FIRING IS ONE INVOCATION AND IT DRAINS `batch` PAGES, so the invocation term is 1/batch and
+	// nothing else. `windowed` used to divide this by a further 25, which is how the two paths came
+	// to report ceilings 4x apart; that multiplier has no measurement behind it and, now that a
+	// firing costs 1 rather than 180, it would be dividing a number that is already the floor. The
+	// window's real effect is on BOOTS, which is a duration cost, not a request count.
+	const amortisation = batch;
+	const invocationsPerFill = DO_INVOCATIONS_PER_FIRING / amortisation;
 	const byDo = doAvailable / invocationsPerFill;
 	const byRows = rowsAvailable / rowsPerFill;
-	const byR2ClassA = FREE_QUOTAS.r2ClassAPerMonth / DAYS_PER_MONTH;
+	// ONLY IF A FILL ACTUALLY WRITES AN R2 OBJECT. This term was unconditional and it capped
+	// regeneration at 33,333/day on a configuration that writes nothing to R2: the shipping
+	// `wrangler.jsonc` declares no `r2_buckets`, so the mirror does not run on a default deploy, and
+	// `offWorker` defaults to 0 besides. Charging the meter anyway made an R2 ceiling bind a site
+	// with no bucket -- invisible while rows bind first, and the answer the moment the in-memory
+	// bins took rows/fill below 2.65
+	const mirrored = (mix.offWorker ?? 0) > 0 || opts.mirror === true;
+	const byR2ClassA = mirrored ? FREE_QUOTAS.r2ClassAPerMonth / DAYS_PER_MONTH : Infinity;
 	const byDuration = perFillGbS > 0 ? Math.max(0, availableGbS) / perFillGbS : Infinity;
 	const regenCeilings = { do: byDo, rows: byRows, r2ClassA: byR2ClassA, duration: byDuration };
 
@@ -1436,7 +1536,7 @@ if (import.meta.main) {
 
 	for (const windowed of [false, true]) {
 		const v = scoreWorkload(visits, dynamic, { windowed, warmth, warmthMix });
-		console.log(`\n=== fill window: ${windowed ? 'ON (~25x)' : 'OFF (alarm chain)'} ===`);
+		console.log(`\n=== fill window: ${windowed ? 'ON' : 'OFF (alarm chain, the default)'} ===`);
 		console.log(
 			`target            ${v.targetVisitsPerMonth.toLocaleString()}/month = ${v.targetVisitsPerDay.toLocaleString()}/day`
 		);
@@ -1462,6 +1562,16 @@ if (import.meta.main) {
 		);
 		console.log(`VERDICT           ${v.verdict.toUpperCase()}`);
 	}
+
+	// THE LINES ABOVE PRICE `MEMORY_CACHE_BINS=none`, the conservative arm. The shipping default holds
+	// `dynamic_page_cache` and `menu` in memory, and it has to be priced on the MIX: its `realRender`
+	// class sits BELOW the mix, so quoting the class alone would be the optimistic figure
+	const shippingRows = rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS);
+	const shipping = envelope(DEFAULT_MIX, { rowsPerFill: shippingRows });
+	console.log(
+		`\nshipping default  ${shipping.regenerationsPerDay.toLocaleString()}/day (bound by ${shipping.regenerationBoundBy}), ` +
+			`dynamic_page_cache and menu in memory, priced on the warmth mix at ${shippingRows.toFixed(2)} rows/fill`
+	);
 
 	// a FLEET ceiling, not a traffic one, which is why it prints once and outside the loop
 	const s = scoreWorkload(visits, dynamic).storage;

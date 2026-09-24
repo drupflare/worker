@@ -96,9 +96,10 @@ export const SWEEP_MIN_FRACTION = 0.01;
 /**
  * The largest share an operator may declare.
  *
- * At 0.5 the demand-driven anonymous slice is 25,000 rows, 2,777 `realRender` fills against the
- * measured 1,000/day need -- 2.7x. Past that a sweep is competing with visitors for the meter
- * rather than using its slack.
+ * At 0.5 the demand-driven anonymous slice is 25,000 rows, 3,125 `realRender` fills against the
+ * measured 1,000/day need -- 3.1x. Past that a sweep is competing with visitors for the meter
+ * rather than using its slack. It read 2.7x until `realRender` lost the audit harness's own
+ * DELETE (9 -> 8); the cap was left where it was, so it is now slightly more conservative.
  */
 export const SWEEP_MAX_FRACTION = 0.5;
 

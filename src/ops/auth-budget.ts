@@ -9,20 +9,22 @@ import { isPaid, type PlanEnv } from './plan.js';
  * | ceiling                      | value                              |
  * | ---------------------------- | ---------------------------------- |
  * | serving                      | 100,000/day, worker-bound, **1.00x** |
- * | regeneration, windowed       | **10,869/day, rows-bound**         |
- * | regeneration, alarm chain    | 1,052/day, do-bound                |
+ * | regeneration, windowed       | **10,866/day, rows-bound**         |
+ * | regeneration, alarm chain    | **10,866/day, rows-bound**         |
  *
  * At the default 25% reservation that splits as:
  *
  * | slice                        | rows/day | what it buys                              |
  * | ---------------------------- | -------- | ----------------------------------------- |
- * | authenticated                | 25,000   | **2,777 authenticated views/day**         |
- * | anonymous regeneration       | 75,000   | **8,151 regenerations/day** (8.15x need)  |
+ * | authenticated                | 25,000   | **3,125 authenticated views/day**         |
+ * | anonymous regeneration       | 75,000   | **8,149 regenerations/day** (8.15x need)  |
  *
  * The anonymous side still clears the 1,000 regenerations/day a 3M-visit month needs at 1% dynamic,
  * with 8.15x headroom, which is the property that makes the reservation safe to take.
  *
- * All three moved when the pack's cache bins became `WITHOUT ROWID` and a render fell 12 -> 9 rows.
+ * All of these describe `MEMORY_CACHE_BINS=none`, the conservative arm. The two regeneration rows
+ * are equal because the alarm chain was priced at 180 invocations per fill until 2026-09-23, a
+ * boot-slicing mechanism nothing performs; a deployed free worker drains a batch in one invocation.
  *
  * Paid has no reservation. The meters it is protecting do not bind there, and a limit that exists
  * only to be never reached is a limit a reader has to explain later.
@@ -42,11 +44,13 @@ export const DAILY_ROWS_QUOTA = 100_000;
 /**
  * `ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs.
  *
- * It describes `MEMORY_CACHE_BINS=none`; with the shipping default an authenticated view is 3, and
- * this tracks `ROWS_PER_FILL.realRender` rather than leading it. See that class for why the model
- * has not been re-derived against the new default yet.
+ * It describes `MEMORY_CACHE_BINS=none`; with the shipping default an authenticated view is 2, and
+ * this tracks `ROWS_PER_FILL.realRender` rather than leading it.
+ *
+ * 9 -> 8 on 2026-09-23, and the row that went was never PHP's: the audit harness deleted the page
+ * row inside its own tracked window before re-filling, and a DELETE is charged where a fill upserts.
  */
-export const ROWS_PER_AUTH_RENDER = 9;
+export const ROWS_PER_AUTH_RENDER = 8;
 
 /** `FREE_QUOTAS.doRequestsPerDay`, same quota shape as rows */
 export const DAILY_DO_QUOTA = 100_000;

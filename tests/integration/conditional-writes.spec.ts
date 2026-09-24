@@ -6,7 +6,7 @@ import { inObject, markProvisioned, provisionedSite, type ServeDo } from '../hel
  * One read spent to avoid one charged row, and why the trade is not close.
  *
  * The free plan allows 5,000,000 rows READ a day against 100,000 written, so a read is 1/50th of a
- * write, and rows written is the meter that binds regeneration at 9,685/day. A statement that
+ * write, and rows written is the meter that binds regeneration. A statement that
  * stores the value a column already holds is charged in full.
  *
  * Two callers were already doing this by hand -- `noteStorable()` compares against the held list,

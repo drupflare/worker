@@ -12,7 +12,9 @@
  * 333,333/day against the 100,000/day Worker-request ceiling, so the floor is **3.3x** rather than the
  * 12.5x once quoted. Anything above that floor comes from Cloudflare's CDN absorbing reads in front of
  * the bucket, and that hit ratio is unmeasured. Writes are not the constraint: 1M Class A/month is
- * 33,333/day against an 10,869/day regeneration ceiling.
+ * 33,333/day against the shipping warmed ceiling of 9,685/day; 10,869 is the UNWARMED arm, which
+ * `envelope({ warmed: false })` still answers and which this line used to quote as though it were
+ * the default. Count it with `bun scripts/measure/free-envelope.ts` rather than quoting either.
  *
  * MIRROR TO THE OPTIMUM, NOT TO EVERYTHING. Once R2's read meter binds, moving more traffic off the
  * Worker spends a 333,333/day meter faster to save a 100,000/day one, so the lever has a maximum

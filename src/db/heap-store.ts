@@ -37,8 +37,8 @@ export const WASM_PAGE_BYTES = 65_536;
  *
  * So the goal of chunking -- one restore step inside one free-plan invocation -- only holds
  * at roughly this size. 41 rows for an 8.1 MB elided image is still a handful of reads, and rows are
- * not the meter that binds. The cost is not the memcpy: each chunk is also digested by a per-byte
- * JS loop (`digestBytes`), so per-firing CPU tracks chunk size closely.
+ * not the meter that binds. Per-firing CPU tracks chunk size; the per-chunk digest is not what
+ * scales it, at about 0.1 ms per 200,000 bytes on V8 (`scripts/measure/heap-digest-cost.ts`).
  */
 export const DEFAULT_CHUNK_BYTES = 200_000;
 

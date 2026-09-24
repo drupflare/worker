@@ -1,0 +1,12 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "cfw-render-lane",
+	"main": "../../src/probes/render-lane.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": true }],
+	"durable_objects": {
+		"bindings": [{ "name": "RENDER_LANES", "class_name": "RenderLane" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["RenderLane"] }]
+}

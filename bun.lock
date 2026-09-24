@@ -5,6 +5,7 @@
     "": {
       "name": "drupal-cfw-test",
       "dependencies": {
+        "@drupflare/burrow": "^1.1.0",
         "@drupflare/cartridge": "^0.2.0",
         "@drupflare/durabledb": "^0.1.3",
         "@drupflare/untarl": "^0.1.0",
@@ -95,6 +96,8 @@
     "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20260829.1", "", {}, "sha512-SsH4G9+JePvrBmz+b5Dl67LQ9w2/ycoIpAPcAkfg2aEs2SEisQHk7/AY0TymSXEBbDbWgcBqoLe4hNcuY3CxWA=="],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
+
+    "@drupflare/burrow": ["@drupflare/burrow@1.1.0", "", { "dependencies": { "commander": "^15.0.0" }, "bin": { "burrow": "dist/bin/burrow.js" } }, "sha512-Q26crrXleMMkmC4bpJa6EYg3j8h9kNBZENhIyxuoeS+Ve+nYCtmvvfRYQMmZ5QFoKiaQZjpdSD7yVFtl4ikqXA=="],
 
     "@drupflare/cartridge": ["@drupflare/cartridge@0.2.0", "", { "dependencies": { "fflate": "^0.8.3", "fzstd": "^0.1.1" } }, "sha512-W92yDLlzPGudvAZgZrZzlY5M8GBckCMU27k7VHBfXpvr2AZxEqGwilABoy3AMlsDbEMUPbGuchYF2ifnZtXM1w=="],
 
@@ -359,6 +362,8 @@
     "chai": ["chai@6.2.2", "", {}, "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="],
 
     "cjs-module-lexer": ["cjs-module-lexer@1.2.3", "", {}, "sha512-0TNiGstbQmCFwt4akjjBg5pLRTSyj/PkWQ1ZoO2zntmg9yLqSRxwEa4iCfQLGjqhiqBfOJa7W/E8wfGrTDmlZQ=="],
+
+    "commander": ["commander@15.0.0", "", {}, "sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg=="],
 
     "convert-source-map": ["convert-source-map@2.0.0", "", {}, "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="],
 

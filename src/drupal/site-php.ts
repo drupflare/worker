@@ -6,6 +6,8 @@
  * JSON object and nothing else, because the caller parses from the first `{`.
  */
 
+import { bytesToBase64 } from '../db/file-store.js';
+
 /**
  * A host-call helper shared by the fragments below.
  *
@@ -479,6 +481,11 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   $isMultipart = stripos($contentType, "multipart/form-data") !== false;
   if ($method !== "GET" && $body !== "" && $isForm) { parse_str($body, $parameters); }
 
+  // the uploads this request may move (CfwFileSystem reads it); a leftover from the last request
+  // was never moved, so it is deleted the way PHP deletes an unmoved upload at shutdown
+  foreach (($GLOBALS["__cfw_uploads"] ?? []) as $stale => $unused) { if (is_file($stale)) { @unlink($stale); } }
+  $GLOBALS["__cfw_uploads"] = [];
+
   // MULTIPART IS PARSED BY HAND, because PHP fills $_POST and $_FILES only for a real POST SAPI and
   // this interpreter has none. Without it every form carrying a file field submitted an EMPTY
   // request: Drupal saw no form_id, rebuilt the form and answered 200, so /user/register and
@@ -537,18 +544,17 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
         $tmp = tempnam(sys_get_temp_dir(), "cfwup");
         if ($tmp === false) { continue; }
         file_put_contents($tmp, $value);
-        $entry = ["name" => $filename, "type" => $partType, "tmp_name" => $tmp,
-                  "error" => 0, "size" => strlen($value)];
-        // $_FILES holds a per-COLUMN array for a bracketed name, the shape Drupal
-        // managed_file element emits, as in files[user_picture_0]. One level is what a form sends
+        $tmp = realpath($tmp) ?: $tmp;
+        $GLOBALS["__cfw_uploads"][$tmp] = true;
+        // TEST MODE, because a raw array became an UploadedFile whose isValid() asks
+        // is_uploaded_file(), which only a POST SAPI answers true, so every upload was refused
+        $entry = new \\Symfony\\Component\\HttpFoundation\\File\\UploadedFile($tmp, $filename, $partType, 0, true);
+        // one bracketed level is what a form sends, as in files[user_picture_0]
         $open = strpos($name, "[");
         if ($open !== false && substr($name, -1) === "]") {
           $outer = substr($name, 0, $open);
           $inner = substr($name, $open + 1, strlen($name) - $open - 2);
-          if (!isset($uploads[$outer])) {
-            $uploads[$outer] = ["name" => [], "type" => [], "tmp_name" => [], "error" => [], "size" => []];
-          }
-          foreach ($entry as $col => $val) { $uploads[$outer][$col][$inner] = $val; }
+          $uploads[$outer][$inner] = $entry;
         } else {
           $uploads[$name] = $entry;
         }
@@ -1454,6 +1460,13 @@ export interface RenderRequest {
 	method?: string;
 	/** the raw request body, forwarded verbatim */
 	body?: string;
+	/**
+	 * the body as base64, for one that is not UTF-8; wins over `body`.
+	 *
+	 * The body travels inside the PHP source as a JSON string, which cannot carry arbitrary bytes, so
+	 * every uploaded image arrived corrupted and the render died.
+	 */
+	bodyBase64?: string;
 	/** the inbound content type, which decides whether the body is parsed as a form */
 	contentType?: string;
 	/**
@@ -1486,6 +1499,50 @@ export interface RenderRequest {
 	 * A browser asking for JSON sends `application/json, text/javascript`, which does not match.
 	 */
 	accept?: string;
+}
+
+/** a request body as the render takes it: text when it is UTF-8, base64 when it is not */
+export function requestBody(bytes: Uint8Array): { body: string } | { bodyBase64: string } {
+	try {
+		return { body: new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes) };
+	} catch {
+		return { bodyBase64: bytesToBase64(bytes) };
+	}
+}
+
+const FILE_PART = new TextEncoder().encode('filename="');
+
+/**
+ * Whether a multipart body carries a chosen file.
+ *
+ * `file_save_upload()` caches each upload in a function static keyed on the field name. Nothing can
+ * reset a function static, and this interpreter never ends the request, so the next upload to that
+ * field was handed the previous file -- including one another user uploaded. The object drops the
+ * interpreter after such a request. A false positive costs one boot.
+ */
+export function carriesUpload(contentType: string, bytes: Uint8Array): boolean {
+	if (!/multipart\/form-data/i.test(contentType)) return false;
+	for (
+		let at = bytes.indexOf(FILE_PART[0]!);
+		at >= 0;
+		at = bytes.indexOf(FILE_PART[0]!, at + 1)
+	) {
+		if (
+			FILE_PART.every((b, i) => bytes[at + i] === b) &&
+			bytes[at + FILE_PART.length] !== 0x22
+		) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** the PHP expression that yields a request body, byte for byte */
+export function phpBodyExpression(request: Pick<RenderRequest, 'body' | 'bodyBase64'>): string {
+	if (request.bodyBase64 !== undefined) {
+		return `base64_decode(json_decode(${JSON.stringify(JSON.stringify(request.bodyBase64))}))`;
+	}
+	return `json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})`;
 }
 
 export function renderPage(
@@ -1522,13 +1579,14 @@ export function renderPage(
 	const requestArgs =
 		method === 'GET' &&
 		!request.body &&
+		request.bodyBase64 === undefined &&
 		!request.cookie &&
 		origin === '' &&
 		clientIp === '' &&
 		accept === ''
 			? ''
 			: `, json_decode(${JSON.stringify(JSON.stringify(method))})` +
-				`, json_decode(${JSON.stringify(JSON.stringify(String(request.body ?? '')))})` +
+				`, ${phpBodyExpression(request)}` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.contentType ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(String(request.cookie ?? '')))})` +
 				`, json_decode(${JSON.stringify(JSON.stringify(origin))})` +

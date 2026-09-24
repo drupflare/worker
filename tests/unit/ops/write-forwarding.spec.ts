@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { maxLanes } from '../../../src/ops/replica-demand';
 import { replicaCount } from '../../../src/ops/replica-routing';
 import {
+	cacheTagIncrement,
+	deferrable,
 	hazardClass,
 	ID_PARTITION_LANES,
 	idStride,
+	keyValueTarget,
 	laneHighWater,
 	nextLaneId,
 	partitionedTables,
 	planForward,
+	splitForward,
 	type ForwardStatement
 } from '../../../src/ops/write-forwarding';
 
@@ -259,6 +263,143 @@ describe('the ids a forwarded batch spent', () => {
 		});
 		expect(plan.action).toBe('refuse');
 		expect(plan.reason).toContain('watchdog');
+	});
+
+	it('defers the log row instead, with the lane-minted id dropped for the primary to allocate', () => {
+		expect(
+			deferrable({
+				sql: 'INSERT INTO watchdog ("wid", "type") VALUES (5, ?)',
+				params: ['user'],
+				table: 'watchdog',
+				minted: 'watchdog'
+			})
+		).toEqual({
+			sql: 'INSERT INTO watchdog ("type") VALUES (?)',
+			params: ['user'],
+			table: 'watchdog'
+		});
+	});
+
+	it('defers a log row bound by name, which is how Drupal inserts one', () => {
+		expect(
+			deferrable({
+				sql: 'INSERT INTO watchdog (uid, type) VALUES (:db_insert_placeholder_0, :db_insert_placeholder_1)',
+				params: { ':db_insert_placeholder_0': 1, ':db_insert_placeholder_1': 'user' },
+				table: 'watchdog'
+			} as unknown as ForwardStatement)
+		).toEqual({
+			sql: 'INSERT INTO watchdog (uid, type) VALUES (?, ?)',
+			params: [1, 'user'],
+			table: 'watchdog'
+		});
+	});
+
+	// an id the driver did not report, a trailing clause, or another table stays in the batch
+	it('keeps every shape it cannot prove disposable in the batch', () => {
+		for (const statement of [
+			{
+				sql: 'INSERT INTO watchdog ("type", "wid") VALUES (?, 3)',
+				params: ['x'],
+				table: 'watchdog'
+			},
+			{
+				sql: 'INSERT INTO watchdog ("type") VALUES (?) RETURNING wid',
+				params: ['x'],
+				table: 'watchdog'
+			},
+			{
+				sql: 'INSERT INTO watchdog ("type") SELECT type FROM node',
+				params: [],
+				table: 'watchdog'
+			},
+			{ sql: 'UPDATE watchdog SET type = ?', params: ['x'], table: 'watchdog' },
+			{ sql: 'INSERT INTO sessions ("sid") VALUES (?)', params: ['s'], table: 'sessions' }
+		]) {
+			expect(deferrable(statement), statement.sql).toBeNull();
+		}
+	});
+
+	it('splits a batch so the log row no longer refuses the write beside it', () => {
+		const update = {
+			sql: 'UPDATE users SET name = ? WHERE uid = 1',
+			params: ['a'],
+			table: 'users'
+		};
+		const log = {
+			sql: 'INSERT INTO watchdog ("type") VALUES (?)',
+			params: ['user'],
+			table: 'watchdog'
+		};
+		const { commit, deferred } = splitForward([update, log]);
+		expect(commit).toEqual([update]);
+		expect(deferred).toHaveLength(1);
+		expect(planForward({ statements: commit, parent: 4, primaryGeneration: 4 }).action).toBe(
+			'commit'
+		);
+	});
+
+	// the autocomplete widget writes this on every form build; the table alone read as an origination
+	it('classifies a key_value upsert by its collection, not its table', () => {
+		const upsert = (collection: string, name: string): ForwardStatement => ({
+			sql: 'INSERT INTO "key_value" ("collection", "name", "value") VALUES (:db_insert_placeholder_0, :db_insert_placeholder_1, :db_insert_placeholder_2) ON CONFLICT ("collection", "name") DO UPDATE SET "value" = excluded."value"',
+			params: {
+				':db_insert_placeholder_0': collection,
+				':db_insert_placeholder_1': name,
+				':db_insert_placeholder_2': 'x'
+			} as unknown as unknown[],
+			table: 'key_value'
+		});
+		expect(keyValueTarget(upsert('entity_autocomplete', 'h'))).toEqual({
+			collection: 'entity_autocomplete',
+			name: 'h'
+		});
+		const plan = (s: ForwardStatement) =>
+			planForward({ statements: [s], parent: 1, primaryGeneration: 1 });
+		expect(plan(upsert('entity_autocomplete', 'h')).action).toBe('commit');
+		// the lazily minted secret is still refused, now by name rather than by accident
+		expect(plan(upsert('state', 'system.private_key')).reason).toContain('key_value:state');
+		// a shape it cannot read keeps the old verdict
+		expect(
+			plan({
+				sql: 'DELETE FROM key_value WHERE collection = ?',
+				params: ['x'],
+				table: 'key_value'
+			}).action
+		).toBe('refuse');
+	});
+
+	it('rewrites both branches of a tag invalidation as the increment they mean', () => {
+		const expected = {
+			sql: 'INSERT INTO "cachetags" ("tag", "invalidations") VALUES (?, 1) ON CONFLICT ("tag") DO UPDATE SET "invalidations" = "invalidations" + 1',
+			params: ['node_list'],
+			table: 'cachetags'
+		};
+		expect(
+			cacheTagIncrement({
+				sql: 'INSERT INTO "cachetags" ("invalidations", "tag") VALUES (?, ?)',
+				params: [1, 'node_list'],
+				table: 'cachetags'
+			})
+		).toEqual(expected);
+		expect(
+			cacheTagIncrement({
+				sql: 'UPDATE "cachetags" SET invalidations = invalidations + 1 WHERE tag = :db_condition_placeholder_0',
+				params: { ':db_condition_placeholder_0': 'node_list' } as unknown as unknown[],
+				table: 'cachetags'
+			})
+		).toEqual(expected);
+		expect(
+			cacheTagIncrement({ sql: 'DELETE FROM cachetags', params: [], table: 'cachetags' })
+		).toBeNull();
+		expect(
+			splitForward([
+				{
+					sql: 'INSERT INTO cachetags (invalidations, tag) VALUES (?, ?)',
+					params: [1, 't'],
+					table: 'cachetags'
+				}
+			]).commit[0]?.params
+		).toEqual(['t']);
 	});
 
 	it('reads nothing from a statement that mints nothing', () => {

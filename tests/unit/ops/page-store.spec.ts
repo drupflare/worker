@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
 	DEFAULT_PAGE_KV_TTL_SECONDS,
 	KV_MIN_TTL_SECONDS,
+	kvWriteBudget,
 	pageKvEnabled,
 	pageKvKey,
 	pageKvTtlSeconds,
+	planKvWritesEnabled,
 	readPage,
 	writePage,
 	type PageKv,
@@ -15,12 +17,11 @@ import { isFree, isPaid, planFlag } from '../../../src/ops/plan';
 /**
  * The KV page tier, and the plan predicate it shares with the other two per-plan decisions.
  *
- * The tier is paid-only for a reason about METERS, not about generosity: the Durable Object's own
- * `cfw_page` table spends row writes, a budget measured here at 100,000/day, and the whole free-tier
- * design is engineered against it. KV spends a much smaller daily write allowance on free, so caching
- * every page there would trade a known-good limit for a tighter unmeasured one.
+ * On for both plans once bound. Free KV allows 1,000 writes a day for the whole account, so the
+ * object grants each page write against `kvWriteBudget()`, and compiled plans, which carry no budget,
+ * stay paid-only.
  *
- * Most of what follows asserts that the tier DECLINES: absent binding, free plan, non-200, empty body.
+ * Most of what follows asserts that the tier DECLINES: absent binding, non-200, empty body.
  * A cache that stores when it should not is worse than one that never stores, because a stored 503
  * "warming" placeholder is served globally for a day.
  */
@@ -83,18 +84,34 @@ describe('the plan predicate, extracted at its third use', () => {
 	});
 });
 
-describe('the tier is OFF unless the plan and the binding both say yes', () => {
+describe('the tier is on wherever the binding is', () => {
 	it('is off with no binding, whatever the plan says', () => {
 		expect(pageKvEnabled({ PLAN: 'paid' })).toBe(false);
 		expect(pageKvEnabled({ PLAN: 'paid', PAGE_KV: null })).toBe(false);
 	});
 
-	it('is off on free even with a binding', () => {
-		expect(pageKvEnabled({ PLAN: 'free', PAGE_KV: fakeKv() })).toBe(false);
+	it('is on for both plans with a binding', () => {
+		expect(pageKvEnabled({ PLAN: 'free', PAGE_KV: fakeKv() })).toBe(true);
+		expect(pageKvEnabled({ PLAN: 'paid', PAGE_KV: fakeKv() })).toBe(true);
 	});
 
-	it('is on for paid with a binding', () => {
-		expect(pageKvEnabled({ PLAN: 'paid', PAGE_KV: fakeKv() })).toBe(true);
+	// plans carry no write budget, so free only writes one when told to
+	it('keeps compiled-plan writes paid-only unless PAGE_KV_ENABLED is 1', () => {
+		const kv = fakeKv();
+		expect(planKvWritesEnabled({ PLAN: 'free', PAGE_KV: kv })).toBe(false);
+		expect(planKvWritesEnabled({ PLAN: 'free', PAGE_KV: kv, PAGE_KV_ENABLED: '1' })).toBe(true);
+		expect(planKvWritesEnabled({ PLAN: 'paid', PAGE_KV: kv })).toBe(true);
+		expect(planKvWritesEnabled({ PLAN: 'paid', PAGE_KV: kv, PAGE_KV_ENABLED: '0' })).toBe(
+			false
+		);
+	});
+
+	it('budgets free page writes under the account allowance, and leaves paid unbounded', () => {
+		expect(kvWriteBudget({ PLAN: 'free' })).toBe(800);
+		expect(kvWriteBudget({ PLAN: 'paid' })).toBe(Number.POSITIVE_INFINITY);
+		expect(kvWriteBudget({ PLAN: 'paid', KV_WRITES_PER_DAY: '50' })).toBe(50);
+		expect(kvWriteBudget({ PLAN: 'free', KV_WRITES_PER_DAY: '0' })).toBe(0);
+		expect(kvWriteBudget({ PLAN: 'free', KV_WRITES_PER_DAY: 'junk' })).toBe(800);
 	});
 
 	it('lets an explicit flag override the plan in both directions', () => {
@@ -171,9 +188,11 @@ describe('reads and writes, including everything it refuses to store', () => {
 		expect(kv.puts).toBe(0);
 	});
 
-	it('writes nothing at all on free', async () => {
+	it('writes nothing when the tier is switched off', async () => {
 		const kv = fakeKv();
-		expect(await writePage({ PLAN: 'free', PAGE_KV: kv }, 's', 7, '/', PAGE)).toBe(false);
+		expect(
+			await writePage({ PLAN: 'free', PAGE_KV: kv, PAGE_KV_ENABLED: '0' }, 's', 7, '/', PAGE)
+		).toBe(false);
 		expect(kv.puts).toBe(0);
 	});
 

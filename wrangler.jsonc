@@ -26,12 +26,18 @@
 	],
 	"build": { "command": "bun run hydrate" },
 	"durable_objects": {
-		"bindings": [{ "name": "SITE", "class_name": "SitePhpDurableObject" }]
+		"bindings": [
+			{ "name": "SITE", "class_name": "SitePhpDurableObject" },
+			{ "name": "RENDER_LANES", "class_name": "RenderLane" }
+		]
 	},
 	"kv_namespaces": [{ "binding": "CONFIG_KV" }, { "binding": "PAGE_KV" }],
 	"d1_databases": [{ "binding": "FLEET_DB", "database_name": "drupflare-fleet" }],
 	"version_metadata": { "binding": "CF_VERSION_METADATA" },
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SitePhpDurableObject"] },
+		{ "tag": "v2", "new_sqlite_classes": ["RenderLane"] }
+	],
 	"assets": {
 		"directory": "./assets",
 		"binding": "ASSETS"

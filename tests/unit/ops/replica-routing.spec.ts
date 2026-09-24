@@ -3,6 +3,7 @@ import {
 	believedLanes,
 	chooseTarget,
 	LANES_TRUST_MS,
+	originationRoute,
 	rememberLanes,
 	replicaCount,
 	replicaName,
@@ -275,6 +276,38 @@ describe('which lane answers', () => {
 					hasSession: false
 				}).lane
 			);
+		}
+		expect(seen.size).toBeGreaterThan(1);
+	});
+
+	// a lane would run the whole request, be refused, and hand it back for the primary to re-run
+	it('pins a write a lane always refuses, and still spreads the rest', () => {
+		const write = (visitorPath: string, contentType: string | null, i: number) =>
+			chooseTarget({
+				site: SITE,
+				method: 'POST',
+				affinity: `visitor-${i}`,
+				replicas: 4,
+				pathname: '/serve',
+				writeForward: true,
+				hasSession: true,
+				visitorPath,
+				contentType
+			});
+		for (let i = 0; i < 200; i++) {
+			expect(write('/node/1/edit', 'multipart/form-data; boundary=x', i).reason).toBe(
+				'an upload writes the file store'
+			);
+			expect(write('/admin/modules', 'application/x-www-form-urlencoded', i).role).toBe(
+				'primary'
+			);
+			expect(write('/admin/modules/uninstall', null, i).role).toBe('primary');
+			expect(write('/admin/config/drupflare/settings', null, i).role).toBe('primary');
+		}
+		expect(originationRoute('/admin/modulesx', null)).toBeNull();
+		const seen = new Set<number>();
+		for (let i = 0; i < 200; i++) {
+			seen.add(write('/node/1/edit', 'application/x-www-form-urlencoded', i).lane);
 		}
 		expect(seen.size).toBeGreaterThan(1);
 	});

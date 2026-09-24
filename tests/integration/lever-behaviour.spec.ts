@@ -338,6 +338,52 @@ describe('MIRROR_LIMIT bounds one mirror pass', () => {
 	});
 });
 
+describe('R2_WRITES_PER_MONTH stops the mirrors when it is spent', () => {
+	type MirrorPass = {
+		mirrored?: number;
+		budgetSpent?: boolean;
+		pending: unknown[];
+		r2: { used: number; budget: number; left: number } | null;
+	};
+	const queueFiles = (site: any, prefix: string) => {
+		const bag = bridgeOf(site);
+		for (let n = 0; n < 6; n++) {
+			call(bag, 'cfwFileWrite', { uri: `public://${prefix}-${n}.txt`, b64: btoa('x') });
+		}
+	};
+	const pass = async (site: any) =>
+		(await (await site.fetch(new Request('https://do.local/__mirror'))).json()) as MirrorPass;
+
+	it('spends no more than the budget, then leaves the rest queued', async () => {
+		const passes = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, R2_WRITES_PER_MONTH: '3' };
+			markProvisioned(site);
+			queueFiles(site, 'budget');
+			return [await pass(site), await pass(site), await pass(site)];
+		});
+		// free's mirror limit is 2, so the second pass is cut to the one write left
+		expect(passes.map((p) => p.mirrored ?? 0)).toEqual([2, 1, 0]);
+		expect(passes[2]?.budgetSpent).toBe(true);
+		expect(passes[2]?.r2).toMatchObject({ used: 3, budget: 3, left: 0 });
+		expect(passes[2]?.pending).toHaveLength(3);
+	});
+
+	it('turns both mirrors off at 0, on the alarm as well as by hand', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.env = { ...site.env, ...QUIET_ALARM, R2_WRITES_PER_MONTH: '0' };
+			markProvisioned(site);
+			queueFiles(site, 'off');
+			await site.alarm();
+			const stats = await statsOf(site);
+			await quiesce(site);
+			return { stats, manual: await pass(site) };
+		});
+		expect(out.stats.lastMirrorDrain?.budgetSpent).toMatchObject({ used: 0, budget: 0 });
+		expect(out.manual.budgetSpent).toBe(true);
+		expect(out.manual.pending).toHaveLength(6);
+	});
+});
+
 /**
  * Prefill, which changes what a MISS MEANS rather than how fast one is.
  *

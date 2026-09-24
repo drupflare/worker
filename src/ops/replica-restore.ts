@@ -143,6 +143,14 @@ export type RestoreChunk = {
 	 * is deliberately not copied.
 	 */
 	origin?: string;
+	/**
+	 * On the first chunk: the primary's hash salt, for the same reason as `origin`.
+	 *
+	 * It signs form tokens, one-time login links and every `Crypt::hmacBase64` key. Measured on a
+	 * deployed 3-lane pool, the primary and each lane held four different salts, so a form a lane
+	 * rendered was refused on the primary as outdated.
+	 */
+	hashSalt?: string;
 	/** the last chunk of the whole copy */
 	done?: boolean;
 };

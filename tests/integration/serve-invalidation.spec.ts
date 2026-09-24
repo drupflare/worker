@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { emptyTally } from '../../src/db/write-tally';
+import { saveDebounceMs } from '../../src/site-do';
 import {
 	driveAlarms,
 	freshSite,
@@ -79,6 +80,8 @@ describe('one integer write invalidates every edge-cached URL for a site', () =>
 		await inObject(namedSite(site), (obj) => {
 			stubRender(obj, ({ path }) => pageFor(path));
 			seedPage(obj, '/', '<title>before</title>');
+			// no KV copy, or the read after the bump is the stale-generation tier and not the object
+			obj.env = { ...obj.env, KV_WRITES_PER_DAY: '0' };
 		});
 		await serveThroughWorker(site, '/');
 		const cached = await untilEdge(site, '/');
@@ -267,6 +270,32 @@ describe('the automatic seam: a cachetags WRITE bumps, a cachetags READ does not
 		});
 		expect(out.afterFirst).toBe(2);
 		expect(out.afterFill).toBe(3);
+	});
+
+	it('arms the refill a bounded window after a save, and a later save does not push it', async () => {
+		const arm = async (debounce?: string) =>
+			inObject(freshSite(), async (site) => {
+				if (debounce !== undefined) site.env = { ...site.env, SAVE_DEBOUNCE_MS: debounce };
+				stubRender(site, ({ path }) => pageFor(path));
+				await site.fillOne('/');
+				// start from no pending alarm, so the reading below is the save's own arm
+				await site.ctx.storage.deleteAlarm();
+				(site as unknown as { alarmDueMs?: number }).alarmDueMs = undefined;
+				const t = Date.now();
+				site.bumpGeneration('save');
+				const first = (await site.ctx.storage.getAlarm()) ?? 0;
+				// a second save in the same burst, with a page stored again so it has one to requeue
+				await site.fillOne('/');
+				site.bumpGeneration('save');
+				const second = (await site.ctx.storage.getAlarm()) ?? 0;
+				return { firstIn: first - t, second, first };
+			});
+		const debounced = await arm();
+		expect(debounced.firstIn).toBeGreaterThanOrEqual(saveDebounceMs({} as never));
+		// the window is bounded by the FIRST save: the second one cannot move it later
+		expect(debounced.second).toBeLessThanOrEqual(debounced.first);
+		const immediate = await arm('0');
+		expect(immediate.firstIn).toBeLessThan(saveDebounceMs({} as never));
 	});
 
 	it('stays silent while the packed site is being replayed', async () => {
@@ -505,7 +534,8 @@ describe('a save must not hand the next visitor a 202', () => {
 			site.bumpGeneration('wake');
 			return { alarmAt: await site.ctx.storage.getAlarm(), now: Date.now() };
 		});
-		expect(Number(out.alarmAt) - out.now).toBeLessThan(1000);
+		// inside the save debounce, and far before the keep-warm alarm it would otherwise wait for
+		expect(Number(out.alarmAt) - out.now).toBeLessThan(saveDebounceMs({} as never) + 1000);
 	});
 });
 

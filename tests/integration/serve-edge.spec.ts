@@ -321,14 +321,25 @@ describe('the three tiers are distinguishable, and only one of them costs a DO r
 		expect(stale?.headers.get('cache-control')).toBe('public, max-age=0, must-revalidate');
 	});
 
-	// THE CONTROL, and without it the case above would pass on a build where the tier is always on.
-	// A free site must store nothing in KV, so there is nothing to serve stale from
-	it('CONTROL: stores no KV page on the free plan, so the tier cannot fire there', async () => {
+	// free KV allows 1,000 writes a day for the whole account, so a free site stores a page only while
+	// the object's budget lasts, and a spent budget stores nothing for the stale tier to fall back on
+	it('stores a free page under its KV budget and none once the budget is spent', async () => {
 		const site = 'stalegen-free';
 		await provisionedNamedSite(site);
 		await inObject(namedSite(site), (obj) => seedPage(obj, '/', '<title>free</title>'));
-		const hit = await serveThroughWorker(site, '/');
-		expect(hit.header('x-cfw-kv-put')).toBe('skipped:disabled');
+		const granted = await serveThroughWorker(site, '/', '&edge=0');
+		expect(granted.header('x-cfw-kv-put')).toBe('deferred');
+		const counted = await inObject(namedSite(site), async (obj) => {
+			const stats = (await (
+				await obj.fetch(new Request('https://do.local/__serve-stats'))
+			).json()) as { pageKv: { writesToday: number; budget: number | null } | null };
+			obj.env = { ...obj.env, KV_WRITES_PER_DAY: String(stats.pageKv?.writesToday ?? 0) };
+			return stats.pageKv;
+		});
+		expect(counted?.writesToday).toBeGreaterThanOrEqual(1);
+		expect(counted?.budget).toBe(800);
+		const spent = await serveThroughWorker(site, '/', '&edge=0');
+		expect(spent.header('x-cfw-kv-put')).toBe('skipped:no-grant');
 	});
 
 	it('re-validates at the client so a generation bump is not defeated by a browser cache', async () => {

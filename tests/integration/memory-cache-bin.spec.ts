@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderPage } from '../../src/drupal/site-php';
-import { DEFAULT_MEMORY_CACHE_BINS, memoryCacheBins } from '../../src/site-do';
+import { DEFAULT_MEMORY_CACHE_BINS, memoryCacheBins, recycleAboveBytes } from '../../src/site-do';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -256,15 +256,14 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 	 * the reset runs at the start of the next request. A bare fragment is not a request and never
 	 * reaches it, which is what this spec measured before the render was added.
 	 */
-	// `menu` is here because the census showed it is the one bin worth adding, and a menu save
-	// invalidates EVERY cached page -- so a menu entry outliving its invalidation is the worst defect
-	// this tier could have. The backend is bin-agnostic; this proves each bin is wired to it
-	for (const bin of ['dynamic_page_cache', 'menu'])
+	// a menu save invalidates EVERY cached page, so a menu entry outliving its invalidation is the
+	// worst defect this tier could have. The backend is bin-agnostic; this proves each bin is wired
+	for (const bin of ['dynamic_page_cache', 'menu', 'render', 'discovery'])
 		it(
 			`refuses a ${bin} entry whose tag checksum moved, with no invalidation call`,
 			async () => {
 				const seen = await inObject(freshSite(), async (site: ServeDo) => {
-					await armSite(site, 'dynamic_page_cache,menu');
+					await armSite(site, 'dynamic_page_cache,menu,render,discovery');
 					await site.runJson(renderPage('/', [], false, {}));
 					const probe = async (code: string) =>
 						(await site.runJson(code)) as Record<string, unknown>;
@@ -304,6 +303,88 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 			},
 			TIMEOUT
 		);
+
+	/**
+	 * What holding a bin in the interpreter costs in heap, over more pages than the census drives.
+	 *
+	 * Over these nine pages `render` held 50 entries and left linear memory on the same allocation
+	 * step, so it is safe to opt into; `discovery` sat at its 64-entry bound, evicting, and added
+	 * 12.4 MiB -- 4.8 MiB under the recycle threshold, for a tenth of a row per fill. Neither is the
+	 * default: `render` was refused on its cold-render cost, which a pool spec cannot measure (see
+	 * `DEFAULT_MEMORY_CACHE_BINS`). The discovery arm is still printed so the refusal can be re-read.
+	 *
+	 * A bin in memory is bounded by an item count (`CfwMemoryBackend::DEFAULT_MAX_ITEMS`), and the
+	 * footprint is a high-water mark until the interpreter drops. So the workload is every anonymous
+	 * route a default site has, enough distinct pages to push `render` and `discovery` toward their
+	 * bound, and the gate is the product's own: `recycleIfOversized()` drops an interpreter above
+	 * `recycleAboveBytes()`, and an arm that crosses it pays a boot per page.
+	 */
+	it(
+		'holds render without crossing the recycle threshold or costing a row',
+		async () => {
+			const PATHS = [
+				'/',
+				'/user/login',
+				'/user/password',
+				'/user/register',
+				'/node',
+				'/rss.xml',
+				'/search/node',
+				'/contact',
+				'/filter/tips'
+			];
+			const arm = async (bins: string) =>
+				inObject(freshSite(), async (site: ServeDo) => {
+					await armSite(site, bins);
+					await site.fetch(new Request(`${ORIGIN}/__writes?op=off`));
+					await site.fetch(new Request(`${ORIGIN}/__writes?op=on`));
+					for (const path of PATHS) await site.fillOne(path);
+					const writes = (await (
+						await site.fetch(new Request(`${ORIGIN}/__writes`))
+					).json()) as Writes;
+					const counts = (await site.runJson(`<?php
+						echo json_encode(\\Drupal\\drupflare\\Cache\\CfwMemoryBackend::counts());
+					`)) as Record<string, number>;
+					const html = String(
+						site.sql
+							.exec('SELECT html FROM cfw_page WHERE path = ?', '/user/login')
+							.toArray()[0]?.['html'] ?? ''
+					);
+					return {
+						heap: (site as unknown as { heapNow(): number }).heapNow(),
+						rows: writes.rowsWritten,
+						counts,
+						page: stablePage(html),
+						php: site.sql
+							.exec("SELECT COUNT(*) AS c FROM watchdog WHERE type = 'php'")
+							.toArray()
+							.map((r) => Number(r['c']))[0]!
+					};
+				});
+
+			const shipped = await arm('dynamic_page_cache,menu');
+			const wider = await arm('dynamic_page_cache,menu,render');
+			const widest = await arm('dynamic_page_cache,menu,render,discovery');
+			const log = (a: typeof shipped) => {
+				const { page: _p, ...rest } = a;
+				return rest;
+			};
+			console.log(
+				`[memory-bin-heap] ${JSON.stringify({ shipped: log(shipped), render: log(wider), discovery: log(widest) })}`
+			);
+
+			// THE CONTROL: the wider arm has to be holding the two extra bins, or the heap below
+			// describes a configuration that stored nothing extra
+			expect(wider.counts['render'] ?? 0).toBeGreaterThan(0);
+			expect(widest.counts['discovery'] ?? 0).toBeGreaterThan(0);
+			expect(shipped.counts['render'] ?? 0).toBe(0);
+			expect(wider.heap).toBeLessThan(recycleAboveBytes({} as never));
+			expect(wider.rows).toBeLessThanOrEqual(shipped.rows);
+			expectSamePage(wider.page, shipped.page, 'the wider arm changed the page');
+			expect(wider.php, 'the wider arm logged a PHP error').toBe(0);
+		},
+		TIMEOUT
+	);
 });
 
 /**
@@ -320,9 +401,8 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
  * writes nothing to SQL. So on the meter that binds regeneration the bin is cheaper in both states,
  * and the conditional default had no evidence under it.
  *
- * What it does still cost is CPU on that render and isolate memory for the entries it holds, and
- * neither is the binding constraint. The CPU is spent on a request that was already paying a
- * 1,398 ms boot for the same drop.
+ * What it does cost is latency on that render, which a pool spec cannot time: measured deployed, a
+ * cold reassemble is 1,324 ms against 1,073 with every bin in SQL (see `DEFAULT_MEMORY_CACHE_BINS`).
  */
 describe.skipIf(FROM_SOURCE)('what an interpreter drop costs each arm', () => {
 	it(
@@ -376,4 +456,25 @@ describe('the default, which is what most sites will run', () => {
 			'menu'
 		]);
 	});
+
+	// a row the default never reads is storage and provisioning writes for nothing, so a database
+	// rebuilt from a warmed site must not bring any back
+	it(
+		'provisions no row into a bin the default holds in memory',
+		async () => {
+			const counts = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1`));
+				return DEFAULT_MEMORY_CACHE_BINS.map((bin) => ({
+					bin,
+					rows: Number(
+						site.sql.exec(`SELECT COUNT(*) AS n FROM cache_${bin}`).toArray()[0]?.[
+							'n'
+						] ?? -1
+					)
+				}));
+			});
+			expect(counts).toEqual(DEFAULT_MEMORY_CACHE_BINS.map((bin) => ({ bin, rows: 0 })));
+		},
+		TIMEOUT
+	);
 });

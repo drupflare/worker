@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, drupalOp } from '../../src/drupal/site-php';
+import { parseTransformPath } from '../../src/ops/image-transform';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -137,6 +138,39 @@ describe('image toolkit discovery on a shipped site', () => {
 			expect(out['derivativeExists']).toBe(1);
 			// the derivative IS the source: the resize happens at /cdn-cgi/image/, not here
 			expect(out['derivativeBytes']).toBe(out['sourceBytes']);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * The URL a page emits for a style, which is the half that had been missing.
+ *
+ * The toolkit copies the source to the derivative path, so the stock style URL served the full-size
+ * original on every site, and nothing emitted the delivery path the front worker resizes on. The
+ * container is dropped first, because a hook reaches a site only through a container rebuild, which
+ * reconciliation performs when the packed driver changes.
+ */
+describe('an image style URL points at the delivery path', () => {
+	it(
+		'emits a path the front worker parses, carrying the style as its transform',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await call(site, '/__migrate?all=1&prefill=0');
+				site.sql.exec('DELETE FROM cache_container');
+				return (await site.runJson(
+					drupalOp(`$style = \\Drupal\\image\\Entity\\ImageStyle::load('medium');
+$out['url'] = $style->buildUrl('public://2026-09/cat.jpg');`)
+				)) as Payload;
+			});
+			expect(out['error'], String(out['error'] ?? '')).toBeUndefined();
+			const url = new URL(String(out['url']), 'https://site.example');
+			expect(url.pathname.startsWith('/cfw-img/'), url.toString()).toBe(true);
+			const parsed = parseTransformPath(url.pathname, url.search);
+			expect(parsed?.uri).toBe('public://2026-09/cat.jpg');
+			expect(parsed?.transform).toMatchObject({ width: 220, height: 220, fit: 'scale-down' });
+			// the itok Drupal appends rides along without breaking the identity check
+			expect(url.searchParams.has('itok')).toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

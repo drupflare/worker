@@ -117,6 +117,65 @@ describe('the primary commits what a lane ran', () => {
 	);
 });
 
+describe('the log row a lane carries', () => {
+	it(
+		'commits the write beside it and appends the row with an id the primary allocates',
+		async () => {
+			const out = await inObject(namedSite('forward.defers'), async (site) => {
+				role(site, 'primary');
+				markProvisioned(site);
+				site.ensureServeTables();
+				site.ensureReplicationLog();
+				seedTable(site);
+				site.sql.exec(
+					'CREATE TABLE IF NOT EXISTS watchdog (wid INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT)'
+				);
+				site.sql.exec("INSERT INTO watchdog (wid, type) VALUES (5, 'earlier')");
+				const answer = await forward(site, {
+					statements: [
+						{
+							sql: 'UPDATE node_field_data SET title = ? WHERE nid = 1',
+							params: ['logged'],
+							table: 'node_field_data'
+						},
+						{
+							sql: 'INSERT INTO watchdog ("wid", "type") VALUES (5, ?)',
+							params: ['user'],
+							table: 'watchdog',
+							minted: 'watchdog'
+						}
+					],
+					parent: site.commitSeq()
+				});
+				const log = await (
+					await site.fetch(new Request('https://do.local/__replica?action=log&since=0'))
+				).json();
+				return {
+					answer,
+					title: site.sql
+						.exec('SELECT title FROM node_field_data WHERE nid = 1')
+						.toArray()[0],
+					rows: site.sql.exec('SELECT wid, type FROM watchdog ORDER BY wid').toArray(),
+					log: JSON.stringify(log)
+				};
+			});
+
+			// it used to answer 422, and the primary re-ran the whole request
+			expect(out.answer.status).toBe(200);
+			expect(out.answer.body.action).toBe('commit');
+			expect(out.title).toEqual({ title: 'logged' });
+			// the lane minted 5, which the primary already used; the row lands at the next id instead
+			expect(out.rows).toEqual([
+				{ wid: 5, type: 'earlier' },
+				{ wid: 6, type: 'user' }
+			]);
+			// a primary-only effect: no lane holds the table, so the row is not replicated
+			expect(out.log).not.toContain('watchdog');
+		},
+		TIMEOUT
+	);
+});
+
 describe('what the primary refuses', () => {
 	it(
 		'conflicts when the lane read an older generation',

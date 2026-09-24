@@ -20,6 +20,7 @@
  *   log's parent generation already detects.
  */
 
+import { positionalBindings } from './replication-log.js';
 import { classifyState } from './state-inventory.js';
 
 export type Hazard = 'origination' | 'ordering' | 'none';
@@ -197,6 +198,133 @@ export function laneHighWater(statements: readonly ForwardStatement[]): Map<stri
 	return out;
 }
 
+/** tables whose rows record a request rather than its result; the primary appends them after the commit */
+const DEFERRABLE_TABLES: ReadonlySet<string> = new Set(['watchdog']);
+
+/** a whole single-row insert and nothing after it, so a trailing clause cannot ride along */
+const WHOLE_INSERT =
+	/^\s*INSERT\s+INTO\s+("?[A-Za-z0-9_$]+"?)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*$/i;
+
+/**
+ * A disposable statement rewritten for the primary to run on its own, or null to keep it in the batch.
+ *
+ * A dblog row made every login on a lane an origination refusal, so the primary re-ran the whole
+ * request. The row mints nothing when the primary allocates the id, so a lane-minted id the driver
+ * spliced in first is dropped. Any other shape answers null and is refused as before.
+ */
+export function deferrable(statement: ForwardStatement): ForwardStatement | null {
+	const table = (statement.table ?? '').toLowerCase();
+	if (!DEFERRABLE_TABLES.has(table)) return null;
+	let bound: { sql: string; params: readonly unknown[] };
+	try {
+		// Drupal's inserts bind by name, so both shapes are reduced to `?` first
+		bound = positionalBindings(statement.sql, statement.params);
+	} catch {
+		return null;
+	}
+	const match = WHOLE_INSERT.exec(bound.sql);
+	if (!match) return null;
+	const columns = (match[2] as string).split(',').map((c) => c.trim());
+	const values = (match[3] as string).split(',').map((v) => v.trim());
+	if (columns.length !== values.length) return null;
+	if ((statement.minted ?? '').toLowerCase() === table) {
+		if (!/^\d+$/.test(values[0] ?? '')) return null;
+		columns.shift();
+		values.shift();
+	}
+	if (values.length === 0 || !values.every((v) => v === '?')) return null;
+	if (bound.params.length !== values.length) return null;
+	return {
+		sql: `INSERT INTO ${match[1]} (${columns.join(', ')}) VALUES (${values.join(', ')})`,
+		params: bound.params,
+		table
+	};
+}
+
+/** a key_value upsert's column list and value tuple, with anything after the tuple allowed */
+const KEY_VALUE_INSERT =
+	/^\s*INSERT\s+(?:OR\s+[A-Za-z]+\s+)?INTO\s+"?key_value(?:_expire)?"?\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/i;
+
+/**
+ * The collection and key a `key_value` upsert writes, or null when the shape does not say.
+ *
+ * The table alone cannot be classified, because one collection holds a derived cache and another
+ * the lazily minted site secrets. Only a plain upsert is read; anything else stays unclassified and
+ * is refused as before.
+ */
+export function keyValueTarget(
+	statement: ForwardStatement
+): { collection: string; name: string } | null {
+	if (!/^key_value(?:_expire)?$/i.test(statement.table ?? '')) return null;
+	let bound: { sql: string; params: readonly unknown[] };
+	try {
+		bound = positionalBindings(statement.sql, statement.params);
+	} catch {
+		return null;
+	}
+	const match = KEY_VALUE_INSERT.exec(bound.sql);
+	if (!match) return null;
+	const columns = (match[1] as string).split(',').map((c) => c.trim().replace(/"/g, ''));
+	const values = (match[2] as string).split(',').map((v) => v.trim());
+	if (columns.length !== values.length || !values.every((v) => v === '?')) return null;
+	const collection = bound.params[columns.indexOf('collection')];
+	const name = bound.params[columns.indexOf('name')];
+	if (typeof collection !== 'string' || typeof name !== 'string') return null;
+	return { collection, name };
+}
+
+const TAG_INSERT =
+	/^\s*INSERT\s+INTO\s+"?cachetags"?\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*$/i;
+const TAG_UPDATE =
+	/^\s*UPDATE\s+"?cachetags"?\s+SET\s+"?invalidations"?\s*=\s*"?invalidations"?\s*\+\s*1\s+WHERE\s+"?tag"?\s*=\s*\?\s*;?\s*$/i;
+
+/**
+ * A tag invalidation rewritten as the increment it means, or null when the shape is not one.
+ *
+ * Drupal's merge picks INSERT or UPDATE from the lane's own `cachetags`, which the primary does not
+ * share, so the lane's branch collides with the primary's row. Both branches add one invalidation.
+ */
+export function cacheTagIncrement(statement: ForwardStatement): ForwardStatement | null {
+	if ((statement.table ?? '').toLowerCase() !== 'cachetags') return null;
+	let bound: { sql: string; params: readonly unknown[] };
+	try {
+		bound = positionalBindings(statement.sql, statement.params);
+	} catch {
+		return null;
+	}
+	let tag: unknown;
+	const insert = TAG_INSERT.exec(bound.sql);
+	if (insert) {
+		const columns = (insert[1] as string).split(',').map((c) => c.trim().replace(/"/g, ''));
+		const values = (insert[2] as string).split(',').map((v) => v.trim());
+		if (columns.length !== values.length || !values.every((v) => v === '?')) return null;
+		tag = bound.params[columns.indexOf('tag')];
+	} else if (TAG_UPDATE.test(bound.sql) && bound.params.length === 1) {
+		tag = bound.params[0];
+	}
+	if (typeof tag !== 'string' || tag === '') return null;
+	return {
+		sql: 'INSERT INTO "cachetags" ("tag", "invalidations") VALUES (?, 1) ON CONFLICT ("tag") DO UPDATE SET "invalidations" = "invalidations" + 1',
+		params: [tag],
+		table: 'cachetags'
+	};
+}
+
+/** a forwarded batch split into what the primary must sequence and what it may append afterwards */
+export function splitForward(statements: readonly ForwardStatement[]): {
+	commit: ForwardStatement[];
+	deferred: ForwardStatement[];
+} {
+	const commit: ForwardStatement[] = [];
+	const deferred: ForwardStatement[] = [];
+	for (const statement of statements) {
+		const later = deferrable(statement);
+		if (later) deferred.push(later);
+		else commit.push(cacheTagIncrement(statement) ?? statement);
+	}
+	return { commit, deferred };
+}
+
 export type ForwardPlan =
 	| { action: 'commit'; reason: '' }
 	| { action: 'conflict'; reason: string }
@@ -238,11 +366,10 @@ export function planForward(input: {
 	for (const statement of input.statements) {
 		const table = statement.table ?? '';
 		if (partitioned.has(table.toLowerCase())) continue;
-		if (hazardClass(table) === 'origination') {
-			return {
-				action: 'refuse',
-				reason: `${table || 'an unnamed table'} originates a value a lane may not mint`
-			};
+		const key = keyValueTarget(statement);
+		if (hazardClass(table, key?.collection, key?.name) === 'origination') {
+			const what = key ? `${table}:${key.collection}` : table || 'an unnamed table';
+			return { action: 'refuse', reason: `${what} originates a value a lane may not mint` };
 		}
 	}
 

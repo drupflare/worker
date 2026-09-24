@@ -1,21 +1,22 @@
 import { isPaid, type PlanEnv } from './plan.js';
 
 /**
- * The page cache tier that survives a colo, for the paid plan only.
+ * The page cache tier that survives a colo, and the previous generation a cold object answers from.
  *
  * It cannot live in the Durable Object. `serveFromStorage()` is synchronous by construction -- an
  * `await` there introduces exactly the suspension the reentrancy contract forbids -- and every KV read
  * is asynchronous. So a KV backend cannot serve the DO's storage lane at any price. It belongs in the
  * Worker, which is already async and already does a `caches.default` lookup before reaching the object.
  *
- * Paid-only because of a meter. The DO's own `cfw_page`
- * table spends **row writes**, and that budget is measured here at 100,000/day, which is what caps
- * fills near 20,000/day. KV spends a different and much smaller daily write allowance on the free
- * plan, so a free site that cached every page to KV would exhaust that allowance long before it
- * exhausted the one it is already engineered against -- trading a known-good limit for a tighter and
- * unmeasured one. Paid has neither constraint and gains what KV is actually for: a page rendered in one
- * colo answers from every colo **without touching the Durable Object at all**, which is the cost driver
- * on paid.
+ * On by default on both plans once `PAGE_KV` is bound. It used to be paid-only because free KV allows
+ * 1,000 writes a day for the whole account, which one busy site could spend by itself. The object now
+ * grants each page write against `KV_WRITES_PER_DAY` (see `kvWriteBudget()` in `site-do.ts`), so a
+ * free site stops storing at its budget and keeps serving what it already stored. Reads are bounded
+ * by Worker requests: at most one per miss, plus up to {@link STALE_GENERATION_DEPTH} on a miss at the
+ * current generation.
+ *
+ * Compiled plans share the namespace and are NOT budgeted, so {@link planKvWritesEnabled} keeps them
+ * paid-only unless `PAGE_KV_ENABLED` says so.
  *
  * Degrades to nothing. No binding, or a free site, and every function here is a no-op that reports
  * why -- so the tier can ship before any namespace exists and a misconfiguration cannot take the site
@@ -76,7 +77,31 @@ export function pageKvEnabled(env?: PageStoreEnv | null): boolean {
 	if (explicit !== undefined && explicit !== null && String(explicit) !== '') {
 		return String(explicit) !== '0';
 	}
-	return isPaid(env);
+	return true;
+}
+
+/** the object's permission for the front worker to store the page it is answering with */
+export const KV_GRANT_HEADER = 'x-cfw-kv-grant';
+
+/**
+ * Page writes to `PAGE_KV` one site may make in a UTC day.
+ *
+ * Free KV allows 1,000 writes a day across the whole account, and `CONFIG_KV` draws on the same
+ * allowance, so free stops at 800. Paid has no daily cap and is unbounded unless set.
+ */
+export function kvWriteBudget(env?: (PlanEnv & { KV_WRITES_PER_DAY?: unknown }) | null): number {
+	const raw = env?.KV_WRITES_PER_DAY;
+	const n = Number(raw);
+	if (raw !== undefined && raw !== null && String(raw) !== '' && Number.isFinite(n) && n >= 0) {
+		return Math.floor(n);
+	}
+	return isPaid(env) ? Number.POSITIVE_INFINITY : 800;
+}
+
+/** whether compiled plans may be written to KV; they carry no write budget, so free needs an explicit `1` */
+export function planKvWritesEnabled(env?: PageStoreEnv | null): boolean {
+	if (!pageKvEnabled(env)) return false;
+	return isPaid(env) || String(env?.PAGE_KV_ENABLED ?? '') === '1';
 }
 
 /** seconds a stored page lives; floored at KV's own minimum so a bad value cannot make writes fail */
@@ -190,15 +215,9 @@ export function staleAllowed(path: string, extra: string | null | undefined = nu
  * design.
  *
  * Returns the page and how many generations back it came from, so the caller can say so in a header
- * and schedule the regeneration rather than rendering inline.
- *
- * **MEASURED 2026-09-14 ON A DEPLOYED FREE WORKER: 265 ms against a 476 ms render on the same
- * object in the same run, so 1.8x.** n=13 for the stale serve (`x-worker-ms` p50, range 182-404)
- * against n=6 for the render control (438-603). Two things the run needed, and either missing makes
- * this read as dead code rather than as a tier: `PAGE_KV` has to be BOUND -- this function returns
- * null at its first line without it, and the shipping `wrangler.jsonc` bound no KV namespace at all
- * -- and the header to look for is `AGED`. `STALE` is a REPLICA REFUSAL, a different event; an
- * earlier arm reported zero hits because it asserted on that name.
+ * and schedule the regeneration rather than rendering inline. The answer carries
+ * `x-cfw-edge: STALE`; `x-cfw-cache: KV` alone does not identify it, because the object's own
+ * time-stale `AGED` answer reports the same value.
  */
 export async function readStalePage(
 	env: PageStoreEnv | null | undefined,

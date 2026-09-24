@@ -1,3 +1,4 @@
+import { normaliseUri } from './db/file-store.js';
 import type { SiteEnv } from './env.js';
 import {
 	adminCookieToken,
@@ -67,6 +68,7 @@ import { IMAGE_ROUTE_PREFIX, parseTransformPath, runImageTransform } from './ops
 import { callbackUri } from './ops/oidc.js';
 import { lookupPageMemo, pageMemoHeaders, storePageMemo } from './ops/page-memo.js';
 import {
+	KV_GRANT_HEADER,
 	pageKvEnabled,
 	readPage,
 	readStalePage,
@@ -121,6 +123,7 @@ import {
 	type RemoteRow
 } from './ui/admin.js';
 
+export { RenderLane } from './ops/render-lane.js';
 export { SitePhpDurableObject };
 
 /**
@@ -1022,6 +1025,8 @@ export default {
 		// with a render rather than a refusal, which reads as "the route exists and something went
 		// wrong" instead of "there is no such route here"
 		const internal = url.pathname.startsWith('/__');
+		// set by the catch-all rewrite below, whose `?site=` is the site resolved above
+		let pageRequest = false;
 		// Image derivatives, answered here. In the front worker rather than in the object for two
 		// reasons: the wasm decoder never meets PHP's heap, and a derivative is a static byte range
 		// that has no reason to enter a single-threaded object at all. Before the `/serve` rewrite,
@@ -1029,16 +1034,25 @@ export default {
 		if (!internal && url.pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`) && ctx !== undefined) {
 			return serveImageTransform(request, url, env, ctx);
 		}
+		if (
+			!internal &&
+			ctx !== undefined &&
+			publicFileUri(request.method, url.pathname) !== null
+		) {
+			const served = await servePublicFile(request, url, env, ctx);
+			if (served !== null) return served;
+		}
 
 		if (!internal && !ROUTES.has(url.pathname)) {
 			// `allowParam: false` because THIS query string is the visitor's. Without it,
 			// `https://customer-a.example/about?site=customer-b` resolves to customer B and serves
 			// their database from customer A's hostname -- the origin rewrite below keeps the
-			// parameter out of `/serve`'s own arguments and does nothing about which object answers
-			const { site } = await resolveSite(url, env, { allowParam: false });
+			// parameter out of `/serve`'s own arguments and does nothing about which object answers.
+			// The site resolved at the top already is that answer: same URL, same flag
 			const rewritten = new URL(url.origin);
 			rewritten.pathname = '/serve';
-			rewritten.searchParams.set('site', site);
+			rewritten.searchParams.set('site', resolvedSite);
+			pageRequest = true;
 			// built from the ORIGIN, so the visitor's own query cannot land among /serve's parameters
 			// -- `/about?site=someone-else` would otherwise choose which site answers. The query is
 			// preserved where Drupal wants it, inside `path`
@@ -1089,7 +1103,9 @@ export default {
 
 		// one object per site; the name is the site identity, and a replica lane is that name plus a
 		// suffix. With no replicas configured `chooseTarget()` always answers the site itself
-		const site = await siteFor(url, env);
+		// a rewritten page request carries the site this handler resolved at the top, so asking again
+		// would read back its own parameter; only a route addressed directly resolves here
+		const site = pageRequest ? resolvedSite : await siteFor(url, env);
 		// The visitor's own path, which `url.pathname` no longer holds: the rewrite above moved it
 		// into `?path=` and made every serving request read `/serve`. So the path fallback in
 		// `affinityKey()` -- what a request with no session and no `cf-connecting-ip` spreads on --
@@ -1125,7 +1141,9 @@ export default {
 				writeForward: writeForwardEnabled(env),
 				// a write arriving without one may MINT one, and a lane's mint never reaches the
 				// primary; see the docblock on the field
-				hasSession: sessionValue !== null
+				hasSession: sessionValue !== null,
+				visitorPath,
+				contentType: request.headers.get('content-type')
 			}));
 		let stubMemo: DurableObjectStub | null = null;
 		const stubOf = (): DurableObjectStub =>
@@ -1388,12 +1406,16 @@ export default {
 		const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
 
 		// BEFORE the first routing decision, so a cold isolate routes to the pool on request one
-		// rather than sending it to the primary and learning afterwards
-		if (serving) await primeLanes(cache, origin, site);
+		// rather than sending it to the primary and learning afterwards. Alongside the generation read
+		// rather than ahead of it: both are edge reads into separate maps, and only a miss routes
+		const [, generationRead] = await Promise.all([
+			serving ? primeLanes(cache, origin, site) : undefined,
+			edgeWanted ? readGeneration(cache, origin, site, bucket) : null
+		]);
 
 		let generation = null;
 		if (edgeWanted) {
-			generation = await readGeneration(cache, origin, site, bucket);
+			generation = generationRead;
 			if (generation !== null) {
 				// The string before the request, because the memo below is the tier that answers
 				// almost all of this path and it reads only the string. Building the `Request` first
@@ -1757,6 +1779,9 @@ export default {
 			} else if (doCache !== 'HIT' && doCache !== 'RENDER') {
 				// a 503 warming placeholder is not a page; storing it would pin "warming" globally
 				kvPut = `skipped:${doCache}`;
+			} else if (res.headers.get(KV_GRANT_HEADER) !== '1') {
+				// the object holds the daily write budget; no grant means it is spent, or a lane answered
+				kvPut = 'skipped:no-grant';
 			} else {
 				// cloned now, read later: the body below is returned to the caller, and a clone taken
 				// after that has been consumed is empty
@@ -2334,6 +2359,79 @@ async function renderAdmin(
  * Cloudflare mechanism carries one -- which is the case a wasm arm was always going to be needed
  * for, and the reason this covers every other case from the same module.
  */
+const PUBLIC_FILES = '/sites/default/files/';
+const INLINE_FILE_TYPES = new Set([
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+	'image/avif'
+]);
+
+/**
+ * The `public://` uri a GET for a public file names, or null.
+ *
+ * Drupal expects the web server to answer these from disk and has no route for them, so without
+ * this every public original was Drupal's 404 unless the optional R2 mirror was configured: every
+ * document download, every file field, every link to a full-size image. `styles/` stays Drupal's,
+ * because its image style controller owns that prefix.
+ */
+export function publicFileUri(method: string, pathname: string): string | null {
+	if (method !== 'GET' && method !== 'HEAD') return null;
+	if (!pathname.startsWith(PUBLIC_FILES) || pathname.startsWith(`${PUBLIC_FILES}styles/`)) {
+		return null;
+	}
+	let rest: string;
+	try {
+		rest = decodeURIComponent(pathname.slice(PUBLIC_FILES.length));
+	} catch {
+		return null;
+	}
+	return normaliseUri(`public://${rest}`);
+}
+
+/** a stored public file, or null so the request falls through to Drupal */
+async function servePublicFile(
+	request: Request,
+	url: URL,
+	env: SiteWorkerEnv,
+	ctx: ExecutionContext
+): Promise<Response | null> {
+	const uri = publicFileUri(request.method, url.pathname);
+	if (uri === null) return null;
+	const cache = caches.default;
+	const key = new Request(url.toString(), { method: 'GET' });
+	const cached = await cache.match(key);
+	if (cached) return request.method === 'HEAD' ? new Response(null, cached) : cached;
+
+	const { site } = await resolveSite(url, env, { allowParam: false });
+	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+	const source = await stub.fetch(
+		new Request(`https://do.local/__filebytes?uri=${encodeURIComponent(uri)}`)
+	);
+	if (!source.ok) {
+		await source.body?.cancel();
+		return null;
+	}
+	const type = source.headers.get('content-type') ?? 'application/octet-stream';
+	const headers = new Headers({
+		'content-type': type,
+		// short, because a file can be replaced under the same uri
+		'cache-control': 'public, max-age=300',
+		'x-content-type-options': 'nosniff',
+		'x-cfw-file': 'STORED'
+	});
+	// an uploaded file shares the site's origin, so anything that can carry script (svg, html) is
+	// downloaded in a sandbox rather than rendered beside the session cookie
+	if (!INLINE_FILE_TYPES.has(type.split(';', 1)[0]!.trim().toLowerCase())) {
+		headers.set('content-disposition', 'attachment');
+		headers.set('content-security-policy', "sandbox; default-src 'none'");
+	}
+	const response = new Response(source.body, { status: 200, headers });
+	ctx.waitUntil(cache.put(key, response.clone()));
+	return request.method === 'HEAD' ? new Response(null, response) : response;
+}
+
 async function serveImageTransform(
 	request: Request,
 	url: URL,
@@ -2357,13 +2455,26 @@ async function serveImageTransform(
 	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
 	const source = await stub.fetch(
 		new Request(
-			`https://do.local/__filebytes?uri=${encodeURIComponent(parsed.uri)}`,
+			`https://do.local/__filebytes?uri=${encodeURIComponent(parsed.uri)}&derivative=${parsed.id}`,
 			// the visitor's cookie, because a `private://` file is theirs to read or not
 			{ headers: { cookie: request.headers.get('cookie') ?? '' } }
 		)
 	);
 	if (!source.ok) {
 		return new Response('not found\n', { status: source.status === 403 ? 403 : 404 });
+	}
+	// rendered on upload by the rendering lanes, so there is nothing left to do here
+	if (source.headers.get('x-cfw-derivative') === 'stored') {
+		const response = new Response(source.body, {
+			status: 200,
+			headers: {
+				'content-type': source.headers.get('content-type') ?? 'application/octet-stream',
+				'cache-control': 'public, max-age=31536000, immutable',
+				'x-cfw-image': 'STORED'
+			}
+		});
+		ctx.waitUntil(cache.put(new Request(url.toString()), response.clone()));
+		return response;
 	}
 
 	try {

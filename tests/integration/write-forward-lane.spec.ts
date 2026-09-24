@@ -119,6 +119,48 @@ describe('a lane lands its writes on the primary', () => {
 		TIMEOUT
 	);
 
+	// the save's own response said it succeeded, so answering it lost the write without a word
+	it(
+		'hands a request back to the primary when the primary refuses its forward',
+		async () => {
+			await preparePrimary();
+			const out = await inObject(namedSite(replicaName(SITE, 5)), async (lane) => {
+				role(lane, 'replica');
+				lane.ensureServeTables();
+				lane.collectForward(
+					['INSERT INTO sequences (value) VALUES (1)'],
+					txn('INSERT INTO sequences (value) VALUES (1)')
+				);
+				const res = await lane.fetch(new Request('https://do.local/__serve-stats'));
+				return {
+					status: res.status,
+					capability: res.headers.get('x-cfw-requires-primary'),
+					retrySafe: res.headers.get('x-cfw-retry-safe')
+				};
+			});
+			expect(out).toEqual({ status: 421, capability: 'forward', retrySafe: '1' });
+		},
+		TIMEOUT
+	);
+
+	it(
+		'keeps the answer when the forward commits',
+		async () => {
+			await preparePrimary();
+			const status = await inObject(namedSite(replicaName(SITE, 6)), async (lane) => {
+				role(lane, 'replica');
+				lane.ensureServeTables();
+				lane.collectForward(
+					['UPDATE node_field_data SET title = ?'],
+					txn('UPDATE node_field_data SET title = ? WHERE nid = 1', ['kept'])
+				);
+				return (await lane.fetch(new Request('https://do.local/__serve-stats'))).status;
+			});
+			expect(status).toBe(200);
+		},
+		TIMEOUT
+	);
+
 	it(
 		'forwards nothing when nothing was collected',
 		async () => {

@@ -464,4 +464,37 @@ describe('a lane inherits the origin rather than pinning one of its own', () => 
 		},
 		TIMEOUT
 	);
+
+	// it signs form tokens, so a lane with its own salt refused every form the primary rendered and
+	// the primary refused every form the lane rendered
+	it(
+		'lands the primary hash salt over one the lane minted for itself',
+		async () => {
+			const src = await primary();
+			const SALT = 'primary-salt-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v2W3x4Y5z6_-';
+			const out = await inObject(freshSite(), async (site) => {
+				role(site, 'primary');
+				await install(site, 'Salt Replica');
+				role(site, 'replica');
+				site.metaSet(
+					'hash_salt',
+					'lane-own-salt-Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2H1g0F9e8D7c6B5a4'
+				);
+				const landings: Landing[] = [];
+				for (const [i, page] of src.pages.entries()) {
+					landings.push(
+						await land(site, {
+							...page,
+							...(i === 0 ? { hashSalt: SALT } : {}),
+							done: i === src.pages.length - 1
+						})
+					);
+				}
+				return { landings, salt: site.metaGet('hash_salt') };
+			});
+			expect(out.landings.filter((l) => !l.ok).map((l) => l.reason)).toEqual([]);
+			expect(out.salt).toBe(SALT);
+		},
+		TIMEOUT
+	);
 });

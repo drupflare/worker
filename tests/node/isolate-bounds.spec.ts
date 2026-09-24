@@ -50,10 +50,11 @@ describe('the replica refusal window', () => {
 		// Only the count and the last message are read, so the window is small -- and the total is
 		// carried separately, because bounding the array alone would deflate the figure a failover
 		// is counted from
+		// `self` is the forwarding owner the interpreter's closures are bound to; see `forwardTo()`
 		expect(SOURCE).toContain(
-			'if (this.replicaRefusals.length > 20) this.replicaRefusals.shift()'
+			'if (self.replicaRefusals.length > 20) self.replicaRefusals.shift()'
 		);
-		expect(SOURCE).toContain('this.replicaRefusalsTotal += 1');
+		expect(SOURCE).toContain('self.replicaRefusalsTotal += 1');
 		// and nothing reports the window as if it were the total
 		expect(SOURCE).not.toContain('refusals: this.replicaRefusals.length');
 	});

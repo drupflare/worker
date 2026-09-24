@@ -109,6 +109,7 @@ export type ServeDo = {
 			sql: Sql;
 			getAlarm: () => Promise<number | null>;
 			setAlarm: (at: number) => Promise<void>;
+			deleteAlarm: () => Promise<void>;
 			/** the one way a spec can make two writes observable together, which a raceable
 			 * setup needs: each `sql.exec` autocommits, so a lane's alarm chain can catch up
 			 * between them */
@@ -346,6 +347,8 @@ export type ServeDo = {
 	pinnedHandles?: Set<object>;
 	/** the host bridge, so a spec can call a capability the way PHP does */
 	installCapabilities: (binary: Record<string, (json: string) => string>) => void;
+	queueDerivatives: (uri: string) => void;
+	deriveStep: (transport?: import('../../src/ops/render-lane').DeriveTransport) => Promise<void>;
 	/** the host's own view, handed to the PHP health layer; see `runHealthSelfTest()` */
 	healthObservation: () => Record<string, unknown>;
 	/** the crossing tally; `calls` is the per-statement census log, armed by assigning `[]` */
@@ -446,6 +449,7 @@ export type ServeStats = {
 	semaphoreHeld: number | null;
 	httpQueue: number | null;
 	lastHttpDrain: { drained?: Record<string, unknown>[]; remaining?: number } | null;
+	lastMirrorDrain: { budgetSpent?: { used: number; budget: number }; mirrored?: number } | null;
 	mailQueue: number | null;
 	lastMailDrain: {
 		sent?: Record<string, unknown>[];

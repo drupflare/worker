@@ -26,9 +26,14 @@ describe('the packed day row', () => {
 			rows: 4_211,
 			doRequests: 903,
 			serveTotal: 71_004,
-			encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 400 }
+			encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 400 },
+			kvWrites: 37
 		};
 		expect(readDayMeters(writeDayMeters(meters))).toEqual(meters);
+	});
+
+	it('reads a row written before `kvWrites` existed as having granted none', () => {
+		expect(readDayMeters('10:20:30:1,2,3,4')?.kvWrites).toBe(0);
 	});
 
 	it('keys by UTC day, so an eviction loses a flush rather than a day', () => {
@@ -42,7 +47,15 @@ describe('the packed day row', () => {
 	 * day that genuinely counted nothing.
 	 */
 	it('answers null on anything it cannot read', () => {
-		for (const raw of ['', '1:2:3', '1:2:3:4:5', 'a:b:c:0,0,0,0', '-1:2:3:0,0,0,0', null]) {
+		for (const raw of [
+			'',
+			'1:2:3',
+			'1:2:3:0,0,0,0:5:6',
+			'1:2:3:0,0,0,0:x',
+			'a:b:c:0,0,0,0',
+			'-1:2:3:0,0,0,0',
+			null
+		]) {
 			expect(readDayMeters(raw), `read ${raw} as a row`).toBeNull();
 		}
 	});
@@ -52,13 +65,14 @@ describe('the packed day row', () => {
 			rows: 10,
 			doRequests: 20,
 			serveTotal: 30,
-			encounters: { noPhp: 1, warm: 2, cold: 3, absorbed: 0 }
+			encounters: { noPhp: 1, warm: 2, cold: 3, absorbed: 0 },
+			kvWrites: 0
 		});
 	});
 
 	it('starts at zero on every counter', () => {
 		expect(ZERO_DAY_METERS.encounters).toEqual(ZERO_ENCOUNTERS);
-		expect(writeDayMeters(ZERO_DAY_METERS)).toBe('0:0:0:0,0,0,0');
+		expect(writeDayMeters(ZERO_DAY_METERS)).toBe('0:0:0:0,0,0,0:0');
 	});
 });
 

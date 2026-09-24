@@ -21,6 +21,10 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * optional rather than asserting it.
 	 */
 	CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
+	/** the rendering lanes an upload's image styles are rendered on; see `src/ops/render-lane.ts` */
+	RENDER_LANES?: DurableObjectNamespace;
+	/** `0` stops rendering styles on upload while the binding stays */
+	EAGER_DERIVATIVES?: string;
 	HEAP_SNAPSHOT?: string;
 	HEAP_RESTORE_CHUNKS?: string | number;
 	MIRROR_LIMIT?: string | number;
@@ -129,9 +133,9 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * overlap, so restoring an image costs about 648 ms MORE than booting from scratch. It also
 	 * costs 8,071,929 bytes a site against an account-wide 5 GB cap.
 	 *
-	 * A cost on both meters and no benefit on either, so the default is off. The likely mechanism is
-	 * `digestBytes`, a per-byte JS loop over the restored bytes, which is why compressing the stored
-	 * chunks does not help: the digest is taken over heap bytes rather than stored ones.
+	 * A cost on both meters and no benefit on either, so the default is off. The mechanism is
+	 * unattributed. It is NOT `digestBytes`: verifying a 37,158,912-byte image, whole and per chunk,
+	 * is 13-20 ms on a laptop's V8 (`scripts/measure/heap-digest-cost.ts`), about 3% of the gap.
 	 */
 	HEAP_IMAGE?: string;
 	/**

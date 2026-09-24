@@ -447,7 +447,11 @@ export function enforceReadOnly(
 							: 'the transaction payload could not be downgraded'
 					);
 				}
-				collect!(statements!, args[0]);
+				// a speculative replay resends the whole buffer beside each read, so only the commit
+				// carries the batch; collecting every replay forwarded one insert several times
+				if ((parseJson(args[0]) as Partial<TxnRequest> | null)?.commit !== false) {
+					collect!(statements!, args[0]);
+				}
 				mutated = true;
 				try {
 					return inner(payload, ...args.slice(1));

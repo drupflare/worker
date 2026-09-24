@@ -238,7 +238,9 @@ describe('the packed meter row', () => {
 				rows: 4_100,
 				doRequests: 900,
 				serveTotal: 71_004,
-				encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 0 }
+				encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 0 },
+				// the legacy keys predate the KV grant, so they granted none
+				kvWrites: 0
 			});
 			// and the packed row supersedes them the moment it exists
 			expect(seen.packed.rows).toBe(1);

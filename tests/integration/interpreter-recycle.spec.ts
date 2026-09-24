@@ -3,7 +3,14 @@ import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
 import { renderPage } from '../../src/drupal/site-php';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
 import { DEFAULT_CRON_BUDGET, driveCron } from '../../src/ops/cron-drive';
-import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
+import {
+	SitePhpDurableObject,
+	isolateId,
+	isolateResidency,
+	noteResident,
+	retainInterpreterEnabled
+} from '../../src/site-do';
+import { freshSite, inObject, queuePath, serveDirect, type ServeDo } from '../helpers/serve-do';
 
 /**
  * Linear memory across ONE incarnation, and the drop that keeps it inside the isolate.
@@ -164,6 +171,55 @@ describe('a cold object is safe on its FIRST authenticated request', () => {
 			// the defect. The fresh case above is the one that fails when the drop is removed.
 			expect(out.after).toBeLessThan(ISOLATE_LIMIT);
 			expect(ISOLATE_LIMIT - out.after).toBeGreaterThan(4 * MIB);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+/**
+ * An authenticated request is never answered "warming", because nothing can warm it.
+ *
+ * The chain renders anonymously and does not queue a session's request, so a 503 telling a logged-in
+ * visitor to retry for a fill promises work nobody is doing. `unfillable` carries `authenticated`,
+ * which lifts both refusals the chain would otherwise make: the cold one and the over-budget one.
+ * A real claimed site and a real session, because an unclaimed one answers its claim page first.
+ */
+describe('an authenticated request is never answered warming', () => {
+	it(
+		'renders inline over budget, where an anonymous request is diverted',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const jar = await provision(site);
+				// THE CONTROL: the budget really diverts, or the authenticated answer proves nothing
+				const anonymous = await serveDirect(site, '/filter/tips', '&budget=1');
+				const authenticated = await serveDirect(site, '/admin/content', '&budget=1', {
+					headers: { cookie: jar }
+				});
+				return { anonymous, authenticated };
+			});
+			expect(out.anonymous.inline).toBe('over-budget');
+			// rendered for the visitor, whatever Drupal then decides: the cookie name is derived
+			// from the host and this login ran on a different one, so Drupal answers 403 -- which is
+			// a render, and the property is only that a session is never told to wait for a fill
+			expect(out.authenticated.status).not.toBe(503);
+			expect(out.authenticated.cache).toBe('RENDER');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'boots for it on a cold object, whatever the plan profile says about booting',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const jar = await provision(site);
+				// what `/__migrate` and `/__firstrun` leave behind, and what an eviction leaves. Both plan
+				// profiles boot inline today, so this passes without `authenticated` in `unfillable`; it
+				// is what fails the day a profile stops booting
+				site.php = null;
+				return serveDirect(site, '/admin/content', '', { headers: { cookie: jar } });
+			});
+			expect(out.status).not.toBe(503);
+			expect(out.cache).toBe('RENDER');
 		},
 		REQUEST_TIMEOUT
 	);
@@ -455,4 +511,162 @@ describe('one incarnation doing more than rendering', () => {
 		},
 		REQUEST_TIMEOUT
 	);
+});
+
+/**
+ * The interpreters one isolate holds, which is what its 128 MiB is actually shared between.
+ *
+ * Module scope is per isolate and an isolate can host several live objects of this class, so the
+ * limit is not per object. `/serve-stats` reports the whole isolate for that reason.
+ */
+describe('the interpreters an isolate holds', () => {
+	const fake = (bytes: number) => ({ binary: { HEAPU8: new Uint8Array(bytes) } });
+
+	it('counts each resident interpreter once and adds their linear memory', () => {
+		const before = isolateResidency();
+		const a = fake(1024);
+		const b = fake(2048);
+		noteResident('residency-a', a);
+		noteResident('residency-b', b);
+		// a second report for the same object replaces rather than adds
+		noteResident('residency-a', a);
+		const both = isolateResidency();
+		expect(both.interpreters - before.interpreters).toBe(2);
+		expect(both.linearBytes - before.linearBytes).toBe(3072);
+
+		// a dropped interpreter leaves the registry at the end of that invocation
+		noteResident('residency-a', null);
+		noteResident('residency-b', undefined);
+		const after = isolateResidency();
+		expect(after.interpreters).toBe(before.interpreters);
+		expect(after.linearBytes).toBe(before.linearBytes);
+	});
+
+	it('reads a build that exposes only wasmMemory', () => {
+		const before = isolateResidency();
+		const php = { binary: { wasmMemory: { buffer: new ArrayBuffer(4096) } } };
+		noteResident('residency-wasm', php);
+		expect(isolateResidency().linearBytes - before.linearBytes).toBe(4096);
+		noteResident('residency-wasm', null);
+	});
+
+	it('keeps one id for the life of the isolate', () => {
+		expect(isolateId()).toBe(isolateId());
+		expect(isolateResidency().id).toBe(isolateId());
+	});
+
+	it("reports another object's interpreter on serve-stats when both share the isolate", async () => {
+		const booted = async () =>
+			inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				await site.fillOne('/user/login');
+				await site.fetch(new Request('https://do.local/__serve?path=/'));
+				return (await (
+					await site.fetch(new Request('https://do.local/__serve-stats'))
+				).json()) as { isolate: { id: string; interpreters: number; linearBytes: number } };
+			});
+		const first = await booted();
+		const second = await booted();
+		// THE CONTROL: the first object reports its own interpreter, or a count of two below
+		// could be two stale entries rather than two live ones
+		expect(first.isolate.interpreters).toBeGreaterThanOrEqual(1);
+		// the test pool runs every object in one isolate, which is the co-residency this reports
+		expect(second.isolate.id).toBe(first.isolate.id);
+		expect(second.isolate.interpreters).toBeGreaterThanOrEqual(2);
+		expect(second.isolate.linearBytes).toBeGreaterThan(first.isolate.linearBytes);
+	}, 900_000);
+});
+
+/**
+ * An interpreter kept in module scope across the eviction of the instance that booted it.
+ *
+ * A second instance built on the same object state is what the platform does after an eviction, in
+ * the same isolate. Both share one storage here, so a correct page proves nothing about the wiring;
+ * which instance's `queryCount` moves does, because only the instance the SQL bridge reaches counts.
+ */
+describe('an interpreter kept across an eviction', () => {
+	type Retaining = ServeDo & {
+		queryCount: number;
+		lastRetention?: { adopted: boolean; reason?: string };
+		pendingCommits?: number;
+		flushCommitSeq(): void;
+	};
+	const booted = async (site: ServeDo, retain = '1') => {
+		site.env = { ...site.env, RETAIN_INTERPRETER: retain };
+		await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+		await site.fillOne('/user/login');
+		// a GATED request, because the interpreter is kept at the end of one; a stored page is
+		// answered by the storage lane before the gate and never reaches that point
+		await site.fetch(new Request('https://do.local/__serve-stats'));
+	};
+	const successor = (site: ServeDo) =>
+		new SitePhpDurableObject(site.ctx as never, site.env as never) as unknown as Retaining;
+
+	it("is adopted by the next instance, and PHP's SQL reaches that instance", async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			await booted(site);
+			const old = site as Retaining;
+			const next = successor(site);
+			await next.fetch(new Request('https://do.local/__serve-stats'));
+			const before = { old: old.queryCount, next: next.queryCount };
+			// CfwSqlClient cached its bridge function when the OLD instance booted
+			await next.fillOne('/user/password');
+			return {
+				same: next.php === old.php,
+				adopted: next.lastRetention?.adopted,
+				reason: next.lastRetention?.reason,
+				oldMoved: old.queryCount - before.old,
+				nextMoved: next.queryCount - before.next,
+				stored: next.sql
+					.exec("SELECT COUNT(*) AS n FROM cfw_page WHERE path = '/user/password'")
+					.toArray()[0]?.['n']
+			};
+		});
+		expect(out.adopted, `refused: ${out.reason}`).toBe(true);
+		expect(out.same).toBe(true);
+		expect(out.nextMoved).toBeGreaterThan(0);
+		expect(out.oldMoved, 'the adopted interpreter still called the evicted instance').toBe(0);
+		expect(Number(out.stored)).toBe(1);
+	}, 900_000);
+
+	it('is refused when the object committed somewhere else in between', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			await booted(site);
+			const old = site as Retaining;
+			// the commit sequence moving after the interpreter was kept is what a write made in
+			// another isolate looks like from here
+			old.pendingCommits = 1;
+			old.flushCommitSeq();
+			const next = successor(site);
+			await next.fetch(new Request('https://do.local/__serve-stats'));
+			return { php: next.php, last: next.lastRetention };
+		});
+		expect(out.php).toBeNull();
+		expect(out.last).toEqual(expect.objectContaining({ adopted: false, reason: 'stale' }));
+	}, 900_000);
+
+	it('keeps nothing once the interpreter was dropped', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			await booted(site);
+			site.php = null;
+			const next = successor(site);
+			await next.fetch(new Request('https://do.local/__serve-stats'));
+			return { php: next.php, last: next.lastRetention ?? null };
+		});
+		expect(out.php).toBeNull();
+		expect(out.last).toBeNull();
+	}, 900_000);
+
+	it('keeps nothing with RETAIN_INTERPRETER=0, and is on without it', async () => {
+		expect(retainInterpreterEnabled({} as never)).toBe(true);
+		expect(retainInterpreterEnabled({ RETAIN_INTERPRETER: '0' } as never)).toBe(false);
+		const out = await inObject(freshSite(), async (site) => {
+			await booted(site, '0');
+			const next = successor(site);
+			await next.fetch(new Request('https://do.local/__serve-stats'));
+			return { php: next.php, last: next.lastRetention ?? null };
+		});
+		expect(out.php).toBeNull();
+		expect(out.last).toBeNull();
+	}, 900_000);
 });

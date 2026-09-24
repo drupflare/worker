@@ -85,6 +85,25 @@ describe('with a collector a write is forwarded instead', () => {
 		expect(payload.commit).toBe(false);
 	});
 
+	// the driver resends the whole buffer beside each read, so collecting replays forwarded one
+	// insert several times and the primary refused it on the duplicate key
+	it('collects the commit and not the speculative replays before it', () => {
+		const calls: Call[] = [];
+		const collected: string[][] = [];
+		const binary = moduleWith(calls);
+		enforceReadOnly(binary, undefined, (s) => collected.push([...s]));
+		const insert = { sql: 'INSERT INTO node (vid) VALUES (?)', params: [1] };
+		const txn = binary.cfwSqlTxn as (p: unknown) => unknown;
+
+		txn(JSON.stringify({ statements: [insert], read: { sql: 'SELECT 1' }, commit: false }));
+		txn(JSON.stringify({ statements: [insert], read: { sql: 'SELECT 2' }, commit: false }));
+		txn(JSON.stringify({ statements: [insert], commit: true }));
+
+		expect(collected).toHaveLength(1);
+		// every call still ran, so PHP read through its own write each time
+		expect(calls).toHaveLength(3);
+	});
+
 	it('still refuses an outbound effect, because a sent mail has no rollback', () => {
 		const calls: Call[] = [];
 		const binary = moduleWith(calls);

@@ -199,6 +199,25 @@ function hash(value: string): number {
 const SPREAD_ROUTES: ReadonlySet<string> = new Set(['/serve']);
 
 /**
+ * Visitor paths whose writes a lane always refuses, so they go to the primary without the detour.
+ *
+ * A module install creates tables the state inventory does not know, and an unknown table is an
+ * origination hazard. The drupflare settings form writes account KV through `cfwSettings`, which
+ * no lane may call. Matched as prefixes; anything else is still forwarded and refused if it must be.
+ */
+const ORIGINATION_PREFIXES = ['/admin/modules', '/admin/config/drupflare/settings'] as const;
+
+/** why a write originates on every path through it, or null when forwarding might succeed */
+export function originationRoute(visitorPath: string, contentType: string | null): string | null {
+	// an upload writes the file store through `cfwFileWrite`, which is not a replica-safe capability
+	if (/^multipart\/form-data\b/i.test(contentType ?? ''))
+		return 'an upload writes the file store';
+	const path = visitorPath.split('?')[0] ?? '';
+	const hit = ORIGINATION_PREFIXES.find((p) => path === p || path.startsWith(`${p}/`));
+	return hit ? `${hit} writes what only the primary may originate` : null;
+}
+
+/**
  * Which lane answers this request.
  *
  * Only reads on the serving path are spread. A write goes straight to the primary rather than
@@ -236,6 +255,9 @@ export function chooseTarget(input: {
 	 * so pinning on this covers the class without naming any route.
 	 */
 	hasSession?: boolean;
+	/** the visitor's own path, which `pathname` no longer holds after the rewrite to `/serve` */
+	visitorPath?: string;
+	contentType?: string | null;
 }): RoutingDecision {
 	const primary: RoutingDecision = {
 		target: input.site,
@@ -265,6 +287,11 @@ export function chooseTarget(input: {
 	if (write && input.hasSession !== true) {
 		return { ...primary, reason: 'a write carrying no session may establish one' };
 	}
+
+	const originates = write
+		? originationRoute(input.visitorPath ?? '', input.contentType ?? null)
+		: null;
+	if (originates) return { ...primary, reason: originates };
 
 	const lane = hash(input.affinity) % lanes;
 	if (lane === 0) return { ...primary, reason: 'affinity chose the primary lane' };

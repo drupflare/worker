@@ -1,5 +1,5 @@
 /**
- * The four daily counters this object keeps, in one `cfw_meta` row.
+ * The daily counters this object keeps, in one `cfw_meta` row.
  *
  * Each of them used to have a key of its own, so a meter flush on a trafficked site wrote FOUR rows
  * -- while the comments beside the calls said the folding cost no row of its own. What the folding
@@ -29,13 +29,16 @@ export type DayMeters = {
 	/** requests answered over this object's whole life, not today's */
 	serveTotal: number;
 	encounters: EncounterCounts;
+	/** page writes to `PAGE_KV` this object granted today, against `KV_WRITES_PER_DAY` */
+	kvWrites: number;
 };
 
 export const ZERO_DAY_METERS: DayMeters = {
 	rows: 0,
 	doRequests: 0,
 	serveTotal: 0,
-	encounters: { ...ZERO_ENCOUNTERS }
+	encounters: { ...ZERO_ENCOUNTERS },
+	kvWrites: 0
 };
 
 /** the prefix a day row is found under, and the one `carriedServeTotal()` scans */
@@ -50,7 +53,8 @@ export function writeDayMeters(meters: DayMeters): string {
 		Math.max(0, Math.round(meters.rows)),
 		Math.max(0, Math.round(meters.doRequests)),
 		Math.max(0, Math.round(meters.serveTotal)),
-		serialiseEncounters(meters.encounters)
+		serialiseEncounters(meters.encounters),
+		Math.max(0, Math.round(meters.kvWrites))
 	].join(':');
 }
 
@@ -64,14 +68,18 @@ export function writeDayMeters(meters: DayMeters): string {
 export function readDayMeters(raw: string | null | undefined): DayMeters | null {
 	if (!raw) return null;
 	const parts = raw.split(':');
-	if (parts.length !== 4) return null;
+	// four parts is a row written before `kvWrites` existed, which counted none
+	if (parts.length !== 4 && parts.length !== 5) return null;
 	const [rows, doRequests, serveTotal] = parts.slice(0, 3).map((n) => Number(n)) as [
 		number,
 		number,
 		number
 	];
-	if (![rows, doRequests, serveTotal].every((n) => Number.isFinite(n) && n >= 0)) return null;
-	return { rows, doRequests, serveTotal, encounters: parseEncounters(parts[3]) };
+	const kvWrites = Number(parts[4] ?? 0);
+	if (![rows, doRequests, serveTotal, kvWrites].every((n) => Number.isFinite(n) && n >= 0)) {
+		return null;
+	}
+	return { rows, doRequests, serveTotal, encounters: parseEncounters(parts[3]), kvWrites };
 }
 
 /**

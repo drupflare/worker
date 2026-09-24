@@ -60,7 +60,9 @@ const DERIVED_COLLECTION_PREFIXES = [
 	'entity.storage_schema.',
 	'hook_data',
 	'update_fetch_task',
-	'update'
+	'update',
+	// keyed by an HMAC of its own value under the site hash salt, so every writer writes the same row
+	'entity_autocomplete'
 ] as const;
 
 /**

@@ -1,4 +1,9 @@
-import { pageKvEnabled, type PageKv, type PageStoreEnv } from './page-store.js';
+import {
+	pageKvEnabled,
+	planKvWritesEnabled,
+	type PageKv,
+	type PageStoreEnv
+} from './page-store.js';
 import {
 	compilePlan,
 	fillSlots,
@@ -771,7 +776,7 @@ export async function writeEdgePlan(
 	path: string,
 	plan: RenderPlan
 ): Promise<boolean> {
-	if (!pageKvEnabled(env) || !env?.PAGE_KV) return false;
+	if (!planKvWritesEnabled(env) || !env?.PAGE_KV) return false;
 	try {
 		await env.PAGE_KV.put(
 			edgePlanKvKey(site, generation, await cookieFingerprint(roles), path),

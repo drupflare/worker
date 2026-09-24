@@ -148,18 +148,22 @@ must not lock its owner out of the routes they need to repair it.
 ## Scoring a Proposal
 
 Free's limits are aggregate daily budgets, not the 10 ms per-invocation cap. There are two ceilings:
-serving is bound by Worker requests at 100,000/day, and regeneration at **47,749/day at the shipping
+serving is bound by Worker requests at 100,000/day, and regeneration at **50,916/day at the shipping
 default** (`dynamic_page_cache` and `menu` in memory, priced on the warmth mix at 1.75 rows/fill) and
 **10,866/day on the conservative `MEMORY_CACHE_BINS=none` arm** -- the SAME on the alarm chain and
 the fill window. Score with `bun scripts/measure/free-envelope.ts`, which prints both and fails a
 workload that misses either.
 
-**AT THE SHIPPING DEFAULT ROWS NO LONGER BIND; DURATION DOES, AND ON A PESSIMISTIC FIGURE.** The
-duration term prices every fill at `SECONDS_PER.warmRender`, 2.127 s, which is the cold-bins mixture
-and overstates a steady-state re-render (60.2 ms on warm bins) -- so 47,749 is a floor. Rows would bind
-at 50,916 if that term were right, so the ceiling is ~48-51k either way. Do not "fix" the constant to
-a smaller guess: that moves a headline in the flattering direction on no evidence. Measure the
-steady-state fill's wall clock first.
+**ROWS BIND ON BOTH ARMS, AND DURATION WAS A FIFTH MODELLING DEFECT.** It read 47,749 duration-bound
+for one day because the duration term priced every fill at 2,127 ms, the cold-bins mixture. Measured
+2026-09-24 on a deployed object with `gbs-per-operation.ts`: a steady-state fill is 209-308 ms with
+three bins emptied (n=9) and 52-95 ms reassembling from a warm dynamic page cache (n=18), and
+`x-worker-ms` agreed with billed `activeTime` to 2-6%. `SECONDS_PER.warmRender` is the 308 ms maximum,
+which puts duration at 329,748 fills/day. It reopened the census: `render` and `discovery` on top of
+`menu` would take a fill to 1.40 rows, and both were then REFUSED on costs rows cannot see --
+`render` makes a cold render 2,696 ms against 1,450, `discovery` costs 12.4 MiB at its 64-entry cap.
+**Price a memory bin on the cold render too.** The shipped two cost a cold reassemble +251 ms, which
+their docblock had reasoned away as landing on a request already paying a boot.
 
 **THOSE FIGURES WERE 9,685 WINDOWED AND 2,477 ON THE ALARM CHAIN UNTIL 2026-09-23, and four
 modelling defects produced them**, each found by predicting the mechanism and confirming it with a
@@ -186,11 +190,16 @@ control. They are the case study for "a number outlives its mechanism":
 moving either -- the reassemble was briefly set to the login figure and `fill-bins.spec.ts` caught it
 undercutting a real fill. (This paragraph once carried an unsourced "476x" that no file derived.)
 
-**The 10 ms cap does not fail a request, measured 2026-09-07: a 1,882 ms `cpuTime` invocation
-SUCCEEDED on a deployed free worker.** Before refusing anything because "it will not fit in 10 ms",
-check whether that refusal was ever measured. This project has been wrong about it in both
-directions, and so is `@gmitch215/tinyimg`'s README, which tells its users a request either fits or
-fails.
+**On free the 10 ms cap does not fail a Durable Object invocation, and a Worker handler is refused
+only under sustained heavy CPU whose threshold is unmeasured.** A 1,882 ms `cpuTime` invocation
+succeeded on a deployed free worker on 2026-09-07. burrow's M5 probe (2026-09-24) ran back-to-back
+~1.6 s burns: an object completed 10/10, while a Worker handler completed two and was then killed at
+412 ms and at 10 ms on every call after. **That did NOT generalise to image work**, measured the same
+day on a fresh free deploy running `runImageTransform()` over a 3000x1571 JPEG: 30 sequential and 40
+concurrent (two waves of 20) 1090 px transforms plus 19 earlier ones, `cpuTime` p50 ~180 ms and max
+493 ms, **every invocation `success`, zero refusals**. So the front-worker image path is fine at
+page-load rates. Before refusing anything because "it will not fit in 10 ms", check where it runs
+and how hard it runs back to back.
 
 **A rows-saving feature can cost more rows than it saves, and one did.** Scoped invalidation's
 `tag -> paths` index as a `(tag, path)` TABLE took rows per fill from 9 to 39. Folded into the page
@@ -367,6 +376,58 @@ It is rate-limited because the cookie is attacker-supplied, which is the amplifi
 it later looked the row up with, so returning the cookie value unhashed kept it green. A golden
 vector off a deployed site fixed that: `78e094846386248b8a5685a8a2dd4568` hashes to
 `TIkEn6fkVm-NaFDE5eDlIfIXxgfFJXI2XRRnMxjurwI`, which is the row Drupal itself wrote.
+
+## NO SAVE HAD EVER COMMITTED THROUGH A LANE, AND THE LANE SAID IT HAD
+
+Found 2026-09-24 on two deployed 3-lane pools: twelve node creates answered `303` from a lane and
+none existed on any object. Five defects in a chain, each hiding the next; the roadmap's
+Write-Forwarding section lists them. Two rules out of it:
+
+- **A response built before a side effect is confirmed must not survive the side effect failing.**
+  `flushForward()` runs after `handle()`, so its refusal was recorded in a field nothing read and the
+  visitor got the save's redirect. It throws `ReplicaRequiresPrimary('forward', ...)` at the end of
+  the gate now, and the primary re-runs the request.
+- **Anything signed with a site secret must use the site's secret.** `hash_salt` sits in `cfw_meta`,
+  which is lane-local, so every lane minted its own and every form token crossed objects invalid. It
+  rides the restore now, beside the origin. `private_key`, the origin and the salt are the three;
+  check for a fourth before adding lane-local state that signs anything.
+
+Measure a pool write by reading the PRIMARY afterwards, never by the status code: a `303` from a lane
+was exactly the lie.
+
+## IMAGE STYLES SERVED THE FULL-SIZE ORIGINAL ON EVERY SITE
+
+`CfwImageToolkit::save()` copies the source to the derivative path, and `deliveryUrl()`, the only
+emitter of a `/cfw-img/` URL, had no caller, so the front worker's tinyimg path was reached by no page.
+drupflare's `Hook\ImageDelivery` rewrites a public style URL to the delivery path now, and the
+rendering lanes (`RENDER_LANES`, `src/ops/render-lane.ts`) store every style on upload.
+`image-toolkit.spec.ts` asserts the URL, with the stock URL as the control when the container has not
+rebuilt. A hook reaches an existing site only through a container rebuild, which reconciliation
+performs when the packed driver's digest changes.
+
+## NO UPLOAD HAD EVER BEEN STORED, AND FOUR DEFECTS STOOD IN A ROW
+
+Found 2026-09-24 by driving the media form on a deployed worker. Each fix exposed the next, and a
+multipart POST answered 200 or 303 through all of them.
+
+- **PHP's upload table is empty here.** `UploadedFile::isValid()` asks `is_uploaded_file()` and
+  `FileSystem::moveUploadedFile()` calls `move_uploaded_file()`, and only a POST SAPI fills the table
+  both read. The request fragment builds test-mode `UploadedFile`s and records each temp path in
+  `$GLOBALS['__cfw_uploads']`; drupflare's `File\CfwFileSystem` moves exactly those.
+- **An empty directory did not exist.** Storage is a flat keyspace, so `is_dir()` was true only once
+  a file sat under the prefix, and `FileSystem::move()` checks the destination directory without
+  creating it. Every move into a new directory threw. `CfwFileStreamWrapper::mkdir()` remembers what
+  it made now.
+- **`file_save_upload()` keeps a function-local `static $upload_cache`**, keyed on the field name.
+  Nothing can reset a function static, so the second upload to a field got the first file, including
+  one another user uploaded. The object drops the interpreter after a request `carriesUpload()`
+  matches. `multipart-submit.spec.ts` keeps the direct-render control, which still reproduces it.
+- **A public original was Drupal's 404.** Drupal expects the web server to serve
+  `sites/default/files` and has no route for it. The front worker answers it from the file store.
+
+**The property sweep cannot see a function static.** `static-sweep.spec.ts` walks class statics and
+initialised services; a `static` inside a function is invisible to both and to reflection's writer.
+Grep core for `^\s*static \$` in any function a request reaches before trusting the sweep.
 
 ## A PLAUSIBLE CAUSE THAT FITS THE SYMPTOM IS THE EXPENSIVE KIND OF WRONG
 
@@ -1070,9 +1131,11 @@ costs about 648 ms MORE than booting from scratch**, and it also costs ~8 MB a s
 account-wide 5 GB cap. A cost on both meters and no benefit on either, so `HEAP_IMAGE` defaults off.
 
 It agrees in direction with the local `/bootphase` reading of 0.962 and separates far more cleanly.
-The likely mechanism is `digestBytes`, a per-byte JS loop over the restored bytes, which is why
-compressing the stored chunks cannot help: the digest is taken over HEAP bytes rather than stored
-ones, deliberately, so it catches a bad inflate as well as bad storage.
+**The mechanism is unattributed, and it is NOT `digestBytes`,** which this paragraph named for two
+weeks without a reading behind it. The digest walks words, not bytes, and verifying a 37,158,912-byte
+image costs 13-16 ms whole and 19-20 ms as 200 KB chunks on a laptop's V8
+(`node scripts/measure/heap-digest-cost.ts`), about 3% of the gap. Inflate, the 186 chunk reads and
+the write into linear memory are the remaining candidates, none measured.
 
 **AND THE EARLIER RUN THAT MEASURED A SAVING WAS RIGHT ABOUT A DIFFERENT IMAGE.** It read a cold
 serve at 904 ms with an image against 1,218.5 without, a 314.5 ms saving, on a **9,699,328-byte**
@@ -2242,14 +2305,22 @@ and `wrangler.jsonc` declares both namespaces.
 
 Two things to get right before measuring it, each of which cost a wrong reading:
 
-- **The tier is PAID-ONLY by default.** `pageKvEnabled()` ends in `isPaid(env)`, so binding the
-  namespace changes nothing for a free site: it stores no page and has no previous generation to
-  fall back to. `PAGE_KV_ENABLED=1` overrides the plan in both directions.
+- **The tier is on for both plans now, and a free site's writes are GRANTED by the object.** It was
+  paid-only until 2026-09-24. Free KV allows 1,000 writes a day per account, so the front worker
+  stores a page only when the answer carries `x-cfw-kv-grant`, and the object stops granting at
+  `KV_WRITES_PER_DAY` (800 on free). A free site past its budget has nothing new to fall back to.
 - **The generation pointer is discovered once per 5 s window**, so a request straight after a
   `/bump` is answered from the isolate memo at the OLD generation and the tier never runs. One
   `edge=0` request reaches the object and teaches the pointer forward. It cannot be the assertion
   itself: the KV read and the stale read both sit INSIDE the same `edgeWanted` guard that flag
   turns off.
+
+**MEASURED 2026-09-24 on a paid-account throwaway with `PLAN=free`: the stale serve is p50 93 ms
+(n=9, 86-109) and reached the object on none of them. It does NOT beat the object on a warm site.**
+The control, the same window with `edge=0`, answered `HIT` at p50 90 ms (n=10, 11-160): after a
+`/bump` the object keeps serving its own previous copy, so no render was waiting to be avoided. What
+the tier buys there is the Durable Object hop. A cold object and a page with no stored copy were not
+measured. Each cycle was a bump, one `edge=0` request on another path, then the read.
 
 ## A hook timeout that was real did not explain the intermittent blamed on it
 

@@ -28,15 +28,18 @@ it is bound and absent otherwise.
 | `FILES`               | R2               | **not declared** | the page and file mirror drains nothing; the off-Worker serving path is unavailable  |
 | `CF_VERSION_METADATA` | version metadata | declared         | the fleet row records `workerVersion: "unknown"`                                     |
 | `PAGE_KV`             | KV               | declared         | the cross-colo page tier is absent, and so is the stale-generation serve             |
+| `RENDER_LANES`        | Durable Object   | declared         | image styles render on first view instead of on upload                               |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
 **`FILES` is the one binding the shipping config leaves out, because naming it breaks the deploy
 button.** R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
 config that names one is refused with _"Please enable R2 through the Cloudflare Dashboard.
-[code: 10042]"_ on every account that has not done that. KV and D1 have no such requirement:
-wrangler creates `CONFIG_KV` and `FLEET_DB` on first deploy.
+[code: 10042]"_ on every account that has not done that. Enabling R2 requires a payment card on
+either Workers plan, even when usage stays inside the monthly allocation. KV and D1 have no such
+requirement: wrangler creates `CONFIG_KV` and `FLEET_DB` on first deploy.
 
-Add it when you want the mirror:
+Once R2 is enabled, wrangler creates the named bucket on deploy as it does for KV and D1. Add the
+binding when you want the mirror:
 
 ```jsonc
 "r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }]
@@ -157,8 +160,9 @@ value all fall through to the var.
 | `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
 | `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                |
 | `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off   |
-| `PAGE_KV_ENABLED`        | per plan | force the cross-colo KV page tier on (`1`) or off (`0`)                        |
+| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans  |
 | `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
+| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, paid unset  |
 | `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off  |
 | `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation        |
 | `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on        |
@@ -210,10 +214,18 @@ Consumer: `bodyTooLarge()` in `src/site.ts`.
 
 ### The KV Page Tier
 
-`PAGE_KV` is a cross-colo tier between the edge cache and the Durable Object. It is **on for paid and
-off for free** by default. It still costs one Worker request, since the Worker has to run to consult
-it, so what it buys is latency and never serving ceiling. A missing binding always wins over
+`PAGE_KV` is a cross-colo tier between the edge cache and the Durable Object, on for both plans
+whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
+consult it, so what it buys is latency and never serving ceiling. A missing binding always wins over
 `PAGE_KV_ENABLED`.
+
+Free KV allows 1,000 writes a day for the whole account, and `CONFIG_KV` draws on the same allowance.
+So the object grants each page write: an answer that may be stored carries `x-cfw-kv-grant`, and the
+front worker stores nothing without it. The object counts its grants in its daily meter row and stops
+at `KV_WRITES_PER_DAY`, 800 on free. Past that, the site keeps serving from what it already stored
+and from the object. Only the primary grants, so replica lanes do not multiply the budget.
+`/serve-stats` reports `pageKv.writesToday` against `pageKv.budget`. Compiled plans share the namespace
+and carry no budget, so on free they are written only when `PAGE_KV_ENABLED` is `1`.
 
 Stored pages are keyed by site, generation and path, so a generation bump invalidates every one of
 them without enumerating or deleting anything. KV has no bulk delete, so a scheme needing one would
@@ -540,6 +552,7 @@ cross-site request carries it, including a top-level link.
 | `SITE_WARM`             | on        | re-arms below the hibernation threshold so the object stays resident; `0` opts out              |
 | `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm; clamped under 10,000 whatever is set                                           |
 | `RECYCLE_ABOVE_BYTES`   | 117440512 | drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB |
+| `RETAIN_INTERPRETER`    | on        | keeps an evicted instance's interpreter for the next instance to adopt; `0` is off              |
 | `REPLICA_READ_ONLY`     | off       | `1` puts the object in replica mode; see below                                                  |
 | `REPLICA_COUNT`         | 0         | replica lanes per site beyond the primary; 0 is one object per site                             |
 | `REPLICA_LAG_MS`        | 30,000    | how long a serving lane may go without pulling the log; the bound on staleness                  |
@@ -553,6 +566,17 @@ cumulative; `/__migrate` and `/__firstrun` drop the interpreter when they finish
 everything else. It must fire BETWEEN invocations: linear memory is reclaimed only when the old
 module is collected, so dropping mid-request holds both allocations at once. `/serve-stats` reports
 `recycles` and `lastRecycle`; an object recycling every request is paying a boot per page.
+
+The limit is per isolate, not per object, and an isolate can host several objects of one class.
+`/serve-stats` reports `isolate`: its `id`, the `interpreters` it holds and their `linearBytes`
+added together. Two interpreters do not fit 128 MiB, so `interpreters` above 1 is the thing to look
+for on a replica pool.
+
+`RETAIN_INTERPRETER` keeps the interpreter in the isolate when the instance is evicted, so the next
+request skips the boot while the isolate survives: 61-169 ms against about 1-2.5 s measured, after gaps
+up to 150 s in most rounds. When the isolate is gone the next request boots as it would have anyway.
+An adopted interpreter is refused when the site committed a write since it was kept. `/serve-stats`
+reports `retention`.
 
 **`REPLICA_READ_ONLY` is a SAFETY interlock.** Setting it wraps every installed `cfw*` capability so
 the object physically cannot commit an authoritative write, and refuses anything unrecognised. That
@@ -871,10 +895,9 @@ only in these two vars, `cpuTime` on the cold render, nothing asked of either ob
 | both `0`                             | 1277, 1343, 1113, 1251       |   4 |  1,264 |
 
 The ranges do not overlap, so a restore costs about 648 ms more than booting from scratch, and it
-consumes storage against an account-wide 5 GB cap. The likely mechanism is `digestBytes`, a per-byte
-JS loop over the restored bytes. That is also why deflating the stored chunks does not help: the
-digest is taken over heap bytes rather than stored ones, so it catches a bad inflate as well as bad
-storage.
+consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known. Checking
+the restored bytes is not it: that costs 13-20 ms for a 37 MB image
+(`node scripts/measure/heap-digest-cost.ts`).
 
 **The size of the image depends on when it is taken, and the producer takes the expensive one.**
 `snapshotStep()` fires on an alarm arriving with no resident interpreter, so on a fresh site it
@@ -955,18 +978,35 @@ readable when the object dies mid-run. A `wrangler tail` has a 256 KB budget, so
 
 ## Prefill and Mirroring
 
-| var                     | default                   | what it does                                                |
-| ----------------------- | ------------------------- | ----------------------------------------------------------- |
-| `PREFILL`               | on for free, off for paid | seed the serving table from `assets/prefill.json`           |
-| `PREFILL_ON_SAVE`       | on                        | re-render invalidated paths after a content save            |
-| `PREFILL_ON_SAVE_LIMIT` | 25                        | paths one save may queue                                    |
-| `MIRROR_LIMIT`          | per plan                  | files one alarm firing may push to R2; capped at 25         |
-| `HTTP_DRAIN_ON_ALARM`   | on                        | drain queued outbound requests from the alarm               |
-| `HTTP_DRAIN_LIMIT`      | per plan                  | queued outbound requests one firing may fetch; capped at 25 |
+| var                     | default                   | what it does                                                                        |
+| ----------------------- | ------------------------- | ----------------------------------------------------------------------------------- |
+| `PREFILL`               | on for free, off for paid | seed the serving table from `assets/prefill.json`                                   |
+| `PREFILL_ON_SAVE`       | on                        | re-render invalidated paths after a content save                                    |
+| `PREFILL_ON_SAVE_LIMIT` | 25                        | paths one save may queue                                                            |
+| `SAVE_DEBOUNCE_MS`      | 2000                      | how long the refill after a save waits for the rest of a burst; `0` refills at once |
+| `MIRROR_LIMIT`          | per plan                  | files one alarm firing may push to R2; capped at 25                                 |
+| `R2_WRITES_PER_MONTH`   | 900000                    | R2 writes both mirrors may spend in a UTC month; `0` turns both off                 |
+| `HTTP_DRAIN_ON_ALARM`   | on                        | drain queued outbound requests from the alarm                                       |
+| `HTTP_DRAIN_LIMIT`      | per plan                  | queued outbound requests one firing may fetch; capped at 25                         |
 
 `PREFILL` is on for free because free is where a cold first request costs the most: a prefilled path
 is a hit on its first ever request. It is off during a bake, or every render would be a hit of the
 file being rebuilt.
+
+`SAVE_DEBOUNCE_MS` holds the refill after a save for a short window, so a burst of saves costs one
+generation bump and one render of each affected page. A refill that ran between two saves would
+reopen the invalidation and make the second save pay for both again. The window starts at the first
+save and later saves do not extend it. A visitor who asks for an invalidated page is still served at
+once; only the pages nobody has asked for wait.
+
+`R2_WRITES_PER_MONTH` caps what the file and page mirrors spend together. R2's allocation is
+1,000,000 Class A operations a month per account, and every put past it is billed; the default stops
+one site at 90% of that. The count is kept in `cfw_meta` under a key that names the month, so it
+resets on the first of each month. Deletes count as well, so the tally reads high. A spent budget
+leaves the rest of the queue in place and every file keeps serving from the object, which holds the
+bytes either way. `/serve-stats` reports the month's tally as `r2`. Set it to `0` to stop both
+mirrors while leaving `FILES` bound. On an account running several sites, divide the allocation
+between them.
 
 **Mirror to the optimum.** Once R2's read meter binds, moving more traffic off-Worker spends a
 333,333/day meter to save a 100,000/day one. On the default traffic mix the peak is 0.769 off-Worker
@@ -980,15 +1020,41 @@ reads cannot bind at all, the peak lands at 0.898 and is bound by rows.
 
 ## Files and Images
 
-| var                | default   | what it does                                                        |
-| ------------------ | --------- | ------------------------------------------------------------------- |
-| `FILES_PUBLIC_URL` | unset     | origin a mirrored public file is linked from; unset uses the Worker |
-| `IMAGE_ENGINE`     | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
+| var                 | default   | what it does                                                        |
+| ------------------- | --------- | ------------------------------------------------------------------- |
+| `FILES_PUBLIC_URL`  | unset     | origin a mirrored public file is linked from; unset uses the Worker |
+| `IMAGE_ENGINE`      | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
+| `EAGER_DERIVATIVES` | on        | render an upload's image styles on the rendering lanes; `0` off     |
+
+### Image Styles
+
+A public image style's URL points at the Worker's delivery path, `/cfw-img/<id>/<uri>?<transform>`,
+where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL
+from the style's effect chain: scale, scale-and-crop, resize and convert each map to one transform.
+A chain that cannot be expressed as one transform, and any private file, keeps Drupal's stock URL.
+Before this, the toolkit copied the original to the derivative path and every style served the
+full-size source.
+
+With `RENDER_LANES` bound, an image written to `public://` is queued, and the next alarm renders
+every configured style at once on the rendering lanes, Durable Objects that hold no Drupal state.
+The results are stored under `public://cfw-derivatives/`, and the image route answers a stored copy
+in place of the source on the request it already makes, marked `x-cfw-image: STORED`. Measured on a
+deployed worker with the four shipped styles, n=5: the job took 984-1,718 ms on four lanes with five
+or six Durable Object requests, a stored first view answered in 41-91 ms, and the same style
+rendered on first view took up to 1,647 ms. Stored and rendered bytes were identical in all 20
+comparisons. Driven through the media form on a deployed worker, n=5, an upload answered 303 in
+750-939 ms and all four styles were stored 3.9-4.4 s after the POST. `EAGER_DERIVATIVES=0` returns
+to rendering on first view.
 
 ### `FILES_PUBLIC_URL`
 
 Unset, every file is served through the Worker, which is correct and costs one Worker request per
-file. Set to an R2 custom domain, a public file that has already mirrored to the `FILES` bucket is
+file. The front worker answers `/sites/default/files/<path>` from the object's file store and caches
+it for 300 seconds. Drupal has no route for a public file, so until this route existed every public
+original answered Drupal's 404 on a site with no mirror. PNG, JPEG, GIF, WebP and AVIF render inline;
+every other type, SVG and PDF included, is sent as a download under a sandboxing
+`Content-Security-Policy`, because the file shares the site's origin and its session cookie. Set to
+an R2 custom domain, a public file that has already mirrored to the `FILES` bucket is
 linked at that origin instead and costs **no Worker request at all**.
 
 That is one of only two paths on the platform that cost nothing. A zone Cache Rule is not one of them:

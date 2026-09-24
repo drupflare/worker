@@ -14,6 +14,18 @@
  *   bun scripts/economics/comparison.ts --md
  *   bun scripts/economics/comparison.ts --views=1000,10000 --grid-us=280
  */
+import { BREAK_EVEN_RENDERS_PER_DAY } from '../../src/ops/thermal.js';
+import {
+	DO_GB_ALLOCATED,
+	FREE_QUOTAS,
+	PAID_DURATION,
+	ROWS_PER_FILL_MEMORY_BINS,
+	SECONDS_PER,
+	STEADY_STATE_WARMTH,
+	WARM_INTERVAL_MS,
+	keepWarmFleetCost,
+	rowsForWarmthMix
+} from '../measure/free-envelope.js';
 import { num, sweep } from './args.js';
 import { drupflareKwhYear, vpsKwhYear } from './energy.js';
 import { f, n, nr, r, sfx } from './fmt.js';
@@ -42,22 +54,37 @@ const REQ_RATE = 0.3;
 const CPU_RATE = 0.02;
 const ROWW_RATE = 1.0;
 const STORE_RATE = 0.2;
-const DO_REQ_RATE = 0.15; // no included tier modelled, which overstates our own cost
+const DO_REQ_RATE = 0.15;
+const PAID_DO_REQ_INC = 1e6;
 const DAYS_MONTH = 30.44;
 
+const FREE_GBS_DAY = FREE_QUOTAS.durationGbSPerDay;
 const SITE_GB = 4.726784 / 1000.0; // measured: a fresh site is 4,726,784 bytes
-const ROWS_PER_FILL = num('rows-per-fill', 25.0); // mid of the measured 2-94 band
+// the shipping default priced on the warmth mix, from the audit spec's pinned classes. It was a flat
+// 25 ("mid of the 2-94 band"), 14x the shipping figure, which made rows written read as binding
+const ROWS_PER_FILL = num(
+	'rows-per-fill',
+	rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS)
+);
 const RENDER_FRAC = num('render-frac', 0.0438); // derived per-colo figure, not a 1% assumption
 const DO_HIT_FRAC = num('do-hit-frac', 0.18); // share of views that reach the object at all
+// wall clock, since duration bills wall clock; the render figure is the envelope's pessimistic one
+const RENDER_S = num('render-s', SECONDS_PER.warmRender);
+const WARMING = keepWarmFleetCost(1, WARM_INTERVAL_MS);
 
 type Bill = { total: number; free: boolean; binds: string };
 
 /** One bill for the whole account, whatever number of sites share it. */
 function account(sites: number, viewsPerSite: number): Bill {
 	const v = sites * viewsPerSite;
-	const rows = v * RENDER_FRAC * ROWS_PER_FILL;
+	// thermal.ts keeps a site resident above its break-even render rate, and the chain spends rows
+	// and object requests before any visitor arrives
+	const warmed = (viewsPerSite * RENDER_FRAC) / DAYS_MONTH >= BREAK_EVEN_RENDERS_PER_DAY;
+	const warmSites = warmed ? sites : 0;
+	const rows = v * RENDER_FRAC * ROWS_PER_FILL + warmSites * WARMING.rowsPerDay * DAYS_MONTH;
 	const cpuMs = v * ((1 - RENDER_FRAC) * CPU_CACHED + RENDER_FRAC * CPU_RENDER);
-	const doReq = v * DO_HIT_FRAC;
+	const doReq = v * DO_HIT_FRAC + warmSites * WARMING.doRequestsPerDay * DAYS_MONTH;
+	const gbS = v * (DO_HIT_FRAC * SECONDS_PER.doHit + RENDER_FRAC * RENDER_S) * DO_GB_ALLOCATED;
 	const storeGb = sites * SITE_GB;
 
 	const perDay = (x: number) => x / DAYS_MONTH;
@@ -65,6 +92,7 @@ function account(sites: number, viewsPerSite: number): Bill {
 		['requests', perDay(v) / FREE_REQ_DAY],
 		['rows written', perDay(rows) / FREE_ROWS_DAY],
 		['object requests', perDay(doReq) / FREE_DO_REQ_DAY],
+		['duration', perDay(gbS) / FREE_GBS_DAY],
 		['storage', storeGb / FREE_STORE_GB]
 	];
 	caps.sort((a, b) => b[1] - a[1]);
@@ -80,7 +108,10 @@ function account(sites: number, viewsPerSite: number): Bill {
 		(Math.max(0, cpuMs - PAID_CPU_INC) / 1e6) * CPU_RATE +
 		(Math.max(0, rows - PAID_ROWW_INC) / 1e6) * ROWW_RATE +
 		Math.max(0, storeGb - PAID_STORE_INC) * STORE_RATE +
-		(doReq / 1e6) * DO_REQ_RATE;
+		// Durable Object usage over the allowance bills rounded UP to the next million
+		Math.ceil(Math.max(0, doReq - PAID_DO_REQ_INC) / 1e6) * DO_REQ_RATE +
+		Math.ceil(Math.max(0, gbS - PAID_DURATION.includedGbSPerMonth) / 1e6) *
+			PAID_DURATION.usdPerMillionGbS;
 	return { total, free: false, binds: binds[0] };
 }
 
@@ -91,6 +122,12 @@ const PEAK_RATIO = num('peak', 5.0);
 const TARGET_UTIL = num('util', 0.5);
 const SECONDS_MONTH = 2_629_800.0;
 const PANTHEON_BASIC = num('pantheon', 41.0);
+// a latency-matched conventional host: the floor box in each region plus one global load balancer.
+// DigitalOcean's global LB is $15/mo (docs, verified 2026-07-13). Three regions still leave most
+// visitors tens of ms from an origin where the edge answers from their colo, and no database
+// replication is priced, so this too is a floor
+const MATCHED_REGIONS = num('regions', 3);
+const GLOBAL_LB_USD = num('global-lb', 15.0);
 const ACQUIA_ENTRY = num('acquia', 148.0);
 
 /**
@@ -105,6 +142,11 @@ function vpsUsdMonth(views: number): number {
 	const renderS = (views * ORIGIN_RENDER_FRAC) / SECONDS_MONTH;
 	const need = (renderS * PEAK_RATIO) / TARGET_UTIL / RENDER_S_PER_CPU;
 	return (Math.max(2, Math.ceil(need) * 2) / 2) * VPS_USD_PER_2VCPU;
+}
+
+/** One site served from `MATCHED_REGIONS` regions behind a global load balancer. */
+function matchedUsdMonth(views: number): number {
+	return MATCHED_REGIONS * vpsUsdMonth(views / MATCHED_REGIONS) + GLOBAL_LB_USD;
 }
 
 const DENSITY = num('density', 100.0);
@@ -214,14 +256,23 @@ table(
 
 table(
 	'What hosting the same site costs conventionally, per site',
-	['views/site/mo', 'VPS floor', 'managed floor'],
-	VIEWS.map((v) => [n(v, 0), usd(vpsUsdMonth(v)), usd(PANTHEON_BASIC)])
+	['views/site/mo', 'VPS floor', 'latency-matched VPS', 'managed floor'],
+	VIEWS.map((v) => [n(v, 0), usd(vpsUsdMonth(v)), usd(matchedUsdMonth(v)), usd(PANTHEON_BASIC)])
 );
 
 table(
 	'Against the VPS floor',
 	['views/site/mo', ...siteCols],
 	VIEWS.map((v) => [n(v, 0), ...SITES.map((st) => versus(st * vpsUsdMonth(v), account(st, v)))])
+);
+
+table(
+	'Against a latency-matched VPS',
+	['views/site/mo', ...siteCols],
+	VIEWS.map((v) => [
+		n(v, 0),
+		...SITES.map((st) => versus(st * matchedUsdMonth(v), account(st, v)))
+	])
 );
 
 table(
@@ -262,8 +313,8 @@ console.log(
 	"your cost     Cloudflare's published rates on your own account, applied to the measured"
 );
 console.log('              workload. `free` means the whole account fits inside the free plan.');
-console.log('first cap     Which free meter is nearest its limit. It is rarely requests, which is');
-console.log('              where a ceiling is usually assumed to be.');
+console.log('first cap     Which free meter is nearest its limit. At the shipping default it is');
+console.log('              Worker requests, one per view, until storage binds an idle fleet.');
 console.log(
 	'VPS floor     One self-managed VPS per site at about the cheapest real price. Excludes'
 );

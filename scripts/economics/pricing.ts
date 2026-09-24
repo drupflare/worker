@@ -10,6 +10,13 @@
  *
  * Measured figures come from measured.ts with their provenance and workload attached.
  */
+import {
+	DO_GB_ALLOCATED,
+	ROWS_PER_FILL_MEMORY_BINS,
+	SECONDS_PER,
+	STEADY_STATE_WARMTH,
+	rowsForWarmthMix
+} from '../measure/free-envelope.js';
 import { f, fr, n, nr, pctr, r } from './fmt.js';
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
@@ -30,7 +37,7 @@ const DO_ROWW_RATE = 1.0;
 const DO_STORE_RATE = 0.2;
 const DO_ROWW_INC = 50e6;
 const SITE_GB = 4.726784 / 1000.0; // measured: a fresh site is 4,726,784 bytes
-const ROWS_PER_VIEW_FILL = 25.0; // mid of the measured 2-94 band
+const ROWS_PER_VIEW_FILL = rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS);
 
 /**
  * `doHitFrac` is the share of views that reach the Durable Object at all. Measured: 71.5% of one
@@ -49,13 +56,16 @@ export function month(
 	const req = v; // one billed request per view, whole chain
 	const doReq = v * doHitFrac;
 	const rowsW = v * renderFrac * ROWS_PER_VIEW_FILL;
-	const gbs = doReq * (CPU_CACHED / 1000.0) * 0.128; // 128 MB class, charged on wall time
+	// wall clock: a hit holds the object for an indexed read, a render for the whole render
+	const gbs =
+		(doReq * SECONDS_PER.doHit + v * renderFrac * SECONDS_PER.warmRender) * DO_GB_ALLOCATED;
 
 	const cReq = (Math.max(0.0, req - WFP_REQ_INC) / 1e6) * WFP_REQ_RATE;
 	const cCpu = (Math.max(0.0, cpuMs - WFP_CPU_INC) / 1e6) * WFP_CPU_RATE;
 	const cScripts = Math.max(0, sites - WFP_SCRIPTS_INC) * WFP_SCRIPT_RATE;
-	const cDoReq = (doReq / 1e6) * DO_REQ_RATE;
-	const cDoGbs = (gbs / 1e6) * DO_GBS_RATE;
+	// over the paid plan's allowances, rounded up to the next million as Cloudflare bills them
+	const cDoReq = Math.ceil(Math.max(0, doReq - 1e6) / 1e6) * DO_REQ_RATE;
+	const cDoGbs = Math.ceil(Math.max(0, gbs - 400_000) / 1e6) * DO_GBS_RATE;
 	const cRoww = (Math.max(0.0, rowsW - DO_ROWW_INC) / 1e6) * DO_ROWW_RATE;
 	const cStore = sites * SITE_GB * DO_STORE_RATE;
 	const total = WFP_BASE + cReq + cCpu + cScripts + cDoReq + cDoGbs + cRoww + cStore;

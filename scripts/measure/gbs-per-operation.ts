@@ -54,6 +54,12 @@ export const WORKLOADS: readonly WorkloadClass[] = [
 		drive: (s) => [`/assemble?site=${s}&path=/&bins=page`]
 	},
 	{
+		id: 'render-warm-login',
+		label: 'render /user/login, page bin emptied',
+		unit: 'one login page rendered with only the page bin emptied',
+		drive: (s) => [`/assemble?site=${s}&path=/user/login&bins=page`]
+	},
+	{
 		id: 'serve-hit',
 		label: 'stored page',
 		unit: 'one page served from storage',
@@ -207,10 +213,12 @@ if (import.meta.main) {
 	const prefix = arg('prefix', 'gbs');
 	const repeat = Number(arg('repeat', '5'));
 	const settle = Number(arg('settle', '600'));
+	const only = arg('classes').split(',').filter(Boolean);
+	const selected = only.length ? WORKLOADS.filter((w) => only.includes(w.id)) : WORKLOADS;
 
 	if (dry) {
-		console.log(`plan: ${WORKLOADS.length} classes x ${repeat} repeats\n`);
-		for (const w of WORKLOADS) {
+		console.log(`plan: ${selected.length} classes x ${repeat} repeats\n`);
+		for (const w of selected) {
 			const sites = sitesFor(prefix, w, repeat);
 			console.log(`  ${sites.join(', ').padEnd(40)} ${w.label}`);
 			const base = w.provisions ? siteFor(prefix, w.id) : (sites[0] as string);
@@ -229,11 +237,11 @@ if (import.meta.main) {
 	const get = async (path: string) => {
 		const res = await fetch(`${endpoint}${path}`);
 		const text = await res.text();
-		return { status: res.status, text };
+		return { status: res.status, text, workerMs: res.headers.get('x-worker-ms') };
 	};
 
 	// phase 1: provision outside the window, or a migration is charged to a render class
-	for (const w of WORKLOADS) {
+	for (const w of selected) {
 		if (w.provisions) continue;
 		const site = siteFor(prefix, w.id);
 		const m = await get(`/migrate?site=${site}&all=1&prefill=1`);
@@ -256,13 +264,21 @@ if (import.meta.main) {
 	const startedAt = new Date().toISOString();
 	const completed = new Map<string, number>();
 
-	for (const w of WORKLOADS) {
+	for (const w of selected) {
 		const sites = sitesFor(prefix, w, repeat);
 		let done = 0;
 		for (let i = 0; i < repeat; i++) {
 			const site = (w.provisions ? sites[i] : sites[0]) as string;
 			for (const path of w.drive(w.provisions ? siteFor(prefix, w.id) : site, i)) {
 				const res = await get(path);
+				// wall clock of the object call, which spans I/O and so tracks the platform's own
+				let body: { rowsWritten?: number; phpBooted?: boolean; filled?: unknown } = {};
+				try {
+					body = JSON.parse(res.text);
+				} catch {}
+				console.log(
+					`  ${w.id} #${i} ${res.status} x-worker-ms=${res.workerMs ?? '-'} rows=${body.rowsWritten ?? '-'} booted=${body.phpBooted ?? '-'}`
+				);
 				// a 503 is the fill queue answering, not a failure; it still spent duration
 				if (res.status >= 500 && res.status !== 503) {
 					console.warn(`  ${site} ${path} -> ${res.status}`);
@@ -309,7 +325,7 @@ if (import.meta.main) {
 		'\n| class | objects | GB-s total | GB-s per op | rows written/op | activeTime/cpuTime | alloc check |'
 	);
 	console.log('| --- | --- | --- | --- | --- | --- | --- |');
-	for (const w of WORKLOADS) {
+	for (const w of selected) {
 		const names = sitesFor(prefix, w, repeat);
 		const row = sumRows(rows, names);
 		if (!row) {

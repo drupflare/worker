@@ -250,57 +250,68 @@ makes unnecessary, not emissions that stop when a site moves.
 per-tenant charge. Quotas are account-wide, so several sites share one envelope rather than each
 paying its own floor.
 
-### The Free Plan Covers 2.78 Million Views A Month
+### The Free Plan Covers 3.04 Million Views A Month
 
-Across the whole account, split however you like: one site at 2.78 million views, a hundred sites at
-27,799 each, a thousand at 2,779 each. Past that the Workers Paid plan is $5 a month, including 10
+Across the whole account, split however you like: one site at 3.04 million views, a hundred sites at
+30,439 each, a thousand at 3,043 each. Past that the Workers Paid plan is $5 a month, including 10
 million requests, 50 million rows written and 5 GB of storage.
 
-**The meter that runs out first is rows written, not requests.** A request cap is where a ceiling is
-usually assumed to be, and here requests are nowhere near binding. Rows written is a function of the
-render fraction and of rows per fill, which is the same lever the energy section turns on: fewer
-renders is at once a smaller bill and less electricity. For a large idle fleet the binding meter
-changes again, to storage at 4.7 MB per site.
+**The meter that runs out first is Worker requests, one per view.** Every view reaches the Worker,
+cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
+Worker avoids it: a static asset, or a hostname not routed to the Worker. At the shipping default a
+fill writes 1.75 rows, and the re-render ceiling is 50,916 a day, set by rows written. At a 4.38%
+render fraction the full request allowance drives about 4,380 renders a day, under a tenth of that. For a large idle fleet the binding meter changes to storage, at 4.7 MB
+per site, and uploaded files are stored in each site's database against the same 5 GB.
 
 **What you pay, on your own account**
 
 | views/site/mo | 1 site | 10 sites | 100 sites | 1,000 sites |
 | ------------- | ------ | -------- | --------- | ----------- |
 | 1,000         | free   | free     | free      | free        |
-| 10,000        | free   | free     | free      | $5.54       |
-| 100,000       | free   | free     | $5.54     | $102.32     |
-| 1,000,000     | free   | $5.54    | $102.32   | $1,460.56   |
-| 10,000,000    | $5.54  | $102.32  | $1,460.56 | $15,042.98  |
+| 10,000        | free   | free     | free      | $5.42       |
+| 100,000       | free   | free     | $5.42     | $42.67      |
+| 1,000,000     | free   | $6.02    | $47.62    | $848.08     |
+| 10,000,000    | $5.57  | $43.27   | $505.18   | $5,465.36   |
 
 **The first free cap you reach, and how much of it is used**
 
-| views/site/mo | 1 site           | 10 sites         | 100 sites        | 1,000 sites  |
-| ------------- | ---------------- | ---------------- | ---------------- | ------------ |
-| 1,000         | storage 0%       | storage 1%       | storage 9%       | storage 95%  |
-| 10,000        | rows written 0%  | rows written 4%  | rows written 36% | rows written |
-| 100,000       | rows written 4%  | rows written 36% | rows written     | rows written |
-| 1,000,000     | rows written 36% | rows written     | rows written     | rows written |
-| 10,000,000    | rows written     | rows written     | rows written     | rows written |
+| views/site/mo | 1 site       | 10 sites     | 100 sites    | 1,000 sites |
+| ------------- | ------------ | ------------ | ------------ | ----------- |
+| 1,000         | storage 0%   | storage 1%   | storage 9%   | storage 95% |
+| 10,000        | requests 0%  | requests 3%  | requests 33% | requests    |
+| 100,000       | requests 3%  | requests 33% | requests     | requests    |
+| 1,000,000     | requests 33% | requests     | requests     | requests    |
+| 10,000,000    | requests     | requests     | requests     | requests    |
 
 **What hosting the same site costs conventionally, per site**
 
-| views/site/mo | VPS floor | managed floor |
-| ------------- | --------- | ------------- |
-| 1,000         | $5.00     | $41.00        |
-| 10,000        | $5.00     | $41.00        |
-| 100,000       | $5.00     | $41.00        |
-| 1,000,000     | $5.00     | $41.00        |
-| 10,000,000    | $5.00     | $41.00        |
+| views/site/mo | VPS floor | latency-matched VPS | managed floor |
+| ------------- | --------- | ------------------- | ------------- |
+| 1,000         | $5.00     | $30.00              | $41.00        |
+| 10,000        | $5.00     | $30.00              | $41.00        |
+| 100,000       | $5.00     | $30.00              | $41.00        |
+| 1,000,000     | $5.00     | $30.00              | $41.00        |
+| 10,000,000    | $5.00     | $30.00              | $41.00        |
 
 **Against the VPS floor**
 
 | views/site/mo | 1 site      | 10 sites     | 100 sites     | 1,000 sites    |
 | ------------- | ----------- | ------------ | ------------- | -------------- |
 | 1,000         | free        | free         | free          | free           |
-| 10,000        | free        | free         | free          | 902.3x cheaper |
-| 100,000       | free        | free         | 90.2x cheaper | 48.9x cheaper  |
-| 1,000,000     | free        | 9.0x cheaper | 4.9x cheaper  | 3.4x cheaper   |
-| 10,000,000    | 1.1x dearer | 2.0x dearer  | 2.9x dearer   | 3.0x dearer    |
+| 10,000        | free        | free         | free          | 922.2x cheaper |
+| 100,000       | free        | free         | 92.2x cheaper | 117.2x cheaper |
+| 1,000,000     | free        | 8.3x cheaper | 10.5x cheaper | 5.9x cheaper   |
+| 10,000,000    | 1.1x dearer | 1.2x cheaper | 1.0x dearer   | 1.1x dearer    |
+
+**Against a latency-matched VPS**
+
+| views/site/mo | 1 site       | 10 sites      | 100 sites      | 1,000 sites     |
+| ------------- | ------------ | ------------- | -------------- | --------------- |
+| 1,000         | free         | free          | free           | free            |
+| 10,000        | free         | free          | free           | 5533.4x cheaper |
+| 100,000       | free         | free          | 553.3x cheaper | 703.1x cheaper  |
+| 1,000,000     | free         | 49.8x cheaper | 63.0x cheaper  | 35.4x cheaper   |
+| 10,000,000    | 5.4x cheaper | 6.9x cheaper  | 5.9x cheaper   | 5.5x cheaper    |
 
 **Energy avoided per year**
 
@@ -334,15 +345,16 @@ So $5 buys enough throughput for the average load, from one location. It does no
 profile: the same workload measures 100.2 ms on a VPS against 8.9 ms on drupflare once an 82 ms
 round trip is injected, because one serves from a region and the other from the visitor's colo. It
 does not buy the tail either, where the VPS p50 runs from 59 ms at 4 clients to 182 ms at 96 while
-drupflare holds. Read the cost tables against the latency and energy sections rather than alone.
+drupflare holds. The latency-matched column prices the first of those; nothing here prices the
+second.
 
 ### Reading These Tables
 
 The shape of the two bills differs more than the totals do. A conventional host charges per site per
 month whether or not anyone visits; this charges for traffic served, against an allowance that costs
 nothing until it is crossed. The comparison therefore widens with the number of idle sites and
-narrows with traffic, and on a single site at ten million views a month the VPS is the cheaper of
-the two.
+narrows with traffic. On a single site at ten million views a month the VPS floor is the cheaper of
+the two, by the $5 subscription plus $0.57 of usage, and the latency-matched host is 5.4x dearer.
 
 Energy moves far less than cost does. The conventional arm is charged both its idle allocation and
 the marginal joules of the work it does, and across a ten-thousandfold range of traffic the total
@@ -357,6 +369,10 @@ What the figures are:
   labour of running it, which for most people is the largest real cost, and it excludes CDN egress.
   The origin is charged every view as a render, derived rather than assumed: a per-location cache
   never warms when a path is requested less often than the edge TTL expires it.
+- **Latency-matched VPS.** `derived (modelled)`. The floor box in each of three regions behind one
+  global load balancer, DigitalOcean's at $15 a month. It is what serving visitors from nearby costs
+  conventionally, and it is still a floor: three regions leave most visitors tens of milliseconds
+  from an origin where the edge answers from their own colo, and no database replication is priced.
 - **Managed floor.** Published. Pantheon Basic at $41 a month for 20,000 visits; Acquia's
   self-service tier is $148. Held flat because overage is not published in a form worth quoting.
 - **Energy.** Derived, from marginal joules measured on the same counter as everything else. The

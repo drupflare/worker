@@ -31,7 +31,7 @@ project shipped before it is gone from the path.
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Authenticated page, RENDER path | **208 ms p50**, and it is the render path rather than the median | see the mixture below |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **47,749 renders/day** at the shipping default, **10,866** with `MEMORY_CACHE_BINS=none`; the same on the alarm chain and the fill window | duration binds at the default, rows on the conservative arm |
+| Regeneration ceiling, free | **50,916 renders/day** at the shipping default, **10,866** with `MEMORY_CACHE_BINS=none`; the same on the alarm chain and the fill window | rows written on both arms |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 | Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
 | Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
@@ -45,15 +45,19 @@ Free's limits are aggregate daily budgets, not the 10 ms per-invocation CPU cap.
 one execution unit and the architecture decides what an execution unit is: 20 Durable Object hops
 accumulate 142 ms with no single invocation over 10 ms.
 
-**And the cap does not fail a request either, measured directly.** A single invocation reading
-**1,882 ms of `cpuTime`** completed on a deployed free worker on 2026-09-07. Read the 10 ms figure as
-the amortised allowance it is; a proposal refused because "it will not fit in 10 ms" has been refused
-against a limit nobody measured.
+**The cap does not fail a Durable Object invocation, and it fails a Worker handler only under
+sustained heavy CPU.** A single invocation reading **1,882 ms of `cpuTime`** completed on a deployed
+free worker on 2026-09-07. A later probe ran ~1.5 s burns back to back: the object completed 10/10
+at 1.35-1.54 s, while the Worker handler completed two and was then killed at 412 ms and at 10 ms on
+every call after. The front worker's image transform does not meet that limit at page-load rates. On
+a fresh free deploy, 1090 px transforms of a 3000x1571 JPEG ran 30 in sequence and 40 in two
+concurrent waves of 20, at `cpuTime` p50 ~180 ms and max 493 ms, with every invocation reported as
+`success`. Where between those two workloads the Worker limit sits is unmeasured.
 
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **duration** at the default | **47,749/day** |
+| **Regeneration** | distinct pages re-rendered per day | rows written | **50,916/day** |
 
 **The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
 divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
@@ -78,10 +82,10 @@ against a control:
 | --- | --- | --- | --- |
 | `MEMORY_CACHE_BINS=none`, `realRender` class | 8.20 | **10,866** | rows |
 | `dynamic_page_cache` in memory, warmth mix | 2.50 | 35,641 | rows |
-| **shipping default**: `dynamic_page_cache` and `menu` | 1.75 | **47,749** | duration |
+| **shipping default**: `dynamic_page_cache` and `menu` | 1.75 | **50,916** | rows |
 
 The alarm chain and the fill window now give the SAME ceiling, because the gap between them was the
-180-slice constant. Rows stop binding at ~1.9 rows/fill, where duration takes over at 47,749/day.
+180-slice constant. Duration would take over only below ~0.27 rows/fill.
 
 **`menu` joined the default on 2026-09-23, chosen by a census rather than by being a Drupal bin.**
 Each reconstructible bin was held in memory on a fresh object, in the audit's sequence so its figures
@@ -90,22 +94,31 @@ map onto the model's classes:
 | held in memory | rows/fill | regeneration/day | bound by |
 | --- | --- | --- | --- |
 | `dynamic_page_cache` | 2.50 | 35,641 | rows |
-| + `menu` | 1.75 | **47,749** | **duration** |
+| + `menu` | 1.75 | **50,916** | rows |
 | + `render` | 2.25 | 39,601 | rows |
 | + `discovery` | 2.40 | 37,126 | rows |
-| + all three | 1.40 | 47,749 | duration |
+| + all three | 1.40 | 63,645 | rows |
 
 `menu` is the only candidate that writes on a warm re-render, the class carrying 70% of the mix, so it
-alone reaches the duration wall and nothing added after it buys anything. Every arm produced a page
+is the largest single step. Adding `render` and `discovery` on top takes a fill to 1.40 rows and the
+ceiling to 63,645, and both were refused on costs the rows census cannot see. Both refuse a stale
+entry. `discovery` sat at its 64-entry bound, evicting, and added 12.4 MiB of heap. `render` fit the
+heap but made the first render after an interpreter drop 2,696 ms against 1,450 (medians, n=10,
+deployed, forced recycle), for about 1.5% of a free day's rows. The shipped two cost a cold
+reassemble 1,324 ms against 1,073 all-SQL and stay, because they take a modelled free day's rows
+written from 72% of the quota to 32%. Every arm produced a page
 identical in CONTENT, not just length, once two values were normalised that have nothing to do with a
 cache bin: the random `form_build_id`, which `Html::getId()` shortens by a byte whenever the token
 contains consecutive hyphens, and `permissionsHash`, an HMAC keyed on each site's randomly minted
 private key. `menu` also refuses an entry whose tag checksum moves through SQL alone, which matters
 more for it than for any other bin, since a menu save invalidates every cached page.
 
-**Duration binds on a pessimistic figure.** It prices every fill at `SECONDS_PER.warmRender`, 2.127 s,
-which is the cold-bins mixture above rather than a warm re-render (60.2 ms on warm bins), so 47,749 is
-a floor. Rows would bind at 50,916 if that term were right.
+**Duration does not bind, measured on a deployed object.** A steady-state fill costs 209-308 ms of
+wall clock with three bins emptied (n=9) and 52-95 ms reassembling from a warm dynamic page cache
+(n=18); the first fill after an idle boots and costs 4.5-8.4 s. `x-worker-ms` agreed with billed
+`activeTime` to within 2-6%. Priced at the 308 ms maximum, duration allows 329,748 fills a day. Until
+2026-09-24 the model priced a fill at the 2,127 ms cold-bins figure, which made duration read as
+binding at 47,749.
 
 **Each class is priced on its dearer path.** `/user/login` realRenders in 8 and reassembles in 1; `/`
 realRenders in 3 and reassembles in 2, because the login form carries six `dynamic_page_cache`

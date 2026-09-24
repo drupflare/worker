@@ -230,7 +230,17 @@ describe.skipIf(FROM_SOURCE)(
 					const realRender = await arm('/user/login', ['page', 'dynamic_page_cache']);
 					// page bin only: dynamic_page_cache stays warm, so this is a reassemble
 					const warmReassemble = await arm('/user/login', ['page']);
-					return { firstEver, anotherNewPath, realRender, warmReassemble };
+					// the front page reassembles dearer than login, so the class is priced on it.
+					// Appended AFTER the four, because the classes above are sequence-sensitive
+					await arm('/');
+					const frontReassemble = await arm('/', ['page']);
+					return {
+						firstEver,
+						anotherNewPath,
+						realRender,
+						warmReassemble,
+						frontReassemble
+					};
 				});
 
 				const table = {
@@ -331,7 +341,17 @@ describe.skipIf(FROM_SOURCE)(
 					const anotherNewPath = await arm('/user/password');
 					const realRender = await arm('/user/login', ['page', 'dynamic_page_cache']);
 					const warmReassemble = await arm('/user/login', ['page']);
-					return { firstEver, anotherNewPath, realRender, warmReassemble };
+					// the front page reassembles dearer than login, so the class is priced on it.
+					// Appended AFTER the four, because the classes above are sequence-sensitive
+					await arm('/');
+					const frontReassemble = await arm('/', ['page']);
+					return {
+						firstEver,
+						anotherNewPath,
+						realRender,
+						warmReassemble,
+						frontReassemble
+					};
 				});
 
 				console.log(
@@ -378,7 +398,8 @@ describe.skipIf(FROM_SOURCE)(
 				// the same way the SQL arm above pins its own -- reassemble as a bound, for the
 				// front-page reason given there
 				expect(out.realRender.rows).toBe(ROWS_PER_FILL_MEMORY_BINS.realRender);
-				expect(out.warmReassemble.rows).toBeLessThanOrEqual(
+				// priced on the DEARER path, which is the front page
+				expect(Math.max(out.warmReassemble.rows, out.frontReassemble.rows)).toBe(
 					ROWS_PER_FILL_MEMORY_BINS.warmReassemble
 				);
 				expect(out.anotherNewPath.rows).toBe(ROWS_PER_FILL_MEMORY_BINS.firstEverForPath);

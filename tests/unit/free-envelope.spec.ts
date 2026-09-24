@@ -243,20 +243,16 @@ describe('the DURATION meter, which is reported whether or not it binds', () => 
 		expect(e.duration.servingUseGbS).toBeLessThan(FREE_QUOTAS.durationGbSPerDay * 0.1);
 	});
 
-	it('does not bind regeneration either, but the margin NARROWED to 5.0x', () => {
-		// 5.8x while a fill cost 12 rows, 4.4x at 9, and 5.0x once warming was subtracted -- that
-		// last one moves the ROWS ceiling and not the duration one, so the margin widens back.
-		// Cheaper rows raise the rows ceiling toward the duration one, so each further row saved
-		// buys less than the last and duration is what takes over. Asserted as a band rather than a
-		// floor, because the direction is the finding
+	it('does not bind regeneration, by more than 10x on the conservative arm', () => {
+		// it read 4-6x while a fill was priced at the 2,127 ms cold-bins mixture. The steady-state
+		// fill measured 308 ms at worst, deployed, so duration sits far above the rows ceiling
 		const e = envelope(DEFAULT_MIX, { windowed: true });
 		const byDuration = Math.floor(e.duration.availableGbS / e.duration.perFillGbS);
 		expect(e.regenerationBoundBy).toBe('rows');
-		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 4);
-		expect(byDuration).toBeLessThan(e.regenerationsPerDay * 6);
+		expect(byDuration).toBeGreaterThan(e.regenerationsPerDay * 10);
 	});
 
-	it('charges a cold fill ~2.9x a warm one, because boot is wall clock too', () => {
+	it('charges a cold fill far above a warm one, because boot is wall clock too', () => {
 		const warm = envelope(DEFAULT_MIX, { windowed: true });
 		const cold = envelope(DEFAULT_MIX, { windowed: true, fillWarmth: 'cold' });
 		expect(cold.duration.perFillGbS / warm.duration.perFillGbS).toBeCloseTo(
@@ -284,14 +280,14 @@ describe('always-warm objects, which is only ONE of the replica architectures', 
 		// serving still holds, because a cached view barely touches the meter
 		expect(one.servingViewsPerDay).toBe(100_000);
 
-		// BUT REGENERATION NO LONGER DOES, and the 0.125 error was hiding it. One always-warm
-		// object leaves 1,940.8 GB-s, and at 0.272256 GB-s per warm fill that funds ~7,128
-		// regenerations against the 8,196 rows allow -- so DURATION becomes the binding meter for
-		// regeneration at ONE replica, not at two. The binary reading said rows still bound
-		expect(one.regenerationBoundBy).toBe('duration');
-		expect(one.regenerationsPerDay).toBeLessThan(
-			envelope(DEFAULT_MIX, { windowed: true }).regenerationsPerDay
-		);
+		// and so does regeneration. This asserted that ONE replica made duration bind, which held
+		// only while a fill was priced at 2,127 ms. At the measured 308 ms the 1,940.8 GB-s left
+		// funds far more fills than rows allow, so the replica costs duration headroom and no
+		// regenerations
+		const none = envelope(DEFAULT_MIX, { windowed: true });
+		expect(one.regenerationBoundBy).toBe('rows');
+		expect(one.regenerationsPerDay).toBe(none.regenerationsPerDay);
+		expect(one.duration.availableGbS).toBeLessThan(none.duration.availableGbS);
 	});
 
 	it('takes BOTH ceilings to zero at two, before a single visitor arrives', () => {
@@ -597,7 +593,7 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		expect(at100 / at5).toBeLessThan(1.03);
 	});
 
-	it('shows rows work pays until ~1.9 rows/fill, where duration takes over', () => {
+	it('shows rows work paying all the way down to a fraction of a row per fill', () => {
 		const ladder = [17, 8, 4, 2, 1].map(
 			(rows) =>
 				envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: rows }).regenerationsPerDay
@@ -609,9 +605,13 @@ describe('the fill BATCH, which the model shipped without and the code already h
 		// 2 -> 1 no longer flattens: it still gains, just less, because DURATION takes over rather
 		// than the R2 Class A term, which no longer applies to a config that writes nothing to R2
 		expect(ladder[4]!).toBeGreaterThan(ladder[3]!);
+		// duration takes over only below ~0.27 rows/fill now; it was ~1.9 at the cold-bins figure
 		expect(envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 1 }).regenerationBoundBy).toBe(
-			'duration'
+			'rows'
 		);
+		expect(
+			envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 0.25 }).regenerationBoundBy
+		).toBe('duration');
 		// and the R2 term still applies when a mirror really exists
 		expect(
 			envelope(DEFAULT_MIX, { windowed: true, rowsPerFill: 1, mirror: true })

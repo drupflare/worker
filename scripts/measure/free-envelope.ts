@@ -300,18 +300,18 @@ export const SECONDS_PER = {
 	/** one indexed read on the fast storage lane */
 	doHit: 0.003,
 	/**
-	 * LABELLED A WARM RENDER AND IT IS NOT ONE. 2,127 ms is `RENDER_COLD_BINS_MS` in
-	 * `scripts/economics/measured.ts`, whose own docblock says never to multiply it by an
-	 * invalidation frequency -- and a per-fill duration is exactly that. Re-measured 2026-09-23 it is
-	 * also a MIXTURE: 1,229 ms with a warm container, 3,080 with it emptied. The steady-state
-	 * re-render on a warm object is `RENDER_WARM_BIN_MS`, 60.2 ms.
+	 * The dearest STEADY-STATE fill measured, which is what a fill costs on an object busy enough to
+	 * reach the regeneration ceiling. Deployed 2026-09-24, `gbs-per-operation.ts`, wall clock from
+	 * `x-worker-ms` and cross-checked against billed `activeTime` (2-6% high, the hop):
 	 *
-	 * It matters now because duration BINDS at the shipping default, and this figure is why: it
-	 * overstates a fill, so the duration ceiling is conservative. Rows would bind about 7% higher if
-	 * it were right. Left in place until the steady-state fill's wall clock is measured, since a
-	 * smaller guess here would move a headline in the flattering direction on no evidence.
+	 * - three bins emptied (page, dynamic page cache, render): 209-308 ms, n=9 after the boot
+	 * - reassemble from a warm dynamic page cache, `/` and `/user/login`: 52-95 ms, n=18
+	 * - the first fill after an idle, which boots: 4,467-8,401 ms, and that is `coldRender`
+	 *
+	 * Priced at the 308 ms maximum, so every class is covered from above. It was 2,127 ms, the
+	 * cold-bins `RENDER_COLD_BINS_MS` mixture, which made duration read as binding at the default.
 	 */
-	warmRender: 2.127,
+	warmRender: 0.308,
 	/** a cold render, 6,140 ms measured: boot plus render in one invocation */
 	coldRender: 6.14
 } as const;
@@ -459,8 +459,10 @@ export function coldUrlCost(rowsPerFill: number = ROWS_PER_FILL.realRender): Col
  * - **No slicing code exists.** There is no `bootSlice`, no cursor, nothing under `src/` that
  *   resumes a partial boot, and `TECHNICAL_REPORT.md`'s Boot section says why there cannot be:
  *   `_run()` enters wasm and the stack runs to completion, so a boot has no seam to resume from.
- * - **The cap does not fail a request**, measured 2026-09-07 -- a 1,882 ms `cpuTime` invocation
- *   SUCCEEDED on a deployed free worker -- so the premise that forced the slicing is false.
+ * - **The cap does not fail an object invocation**, measured 2026-09-07 -- a 1,882 ms `cpuTime`
+ *   invocation SUCCEEDED on a deployed free worker -- so the premise that forced the slicing is
+ *   false. (A Worker handler running ~1.6 s burns back to back was cut to 10 ms; a fill runs in the
+ *   object.)
  * - **A batch drains in ONE invocation, measured on a deployed FREE worker**, n=5 per k with every
  *   batch verified to drain exactly k: per-page wall 109 ms at k=1, 82 at k=5, 50 at k=10, 42.9 at
  *   k=20. That is the direct observation, and `src/ops/plan-profile.ts` carries it.
@@ -603,25 +605,20 @@ export const ROWS_PER_FILL = {
 } as const;
 
 /**
- * The same four classes at the SHIPPING DEFAULT, where `dynamic_page_cache` is an in-memory bin.
+ * The same four classes at the SHIPPING DEFAULT: `dynamic_page_cache` and `menu` in memory.
  *
- * MEASURED 2026-09-23 by `rows-per-fill-audit.spec.ts`, whose default arm now drives the same four
- * classes in the same order as the SQL arm. Order matters and cost a wrong reading: an arm that
- * takes `realRender` straight after a throwaway both-bins fill reads one row higher than the same
- * class in the SQL arm's sequence, and the model is pinned to the latter.
+ * MEASURED by `rows-per-fill-audit.spec.ts`, whose default arm drives the four classes in the SQL
+ * arm's order. Order matters and cost a wrong reading: an arm that takes `realRender` straight after
+ * a throwaway both-bins fill reads one row higher than the same class in the SQL arm's sequence.
  *
- * AT THE DEFAULT OF `dynamic_page_cache,menu` a real re-render is **1** row -- the `cfw_page`
- * upsert and nothing else -- which reconciles exactly: {@link ROWS_PER_FILL}'s 8, minus the 6
- * `cache_dynamic_page_cache` rows, minus the 1 `cache_menu` row. With `dynamic_page_cache` alone it
- * was 2. The cold classes barely move, because the in-memory bins are most of a re-render and almost
- * none of a cold one: a first fill is 87 against 91 and a never-routed path 11 against 14. That
- * asymmetry is why the headline is priced on a MIX rather than on `realRender` alone -- see
- * {@link rowsForWarmthMix}.
+ * A real re-render is **1** row, the `cfw_page` upsert: {@link ROWS_PER_FILL}'s 8, minus the 6
+ * `cache_dynamic_page_cache` rows and the 1 `cache_menu` row. The cold classes barely move, because
+ * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 87 against
+ * 91 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
+ * see {@link rowsForWarmthMix}. (With `render` in memory too they read 72 and 6; it is not default.)
  *
- * `warmReassemble` stays at the front-page 2, for the reason on the SQL table's class, and it is
- * the ONE figure here not re-measured with `menu` in memory: the front page's two rows were read by
- * `fill-bins.spec.ts` with every bin in SQL. Holding it at 2 can only overstate, so the headline
- * stays a floor while it is owed.
+ * `warmReassemble` is the front page's 2, measured at this default in the same arm (login
+ * reassembles in 1); the class is priced on its dearer path.
  */
 export const ROWS_PER_FILL_MEMORY_BINS = {
 	warmReassemble: 2,

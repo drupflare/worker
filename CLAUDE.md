@@ -100,9 +100,10 @@ Three things the rig cannot say, and each has bitten a comparison before:
 - **`wrangler dev` is one local workerd**, so throughput there is a property of the laptop. Absolute
   CPU still comes only from `cpuTime` on a deployed worker; what this gives is a same-machine RATIO.
 - **The authenticated arm ran with no replica lanes and no compiled plan.** A plan is 0 ms median and
-  max, n=57 deployed, and it needs two sessions in a role set to agree before it compiles, which one
-  benchmark client never gives. **A single-editor site therefore never gets one** -- correct as a
-  safety property, and a real coverage hole.
+  max, n=57 deployed, and a shared plan needs two sessions in a role set to agree before it
+  compiles, which one benchmark client never gives. A single-editor site gets a private plan keyed
+  to its own session instead (`privatePlanKey()` in `src/ops/edge-plan.ts`), so this arm's missing
+  plan is the rig's, not the product's.
 
 ## The levers are writable now, and `PLAN` is deliberately not one of them
 
@@ -1214,7 +1215,7 @@ subresource the CSS asks for, which only a browser fetches.
 and stored page bytes, not Worker requests. Measured on `/` with the lever on: 13 aggregates replacing
 63 tags, 17,678 bytes of markup down to 12,211.
 
-## Workers Cache is dominated here, and a `ctx.exports` call is a BILLED invocation
+## Workers Cache is dominated here, and a `ctx.exports` call is its own invocation
 
 Measured 2026-09-09 on three deployed free workers, 60 worker requests and 240 static-asset requests
 each, invocations read from `workersInvocationsAdaptive`:
@@ -1229,8 +1230,10 @@ Three things it settles:
 
 - **Per-entrypoint caching works with no top-level block**, which the docs allow and which is what
   makes a gateway pattern expressible.
-- **A `ctx.exports.X.fetch()` is its own billed invocation.** The control's 120 is 60 requests times
-  two, gateway plus inner. So a gateway-and-inner split DOUBLES the request meter on every miss.
+- **A `ctx.exports.X.fetch()` is its own invocation.** The control's 120 is 60 requests times two,
+  gateway plus inner. Whether the second one is BILLED is a different question this instrument
+  cannot answer: Cloudflare's pricing page says a request through a service binding incurs no
+  additional request fee, and whether it counts toward free's 100,000/day is unmeasured.
 - The 63 is 60 gateway plus 3 inner, for 3 distinct URLs: the cache absorbed 95% of the inner tier.
   The 5 is the top-level arm caching the GATEWAY itself, which for this project is a disqualifier
   rather than a win, since the gateway is what routes by hostname and resolves the plan.
@@ -1238,14 +1241,28 @@ Three things it settles:
 **So the L0 tier is refused, and the reason is that it is dominated by what already ships.** The front
 worker already runs a `caches.default` tier at a 300 s TTL before the Durable Object hop and reports
 it as `x-cfw-edge`. An L0 entrypoint's only advantage over that is not running the inner entrypoint on
-a hit, and on a hit that entrypoint is a cache read; against it stands a second billed invocation on
-every miss. The surviving objective is unchanged and belongs to off-worker serving: a hostname that is
+a hit, and on a hit that entrypoint is a cache read; against it stands a second invocation on every
+miss. The surviving objective is unchanged and belongs to off-worker serving: a hostname that is
 not routed to the Worker.
 
 **The static-asset billing question is UNANSWERED and the instrument is why.** 720 asset requests
 produced zero rows on all three arms, including the one the docs say is billed, so
 `workersInvocationsAdaptive` counts invocations and cannot see a billed non-invocation. Do not record
 the doc's sentence as a measurement.
+
+**The instrument that can answer it is the free daily cap.** Drive ~100,000 asset requests, then count
+Worker requests until the first refusal: a refusal near 100,000 means assets were not counted, one near
+zero means they were. The same rig answers the service-binding question. It spends the whole free
+account's Worker allowance until 00:00 UTC, so it waits for a free account with nothing else on it;
+`burrow-e2e2` lives on the current one.
+
+**Two asset-routing facts, measured 2026-09-24 on a free throwaway** with `run_worker_first:
+["/dyn/*"]` and no `not_found_handling`. The asset layer IGNORES THE QUERY STRING: `/?page=1` and
+`/?q=x` both answered the published `index.html`. And a POST to a published path answers **405 from
+the asset layer** without running the Worker. `_headers` applied to every asset response, and an
+unmatched path fell through to the Worker as expected. So a page published as an asset answers every
+pager, search and filter URL on its path with the same bytes, and breaks any form that posts back to
+its own URL.
 
 ## `config/` is the declaration and `src/ops/generated/` is what the edge reads
 
@@ -2515,8 +2532,10 @@ the worker list returns to exactly its prior baseline -- workers AND
 alone will not show it.
 
 **THE FREE ACCOUNT IS A SEPARATE ONE**: `FREE_CLOUDFLARE_ACCOUNT_ID` / `FREE_CLOUDFLARE_API_TOKEN`
-in the shell profile, exported as `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`. Its baseline is
-0 workers, so anything listed there is something a run left behind.
+in the shell profile, exported as `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`. It is not empty:
+burrow's e2e rig `burrow-e2e2` lives there with three Durable Object namespaces, beside two KV
+namespaces. Record the inventory before a run and diff against it, and never exhaust the account's
+daily allowance while that rig depends on it.
 
 A DO-namespace deploy needs ~60 s propagation before `stub.fetch()` stops returning "Worker not
 found" - wait, do not debug it.

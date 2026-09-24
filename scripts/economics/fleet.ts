@@ -6,6 +6,7 @@
  * captures most of the multi-tenancy saving. Every contested input takes the value generous to the
  * opponent.
  */
+import { model, pageStoreFraction } from '../measure/render-fraction.js';
 import { num, sweep } from './args.js';
 import { fr, nr, pctr, r } from './fmt.js';
 
@@ -28,6 +29,18 @@ export const G_US = num('grid-us', 384.0);
 const RAM_GB_HOST = 1536.0; // a large modern 2-socket host
 const RAM_GB_SITE = 1.0; // php-fpm pool + opcache + MySQL share for a small Drupal site; generous
 
+/** the opponent's edge misses reach an origin, so its fraction carries the TTL floor over 8 colos */
+export function originRenderFraction(viewsMonth: number): number {
+	return model({
+		paths: 100,
+		colos: 8,
+		viewsPerMonth: viewsMonth,
+		savesPerDay: 5,
+		pagesPerSave: 5,
+		zipf: 1
+	}).fraction;
+}
+
 export function watts(util: number): number {
 	return IDLE_W + (PEAK_W - IDLE_W) * util;
 }
@@ -36,7 +49,7 @@ export function watts(util: number): number {
 export function sharedHosting(
 	sites: number,
 	viewsMonth: number,
-	renderFrac = 0.01
+	renderFrac = originRenderFraction(viewsMonth)
 ): { hosts: number; util: number; kwh: number } {
 	const byRam = RAM_GB_HOST / RAM_GB_SITE;
 	// CPU the fleet actually needs, in core-seconds/year, using the SAME per-request cost as
@@ -53,7 +66,11 @@ export function sharedHosting(
 	return { hosts, util, kwh };
 }
 
-export function drupflare(sites: number, viewsMonth: number, renderFrac = 0.01): number {
+export function drupflare(
+	sites: number,
+	viewsMonth: number,
+	renderFrac = pageStoreFraction(viewsMonth)
+): number {
 	const viewsY = sites * viewsMonth * 12.0;
 	const cpuS =
 		(viewsY * ((1 - renderFrac) * CPU_MS_CACHED + renderFrac * CPU_MS_RENDER)) / 1000.0;
@@ -62,16 +79,16 @@ export function drupflare(sites: number, viewsMonth: number, renderFrac = 0.01):
 }
 
 if (import.meta.main) {
-	console.log('1,000 sites, 1% of views render. Opponent = consolidated shared hosting,');
-	console.log("given drupflare's own per-request CPU so only idle and PUE differ.\n");
+	console.log('1,000 sites. Opponent = consolidated shared hosting behind a CDN, given');
+	console.log("drupflare's per-request CPU so only idle, PUE and the render fraction differ.\n");
 	console.log(
-		`${r('views/site/mo', 13)} ${r('hosts', 7)} ${r('util', 6)} ${r('shared kWh/y', 13)} ${r('drupflare', 11)} ${r('saving', 8)}`
+		`${r('views/site/mo', 13)} ${r('shared rnd', 10)} ${r('df rnd', 8)} ${r('hosts', 7)} ${r('util', 6)} ${r('shared kWh/y', 13)} ${r('drupflare', 11)} ${r('saving', 8)}`
 	);
-	for (const v of VIEWS) {
+	for (const v of [...VIEWS, 20_000_000]) {
 		const { hosts, util, kwh } = sharedHosting(1000, v);
 		const d = drupflare(1000, v);
 		console.log(
-			`${nr(v, 13)} ${fr(hosts, 7, 1)} ${pctr(util, 6, 1)} ${nr(kwh, 13)} ${nr(d, 11, 1)} ${fr((1 - d / kwh) * 100, 7, 1)}%`
+			`${nr(v, 13)} ${pctr(originRenderFraction(v), 10, 2)} ${pctr(pageStoreFraction(v), 8, 3)} ${fr(hosts, 7, 1)} ${pctr(util, 6, 1)} ${nr(kwh, 13)} ${nr(d, 11, 1)} ${fr((1 - d / kwh) * 100, 7, 2)}%`
 		);
 	}
 

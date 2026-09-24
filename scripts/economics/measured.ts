@@ -45,6 +45,9 @@ export const CACHED_SERVE_TOTAL_MS = 1.8;
 /** previous generation out of PAGE_KV, p50 n=29, and zero Durable Object invocations */
 export const STALE_SERVE_MS = 12.0;
 
+/** a freshly provisioned site's database, 4,726,784 bytes, in the GB the storage meters bill */
+export const SITE_GB = 4.726784 / 1000.0;
+
 // --- paths that are not a plain serve ----------------------------------------------------------
 
 /**

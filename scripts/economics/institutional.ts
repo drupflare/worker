@@ -6,9 +6,11 @@
  */
 import { num } from './args.js';
 import { fr, n, nr, r } from './fmt.js';
+import { SITE_GB } from './measured.js';
+import { DO_REQ_RATE, DO_STORE_RATE, WFP_BASE } from './pricing.js';
 
-const WFP_BASE = 25.0;
-const MARGINAL_SITE = 0.0012; // measured earlier: storage plus DO requests
+// storage plus the object requests of a 10,000-view site, 18% of which reach the object
+const MARGINAL_SITE = SITE_GB * DO_STORE_RATE + ((10_000 * 0.18) / 1e6) * DO_REQ_RATE;
 const COMMODITY_LO = 6.0;
 const COMMODITY_HI = 14.0; // per site per month
 const PANTHEON = num('pantheon', 55.0);

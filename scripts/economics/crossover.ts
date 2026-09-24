@@ -1,6 +1,8 @@
 /** The two boundaries a critic will look for: the carbon crossover, and the true marginal cost. */
 import { num, sweep } from './args.js';
 import { f, fr, nr, r } from './fmt.js';
+import { SITE_GB } from './measured.js';
+import { DO_REQ_RATE as DO_REQ, DO_STORE_RATE as DO_STORE, WFP_BASE } from './pricing.js';
 
 const VIEWS = sweep('views', [10_000, 100_000]);
 
@@ -25,9 +27,6 @@ console.log(`\nper-request attributed carbon: ${f(gPerReq * 1e6, 3)} ug CO2e`);
 console.log(`one site's shared-hosting share: ${f(SHARED_KG_SITE, 3)} kg CO2e/y\n`);
 
 // --- true marginal cost of one more site ---
-const SITE_GB = 4.726784 / 1000.0;
-const DO_STORE = 0.2;
-const DO_REQ = 0.15;
 for (const views of VIEWS) {
 	const storage = SITE_GB * DO_STORE;
 	const doReq = ((views * 0.18) / 1e6) * DO_REQ;
@@ -39,6 +38,6 @@ for (const views of VIEWS) {
 
 console.log('\nsites needed to cover the $25 WfP base at a given price point:');
 for (const price of [1.0, 2.0, 3.0, 5.0]) {
-	console.log(`  $${f(price, 0)}/site/mo -> ${fr(25.0 / price, 5, 1)} paying sites`);
+	console.log(`  $${f(price, 0)}/site/mo -> ${fr(WFP_BASE / price, 5, 1)} paying sites`);
 }
 void r;

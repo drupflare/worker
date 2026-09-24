@@ -112,7 +112,7 @@ function zipf(paths: number, s: number): number[] {
  * because `caches.default` is per-colo and a path's rate is divided across them, which is the term a
  * single-address generator cannot drive.
  */
-function model(inp: Inputs): Result {
+export function model(inp: Inputs): Result {
 	const weightSum = DIURNAL.reduce((a, b) => a + b, 0);
 	const requestsPerDay = (inp.viewsPerMonth * 12) / 365;
 	const share = zipf(inp.paths, inp.zipf);
@@ -145,98 +145,112 @@ function model(inp: Inputs): Result {
 	};
 }
 
-const args = parseArgs(process.argv.slice(2));
-const base: Inputs = {
-	// 173 of the shipped seed's 423 declared routes carry no {param}; most of those are admin paths
-	// that never cache because `$skip_cache` fires on a session cookie. A real content site's P is
-	// dominated by its nodes and terms instead, so it is swept below rather than fixed.
-	paths: Number(args.paths ?? 100),
-	colos: Number(args.colos ?? 8),
-	viewsPerMonth: Number(args.views ?? 100_000),
-	savesPerDay: Number(args.saves ?? 5),
-	pagesPerSave: Number(args['pages-per-save'] ?? PAGES_PER_SAVE),
-	zipf: Number(args.zipf ?? 1)
-};
-
-console.log('render fraction, derived (modelled). measured inputs:');
-console.log(`  edge TTL ${TTL_S}s, pages per ordinary node save ${PAGES_PER_SAVE}`);
-console.log(
-	`  ${MJ_RENDER} mJ/render and ${MJ_CACHED} mJ/cached serve, RAPL package, 2-CPU VPS arm`
-);
-console.log('modelled inputs: the diurnal shape, the colo count, and P for a real site\n');
-
-console.log(`P=${base.paths} paths, L=${base.colos} colos, ${base.savesPerDay} saves/day:`);
-console.log('  views/site/mo | renders/day | requests/day | fraction | worst hour | mJ/request');
-for (const views of [10_000, 100_000, 1_000_000, 20_000_000]) {
-	const r = model({ ...base, viewsPerMonth: views });
-	console.log(
-		`  ${String(views).padStart(13)} | ${r.rendersPerDay.toFixed(0).padStart(11)} | ` +
-			`${r.requestsPerDay.toFixed(0).padStart(12)} | ${(100 * r.fraction).toFixed(2).padStart(7)}% | ` +
-			`${(100 * r.peakHourFraction).toFixed(1).padStart(9)}% | ${r.mjPerRequest.toFixed(1).padStart(10)}`
-	);
-}
-
-console.log('\nsensitivity of energy per request to the fraction itself, which is the point:');
-for (const f of [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1]) {
-	const mj = f * MJ_RENDER + (1 - f) * MJ_CACHED;
-	console.log(
-		`  fraction ${(100 * f).toFixed(1).padStart(5)}%  ->  ${mj.toFixed(1).padStart(6)} mJ/request` +
-			`  (${(mj / MJ_CACHED).toFixed(2)}x the all-cached floor)`
-	);
-}
-
-console.log('\nthe colo term, which one generator cannot drive:');
-for (const colos of [1, 4, 8, 20, 50]) {
-	const r = model({ ...base, colos, viewsPerMonth: 20_000_000 });
-	console.log(
-		`  L=${String(colos).padStart(2)}  fraction ${(100 * r.fraction).toFixed(2).padStart(6)}%` +
-			`  ->  ${r.mjPerRequest.toFixed(1)} mJ/request`
-	);
-}
-
-console.log('\nthe Zipf exponent, which is what "a too-simplistic generator" means here:');
-for (const s of [0, 0.6, 0.8, 1, 1.2, 1.5]) {
-	const lo = model({ ...base, zipf: s, viewsPerMonth: 100_000 });
-	const hi = model({ ...base, zipf: s, viewsPerMonth: 20_000_000 });
-	console.log(
-		`  s=${s.toFixed(1)}  at 100k views/mo ${(100 * lo.fraction).toFixed(1).padStart(6)}%` +
-			`  at 20M views/mo ${(100 * hi.fraction).toFixed(2).padStart(6)}%`
-	);
-}
-
-// the crossover the economics tables actually rest on
-const target = 0.01;
-let views = 1_000;
-while (views < 1e11 && model({ ...base, viewsPerMonth: views }).fraction > target) views *= 1.2;
-console.log(
-	`\nthe 1% assumption is first reached at about ${(views / 1e6).toFixed(1)}M views/site/month` +
-		` at P=${base.paths}, L=${base.colos}, s=${base.zipf}.`
-);
-console.log('Below that the assumption understates renders, and the economics tables are built on');
-console.log('10k to 20M views/site/month.');
-
 /**
- * THE COLO TERM APPLIES TO A CDN-PLUS-ORIGIN ARM AND NOT TO DRUPFLARE, which is the finding.
+ * Drupflare's render fraction: the page store re-renders a page when a save invalidates it, and
+ * never on a clock.
  *
- * On a conventional host a per-colo edge miss goes to the ORIGIN and renders. On drupflare it goes to
- * the site's Durable Object, which serves it out of `cfw_page` without booting PHP -- and there is one
- * object per site, not one per colo. So the L multiplier that inflates a conventional host's render
- * count is absorbed, and drupflare's render fraction is set as though L = 1.
+ * A `caches.default` miss reaches `cfw_page`, which answers without PHP, and `pageStaleness()` marks
+ * a row stale only when one of its tags' invalidation counters moves. So neither the TTL floor nor
+ * the colo count reaches this arm. `model()` with `colos: 1` still charges the floor, which read
+ * 4.38% at 20M views/month where this reads 0.004%.
  *
- * This is a structural advantage that nothing in the economics model currently claims.
+ * One-off first fills of new paths are left out, and so is a menu-touching save, which invalidates
+ * every page and is the `pagesPerSave` sweep rather than a different model.
  */
-console.log('\nthe same traffic against the two architectures, 20M views/site/month:');
-const cdn = model({ ...base, viewsPerMonth: 20_000_000 });
-const edge = model({ ...base, viewsPerMonth: 20_000_000, colos: 1 });
-console.log(
-	`  CDN + origin, L=${base.colos}: ${(100 * cdn.fraction).toFixed(2)}% renders, ` +
-		`${cdn.rendersPerDay.toFixed(0)} renders/day`
-);
-console.log(
-	`  drupflare, one object:   ${(100 * edge.fraction).toFixed(2)}% renders, ` +
-		`${edge.rendersPerDay.toFixed(0)} renders/day`
-);
-console.log(
-	`  the object absorbs ${(cdn.rendersPerDay / edge.rendersPerDay).toFixed(1)}x the renders, ` +
-		`because a per-colo miss reaches a page store rather than an origin`
-);
+export function pageStoreFraction(
+	viewsPerMonth: number,
+	savesPerDay = 5,
+	pagesPerSave = PAGES_PER_SAVE
+): number {
+	const requestsPerDay = (viewsPerMonth * 12) / 365;
+	return requestsPerDay > 0 ? Math.min(1, (savesPerDay * pagesPerSave) / requestsPerDay) : 0;
+}
+
+if (import.meta.main) {
+	const args = parseArgs(process.argv.slice(2));
+	const base: Inputs = {
+		// 173 of the shipped seed's 423 declared routes carry no {param}; most of those are admin paths
+		// that never cache because `$skip_cache` fires on a session cookie. A real content site's P is
+		// dominated by its nodes and terms instead, so it is swept below rather than fixed.
+		paths: Number(args.paths ?? 100),
+		colos: Number(args.colos ?? 8),
+		viewsPerMonth: Number(args.views ?? 100_000),
+		savesPerDay: Number(args.saves ?? 5),
+		pagesPerSave: Number(args['pages-per-save'] ?? PAGES_PER_SAVE),
+		zipf: Number(args.zipf ?? 1)
+	};
+
+	console.log('render fraction, derived (modelled). measured inputs:');
+	console.log(`  edge TTL ${TTL_S}s, pages per ordinary node save ${PAGES_PER_SAVE}`);
+	console.log(
+		`  ${MJ_RENDER} mJ/render and ${MJ_CACHED} mJ/cached serve, RAPL package, 2-CPU VPS arm`
+	);
+	console.log('modelled inputs: the diurnal shape, the colo count, and P for a real site\n');
+
+	console.log(`P=${base.paths} paths, L=${base.colos} colos, ${base.savesPerDay} saves/day:`);
+	console.log(
+		'  views/site/mo | renders/day | requests/day | fraction | worst hour | mJ/request'
+	);
+	for (const views of [10_000, 100_000, 1_000_000, 20_000_000]) {
+		const r = model({ ...base, viewsPerMonth: views });
+		console.log(
+			`  ${String(views).padStart(13)} | ${r.rendersPerDay.toFixed(0).padStart(11)} | ` +
+				`${r.requestsPerDay.toFixed(0).padStart(12)} | ${(100 * r.fraction).toFixed(2).padStart(7)}% | ` +
+				`${(100 * r.peakHourFraction).toFixed(1).padStart(9)}% | ${r.mjPerRequest.toFixed(1).padStart(10)}`
+		);
+	}
+
+	console.log('\nsensitivity of energy per request to the fraction itself, which is the point:');
+	for (const f of [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1]) {
+		const mj = f * MJ_RENDER + (1 - f) * MJ_CACHED;
+		console.log(
+			`  fraction ${(100 * f).toFixed(1).padStart(5)}%  ->  ${mj.toFixed(1).padStart(6)} mJ/request` +
+				`  (${(mj / MJ_CACHED).toFixed(2)}x the all-cached floor)`
+		);
+	}
+
+	console.log('\nthe colo term, which one generator cannot drive:');
+	for (const colos of [1, 4, 8, 20, 50]) {
+		const r = model({ ...base, colos, viewsPerMonth: 20_000_000 });
+		console.log(
+			`  L=${String(colos).padStart(2)}  fraction ${(100 * r.fraction).toFixed(2).padStart(6)}%` +
+				`  ->  ${r.mjPerRequest.toFixed(1)} mJ/request`
+		);
+	}
+
+	console.log('\nthe Zipf exponent, which is what "a too-simplistic generator" means here:');
+	for (const s of [0, 0.6, 0.8, 1, 1.2, 1.5]) {
+		const lo = model({ ...base, zipf: s, viewsPerMonth: 100_000 });
+		const hi = model({ ...base, zipf: s, viewsPerMonth: 20_000_000 });
+		console.log(
+			`  s=${s.toFixed(1)}  at 100k views/mo ${(100 * lo.fraction).toFixed(1).padStart(6)}%` +
+				`  at 20M views/mo ${(100 * hi.fraction).toFixed(2).padStart(6)}%`
+		);
+	}
+
+	// the crossover the economics tables actually rest on
+	const target = 0.01;
+	let views = 1_000;
+	while (views < 1e11 && model({ ...base, viewsPerMonth: views }).fraction > target) views *= 1.2;
+	console.log(
+		`\nfor CDN + origin, 1% is first reached at about ${(views / 1e6).toFixed(1)}M views/site/month` +
+			` at P=${base.paths}, L=${base.colos}, s=${base.zipf}.`
+	);
+	const pageStoreAt = (base.savesPerDay * base.pagesPerSave * 365) / 12 / target;
+	console.log(
+		`for drupflare's page store it is ${(pageStoreAt / 1e3).toFixed(0)}k views/site/month,` +
+			` and the fraction falls as 1/views above that.`
+	);
+
+	// a per-colo miss renders at the origin on a conventional host and is a page-store hit here
+	console.log('\nthe same traffic against the two architectures:');
+	console.log('  views/site/mo | CDN + origin | drupflare');
+	for (const v of [10_000, 100_000, 1_000_000, 20_000_000]) {
+		const cdn = model({ ...base, viewsPerMonth: v });
+		const edge = pageStoreFraction(v, base.savesPerDay, base.pagesPerSave);
+		console.log(
+			`  ${String(v).padStart(13)} | ${(100 * cdn.fraction).toFixed(2).padStart(11)}% | ` +
+				`${(100 * edge).toFixed(4).padStart(8)}%`
+		);
+	}
+}

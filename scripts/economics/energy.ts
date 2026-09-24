@@ -4,6 +4,7 @@
  * Every input is sourced. Where a range exists the model takes the value that is GENEROUS TO THE
  * VPS, so the result is a floor on the saving rather than a headline.
  */
+import { pageStoreFraction } from '../measure/render-fraction.js';
 import { num, sweep } from './args.js';
 import { fr, nr, pctr, r } from './fmt.js';
 
@@ -50,7 +51,7 @@ function row(
 	density: number,
 	util: number,
 	renderMs = CPU_MS_RENDER,
-	renderFrac = 0.01
+	renderFrac = pageStoreFraction(views)
 ): [number, number, number] {
 	const v = vpsKwhYear(density, util);
 	const d = drupflareKwhYear(views, renderFrac, renderMs);
@@ -58,7 +59,7 @@ function row(
 }
 
 if (import.meta.main) {
-	console.log('one site, 1% of views render, VPS idle-dominated\n');
+	console.log('one site, renders from 5 saves a day, VPS idle-dominated\n');
 	console.log(
 		`${r('views/mo', 9)} ${r('VPS/host', 9)} ${r('VPS util', 9)} ${r('VPS kWh/y', 10)} ${r('drupflare', 10)} ${r('saving', 8)}`
 	);
@@ -107,6 +108,7 @@ if (import.meta.main) {
 		);
 	}
 
+	// at these volumes the page-store fraction is far below 1%, so 1% bounds the break-even from below
 	console.log("\nbreak-even: views/month where drupflare's CPU equals the VPS's idle share");
 	for (const [density, util] of [
 		[20, 0.05],

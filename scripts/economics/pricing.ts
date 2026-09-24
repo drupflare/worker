@@ -8,6 +8,9 @@
  *   Durable Objects  $0.15/M requests, $12.50/M GB-s, rows written $1.00/M over 50M,
  *              storage $0.20/GB-month
  *
+ * PUBLISHED, retrieved 2026-09-24: Cloudflare for SaaS includes 100 custom hostnames, then $0.10
+ * per hostname-month, up to 50,000 on a non-Enterprise zone. Only a site on its own domain uses one.
+ *
  * Measured figures come from measured.ts with their provenance and workload attached.
  */
 import {
@@ -17,39 +20,45 @@ import {
 	STEADY_STATE_WARMTH,
 	rowsForWarmthMix
 } from '../measure/free-envelope.js';
+import { pageStoreFraction } from '../measure/render-fraction.js';
 import { f, fr, n, nr, pctr, r } from './fmt.js';
 import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
 	RENDER_WARM_BIN_MS as CPU_RENDER,
+	SITE_GB,
 	renderMsFor
 } from './measured.js';
 
-const WFP_BASE = 25.0;
+export const WFP_BASE = 25.0;
 const WFP_REQ_INC = 20e6;
 const WFP_CPU_INC = 60e6;
 const WFP_SCRIPTS_INC = 1000;
 const WFP_REQ_RATE = 0.3;
 const WFP_CPU_RATE = 0.02;
 const WFP_SCRIPT_RATE = 0.02;
-const DO_REQ_RATE = 0.15;
+export const DO_REQ_RATE = 0.15;
 const DO_GBS_RATE = 12.5;
 const DO_ROWW_RATE = 1.0;
-const DO_STORE_RATE = 0.2;
+export const DO_STORE_RATE = 0.2;
 const DO_ROWW_INC = 50e6;
-const SITE_GB = 4.726784 / 1000.0; // measured: a fresh site is 4,726,784 bytes
+const HOSTNAMES_INC = 100;
+const HOSTNAME_RATE = 0.1;
 const ROWS_PER_VIEW_FILL = rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS);
 
 /**
  * `doHitFrac` is the share of views that reach the Durable Object at all. Measured: 71.5% of one
  * authenticated arm was answered by the compiled plan in the front worker, and anon-cached is
  * answered by `caches.default`, so most views never reach an object.
+ *
+ * `hostnames` is how many of the sites sit on their own domain through Cloudflare for SaaS.
  */
 export function month(
 	sites: number,
 	views: number,
-	renderFrac = 0.01,
+	renderFrac = pageStoreFraction(views),
 	cpuRender = CPU_RENDER,
-	doHitFrac = 0.18
+	doHitFrac = 0.18,
+	hostnames = 0
 ): [number, Record<string, number>] {
 	const v = sites * views;
 	const cpuMs = v * ((1 - renderFrac) * CPU_CACHED + renderFrac * cpuRender);
@@ -68,7 +77,8 @@ export function month(
 	const cDoGbs = Math.ceil(Math.max(0, gbs - 400_000) / 1e6) * DO_GBS_RATE;
 	const cRoww = (Math.max(0.0, rowsW - DO_ROWW_INC) / 1e6) * DO_ROWW_RATE;
 	const cStore = sites * SITE_GB * DO_STORE_RATE;
-	const total = WFP_BASE + cReq + cCpu + cScripts + cDoReq + cDoGbs + cRoww + cStore;
+	const cHost = Math.max(0, hostnames - HOSTNAMES_INC) * HOSTNAME_RATE;
+	const total = WFP_BASE + cReq + cCpu + cScripts + cDoReq + cDoGbs + cRoww + cStore + cHost;
 	return [
 		total,
 		{
@@ -79,20 +89,24 @@ export function month(
 			do_req: cDoReq,
 			do_gbs: cDoGbs,
 			rows: cRoww,
-			storage: cStore
+			storage: cStore,
+			hostnames: cHost
 		}
 	];
 }
 
 if (import.meta.main) {
-	console.log('monthly platform cost, 1% of views render\n');
+	console.log('monthly platform cost, renders from 5 saves a day per site\n');
 	console.log(
-		`${r('sites', 7)} ${r('views/site', 11)} ${r('total/mo', 10)} ${r('per site', 10)}`
+		`${r('sites', 7)} ${r('views/site', 11)} ${r('total/mo', 10)} ${r('per site', 10)} ${r('own domains', 12)}`
 	);
 	for (const sites of [100, 1_000, 10_000]) {
 		for (const views of [10_000, 100_000]) {
 			const [t] = month(sites, views);
-			console.log(`${nr(sites, 7)} ${nr(views, 11)} ${nr(t, 10, 2)} ${fr(t / sites, 10, 4)}`);
+			const [td] = month(sites, views, undefined, undefined, undefined, sites);
+			console.log(
+				`${nr(sites, 7)} ${nr(views, 11)} ${nr(t, 10, 2)} ${fr(t / sites, 10, 4)} ${nr(td, 12, 2)}`
+			);
 		}
 	}
 

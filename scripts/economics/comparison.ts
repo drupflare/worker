@@ -26,6 +26,7 @@ import {
 	keepWarmFleetCost,
 	rowsForWarmthMix
 } from '../measure/free-envelope.js';
+import { pageStoreFraction } from '../measure/render-fraction.js';
 import { num, sweep } from './args.js';
 import { drupflareKwhYear, vpsKwhYear } from './energy.js';
 import { f, n, nr, r, sfx } from './fmt.js';
@@ -33,7 +34,8 @@ import {
 	CACHED_SERVE_TOTAL_MS as CPU_CACHED,
 	RENDER_WARM_BIN_MS as CPU_RENDER,
 	MJ_CACHED_VPS,
-	MJ_RENDER_VPS
+	MJ_RENDER_VPS,
+	SITE_GB
 } from './measured.js';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000, 10_000_000]);
@@ -59,14 +61,16 @@ const PAID_DO_REQ_INC = 1e6;
 const DAYS_MONTH = 30.44;
 
 const FREE_GBS_DAY = FREE_QUOTAS.durationGbSPerDay;
-const SITE_GB = 4.726784 / 1000.0; // measured: a fresh site is 4,726,784 bytes
 // the shipping default priced on the warmth mix, from the audit spec's pinned classes. It was a flat
 // 25 ("mid of the 2-94 band"), 14x the shipping figure, which made rows written read as binding
 const ROWS_PER_FILL = num(
 	'rows-per-fill',
 	rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS)
 );
-const RENDER_FRAC = num('render-frac', 0.0438); // derived per-colo figure, not a 1% assumption
+// renders follow saves, not views, so the fraction is per site traffic; --render-frac pins one
+const RENDER_FRAC_FLAG = num('render-frac', -1);
+const renderFrac = (viewsPerSite: number) =>
+	RENDER_FRAC_FLAG >= 0 ? RENDER_FRAC_FLAG : pageStoreFraction(viewsPerSite);
 const DO_HIT_FRAC = num('do-hit-frac', 0.18); // share of views that reach the object at all
 // wall clock, since duration bills wall clock; the render figure is the envelope's pessimistic one
 const RENDER_S = num('render-s', SECONDS_PER.warmRender);
@@ -77,14 +81,15 @@ type Bill = { total: number; free: boolean; binds: string };
 /** One bill for the whole account, whatever number of sites share it. */
 function account(sites: number, viewsPerSite: number): Bill {
 	const v = sites * viewsPerSite;
+	const rf = renderFrac(viewsPerSite);
 	// thermal.ts keeps a site resident above its break-even render rate, and the chain spends rows
 	// and object requests before any visitor arrives
-	const warmed = (viewsPerSite * RENDER_FRAC) / DAYS_MONTH >= BREAK_EVEN_RENDERS_PER_DAY;
+	const warmed = (viewsPerSite * rf) / DAYS_MONTH >= BREAK_EVEN_RENDERS_PER_DAY;
 	const warmSites = warmed ? sites : 0;
-	const rows = v * RENDER_FRAC * ROWS_PER_FILL + warmSites * WARMING.rowsPerDay * DAYS_MONTH;
-	const cpuMs = v * ((1 - RENDER_FRAC) * CPU_CACHED + RENDER_FRAC * CPU_RENDER);
+	const rows = v * rf * ROWS_PER_FILL + warmSites * WARMING.rowsPerDay * DAYS_MONTH;
+	const cpuMs = v * ((1 - rf) * CPU_CACHED + rf * CPU_RENDER);
 	const doReq = v * DO_HIT_FRAC + warmSites * WARMING.doRequestsPerDay * DAYS_MONTH;
-	const gbS = v * (DO_HIT_FRAC * SECONDS_PER.doHit + RENDER_FRAC * RENDER_S) * DO_GB_ALLOCATED;
+	const gbS = v * (DO_HIT_FRAC * SECONDS_PER.doHit + rf * RENDER_S) * DO_GB_ALLOCATED;
 	const storeGb = sites * SITE_GB;
 
 	const perDay = (x: number) => x / DAYS_MONTH;
@@ -194,7 +199,9 @@ function row(sites: number, views: number) {
 		3.6e6;
 	const savedKwh =
 		sites *
-		(vpsKwhYear(DENSITY, UTIL) + vpsWorkKwh - drupflareKwhYear(views, RENDER_FRAC, 60.2));
+		(vpsKwhYear(DENSITY, UTIL) +
+			vpsWorkKwh -
+			drupflareKwhYear(views, renderFrac(views), CPU_RENDER));
 	return {
 		bill,
 		vpsMo: sites * vpsUsdMonth(views),

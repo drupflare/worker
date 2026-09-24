@@ -9,8 +9,8 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * `pib_run` performs no request shutdown, so a class static survives from one Worker invocation to
  * the next -- which is what makes an in-process bin a real tier here and a test double on any
  * ordinary PHP host. What it is worth is measured: a real re-render after a tag invalidation charges
- * 9 rows on the shipping pack, of which **6 are `cache_dynamic_page_cache`**, and rows written is
- * the meter that binds regeneration at 9,685/day.
+ * 8 rows on the shipping pack, of which **6 are `cache_dynamic_page_cache`**, and rows written is
+ * the meter that binds regeneration.
  *
  * The bin is selected through core's own `$settings['cache']['bins']`, so the arms here differ by
  * one environment variable and nothing else.
@@ -24,6 +24,36 @@ type Writes = {
 	rowsWritten: number;
 	indexSplit: { rows: { table: string; chargedRows: number }[] };
 };
+
+/**
+ * The page with its per-build and per-site values replaced, so two renders compare for CONTENT.
+ *
+ * Two, and neither has anything to do with a cache bin:
+ *
+ * - `form_build_id` is fresh base64 on every build, and `Html::getId()` collapses consecutive
+ *   hyphens when it derives the `data-drupal-selector` from it, so a token that happens to contain
+ *   `--` or `_-` renders a byte shorter. That flaked a LENGTH comparison about one run in six.
+ * - `permissionsHash` is an HMAC keyed on the site's private key, which `firstRunConfig()` mints at
+ *   random, so two separately provisioned objects differ there by construction. It is fixed-width
+ *   hex, which is exactly why a length comparison never saw it.
+ *
+ * Comparing lengths was also the weaker check -- two different pages can share one.
+ */
+const stablePage = (html: string) =>
+	html
+		.replace(/form-[A-Za-z0-9_-]{20,}/g, 'form-X')
+		.replace(/"permissionsHash":"[0-9a-f]{64}"/g, '"permissionsHash":"X"');
+
+/** equality of two pages, failing with WHERE they diverge rather than with two 13 KB strings */
+function expectSamePage(actual: string, expected: string, label: string) {
+	if (actual === expected) return;
+	let i = 0;
+	while (i < actual.length && actual[i] === expected[i]) i++;
+	const at = (s: string) => JSON.stringify(s.slice(Math.max(0, i - 80), i + 80));
+	expect.fail(
+		`${label}: pages diverge at ${i}\n  actual:   ${at(actual)}\n  expected: ${at(expected)}`
+	);
+}
 
 async function armSite(site: ServeDo, bins: string) {
 	site.env = { ...site.env, MEMORY_CACHE_BINS: bins };
@@ -40,9 +70,11 @@ async function armSite(site: ServeDo, bins: string) {
 
 /** a real render: both bins emptied, which is what a tag invalidation costs to undo */
 async function realRender(site: ServeDo, path: string) {
+	// the DELETE is the harness's and goes BEFORE the reset: it is a charged write, a fill upserts,
+	// and inside the window it read every arm one row high -- the same defect the audit spec had
+	site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 	await site.fetch(new Request(`${ORIGIN}/__writes?op=off`));
 	await site.fetch(new Request(`${ORIGIN}/__writes?op=on`));
-	site.sql.exec('DELETE FROM cfw_page WHERE path = ?', path);
 	await site.fillOne(path, ['page', 'dynamic_page_cache']);
 	const t = (await (await site.fetch(new Request(`${ORIGIN}/__writes`))).json()) as Writes;
 	return {
@@ -68,7 +100,7 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 						.exec('SELECT html FROM cfw_page WHERE path = ?', '/user/login')
 						.toArray()[0]?.['html'] ?? ''
 				);
-				return { ...measured, bytes: html.length };
+				return { ...measured, bytes: html.length, page: stablePage(html) };
 			});
 
 			const memory = await inObject(freshSite(), async (site: ServeDo) => {
@@ -83,6 +115,7 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 				return {
 					...measured,
 					bytes: html.length,
+					page: stablePage(html),
 					log: site.sql
 						.exec(
 							'SELECT type, message, variables FROM watchdog ORDER BY wid DESC LIMIT 5'
@@ -95,7 +128,11 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 				};
 			});
 
-			console.log(`[memory-bin] ${JSON.stringify({ database, memory })}`);
+			const { page: _dp, ...databaseLog } = database;
+			const { page: _mp, ...memoryLog } = memory;
+			console.log(
+				`[memory-bin] ${JSON.stringify({ database: databaseLog, memory: memoryLog })}`
+			);
 
 			// THE CONTROL: the database arm has to charge for the bin, or the comparison below is
 			// between two arms that were never different
@@ -108,12 +145,98 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 			// the identity says the saving is this bin rather than a render that did less work
 			expect(database.rows - memory.rows).toBe(binRows);
 
-			// the page itself is byte for byte the same, which is what separates a removed cost
-			// from a skipped render
+			// the page itself is the same CONTENT, which is what separates a removed cost from a
+			// skipped render; compared with the random form token normalised, see `stablePage`
 			expect(memory.bytes).toBeGreaterThan(0);
-			expect(memory.bytes).toBe(database.bytes);
+			expectSamePage(memory.page, database.page, 'memory arm against database arm');
 			// and nothing was logged: a backend that threw would fall back and read as a saving
 			expect(memory.log.filter((line) => line.startsWith('php:'))).toEqual([]);
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * THE CENSUS: which other bins are worth holding in the interpreter, measured the same way.
+	 *
+	 * IN THE AUDIT'S SEQUENCE, and that is not a detail. A re-render's leftover rows depend on what
+	 * ran before it on the object: warming with a fill first leaves `cache_discovery` behind, the
+	 * audit's first-fill-then-new-path order does not, and the model's classes are pinned to the
+	 * latter. So this drives `/user/login`, then `/user/password` (a never-routed path, where `render`
+	 * and `discovery` write), then a re-render of `/user/login` -- the same order
+	 * `rows-per-fill-audit.spec.ts` uses -- and the figures map straight onto
+	 * `ROWS_PER_FILL_MEMORY_BINS`.
+	 *
+	 * The property is the one that makes a default safe: holding a bin in memory never costs a row
+	 * and never changes the page. What each is WORTH is printed, because it moves with the pack.
+	 */
+	it(
+		'never costs a row or changes the page, for every candidate bin set',
+		async () => {
+			const CANDIDATES = [
+				'dynamic_page_cache',
+				'dynamic_page_cache,menu',
+				'dynamic_page_cache,render',
+				'dynamic_page_cache,discovery',
+				'dynamic_page_cache,menu,render,discovery'
+			];
+			const census: Record<
+				string,
+				{
+					realRender: number;
+					newPath: number;
+					bytes: number;
+					page: string;
+					left: string[];
+					php: number;
+				}
+			> = {};
+			for (const bins of CANDIDATES) {
+				census[bins] = await inObject(freshSite(), async (site: ServeDo) => {
+					await armSite(site, bins);
+					// the audit's order: a first fill, a never-routed path, then the re-render
+					await site.fillOne('/user/login');
+					await site.fetch(new Request(`${ORIGIN}/__writes?op=off`));
+					await site.fetch(new Request(`${ORIGIN}/__writes?op=on`));
+					await site.fillOne('/user/password');
+					const fresh = (await (
+						await site.fetch(new Request(`${ORIGIN}/__writes`))
+					).json()) as Writes;
+					const warm = await realRender(site, '/user/login');
+					const html = String(
+						site.sql
+							.exec('SELECT html FROM cfw_page WHERE path = ?', '/user/login')
+							.toArray()[0]?.['html'] ?? ''
+					);
+					return {
+						realRender: warm.rows,
+						newPath: fresh.rowsWritten,
+						bytes: html.length,
+						page: stablePage(html),
+						left: Object.keys(warm.perTable).sort(),
+						php: site.sql
+							.exec("SELECT COUNT(*) AS c FROM watchdog WHERE type = 'php'")
+							.toArray()
+							.map((r) => Number(r['c']))[0]!
+					};
+				});
+			}
+			console.log(
+				`[memory-bin-census] ${JSON.stringify(
+					Object.fromEntries(
+						Object.entries(census).map(([bins, { page: _p, ...rest }]) => [bins, rest])
+					)
+				)}`
+			);
+
+			const baseline = census['dynamic_page_cache']!;
+			for (const [bins, arm] of Object.entries(census)) {
+				expect(arm.realRender, `${bins} re-render`).toBeLessThanOrEqual(
+					baseline.realRender
+				);
+				expect(arm.newPath, `${bins} new path`).toBeLessThanOrEqual(baseline.newPath);
+				expectSamePage(arm.page, baseline.page, `${bins} changed the page`);
+				expect(arm.php, `${bins} logged a PHP error`).toBe(0);
+			}
 		},
 		TIMEOUT
 	);
@@ -133,50 +256,54 @@ describe.skipIf(FROM_SOURCE)('the dynamic_page_cache bin, held in the interprete
 	 * the reset runs at the start of the next request. A bare fragment is not a request and never
 	 * reaches it, which is what this spec measured before the render was added.
 	 */
-	it(
-		'refuses an entry whose tag checksum moved, with no invalidation call',
-		async () => {
-			const seen = await inObject(freshSite(), async (site: ServeDo) => {
-				await armSite(site, 'dynamic_page_cache');
-				await site.runJson(renderPage('/', [], false, {}));
-				const probe = async (code: string) =>
-					(await site.runJson(code)) as Record<string, unknown>;
+	// `menu` is here because the census showed it is the one bin worth adding, and a menu save
+	// invalidates EVERY cached page -- so a menu entry outliving its invalidation is the worst defect
+	// this tier could have. The backend is bin-agnostic; this proves each bin is wired to it
+	for (const bin of ['dynamic_page_cache', 'menu'])
+		it(
+			`refuses a ${bin} entry whose tag checksum moved, with no invalidation call`,
+			async () => {
+				const seen = await inObject(freshSite(), async (site: ServeDo) => {
+					await armSite(site, 'dynamic_page_cache,menu');
+					await site.runJson(renderPage('/', [], false, {}));
+					const probe = async (code: string) =>
+						(await site.runJson(code)) as Record<string, unknown>;
 
-				const store = `<?php
-          $bin = \\Drupal::service('cache.dynamic_page_cache');
+					const store = `<?php
+          $bin = \\Drupal::service('cache.${bin}');
           $bin->set('cfw-probe', 'first', -1, ['cfw_probe_tag']);
           $hit = $bin->get('cfw-probe');
           echo json_encode(['class' => get_class($bin), 'data' => $hit === false ? null : $hit->data]);
         `;
-				const read = `<?php
-          $bin = \\Drupal::service('cache.dynamic_page_cache');
+					const read = `<?php
+          $bin = \\Drupal::service('cache.${bin}');
           $hit = $bin->get('cfw-probe');
           echo json_encode(['data' => $hit === false ? null : $hit->data]);
         `;
 
-				const stored = await probe(store);
-				// THE CONTROL: a render with nothing invalidated must leave the entry alone, or the
-				// refusal below could be the render dropping it rather than the checksum
-				await site.runJson(renderPage('/', [], false, {}));
-				const survived = await probe(read);
+					const stored = await probe(store);
+					// THE CONTROL: a render with nothing invalidated must leave the entry alone, or the
+					// refusal below could be the render dropping it rather than the checksum
+					await site.runJson(renderPage('/', [], false, {}));
+					const survived = await probe(read);
 
-				// the counter moved by SQL, the way a replayed record moves it on a lane, with no
-				// PHP invalidation call anywhere
-				site.sql.exec(
-					"INSERT INTO cachetags (tag, invalidations) VALUES ('cfw_probe_tag', 1) ON CONFLICT(tag) DO UPDATE SET invalidations = invalidations + 1"
-				);
-				await site.runJson(renderPage('/', [], false, {}));
-				const after = await probe(read);
-				return { stored, survived, after };
-			});
+					// the counter moved by SQL, the way a replayed record moves it on a lane, with no
+					// PHP invalidation call anywhere
+					site.sql.exec(
+						"INSERT INTO cachetags (tag, invalidations) VALUES ('cfw_probe_tag', 1) ON CONFLICT(tag) DO UPDATE SET invalidations = invalidations + 1"
+					);
+					await site.runJson(renderPage('/', [], false, {}));
+					const after = await probe(read);
+					return { stored, survived, after };
+				});
 
-			expect(String(seen.stored['class'])).toContain('CfwMemoryBackend');
-			expect(seen.stored['data']).toBe('first');
-			expect(seen.survived['data'], 'a render alone dropped it').toBe('first');
-			expect(seen.after['data']).toBeNull();
-		},
-		TIMEOUT
-	);
+				expect(String(seen.stored['class'])).toContain('CfwMemoryBackend');
+				expect(seen.stored['data']).toBe('first');
+				expect(seen.survived['data'], 'a render alone dropped it').toBe('first');
+				expect(seen.after['data']).toBeNull();
+			},
+			TIMEOUT
+		);
 });
 
 /**

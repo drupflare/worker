@@ -1467,8 +1467,16 @@ export function argon2Enabled(env?: SiteEnv | null): boolean {
  *
  * What it still costs is CPU on that render and isolate memory for what it holds, and neither is
  * the binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.
+ *
+ * `menu` JOINED ON 2026-09-23, chosen by a census rather than by being a Drupal cache bin. Of the
+ * reconstructible bins measured in the audit's sequence, it is the only one that writes on a warm
+ * re-render, the class carrying 70% of the steady-state mix -- so it alone took rows/fill 2.50 ->
+ * 1.75 and the ceiling to the DURATION wall, 1.34x, where adding `render` and `discovery` on top
+ * buys nothing more. It passed the same three checks this bin did: never a row more, the page byte
+ * for byte identical, and an entry refused once its tag checksum moves through SQL alone. That last
+ * one matters most here, because a menu save invalidates every cached page.
  */
-export const DEFAULT_MEMORY_CACHE_BINS = ['dynamic_page_cache'] as const;
+export const DEFAULT_MEMORY_CACHE_BINS = ['dynamic_page_cache', 'menu'] as const;
 
 /**
  * Cache bins the interpreter keeps in memory instead of in this tenant's SQLite.

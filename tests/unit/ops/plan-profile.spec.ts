@@ -46,8 +46,8 @@ describe('the profiles', () => {
 
 	it('permits a cold boot on BOTH plans, because the refusal cost the visitor more than it saved', () => {
 		// It was false on free against a 10 ms per-invocation cap and an assumed-fast chain. Both
-		// are measured now and both were wrong: a 1,882 ms `cpuTime` invocation COMPLETED on a
-		// deployed free worker, and time-to-served for an anonymous miss on a cold object was
+		// are measured now and both were wrong: a 1,882 ms `cpuTime` object invocation COMPLETED on
+		// a deployed free worker, and time-to-served for an anonymous miss on a cold object was
 		// 19,004 ms with only 4 of 8 paths served at all -- against ~3.8 s to boot and render.
 		// Refusing did not protect a budget; it made the visitor wait fifteen seconds longer and
 		// often lose the page

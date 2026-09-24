@@ -544,7 +544,7 @@ export function assetChunkLoader(env: MigrateAssetEnv, prefix = 'drupal-sql'): M
  *
  * **FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.** That premise is retracted in writing
  * one file over: a single invocation reading 1,882 ms of `cpuTime` completed on a deployed free
- * worker, so the cap is an amortised allowance rather than a per-request limit -- see
+ * worker, so the cap does not bind an object invocation, which is where migration runs -- see
  * `FREE_PROFILE` in `src/ops/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
  * over **75 separate
  * Durable Object invocations**, each paying an alarm turnaround, a `setAlarm` row and a cursor row,

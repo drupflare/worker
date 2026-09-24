@@ -52,9 +52,9 @@ export type PlanProfile = {
  * that a cold boot obviously cannot fit, and against an implicit alternative of "the chain fills it
  * shortly". Both halves are now measured and both are wrong:
  *
- * - **The cap does not fail a request.** A single invocation reading 1,882 ms of `cpuTime`
- *   completed on a deployed FREE worker. The 10 ms figure is an amortised allowance, not a
- *   per-request limit, so "a cold boot cannot fit" was never the thing being enforced.
+ * - **The cap does not fail an object invocation.** A single invocation reading 1,882 ms of
+ *   `cpuTime` completed on a deployed FREE worker, and a boot runs in the object. (A Worker handler
+ *   running ~1.6 s burns back to back was cut to 10 ms, which is why this is scoped to the object.)
  * - **The alternative is not a short wait.** Time-to-served for an anonymous miss on a cold object,
  *   deployed: **19,004 ms, and only 4 of 8 paths served at all.** A cold boot plus render is ~3.8 s.
  *   Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the

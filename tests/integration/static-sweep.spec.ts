@@ -3,6 +3,7 @@ import {
 	abandonTransaction,
 	BOUNDARY_STATE,
 	createUser,
+	drupalOp,
 	LEAK_OPEN_SESSION,
 	leakOutputBuffer,
 	renderPage,
@@ -494,7 +495,8 @@ describe('the caches whose key is the request they were first asked in', () => {
 				'nor the ordinary user after them'
 			).toEqual([]);
 			expect(
-				wrong(out.adminCids, 'administrator:authenticated'),
+				// uid 1 is given the owner role at claim
+				wrong(out.adminCids, 'administrator:authenticated:drupflare_owner'),
 				'and the admin must not inherit the key from before the login'
 			).toEqual([]);
 
@@ -1421,6 +1423,101 @@ echo json_encode(['planted' => $p->getValue($r) ? 1 : 0]);`;
 			// incarnation and the site answers 500 on every page
 			expect(out.afterStatus, 'a stray renderRoot() took the next render down').toBe(200);
 			expect(out.afterHtml).toContain('</html>');
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the entity access cache, which kept an unpublished node public', () => {
+	/**
+	 * `EntityAccessControlHandler::$accessCache` lives on a handler the entity type manager keeps
+	 * for the incarnation, and core empties it nowhere. Measured: node 1 was viewed anonymously,
+	 * unpublished, and still rendered 200 for the next anonymous visitor and was stored in the
+	 * public page store.
+	 */
+	it(
+		'answers a node as it is now, not as it was when first viewed',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				const { jar, fields } = await adminWithForm(site);
+				await render(
+					site,
+					'/node/add/page',
+					formPost(encodeForm({ ...fields, ...NODE_BODY }), jar)
+				);
+				const published = await renderWith(site, '/node/1', COLD_BINS);
+				const saved = await site.runJson(
+					drupalOp(`$k = $GLOBALS['__pw_kernel'] ?? null;
+						if ($k !== null && method_exists($k, 'loadLegacyIncludes')) { $k->loadLegacyIncludes(); }
+						$n = \\Drupal\\node\\Entity\\Node::load(1);
+						$n->setUnpublished();
+						$n->save();
+						$out['ok'] = !$n->isPublished();`)
+				);
+				const unpublished = await renderWith(site, '/node/1', COLD_BINS);
+				return {
+					before: published['status'],
+					saved: saved['ok'],
+					after: unpublished['status'],
+					emptied: (unpublished['reset'] as Payload)['entity_access_caches_emptied']
+				};
+			});
+			// the control: an anonymous visitor could see it while it was published
+			expect(out.before).toBe(200);
+			expect(out.saved).toBe(true);
+			expect(out.after).toBe(403);
+			expect(Number(out.emptied)).toBeGreaterThan(0);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('the local task memo, which answered one page with the tabs of another', () => {
+	/**
+	 * `LocalTaskManager::$taskData` is keyed by ROUTE NAME, which is one entry per request under
+	 * FPM. Here the service outlives the request, so the tabs built for `/node/1` answered every
+	 * later node page on the incarnation: every node page carried `node:1`, which made a title edit
+	 * to node 1 purge the whole page store, and an editor on `/node/2` was offered `/node/1/edit`.
+	 * Found while pinning which element put `node:1` on pages that do not show node 1.
+	 */
+	it(
+		'builds the tabs for the page being rendered',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				for (const title of ['First Tab Probe', 'Second Tab Probe']) {
+					const { jar, fields } = await adminWithForm(site);
+					await render(
+						site,
+						'/node/add/page',
+						formPost(
+							encodeForm({ ...fields, ...NODE_BODY, 'title[0][value]': title }),
+							jar
+						)
+					);
+				}
+				const jar = cookieJar(await login(site, 'admin', PASS));
+				const first = html(await renderWith(site, '/node/1', COLD_BINS, jar));
+				const second = await renderWith(site, '/node/2', COLD_BINS, jar);
+				return { first, second: html(second), reset: second['reset'] as Payload };
+			});
+
+			// the tabs arrive as BigPipe replacements, whose markup is JSON-escaped
+			const decode = (s: string) =>
+				s
+					.replace(/\\u003C/g, '<')
+					.replace(/\\u003E/g, '>')
+					.replace(/\\u0022/g, '"')
+					.replace(/\\"/g, '"')
+					.replace(/\\\//g, '/');
+			const first = decode(out.first);
+			const second = decode(out.second);
+			// the control: the first page's own tabs, or there is nothing to have leaked
+			expect(first).toContain('href="/node/1/edit"');
+			expect(second).toContain('href="/node/2/edit"');
+			expect(second).not.toContain('href="/node/1/edit"');
+			expect(out.reset['local_tasks_cleared']).toBe(true);
 		},
 		REQUEST_TIMEOUT
 	);

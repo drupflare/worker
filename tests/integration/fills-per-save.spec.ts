@@ -38,6 +38,11 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * re-renders all 34 pages and 87 of the 102 come back byte-identical, so most of that fan-out is a
  * render and a row spent reproducing the page it replaced. An ordinary node save changes every page
  * it reaches, by a median of 64 bytes; a menu-item save changes all 34 by ~1.4 KB of navigation.
+ *
+ * Since 2026-09-25 a title edit to a linked node reaches 5 pages, all of which change: the link
+ * carries `drupflare_node_link:N` rather than `node:N`, and every page had also carried `node:1`
+ * from a local task memo that outlived its request. An alias change or an unpublish still reaches
+ * all 34, because the link does depend on those.
  */
 
 const TIMEOUT = 900_000;
@@ -172,6 +177,17 @@ const KINDS: readonly { kind: string; php: (round: number) => string }[] = [
 		kind: 'menu-item',
 		php: (r) =>
 			`$l = \\Drupal\\menu_link_content\\Entity\\MenuLinkContent::load(${1 + r}); $l->set('title', 'Link r${r}'); $l->save();`
+	},
+	// the two changes a menu link to a node does depend on: its URL and whether it may be viewed
+	{
+		kind: 'node-in-menu-alias',
+		php: (r) =>
+			`\\Drupal\\path_alias\\Entity\\PathAlias::create(['path' => '/node/${1 + r}', 'alias' => '/linked-${1 + r}-r${r}'])->save();`
+	},
+	{
+		kind: 'node-in-menu-unpublish',
+		php: (r) =>
+			`$n = \\Drupal\\node\\Entity\\Node::load(${1 + r}); $n->setUnpublished(); $n->save();`
 	}
 ];
 
@@ -186,6 +202,8 @@ type Round = {
 	requeued: number;
 	policy: string;
 	scoped: boolean;
+	/** pages stored when the save ran; an unpublished node's page is not stored again */
+	storedBefore: number;
 };
 
 const median = (xs: readonly number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
@@ -269,6 +287,11 @@ describe('fills per save, on a site with real dependents', () => {
 					}
 				};
 				await refill();
+				const node10Tags = String(
+					site.sql
+						.exec('SELECT tags FROM cfw_page WHERE path = ?', '/node/10')
+						.toArray()[0]?.tags ?? ''
+				);
 				const cached = count('cfw_page');
 
 				// #region page delta: what survives a re-render, and the noise floor with no save at all
@@ -281,7 +304,7 @@ describe('fills per save, on a site with real dependents', () => {
 				const snapshot = () => new Map(paths.map((p) => [p, stored(p)]));
 				const deltas = (before: Map<string, { html: string; at: number }>) =>
 					paths
-						.filter((p) => stored(p).at !== before.get(p)?.at)
+						.filter((p) => stored(p).html !== '' && stored(p).at !== before.get(p)?.at)
 						.map((p) => sameShare(before.get(p)?.html ?? '', stored(p).html));
 				const noiseBefore = snapshot();
 				for (const p of ['/', '/node/25', '/taxonomy/term/1']) {
@@ -295,6 +318,7 @@ describe('fills per save, on a site with real dependents', () => {
 				const one = async (kind: string, php: string): Promise<Round> => {
 					site.sql.exec('DELETE FROM cfw_fill_queue');
 					site.clearPendingTags();
+					const storedBefore = count('cfw_page');
 					const res = await site.runJson(save(php));
 					expect(res.ok, `${kind}: ${JSON.stringify(res).slice(0, 400)}`).toBe(true);
 					const invalidated = (res.invalidated as string[]) ?? [];
@@ -310,7 +334,8 @@ describe('fills per save, on a site with real dependents', () => {
 						purged: purge.purged,
 						requeued: purge.requeued,
 						policy: purge.policy,
-						scoped: purge.scoped
+						scoped: purge.scoped,
+						storedBefore
 					};
 				};
 
@@ -323,6 +348,15 @@ describe('fills per save, on a site with real dependents', () => {
 						pageDelta.set(kind, [...(pageDelta.get(kind) ?? []), ...deltas(before)]);
 					}
 				}
+
+				const afterUnpublish = String(
+					site.sql
+						.exec('SELECT html FROM cfw_page WHERE path = ?', '/node/10')
+						.toArray()[0]?.html ?? ''
+				);
+				const unpublishedStored = site.sql
+					.exec('SELECT status FROM cfw_page WHERE path = ?', '/node/1')
+					.toArray()[0]?.status;
 
 				// THE WHOLESALE ARM, on the same object and the same save. One page with no recorded
 				// tags is enough to make `pathsForTags()` answer null, which is the fallback the
@@ -342,9 +376,22 @@ describe('fills per save, on a site with real dependents', () => {
 					wholesale,
 					storedAfter: count('cfw_page'),
 					noise,
-					pageDelta: [...pageDelta]
+					pageDelta: [...pageDelta],
+					node10Tags,
+					afterUnpublish,
+					unpublishedStored
 				};
 			});
+
+			// an unpublished node is neither linked nor served to an anonymous visitor; both were, on
+			// a stale entity access cache, before the resetter emptied it
+			expect(out.afterUnpublish, '/node/10 was not re-stored').not.toBe('');
+			expect(out.afterUnpublish).not.toMatch(/>Link r\d</);
+			expect(out.unpublishedStored ?? null).not.toBe(200);
+
+			// the menu links to nodes 1-3 are on /node/10 by their link tag and not by the node's tag
+			expect(out.node10Tags).toContain('drupflare_node_link:1');
+			expect(JSON.parse(out.node10Tags || '[]')).not.toContain('node:1');
 
 			const summarise = (xs: ReturnType<typeof sameShare>[]) => ({
 				pages: xs.length,
@@ -441,15 +488,20 @@ describe('fills per save, on a site with real dependents', () => {
 				).toBeLessThan(out.wholesale.purged);
 			}
 
-			// AND THE HALF THAT IS NOT FLATTERING: a save whose entity is referenced by the main
-			// menu reaches every page, so scoping saves nothing on it. Asserted rather than
-			// mentioned, because the arithmetic that quotes one ratio for "a save" hides this
+			// A TITLE EDIT TO A NODE THE MAIN MENU LINKS no longer reaches every page: the link's
+			// access check carries `drupflare_node_link:N` rather than `node:N`
 			const inMenu = byKind.get('node-in-menu') ?? [];
 			for (const r of inMenu) {
 				expect(
 					r.purged,
-					'a menu-linked node save was expected to reach every cached page'
-				).toBe(out.cached);
+					'a menu-linked node title edit still reached every cached page'
+				).toBeLessThan(r.storedBefore);
+			}
+			// and what the link does depend on still reaches every page carrying the menu
+			for (const kind of ['node-in-menu-alias', 'node-in-menu-unpublish']) {
+				for (const r of byKind.get(kind) ?? []) {
+					expect(r.purged, `${kind} round ${r.round} missed pages`).toBe(r.storedBefore);
+				}
 			}
 		},
 		TIMEOUT

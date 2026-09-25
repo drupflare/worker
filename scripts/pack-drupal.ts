@@ -1,8 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { glob, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { composerAutoloadFiles, sdcSiblings } from './pack-completion.ts';
+import { composerAutoloadFiles, scannedDirectoryFiles, sdcSiblings } from './pack-completion.ts';
 
 /**
  * Packs the real file set a cold Drupal request touches into one blob plus an
@@ -291,6 +291,20 @@ if (sdcAssets.length > 0) {
 	const before = paths.length;
 	paths = [...new Set([...paths, ...sdcAssets])];
 	console.error(`sdc: ${sdcAssets.length} component assets, ${paths.length - before} new`);
+}
+
+// a directory core lists is packed whole, whatever the skip lists say about its extensions
+const scanned = scannedDirectoryFiles(paths, (dir) =>
+	existsSync(join(root, dir))
+		? readdirSync(join(root, dir), { withFileTypes: true })
+				.filter((d) => d.isFile())
+				.map((d) => dir + d.name)
+		: []
+);
+if (scanned.length > 0) {
+	const before = paths.length;
+	paths = [...new Set([...paths, ...scanned])];
+	console.error(`scanned: ${scanned.length} listed files, ${paths.length - before} new`);
 }
 
 // COMPOSER'S `files` AUTOLOAD IS REQUIRED BEFORE ANY CLASS RESOLVES, so a missing member is not a

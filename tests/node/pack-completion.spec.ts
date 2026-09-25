@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { composerAutoloadFiles, sdcSiblings } from '../../scripts/pack-completion.ts';
+import {
+	composerAutoloadFiles,
+	SCANNED_DIRECTORIES,
+	scannedDirectoryFiles,
+	sdcSiblings
+} from '../../scripts/pack-completion.ts';
 
 /**
  * The pack's skip lists drop `.css` and `.js` on the reasoning that PHP never opens them. That is
@@ -116,6 +121,33 @@ return array(
 	it('reads nothing out of a file with no entries', () => {
 		expect(composerAutoloadFiles('<?php return array();')).toEqual([]);
 	});
+});
+
+describe('packing a directory core lists', () => {
+	const translations = SCANNED_DIRECTORIES['core/modules/ckeditor5/']!;
+	const list = (dir: string) => (dir === translations ? [`${dir}de.js`, `${dir}fr.js`] : []);
+
+	it('packs the listing when the module that lists it is packed', () => {
+		expect(
+			scannedDirectoryFiles(['core/modules/ckeditor5/src/LanguageMapper.php'], list)
+		).toEqual([`${translations}de.js`, `${translations}fr.js`]);
+	});
+
+	it('packs nothing for a module the pack does not carry', () => {
+		expect(scannedDirectoryFiles(['core/modules/node/node.module'], list)).toEqual([]);
+	});
+
+	it.skipIf(!has('core/modules/ckeditor5/src/LanguageMapper.php'))(
+		'names the directory core actually lists',
+		() => {
+			const source = readFileSync(
+				join(ROOT, 'core/modules/ckeditor5/src/LanguageMapper.php'),
+				'utf8'
+			);
+			expect(source).toContain(`scandir('${translations.replace(/\/$/, '')}')`);
+			expect(has(translations)).toBe(true);
+		}
+	);
 });
 
 describe.skipIf(!existsSync(join(ROOT, 'vendor/composer/autoload_files.php')))(

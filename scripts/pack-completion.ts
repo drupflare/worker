@@ -37,6 +37,42 @@ export function sdcSiblings(paths: Iterable<string>, exists: (path: string) => b
 }
 
 /**
+ * Directories core lists with `scandir()`, keyed on the module whose code does the listing.
+ *
+ * A listing sees only what the pack carries, and the skip lists strip `.js` as something PHP never
+ * opens. `LanguageMapper::getMappings()` lists the CKEditor 5 translations to learn its langcodes,
+ * so with none packed it warned on every editor render and mapped no language at all. Its cache
+ * cannot stand in: it lives in `cache.discovery`, which a driver update empties.
+ */
+export const SCANNED_DIRECTORIES: Record<string, string> = {
+	'core/modules/ckeditor5/': 'core/assets/vendor/ckeditor5/ckeditor5-dll/translations/'
+};
+
+/**
+ * The files inside every directory in {@link SCANNED_DIRECTORIES} whose module is in a file set.
+ *
+ * @param paths
+ *   Every path already in the pack, tree-relative.
+ * @param list
+ *   The tree-relative files directly inside a tree-relative directory.
+ *
+ * @returns
+ *   The files to add, sorted, without duplicates.
+ */
+export function scannedDirectoryFiles(
+	paths: Iterable<string>,
+	list: (dir: string) => string[]
+): string[] {
+	const packed = [...paths];
+	const found = new Set<string>();
+	for (const [module, dir] of Object.entries(SCANNED_DIRECTORIES)) {
+		if (!packed.some((p) => p.startsWith(module))) continue;
+		for (const file of list(dir)) found.add(file);
+	}
+	return [...found].sort();
+}
+
+/**
  * Every path composer's autoloader `require`s before any class is resolved.
  *
  * A `files` entry is loaded unconditionally by `autoload_real.php`, so one missing member is a

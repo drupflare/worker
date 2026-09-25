@@ -130,4 +130,30 @@ describe('first-run pack consistency', () => {
 		},
 		TIMEOUT
 	);
+
+	it(
+		'carries the directory CKEditor 5 lists for its langcodes',
+		async () => {
+			// the listing warned on every editor render and mapped no language while the pack
+			// carried none of the translations; a cached list cannot stand in, it sits in discovery
+			const probe = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				return (await site.runJson(
+					drupalOp(`\\Drupal::cache('discovery')->delete('ckeditor5.langcodes');
+						$warned = [];
+						set_error_handler(function ($no, $msg) use (&$warned) { $warned[] = $msg; return true; });
+						$map = \\Drupal::service(\\Drupal\\ckeditor5\\LanguageMapper::class)->getMappings();
+						restore_error_handler();
+						$out['langcodes'] = count($map);
+						$out['de'] = $map['de'] ?? null;
+						$out['warned'] = $warned;`)
+				)) as Record<string, unknown>;
+			});
+			console.log(`[pack-consistency ckeditor5] ${JSON.stringify(probe)}`);
+			expect(probe['warned']).toEqual([]);
+			expect(probe['langcodes'] as number).toBeGreaterThan(0);
+			expect(probe['de']).toBe('de');
+		},
+		TIMEOUT
+	);
 });

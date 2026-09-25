@@ -189,6 +189,7 @@ describe('the fixture covers the allow-list', () => {
 			'REPLICA_COUNT',
 			'REPLICA_LAG_MS',
 			'SITE_WARM',
+			'WARM_INTERVAL_MS',
 			'EDGE_PLAN',
 			'ASSET_AGGREGATES'
 		];
@@ -707,11 +708,21 @@ describe('SITE_WARM decides the idle re-arm', () => {
 	it('re-arms inside the hibernation threshold only when warming is asked for', async () => {
 		const fallback = await rearm({});
 		const on = await rearm({ SITE_WARM: '1' });
-		expect(fallback).toBe(240_000);
+		// declined by the policy: the adoptable re-arm, past hibernation but inside an isolate's life
+		expect(fallback).toBe(120_000);
 		expect(on).toBe(8_000);
 		// a Durable Object hibernates at 10 s, so the two sit either side of staying resident
 		expect(on).toBeLessThan(10_000);
 		expect(fallback).toBeGreaterThan(10_000);
+		// THE CONTROL: without retention nothing is adoptable, so the slow re-arm is all it buys
+		expect(await rearm({ RETAIN_INTERPRETER: '0' })).toBe(240_000);
+	});
+
+	it('warms an idle paid site by default and leaves an idle free one to the thermal policy', async () => {
+		expect(await rearm({ PLAN: 'paid' })).toBe(8_000);
+		expect(await rearm({ PLAN: 'free' })).toBe(120_000);
+		// an explicit choice still wins on either plan, and an operator's no gets the cheapest re-arm
+		expect(await rearm({ PLAN: 'paid', SITE_WARM: '0' })).toBe(240_000);
 	});
 
 	it('agrees with the interval the cron module resolves', () => {

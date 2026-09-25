@@ -1,6 +1,7 @@
 import {
 	reconcileClockPhp,
 	reconcileConfigPhp,
+	reconcileDiscoveryPhp,
 	reconcileOwnerPhp,
 	reconcileRouterPhp
 } from '../drupal/reconcile-php.js';
@@ -17,6 +18,9 @@ import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-
  * the row away; one baked earlier reads as owed, which is what makes a newer hook visible.
  */
 export const DRIVER_DIGEST_KEY = 'driver_digest';
+
+/** set by the digest step on an update, and read once by its `php()` to warm discovery */
+export const DISCOVERY_WARM_KEY = 'discovery_warm_owed';
 
 /**
  * Reconciling an ALREADY-PROVISIONED site with the pack that ships today.
@@ -109,8 +113,8 @@ export interface ReconcileStep {
 	verdict(sql: ReconcileSql, host: ReconcileHost): StepVerdict;
 	/** a SQL-only fix; use only where no cached copy of the value can exist */
 	sql?(sql: ReconcileSql, host: ReconcileHost): void;
-	/** a PHP fragment printing a JSON object, for anything Drupal owns a cache of */
-	php?(host: ReconcileHost): string;
+	/** a PHP fragment printing a JSON object, for anything Drupal owns a cache of; null boots nothing */
+	php?(host: ReconcileHost): string | null;
 }
 
 /**
@@ -375,15 +379,25 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 			// step is keyed on the driver digest, so it fires whenever the packed modules change at
 			// all, which is exactly the condition under which discovery has to run again.
 			sql.exec('DELETE FROM cache_discovery');
+			// an UPDATE rather than a fresh site: only a site that recorded an older digest warms
+			host.setMeta(DISCOVERY_WARM_KEY, host.meta(DRIVER_DIGEST_KEY) ? '1' : '');
 			host.setMeta(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
+		},
+		/**
+		 * Rebuilds discovery in this invocation, on an update only, so no render has to.
+		 *
+		 * A render that rebuilt the emptied discovery bin inside the first cold alarm after an update
+		 * was reset for the isolate's memory with a visitor waiting (2 of 2 deployed updates,
+		 * 2026-09-25), and a simulation that moved only the digest did not reproduce it. Splitting the
+		 * rebuild into this invocation, which drops its interpreter at the end, keeps any single
+		 * invocation to one of the two. A fresh site reads null and boots nothing: a `php()` on this
+		 * step that booted on every fresh site was tried once and broke the boot-free migration chain.
+		 */
+		php(host) {
+			if (host.meta(DISCOVERY_WARM_KEY) !== '1') return null;
+			host.setMeta(DISCOVERY_WARM_KEY, '');
+			return reconcileDiscoveryPhp(host.origin());
 		}
-		// NO `php()` HERE, AND ADDING ONE WAS A MISTAKE WORTH RECORDING. Recompiling the container
-		// inside this step looks like an improvement -- the next visitor stops paying the compile --
-		// and it costs a kernel boot on EVERY FRESH SITE, because a fresh site has no recorded
-		// digest and so reads as owed. `serve-migration.spec.ts` caught it: the migration chain is
-		// deliberately free of interpreter boots, which is also why provisioning drops the
-		// interpreter at all. The docblock above already stated the design: the drop is the fix, and
-		// the next boot rebuilds and discovers.
 	},
 	{
 		id: 'router-driver-routes',

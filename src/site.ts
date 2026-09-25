@@ -192,6 +192,8 @@ const PUBLIC_ROUTES = new Set([
 const DIAGNOSTIC_ROUTES = new Set([
 	'/php',
 	'/opcache',
+	// opens a connection to the external database the HYPERDRIVE binding names
+	'/backend',
 	'/probe',
 	'/mb',
 	'/migrate',
@@ -450,6 +452,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/enable': '/__enable',
 	'/php': '/__php',
 	'/opcache': '/__opcache',
+	'/backend': '/__backend',
 	'/probe': '/__probe',
 	'/mb': '/__mb',
 	'/migrate': '/__migrate',

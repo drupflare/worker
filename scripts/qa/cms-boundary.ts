@@ -158,6 +158,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/heap': 'host',
 	'/opcache': 'host',
+	'/backend': 'host',
 	'/bootphase': 'cms',
 	'/ops': 'mixed',
 	'/installable': 'cms',

@@ -1,5 +1,6 @@
 import '@drupflare/cartridge/shim';
 import { backendNeedsPark, selectBackend, type BackendEnv } from './db/backend.js';
+import { backendExec } from './db/pg-exec.js';
 import type { SiteEnv } from './env.js';
 import { substituteAggregates, type AggregateIndex } from './ops/aggregates.js';
 import type { CacheTier } from './ops/cache-tiers.js';
@@ -324,9 +325,10 @@ import {
 	cronHooksFor,
 	cronHooksFromList,
 	cronOptions,
+	declinedRearmMs,
 	gcPass,
 	idleRearmMs,
-	keepWarmMs,
+	warmForced,
 	warmIntervalConfigured,
 	writeCursor,
 	type CronHookCache
@@ -1998,6 +2000,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	/** the last adoption attempt, for `/serve-stats` */
 	lastRetention?: { at: number; adopted: boolean; reason?: string; idleMs?: number };
 	retentionAdoptions = 0;
+	/** the cold boot under way, which a concurrent {@link ensurePhp} caller shares */
+	private bootInFlight: Promise<PhpInstance> | null = null;
+	/** the last boot that started while another interpreter was still resident in this isolate */
+	bootBesideResident?: { at: number; id: string; interpreters: number; linearBytes: number };
 	/**
 	 * The interpreter. Clearing it also drops the isolate's retained copy, or a recycle or a drop
 	 * would leave the memory it exists to free held in module scope.
@@ -2473,7 +2479,25 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			this.encounters = recordEncounter(this.encounters, 'warm');
 			return this.php;
 		}
+		// A SECOND COLD CALLER WAITS FOR THE FIRST. Reconciliation runs in the alarm outside the gate,
+		// so its PHP and a visitor's inline render each constructed an interpreter, and two in one
+		// isolate were reset for its memory with the visitor waiting (deployed, 2026-09-25)
+		if (this.bootInFlight) return this.bootInFlight;
+		this.bootInFlight = this.bootPhp(opts).finally(() => {
+			this.bootInFlight = null;
+		});
+		return this.bootInFlight;
+	}
+
+	/** the cold half of {@link ensurePhp}; only it and its own reboot call this */
+	private async bootPhp(opts: { skipRestore?: boolean }): Promise<PhpInstance> {
 		this.encounters = recordEncounter(this.encounters, 'cold');
+		// an uncollected interpreter still counts toward the isolate's 128 MiB while this one grows
+		const resident = isolateResidency();
+		if (resident.interpreters > 0) {
+			this.bootBesideResident = { at: this.nowMs(), ...resident };
+			console.warn(JSON.stringify({ cfw: 'boot-beside-resident', ...resident }));
+		}
 
 		const t0 = Date.now();
 		// every closure installed below goes through `self`, so an adopting instance can take them over
@@ -2739,7 +2763,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					// does not depend on the snapshot at all. `skipRestore` is what stops the retry
 					// refusing the same chunk forever.
 					this.php = null;
-					const fresh = await this.ensurePhp({ skipRestore: true });
+					// directly: through `ensurePhp()` this would wait on the boot it is part of
+					const fresh = await this.bootPhp({ skipRestore: true });
 					this.heapRestore.rebooted = true;
 					return fresh;
 				}
@@ -4698,7 +4723,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const applied: Payload = { id: step.id, owed, satisfied };
 		try {
 			if (step.sql) step.sql(this.sql, host);
-			if (step.php) applied.php = await this.runJson(step.php(host));
+			const code = step.php?.(host) ?? null;
+			if (code !== null) applied.php = await this.runJson(code);
 		} catch (e: any) {
 			applied.error = String(e?.message ?? e);
 		}
@@ -10442,11 +10468,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const headroom = this.degradation().cron;
 		const configured = idleRearmMs(this.env, headroom);
 		if (!headroom) return configured;
-		const stated = (this.env as { SITE_WARM?: string | null } | null | undefined)?.SITE_WARM;
-		const forced =
-			stated === undefined || stated === null || String(stated) === ''
-				? null
-				: String(stated) === '1';
+		const forced = warmForced(this.env, isPaid(this.env));
 		const stored = this.storedRenderWindow();
 		const decision = warmDecision(this.arrivals ?? [], this.nowMs(), {
 			thresholdMs: HIBERNATION_IDLE_MS,
@@ -10455,7 +10477,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			stored
 		});
 		this.lastWarmDecision = decision;
-		if (!decision.warm) return keepWarmMs(this.env);
+		if (!decision.warm) return declinedRearmMs(this.env, forced === false);
 		return (
 			warmIntervalConfigured(this.env) ??
 			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, HIBERNATION_IDLE_MS)
@@ -12440,6 +12462,38 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 				// naming `curl_init` and `imagecreatetruecolor` in a binary that has neither.
 				// the file cache this interpreter wrote, for `scripts/bake-opcache.ts` to pack: `op=list`
 				// names every `.bin` under /tmp, `op=read&path=` answers one as bytes
+				case '/__backend': {
+					// the binding as an OBJECT sees it, probed whether or not DB_BACKEND selected it
+					const env = this.env as unknown as BackendEnv;
+					const configured = selectBackend(env);
+					const probe = selectBackend({
+						DB_BACKEND: 'hyperdrive',
+						HYPERDRIVE: env?.HYPERDRIVE
+					});
+					const selected = { name: configured.name, available: configured.available };
+					if (!probe.available) {
+						return Response.json(
+							{ ok: false, selected, why: probe.why },
+							{ status: 503 }
+						);
+					}
+					const t0 = Date.now();
+					try {
+						const out = await backendExec(probe, 'SELECT 1 AS one');
+						return Response.json({
+							ok: true,
+							selected,
+							dialect: probe.dialect,
+							rows: out.rows,
+							ms: Date.now() - t0
+						});
+					} catch (e) {
+						return Response.json(
+							{ ok: false, selected, dialect: probe.dialect, error: String(e) },
+							{ status: 502 }
+						);
+					}
+				}
 				case '/__opcache': {
 					const { binary } = await this.ensurePhp();
 					const fs = binary.FS as unknown as {
@@ -16141,7 +16195,8 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 						retention: {
 							enabled: retainInterpreterEnabled(this.env),
 							adoptions: this.retentionAdoptions,
-							last: this.lastRetention ?? null
+							last: this.lastRetention ?? null,
+							bootBesideResident: this.bootBesideResident ?? null
 						},
 						// the two `ctx.storage` reads, which are Promises and therefore cannot be in the
 						// synchronous half PHP calls

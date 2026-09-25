@@ -284,8 +284,47 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 		TIMEOUT
 	);
 
+	/**
+	 * The update's warm-up runs in the alarm, OUTSIDE the gate, and a visitor can arrive during it.
+	 *
+	 * Deployed 2026-09-25: nine seconds after an update deploy the alarm and a visitor's inline render
+	 * were reset together for the isolate's memory at 262 and 139 ms of CPU, because each constructed
+	 * an interpreter. The pool enforces no memory limit, so what is asserted is the mechanism: two
+	 * cold callers at once share one boot. A count of boots across the alarm cannot say it, because
+	 * the warm-up drops its interpreter by design and the render after it boots again, in sequence.
+	 */
 	it(
-		'drops a compiled container no packed variant matches, and the next boot rebuilds it',
+		'shares one cold boot between two callers that arrive together',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				const s = site as unknown as {
+					php: unknown;
+					encounters: { cold: number };
+					ensurePhp(): Promise<unknown>;
+				};
+				s.php = null;
+				const before = s.encounters.cold;
+				const [a, b] = await Promise.all([s.ensurePhp(), s.ensurePhp()]);
+				const shared = a === b;
+				// THE CONTROL: one after another is two boots, so the counter can see a second one
+				s.php = null;
+				await s.ensurePhp();
+				return {
+					together: s.encounters.cold - before - 1,
+					shared,
+					total: s.encounters.cold - before
+				};
+			});
+			expect(out.shared).toBe(true);
+			expect(out.together).toBe(1);
+			expect(out.total).toBe(2);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'drops a compiled container no packed variant matches, and rebuilds it inside the step',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
 				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
@@ -299,12 +338,16 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				);
 				const containers = () =>
 					Number(rows(site, 'SELECT COUNT(*) AS n FROM cache_container')[0]?.n ?? 0);
+				const created = () =>
+					String(rows(site, 'SELECT created FROM cache_container')[0]?.created ?? '');
 				const before = containers();
-				// SAMPLED WHEN THE CONTAINER STEP ITSELF RAN, not after the chain. The router step
-				// runs later and boots a kernel to rebuild `router`, which recompiles the container
-				// the drop just removed -- so an `after` taken at the end of the chain reads 1 and
-				// says nothing about whether the drop happened
+				const createdBefore = created();
+				// SAMPLED WHEN THE CONTAINER STEP ITSELF RAN, not after the chain. Its discovery
+				// warm-up boots a kernel in the same invocation, so the row there is a NEW compile:
+				// a `created` unlike the old row's is what proves the drop happened
 				let atDrop: number | null = null;
+				let createdAtDrop = '';
+				let warm: Payload | null = null;
 				for (let i = 0; i < 12; i++) {
 					const res = await site.fetch(
 						new Request(`${ORIGIN}/__reconcile`, { method: 'POST' })
@@ -312,7 +355,11 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 					const body = (await res.json()) as Payload;
 					const ran = body.ran as Payload | null;
 					const outcome = (ran?.reconcile ?? null) as Payload | null;
-					if (outcome?.id === 'container-driver-digest') atDrop = containers();
+					if (outcome?.id === 'container-driver-digest') {
+						atDrop = containers();
+						createdAtDrop = created();
+						warm = (outcome.php ?? null) as Payload | null;
+					}
 					if (
 						outcome === null ||
 						outcome.done === true ||
@@ -327,7 +374,17 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				const booted = await site.runJson(BOOT_KERNEL);
 				const rebuilt = containers();
 				const digest = rows(site, "SELECT v FROM cfw_meta WHERE k = 'driver_digest'")[0]?.v;
-				return { before, atDrop, after, rebuilt, booted, digest: digest ?? null };
+				return {
+					before,
+					createdBefore,
+					atDrop,
+					createdAtDrop,
+					warm,
+					after,
+					rebuilt,
+					booted,
+					digest: digest ?? null
+				};
 			});
 
 			// THE CONTROL: a pack with no container row makes the drop unobservable
@@ -335,15 +392,13 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 				out.before,
 				'the pack shipped no container, so the drop proves nothing'
 			).toBeGreaterThan(0);
-			expect(out.atDrop, 'the container step never ran').toBe(0);
-			// THE DROP IS THE WHOLE FIX, and this file used to assert a container survived the chain.
-			// That was INCIDENTAL: a later step booted a kernel for its own reasons and left one
-			// behind, and once the 11.4.6 pack stopped owing those steps work it read 0 with the drop
-			// still perfectly correct.
-			//
-			// Recompiling inside the step was tried and reverted: a fresh site has no recorded digest,
-			// so it reads as owed and would pay a kernel boot on every provision -- which is what the
-			// migration chain is deliberately free of. `serve-migration.spec.ts` is what caught that.
+			expect(out.atDrop, 'the container step never ran').toBe(1);
+			expect(out.createdAtDrop, 'the old container survived the drop').not.toBe(
+				out.createdBefore
+			);
+			// an UPDATE, so the step warmed discovery here rather than leaving it to a render
+			expect((out.warm as Payload)?.ok, JSON.stringify(out.warm)).toBe(true);
+			expect(Number((out.warm as Payload)?.rows)).toBeGreaterThan(0);
 			expect((out.booted as Payload)?.ok, JSON.stringify(out.booted)).toBe(true);
 			expect(out.rebuilt).toBeGreaterThan(0);
 			expect(out.digest).not.toBe('a-pack-from-before');

@@ -13,6 +13,7 @@ import {
 	parseParkSql,
 	performSql
 } from '../../../src/ops/park-drive';
+import { freshSite, inObject, type ServeDo } from '../../helpers/serve-do';
 
 /**
  * Where a site's SQL executes, and the two things that decide it.
@@ -363,4 +364,34 @@ describe('placeholders, which the two databases do not share', () => {
 		);
 		expect(seen).toEqual(['INSERT INTO n (a) VALUES ($1)']);
 	});
+});
+
+describe('/__backend, the binding as a Durable Object sees it', () => {
+	const probe = (hyperdrive?: { connectionString: string }) =>
+		inObject(freshSite(), async (site: ServeDo) => {
+			site.env = { ...site.env, HYPERDRIVE: hyperdrive } as typeof site.env;
+			const res = await site.fetch(new Request('https://do.local/__backend'));
+			return { status: res.status, text: await res.text() };
+		});
+
+	it('names the missing binding and the backend in force', async () => {
+		const out = await probe();
+		expect(out.status).toBe(503);
+		const body = JSON.parse(out.text);
+		expect(body.why).toContain('HYPERDRIVE');
+		expect(body.selected).toEqual({ name: 'do-sqlite', available: true });
+	});
+
+	it('refuses a connection string for neither dialect', async () => {
+		const out = await probe({ connectionString: 'redis://u:p@h:6379' });
+		expect(out.status).toBe(503);
+		expect(JSON.parse(out.text).why).toContain('neither');
+	});
+
+	it('reports a failed query without echoing the connection string', async () => {
+		const out = await probe({ connectionString: 'postgres://u:s3cret-pw@127.0.0.1:1/d' });
+		expect(out.status).toBe(502);
+		expect(JSON.parse(out.text).dialect).toBe('postgres');
+		expect(out.text).not.toContain('s3cret-pw');
+	}, 60_000);
 });

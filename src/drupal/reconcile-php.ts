@@ -132,6 +132,46 @@ echo json_encode($out);
  * unconditional form does the work again on a site that is already current, and this runs inside an
  * alarm with a CPU budget.
  */
+/**
+ * Fills the discovery bin the digest step emptied, without rendering anything.
+ *
+ * Entity types, the field map and every `plugin.manager.*` definition list: the set a first render
+ * would otherwise rebuild inside itself. A manager that throws is named and skipped, since the render
+ * after this rebuilds whatever is still missing.
+ */
+export function reconcileDiscoveryPhp(origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false, 'managers' => 0, 'failed' => []];
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+  $container = \Drupal::getContainer();
+  \Drupal::entityTypeManager()->getDefinitions();
+  \Drupal::service('entity_field.manager')->getFieldMap();
+  foreach ($container->getServiceIds() as $id) {
+    if (strpos($id, 'plugin.manager.') !== 0) continue;
+    try {
+      $manager = $container->get($id);
+      if (method_exists($manager, 'getDefinitions')) {
+        $manager->getDefinitions();
+        $out['managers']++;
+      }
+    } catch (\Throwable $e) {
+      $out['failed'][] = $id;
+    }
+  }
+  $out['rows'] = (int) \Drupal::database()->query('SELECT COUNT(*) FROM {cache_discovery}')->fetchField();
+  $out['ok'] = $out['rows'] > 0;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+echo json_encode($out);
+`;
+}
+
 export function reconcileRouterPhp(origin = ''): string {
 	return String.raw`<?php
 ${FIBER_SHIM}

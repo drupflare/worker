@@ -225,6 +225,20 @@ describe('the container step, which is the general close for a hook added after 
 	 * The verdict runs immediately after the apply, so a step whose end state IS a recorded value
 	 * would read the old one and be filed as failed on the run that succeeded.
 	 */
+	it('warms discovery on an update, once, and boots nothing on a fresh site', () => {
+		const update = fakeHost(1_000, { driver_digest: 'stale' });
+		step.sql?.(fakeSql({ cache_container: [{ cid: 'x' }] }), update);
+		const code = step.php?.(update) ?? null;
+		expect(code).toContain('plugin.manager.');
+		// read once: a retried step must not warm again on a stale marker
+		expect(step.php?.(update) ?? null).toBeNull();
+
+		// THE CONTROL: no recorded digest is a fresh site, whose migration chain boots nothing
+		const fresh = fakeHost(1_000, {});
+		step.sql?.(fakeSql({ cache_container: [{ cid: 'x' }] }), fresh);
+		expect(step.php?.(fresh) ?? null).toBeNull();
+	});
+
 	it('drops the container and records the digest in the same apply', () => {
 		const tables = { cache_container: [{ cid: 'x' }] };
 		const sql = fakeSql(tables);

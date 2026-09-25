@@ -205,8 +205,14 @@ for level in idle light heavy; do
 	t0=$(date +%s)
 	case "$level" in
 		idle) sleep "$BURN" ;;
-		light) END=$(($(date +%s) + BURN)); while [ "$(date +%s)" -lt "$END" ]; do sleep 0.05; done ;;
-		heavy) END=$(($(date +%s) + BURN)); while [ "$(date +%s)" -lt "$END" ]; do :; done ;;
+		light)
+			END=$(($(date +%s) + BURN))
+			while [ "$(date +%s)" -lt "$END" ]; do sleep 0.05; done
+			;;
+		heavy)
+			END=$(($(date +%s) + BURN))
+			while [ "$(date +%s)" -lt "$END" ]; do :; done
+			;;
 	esac
 	t1=$(date +%s)
 	cpu1=$(awk '/^usage_usec/{print $2}' /sys/fs/cgroup/cpu.stat)

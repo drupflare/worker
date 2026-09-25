@@ -137,7 +137,10 @@ export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 	return mode === 'alwaysWarm' ? Math.max(0, replicas) * IDLE_GB_S_PER_DAY : 0;
 }
 
-/** the keep-warm chain's re-arm interval, `KEEP_WARM_MS` in `src/ops/cron.ts` */
+/**
+ * The idle re-arm an operator's `SITE_WARM=0` gets, `KEEP_WARM_MS` in `src/ops/cron.ts`. A site the
+ * thermal policy declined re-arms at `ADOPTABLE_REARM_MS` (120 s) instead, twice these firings.
+ */
 export const KEEP_WARM_MS = 240_000;
 
 /**
@@ -605,8 +608,13 @@ export const ROWS_PER_FILL = {
 	 * 91 -> 90 on 2026-09-25, when the claim began creating the owner role and assigning it to uid 1.
 	 * Same shape as the key: with `OwnerTier::establish()` disabled the first fill reads 91 and 87
 	 * at the default, restored it reads 90 and 86, n=1 each with the other classes unchanged.
+	 *
+	 * 90 -> 82 the same day, when the pack database was rebuilt so its router matches the driver.
+	 * A fresh install mints a new Twig prefix, the bake re-ran under it, and the pack now carries 34
+	 * compiled templates against 23: the first fill compiles fewer, so `cache_default` writes 12
+	 * rows rather than 20. Every other table matched to the row.
 	 */
-	firstFillOnFreshObject: 90
+	firstFillOnFreshObject: 82
 } as const;
 
 /**
@@ -618,8 +626,8 @@ export const ROWS_PER_FILL = {
  *
  * A real re-render is **1** row, the `cfw_page` upsert: {@link ROWS_PER_FILL}'s 8, minus the 6
  * `cache_dynamic_page_cache` rows and the 1 `cache_menu` row. The cold classes barely move, because
- * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 86 against
- * 90 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
+ * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 78 against
+ * 82 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
  * see {@link rowsForWarmthMix}. (With `render` in memory too they read 72 and 6; it is not default.)
  *
  * `warmReassemble` is the front page's 2, measured at this default in the same arm (login
@@ -630,7 +638,7 @@ export const ROWS_PER_FILL_MEMORY_BINS = {
 	realRender: 1,
 	firstFillAfterMigrate: ROWS_PER_FILL.firstFillAfterMigrate,
 	firstEverForPath: 11,
-	firstFillOnFreshObject: 86
+	firstFillOnFreshObject: 78
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;

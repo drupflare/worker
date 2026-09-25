@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -12,7 +13,11 @@ import {
 	serialiseDriverAssets,
 	serialiseDriverDigest
 } from '../../scripts/gen-driver-assets.ts';
-import { DRIVER_DIGEST } from '../../src/ops/driver-digest.ts';
+import {
+	DRIVER_DIGEST,
+	DRIVER_ROUTES,
+	DRIVER_ROUTE_PERMISSIONS
+} from '../../src/ops/driver-digest.ts';
 
 /**
  * `assets/driver.json` is the copy of the Drupal modules that ACTUALLY EXECUTES on the edge, and
@@ -269,5 +274,46 @@ describe('the build packs the CMS the shipping config selects', () => {
 		expect(serialiseDriverAssets(await buildDriverAssets('drupal'))).toBe(
 			serialiseDriverAssets(await buildDriverAssets())
 		);
+	});
+});
+
+/**
+ * The pack's router has to be the router the packed driver declares.
+ *
+ * Reconciliation's router step rebuilds any site whose table lacks a driver route or carries an old
+ * permission, and a fresh site is provisioned from this database. So a router that lags the driver
+ * made EVERY new site run a PHP router rebuild on its first cold alarm, and on deployed throwaways
+ * that invocation was reset for the isolate's memory with the first visitor waiting, 8 of 8 times.
+ * `bun run build:site-db` after `assets:driver -- --to=drupal-src` is the repair.
+ */
+describe('the packed router', () => {
+	it('carries every driver route with the permission the driver declares', () => {
+		const sqlite = join(
+			dirname(fileURLToPath(import.meta.url)),
+			'../../assets/drupal/site.sqlite'
+		);
+		// PDO rather than node:sqlite: a serialized Route carries NULs, which node:sqlite truncates at
+		const rows = JSON.parse(
+			execFileSync(
+				'php',
+				[
+					'-r',
+					`$d = new PDO("sqlite:" . $argv[1]);
+					 $out = [];
+					 foreach ($d->query("SELECT name, route FROM router WHERE name LIKE 'drupflare.%'") as $r) {
+						 preg_match('/"_permission";s:\\d+:"([^"]*)"/', $r['route'], $m);
+						 $out[$r['name']] = $m[1] ?? null;
+					 }
+					 echo json_encode($out);`,
+					'--',
+					sqlite
+				],
+				{ encoding: 'utf8' }
+			)
+		) as Record<string, string | null>;
+		for (const route of DRIVER_ROUTES) expect(Object.keys(rows), route).toContain(route);
+		for (const [route, permission] of Object.entries(DRIVER_ROUTE_PERMISSIONS)) {
+			expect(rows[route], route).toBe(permission);
+		}
 	});
 });

@@ -209,9 +209,9 @@
 		},
 		{
 			"key": "assets/drupal/site.sqlite",
-			"bytes": 5840896,
-			"sha256": "c4419df122b7f4c92028f4789e0357706681a1cb4110f3866ac379826b82a846",
-			"md5": "d8f7fc7396c08a78cd7b0525040d71fb",
+			"bytes": 5832704,
+			"sha256": "110877375492baacac46e515ff5bd4756596f95e3a70522e97359e2bafef2327",
+			"md5": "fc935bc9e8637af97f8239af7f142084",
 			"tracked": true
 		}
 	],

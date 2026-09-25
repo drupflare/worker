@@ -63,21 +63,26 @@ describe('the page itself', () => {
 	});
 
 	/**
-	 * A GENERATED password is shown once and nowhere else, so the page must not navigate away from
-	 * it on a timer. One the visitor typed is one they already have, so it may.
+	 * The owner token is issued on every claim and shown once. The page used to navigate to the
+	 * login form five seconds after a claim with a chosen password, taking the token with it.
 	 */
-	it('sends the owner to the login page only when they chose the password', () => {
-		expect(html).toContain('const chose = Boolean(body.adminPass)');
-		expect(html).toContain("location.href = '/user/login'");
-		// the redirect sits inside the branch rather than beside it
-		const branch = html.slice(html.indexOf('if (chose) {'));
-		expect(branch).toContain("location.href = '/user/login'");
-		// and a link is always offered, so the no-timer case is not a dead end
+	it('never navigates away on its own', () => {
+		expect(html).not.toContain('location.href =');
+		expect(html).not.toContain('setTimeout');
+		// a link is always offered, so leaving is the visitor's decision
 		expect(html).toContain('Log in as admin');
 	});
 
-	it('names the account, not just the password', () => {
-		expect(html).toContain("lines.push('username: admin')");
+	it('says the token is shown once and gates leaving on storing it', () => {
+		expect(html).toContain('is shown once, on this page, and this site cannot show it again');
+		expect(html).toContain('I have stored the owner token');
+		expect(html).toContain("login.className = 'off'");
+	});
+
+	it('gives every credential a copy control and offers a download', () => {
+		expect(html).toContain('navigator.clipboard.writeText(value)');
+		expect(html).toContain('Download as Text');
+		expect(html).toContain("['Username', 'admin']");
 	});
 
 	it('tells a crawler to stay away, in the markup and in the headers', () => {

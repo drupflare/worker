@@ -70,14 +70,20 @@ pre { overflow-x: auto; padding: .75rem; border-radius: .25rem; font-size: .8rem
   background: rgba(127,127,127,.15) }
 .out:empty { display: none }
 .warn { font-size: .85rem; opacity: .7 }
+.cred { display: flex; gap: .5rem; align-items: end; margin: 0 0 .75rem }
+.cred label { flex: 1; margin: 0 }
+.cred input { font-family: ui-monospace, monospace; font-size: .85rem }
+.alert { padding: .75rem; border: 2px solid #b45309; border-radius: .25rem; margin: 0 0 1rem;
+  opacity: 1 }
+a.off { pointer-events: none; opacity: .4 }
 </style>
 </head>
 <body>
 <main>
 <h1>Set Up This Site</h1>
 <p>Drupal is installed and serving, but nobody has claimed it yet. Claiming it sets the
-administrator password and issues the owner token. Until then, anyone who reaches this URL can
-claim it.</p>
+administrator password, gives that account the Site Owner role, and issues the owner token. Until
+then, anyone who reaches this URL can claim it.</p>
 <form id="f">
 <label>Site Name<input name="siteName" value="My Site" autocomplete="off"></label>
 <label>Administrator Email<input name="adminMail" type="email" autocomplete="off"></label>
@@ -109,32 +115,80 @@ document.getElementById('f').addEventListener('submit', async (e) => {
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'refused');
-    // the password the visitor typed is one they already have; anything the host generated is
-    // shown once and nowhere else, so that case must not be navigated away from on a timer
+    // a password the visitor typed is one they already have, so it is not shown back
     const chose = Boolean(body.adminPass);
-    const lines = chose
-      ? ['Claimed. Sign in with these:']
-      : ['Claimed. Store these now, they are shown once.'];
-    lines.push('username: admin');
-    if (data.adminPass) lines.push('password: ' + data.adminPass);
-    else if (chose) lines.push('password: the one you just entered');
-    if (data.ownerToken) lines.push('owner token: ' + data.ownerToken);
-    out.innerHTML = '<pre></pre>';
-    out.firstChild.textContent = lines.join('\\n');
-    const go = document.createElement('p');
-    go.innerHTML = '<a href="/user/login">Log in as admin</a>';
-    out.appendChild(go);
-    if (chose) {
-      const note = document.createElement('p');
-      out.appendChild(note);
-      let left = 5;
-      const tick = () => {
-        note.textContent = 'Taking you to the login page in ' + left + '...';
-        if (left-- <= 0) location.href = '/user/login';
-        else setTimeout(tick, 1000);
-      };
-      tick();
+    const creds = [['Username', 'admin']];
+    if (data.adminPass) creds.push(['Password', data.adminPass]);
+    if (data.ownerToken) creds.push(['Owner Token', data.ownerToken]);
+    out.textContent = '';
+    const say = (tag, text, cls) => {
+      const el = document.createElement(tag);
+      el.textContent = text;
+      if (cls) el.className = cls;
+      out.appendChild(el);
+      return el;
+    };
+    say('h2', 'Claimed');
+    if (data.ownerToken || data.adminPass) {
+      say('p', (data.ownerToken ? 'The owner token' : 'The password') +
+        ' is shown once, on this page, and this site cannot show it again. ' +
+        (data.ownerToken ? 'It reaches the site when Drupal itself is broken, so store it somewhere other than this site.' : ''),
+        'alert');
     }
+    for (const [name, value] of creds) {
+      const row = document.createElement('div');
+      row.className = 'cred';
+      const label = document.createElement('label');
+      label.textContent = name;
+      const input = document.createElement('input');
+      input.readOnly = true;
+      input.value = value;
+      label.appendChild(input);
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.textContent = 'Copy';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+        } catch {
+          input.select();
+          document.execCommand('copy');
+        }
+        copy.textContent = 'Copied';
+      });
+      row.append(label, copy);
+      out.appendChild(row);
+    }
+    if (chose) say('p', 'Password: the one you just entered.', 'warn');
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = 'Download as Text';
+    save.addEventListener('click', () => {
+      const text = creds.map(([n, v]) => n + ': ' + v).join('\\n') + '\\nsite: ' + location.origin + '\\n';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      a.download = location.hostname + '-credentials.txt';
+      a.click();
+    });
+    out.appendChild(save);
+    const go = document.createElement('p');
+    const login = document.createElement('a');
+    login.href = '/user/login';
+    login.textContent = 'Log in as admin';
+    go.appendChild(login);
+    if (data.ownerToken) {
+      // nothing leaves this page until the visitor says the token is somewhere else
+      login.className = 'off';
+      const ack = document.createElement('label');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.style.display = 'inline';
+      box.style.width = 'auto';
+      box.addEventListener('change', () => { login.className = box.checked ? '' : 'off'; });
+      ack.append(box, ' I have stored the owner token');
+      out.appendChild(ack);
+    }
+    out.appendChild(go);
   } catch (err) {
     button.disabled = false;
     out.textContent = 'Could not claim this site: ' + err.message;

@@ -503,3 +503,58 @@ describe('rowid reuse, which decides the audit table by table', () => {
 		expect(out).toBe(1);
 	});
 });
+
+/** the three `node_field_data` indexes the planner never used over listing, view, save and admin */
+const UNREAD_NODE_INDEXES: Record<string, string> = {
+	node_field_data_node__vid: '"vid"',
+	node_field_data_node_field__uid__target_id: '"uid"',
+	node_field_data_node_field__created: '"created"'
+};
+
+describe('the three unread node_field_data indexes, priced as a pair on one object', () => {
+	/**
+	 * `type` and `status_type` stay, because listing by content type is the commonest Views shape
+	 * on a real site and a scan there costs read rows on every uncached listing. The other three
+	 * serve an author listing, a sort by creation date and a revision join, none of which a default
+	 * site runs. Each arm is created from the host, so neither one depends on what the pack ships.
+	 */
+	it(
+		'charges a node create and a revision fewer rows without them',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await call(site, '/__migrate?all=1&prefill=0');
+				await call(site, '/__firstrun', {
+					method: 'POST',
+					body: JSON.stringify({ adminPass: PASS, siteName: 'Indexes' }),
+					headers: { 'content-type': 'application/json' }
+				});
+				const setIndexes = (present: boolean) => {
+					for (const [name, column] of Object.entries(UNREAD_NODE_INDEXES)) {
+						site.sql.exec(
+							present
+								? `CREATE INDEX IF NOT EXISTS ${name} ON node_field_data (${column})`
+								: `DROP INDEX IF EXISTS ${name}`
+						);
+					}
+				};
+				const arm = async (present: boolean, seq: number) => {
+					setIndexes(present);
+					const first = await warm(site, 'node-create', seq);
+					await warm(site, 'node-revision', seq + 1, Number(first['id'] ?? 0));
+					const create = await priced(site, 'node-create', () =>
+						workload(site, 'node-create', seq + 2)
+					);
+					const revision = await priced(site, 'node-revision', () =>
+						workload(site, 'node-revision', seq + 3, create.id)
+					);
+					return { create: create.rowsWritten, revision: revision.rowsWritten };
+				};
+				return { with: await arm(true, 100), without: await arm(false, 200) };
+			});
+			console.log(`[unread-node-indexes] ${JSON.stringify(out)}`);
+			expect(out.without.create).toBeLessThan(out.with.create);
+			expect(out.without.revision).toBeLessThan(out.with.revision);
+		},
+		REQUEST_TIMEOUT
+	);
+});

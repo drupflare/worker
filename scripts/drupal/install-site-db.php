@@ -440,6 +440,27 @@ foreach ($bins as $bin) {
 }
 // #endregion
 
+// #region the node_field_data indexes no default workload reads (src/ops/node-indexes.ts)
+foreach (
+	[
+		'node_field_data_node__vid',
+		'node_field_data_node_field__uid__target_id',
+		'node_field_data_node_field__created',
+	]
+	as $index
+) {
+	$present = (int) $db
+		->query("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=:n", [
+			':n' => $index,
+		])
+		->fetchField();
+	if ($present > 0) {
+		$db->query('DROP INDEX ' . $index);
+		$droppedIndexes[] = $index;
+	}
+}
+// #endregion
+
 // WAL first, or the copy loses whatever the last transactions wrote: the installer leaves a -wal
 // and a -shm beside the database and copying the main file alone drops both. The VACUUM after it
 // reclaims what the dropped indexes and the truncate freed, so the artifact carries no free pages;

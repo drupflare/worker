@@ -46,9 +46,10 @@ beforeAll(async () => {
 });
 
 describe.skipIf(SKIP)('the shipped schema, counted', () => {
-	it('carries 71 tables and 157 CREATE INDEX, matching the pack manifest', () => {
+	it('carries 71 tables and 154 CREATE INDEX, matching the pack manifest', () => {
 		expect(audit.totals.tables).toBe(71);
-		expect(audit.totals.explicitIndexes).toBe(157);
+		// 157 until the three unread node_field_data indexes left the pack (src/ops/node-indexes.ts)
+		expect(audit.totals.explicitIndexes).toBe(154);
 	});
 
 	it('reaches a floor of 1 on the cache bins, which used to be unreachable', () => {

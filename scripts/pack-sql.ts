@@ -6,6 +6,7 @@ import type { SQLOutputValue } from 'node:sqlite';
 import { DatabaseSync } from 'node:sqlite';
 import { TextDecoder } from 'node:util';
 import { PACKED_CONTAINER_DIGEST } from '../src/ops/container-digest.ts';
+import { UNREAD_NODE_INDEXES } from '../src/ops/node-indexes.ts';
 import {
 	extensionFingerprint,
 	PACKED_CONTAINER_TABLE,
@@ -134,6 +135,7 @@ async function openRewritten(path: string) {
 	db.exec(`PRAGMA schema_version=${Number(before) + 1}`);
 	db.exec('PRAGMA writable_schema=OFF');
 	const dropped = dropBakeHistory(db);
+	for (const index of UNREAD_NODE_INDEXES) db.exec(`DROP INDEX IF EXISTS ${index}`);
 	db.close();
 	return {
 		db: new DatabaseSync(tmp, { readOnly: true }),

@@ -99,7 +99,7 @@ describe('what bake-container needs before it spawns wrangler', () => {
 	 * one run. A guard written against either shape refused a build that had succeeded.
 	 */
 	it('loops on the container row rather than on one render', () => {
-		expect(source).toMatch(/for \(let pass = 1; pass <= RENDER_PATHS\.length && !match/);
+		expect(source).toMatch(/for \(let pass = 1; pass <= paths\.length && !match/);
 		expect(source).toContain('match = meta.find((r) => r.cid.includes(wanted))');
 	});
 
@@ -108,10 +108,19 @@ describe('what bake-container needs before it spawns wrangler', () => {
 	 * pass one stores `/` in `cfw_page` and four serves of it read `0 row(s)` exactly like one.
 	 */
 	it('takes a different path each pass, all distinct', () => {
-		const paths = source.match(/const RENDER_PATHS = \[(.*?)\] as const/s)?.[1] ?? '';
-		const list = [...paths.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+		const listOf = (name: string) =>
+			[
+				...(
+					source.match(new RegExp(`const ${name} = \\[(.*?)\\] as const`, 's'))?.[1] ?? ''
+				).matchAll(/'([^']+)'/g)
+			].map((m) => m[1]);
+		const list = listOf('RENDER_PATHS');
 		expect(list.length).toBeGreaterThanOrEqual(2);
 		expect(new Set(list).size).toBe(list.length);
+		// and the claimed pass runs on the same site, so none of its paths may already be stored
+		const claimed = listOf('CLAIMED_PATHS');
+		expect(claimed.length).toBeGreaterThanOrEqual(2);
+		expect(new Set([...list, ...claimed]).size).toBe(list.length + claimed.length);
 	});
 });
 

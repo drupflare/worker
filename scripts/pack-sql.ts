@@ -5,6 +5,12 @@ import { join, resolve } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 import { DatabaseSync } from 'node:sqlite';
 import { TextDecoder } from 'node:util';
+import { PACKED_CONTAINER_DIGEST } from '../src/ops/container-digest.ts';
+import {
+	extensionFingerprint,
+	PACKED_CONTAINER_TABLE,
+	type PackedContainer
+} from '../src/ops/packed-container.ts';
 
 /**
  * Turns the packed Drupal database into JSON chunks the Durable Object can replay
@@ -331,6 +337,8 @@ for (const o of master) {
 	const name = String(o.name ?? '');
 	// engine-owned objects refuse to be created, and miniflare adds its own bookkeeping
 	if (!name || name.startsWith('sqlite_') || name.startsWith('__miniflare')) continue;
+	// the bake's container variants are published as container.json, never replayed into a site
+	if (String(o.tbl_name ?? '') === PACKED_CONTAINER_TABLE) continue;
 	const stmt = { s: String(o.sql).replace(/;+\s*$/, ''), p: [] };
 	if (o.type === 'table') {
 		if (wantsWithoutRowid(name, stmt.s)) {
@@ -475,6 +483,33 @@ for (const table of tables) {
 	totalRows += n;
 }
 
+// read before the close; published beside the manifest below. The pack's own variant is the
+// `cache_container` row, fingerprinted by the pack's `core.extension`; the rest are the bake's table
+const packRow = db
+	.prepare(
+		'SELECT cid, CAST(data AS BLOB) AS data, expire, created, serialized, tags, checksum FROM cache_container'
+	)
+	.get() as Record<string, SQLOutputValue> | undefined;
+const packExtension = db
+	.prepare(
+		"SELECT CAST(data AS BLOB) AS data FROM config WHERE collection = '' AND name = 'core.extension'"
+	)
+	.get() as { data?: Uint8Array } | undefined;
+const packModules = extensionFingerprint(
+	packExtension?.data ? new TextDecoder().decode(packExtension.data) : ''
+);
+const hasVariants = db
+	.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+	.get(PACKED_CONTAINER_TABLE);
+const variantRows = hasVariants
+	? (db
+			.prepare(
+				`SELECT modules, driver, cid, CAST(data AS BLOB) AS data, expire, created, serialized,
+				 tags, checksum FROM ${PACKED_CONTAINER_TABLE} ORDER BY modules`
+			)
+			.all() as Record<string, SQLOutputValue>[])
+	: [];
+
 db.close();
 await rm(tmp, { force: true });
 
@@ -589,6 +624,30 @@ const manifest = {
 	chunks: chunkMeta
 };
 await writeFile(join(outAbs, 'manifest.json'), JSON.stringify(manifest, null, '\t'));
+
+// #region the container variants
+const packedContainer: PackedContainer = {
+	// one bake writes every variant and the digest beside them; with no bake table nothing is trusted
+	driver: variantRows.length > 0 ? PACKED_CONTAINER_DIGEST : '',
+	variants: [...(packRow ? [{ ...packRow, modules: packModules }] : []), ...variantRows].map(
+		(r) => ({
+			modules: String(r.modules),
+			rows: [
+				{
+					cid: String(r.cid),
+					data: Buffer.from(r.data as Uint8Array).toString('base64'),
+					expire: Number(r.expire),
+					created: Number(r.created),
+					serialized: Number(r.serialized),
+					tags: String(r.tags ?? ''),
+					checksum: String(r.checksum)
+				}
+			]
+		})
+	)
+};
+await writeFile(join(outAbs, 'container.json'), JSON.stringify(packedContainer));
+// #endregion
 
 const biggest = [...chunkMeta].sort((a, b) => b.bytes - a.bytes).slice(0, 5);
 console.log(`source          ${resolve(source)}`);

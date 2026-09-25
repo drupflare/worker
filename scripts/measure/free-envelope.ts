@@ -138,8 +138,8 @@ export function fleetIdleGbS(replicas: number, mode: ReplicaMode): number {
 }
 
 /**
- * The idle re-arm an operator's `SITE_WARM=0` gets, `KEEP_WARM_MS` in `src/ops/cron.ts`. A site the
- * thermal policy declined re-arms at `ADOPTABLE_REARM_MS` (120 s) instead, twice these firings.
+ * The idle re-arm for a site that is not warming, whether an operator's `SITE_WARM=0` or the thermal
+ * policy declined it: `KEEP_WARM_MS` in `src/ops/cron.ts`.
  */
 export const KEEP_WARM_MS = 240_000;
 

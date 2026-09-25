@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/cron-php';
 import {
-	ADOPTABLE_REARM_MS,
 	advanceCursor,
 	CRON_HOOKS,
 	cronAlarmDelayMs,
 	cronHooksFor,
 	cronHooksFromList,
 	cronUnits,
-	declinedRearmMs,
 	HIBERNATION_IDLE_MS,
 	idleRearmMs,
 	keepWarmMs,
@@ -303,19 +301,11 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 		);
 	});
 
-	// with retention a hibernated object adopts the interpreter its isolate kept some of the time,
-	// so a longer interval is a cheaper point on the curve rather than a wasted firing
+	// with retention a hibernated object adopts the interpreter its isolate kept when placement
+	// allows, so an operator's longer interval is honoured rather than clamped
 	it('honours a longer interval under retention, up to the ceiling', () => {
 		expect(warmIntervalMs({ WARM_INTERVAL_MS: '60000' })).toBe(60_000);
 		expect(warmIntervalMs({ WARM_INTERVAL_MS: '9000000' })).toBe(WARM_INTERVAL_MAX_MS);
-	});
-
-	it('re-arms a declined site where it can still adopt, unless an operator declined it', () => {
-		expect(declinedRearmMs({})).toBe(ADOPTABLE_REARM_MS);
-		expect(declinedRearmMs({}, true)).toBe(240_000);
-		expect(declinedRearmMs({ RETAIN_INTERPRETER: '0' })).toBe(240_000);
-		// a stated idle re-arm is an operator decision too
-		expect(declinedRearmMs({ KEEP_WARM_MS: '90000' })).toBe(90_000);
 	});
 
 	it('forces warming on paid, leaves free to the thermal policy, and lets SITE_WARM win', () => {

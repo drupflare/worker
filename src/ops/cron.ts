@@ -384,31 +384,15 @@ export function warmIntervalMs(env?: CronEnv | null): number {
 	return Math.min(ms, HIBERNATION_IDLE_MS - 2000);
 }
 
-/** the longest warming interval a writer accepts, past which a firing adopts almost nothing */
-export const WARM_INTERVAL_MAX_MS = 600_000;
-
 /**
- * The idle re-arm for a site the thermal policy declined to warm, while retention is on.
+ * The longest warming interval a writer accepts.
  *
- * Measured 2026-09-25 on paid throwaways, a PHP-needing request after 150-300 s idle: re-armed at 30,
- * 60 and 120 s the object hibernated between firings and the request adopted the retained
- * interpreter in 188-396 ms on 27 of 28 samples, while the default 240 s re-arm booted (3,151-3,506
- * ms). One host that recycled isolates booted at every interval. 120 s is the cheapest point that
- * adopted, at 720 firings a day against 240 s's 360.
+ * Past hibernation a firing buys adoption only when the next instance lands in the same isolate,
+ * which is placement: measured 2026-09-25 across 18 paid workers, 120, 150, 180, 210, 240 and 600 s
+ * re-arms showed no ordering, and one of two identically configured workers adopted 8 of 8 while
+ * its twin adopted 0 of 8.
  */
-export const ADOPTABLE_REARM_MS = 120_000;
-
-/**
- * The re-arm for a site that is not warming: the adoptable one when the policy declined, and the
- * slow one when an operator said no or nothing can be adopted.
- */
-export function declinedRearmMs(env?: CronEnv | null, operatorDeclined = false): number {
-	const set = env?.KEEP_WARM_MS;
-	if (operatorDeclined || (set !== undefined && set !== null && String(set) !== '')) {
-		return keepWarmMs(env);
-	}
-	return String(env?.RETAIN_INTERPRETER ?? '1') !== '0' ? ADOPTABLE_REARM_MS : keepWarmMs(env);
-}
+export const WARM_INTERVAL_MAX_MS = 600_000;
 
 /**
  * Whether warming is forced, off, or left to the thermal policy.

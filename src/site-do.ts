@@ -325,9 +325,9 @@ import {
 	cronHooksFor,
 	cronHooksFromList,
 	cronOptions,
-	declinedRearmMs,
 	gcPass,
 	idleRearmMs,
+	keepWarmMs,
 	warmForced,
 	warmIntervalConfigured,
 	writeCursor,
@@ -10477,7 +10477,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			stored
 		});
 		this.lastWarmDecision = decision;
-		if (!decision.warm) return declinedRearmMs(this.env, forced === false);
+		if (!decision.warm) return keepWarmMs(this.env);
 		return (
 			warmIntervalConfigured(this.env) ??
 			clampWarmInterval(stored?.intervalMs ?? WARM_INTERVAL_VERIFIED_MS, HIBERNATION_IDLE_MS)

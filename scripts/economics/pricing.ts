@@ -1,17 +1,8 @@
 /**
  * Per-site cost on Workers for Platforms, and what the three plans should charge.
  *
- * PUBLISHED, retrieved 2026-09-20 from developers.cloudflare.com:
- *   WfP        $25/mo, includes 20M requests, 60M CPU-ms, 1000 scripts
- *              +$0.30/M requests, +$0.02/M CPU-ms, +$0.02/script
- *              subrequests are NOT billed; the dispatch+user+outbound chain is ONE request
- *   Durable Objects  $0.15/M requests, $12.50/M GB-s, rows written $1.00/M over 50M,
- *              storage $0.20/GB-month
- *
- * PUBLISHED, retrieved 2026-09-24: Cloudflare for SaaS includes 100 custom hostnames, then $0.10
- * per hostname-month, up to 50,000 on a non-Enterprise zone. Only a site on its own domain uses one.
- *
- * Measured figures come from measured.ts with their provenance and workload attached.
+ * Prices come from rates.ts with their retrieval dates. Only a site on its own domain uses a SaaS
+ * hostname. Measured figures come from measured.ts with their provenance and workload attached.
  */
 import {
 	DO_GB_ALLOCATED,
@@ -28,21 +19,22 @@ import {
 	SITE_GB,
 	renderMsFor
 } from './measured.js';
+import { CLOUDFLARE_FOR_SAAS, DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from './rates.js';
 
-export const WFP_BASE = 25.0;
-const WFP_REQ_INC = 20e6;
-const WFP_CPU_INC = 60e6;
-const WFP_SCRIPTS_INC = 1000;
-const WFP_REQ_RATE = 0.3;
-const WFP_CPU_RATE = 0.02;
-const WFP_SCRIPT_RATE = 0.02;
-export const DO_REQ_RATE = 0.15;
-const DO_GBS_RATE = 12.5;
-const DO_ROWW_RATE = 1.0;
-export const DO_STORE_RATE = 0.2;
-const DO_ROWW_INC = 50e6;
-const HOSTNAMES_INC = 100;
-const HOSTNAME_RATE = 0.1;
+export const WFP_BASE = WORKERS_FOR_PLATFORMS.usdPerMonth;
+const WFP_REQ_INC = WORKERS_FOR_PLATFORMS.requestsIncluded;
+const WFP_CPU_INC = WORKERS_FOR_PLATFORMS.cpuMsIncluded;
+const WFP_SCRIPTS_INC = WORKERS_FOR_PLATFORMS.scriptsIncluded;
+const WFP_REQ_RATE = WORKERS_FOR_PLATFORMS.usdPerMillionRequests;
+const WFP_CPU_RATE = WORKERS_FOR_PLATFORMS.usdPerMillionCpuMs;
+const WFP_SCRIPT_RATE = WORKERS_FOR_PLATFORMS.usdPerScript;
+export const DO_REQ_RATE = DURABLE_OBJECTS.usdPerMillionRequests;
+const DO_GBS_RATE = DURABLE_OBJECTS.usdPerMillionGbS;
+const DO_ROWW_RATE = DURABLE_OBJECTS.usdPerMillionRowsWritten;
+export const DO_STORE_RATE = DURABLE_OBJECTS.usdPerGbMonth;
+const DO_ROWW_INC = DURABLE_OBJECTS.rowsWrittenIncluded;
+const HOSTNAMES_INC = CLOUDFLARE_FOR_SAAS.hostnamesIncluded;
+const HOSTNAME_RATE = CLOUDFLARE_FOR_SAAS.usdPerHostnameMonth;
 const ROWS_PER_VIEW_FILL = rowsForWarmthMix(STEADY_STATE_WARMTH, ROWS_PER_FILL_MEMORY_BINS);
 
 /**
@@ -73,8 +65,9 @@ export function month(
 	const cCpu = (Math.max(0.0, cpuMs - WFP_CPU_INC) / 1e6) * WFP_CPU_RATE;
 	const cScripts = Math.max(0, sites - WFP_SCRIPTS_INC) * WFP_SCRIPT_RATE;
 	// over the paid plan's allowances, rounded up to the next million as Cloudflare bills them
-	const cDoReq = Math.ceil(Math.max(0, doReq - 1e6) / 1e6) * DO_REQ_RATE;
-	const cDoGbs = Math.ceil(Math.max(0, gbs - 400_000) / 1e6) * DO_GBS_RATE;
+	const cDoReq =
+		Math.ceil(Math.max(0, doReq - DURABLE_OBJECTS.requestsIncluded) / 1e6) * DO_REQ_RATE;
+	const cDoGbs = Math.ceil(Math.max(0, gbs - DURABLE_OBJECTS.gbSIncluded) / 1e6) * DO_GBS_RATE;
 	const cRoww = (Math.max(0.0, rowsW - DO_ROWW_INC) / 1e6) * DO_ROWW_RATE;
 	const cStore = sites * SITE_GB * DO_STORE_RATE;
 	const cHost = Math.max(0, hostnames - HOSTNAMES_INC) * HOSTNAME_RATE;

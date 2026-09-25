@@ -37,27 +37,28 @@ import {
 	MJ_RENDER_VPS,
 	SITE_GB
 } from './measured.js';
+import { DURABLE_OBJECTS, WORKERS_PAID } from './rates.js';
 
 const VIEWS = sweep('views', [1_000, 10_000, 100_000, 1_000_000, 10_000_000]);
 const SITES = sweep('sites', [1, 10, 100, 1_000]);
 
 // Cloudflare's published rate card, retrieved 2026-09-21. Free is a set of DAILY caps; paid is a
 // $5 subscription with monthly allowances on top.
-const FREE_REQ_DAY = 100_000;
-const FREE_ROWS_DAY = 100_000;
-const FREE_DO_REQ_DAY = 100_000;
-const FREE_STORE_GB = 5.0;
-const PAID_BASE = num('paid-base', 5.0);
-const PAID_REQ_INC = 10e6;
-const PAID_CPU_INC = 30e6;
-const PAID_ROWW_INC = 50e6;
-const PAID_STORE_INC = 5.0;
-const REQ_RATE = 0.3;
-const CPU_RATE = 0.02;
-const ROWW_RATE = 1.0;
-const STORE_RATE = 0.2;
-const DO_REQ_RATE = 0.15;
-const PAID_DO_REQ_INC = 1e6;
+const FREE_REQ_DAY = FREE_QUOTAS.workerRequestsPerDay;
+const FREE_ROWS_DAY = FREE_QUOTAS.rowsWrittenPerDay;
+const FREE_DO_REQ_DAY = FREE_QUOTAS.doRequestsPerDay;
+const FREE_STORE_GB = FREE_QUOTAS.storageBytes / 1e9;
+const PAID_BASE = num('paid-base', WORKERS_PAID.usdPerMonth);
+const PAID_REQ_INC = WORKERS_PAID.requestsIncluded;
+const PAID_CPU_INC = WORKERS_PAID.cpuMsIncluded;
+const PAID_ROWW_INC = DURABLE_OBJECTS.rowsWrittenIncluded;
+const PAID_STORE_INC = DURABLE_OBJECTS.storageGbIncluded;
+const REQ_RATE = WORKERS_PAID.usdPerMillionRequests;
+const CPU_RATE = WORKERS_PAID.usdPerMillionCpuMs;
+const ROWW_RATE = DURABLE_OBJECTS.usdPerMillionRowsWritten;
+const STORE_RATE = DURABLE_OBJECTS.usdPerGbMonth;
+const DO_REQ_RATE = DURABLE_OBJECTS.usdPerMillionRequests;
+const PAID_DO_REQ_INC = DURABLE_OBJECTS.requestsIncluded;
 const DAYS_MONTH = 30.44;
 
 const FREE_GBS_DAY = FREE_QUOTAS.durationGbSPerDay;

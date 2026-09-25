@@ -13,6 +13,7 @@
  */
 
 import { meterFlushBudget } from '../../src/ops/day-meters.js';
+import { DURABLE_OBJECTS } from '../economics/rates.js';
 import { GENERATED_FREE_QUOTAS } from '../generated/quotas.js';
 
 /**
@@ -245,8 +246,8 @@ export function keepWarmFleetCost(
  * with the answer rather than staying in a comment.
  */
 export const PAID_DURATION = {
-	includedGbSPerMonth: 400_000,
-	usdPerMillionGbS: 12.5
+	includedGbSPerMonth: DURABLE_OBJECTS.gbSIncluded,
+	usdPerMillionGbS: DURABLE_OBJECTS.usdPerMillionGbS
 } as const;
 
 /** what a fleet costs per month on the paid plan, above the included allowance */
@@ -600,8 +601,12 @@ export const ROWS_PER_FILL = {
 	 * the mint reads 94 and restoring it reads 91, n=1 each with the other three classes unchanged
 	 * to the row. Net-neutral per site, and it moves the cost OFF the metered regeneration path,
 	 * which is the tighter of the two ceilings by 12x.
+	 *
+	 * 91 -> 90 on 2026-09-25, when the claim began creating the owner role and assigning it to uid 1.
+	 * Same shape as the key: with `OwnerTier::establish()` disabled the first fill reads 91 and 87
+	 * at the default, restored it reads 90 and 86, n=1 each with the other classes unchanged.
 	 */
-	firstFillOnFreshObject: 91
+	firstFillOnFreshObject: 90
 } as const;
 
 /**
@@ -613,8 +618,8 @@ export const ROWS_PER_FILL = {
  *
  * A real re-render is **1** row, the `cfw_page` upsert: {@link ROWS_PER_FILL}'s 8, minus the 6
  * `cache_dynamic_page_cache` rows and the 1 `cache_menu` row. The cold classes barely move, because
- * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 87 against
- * 91 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
+ * the in-memory bins are most of a re-render and almost none of a cold one: a first fill is 86 against
+ * 90 and a never-routed path 11 against 14. That asymmetry is why the headline is priced on a MIX --
  * see {@link rowsForWarmthMix}. (With `render` in memory too they read 72 and 6; it is not default.)
  *
  * `warmReassemble` is the front page's 2, measured at this default in the same arm (login
@@ -625,7 +630,7 @@ export const ROWS_PER_FILL_MEMORY_BINS = {
 	realRender: 1,
 	firstFillAfterMigrate: ROWS_PER_FILL.firstFillAfterMigrate,
 	firstEverForPath: 11,
-	firstFillOnFreshObject: 87
+	firstFillOnFreshObject: 86
 } as const;
 
 export type FillWarmth = keyof typeof ROWS_PER_FILL;
@@ -714,10 +719,13 @@ export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 
  * is charged rows rather than statements, because the driver replays a speculative transaction and a
  * replayed row is billed like any other. They were 103 / 218 / 33 / 14 / 41 until the replay sent
  * only the statements that write a table the asked-about statement touches.
+ *
+ * The two node figures are DERIVED since 2026-09-25: the deployed 48 and 53, less the 6 rows the
+ * three unread `node_field_data` indexes cost on both, measured as a pair on one local object.
  */
 export const ROWS_PER_WRITE = {
-	nodeCreate: 48,
-	nodeRevision: 53,
+	nodeCreate: 42,
+	nodeRevision: 47,
 	userCreate: 17,
 	fileCreate: 7,
 	aliasCreate: 24

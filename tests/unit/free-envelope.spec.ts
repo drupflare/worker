@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { DO_REQ_RATE, WFP_BASE } from '../../scripts/economics/pricing';
+import { DURABLE_OBJECTS, WORKERS_FOR_PLATFORMS } from '../../scripts/economics/rates';
 import {
 	billedGbS,
 	coldUrlCost,
@@ -348,6 +350,14 @@ describe('HIBERNATING replicas, which the always-warm arithmetic does not touch'
 describe('paid-plan duration, where "expensive" turns out to be wrong', () => {
 	it('carries the unverified flag with the number, not in a comment', () => {
 		expect(paidDurationCost(1).verified).toBe(false);
+	});
+
+	it('reads the duration price off the one rate card, with the date it was retrieved', () => {
+		expect(PAID_DURATION.usdPerMillionGbS).toBe(DURABLE_OBJECTS.usdPerMillionGbS);
+		expect(PAID_DURATION.includedGbSPerMonth).toBe(DURABLE_OBJECTS.gbSIncluded);
+		expect(DURABLE_OBJECTS.retrieved).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+		expect(DO_REQ_RATE).toBe(DURABLE_OBJECTS.usdPerMillionRequests);
+		expect(WFP_BASE).toBe(WORKERS_FOR_PLATFORMS.usdPerMonth);
 	});
 
 	it('puts ONE always-warm replica INSIDE the included allowance', () => {
@@ -1254,7 +1264,8 @@ describe('the daily row quota, split by what spends it', () => {
 	 * An editorial day is priced against the same meter as the fills.
 	 *
 	 * At 218 rows a revision, fifty a day outweighed the warming chain. The narrowed replay took a
-	 * revision to 53, so fifty is 2,650 rows, about a quarter of the chain, and ~3% off the ceiling.
+	 * revision to 53 and dropping three unread indexes to 47, so fifty is 2,350 rows, under a
+	 * quarter of the chain.
 	 */
 	it('takes a busy editorial day off the regeneration ceiling', () => {
 		const quiet = envelope(DEFAULT_MIX, { windowed: true });

@@ -363,6 +363,13 @@ value across statements with `col = col || ?`, which is how three 520 KB rows be
 
 A half-migrated site refuses to serve.
 
+**The pack's router has to match the packed driver, or every new site rebuilds it.** Measured
+2026-09-25: with the packed router four routes short of the driver's six, reconciliation rebuilt the
+router in PHP on each fresh site's first cold alarm, and that invocation was reset for the isolate's
+memory with the first visitor waiting, 8 of 8 throwaways. Rebuilding the pack database against the
+current driver took two more to 0 resets across six cold visits. `driver-pack.spec.ts` compares the
+packed router with the driver's routes and permissions.
+
 ### The Database Driver
 
 `cfw_do_sqlite` (sibling repo `rom`) is a Drupal 11 driver over `ctx.storage.sql`. It extends
@@ -422,6 +429,12 @@ INTEGERs back as JS doubles, so the read is lossy above 2^53 while the storage i
 own output column names cast to TEXT. `SELECT *`, aliases, JOINs, aggregates, `UNION` and bound
 parameters are covered by construction. It triggers on detection, so a site storing no wide integers
 pays nothing; `WITH`, `PRAGMA` and non-SELECT are refused.
+
+**An external database is reachable from the object through Hyperdrive.** `DB_BACKEND=hyperdrive`
+routes the driver's statements to PostgreSQL or MySQL through the park. Verified 2026-09-25 on a paid
+throwaway: a Durable Object ran `SELECT 1` through a Hyperdrive configuration backed by a Workers VPC
+service and a Cloudflare Tunnel, in 6-9 ms of query time. `docs/external-database.md` has the TLS and
+permission requirements that surfaced.
 
 ### The PHP Filesystem
 
@@ -3117,6 +3130,12 @@ every one ACTIVE, writing 3,011,834 bytes during instantiation, so pre-filling s
 phase rather than removing it.
 
 `tests/node/abi-arms.spec.ts` pins the import/export shape and segment count for all four arms.
+
+**Sharing the stack pointer with a side module costs 3.4% imported and 8.3% exported.** A side
+module imports `env.__stack_pointer`, so an in-process extension needs the host's own global. Exporting
+it stops the linker proving it module-private; phasm's `import-stack-pointer.mjs` instead moves it to
+an `env` import after the link, keeping every global index. Interleaved on node, n=9, against the same
+`long64` binary: 1.034x blended for the import (A/A 1.000x), 1.083x for the export.
 
 ### Extensions
 

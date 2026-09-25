@@ -556,8 +556,8 @@ cross-site request carries it, including a top-level link.
 | `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                                                         |
 | `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site                               |
 | `KEEP_WARM_MS`          | 240,000   | idle alarm re-arm; NOT a keep-warm, see below                                                   |
-| `SITE_WARM`             | on        | re-arms below the hibernation threshold so the object stays resident; `0` opts out              |
-| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm; clamped under 10,000 whatever is set                                           |
+| `SITE_WARM`             | by plan   | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy |
+| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm, KV-overridable; clamped under 10,000 only when `RETAIN_INTERPRETER=0`          |
 | `RECYCLE_ABOVE_BYTES`   | 117440512 | drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB |
 | `RETAIN_INTERPRETER`    | on        | keeps an evicted instance's interpreter for the next instance to adopt; `0` is off              |
 | `REPLICA_READ_ONLY`     | off       | `1` puts the object in replica mode; see below                                                  |
@@ -765,13 +765,32 @@ and 45 s the constructor ran again on every probe.
 `KEEP_WARM_MS` ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps
 nothing warm. The name is older than the measurement; it is an idle re-arm.
 
-`SITE_WARM` re-arms at `WARM_INTERVAL_MS` instead, clamped below 10,000 because a larger value
-spends a request and a row per firing and holds nothing, the worst of both.
+`SITE_WARM` re-arms at `WARM_INTERVAL_MS` instead. At 8,000 the object never hibernates, so every
+request finds the interpreter it left. A longer interval lets it hibernate, and the next instance then
+adopts the retained interpreter only when it lands in the same isolate; without retention
+(`RETAIN_INTERPRETER=0`) nothing can be adopted and the interval stays clamped below 10,000.
 
-On by default on both plans; `siteWarmEnabled()` returns true when the var is unset and carries no
-plan branch. An idle tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
+**The default follows the economics.** An explicit `SITE_WARM` always wins. Unset, a paid site warms:
+one site's 10,800 firings a day sit inside paid's included Durable Object requests and rows. Unset on
+free it is the thermal policy below, because the same firings are 10.8% of free's daily row and request
+budgets, and whether that buys enough is the operator's call. Both levers are on `/settings`. An idle
+tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
 cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
 without booting PHP at all, so warming cannot make one faster by any amount.
+
+**The curve**, measured 2026-09-25 on paid throwaways: a page that needs PHP, requested after 150-300 s
+of idle, with the intervals swapped between workers once to separate the interval from the host.
+
+| re-arm            | firings a day | share of free's budgets | the request                                     |
+| ----------------- | ------------- | ----------------------- | ----------------------------------------------- |
+| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | never hibernated: 156-371 ms                    |
+| 30-120 s          | 720-2,880     | 0.7-2.9%                | adopted the interpreter in 188-396 ms, 27 of 28 |
+| 240 s             | 360           | 0.4%                    | booted: 3,151-3,506 ms                          |
+
+One host recycled isolates and booted at every interval, 30 s and 120 s alike, so the adoption rows
+describe an ordinary host rather than a guarantee. A site the thermal policy declines re-arms at 120 s,
+the cheapest interval that adopted; `SITE_WARM=0` keeps the 240 s re-arm for an operator who wants the
+fewest firings.
 
 **The interval is priced per site rather than flat.** A flat 8 s re-arm is 10,800 object requests and
 10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged

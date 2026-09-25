@@ -70,9 +70,10 @@ The `hyperdrive` binding is deliberately NOT in the canonical `wrangler.jsonc`. 
 configuration that does not exist refuses the deploy, which is what `r2_buckets` did to the one-click
 button; it is an opt-in addition for a deployment that has one.
 
-**What still needs a deployed worker** is the one thing the rig cannot answer: whether a Hyperdrive
-binding works from inside a Durable Object rather than from a plain fetch handler. That is the
-roadmap's own gating experiment and it costs one throwaway deploy.
+**A deployed worker answers the one thing the rig cannot**: whether a Hyperdrive binding works from
+inside a Durable Object rather than from a plain fetch handler. It does; see the section below.
+`/backend` (diagnostic-gated) runs `SELECT 1` through the binding from inside the object and reports
+the dialect and latency, without ever echoing the connection string.
 
 ## What Hyperdrive Is For
 
@@ -116,10 +117,20 @@ lists Hyperdrive among the bindings with no local simulation ("currently unsuppo
 database, including a remote one over TLS. Treat the `localConnectionString` mechanism as the working
 answer and the local-development page as stale.
 
-**Whether a Hyperdrive binding is usable from inside a Durable Object is unverified.** A Durable
-Object receives `env` and Hyperdrive is an `env` binding, so it is reachable in principle, but no
-Cloudflare document found says so. Verifying it means a deployed Durable Object reading
-`env.HYPERDRIVE.connectionString` and completing one query; nothing short of that settles it.
+**A Hyperdrive binding is usable from inside a Durable Object**, verified 2026-09-25 on a paid
+throwaway. The origin was PostgreSQL 17 behind a Cloudflare Tunnel, reached through a Workers VPC
+service, and the object read `env.HYPERDRIVE.connectionString` and completed `SELECT 1` in 6-9 ms of
+query time on three consecutive requests.
+
+Three requirements surfaced while building that path:
+
+- **The origin must speak TLS.** Hyperdrive refuses a plaintext PostgreSQL (`code 2012`).
+- **A VPC-service origin takes no `--sslmode` or custom CA.** Hyperdrive answers `mtls cannot be
+used with service_id` (`code 2007`), so certificate verification is set on the VPC service
+  (`--cert-verification-mode`) rather than on the Hyperdrive configuration. A self-signed origin
+  certificate is otherwise refused with `CERTIFICATE_VERIFY_FAILED` (`code 2015`).
+- **An account API token may carry no Hyperdrive permission at all.** The configuration was created
+  through `wrangler login`, whose OAuth scopes include it.
 
 ## Why the Site Database Is Not External
 

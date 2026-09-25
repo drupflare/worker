@@ -691,8 +691,15 @@ exported everything and could only measure the table. This binary exports 4,178 
 one with a 256-byte local imports `env.__stack_pointer` as `(mut i32)`. burrow's `dylink.ts`
 synthesises that value for a standalone library and deliberately does not with a host, where it
 would aim into PHP's heap. So a sandboxed user-supplied library costs nothing and an in-process PHP
-extension costs ~8%. The untested escape is importing the global from JS instead of exporting it;
-see the roadmap's v1.0.2 entry.
+extension costs ~8%.
+
+**Importing it instead costs 3.4%, measured 2026-09-25.** phasm's `src/import-stack-pointer.mjs`
+moves the linker's first defined global to the last `env` import, which keeps every global index,
+so the arm (`spimport` in `abi-speed.ts`) is `long64` plus that edit and an unbounded table and
+nothing else. Interleaved, n=9: **1.034x blended** against an A/A of 1.000x, `usercall` 1.044x,
+against the export arm's 1.083x and 1.136x. Cheaper, not free. `long64.rc` still carries
+`TABLE_GROWTH=1`, the 8% shape, so the next interpreter release built from it ships that cost for a
+capability nothing uses yet; `STACK_POINTER=import` in the rc is the cheaper equivalent.
 
 ## The interpreter has no fiber backend, and the executor is persistent
 
@@ -1184,6 +1191,18 @@ read 86-108 and `fetchMs` 31-71. A warm render is 180-220 ms, and waking an obje
 PHP is ~310 ms against ~150 warm. So the 500 / 700 ms target is not met for a fully cold isolate,
 and retention plus warming remain what keeps visitors off that path.
 
+**WARMING HAS A CURVE ONCE RETENTION EXISTS, and the 8 s interval is only its top.** Past 10 s the
+object hibernates, and the next instance adopts the retained interpreter when it lands in the same
+isolate. Measured 2026-09-25, a PHP-needing request after 150-300 s idle: re-arms of 30, 60 and 120 s
+adopted in 188-396 ms on an ordinary host, 240 s booted (~3.2-3.5 s), and one host that recycled
+isolates booted at every interval. **That host is the trap**: with one worker per interval its 30 s
+arm read 0 of 8 and looked like a property of 30 s, until swapping the intervals between workers
+moved the zeros with the worker. So a thermally declined site now re-arms at `ADOPTABLE_REARM_MS`
+(120 s, 720 firings a day) rather than 240 s; an unset `SITE_WARM` warms a paid site at 8 s and leaves
+a free one to the thermal policy; `SITE_WARM` and `WARM_INTERVAL_MS` are both on `/settings`.
+Deterministic residency cannot be made much cheaper: the solver's 9.5 s ceiling saves 16%, and holding
+an object open by other means is billed as duration.
+
 **`PhpDumper` IS NOT A DRUPAL 11.4 FEATURE, checked 2026-09-09 against the shipping tree.** A
 compiled-PHP service container through OPcache is a credible-sounding lever and core does not offer
 it: `DrupalKernel::$phpArrayDumperClass` is `OptimizedPhpArrayDumper`, `getArray()` is what runs, and
@@ -1358,7 +1377,40 @@ minute.
 step on one and the step minus `DELETE FROM cache_discovery` on the other: 0 resets on either, and
 the shipped arm rebuilt 60 discovery rows inside a cold render that answered 200. What the real update
 had and the simulation lacked: changed PHP in `driver.json`, rebuilt SQL chunks, and objects meeting
-their first update rather than their second. Unattributed; test those three before building a fix.
+their first update rather than their second.
+
+**A FRESH SITE RESET THE SAME WAY WITH NO UPDATE AT ALL, and that one is attributed.** Eight
+throwaways, retention on and off, one object each: provisioning rendered fine, and the first alarm
+after ~75 s idle was reset for memory at 921-1,280 ms of CPU, 8 of 8, with the visitor waiting.
+The packed router lagged the driver -- 4 of its 6 routes and the pre-tier permissions -- so
+`router-driver-routes` was owed on EVERY fresh site and ran a PHP router rebuild on that first cold
+alarm. Rebuilding the pack database against the current driver (`bun run assets:driver --
+--to=drupal-src`, then `bun run build:site-db`) took two more throwaways to 6 of 6 first-and-later
+cold visits at 200 and 0 resets. Three hypotheses died first, each by an instrument rather than an
+argument: two interpreters booting in one object (the gate serialises them, one cold boot counted),
+a second object sharing the isolate (the reset held with only the hostname object touched), and an
+uncollected interpreter from the provisioning incarnation (`boot-beside-resident`, logged from
+`ensurePhp()`, never fired). `driver-pack.spec.ts` now fails when the packed router lacks a driver
+route or carries a permission the driver no longer declares.
+
+**The rebuild moves the Twig prefix, so the pack has to follow it.** A fresh install mints a new
+`twig_extension_hash_prefix`; after `build:site-db` run `assets:twig` -> `assets:core` ->
+`assets:pack` -> `assets:scrub`, then `assets:container`. `twig-bake.spec.ts` names the prefix when
+this is skipped, and the first fill otherwise compiles every template it should have loaded.
+
+**The update path gets the split, since nothing reproduced its reset.** On an update (a recorded
+digest that no longer matches), the digest step now warms discovery in its own invocation and drops
+the interpreter, so no render rebuilds it. A fresh site's `php()` returns null and boots nothing,
+which is the constraint that reverted the last `php()` on this step.
+
+**AND THE WARM-UP EXPOSED THE REAL SHAPE: TWO INTERPRETERS AT ONCE.** Nine seconds after an update
+deploy the alarm and a visitor's `/__serve` were reset together at 262 and 139 ms of CPU, far too
+early for any rebuild. Reconciliation runs in the alarm OUTSIDE the gate, so its PHP and a visitor's
+inline render each reached `ensurePhp()` cold and each constructed an interpreter. `ensurePhp()` now
+shares an in-flight boot (`bootInFlight`), falsified by disabling it: `reconcile-converge.spec.ts`
+then sees two instances. Six update deploys with a visitor arriving at once afterwards: 0 memory
+resets, against 3 of 4 before. My first concurrency probe missed it because it drove the FILL path,
+which the gate serialises; probe the ungated paths when asking whether two boots can overlap.
 
 **Two instrument traps from that run.** The opcache rig sends `?site=opcab` on owner routes, which
 reach a DIFFERENT object from the hostname-keyed one that serves visitors, so `/sql` and

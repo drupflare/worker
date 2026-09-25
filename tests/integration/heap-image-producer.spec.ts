@@ -318,10 +318,15 @@ describe('the alarm produces this site one heap image', () => {
 					php: (site as any).php !== null,
 					outcome: (site as any).lastAlarmOutcome,
 					imaged: (site as any).metaGet('heap_image_gen'),
-					queued: (site as any).queueDepth()
+					queued: (site as any).queueDepth(),
+					// what separates the ways the firing can decline: a reconcile outcome, the flag
+					// lost with the instance, a failed read, or the attempt cap
+					heapImageFlag: (site as any).env?.HEAP_IMAGE ?? null,
+					attempts: (site as any).metaGet('heap_image_attempts'),
+					firings: (site as any).alarmFirings ?? null
 				};
 			});
-			expect(after.imaged).not.toBe(null);
+			expect(after.imaged, JSON.stringify(after)).not.toBe(null);
 			expect(after.php).toBe(false);
 			expect(after.outcome?.heapImage?.ok).toBe(true);
 			// the queued page is still queued -- it did not get rendered on the imaging firing

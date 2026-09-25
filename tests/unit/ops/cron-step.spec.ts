@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../../src/drupal/cron-php';
 import {
+	ADOPTABLE_REARM_MS,
 	advanceCursor,
 	CRON_HOOKS,
 	cronAlarmDelayMs,
 	cronHooksFor,
 	cronHooksFromList,
 	cronUnits,
+	declinedRearmMs,
 	HIBERNATION_IDLE_MS,
 	idleRearmMs,
 	keepWarmMs,
@@ -15,6 +17,8 @@ import {
 	readCursor,
 	siteWarmEnabled,
 	skippedCronHooks,
+	WARM_INTERVAL_MAX_MS,
+	warmForced,
 	warmIntervalConfigured,
 	warmIntervalMs,
 	writeCursor
@@ -287,11 +291,38 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 		expect(idleRearmMs({ SITE_WARM: '1', KEEP_WARM_MS: '240000' }, false)).toBe(240000);
 	});
 
-	// 12,000 was measured NOT to warm, so honouring it would spend an alarm per firing and keep
-	// nothing resident -- the worst of both
-	it('clamps a configured value that would not warm anything', () => {
-		expect(warmIntervalMs({ WARM_INTERVAL_MS: '45000' })).toBeLessThan(HIBERNATION_IDLE_MS);
-		expect(warmIntervalMs({ WARM_INTERVAL_MS: '12000' })).toBeLessThan(HIBERNATION_IDLE_MS);
+	// 12,000 was measured NOT to keep the OBJECT resident, so without retention honouring it spends
+	// an alarm per firing and keeps nothing -- the worst of both
+	it('clamps a longer interval when nothing can be adopted after hibernation', () => {
+		const off = { RETAIN_INTERPRETER: '0' };
+		expect(warmIntervalMs({ ...off, WARM_INTERVAL_MS: '45000' })).toBeLessThan(
+			HIBERNATION_IDLE_MS
+		);
+		expect(warmIntervalMs({ ...off, WARM_INTERVAL_MS: '12000' })).toBeLessThan(
+			HIBERNATION_IDLE_MS
+		);
+	});
+
+	// with retention a hibernated object adopts the interpreter its isolate kept some of the time,
+	// so a longer interval is a cheaper point on the curve rather than a wasted firing
+	it('honours a longer interval under retention, up to the ceiling', () => {
+		expect(warmIntervalMs({ WARM_INTERVAL_MS: '60000' })).toBe(60_000);
+		expect(warmIntervalMs({ WARM_INTERVAL_MS: '9000000' })).toBe(WARM_INTERVAL_MAX_MS);
+	});
+
+	it('re-arms a declined site where it can still adopt, unless an operator declined it', () => {
+		expect(declinedRearmMs({})).toBe(ADOPTABLE_REARM_MS);
+		expect(declinedRearmMs({}, true)).toBe(240_000);
+		expect(declinedRearmMs({ RETAIN_INTERPRETER: '0' })).toBe(240_000);
+		// a stated idle re-arm is an operator decision too
+		expect(declinedRearmMs({ KEEP_WARM_MS: '90000' })).toBe(90_000);
+	});
+
+	it('forces warming on paid, leaves free to the thermal policy, and lets SITE_WARM win', () => {
+		expect(warmForced({}, true)).toBe(true);
+		expect(warmForced({}, false)).toBeNull();
+		expect(warmForced({ SITE_WARM: '0' }, true)).toBe(false);
+		expect(warmForced({ SITE_WARM: '1' }, false)).toBe(true);
 	});
 
 	it('ignores nonsense rather than producing 0 or NaN', () => {
@@ -318,10 +349,10 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '' })).toBeNull();
 		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: 'abc' })).toBeNull();
 		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '6000' })).toBe(6000);
-		// still clamped, because a stated value that cannot warm is still a value that cannot warm
-		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '45000' })).toBeLessThan(
-			HIBERNATION_IDLE_MS
-		);
+		// still clamped without retention, because a stated value that cannot warm still cannot
+		expect(
+			warmIntervalConfigured({ WARM_INTERVAL_MS: '45000', RETAIN_INTERPRETER: '0' })
+		).toBeLessThan(HIBERNATION_IDLE_MS);
 	});
 });
 

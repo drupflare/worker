@@ -10,6 +10,10 @@
  * render. A cached page answers off `ctx.storage.sql` without booting PHP, so warming cannot make
  * one faster by any amount.
  *
+ * Retention added a middle: past 10 s the object hibernates, and its next instance adopts the
+ * interpreter when it lands in the same isolate, so an operator-set `WARM_INTERVAL_MS` above the
+ * threshold buys that chance at fewer firings. This module still solves only below the threshold.
+ *
  * ## The band, and why a constant sits in the wrong place inside it
  *
  * Below about 505 renders/day the alarms cost more than the boots they save. Above about 8,640 the

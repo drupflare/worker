@@ -48,6 +48,7 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_COUNT: '3',
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
+	WARM_INTERVAL_MS: '60000',
 	EDGE_PLAN: '0',
 	ASSET_AGGREGATES: '1',
 	MEMORY_CACHE_BINS: 'dynamic_page_cache',
@@ -89,6 +90,20 @@ describe('the KV lever seam inside the object', () => {
 	 *
 	 * Listed explicitly rather than derived, because the split is the finding.
 	 */
+	it('sets the warming interval from KV, past hibernation only while retention is on', async () => {
+		await writeSettings({ SITE_WARM: '1', WARM_INTERVAL_MS: '60000' });
+		const rearm = await inObject(freshSite(), async (obj) => {
+			await obj.adoptSettings();
+			const warm = obj as unknown as { thermalRearmMs(): number };
+			const withRetention = warm.thermalRearmMs();
+			obj.env = { ...obj.env, RETAIN_INTERPRETER: '0' };
+			return { withRetention, without: warm.thermalRearmMs() };
+		});
+		expect(rearm.withRetention).toBe(60_000);
+		// THE CONTROL: without retention a hibernated object re-boots, so the clamp holds
+		expect(rearm.without).toBe(8_000);
+	});
+
 	it('reaches the seven readers that live only inside the object', async () => {
 		await writeSettings(PROBE);
 		const site = freshSite();

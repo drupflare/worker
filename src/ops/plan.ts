@@ -225,6 +225,10 @@ export const KV_OVERRIDABLE = [
 	// warming. On by default and on this list so a site sharing a free account with others can be
 	// un-warmed without shipping anything
 	'SITE_WARM',
+	// how often a warmed site fires, which is the warming cost curve: 8 s holds the object resident
+	// on every request, and longer intervals trade firings for a chance of adopting the interpreter.
+	// Worst case is a cold boot or a costlier site, never a changed reachability
+	'WARM_INTERVAL_MS',
 	// the front worker's compiled-plan tier. Same test as the rest: turning it off costs the object
 	// hop it always paid, which is a slow site and not a changed reachability
 	'EDGE_PLAN',
@@ -288,6 +292,7 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	REPLICA_COUNT: { kind: 'int', min: 0, max: 256 },
 	REPLICA_LAG_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
 	SITE_WARM: { kind: 'flag' },
+	WARM_INTERVAL_MS: { kind: 'int', min: 8_000, max: 600_000, unit: 'ms' },
 	EDGE_PLAN: { kind: 'flag' },
 	ASSET_AGGREGATES: { kind: 'flag' },
 	MEMORY_CACHE_BINS: { kind: 'bins' },

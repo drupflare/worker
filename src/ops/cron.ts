@@ -263,6 +263,7 @@ export interface CronEnv {
 	KEEP_WARM_MS?: string | number;
 	WARM_INTERVAL_MS?: string | number;
 	SITE_WARM?: string | number;
+	RETAIN_INTERPRETER?: string | number;
 }
 
 /**
@@ -377,7 +378,50 @@ export function keepWarmMs(env?: CronEnv | null): number {
 export function warmIntervalMs(env?: CronEnv | null): number {
 	const n = Number(env?.WARM_INTERVAL_MS ?? 8000);
 	const ms = Number.isFinite(n) && n >= 1 ? Math.floor(n) : 8000;
+	// with retention, an interval past hibernation still leaves an interpreter to adopt some of the
+	// time; without it the object re-boots on every firing and the longer interval buys nothing
+	if (String(env?.RETAIN_INTERPRETER ?? '1') !== '0') return Math.min(ms, WARM_INTERVAL_MAX_MS);
 	return Math.min(ms, HIBERNATION_IDLE_MS - 2000);
+}
+
+/** the longest warming interval a writer accepts, past which a firing adopts almost nothing */
+export const WARM_INTERVAL_MAX_MS = 600_000;
+
+/**
+ * The idle re-arm for a site the thermal policy declined to warm, while retention is on.
+ *
+ * Measured 2026-09-25 on paid throwaways, a PHP-needing request after 150-300 s idle: re-armed at 30,
+ * 60 and 120 s the object hibernated between firings and the request adopted the retained
+ * interpreter in 188-396 ms on 27 of 28 samples, while the default 240 s re-arm booted (3,151-3,506
+ * ms). One host that recycled isolates booted at every interval. 120 s is the cheapest point that
+ * adopted, at 720 firings a day against 240 s's 360.
+ */
+export const ADOPTABLE_REARM_MS = 120_000;
+
+/**
+ * The re-arm for a site that is not warming: the adoptable one when the policy declined, and the
+ * slow one when an operator said no or nothing can be adopted.
+ */
+export function declinedRearmMs(env?: CronEnv | null, operatorDeclined = false): number {
+	const set = env?.KEEP_WARM_MS;
+	if (operatorDeclined || (set !== undefined && set !== null && String(set) !== '')) {
+		return keepWarmMs(env);
+	}
+	return String(env?.RETAIN_INTERPRETER ?? '1') !== '0' ? ADOPTABLE_REARM_MS : keepWarmMs(env);
+}
+
+/**
+ * Whether warming is forced, off, or left to the thermal policy.
+ *
+ * An explicit `SITE_WARM` always wins. Unset, a PAID site warms: one site's 10,800 firings a day
+ * sit inside paid's included Durable Object requests and rows, so the performance costs nothing
+ * marginal. Unset on FREE it is the thermal policy, because the same firings are 10.8% of free's
+ * daily row and request budgets and that trade is the operator's to make.
+ */
+export function warmForced(env?: CronEnv | null, paid = false): boolean | null {
+	const set = env?.SITE_WARM;
+	if (set !== undefined && set !== null && String(set) !== '') return String(set) === '1';
+	return paid ? true : null;
 }
 
 /**

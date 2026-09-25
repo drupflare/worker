@@ -273,6 +273,22 @@ describe('write amplification per semantic operation', () => {
 		'prices every content write, and attributes every charged row to a table',
 		async () => {
 			const ops = await measured();
+			// the docblock table, printed so a re-reading needs no second harness (--reporter=verbose)
+			console.log(
+				JSON.stringify(
+					Object.values(ops).map((o) => ({
+						op: o.label,
+						charged: o.rowsWritten,
+						stmts: o.statements,
+						stored: o.storedRows,
+						firstPass: o.firstPassRows,
+						txn: o.driver.transactions,
+						spec: o.driver.speculative,
+						replayed: o.driver.replayed,
+						tables: Object.fromEntries(o.tables.map((t) => [t.table, t.chargedRows]))
+					}))
+				)
+			);
 			for (const name of ENTITY_OPS) {
 				const op = by(ops, name);
 				expect(op.id, `${name} wrote no entity`).toBeGreaterThan(0);

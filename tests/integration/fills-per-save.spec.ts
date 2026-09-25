@@ -32,6 +32,12 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
  * first is invisible to `execSql()`. That is a property of one function and is falsified in
  * `tests/unit/ops/render-plan.spec.ts`; this file measures the dependency graph, which is the term
  * the arithmetic needs, and reads the invalidated set from Drupal's own record.
+ *
+ * **It also reads what each re-render changed**, against a no-save re-render that comes back
+ * byte-identical. Measured 2026-09-24, three rounds per kind: a save to a node the main menu links
+ * re-renders all 34 pages and 87 of the 102 come back byte-identical, so most of that fan-out is a
+ * render and a row spent reproducing the page it replaced. An ordinary node save changes every page
+ * it reaches, by a median of 64 bytes; a menu-item save changes all 34 by ~1.4 KB of navigation.
  */
 
 const TIMEOUT = 900_000;
@@ -184,6 +190,42 @@ type Round = {
 
 const median = (xs: readonly number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
+/**
+ * How much of a re-rendered page is the page it replaced: common prefix plus common suffix, as a
+ * share of the longer copy. A lower bound on what one splice could reuse, because a second changed
+ * region anywhere in the middle counts everything between the two as changed.
+ */
+function sameShare(
+	a: string,
+	b: string
+): { share: number; changedBytes: number; lineShare: number } {
+	const max = Math.max(a.length, b.length);
+	if (max === 0) return { share: 1, changedBytes: 0, lineShare: 1 };
+	// order-free: the bytes of the new copy found on an unused identical line of the old one
+	const pool = new Map<string, number>();
+	for (const line of a.split('\n')) pool.set(line, (pool.get(line) ?? 0) + 1);
+	let reused = 0;
+	for (const line of b.split('\n')) {
+		const left = pool.get(line) ?? 0;
+		if (left > 0) {
+			pool.set(line, left - 1);
+			reused += line.length + 1;
+		}
+	}
+	const lineShare = Math.min(1, reused / Math.max(1, b.length));
+	let prefix = 0;
+	while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
+	let suffix = 0;
+	while (
+		suffix < a.length - prefix &&
+		suffix < b.length - prefix &&
+		a[a.length - 1 - suffix] === b[b.length - 1 - suffix]
+	) {
+		suffix++;
+	}
+	return { share: (prefix + suffix) / max, changedBytes: max - prefix - suffix, lineShare };
+}
+
 describe('fills per save, on a site with real dependents', () => {
 	it(
 		'measures the dependent set per save kind and the wholesale arm beside it',
@@ -229,6 +271,27 @@ describe('fills per save, on a site with real dependents', () => {
 				await refill();
 				const cached = count('cfw_page');
 
+				// #region page delta: what survives a re-render, and the noise floor with no save at all
+				const stored = (path: string) => {
+					const row = site.sql
+						.exec('SELECT html, rendered_at FROM cfw_page WHERE path = ?', path)
+						.toArray()[0];
+					return { html: String(row?.html ?? ''), at: Number(row?.rendered_at ?? 0) };
+				};
+				const snapshot = () => new Map(paths.map((p) => [p, stored(p)]));
+				const deltas = (before: Map<string, { html: string; at: number }>) =>
+					paths
+						.filter((p) => stored(p).at !== before.get(p)?.at)
+						.map((p) => sameShare(before.get(p)?.html ?? '', stored(p).html));
+				const noiseBefore = snapshot();
+				for (const p of ['/', '/node/25', '/taxonomy/term/1']) {
+					site.sql.exec('DELETE FROM cfw_page WHERE path = ?', p);
+				}
+				await refill();
+				const noise = deltas(noiseBefore);
+				const pageDelta = new Map<string, ReturnType<typeof sameShare>[]>();
+				// #endregion
+
 				const one = async (kind: string, php: string): Promise<Round> => {
 					site.sql.exec('DELETE FROM cfw_fill_queue');
 					site.clearPendingTags();
@@ -254,8 +317,10 @@ describe('fills per save, on a site with real dependents', () => {
 				const rounds: Round[] = [];
 				for (const { kind, php } of KINDS) {
 					for (let r = 0; r < ROUNDS; r++) {
+						const before = snapshot();
 						rounds.push({ ...(await one(kind, php(r))), round: r });
 						await refill();
+						pageDelta.set(kind, [...(pageDelta.get(kind) ?? []), ...deltas(before)]);
 					}
 				}
 
@@ -271,8 +336,36 @@ describe('fills per save, on a site with real dependents', () => {
 					round: 0
 				};
 
-				return { cached, rounds, wholesale, storedAfter: count('cfw_page') };
+				return {
+					cached,
+					rounds,
+					wholesale,
+					storedAfter: count('cfw_page'),
+					noise,
+					pageDelta: [...pageDelta]
+				};
 			});
+
+			const summarise = (xs: ReturnType<typeof sameShare>[]) => ({
+				pages: xs.length,
+				medianSame: median(xs.map((x) => x.share)),
+				minSame: Math.min(...xs.map((x) => x.share)),
+				medianLineSame: median(xs.map((x) => x.lineShare)),
+				identical: xs.filter((x) => x.changedBytes === 0).length,
+				medianChangedBytes: median(xs.map((x) => x.changedBytes))
+			});
+			console.log(
+				`[page-delta] ${JSON.stringify({
+					noise: summarise(out.noise),
+					bySave: Object.fromEntries(out.pageDelta.map(([k, xs]) => [k, summarise(xs)]))
+				})}`
+			);
+			// the control re-rendered what it deleted, or every share below is compared with nothing
+			expect(out.noise.length).toBe(3);
+			for (const [kind, xs] of out.pageDelta) {
+				expect(xs.length, `${kind} re-rendered no page`).toBeGreaterThan(0);
+				for (const x of xs) expect(x.share).toBeGreaterThan(0);
+			}
 
 			const byKind = new Map<string, Round[]>();
 			for (const r of out.rounds) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r]);

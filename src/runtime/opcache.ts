@@ -22,16 +22,25 @@
  *
  * | mode     | what it is                                             |
  * | -------- | ------------------------------------------------------ |
- * | `file`   | shipping: opcache on, file cache is the only store     |
+ * | `file`   | opcache on, file cache is the only store               |
  * | `shm`    | opcache on, no file cache, shared memory as the store  |
  * | `off`    | opcache disabled entirely                              |
+ * | `pack`   | the file cache the pack ships, read-only               |
+ *
+ * `pack` is opt-in, and `off` stays the default. Measured 2026-09-25 on two deployed paid workers,
+ * one cold first render per minute, then again with the levers swapped between the deploys: object
+ * cpuTime per cold render (per-minute p90) read ~820-1,020 ms on `pack` against ~1,800 on `off`, and
+ * 1,204-1,524 against 1,636-2,236 after the swap, so the CPU saving follows the lever. Visitor wall
+ * did not: p50 1,482 against 2,291, then 2,341 against 2,286 (n=8 each), because the deploy moves it
+ * more than the lever does. The layer is 1,839 scripts and 8,581,446 bytes, and it holds that much
+ * more of the isolate. `scripts/bake-opcache.ts` builds it.
  *
  * `shm` is the arm with a real chance of not working at all. opcache's shared-memory backend wants
  * `mmap`/`shmget`, which is why `file_cache_only=1` is there in the first place; if the arm aborts,
  * that IS the measurement and it is what justifies keeping the write-only file cache.
  */
 
-export const OPCACHE_MODES = ['file', 'shm', 'off'] as const;
+export const OPCACHE_MODES = ['file', 'shm', 'off', 'pack'] as const;
 
 export type OpcacheMode = (typeof OPCACHE_MODES)[number];
 
@@ -87,10 +96,44 @@ export function opcacheIni(mode: OpcacheMode = DEFAULT_OPCACHE_MODE): string[] {
 		'opcache.optimization_level=0x7FFEBFFF'
 	];
 	if (mode === 'shm') return common;
-	return [
+	const file = [
 		...common,
 		'opcache.file_cache=/tmp',
 		'opcache.file_cache_only=1',
 		'opcache.file_cache_consistency_checks=0'
 	];
+	// the shipped cache is linked under /tmp after the mount, and read-only keeps a miss from writing
+	// the 30 MiB of MEMFS the `file` arm spends
+	return mode === 'pack' ? [...file, 'opcache.file_cache_read_only=1'] : file;
+}
+
+/** the path the shipped cache is mounted at, beside the tree it was compiled from */
+export const OPCACHE_PACK_ROOT = '/drupal/.opcache';
+
+/**
+ * What a shipped cache was compiled FROM: the packed driver and every locked package version.
+ *
+ * `validate_timestamps=0` means a cached script is never checked against its source, so a cache
+ * baked before a driver or composer change would run the old code. The mount refuses a cache whose
+ * key disagrees with the running tree. FNV-1a over the sorted versions; change detection only.
+ */
+export function opcacheSourceKey(driverDigest: string, lock: Record<string, string>): string {
+	const canonical = JSON.stringify(Object.entries(lock).sort(([a], [b]) => (a < b ? -1 : 1)));
+	let h = 0x811c9dc5;
+	for (let i = 0; i < canonical.length; i++) {
+		h ^= canonical.charCodeAt(i);
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return `${driverDigest}:${h.toString(16).padStart(8, '0')}`;
+}
+
+/** whether the mount should take the shipped cache: `stale` is one compiled from other sources */
+export function opcachePackState(
+	pack: { source: string } | null,
+	mode: OpcacheMode,
+	lazyMount: boolean,
+	sourceKey: string
+): 'none' | 'stale' | 'usable' {
+	if (pack === null || mode !== 'pack' || !lazyMount) return 'none';
+	return pack.source === sourceKey ? 'usable' : 'stale';
 }

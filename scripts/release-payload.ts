@@ -84,6 +84,8 @@ export const PAYLOAD_ASSETS: readonly PlanEntry[] = [
 	{ path: 'assets/agg', dir: true, optional: true },
 	{ path: 'assets/drupal-pf/core.pf.json' },
 	{ path: 'assets/drupal-pf/core.pf.bin' },
+	// the opcache layer `OPCACHE_MODE=pack` mounts; opt-in, so a build that never baked it is empty
+	{ path: 'assets/drupal-opc', dir: true, optional: true },
 	{ path: 'assets/drupal-sql', dir: true }
 ];
 

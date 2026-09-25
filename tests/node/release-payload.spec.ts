@@ -87,6 +87,7 @@ function checkout(seam: string, ignore?: string): string {
 				'/drupal-pf/*',
 				'!/drupal-pf/core.pf.json',
 				'!/drupal-pf/core.pf.bin',
+				'!/drupal-opc/',
 				'!/drupal-sql/'
 			].join('\n')
 	);

@@ -418,7 +418,11 @@ async function main(): Promise<void> {
 }
 
 /** one `wrangler dev --local` for the length of `run`, stopped and waited for before returning */
-async function withWrangler<T>(state: string, run: (base: string) => Promise<T>): Promise<T> {
+export async function withWrangler<T>(
+	state: string,
+	run: (base: string) => Promise<T>,
+	vars: readonly string[] = []
+): Promise<T> {
 	/*
 	 * Five things about this line, each of which was wrong first.
 	 *
@@ -442,6 +446,7 @@ async function withWrangler<T>(state: string, run: (base: string) => Promise<T>)
 			String(PORT),
 			'--var',
 			'PW_DIAGNOSTICS:1',
+			...vars.flatMap((v) => ['--var', v]),
 			'--persist-to',
 			state
 		],

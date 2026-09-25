@@ -38,7 +38,8 @@
  *
  * One object, one client, cached serves, `edge=0` so every request reaches it. Reports `x-worker-ms`
  * per bucket and `rowsToday` beside it, because a free site that exhausts its row budget goes
- * read-only and the symptom is not a quota message.
+ * read-only and the symptom is not a quota message. `--unique=1` renders every request instead,
+ * because a CPU allowance can only bite on requests that spend CPU.
  *
  *   bun scripts/measure/open-measure.ts --arm=stale --base=https://cfw-m1.<sub>.workers.dev --n=30
  */
@@ -407,7 +408,9 @@ async function decayArm(): Promise<void> {
 		const slice: number[] = [];
 		for (let i = 0; i < bucket && seen < N; i++, seen++) {
 			const tag = `decay-b${b}-n${i}-${RUN}`;
-			const r = await hit(url('/serve', { path, edge: 0, tag }));
+			// `--unique` makes every request a render, which is what spends CPU; a HIT spends ~2 ms
+			const target = a['unique'] ? `${path}?decay=${RUN}-${seen}` : path;
+			const r = await hit(url('/serve', { path: target, edge: 0, tag }));
 			const ms = Number(r.headers.get('x-worker-ms') ?? r.wallMs);
 			slice.push(ms);
 			wall.push(ms);

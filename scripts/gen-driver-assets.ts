@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
+import { type Cms, cmsSelection } from './cms';
+import { readJsonc } from './release-payload';
 
 /**
  * Packs the cfw_do_sqlite and drupflare modules into assets/driver.json so the Durable Object
@@ -108,6 +110,20 @@ const MODULES: { src: string; mount: string; parts?: readonly string[] }[] = [
 	{ src: STREAM_HTTP_SRC, mount: 'libraries/drupflare-stream-http/src' }
 ];
 
+/** the module set each CMS packs */
+const CMS_MODULES: Record<Cms, typeof MODULES> = { drupal: MODULES };
+
+/**
+ * The CMS this build packs: `CMS` from the environment, else the shipping config's var.
+ *
+ * @internal
+ */
+export function buildCms(env: string | undefined = process.env.CMS): Cms {
+	const vars = readJsonc(join(repo, 'wrangler.jsonc'))['vars'] as
+		Record<string, unknown> | undefined;
+	return cmsSelection(env ?? vars?.['CMS']);
+}
+
 /** the PSR-4 roots the packed tree needs, since composer's autoloader is not there to build them */
 export const PACKED_PSR4 = [
 	{ prefix: 'Drupal\\cfw_do_sqlite\\', path: 'modules/custom/cfw_do_sqlite/src/' },
@@ -142,9 +158,9 @@ async function walk(dir: string): Promise<string[]> {
  *
  * @internal
  */
-export async function buildDriverAssets(): Promise<Record<string, string>> {
+export async function buildDriverAssets(cms: Cms = buildCms()): Promise<Record<string, string>> {
 	const files: Record<string, string> = {};
-	for (const { src, mount, parts } of MODULES) {
+	for (const { src, mount, parts } of CMS_MODULES[cmsSelection(cms)]) {
 		// resolve, not join: the sibling paths may be absolute
 		const from = resolve(repo, src);
 		// a suffix like `.info.yml` names `<machine name>.info.yml`, and the machine name comes from

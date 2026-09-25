@@ -49,6 +49,13 @@ An unbound optional binding always wins over the var that would enable the featu
 that is not bound is a configuration error, and answering it with a crash on the serving path would
 be the wrong trade.
 
+## CMS
+
+`CMS` selects which CMS the build packs, and `drupal` is the only value. It is read at BUILD time by
+`bun run assets:driver`, from the environment and then from `wrangler.jsonc`, which sets it. Unlike
+every other var it has no default: a missing or unknown value fails the build instead of packing
+Drupal under another name. At runtime it is only reported, as the fleet row's `cms`.
+
 ## Site Identity and Origin
 
 | var                  | default              | what it does                                                   |

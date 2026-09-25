@@ -3,8 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { cmsSelection } from '../../scripts/cms.ts';
 import {
 	DRIVER_ASSET_PATH,
+	buildCms,
 	buildDriverAssets,
 	driverDigest,
 	serialiseDriverAssets,
@@ -241,5 +243,31 @@ describe('the packer carries every declaration file a sibling module has', () =>
 			missing,
 			`these declarations never reach a deployed site: ${missing.join(', ')}`
 		).toEqual([]);
+	});
+});
+
+describe('the build packs the CMS the shipping config selects', () => {
+	it('reads CMS from wrangler.jsonc, which sets it explicitly', () => {
+		const vars = JSON.parse(
+			readFileSync(join(ROOT, 'wrangler.jsonc'), 'utf8').replace(/^\s*\/\/.*$/gm, '')
+		).vars as Record<string, unknown>;
+		expect(vars['CMS']).toBe('drupal');
+		expect(buildCms(undefined)).toBe('drupal');
+	});
+
+	it('fails on a value it cannot pack, and on a missing one', async () => {
+		expect(() => cmsSelection('wordpress')).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection(undefined)).toThrow(/not a CMS this build can pack/);
+		expect(() => cmsSelection('Drupal')).toThrow();
+		await expect(buildDriverAssets('wordpress' as 'drupal')).rejects.toThrow(
+			/not a CMS this build can pack/
+		);
+		expect(() => buildCms('wordpress')).toThrow(/wordpress/);
+	});
+
+	it('packs the same bytes whether the selection is explicit or read from the config', async () => {
+		expect(serialiseDriverAssets(await buildDriverAssets('drupal'))).toBe(
+			serialiseDriverAssets(await buildDriverAssets())
+		);
 	});
 });

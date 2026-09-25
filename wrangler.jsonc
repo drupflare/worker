@@ -6,6 +6,7 @@
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"vars": {
+		"CMS": "drupal",
 		"LAZY_MOUNT": "1",
 		"LAZY_FS_BUDGET_BYTES": "4194304",
 		"GEN_BUCKET_MS": "5000",

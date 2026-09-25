@@ -19,3 +19,4 @@ src/ops/shipped-lock.ts
 
 # nginx has no prettier parser; running the formatter over it is a corruption risk for no gain
 docker/vps/nginx.conf
+.remember/

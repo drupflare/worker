@@ -89,7 +89,7 @@ if (import.meta.main) {
 	const endpoint = arg('endpoint').replace(/\/+$/, '');
 	const prefix = arg('prefix', 'ww');
 	const repeat = Number(arg('repeat', '5'));
-	const settle = Number(arg('settle', '600'));
+	const settle = Number(arg('settle', '120'));
 
 	if (dry) {
 		console.log(`plan: ${WRITE_WORKLOADS.length} ops x ${repeat} repeats`);
@@ -239,15 +239,28 @@ if (import.meta.main) {
 		process.exit(0);
 	}
 
-	console.log(`\nwaiting ${settle}s for ingestion; an empty result before then is not evidence`);
-	await new Promise((r) => setTimeout(r, settle * 1000));
-
-	const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
-		method: 'POST',
-		headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-		body: JSON.stringify({ query: GQL, variables: { account, start: startedAt, end: endedAt } })
-	});
-	const rowsBack: PeriodicRow[] = flattenPeriodic(await res.json());
+	// POLLED, not waited: a new namespace can take ~25 minutes to appear, and deleting the worker
+	// deletes its object rows for good, so the rig has to see every class before anyone tears down
+	const ingestMax = Number(arg('ingest-max', '1800'));
+	const deadline = Date.now() + ingestMax * 1000;
+	let rowsBack: PeriodicRow[] = [];
+	for (;;) {
+		await new Promise((r) => setTimeout(r, settle * 1000));
+		const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+			method: 'POST',
+			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				query: GQL,
+				variables: { account, start: startedAt, end: endedAt }
+			})
+		});
+		rowsBack = flattenPeriodic(await res.json());
+		const missing = WRITE_WORKLOADS.filter((op) => !sumRows(rowsBack, [siteForOp(prefix, op)]));
+		if (missing.length === 0 || Date.now() >= deadline) break;
+		console.log(
+			`  ingestion: ${missing.length} class(es) not in the dataset yet; polling again`
+		);
+	}
 	console.log('\n## platform meter, per object\n');
 	console.log(
 		'| op | GB-s/op | cpuTime ms/op | activeTime ms/op | active/cpu | platform rows/op | alloc |'

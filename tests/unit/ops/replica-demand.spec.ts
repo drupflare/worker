@@ -3,6 +3,7 @@ import {
 	autoScaleEnabled,
 	DEFAULT_MAX_LANES,
 	DEMAND_HISTORY,
+	laneFitsRows,
 	laneTarget,
 	maxLanes,
 	nextLaneToProvision,
@@ -80,6 +81,62 @@ describe('the switches', () => {
 		// the router clamps at 32 and so does this, or they would disagree about the same pool
 		expect(maxLanes({ REPLICA_MAX_LANES: '99' })).toBe(32);
 		expect(DEFAULT_MAX_LANES).toBe(32);
+	});
+});
+
+describe('a lane is sized against the rows it multiplies, not only the reads it absorbs', () => {
+	// half the day gone, 10,000 rows written and all of them replicated: 20,000 a day per lane
+	const half = { today: 10_000, replicatedToday: 10_000, limit: 100_000, dayFraction: 0.5 };
+
+	it('fits while the day plus N lanes of the replicated stream stays under the reduce fraction', () => {
+		// 3 lanes: 10,000 + 60,000, under 80,000
+		expect(laneFitsRows(half, 3)).toBe(true);
+		// 4 lanes: 10,000 + 80,000, past it
+		expect(laneFitsRows(half, 4)).toBe(false);
+	});
+
+	it('does not project a provisioning burst as a rate, since a lane arrives by a full copy', () => {
+		// 11,000 rows at provisioning three hours in, almost none replicated: one lane costs ~nothing
+		const provisioned = {
+			today: 11_000,
+			replicatedToday: 50,
+			limit: 100_000,
+			dayFraction: 0.125
+		};
+		expect(laneFitsRows(provisioned, 1)).toBe(true);
+		// the control: the same day with those rows REPLICATED is the rate it claims
+		expect(laneFitsRows({ ...provisioned, replicatedToday: 11_000 }, 1)).toBe(false);
+	});
+
+	it('refuses growth that read contention alone would have taken', () => {
+		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3 })).toBe(4);
+		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3, rows: half })).toBe(null);
+		// the control: the same demand under a quiet write day still grows
+		const quiet = { ...half, today: 1_000, replicatedToday: 1_000 };
+		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3, rows: quiet })).toBe(4);
+	});
+
+	it('does not project a burst after midnight as a whole day', () => {
+		// 1,000 replicated in the first minute project as 24,000 a day over the hour floor, not 1.44M
+		const early = {
+			today: 1_000,
+			replicatedToday: 1_000,
+			limit: 100_000,
+			dayFraction: 1 / 1440
+		};
+		expect(laneFitsRows(early, 1)).toBe(true);
+		// the control: the same rows every minute for the hour is the rate it claims
+		expect(
+			laneFitsRows(
+				{ ...early, today: 60_000, replicatedToday: 60_000, dayFraction: 1 / 24 },
+				1
+			)
+		).toBe(false);
+	});
+
+	it('places no cap on a plan without a daily row limit', () => {
+		const huge = { today: 10_000_000, replicatedToday: 10_000_000, limit: 0, dayFraction: 0.1 };
+		expect(laneFitsRows(huge, 32)).toBe(true);
 	});
 });
 

@@ -13,6 +13,7 @@ import {
 	recordEncounter,
 	type EncounterCounts
 } from './ops/cold-encounter.js';
+import { PACKED_CONTAINER_DIGEST } from './ops/container-digest.js';
 import {
 	DAY_METERS_PREFIX,
 	dayMetersKey,
@@ -31,7 +32,6 @@ import {
 	requestHeaders,
 	ttlFor
 } from './ops/deferred-post.js';
-import { DRIVER_DIGEST } from './ops/driver-digest.js';
 import { ROWS_PER_TAGGED_PAGE, ROWS_PER_UNTAGGED_PAGE, fanoutDecision } from './ops/fanout.js';
 import {
 	ensureFragmentTables,
@@ -71,6 +71,11 @@ import {
 	type OidcProvider,
 	type PendingLogin
 } from './ops/oidc.js';
+import {
+	PACKED_CONTAINER_PATH,
+	extensionFingerprint,
+	type PackedContainer
+} from './ops/packed-container.js';
 import { declaredFetches, pendingDeclared } from './ops/prefetch.js';
 import {
 	DRIVER_DIGEST_KEY,
@@ -334,6 +339,7 @@ import {
 	type CrossingTally
 } from './ops/crossings.js';
 import {
+	REDUCE_AT,
 	dailyLimit,
 	degradation,
 	degradeHeaders,
@@ -494,10 +500,12 @@ import {
 	type ReplicaStage
 } from './ops/replica-admission.js';
 import {
+	laneFitsRows,
 	meanWaitMs,
 	nextLaneToProvision,
 	recordWindow,
-	type DemandWindow
+	type DemandWindow,
+	type RowBudget
 } from './ops/replica-demand.js';
 import {
 	chunkRefusal,
@@ -507,7 +515,15 @@ import {
 	type ProvisionOutcome,
 	type RestoreChunk
 } from './ops/replica-restore.js';
-import { LANES_HEADER, replicaLagMs, replicaName, replicaOf } from './ops/replica-routing.js';
+import {
+	LANES_EPOCH_HEADER,
+	LANES_HEADER,
+	formatLanesPointer,
+	lanesKvKey,
+	replicaLagMs,
+	replicaName,
+	replicaOf
+} from './ops/replica-routing.js';
 import {
 	ReplicaRequiresPrimary,
 	drupalSessionRowId,
@@ -684,6 +700,8 @@ const CRON_HOOKS_KEY = 'cron_hooks';
 /** the contention history autoscaling decides from; see `src/ops/replica-demand.ts` */
 const DEMAND_WINDOWS_KEY = 'demand_windows';
 const LANES_PROVISIONED_KEY = 'lanes_provisioned';
+/** bumped whenever the pool changes; see `LANES_EPOCH_HEADER` */
+const LANES_EPOCH_KEY = 'lanes_epoch';
 
 /** the render count the thermal predictor reads after a hibernation; `<startedAt>:<renders>` */
 const RENDER_WINDOW_KEY = 'render_window';
@@ -2257,7 +2275,21 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	>();
 	/** interpreter drops taken to stay under the isolate limit; `/serve-stats` reports both */
 	recycles?: number;
-	lastRecycle?: { at: number; bytes: number; reason: 'request' | 'alarm' | 'upload' };
+	lastRecycle?: {
+		at: number;
+		bytes: number;
+		reason: 'request' | 'alarm' | 'upload';
+		rebuild?: boolean;
+	};
+	/**
+	 * Set when this interpreter's first kernel boot has no container row and so rebuilds it.
+	 *
+	 * Measured 2026-09-25 on a deployed site after a driver-pack update, which drops the row: the
+	 * rebuilding fill completed and the NEXT invocation, 75 ms of CPU, was reset for the isolate's
+	 * memory, taking a waiting visitor request with it. Both thresholds read clear (linear
+	 * 107,216,896, isolate estimate 93.4%); the rebuild's garbage is what the estimate cannot see.
+	 */
+	private rebuildBoot = false;
 	/** set by a request carrying a file, cleared when the interpreter drops after it */
 	private uploadSeen = false;
 	/** drops taken because the VM trapped, which is a fault rather than a size; see {@link run} */
@@ -2612,6 +2644,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 
 		this.php = { php, binary, out: this.out };
 		this.bootMs = Date.now() - t0;
+		this.rebuildBoot = this.containerMissing();
 
 		// restore a stored heap if one matches this pack, AFTER the mount and after the bridge
 		// and capabilities are installed -- the heap holds vrzno handles by index into the JS side
@@ -3385,10 +3418,24 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const provisioned = Number(this.metaGet(LANES_PROVISIONED_KEY) ?? 0) || 0;
 		// a REPAIR outranks growth: a lane that withdrew is capacity the site already paid to build
 		// and is currently getting nothing from, and growing past it just adds a second cold lane
+		// growth only: a repair re-copies a lane the site already pays to replicate to
+		const now = this.nowMs();
+		const rows: RowBudget = {
+			today: this.dailyRows(now),
+			replicatedToday: this.replicatedRowsSince(now - (now % 86_400_000)),
+			limit: dailyLimit('rows-written', this.env),
+			dayFraction: (now % 86_400_000) / 86_400_000
+		};
 		const lane =
 			pending !== null && pending !== ''
 				? Number(this.metaGet(LANE_IN_FLIGHT_KEY) ?? 0) || null
-				: (repairs[0] ?? nextLaneToProvision({ windows, provisioned, env: this.env }));
+				: (repairs[0] ??
+					nextLaneToProvision({ windows, provisioned, env: this.env, rows }));
+		// whatever demand says: another lane would not fit today's rows
+		this.laneRowsCap =
+			repairs.length === 0 && !laneFitsRows(rows, provisioned + 1, REDUCE_AT)
+				? { at: now, lanes: provisioned + 1, ...rows }
+				: null;
 		if (lane === null || lane < 1) return null;
 		const repairing = repairs.includes(lane);
 
@@ -3740,6 +3787,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// count is what separates that from the one drop a fresh site takes
 			recycles: this.recycles ?? 0,
 			lastRecycle: this.lastRecycle ?? null,
+			laneRowsCap: this.laneRowsCap,
 			// what conditional writes saved this incarnation: one read spent to avoid one charged
 			// row. Reported because the share of rewrites that store an unchanged value is a
 			// property of a real workload, and asserting a figure for it would be a guess
@@ -4434,8 +4482,25 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			},
 			meta: (key: string) => this.metaGet(key),
 			setMeta: (key: string, value: string) => this.metaSet(key, value),
-			origin: () => this.canonicalOrigin()
+			origin: () => this.canonicalOrigin(),
+			packedContainer: () => this.packedContainer,
+			modules: () => this.enabledModulesFingerprint()
 		};
+	}
+
+	/** the pack's container row, loaded once an instance has reconciliation to do */
+	private packedContainer: PackedContainer | null = null;
+
+	private async loadPackedContainer(): Promise<void> {
+		if (this.packedContainer) return;
+		try {
+			const res = await this.env.ASSETS.fetch(
+				new URL(`https://a.local/${PACKED_CONTAINER_PATH}`)
+			);
+			if (res.ok) this.packedContainer = await res.json<PackedContainer>();
+		} catch {
+			// absent means the step rebuilds, as it always did
+		}
 	}
 
 	reconcileState(): ReconcileState {
@@ -4496,6 +4561,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		) {
 			return null;
 		}
+		await this.loadPackedContainer();
 		// Marks are drained in a loop rather than one per firing. A `mark` is the verdict answering
 		// "this site already matches", which is what a site provisioned after the fix answers to every
 		// step -- so paying a firing each would spend four invocations to discover there is nothing to
@@ -4600,14 +4666,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 					: data instanceof Uint8Array
 						? new TextDecoder().decode(data)
 						: '';
-			if (text === '') return '';
-			// FNV-1a; this picks up a changed module list, it does not authenticate one
-			let h = 0x811c9dc5;
-			for (let i = 0; i < text.length; i++) {
-				h ^= text.charCodeAt(i);
-				h = Math.imul(h, 0x01000193) >>> 0;
-			}
-			return `${text.length}:${h.toString(16)}`;
+			return extensionFingerprint(text);
 		} catch {
 			return '';
 		}
@@ -7162,9 +7221,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				// patched old site from an unpatched one
 				reconcileVersion: this.reconcileState().version,
 				schemaVersion: FLEET_SCHEMA_VERSION,
-				// one value today, and the column exists so a second CMS is not a migration on every
-				// live site; see the site-kind record in the roadmap's promoted list
-				cms: 'drupal',
+				// the build refused any other value, so the var is what was packed
+				cms: String((this.env as { CMS?: string } | null)?.CMS ?? 'drupal'),
 				// self-hosted is a workerd the operator runs, which has no Cloudflare account behind
 				// it -- `CF_VERSION_METADATA` is injected by the platform and absent there
 				tier:
@@ -7901,9 +7959,58 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	private noteLaneServing(lane: number): void {
 		const provisioned = this.lanesProvisioned();
 		if (lane > provisioned) {
+			const epoch = this.lanesEpoch() + 1;
 			this.metaSet(LANES_PROVISIONED_KEY, String(lane));
+			this.metaSet(LANES_EPOCH_KEY, String(epoch));
 			this.lanesMemo = lane;
+			this.epochMemo = epoch;
+			// once per epoch, so a colo that has never answered for this site still finds the pool
+			const kv = (this.env as { CONFIG_KV?: KVNamespace } | null)?.CONFIG_KV;
+			const site = this.ctx.id.name;
+			if (kv && site) {
+				this.lanesPublished = kv
+					.put(lanesKvKey(site), formatLanesPointer(lane, epoch))
+					.catch(() => undefined);
+			}
 		}
+	}
+
+	/** statements sealed for replication since `sinceMs`, each at least one row on every lane */
+	private replicatedRowsSince(sinceMs: number): number {
+		try {
+			const row = this.sql
+				.exec<Row<{ n: number }>>(
+					'SELECT COALESCE(SUM(json_array_length(statements)), 0) AS n FROM cfw_repl_log WHERE sealed_at >= ?',
+					sinceMs
+				)
+				.toArray()[0];
+			return Number(row?.n ?? 0);
+		} catch {
+			// no log yet means nothing has been sealed for a lane to replay
+			return 0;
+		}
+	}
+
+	/** set when one more lane would project the day's rows past the reduce fraction */
+	laneRowsCap: ({ at: number; lanes: number } & RowBudget) | null = null;
+
+	/** the last `CONFIG_KV` write of the pool, awaited only by tests */
+	lanesPublished: Promise<unknown> | null = null;
+
+	private epochMemo: number | null = null;
+
+	private lanesEpoch(): number {
+		if (this.epochMemo === null) {
+			this.epochMemo = Number(this.metaGet(LANES_EPOCH_KEY) ?? 0) || 0;
+		}
+		return this.epochMemo;
+	}
+
+	/** the pool advertisement every primary response carries, or nothing without a pool */
+	private laneHeaders(): Record<string, string> {
+		const lanes = this.isPoolLane() ? 0 : this.lanesProvisioned();
+		if (lanes <= 0) return {};
+		return { [LANES_HEADER]: String(lanes), [LANES_EPOCH_HEADER]: String(this.lanesEpoch()) };
 	}
 
 	/** the pool size read once per incarnation; `noteLaneServing()` is the only thing that moves it */
@@ -10577,15 +10684,12 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			// Its own gate.run() rather than the one above: a second sequential acquire on a FIFO
 			// chain is fine, where nesting inside the first would deadlock.
 			if (out.done) {
-				// The packed container is current by construction, so say so. `bun run
-				// assets:driver` writes `src/ops/driver-digest.ts` and the pack in the same step,
-				// and this site's container came from that pack. Without the stamp the
-				// `container-driver-digest` reconcile step reads `owed` on EVERY fresh site and
-				// runs `DELETE FROM cache_container`, discarding the 482 KB row `bun run
-				// assets:container` exists to bake -- so the first boot rebuilt it at 1,024 ms
-				// against 86. The step's own comment had caught that a fresh site reads as owed and
-				// removed the recompile; the DELETE is where the cost actually landed
-				this.metaSet(DRIVER_DIGEST_KEY, DRIVER_DIGEST);
+				// The digest the packed container was BAKED with, not the one that ships. They agree
+				// only when `bun run assets:container` ran after the last `assets:driver`; stamping
+				// the shipping one claimed a container current that could predate a hook, so the hook
+				// stayed invisible on every fresh site. Without any stamp the reconcile step reads
+				// `owed` on every fresh site and the first boot rebuilds at 1,024 ms against 86
+				this.metaSet(DRIVER_DIGEST_KEY, PACKED_CONTAINER_DIGEST);
 				const prefill = await this.gate.run(
 					() => this.prefillServingTable(),
 					'alarm-prefill'
@@ -11884,10 +11988,7 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 		// contended site copied its database into N objects and kept serving every request from
 		// one. Reported here rather than fetched: the response is already paid for, the same way
 		// the generation and the role set ride along
-		if (!this.isPoolLane()) {
-			const lanes = this.lanesProvisioned();
-			if (lanes > 0) headers.set(LANES_HEADER, String(lanes));
-		}
+		for (const [k, v] of Object.entries(this.laneHeaders())) headers.set(k, v);
 		return new Response(response.body, {
 			status: response.status,
 			statusText: response.statusText,
@@ -12036,11 +12137,27 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 	recycleIfOversized(reason: 'request' | 'alarm'): boolean {
 		if (!this.php) return false;
 		const bytes = this.heapNow();
-		if (bytes < recycleAboveBytes(this.env)) return false;
+		const rebuild = this.rebuildBoot;
+		// both thresholds, as oversized() reads them: linear memory alone let an incarnation end
+		// with the isolate past its own and the next invocation start over the limit
+		if (!this.oversized() && !rebuild) return false;
 		this.php = null;
-		this.lastRecycle = { at: this.nowMs(), bytes, reason };
+		this.rebuildBoot = false;
+		this.lastRecycle = { at: this.nowMs(), bytes, reason, ...(rebuild ? { rebuild } : {}) };
 		this.recycles = (this.recycles ?? 0) + 1;
 		return true;
+	}
+
+	/** whether the next kernel boot has to rebuild the container; unreadable reads as no */
+	private containerMissing(): boolean {
+		try {
+			const row = this.sql
+				.exec<Row<{ n: number }>>('SELECT COUNT(*) AS n FROM cache_container')
+				.toArray()[0];
+			return Number(row?.n ?? 0) === 0;
+		} catch {
+			return false;
+		}
 	}
 
 	/** drops the interpreter after a request that carried a file; see `carriesUpload()` */
@@ -12166,11 +12283,10 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 		// believes and `believedLanes()` dropped the pool 60 s after the last gated response --
 		// sending anonymous cached traffic, the workload lanes exist for, back to the primary alone.
 		// Memoised, so this stays one indexed read and no await
-		const lanes = this.isPoolLane() ? 0 : this.lanesProvisioned();
 		return this.pageResponse(row, aged ? 'AGED' : 'HIT', Date.now() - t0, {
 			'x-cfw-lane': 'storage',
 			...(aged ? { 'x-cfw-aged-ms': String(this.nowMs() - (staleAt ?? 0)) } : {}),
-			...(lanes > 0 ? { [LANES_HEADER]: String(lanes) } : {}),
+			...this.laneHeaders(),
 			// Proof of overlap with no timing involved: `active` counts callbacks
 			// currently inside the PHP lane, so a 1 here means this HIT was answered
 			// while a render was in flight. That is the entire claim of the split, and
@@ -15232,9 +15348,7 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 					// warming site rather than as a shed. The retry is still the right advice -- the
 					// NEXT attempt renders inline again, which is the path that can actually serve
 					// them -- but the reason has to be true.
-					const shedPoolSize = this.isPoolLane() ? 0 : this.lanesProvisioned();
-					const shedLanes: Record<string, string> =
-						shedPoolSize > 0 ? { [LANES_HEADER]: String(shedPoolSize) } : {};
+					const shedLanes = this.laneHeaders();
 					return warmingResponse({
 						stage: 'warming',
 						// seconds, short because the fill is queued and the alarm re-arms fast

@@ -5,6 +5,12 @@ import {
 	affinityKey,
 	believedLanes,
 	chooseTarget,
+	formatLanesPointer,
+	LANES_EPOCH_HEADER,
+	LANES_HEADER,
+	lanesKvKey,
+	parseLanesPointer,
+	rememberLanes,
 	REPLICA_HEADER,
 	replicaName,
 	resetLaneBeliefs,
@@ -527,6 +533,98 @@ describe('a lane count survives the isolate that learned it', () => {
 			setLanes(0);
 			await primeLanes(caches.default, 'https://pointer.example', 'never-published.example');
 			expect(believedLanes('never-published.example', Date.now())).toBe(0);
+		},
+		TIMEOUT
+	);
+
+	/**
+	 * A colo that has never answered for the site, which the per-colo cache cannot help.
+	 *
+	 * `caches.default` is written only by an object response in that colo, and it expires, so the
+	 * edge pointer alone left most colos without the pool. `CONFIG_KV` is global.
+	 */
+	it(
+		'finds the pool in KV when this colo holds no pointer, and caches what it found',
+		async () => {
+			const origin = 'https://kv-colo.example';
+			await env.CONFIG_KV.put(lanesKvKey(SITE), formatLanesPointer(4, 2));
+			resetLaneBeliefs();
+			await primeLanes(caches.default, origin, SITE, env.CONFIG_KV);
+			expect(believedLanes(SITE, Date.now())).toBe(4);
+			// the second cold isolate in the colo reads the cache, not KV
+			resetLaneBeliefs();
+			await primeLanes(caches.default, origin, SITE, null);
+			expect(believedLanes(SITE, Date.now())).toBe(4);
+			await env.CONFIG_KV.delete(lanesKvKey(SITE));
+		},
+		TIMEOUT
+	);
+
+	it(
+		'caches an absent pool, so a site without one reads KV once per colo rather than per request',
+		async () => {
+			const origin = 'https://kv-absent.example';
+			const site = 'no-pool.example';
+			resetLaneBeliefs();
+			await primeLanes(caches.default, origin, site, env.CONFIG_KV);
+			// a pool published afterwards is not read again inside the absence TTL; the response
+			// header still teaches it, which is the path every isolate had before
+			await env.CONFIG_KV.put(lanesKvKey(site), formatLanesPointer(2, 1));
+			await primeLanes(caches.default, origin, site, env.CONFIG_KV);
+			expect(believedLanes(site, Date.now())).toBe(0);
+			await env.CONFIG_KV.delete(lanesKvKey(site));
+		},
+		TIMEOUT
+	);
+
+	it('never lets an older epoch replace a newer topology it still trusts', () => {
+		resetLaneBeliefs();
+		const now = Date.now();
+		rememberLanes(SITE, 4, now, 2);
+		rememberLanes(SITE, 2, now, 1);
+		expect(believedLanes(SITE, now)).toBe(4);
+		// a newer epoch wins even when it is smaller, which is what a shrink will need
+		rememberLanes(SITE, 3, now, 3);
+		expect(believedLanes(SITE, now)).toBe(3);
+	});
+
+	it('round-trips the pointer, and reads a bare count from before the epoch as epoch 0', () => {
+		expect(parseLanesPointer(formatLanesPointer(7, 5))).toEqual({ lanes: 7, epoch: 5 });
+		expect(parseLanesPointer('3')).toEqual({ lanes: 3, epoch: 0 });
+		expect(parseLanesPointer('three')).toBeNull();
+		expect(parseLanesPointer(null)).toBeNull();
+	});
+
+	it(
+		'the primary publishes each new topology to KV and advertises its epoch',
+		async () => {
+			const name = 'epoch-publish.example';
+			const out = await inObject(namedSite(name), async (site: ServeDo) => {
+				markProvisioned(site);
+				const s = site as unknown as {
+					noteLaneServing(lane: number): void;
+					lanesPublished: Promise<unknown> | null;
+				};
+				s.noteLaneServing(2);
+				await s.lanesPublished;
+				const first = await env.CONFIG_KV.get(lanesKvKey(name));
+				s.noteLaneServing(3);
+				await s.lanesPublished;
+				// the control: a lane already counted is not a new topology and writes nothing
+				s.noteLaneServing(1);
+				const res = await site.fetch(new Request('https://do.local/__serve-stats'));
+				return {
+					first,
+					second: await env.CONFIG_KV.get(lanesKvKey(name)),
+					lanes: res.headers.get(LANES_HEADER),
+					epoch: res.headers.get(LANES_EPOCH_HEADER)
+				};
+			});
+			expect(out.first).toBe('2@1');
+			expect(out.second).toBe('3@2');
+			expect(out.lanes).toBe('3');
+			expect(out.epoch).toBe('2');
+			await env.CONFIG_KV.delete(lanesKvKey(name));
 		},
 		TIMEOUT
 	);

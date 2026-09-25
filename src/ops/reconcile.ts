@@ -4,13 +4,15 @@ import {
 	reconcileRouterPhp
 } from '../drupal/reconcile-php.js';
 import { DRIVER_DIGEST, DRIVER_ROUTES } from './driver-digest.js';
+import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-container.js';
 
 /**
  * The `cfw_meta` key recording which driver pack a site's compiled container was built against.
  *
- * Named here rather than written as a literal at each use, because provisioning stamps it too: the
- * packed container comes from the same build as {@link DRIVER_DIGEST}, so a fresh site is current
- * and must not be made to prove it by throwing the row away.
+ * Named here rather than written as a literal at each use, because provisioning stamps it too, with
+ * the digest the packed container was BAKED with (`container-digest.ts`). A fresh site whose pack
+ * was baked against the shipping driver is current and must not be made to prove it by throwing
+ * the row away; one baked earlier reads as owed, which is what makes a newer hook visible.
  */
 export const DRIVER_DIGEST_KEY = 'driver_digest';
 
@@ -72,6 +74,10 @@ export interface ReconcileHost {
 	 * localhost, anything Drupal builds an absolute URL for during the write points at the wrong site.
 	 */
 	origin(): string;
+	/** the pack's compiled container, when the host has loaded it */
+	packedContainer?(): PackedContainer | null;
+	/** {@link extensionFingerprint} of the site's own `core.extension` */
+	modules?(): string;
 }
 
 export type StepVerdict =
@@ -291,6 +297,26 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		},
 		sql(sql, host) {
 			sql.exec('DELETE FROM cache_container');
+			// the pack's row when it was baked against this driver and for this site's modules, so
+			// the next boot reads a container instead of compiling one inside a render; a site with
+			// another module set, or a stale bake, still rebuilds its own
+			const rows = packedContainerFor(
+				host.packedContainer?.() ?? null,
+				DRIVER_DIGEST,
+				host.modules?.() ?? ''
+			);
+			for (const row of rows ?? []) {
+				sql.exec(
+					'INSERT INTO cache_container (cid, data, expire, created, serialized, tags, checksum) VALUES (?, ?, ?, ?, ?, ?, ?)',
+					row.cid,
+					base64Bytes(row.data),
+					row.expire,
+					row.created,
+					row.serialized,
+					row.tags,
+					row.checksum
+				);
+			}
 			// AND THE DISCOVERY CACHE, which is where a LOCAL TASK lives. A tab declared in a
 			// links.task.yml file is a discovery-cached plugin definition, so a pack can deliver the
 			// route, the route can resolve, and the tab leading to it stays absent -- which is what

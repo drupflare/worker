@@ -388,6 +388,69 @@ describe('the interpreter recycle', () => {
 		REQUEST_TIMEOUT
 	);
 
+	/**
+	 * The drop between invocations reads the WHOLE isolate, not only linear memory.
+	 *
+	 * `oversized()` has read both since the isolate threshold landed, and the fill batch used it,
+	 * while `recycleIfOversized()` compared linear memory alone. So an incarnation could end with
+	 * the isolate past its threshold and linear memory under its own, and the next invocation --
+	 * an alarm, in the `drupflare-test` report of 2026-09-19 -- started over the limit.
+	 */
+	it(
+		'drops on the isolate threshold when linear memory is still under its own',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await provision(site);
+				await site.ensurePhp();
+				const linear = await heap(site);
+				site.env = { ...site.env, ISOLATE_ABOVE_BYTES: String(1024 * MIB) };
+				const kept = site.recycleIfOversized('alarm');
+				// linear memory stays under the default 112 MiB; only the isolate threshold moves
+				site.env = { ...site.env, ISOLATE_ABOVE_BYTES: String(64 * MIB) };
+				const dropped = site.recycleIfOversized('alarm');
+				return { linear, kept, dropped, gone: site.php === null, last: site.lastRecycle };
+			});
+
+			expect(out.linear).toBeLessThan(112 * MIB);
+			// the control: nothing is dropped while both thresholds are clear
+			expect(out.kept).toBe(false);
+			expect(out.dropped, 'the isolate threshold did not drop the interpreter').toBe(true);
+			expect(out.gone).toBe(true);
+			expect(out.last?.reason).toBe('alarm');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * A boot that rebuilt the container ends its invocation with a drop, whatever the thresholds say.
+	 *
+	 * Reproduced on a deployed site after a driver-pack update, which empties `cache_container`: the
+	 * rebuilding fill completed, then the next invocation (75 ms of CPU) was reset for the isolate's
+	 * memory and a waiting visitor got a 1101. Linear memory and the isolate estimate both read clear.
+	 */
+	it(
+		'drops an interpreter whose boot rebuilt the container, and keeps one that did not',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				const jar = await provision(site);
+				site.sql.exec('DELETE FROM cache_container');
+				site.php = null;
+				await site.runJson(renderPage('/', [], false, { cookie: jar }));
+				const rebuilt = site.recycleIfOversized('request');
+				const last = site.lastRecycle;
+				// the control: the row is back, so the next boot is an ordinary one
+				await site.runJson(renderPage('/', [], false, { cookie: jar }));
+				const ordinary = site.recycleIfOversized('request');
+				return { rebuilt, last, ordinary };
+			});
+
+			expect(out.rebuilt, 'a rebuilding boot kept its interpreter').toBe(true);
+			expect(out.last?.rebuild).toBe(true);
+			expect(out.ordinary).toBe(false);
+		},
+		REQUEST_TIMEOUT
+	);
+
 	it(
 		'ends a fill batch early rather than accumulating across it',
 		async () => {
@@ -563,7 +626,10 @@ describe('the interpreters an isolate holds', () => {
 				await site.fetch(new Request('https://do.local/__serve?path=/'));
 				return (await (
 					await site.fetch(new Request('https://do.local/__serve-stats'))
-				).json()) as { isolate: { id: string; interpreters: number; linearBytes: number } };
+				).json()) as {
+					isolate: { id: string; interpreters: number; linearBytes: number };
+					isolateBytes: { linear: number };
+				};
 			});
 		const first = await booted();
 		const second = await booted();
@@ -573,7 +639,9 @@ describe('the interpreters an isolate holds', () => {
 		// the test pool runs every object in one isolate, which is the co-residency this reports
 		expect(second.isolate.id).toBe(first.isolate.id);
 		expect(second.isolate.interpreters).toBeGreaterThanOrEqual(2);
-		expect(second.isolate.linearBytes).toBeGreaterThan(first.isolate.linearBytes);
+		// against its OWN linear memory, not the first reading: the pool also holds interpreters
+		// earlier tests dropped, and collecting one between the two readings shrinks any raw sum
+		expect(second.isolate.linearBytes).toBeGreaterThan(second.isolateBytes.linear);
 	}, 900_000);
 });
 

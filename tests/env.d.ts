@@ -21,6 +21,7 @@ declare namespace Cloudflare {
 		SITE: DurableObjectNamespace;
 		ASSETS: Fetcher;
 		FLEET_DB?: D1Database;
+		CONFIG_KV: KVNamespace;
 		PW_DIAGNOSTICS?: string;
 		RENDER_BUDGET_MS?: string;
 		GEN_BUCKET_MS?: string;

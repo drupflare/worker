@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { reconcileRouterPhp } from '../../../src/drupal/reconcile-php';
 import { DRIVER_DIGEST, DRIVER_ROUTES } from '../../../src/ops/driver-digest';
 import {
+	base64Bytes,
+	extensionFingerprint,
+	packedContainerFor,
+	type PackedContainer
+} from '../../../src/ops/packed-container';
+import {
 	CLEAN_RECONCILE,
 	DRIVER_DIGEST_KEY,
 	PACK_VERSION,
@@ -38,6 +44,13 @@ function fakeSql(tables: Record<string, Record<string, unknown>[]>): ReconcileSq
 	return {
 		deleted,
 		exec(sql: string, ...bindings: unknown[]) {
+			const into = /^\s*INSERT INTO\s+([a-z_]+)\s*\(([^)]*)\)/i.exec(sql);
+			if (into) {
+				const cols = (into[2] ?? '').split(',').map((c) => c.trim());
+				const row = Object.fromEntries(cols.map((c, i) => [c, bindings[i]]));
+				(tables[into[1] as string] ??= []).push(row);
+				return { toArray: () => [] };
+			}
 			const from = /FROM\s+([a-z_]+)/i.exec(sql)?.[1] ?? '';
 			if (/^\s*DELETE/i.test(sql)) {
 				const target = /DELETE FROM\s+([a-z_]+)/i.exec(sql)?.[1] ?? '';
@@ -205,6 +218,107 @@ describe('the container step, which is the general close for a hook added after 
 		step.sql?.(sql, host);
 		expect(sql.deleted).toContain('cache_container');
 		expect(step.verdict(sql, host).state).toBe('satisfied');
+	});
+
+	/**
+	 * The pack's row instead of a rebuild, when it can be trusted.
+	 *
+	 * Measured 2026-09-25 on a deployed site: after a driver-pack update the rebuilding fill
+	 * completed and the next invocation was reset for the isolate's memory, taking a waiting
+	 * visitor with it. A container baked against this driver for this module set needs no rebuild.
+	 */
+	const bytes = new Uint8Array([0, 1, 2, 250, 0, 7]);
+	const packed = (driver: string, modules: string): PackedContainer => ({
+		driver,
+		variants: [
+			{
+				modules,
+				rows: [
+					{
+						cid: 'service_container:prod:x',
+						data: btoa(String.fromCharCode(...bytes)),
+						expire: -1,
+						created: 1,
+						serialized: 1,
+						tags: '',
+						checksum: '0.0'
+					}
+				]
+			}
+		]
+	});
+	const withPack = (p: PackedContainer, siteModules: string) => {
+		const tables: Record<string, Record<string, unknown>[]> = {
+			cache_container: [{ cid: 'stale' }],
+			cache_discovery: [{ cid: 'd' }]
+		};
+		const sql = fakeSql(tables);
+		const host: ReconcileHost = {
+			...fakeHost(1_000, { driver_digest: 'stale' }),
+			packedContainer: () => p,
+			modules: () => siteModules
+		};
+		step.sql?.(sql, host);
+		return { tables, sql, host };
+	};
+
+	it('writes the packed row when it was baked against this driver for these modules', () => {
+		const { tables, sql, host } = withPack(packed(DRIVER_DIGEST, 'm:1'), 'm:1');
+		expect(tables.cache_container).toHaveLength(1);
+		expect(tables.cache_container?.[0]?.cid).toBe('service_container:prod:x');
+		// bytes intact, NULs included, which is why the file carries base64
+		expect([...(tables.cache_container?.[0]?.data as Uint8Array)]).toEqual([...bytes]);
+		// discovery still goes: tabs are discovery-cached and the new driver may add one
+		expect(sql.deleted).toContain('cache_discovery');
+		expect(step.verdict(sql, host).state).toBe('satisfied');
+	});
+
+	it('rebuilds instead on a different module set, a stale bake, or no bake at all', () => {
+		expect(withPack(packed(DRIVER_DIGEST, 'm:1'), 'm:2').tables.cache_container).toHaveLength(
+			0
+		);
+		expect(withPack(packed('older', 'm:1'), 'm:1').tables.cache_container).toHaveLength(0);
+		expect(withPack(packed('', 'm:1'), 'm:1').tables.cache_container).toHaveLength(0);
+		// an unreadable core.extension is not a match for anything
+		expect(withPack(packed(DRIVER_DIGEST, 'm:1'), '').tables.cache_container).toHaveLength(0);
+	});
+});
+
+describe('the packed container file', () => {
+	it('picks the variant for the module set, and the fingerprint is stable', () => {
+		const text = 'a:1:{s:6:"module";a:1:{s:4:"node";i:0;}}';
+		expect(extensionFingerprint(text)).toBe(extensionFingerprint(text));
+		expect(extensionFingerprint(text)).not.toBe(extensionFingerprint(`${text} `));
+		expect(extensionFingerprint('')).toBe('');
+		const file: PackedContainer = {
+			driver: 'd',
+			variants: [
+				{ modules: 'a', rows: [] },
+				{
+					modules: 'b',
+					rows: [
+						{
+							cid: 'c',
+							data: '',
+							expire: -1,
+							created: 0,
+							serialized: 1,
+							tags: '',
+							checksum: '0'
+						}
+					]
+				}
+			]
+		};
+		expect(packedContainerFor(file, 'd', 'b')?.[0]?.cid).toBe('c');
+		// a variant with no rows is not a container
+		expect(packedContainerFor(file, 'd', 'a')).toBeNull();
+		expect(packedContainerFor(null, 'd', 'b')).toBeNull();
+	});
+
+	it('round-trips bytes through base64', () => {
+		const raw = new Uint8Array([0, 255, 128, 0]);
+		expect([...base64Bytes(btoa(String.fromCharCode(...raw)))]).toEqual([...raw]);
 	});
 });
 

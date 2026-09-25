@@ -136,6 +136,8 @@ export type ServeDo = {
 	/** the raw fragment seam under `runJson`; a spec reaches it to drive a trap */
 	run: (code: string) => Promise<string>;
 	ensurePhp: () => Promise<{ php: { _run: (code: string) => Promise<unknown> } }>;
+	recycleIfOversized: (reason: 'request' | 'alarm') => boolean;
+	lastRecycle?: { at: number; bytes: number; reason: string; rebuild?: boolean };
 	fetch: (request: Request) => Promise<Response>;
 	execSql: (sql: string, params?: unknown) => { rows: Record<string, unknown>[] };
 	/** how many result sets needed a wide-integer re-read this lifetime; see `src/db/wide-integers.ts` */

@@ -79,8 +79,33 @@ export const REPLICA_HEADER = 'x-cfw-replica';
 /** how long an isolate routes to a lane count it learned, in ms */
 export const LANES_TRUST_MS = 60_000;
 
+/**
+ * The pool's topology epoch, beside {@link LANES_HEADER}.
+ *
+ * The primary bumps it whenever the pool changes, so two readings can be ordered without assuming
+ * the pool only grows: a pointer carrying an older epoch is known to be stale, not merely old.
+ */
+export const LANES_EPOCH_HEADER = 'x-cfw-lanes-epoch';
+
+/** the durable copy in `CONFIG_KV`, one per site, written by the primary once per epoch */
+export function lanesKvKey(site: string): string {
+	return `lanes:${site}`;
+}
+
+/** `lanes@epoch`, the form every pointer copy is stored in */
+export function formatLanesPointer(lanes: number, epoch: number): string {
+	return `${Math.max(0, Math.floor(lanes))}@${Math.max(0, Math.floor(epoch))}`;
+}
+
+/** the inverse; a bare count from before the epoch reads as epoch 0, garbage as null */
+export function parseLanesPointer(raw: string | null): { lanes: number; epoch: number } | null {
+	const m = /^(\d+)(?:@(\d+))?$/.exec((raw ?? '').trim());
+	if (!m) return null;
+	return { lanes: Number(m[1]), epoch: Number(m[2] ?? 0) };
+}
+
 /** what this isolate last heard a primary say about its pool, and when */
-const lanesSeen = new Map<string, { lanes: number; at: number }>();
+const lanesSeen = new Map<string, { lanes: number; at: number; epoch: number }>();
 
 /**
  * Records the lane count a primary reported.
@@ -95,14 +120,21 @@ const lanesSeen = new Map<string, { lanes: number; at: number }>();
  * yet promoted is safe rather than merely tolerable -- a lane refuses until it is SERVING and hands
  * the request back, which is why the router needs no readiness cache.
  */
-export function rememberLanes(site: string, lanes: number, nowMs: number): void {
+export function rememberLanes(site: string, lanes: number, nowMs: number, epoch = 0): void {
 	if (!Number.isFinite(lanes) || lanes < 1) return;
+	const held = lanesSeen.get(site);
+	// an older topology never replaces a newer one this isolate still trusts
+	if (held && nowMs - held.at < LANES_TRUST_MS && epoch < held.epoch) return;
 	if (lanesSeen.size > 64) lanesSeen.clear();
 	// the SAME ceiling {@link replicaCount} applies, imported rather than restated. This held a
 	// separate literal 32, so a primary that reported a larger pool was believed at 32 and the router
 	// hashed over a fraction of the objects the site had paid to build -- the lane count is defined
 	// in several places and this is one of the two the router actually reads.
-	lanesSeen.set(site, { lanes: Math.min(Math.floor(lanes), ID_PARTITION_LANES), at: nowMs });
+	lanesSeen.set(site, {
+		lanes: Math.min(Math.floor(lanes), ID_PARTITION_LANES),
+		at: nowMs,
+		epoch
+	});
 }
 
 /** the lane count this isolate may route against, or 0 when it has not learned one recently */

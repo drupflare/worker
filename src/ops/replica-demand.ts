@@ -207,10 +207,42 @@ export function nextLaneToProvision(input: {
 	windows: readonly DemandWindow[];
 	provisioned: number;
 	env?: DemandEnv | null;
+	rows?: RowBudget;
 }): number | null {
 	const have = Math.max(0, Math.floor(input.provisioned));
 	if (!autoScaleEnabled(input.env)) return null;
 	const target = laneTarget(input.windows, maxLanes(input.env));
 	if (target <= have) return null;
+	if (input.rows && !laneFitsRows(input.rows, have + 1)) return null;
 	return have + 1;
+}
+
+/** the day's rows against the plan's daily cap; `limit` 0 means no cap */
+export type RowBudget = {
+	/** every row the primary has written today, one-off provisioning included */
+	today: number;
+	/** the rows the primary has sealed for replication today, which each lane writes again */
+	replicatedToday: number;
+	limit: number;
+	/** how much of the UTC day has passed, 0..1 */
+	dayFraction: number;
+};
+
+/**
+ * Whether a pool of `lanes` lanes keeps the day under the reduce fraction.
+ *
+ * Every replicated row is written again on every lane, so N lanes add N times the replicated stream
+ * to what the day has already spent, and the rows meter is the one regeneration shares. Read
+ * contention alone sized the pool, so a write-heavy site could grow itself into read-only mode.
+ *
+ * The REPLICATED stream is projected, not the primary's whole count: a site provisioned this morning
+ * wrote thousands of rows once, a lane arrives by a full copy rather than by replaying them, and
+ * projecting them as a rate refused a lane the day could afford. The rate is taken over at least an
+ * hour, so a burst after midnight does not project as a day.
+ */
+export function laneFitsRows(budget: RowBudget, lanes: number, reduceAt = 0.8): boolean {
+	if (!(budget.limit > 0)) return true;
+	const elapsed = Math.max(budget.dayFraction, 1 / 24);
+	const perLane = Math.max(0, budget.replicatedToday) / elapsed;
+	return Math.max(0, budget.today) + lanes * perLane <= budget.limit * reduceAt;
 }

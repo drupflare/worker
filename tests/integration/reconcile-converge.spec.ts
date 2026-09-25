@@ -1,6 +1,10 @@
+import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { DRIVER_DIGEST } from '../../src/ops/driver-digest';
+import type { PackedContainer } from '../../src/ops/packed-container';
 import { PACK_VERSION, RECONCILE_STEPS, SHIPPED_PAGE_MAX_AGE } from '../../src/ops/reconcile';
+import { claimSite } from '../helpers/drupal-forms';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -173,11 +177,66 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 	 * fine. The step drops the row; this asserts the row is gone and that a boot afterwards rebuilds
 	 * one rather than serving a site with no container at all.
 	 */
+	/**
+	 * The pack's own container for a module set it baked, so an update needs no rebuild.
+	 *
+	 * Measured 2026-09-25 on a deployed site: after a driver-pack update the rebuilding fill completed
+	 * and the next invocation was reset for the isolate's memory, taking a waiting visitor with it.
+	 * The bake publishes the migrated site's container and the claimed site's, and a site whose
+	 * `core.extension` matches one of them takes its row instead of compiling one inside a render.
+	 */
 	it(
-		'drops a compiled container that predates the driver pack, and the next boot rebuilds it',
+		'writes the packed container for a migrated site and for a claimed one',
+		async () => {
+			const packed = (await (
+				await env.ASSETS.fetch('https://a.local/drupal-sql/container.json')
+			).json()) as PackedContainer;
+			const run = async (claim: boolean) =>
+				inObject(freshSite(), async (site: ServeDo) => {
+					if (claim) await claimSite(site, 'cfw-Packed-4410-pass', 'Packed');
+					else await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+					site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'reconcile_state');
+					site.sql.exec(
+						'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
+						'driver_digest',
+						'a-pack-from-before'
+					);
+					let atStep: number[] = [];
+					for (let i = 0; i < 12; i++) {
+						const res = await site.fetch(
+							new Request(`${ORIGIN}/__reconcile`, { method: 'POST' })
+						);
+						const body = (await res.json()) as Payload;
+						const outcome = ((body.ran as Payload | null)?.reconcile ??
+							null) as Payload | null;
+						if (outcome?.id === 'container-driver-digest') {
+							atStep = rows(
+								site,
+								'SELECT length(data) AS n FROM cache_container'
+							).map((r) => Number(r.n));
+						}
+						if (!outcome || outcome.done === true || outcome.waiting !== undefined)
+							break;
+					}
+					return atStep;
+				});
+			const lengths = packed.variants.map((v) => atob(v.rows[0]?.data ?? '').length);
+
+			expect(packed.driver, 'the pack was baked against another driver').toBe(DRIVER_DIGEST);
+			expect(await run(false)).toEqual([lengths[0]]);
+			// the claimed variant, so the fingerprint a claim produces is the same on every site
+			expect(await run(true)).toEqual([lengths[1]]);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'drops a compiled container no packed variant matches, and the next boot rebuilds it',
 		async () => {
 			const out = await inObject(freshSite(), async (site: ServeDo) => {
 				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				// a module set the bake never produced: the packed rows cannot be this site's
+				await site.fetch(new Request(`${ORIGIN}/__enable?module=ctools`));
 				site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'reconcile_state');
 				site.sql.exec(
 					'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',

@@ -91,8 +91,12 @@ import {
 	affinityKey,
 	believedLanes,
 	chooseTarget,
+	formatLanesPointer,
+	LANES_EPOCH_HEADER,
 	LANES_HEADER,
 	LANES_TRUST_MS,
+	lanesKvKey,
+	parseLanesPointer,
 	rememberLanes,
 	REPLICA_HEADER,
 	replicaCount,
@@ -770,20 +774,43 @@ function laneKey(origin: string, site: string): string {
  */
 const LANE_POINTER_TTL_S = 900;
 
+/** how long a colo remembers that `CONFIG_KV` had no pool, so a site without one reads KV rarely */
+const LANE_ABSENT_TTL_S = 300;
+
 /**
  * Seeds this isolate's belief from the edge, so the FIRST request routes on it.
+ *
+ * `caches.default` first, then `CONFIG_KV`. The cache is per colo and only an object response
+ * writes it, so a colo that has not answered for the site, or one idle past the TTL, used to see no
+ * pool at all; KV is global and the primary writes it once per topology epoch. What KV answered is
+ * cached here either way, a pool or its absence, so the KV read is once per colo per TTL.
  *
  * @internal exported for `replica-failover.spec.ts`, which cannot reach it through a request: the
  * primary memoises `lanesProvisioned()` per incarnation, so a fixture cannot make it report a pool
  * it did not actually provision.
  */
-export async function primeLanes(cache: Cache, origin: string, site: string): Promise<void> {
+export async function primeLanes(
+	cache: Cache,
+	origin: string,
+	site: string,
+	kv?: { get(key: string): Promise<string | null> } | null
+): Promise<void> {
 	if (believedLanes(site, Date.now()) > 0) return;
 	try {
 		const hit = await cache.match(laneKey(origin, site));
-		if (!hit) return;
-		const n = Number((await hit.text()).trim());
-		if (Number.isFinite(n) && n > 0) rememberLanes(site, n, Date.now());
+		if (hit) {
+			const held = parseLanesPointer(await hit.text());
+			if (held && held.lanes > 0) rememberLanes(site, held.lanes, Date.now(), held.epoch);
+			return;
+		}
+		if (!kv) return;
+		const stored = parseLanesPointer(await kv.get(lanesKvKey(site)));
+		if (stored && stored.lanes > 0) {
+			rememberLanes(site, stored.lanes, Date.now(), stored.epoch);
+			await writeLanes(cache, origin, site, stored.lanes, stored.epoch);
+		} else {
+			await writeLanes(cache, origin, site, 0, 0, LANE_ABSENT_TTL_S);
+		}
 	} catch {
 		// no pointer just means this isolate learns from the response the way it always did
 	}
@@ -794,15 +821,17 @@ export async function writeLanes(
 	cache: Cache,
 	origin: string,
 	site: string,
-	lanes: number
+	lanes: number,
+	epoch = 0,
+	ttlS = LANE_POINTER_TTL_S
 ): Promise<void> {
 	try {
 		await cache.put(
 			laneKey(origin, site),
-			new Response(String(lanes), {
+			new Response(formatLanesPointer(lanes, epoch), {
 				headers: {
 					'content-type': 'text/plain; charset=utf-8',
-					'cache-control': `public, max-age=${LANE_POINTER_TTL_S}`
+					'cache-control': `public, max-age=${ttlS}`
 				}
 			})
 		);
@@ -1409,7 +1438,7 @@ export default {
 		// rather than sending it to the primary and learning afterwards. Alongside the generation read
 		// rather than ahead of it: both are edge reads into separate maps, and only a miss routes
 		const [, generationRead] = await Promise.all([
-			serving ? primeLanes(cache, origin, site) : undefined,
+			serving ? primeLanes(cache, origin, site, env.CONFIG_KV) : undefined,
 			edgeWanted ? readGeneration(cache, origin, site, bucket) : null
 		]);
 
@@ -1675,9 +1704,10 @@ export default {
 		// traffic. Rides along on a response already paid for, like the two above
 		const reportedLanes = Number(res.headers.get(LANES_HEADER) ?? '');
 		if (Number.isFinite(reportedLanes) && reportedLanes > 0) {
-			rememberLanes(site, reportedLanes, Date.now());
+			const reportedEpoch = Number(res.headers.get(LANES_EPOCH_HEADER) ?? 0) || 0;
+			rememberLanes(site, reportedLanes, Date.now(), reportedEpoch);
 			// and at the edge, so the next COLD isolate routes on it rather than rediscovering it
-			defer(writeLanes(cache, origin, site, reportedLanes));
+			defer(writeLanes(cache, origin, site, reportedLanes, reportedEpoch));
 		}
 
 		// #region compiling a plan out of the render that just happened

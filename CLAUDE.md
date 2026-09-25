@@ -1250,11 +1250,16 @@ produced zero rows on all three arms, including the one the docs say is billed, 
 `workersInvocationsAdaptive` counts invocations and cannot see a billed non-invocation. Do not record
 the doc's sentence as a measurement.
 
-**The instrument that can answer it is the free daily cap.** Drive ~100,000 asset requests, then count
-Worker requests until the first refusal: a refusal near 100,000 means assets were not counted, one near
-zero means they were. The same rig answers the service-binding question. It spends the whole free
-account's Worker allowance until 00:00 UTC, so it waits for a free account with nothing else on it;
-`burrow-e2e2` lives on the current one.
+**THE FREE DAILY CAP IS NOT THAT INSTRUMENT, and this paragraph said it was.** Run 2026-09-25 on
+the free account: 95,000 asset requests, ~7,300 worker requests, 4,765 requests making 20 binding
+hops each, then 100,000 plain worker requests as the positive control. Analytics counted **209,512
+invocations that day with zero refusals**, and a probe every 20 s for 30 minutes after stayed 200. So
+the refusal the design waited for never came, and "where it refuses" answers nothing about assets or
+hops. Two things it did show: a binding hop is its own invocation in `workersInvocationsAdaptive`
+(94,540 of them, status `clientDisconnected` because the caller does not read the body), and a
+static-asset request does not appear there at all. Whether either is billed toward 100,000/day is
+still open; the next instrument is the day's billed usage, not a refusal. Run the positive control
+first next time: a conditional arm with no control would have reported "not counted" for both.
 
 **Two asset-routing facts, measured 2026-09-24 on a free throwaway** with `run_worker_first:
 ["/dyn/*"]` and no `not_found_handling`. The asset layer IGNORES THE QUERY STRING: `/?page=1` and
@@ -1280,6 +1285,49 @@ is prettier-ignored, or the formatter and the generator rewrite each other forev
 **The round trip was verified lossless before the old maps were deleted**: 66 table rows deep-equal to
 the pre-refactor values with the array order unchanged, and only the tier map's iteration order moved.
 Do that check before replacing a hand-maintained map with a generated one.
+
+## A pack update reset the object, and the container rebuild was why
+
+Reproduced 2026-09-25 on a deployed paid site, twice, and only on a deploy that moved the driver
+digest. Reconciliation's `container-driver-digest` step empties `cache_container` and
+`cache_discovery`; the next fill boots, rebuilds both inside the render, and COMPLETES (3,615 ms of
+CPU); the invocation after it, 75 ms of CPU, is reset with `isolate exceeded its memory limit`, and a
+visitor request waiting on the object gets a 1101 or 500. The same drops made by hand and followed by
+a boot did not reproduce it (0 of 2), so the digest deploy is the condition, not the drop alone.
+Linear memory read 107,216,896 and the whole-isolate estimate 93.4%, both clear of their thresholds:
+the rebuild's garbage is what the estimate cannot see.
+
+Three closes, each falsified by a spec:
+
+- `recycleIfOversized()` compared linear memory alone while `oversized()` read both thresholds. It
+  reads both now (`interpreter-recycle.spec.ts`).
+- A boot that found no container row drops its interpreter at the end of that invocation, the way
+  provisioning does, whatever the thresholds say (`rebuildBoot`).
+- Reconciliation writes the PACK'S container when one matches the site's `core.extension`
+  fingerprint and the running driver, so an update needs no rebuild at all. `container.json` beside
+  the chunks carries one variant per module set: the migrated pack, and the same site claimed,
+  because first-run enables `cfw_do_sqlite` and a claimed site's container is not the pack's. The
+  cid does not carry the module set, so the fingerprint is what tells them apart. A site with any
+  other module set still rebuilds (`reconcile-converge.spec.ts`).
+
+**AND THE BAKE HAD NEVER FOLLOWED A DRIVER CHANGE.** `bake-container.ts` skipped whenever the cid
+matched composer's `VERSIONS_HASH`, which a sibling change never moves, while provisioning stamped
+the SHIPPING digest as the container's. So a `#[Hook]` added after the last bake was invisible on
+every fresh site and nothing said so. The bake now records the digest it baked with in
+`src/ops/container-digest.ts`, skips only when that matches `DRIVER_DIGEST`, and provisioning stamps
+that recorded digest, so a stale bake reads as owed. **Run `bun run assets:container` after
+`assets:driver`** whenever a sibling changed, then update `cdn-manifest.json`, which the spec will
+name.
+
+**A bake must not share `.wrangler/state`.** Every object an earlier bake left there wakes with its
+alarms and renders beside the new one; three bakes in a row died with an empty wrangler `ERROR` that
+way before the cause showed in a debug log as requests to an old bake's host. The bake passes
+`--persist-to` a temp directory of its own and captures the claimed variant in a second process.
+
+**A deployed object ran at an estimated 139 MB of isolate with no reset** (linear 121,176,064 plus
+the ~18 MB JS-side estimate, answered 200 and recycled after). So `isolateNow()` overcounts what the
+platform meters, or the ceiling is not a hard 128 MiB on that sum. A workers-pool ladder that reads
+past 100% on that estimate is not evidence a page resets the object; confirm on a deploy.
 
 ## The container row is keyed to the PACK, and the guard that missed it compared the wrong tree
 
@@ -1779,11 +1827,15 @@ That run used a 96 MiB-initial binary. Parsed from the Memory section of each `.
 | migrate + firstrun + render | 91,815,936      | 92,536,832 (88.25 MiB)    |
 | two authenticated renders   | 96,993,280      | 97,189,888 (92.69 MiB)    |
 
-**Worst case 92.69 MiB against a 128 MiB isolate: 35.31 MiB of headroom, not a breach.** Whether the
-by-construction ceiling problem still exists on the shipping binary is UNVERIFIED -- the drops at
-`/__migrate` and `/__firstrun` that were added to fix it are still in place, so this reading is of a
-tree that already carries the fix and cannot distinguish "the binary made it moot" from "the fix is
-working". Do not remove those drops on the strength of this table.
+**Worst case 92.69 MiB for those three workloads, and it is not the worst page.** Re-read
+2026-09-24 through `isolateBytes`: an authenticated `/admin/content` takes linear memory to
+107,216,896 and the whole isolate to 125,387,248, 93.4% of the ceiling, flat across three more pages.
+
+**THE BREACH STILL EXISTS ON THE SHIPPING BINARY, and the drops are what prevent it.** With the
+`/__migrate` and `/__firstrun` drops commented out for the control arm, the provisioned incarnation
+sits at 107,216,896 and the first authenticated render grows linear memory to 136,970,240, past the
+ceiling before the JS half is counted. The test pool does not enforce the limit, so the run survived
+and `recycleIfOversized()` dropped it; on the edge that invocation is the reset. Keep the drops.
 
 Every figure in `TECHNICAL_REPORT.md`'s Memory section is a single-workload peak, and each one is
 correct. None of them is what the isolate meters.
@@ -2278,9 +2330,9 @@ The surviving objective is therefore per-TENANT rather than per-request, and its
 a tail a bundle cannot hold, not speed. Anything on the hot path belongs in the bundle at native
 speed.
 
-## Two GraphQL traps that each read as an empty dataset
+## Three GraphQL traps that each read as an empty dataset
 
-Both cost a session, and the first contradicts what this file used to say.
+Each cost a session, and the first contradicts what this file used to say.
 
 - **`durableObjectsInvocationsAdaptiveGroups` returning no rows is NOT a free-plan property.** On a
   PAID account a newly created namespace returned zero rows for about **25 minutes** while
@@ -2289,6 +2341,11 @@ Both cost a session, and the first contradicts what this file used to say.
   had recorded the emptiness as a plan limitation and used it to defer a measurement.
 - **`datetimeMinute_geq` silently returns zero rows** as a filter field. The working one is
   `datetime_geq`. No error, just an empty result, which reads exactly like no traffic.
+- **Deleting a worker deletes its Durable Object analytics.** Two hours after `cfw-writes` was torn
+  down, `durableObjectsPeriodicGroups` and `durableObjectsInvocationsAdaptiveGroups` held no row for
+  its namespace while live scripts in the same window did. Its Worker invocations survive, relabelled
+  `__unknown__`. So read every object meter BEFORE the teardown; `write-workloads.ts` polls until each
+  class has a row for that reason.
 
 ## Two platform questions answered from source, so nobody re-measures them
 
@@ -2517,9 +2574,10 @@ until 2026-09-19. Every row a lane replicates still spends the row budget regene
 write-heavy ones; score a proposed pool against the write rate, not only the read rate.
 
 **A scaling ladder is priced by the multiplier, and the arithmetic is available before the run.** A
-node save is 299 rows, recorded above, so seeding 200 nodes is ~59,800 rows on a primary -- and a
-192-lane arm multiplies that to **11.5M rows for the seeding alone**, before any authenticated
-drive. Nine arms at 0/1/2/4/8/32/64/128/192 is 431 lanes. Compute that total before provisioning,
+node save was 299 rows when that ladder ran, so seeding 200 nodes was ~59,800 rows on a primary -- and
+a 192-lane arm multiplied that to **11.5M rows for the seeding alone**, before any authenticated
+drive. A create is 48 rows now (`ROWS_PER_WRITE`), so the same seeding is ~9,600 and ~1.85M across
+193 objects: smaller, and still the number to compute first. Nine arms at 0/1/2/4/8/32/64/128/192 is 431 lanes. Compute that total before provisioning,
 and poll `durableObjectsPeriodicGroups { sum { rowsWritten } }` DURING a long run rather than
 reading the total afterwards. That query takes `datetime_geq`, not `datetimeMinute_geq`, and its
 dimension is `namespaceId` rather than `scriptName`.
@@ -2532,10 +2590,10 @@ the worker list returns to exactly its prior baseline -- workers AND
 alone will not show it.
 
 **THE FREE ACCOUNT IS A SEPARATE ONE**: `FREE_CLOUDFLARE_ACCOUNT_ID` / `FREE_CLOUDFLARE_API_TOKEN`
-in the shell profile, exported as `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`. It is not empty:
-burrow's e2e rig `burrow-e2e2` lives there with three Durable Object namespaces, beside two KV
-namespaces. Record the inventory before a run and diff against it, and never exhaust the account's
-daily allowance while that rig depends on it.
+in the shell profile, exported as `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`. As of 2026-09-25
+it holds two KV namespaces and no workers: burrow's `burrow-e2e2` rig finished and was removed.
+Record the inventory before a run and diff against it, and check nothing else has moved onto it before
+spending its daily allowance.
 
 A DO-namespace deploy needs ~60 s propagation before `stub.fetch()` stops returning "Worker not
 found" - wait, do not debug it.

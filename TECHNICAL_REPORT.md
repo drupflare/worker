@@ -674,13 +674,51 @@ its share of a real write is small.
 
 ### Memory
 
-The isolate ceiling is **134,217,728 bytes**. The heap starts at `INITIAL_MEMORY` = 100,663,296 and
-peaks where the growth step puts it; at the shipping configuration the authenticated peak is
-**113,770,496**, leaving 19.50 MiB.
+The isolate ceiling is **134,217,728 bytes**. The shipping binary starts linear memory at
+`INITIAL_MEMORY` = 83,886,080 (1,280 pages, 80.00 MiB) and grows it where the growth step puts it.
 
-**That 19.50 MiB is gross, and every memory figure below measures wasm linear memory alone.** The
-isolate's budget also covers the JS heap, and the JS half is not small. Measured on a deployed
-worker 2026-09-11 by reading all four terms together for the first time:
+**Re-derived on that binary 2026-09-24**, one incarnation read through `/__serve-stats`
+`isolateBytes` after each step (a scratch spec in the workers pool, deleted after):
+
+| step                                            | linear      | whole isolate          |
+| ----------------------------------------------- | ----------- | ---------------------- |
+| booted and idle                                 | 83,886,080  | 97,907,893             |
+| migrated + firstrun, which drop the interpreter | 83,886,080  | 97,907,893             |
+| `/admin/content`, then `/`, `/user/1`, `/admin/people`, authenticated | 107,216,896 | 125,387,248 (**93.4%**) |
+
+The four authenticated pages land on one rung and stay there. The whole isolate is 8.42 MiB under
+the ceiling; the rest of it is the resident pack blob (12,001,784), the merged index (1,980,912) and
+MEMFS at its 4 MiB budget.
+
+**The provisioning drops are still what keep that true.** With both commented out for the control
+arm, the provisioned incarnation sits at 107,216,896 and the first authenticated render grows linear
+memory to **136,970,240, past the ceiling on linear memory alone**, the whole isolate at 155,137,454.
+The test pool does not enforce the limit, which is why the run continued; `recycleIfOversized()`
+dropped it at the end of that invocation. The history below is the same mechanism on the older
+96 MiB-initial binary.
+
+**A pack update reset the object on a deployed site, 2026-09-25, and the container rebuild was
+why.** Reproduced twice on a paid throwaway, both times on a deploy that moved the driver digest:
+reconciliation empties `cache_container` and `cache_discovery`, the next fill rebuilds both inside
+its render and completes (3,615 ms of CPU), and the invocation after it (75 ms) is reset with
+`isolate exceeded its memory limit`, taking a waiting visitor request with it as a 1101 or 500. The
+same two drops made by hand did not reproduce it (0 of 2). Both thresholds read clear at the time
+(linear 107,216,896, the whole-isolate estimate 93.4%), so what crossed is the rebuild's garbage,
+which the estimate does not see. Three closes: `recycleIfOversized()` now reads the whole-isolate
+threshold that `oversized()` always had, a boot that rebuilt the container drops at the end of its
+invocation, and reconciliation writes the pack's own container when one matches the site's
+`core.extension` (the migrated pack and the claimed site, `drupal-sql/container.json`), so an update
+needs no rebuild. Not yet read on a second deployed update.
+
+**The whole-isolate estimate overcounts.** A deployed object answered 200 with linear memory at
+121,176,064 plus the ~18 MB JS-side estimate, ~139 MB against the 134,217,728 ceiling, and then
+recycled on the linear threshold. So a workers-pool ladder past 100% on that estimate does not show
+a page resets the object: in the pool, `/admin/modules` read 103.8% and `/node/add/page` 115.6%
+after a chain of heavier pages with the drops suppressed, and neither reset on the deploy.
+
+**The figures below this point were taken on that older binary** and are kept for the mechanism;
+the table above is the current reading. Measured on a deployed worker 2026-09-11 by reading all four
+terms together for the first time:
 
 | term                                     | bytes           | how                                     |
 | ---------------------------------------- | --------------- | --------------------------------------- |
@@ -1143,6 +1181,15 @@ Two paths, and only two, cost nothing against the 100,000/day serving ceiling:
   serving ceiling is therefore ~100,000 page views rather than 100,000 divided by the asset count.
 - **A hostname not routed to the Worker at all**, which is what an R2 custom domain is.
 
+**The 100,000/day cap did not refuse, so whether an asset or a binding hop counts toward it is
+unmeasured.** Driven 2026-09-25 on the free account: 95,000 asset requests, ~7,300 worker requests,
+4,765 requests making 20 service-binding hops each, then 100,000 plain worker requests as the
+positive control. Analytics counted 209,512 invocations that day and nothing was refused, including
+a probe every 20 s for 30 minutes after. A hop is its own invocation in `workersInvocationsAdaptive`
+(94,540 of them, `clientDisconnected` because the caller does not read the body); an asset request
+does not appear there at all. The serving ceiling the envelope scores against is the published
+figure, not one observed as a refusal.
+
 A zone Cache Rule is NOT one of them: a Worker route runs the Worker before the cache is consulted.
 The Workers Caching feature does skip the Worker on a hit, but bills the request anyway -- and its
 cache key omits the host, which for a host serving many sites at `/` is a cross-tenant leak rather
@@ -1540,6 +1587,11 @@ cumulative `cpuTime` per phase, n=3:
 | pre-handle            |             660 ms |
 | render                |           1,036 ms |
 
+Re-read 2026-09-24 on the current build (`cfw-boot`, paid, n=5, rotated, tail `cpuTime` on the
+object): 500 / 535 / 541 / 531 / 649 / 647 / **1,131 ms**, the same ladder within about 10%. The
+~500 ms before Drupal runs anything is the interpreter and the lazy mount, and it is the largest
+single phase of a cold boot.
+
 Generic execution state is 466 of 1,036, so **tenant attach is 55% and is the majority**. A split
 recovers at most 45%, of a cost the previous-generation read already removes from the visitor. The
 mechanism closes; the objective is the cold path and the stale read owns it.
@@ -1650,25 +1702,34 @@ stored. Warming one member of the family warms the interpreter every member need
 
 ### Writes
 
-Deployed, the shipping config, n=8 per class, one object per class, each provisioned and warmed
-before the measured sequence. Rows and bytes are exact per call; CPU is per-invocation `cpuTime`.
+Deployed 2026-09-24 (`cfw-writes`, torn down), the shipping config, n=8 per class, one object per
+class, each provisioned and warmed before the measured sequence. Rows are exact per call from
+`scripts/measure/write-workloads.ts`; CPU is the object's per-invocation `cpuTime` from `wrangler
+tail`.
 
 | op | charged rows (min/med/max) | statements | replays | cpuTime ms (min/med/max) |
 | --- | --- | --- | --- | --- |
-| node-create | 103 / 103 / 108 | 34 | 4 | 18 / **23** / 1,868 |
-| node-revision | 218 / 218 / 226 | 78 | 9 | 51 / **78** / 1,673 |
-| user-create | 33 / 33 / 37 | 16 | 3 | 510 / **578** / 1,212 |
-| file-create | 14 / 14 / 18 | 7 | 1 | 10 / **14** / 861 |
-| alias-create | 41 / 41 / 57 | 19 | 2 | 18 / **26** / 1,198 |
-| txn-autoinc | 2 / 2 / 2 | 3 | 0 | 3 / **3** / 644 |
-| txn-rowid | 1 / 1 / 1 | 2 | 0 | 5 / **6** / 997 |
+| node-create | 48 / 48 / 58 | 21 | 4 | 39 / **49** / 1,337 |
+| node-revision | 53 / 53 / 64 | 31 | 9 | 50 / **66** / 178 |
+| user-create | 17 / 17 / 30 | 11 | 3 | 450 / **478** / 3,227 |
+| file-create | 7 / 7 / 22 | 6 | 1 | 14 / **17** / 184 |
+| alias-create | 24 / 24 / 28 | 15 | 2 | 15 / **18.5** / 73 |
+| txn-autoinc | 2 / 2 / 2 | 3 | 0 | 3 / **4.5** / 19 |
+| txn-rowid | 1 / 1 / 1 | 2 | 0 | 3 / **4** / 8 |
 
-**A user create is 578 ms and 25x a node create on CPU while writing a fifth of the rows.** That is
-the password hash, and it makes an account-creation burst a CPU problem where every other write here
-is a rows problem.
+**The rows halved or better against the 2026-08-27 reading of 103 / 218 / 33 / 14 / 41, with the
+same replay counts.** rom's `dependencyIndexesUpTo()` sends a replay only the statements that write a
+table the asked-about statement touches, falling back to the whole buffer on any failure, so a
+revision's nine passes no longer re-send every earlier statement. What remains is index maintenance:
+`node_field_data` charges 11 rows per stored row, and it and `node` carry 41 of a revision's 56
+locally counted rows. `tests/integration/write-amplification.spec.ts` prints the per-table split.
 
-**The max column is a cold boot on every row.** The first call after an object goes cold pays the
-boot; reporting a mean would fold a 1.4 s boot into a 23 ms write.
+**A user create is 478 ms and ten times a node create on CPU while writing a third of the rows.**
+That is the password hash, and it makes an account-creation burst a CPU problem where every other
+write here is a rows problem.
+
+**The max column is the first priced call of each class**, and on node-create and user-create it
+paid a boot. Reporting a mean would fold a 1.3 s boot into a 49 ms write.
 
 ### Rows Per Fill
 
@@ -2146,6 +2207,23 @@ shared-instrument shape as every other one on this list.
 An image style is write-once-serve-many: Drupal generates a derivative on first request and serves the
 stored file afterwards. So the CPU is paid once per derivative rather than once per request, which is
 what makes a per-transform figure this size affordable.
+
+**gd as a third engine loses to tinyimg.** libgd 2.3.3 with libjpeg 9f, libpng 1.6.44 and zlib
+1.3.1, built with emcc 6.0.9 to a standalone native module (252,329 bytes, seven stubbable
+imports), deployed beside tinyimg on a paid throwaway, n=20 each on the same 3000x1571 JPEG to
+1090 px, `cpuTime`:
+
+| engine           | median | range   |
+| ---------------- | -----: | ------- |
+| tinyimg to JPEG  | 184 ms | 118-322 |
+| tinyimg to WebP  | 214 ms | 163-428 |
+| gd to JPEG       | 294 ms | 199-495 |
+
+It also cannot write WebP without libwebp, which the pipeline defaults to. Through burrow's dylink it
+did not load: an interpreted side module needs its host to supply emscripten's `invoke_*` setjmp
+calls, the allocator with `memcpy`/`memset`, and dlmalloc's `GOT.mem` globals. What gd would add is
+the PHP functions for contrib code that calls them directly, which only gd inside the interpreter
+provides.
 
 ### One Object Is Not a Site-Wide Throughput Ceiling
 

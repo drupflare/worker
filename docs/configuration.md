@@ -837,6 +837,7 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `off`  | default; opcache disabled                                |
 | `file` | opcache on with the file cache as its only backing store |
 | `shm`  | opcache on with shared memory as its backing store       |
+| `pack` | reads a file cache baked into the pack, read-only        |
 
 The default is `off`, and the arms are measured. `file` writes 2,346 `.bin` files and 32,141,312
 bytes into the in-memory filesystem for a cache nothing ever reads, and `opcache_get_status()`
@@ -844,6 +845,13 @@ reports opcache DISABLED on that arm because `file_cache_only=1` turns the share
 off. `shm` does accelerate (2,346 cached scripts, no filesystem writes) and puts its arena in PHP's
 linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. `off` renders within 1 ms of
 `file` and leaves 37 MiB more room.
+
+`pack` needs `bun scripts/bake-opcache.ts` first and mounts nothing without it. It loads the baked
+cache as a second layer and cuts a cold render's object CPU by roughly 500-900 ms (deployed, n=8
+per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate,
+and the visitor's wall time did not follow the CPU across the swap. Re-bake after any driver or
+composer change: scripts are never revalidated against their source, so the mount refuses a layer
+baked from other sources.
 
 ### `ARGON2`
 
@@ -1092,6 +1100,10 @@ fallback.
 Measured on a deployed free worker, `cpuTime` amortised over 10 transforms per invocation, median of
 12, against a source-only control at 0 ms: thumbnail 36.3 ms, medium 48.6, large 63.5, wide 188.2.
 Styles at or below 480 px on the long edge are produced inline; larger ones go to the fill queue.
+
+gd is not an engine and is not planned. Built to native wasm and deployed beside tinyimg on the same
+3000x1571 JPEG, it used ~294 ms of CPU against tinyimg's ~184 ms, and it cannot write WebP. Code
+that calls PHP's `imagecreate*` functions directly finds them absent on this runtime.
 
 ## Outbound Mail
 
@@ -1637,10 +1649,34 @@ already holds.
 ### From Drupal, Without the Owner Token
 
 The same levers are editable at `/admin/config/drupflare/settings`, gated on the
-`administer drupflare settings` permission. Each field shows its value and its source, so an
-operator can tell an override they chose from a default nobody has looked at. Only the fields that
-changed are sent, because a patch carrying every field would turn a deployed value into a stored
-override by the act of pressing save.
+`administer drupflare site` permission. Each field holds the stored override, with the deployed value
+beside it and its source named, so an operator can tell an override they chose from a default nobody
+has looked at. Only the fields that changed are sent, because a patch carrying every field would turn
+a deployed value into a stored override by the act of pressing save.
+
+Every lever has a domain, `LEVER_DOMAINS` in `src/ops/plan.ts`: a flag is `0` or `1`, a number has
+the range its reader clamps to, and a fixed choice (`OPCACHE_MODE`, `MAIL_TRANSPORT`,
+`SITE_LOCATION_HINT`) is one of its listed values. The form offers a select or a bounded number
+field from it, and `writeSettings()` refuses a value outside it and names the reason, so a mistyped
+value cannot reach a reader. `LAZY_FS_BUDGET_BYTES` stops at 8 MiB, half of the 16 MiB a module
+install was measured to fail at.
+
+### The Three Permissions
+
+| permission                   | reaches                                                        |
+| ---------------------------- | -------------------------------------------------------------- |
+| `view drupflare status`      | the runtime status page, read only                             |
+| `administer drupflare site`  | the levers, and the operations terminal's cache and queue work |
+| `administer drupflare owner` | code delivery, including the terminal's `en` and package lines |
+
+`administer drupflare owner` is granted at claim, through a `Site Owner` role given to the claimed
+account, and only an account that already holds it can grant it. Holding `administer permissions` is
+not enough: the permission forms disable its checkboxes, and a role or user save that adds or removes
+it is put back when the acting user lacks it. An administrator role carries every permission, so
+assigning one is the same grant. The owner token outranks all three and works when Drupal does not.
+
+A site created before the tiers reconciles onto them: the five older names map to the three, and
+uid 1 is given the owner role.
 
 **`PLAN` is not on that form and cannot be written through it.** Every lever there has a worst case
 of a slower site; `PLAN` selects a limits profile whose quotas are account-wide, while whoever
@@ -1650,7 +1686,7 @@ capability behind the form refuses it at every spelling.
 `/admin/modules/drupflare` is the matching read-only page for code delivery: it names the three
 delivery paths and lists what has been delivered to this site. Delivering code stays an owner action
 on `/_cfw/git`, for the same tenancy reason. Within the operations terminal, `en` and any package
-line now additionally require `administer drupflare code`, so a site can grant the terminal without
+line additionally require `administer drupflare owner`, so a site can grant the terminal without
 granting the ability to add code to the runtime.
 
 **Every one of them reaches a reader inside the Durable Object, and for a while only two did.**

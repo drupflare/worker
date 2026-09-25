@@ -3092,6 +3092,22 @@ linear memory, reaching 191.25 MiB against a 128 MiB cap, so it cannot ship. `of
 of `file` at n=5 and frees 5,046,272 bytes of linear memory plus 32,141,312 of MEMFS. `OPCACHE_MODE`
 is the seam and is KV-overridable.
 
+**A cache baked at pack time is read, and it cuts CPU but not reliably wall.** `pack` mounts a layer
+`scripts/bake-opcache.ts` captures from the `file` arm: 1,839 scripts, 8,581,446 bytes. Measured
+2026-09-25 on two deployed paid workers, one cold first render per minute, then with the levers
+swapped between the two deploys:
+
+| run     | object cpuTime, `pack` | object cpuTime, `off` | visitor wall p50, `pack` | `off`    |
+| ------- | ---------------------- | --------------------- | ------------------------ | -------- |
+| first   | ~820-1,020 ms          | ~1,800 ms             | 1,482 ms                 | 2,291 ms |
+| swapped | 1,204-1,524 ms         | 1,636-2,236 ms        | 2,341 ms                 | 2,286 ms |
+
+CPU is the per-minute p90 from `durableObjectsInvocationsAdaptiveGroups`; wall is n=8 per arm. The
+first run's wall gap belonged to the deploys. The layer adds its full size to the isolate estimate
+(121.7 MB against 113.2 after one render, of a 134.2 MB ceiling), so it stays opt-in. Because
+`validate_timestamps=0` never checks a cached script against its source, the descriptor records the
+driver digest and the locked versions it was baked from, and the mount refuses a mismatch.
+
 `USE_ZEND_ALLOC=1` is built as an arm and refused: it costs **2.66x the heap** (authenticated peak
 342,294,528 against a 134,217,728 limit) and prints `munmap() failed: [28] Invalid argument` into
 PHP's output stream, so in a render that text is prepended to the HTML. `emmalloc` costs +196,608

@@ -15,6 +15,15 @@ that catch the most mistakes:
   delta SPANNING I/O is usable: the clock updates on I/O completion, and an `x-worker-ms` delta
   bracketing `stub.fetch()` tracked the platform's own `wallTimeMs` to within 1 ms on every arm of a
   deployed run. So the rule is about deltas across synchronous PHP, not about `Date.now()` as such.
+- **`x-cfw-serve-ms` is that same frozen clock**, taken inside the object around a serve that may run
+  PHP, so on a render it under-reads by the whole synchronous span. `x-worker-ms` brackets the hop and
+  is the wall figure. And `x-cfw-inline-boot: 1` is what says a request booted; `x-cfw-php-booted`
+  only says an interpreter is resident.
+- **A request tag joined to object invocations can pick the wrong invocation.** Measured 2026-09-25:
+  the tag join returned object rows of 38-121 ms for cold renders whose per-minute
+  `durableObjectsInvocationsAdaptiveGroups` quantiles read cpuTime p90 ~865-959 ms. Read the object
+  dataset per minute, one cold sample per minute per arm, and check the join against it before
+  quoting a per-request object figure.
 - **`cpuTime` is 1 ms granular**, so a reading of 1 ms is the meter's floor rather than a measurement
   of 1.0 ms. It bounds an invocation; it cannot resolve below itself. Amortise over many requests
   when the quantity is sub-millisecond.
@@ -1168,6 +1177,13 @@ the crossing while producing exactly the requests a cold boot hurts.
 So the metric worth reporting is the share of user-visible requests that meet a cold boot, not the
 cost of one. A proposal to make the boot faster has to be scored against that share first.
 
+**Re-measured 2026-09-25 as the visitor sees it**, a paid throwaway with `SITE_WARM=0` and
+`RETAIN_INTERPRETER=0`, one fully cold first render per minute: wall p50 **1,285 ms**, p95 2,696
+(n=10), object cpuTime p90 ~865-959 ms per cold minute. The mount is not where it goes: `bootMs`
+read 86-108 and `fetchMs` 31-71. A warm render is 180-220 ms, and waking an object without booting
+PHP is ~310 ms against ~150 warm. So the 500 / 700 ms target is not met for a fully cold isolate,
+and retention plus warming remain what keeps visitors off that path.
+
 **`PhpDumper` IS NOT A DRUPAL 11.4 FEATURE, checked 2026-09-09 against the shipping tree.** A
 compiled-PHP service container through OPcache is a credible-sounding lever and core does not offer
 it: `DrupalKernel::$phpArrayDumperClass` is `OptimizedPhpArrayDumper`, `getArray()` is what runs, and
@@ -1328,6 +1344,26 @@ way before the cause showed in a debug log as requests to an old bake's host. Th
 the ~18 MB JS-side estimate, answered 200 and recycled after). So `isolateNow()` overcounts what the
 platform meters, or the ceiling is not a hard 128 MiB on that sum. A workers-pool ladder that reads
 past 100% on that estimate is not evidence a page resets the object; confirm on a deploy.
+
+**THE THREE CLOSES DID NOT CLOSE IT, read on a deployed update 2026-09-25.** Two paid throwaways
+provisioned on one build and redeployed on the next (driver `2c2c311d` -> `9cbc5c32`, re-baked
+container, rebuilt chunks) both answered their first visitor 500: an alarm of 908 ms and 1,884 ms of
+CPU was reset for the isolate's memory with the visitor waiting on it. The container half of the fix
+worked: the serving object's `cache_container` row was the packed variant, `created` equal to the
+bake's to the millisecond, so nothing rebuilt a container. 44 discovery rows were written in that
+minute.
+
+**The discovery rebuild alone does not reproduce it.** A simulated update on the same two workers
+(a fake digest on `DRIVER_DIGEST` and in `container.json`, everything else unchanged) ran the shipped
+step on one and the step minus `DELETE FROM cache_discovery` on the other: 0 resets on either, and
+the shipped arm rebuilt 60 discovery rows inside a cold render that answered 200. What the real update
+had and the simulation lacked: changed PHP in `driver.json`, rebuilt SQL chunks, and objects meeting
+their first update rather than their second. Unattributed; test those three before building a fix.
+
+**Two instrument traps from that run.** The opcache rig sends `?site=opcab` on owner routes, which
+reach a DIFFERENT object from the hostname-keyed one that serves visitors, so `/sql` and
+`/serve-stats` read the wrong site until the parameter is dropped. And a result that holds on one
+pair of deploys can be placement: swap the levers between the same two workers before crediting one.
 
 ## The container row is keyed to the PACK, and the guard that missed it compared the wrong tree
 
@@ -2297,8 +2333,13 @@ the object, and read the colo on both.
 
 **AND THE DECAY DOES NOT REPRODUCE ON PAID.** 11,385 requests over 16 minutes on one incarnation read
 52 -> 55 ms, and 10,684 cached serves over 20.9 minutes read 74 ms flat across every bucket.
-Throttling, SQLite growth and heap growth each have their own arm ruling them out. A free-plan CPU
-allowance remains the one live hypothesis, because the original reading was taken there.
+Throttling, SQLite growth and heap growth each have their own arm ruling them out.
+
+**NOR ON FREE, 2026-09-25, which closes the free-plan CPU allowance hypothesis.** One object on the
+free account, current build: 3,000 cached serves read p50 15-16 ms flat across every bucket, and 450
+renders read p50 125-144 ms flat, about 45 CPU-seconds past the ~5 CPU-seconds where the original
+step appeared. Every sample answered from IAD. The original reading stays unattributed; a colo change
+is the remaining candidate and nothing now needs it explained.
 
 ## PHP LOADS EXTENSIONS AT STARTUP, NOT PER REQUEST, and that bounds the whole idea
 
@@ -2433,6 +2474,15 @@ cid. Each was found by hand and then added to the named list, which is not a sea
 `$container->initialized($id)`. **The filter is the whole safety property**: asking the container for
 a service it never built would CONSTRUCT the state the sweep is looking for, the same mistake as a
 probe that warms what it reads. What is walked is exactly the set the request instantiated.
+
+**TWO MORE CARRIERS, 2026-09-25, and the first was a disclosure.** `EntityAccessControlHandler::$accessCache`
+memoises a verdict per entity, operation and account id, and the handler is held by
+`entity_type.manager` for the life of the interpreter. So an anonymous view of a published node,
+followed by an unpublish, left the ALLOW in place: the unpublished node answered 200 to anonymous
+and `cfw_page` stored it. `LocalTaskManager::$taskData` is keyed by route name, not parameters, so
+the tabs built for `/node/1` rendered on `/node/2` and every node page carried `node:1`.
+`RequestResetter` clears both now, and each has a `static-sweep.spec.ts` case whose control reproduces
+the leak with the reset disabled. Both were found while chasing a cache-tag fan-out, not by the sweep.
 
 ## The pack delivers only at provisioning, and reconciliation is the path for everything after
 

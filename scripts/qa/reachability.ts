@@ -14,6 +14,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
+import { CMS_PREFIX, MODULE_SIDES, ROUTE_SIDES, type Side } from './cms-boundary';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const SRC = join(ROOT, 'src');
@@ -125,6 +126,63 @@ function exportsOf(source: string): string[] {
 	return [...source.matchAll(EXPORTED)].map((m) => m[1] ?? '').filter(Boolean);
 }
 
+function sideOf(rel: string): Side | undefined {
+	return rel.startsWith(CMS_PREFIX) ? 'cms' : MODULE_SIDES[rel];
+}
+
+/** the `DO_ROUTE` keys, read from source so the scan needs no worker runtime */
+function doRoutes(): string[] {
+	const block = /const DO_ROUTE[^=]*=\s*\{([\s\S]*?)\n\};/.exec(readFileSync(ENTRY, 'utf8'))?.[1];
+	return [...(block ?? '').matchAll(/^\s*'([^']+)':/gm)].map((m) => m[1] ?? '');
+}
+
+type Boundary = {
+	modules: Record<Side, number>;
+	routes: Record<Side, number>;
+	/** modules that import a `cms` module directly, whatever their own side */
+	importsCms: string[];
+	/** a `host` module importing a `cms` one: the boundary moved and nobody reclassified */
+	violations: { file: string; imports: string[] }[];
+	unclassified: string[];
+	stale: string[];
+	unclassifiedRoutes: string[];
+	staleRoutes: string[];
+};
+
+function boundary(all: string[]): Boundary {
+	const modules = all.map((f) => relative(ROOT, f)).filter((r) => !r.startsWith('src/probes/'));
+	const present = new Set(modules);
+	const count = (sides: (Side | undefined)[]) => ({
+		host: sides.filter((s) => s === 'host').length,
+		cms: sides.filter((s) => s === 'cms').length,
+		mixed: sides.filter((s) => s === 'mixed').length
+	});
+	const importsCms: string[] = [];
+	const violations: Boundary['violations'] = [];
+	for (const rel of modules) {
+		const abs = join(ROOT, rel);
+		const imports = specifiers(readFileSync(abs, 'utf8'))
+			.map((spec) => resolveSpec(abs, spec))
+			.filter((f): f is string => f !== null)
+			.map((f) => relative(ROOT, f))
+			.filter((target) => sideOf(target) === 'cms');
+		if (imports.length === 0) continue;
+		importsCms.push(rel);
+		if (sideOf(rel) === 'host') violations.push({ file: rel, imports });
+	}
+	const routes = doRoutes();
+	return {
+		modules: count(modules.map(sideOf)),
+		routes: count(routes.map((r) => ROUTE_SIDES[r])),
+		importsCms,
+		violations,
+		unclassified: modules.filter((r) => sideOf(r) === undefined),
+		stale: Object.keys(MODULE_SIDES).filter((r) => !present.has(r)),
+		unclassifiedRoutes: routes.filter((r) => ROUTE_SIDES[r] === undefined),
+		staleRoutes: Object.keys(ROUTE_SIDES).filter((r) => !routes.includes(r))
+	};
+}
+
 /** every `.ts` under `scripts/`, each of which is its own bun entrypoint */
 function scriptEntries(): string[] {
 	return walk(join(ROOT, 'scripts')).filter((f) => !f.endsWith('reachability.ts'));
@@ -197,10 +255,19 @@ function main(): void {
 		}
 	}
 
+	const cms = boundary(all);
+
 	if (asJson) {
 		console.log(
 			JSON.stringify(
-				{ scanned: rows.length, edge: edge.size, offEdge, dead, unusedExports },
+				{
+					scanned: rows.length,
+					edge: edge.size,
+					offEdge,
+					dead,
+					unusedExports,
+					boundary: cms
+				},
 				null,
 				2
 			)
@@ -219,6 +286,13 @@ function main(): void {
 				`${unusedExports.length} unused):`
 		);
 		for (const u of testOnly) console.log(`  ${u.file}  ${u.name}`);
+		const sides = (c: Record<Side, number>) => `${c.host} host, ${c.cms} cms, ${c.mixed} mixed`;
+		console.log(`\nCMS BOUNDARY: modules ${sides(cms.modules)}; routes ${sides(cms.routes)}`);
+		for (const v of cms.violations)
+			console.log(`  host imports cms: ${v.file} -> ${v.imports.join(', ')}`);
+		for (const u of [...cms.unclassified, ...cms.unclassifiedRoutes])
+			console.log(`  unclassified: ${u}`);
+		for (const s of [...cms.stale, ...cms.staleRoutes]) console.log(`  stale entry: ${s}`);
 	}
 
 	if (strict && offEdge.length > 0) process.exit(1);

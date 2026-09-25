@@ -87,6 +87,14 @@ type Scan = {
 	offEdge: { file: string; reach: string }[];
 	dead: { file: string }[];
 	unusedExports: { file: string; name: string; testOnly: boolean }[];
+	boundary: {
+		importsCms: string[];
+		violations: { file: string; imports: string[] }[];
+		unclassified: string[];
+		stale: string[];
+		unclassifiedRoutes: string[];
+		staleRoutes: string[];
+	};
 };
 
 /**
@@ -170,5 +178,33 @@ describe('the exports a capability depends on are called from src/, not only tes
 	it('CONTROL: the report is non-empty, so the check above is not vacuous', () => {
 		expect(scan().unusedExports.length).toBeGreaterThan(0);
 		expect(scan().unusedExports.some((e) => e.testOnly)).toBe(true);
+	});
+});
+
+/**
+ * The CMS boundary, drawn before a second CMS exists and enforced so it stays drawn.
+ *
+ * `scripts/qa/cms-boundary.ts` declares every module and object route `host`, `cms` or `mixed`. A
+ * declaration nothing checks is a paragraph, so a `host` module that gains an import from a `cms`
+ * one fails here: either the import goes, or the module is honestly reclassified.
+ */
+describe('the CMS boundary holds', () => {
+	it('no host module imports a cms module', () => {
+		expect(
+			scan().boundary.violations.map((v) => `${v.file} -> ${v.imports.join(', ')}`)
+		).toEqual([]);
+	});
+
+	it('every module and every object route is classified, and no entry is stale', () => {
+		const b = scan().boundary;
+		expect(b.unclassified, 'add these to scripts/qa/cms-boundary.ts').toEqual([]);
+		expect(b.unclassifiedRoutes, 'add these to ROUTE_SIDES').toEqual([]);
+		expect(b.stale).toEqual([]);
+		expect(b.staleRoutes).toEqual([]);
+	});
+
+	// the detector has to see a real cms import, or the violation check passes on an empty scan
+	it('CONTROL: the scan finds the object importing src/drupal/', () => {
+		expect(scan().boundary.importsCms).toContain('src/site-do.ts');
 	});
 });

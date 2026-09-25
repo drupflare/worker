@@ -388,9 +388,8 @@ export function warmIntervalMs(env?: CronEnv | null): number {
  * The longest warming interval a writer accepts.
  *
  * Past hibernation a firing buys adoption only when the next instance lands in the same isolate,
- * which is placement: measured 2026-09-25 across 18 paid workers, 120, 150, 180, 210, 240 and 600 s
- * re-arms showed no ordering, and one of two identically configured workers adopted 8 of 8 while
- * its twin adopted 0 of 8.
+ * which is placement first: measured 2026-09-25 on 12 paid workers rotated through every interval,
+ * 30 s adopted 36% of idle visits and 60, 90 and 120 s 14-15%, and four workers adopted at none.
  */
 export const WARM_INTERVAL_MAX_MS = 600_000;
 

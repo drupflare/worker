@@ -708,8 +708,8 @@ describe('SITE_WARM decides the idle re-arm', () => {
 	it('re-arms inside the hibernation threshold only when warming is asked for', async () => {
 		const fallback = await rearm({});
 		const on = await rearm({ SITE_WARM: '1' });
-		// declined by the policy: the idle re-arm, since a shorter one past hibernation bought no
-		// adoption across 120-600 s on 18 deployed workers
+		// declined by the policy: the cheapest re-arm; past hibernation 30 s adopted 36% and 60-120 s
+		// 14-15% on 12 rotated deployed workers, so a shorter default buys a host lottery
 		expect(fallback).toBe(240_000);
 		expect(on).toBe(8_000);
 		// a Durable Object hibernates at 10 s, so the two sit either side of staying resident

@@ -466,6 +466,13 @@ nothing and therefore fills, and the spec passed alone and failed in a full run.
 alarm (`ctx.storage.deleteAlarm()`) before reading, and take every reading in ONE `inObject` round
 trip -- a second round trip is a second wall-clock window.
 
+**THAT FIX DID NOT CLOSE IT.** With the alarm cancelled, one full run on 2026-09-25 still failed the
+same spec one assertion earlier: `heap_image_gen` null, so the counted firing never imaged. It passed
+alone, in a loaded six-file run twice, and in the next full run. The assertion now prints the alarm
+outcome, the `HEAP_IMAGE` flag the instance holds, the attempt key and the firing count, so the next
+failure says whether the firing reconciled, lost the flag with its instance, failed the heap read, or
+hit the attempt cap.
+
 **AND NEVER RUN THE RIG BESIDE A VITEST RUN.** `wrangler dev` died mid-measurement under 24
 concurrent while the gate had the memory, which this file already records for `bun run test` and is
 equally true of a background agent running one.
@@ -697,9 +704,9 @@ extension costs ~8%.
 moves the linker's first defined global to the last `env` import, which keeps every global index,
 so the arm (`spimport` in `abi-speed.ts`) is `long64` plus that edit and an unbounded table and
 nothing else. Interleaved, n=9: **1.034x blended** against an A/A of 1.000x, `usercall` 1.044x,
-against the export arm's 1.083x and 1.136x. Cheaper, not free. `long64.rc` still carries
-`TABLE_GROWTH=1`, the 8% shape, so the next interpreter release built from it ships that cost for a
-capability nothing uses yet; `STACK_POINTER=import` in the rc is the cheaper equivalent.
+against the export arm's 1.083x and 1.136x. Cheaper, not free. `long64.rc` carries
+`STACK_POINTER=import` now instead of the 8% `TABLE_GROWTH=1`. Linking a real side module against
+the imported global is still unrun, so do that before a release relies on loading one.
 
 ## The interpreter has no fiber backend, and the executor is persistent
 
@@ -1191,19 +1198,22 @@ read 86-108 and `fetchMs` 31-71. A warm render is 180-220 ms, and waking an obje
 PHP is ~310 ms against ~150 warm. So the 500 / 700 ms target is not met for a fully cold isolate,
 and retention plus warming remain what keeps visitors off that path.
 
-**WARMING HAS NO CURVE PAST HIBERNATION, and I shipped one for an afternoon.** Past 10 s the object
-hibernates, and the next instance adopts the retained interpreter only when it lands in the same
-isolate. The first curve (3 workers, 16:00-17:10 UTC 2026-09-25) read 30-120 s adopting 27 of 28 and
-became `ADOPTABLE_REARM_MS = 120_000`. Eighteen workers driven at the same instants over the next two
-hours read nothing ordered by interval: 120/150/180/210/240 s at 2, 5, 2, 1 and 1 of 16, two
-identically configured 120 s workers at 8 of 8 and 0 of 8, and the whole account at 0 of 60 from
-19:00, 600 s included. `/serve-stats` read seconds after a booted visit shows `retention.last: null`,
-which `adoptRetained()` leaves only when no retained interpreter exists in the isolate, so the code
-refused nothing: placement did. Wakes do not hold an isolate. The re-arm is back at `KEEP_WARM_MS`
-(240 s). **Two traps from it**: a curve taken on a few workers in one hour measures their hosts and
-that hour, so drive many workers at the same instants and repeat across hours before crediting an
-interval; and an A/B whose arms both read 0 during a churn phase separates nothing, so read the
-refusal reason instead. An unset `SITE_WARM` warms a paid site at 8 s and leaves a free one to the
+**PAST HIBERNATION THE WARMING CURVE HAS ONE KNEE, AT 30 s, and I shipped the wrong point for an
+afternoon.** Past 10 s the object hibernates, and the next instance adopts the retained interpreter
+only when it lands in the same isolate. The first curve (3 workers, 16:00-17:10 UTC 2026-09-25) read
+30-120 s adopting 27 of 28 and became `ADOPTABLE_REARM_MS = 120_000`. Eighteen workers at the same
+instants over the next two hours read nothing ordered across 120-600 s, twins at 8 of 8 and 0 of 8,
+and the account at 0 of 60 from 19:00. A Latin square then settled it: 12 workers, four phases, every
+worker at every interval, 288 visits. 30 s adopted 36% and 60/90/120 s 14-15%; four workers never
+adopted at any interval, and on the other eight 30 s read 54% against 21-23%. `/serve-stats` read
+seconds after each visit showed `retention.last: null` on every miss, which `adoptRetained()` leaves
+only when no interpreter exists in the isolate, so placement refused and the code never did. The
+declined re-arm is back at `KEEP_WARM_MS` (240 s), the cheapest point; 30 s is the opt-in middle
+(`SITE_WARM=1`, `WARM_INTERVAL_MS=30000`, $0.099/site-month, 2.9% of free). **Three traps from it**:
+a curve on a few workers in one hour measures their hosts and that hour; an A/B whose arms both read
+0 during a churn phase separates nothing, so read the refusal reason; and without rotation the
+interval that happens to land on the good hosts wins, which 30 s did for three phases before reading
+0 of 18 on the dead ones. An unset `SITE_WARM` warms a paid site at 8 s and leaves a free one to the
 thermal policy; `SITE_WARM` and `WARM_INTERVAL_MS` are both on `/settings`.
 Deterministic residency cannot be made much cheaper: the solver's 9.5 s ceiling saves 16%, and holding
 an object open by other means is billed as duration.

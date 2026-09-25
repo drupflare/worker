@@ -778,20 +778,27 @@ tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
 cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
 without booting PHP at all, so warming cannot make one faster by any amount.
 
-**There is no curve past hibernation.** Measured 2026-09-25 on 18 paid throwaways: a page that needs
-PHP, requested after 150-300 s of idle, with every worker driven at the same instants.
+**Past hibernation the curve has one knee, at 30 s.** Measured 2026-09-25 on paid throwaways: a page
+that needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four
+phases, rotated so every worker ran every interval (288 visits).
 
-| re-arm            | firings a day | share of free's budgets | the request                              |
-| ----------------- | ------------- | ----------------------- | ---------------------------------------- |
-| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | never hibernated: 156-371 ms             |
-| 120-600 s         | 144-720       | 0.1-0.7%                | adopted in 188-396 ms or booted in 2-4 s |
+| re-arm            | firings a day | share of free's budgets | paid, per site-month | adopted | the request                    |
+| ----------------- | ------------- | ----------------------- | -------------------- | ------- | ------------------------------ |
+| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | $0.373               | always  | never hibernated: 156-371 ms   |
+| 30 s              | 2,880         | 2.9%                    | $0.099               | 36%     | 100-692 ms adopted, ~2.1 s not |
+| 60-120 s          | 720-1,440     | 0.7-1.4%                | $0.025-0.050         | 14-15%  | 106-888 ms adopted, ~2.2 s not |
+| 240 s             | 360           | 0.4%                    | $0.012               | ~2%     | booted: 2-4 s                  |
 
-Past 10 s, adoption depends on where the platform places the next instance, not on the interval. Two
-workers with identical configuration adopted 8 of 8 and 0 of 8. The same account adopted 27 of 28 in
-one hour and 0 of 60 two hours later, at 120, 240 and 600 s alike. A refused visit recorded no
-refusal reason, so each of those visits found no retained interpreter in its isolate. Wakes do not
-hold an isolate open. A site that is not warming therefore re-arms at 240 s whether the thermal policy
-declined it or an operator set `SITE_WARM=0`.
+Past 10 s, adoption depends first on where the platform places the object. Four of the twelve
+workers never adopted at any interval; on the other eight, 30 s adopted 54% and 60-120 s 21-23%. Every
+visit that did not adopt found no retained interpreter in its isolate, so the code refused none. The
+same account also swings by the hour: 27 of 28 at 16:00 UTC, 0 of 60 at 19:00.
+
+A site that is not warming re-arms at 240 s, whether the thermal policy declined it or an operator
+set `SITE_WARM=0`, because that is the cheapest point and the thermal policy declines exactly the
+sites whose firings cost more than the boots they save. 60-120 s cost two to four times the firings
+for little more. An operator who wants the middle point sets `SITE_WARM=1` and
+`WARM_INTERVAL_MS=30000` on `/settings`; 30 s is also the shortest interval under $0.10 a month.
 
 **The interval is priced per site rather than flat.** A flat 8 s re-arm is 10,800 object requests and
 10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged

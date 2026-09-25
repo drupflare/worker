@@ -1639,6 +1639,22 @@ places in this codebase had promoted "an armed alarm buys no warmth" into a gene
 at 240 s and false at 8 s, because the FIRING resets the idle clock. Arming does not warm. Firing
 under the threshold does.
 
+**Past the threshold, retention decides, and placement decides retention.** A hibernated object's
+next instance adopts the interpreter its isolate kept, in 100-692 ms against ~2.1-2.3 s booting, when
+it lands in that isolate. Measured 2026-09-25 on 12 paid workers over four phases, every worker at
+every interval, a PHP-needing request after 150-300 s idle, n=72 per interval:
+
+| re-arm | adopted | on the 8 workers that ever adopted |
+| --- | ---: | ---: |
+| 30 s | 36% | 54% |
+| 60 s | 15% | 23% |
+| 90 s | 15% | 23% |
+| 120 s | 14% | 21% |
+
+Four workers adopted at no interval. `/serve-stats`, read seconds after each visit, showed
+`retention.last: null` on every miss, which means no interpreter was in the isolate; the code refused
+none. A 240 s re-arm adopted ~2%. So the declined default stays 240 s and 30 s is an opt-in.
+
 **Duration is not the meter, and ROWS are.** An object waiting on an armed alarm is idle and ELIGIBLE
 to hibernate, and an idle-eligible object is not billed for duration. Measured on a deployed worker,
 n=116 firings across two objects, torn down afterwards:
@@ -3135,7 +3151,9 @@ phase rather than removing it.
 module imports `env.__stack_pointer`, so an in-process extension needs the host's own global. Exporting
 it stops the linker proving it module-private; phasm's `import-stack-pointer.mjs` instead moves it to
 an `env` import after the link, keeping every global index. Interleaved on node, n=9, against the same
-`long64` binary: 1.034x blended for the import (A/A 1.000x), 1.083x for the export.
+`long64` binary: 1.034x blended for the import (A/A 1.000x), 1.083x for the export. phasm's
+`long64.rc` builds the import form. A side module has been linked only against the exported global,
+so the import form is verified for PHP itself and not yet for loading one.
 
 ### Extensions
 

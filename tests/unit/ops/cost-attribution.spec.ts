@@ -18,16 +18,17 @@ import { ID_PARTITION_LANES } from '../../../src/ops/write-forwarding';
  * The account-level answer already exists; what was missing is the split. Four dimensions draw on
  * the Durable Object request meter alone, so its total cannot say which of them to change.
  *
- * The distinction the whole module turns on: a dimension nothing counts is null, never 0. Three of
- * the four uncounted ones have a counter that covers the wrong window -- `alarmFirings` and
- * `phpLaneEntries` reset with the incarnation, `cfw_http_queue` is a depth whose rows are deleted as
- * they drain -- and scoring any of them against a daily allowance gives a wrong percentage that
- * reads as measured.
+ * The distinction the whole module turns on: a dimension nothing counts is null, never 0. Renders,
+ * alarm firings and outbound fetches were null because their counters covered the wrong window;
+ * they are daily counters in the packed meter row now, and an absent input is still null.
  */
 
 const full: SiteSpend = {
 	rowsToday: 40_000,
 	doRequestsToday: 30_000,
+	rendersToday: 120,
+	alarmsToday: 1_080,
+	fetchesToday: 6,
 	storage: 14_000_000,
 	imageStyles: 4,
 	managedImages: 100
@@ -79,6 +80,7 @@ describe('a site with nothing spent', () => {
 	});
 
 	it('still reports the dimensions nothing counts, so the table is not half a story', () => {
+		// the three activity counters are absent from this payload, so they are null rather than 0
 		const report = attributeSpend(idle, { PLAN: 'free' });
 		expect(report.counted).toBe(5);
 		expect(report.uncounted).toBe(5);
@@ -98,9 +100,6 @@ describe('a dimension nothing counts is reported, never zeroed', () => {
 
 	it.each([
 		['page-views', 'edge cache'],
-		['renders', 'phpLaneEntries'],
-		['warm-alarms', 'alarmFirings'],
-		['outbound-fetches', 'cfw_http_queue'],
 		['rows-read', 'read-only statements']
 	])('%s is null and names why', (id, reason) => {
 		const line = lineFor(report, id);
@@ -110,11 +109,22 @@ describe('a dimension nothing counts is reported, never zeroed', () => {
 		expect(line.source).toContain(reason);
 	});
 
-	it('stays null on a fully populated payload, because the gap is structural', () => {
-		// every counter this module can read is present here; the five that are still null are
-		// missing a counter rather than missing an input
-		expect(report.counted).toBe(5);
-		expect(report.uncounted).toBe(5);
+	it.each([
+		['renders', 120],
+		['warm-alarms', 1_080],
+		['outbound-fetches', 6]
+	])('%s reports the daily counter', (id, quantity) => {
+		const line = lineFor(report, id);
+		expect(line.quantity).toBe(quantity);
+		expect(line.status).not.toBe('unknown');
+		expect(line.source).toContain('today');
+	});
+
+	it('stays null on a fully populated payload where no counter exists', () => {
+		// every counter this module can read is present here; the two still null are missing a
+		// counter rather than missing an input
+		expect(report.counted).toBe(8);
+		expect(report.uncounted).toBe(2);
 	});
 
 	it('does not let serveRequests stand in for the Worker meter', () => {
@@ -361,7 +371,7 @@ describe('the month projection', () => {
 	});
 
 	it('carries the uncounted dimensions through as uncounted', () => {
-		const line = projectMonth(full, 15).lines.find((l) => l.id === 'warm-alarms');
+		const line = projectMonth(full, 15).lines.find((l) => l.id === 'rows-read');
 		expect(line?.month).toBeNull();
 		expect(line?.percentOfAllowance).toBeNull();
 		expect(line?.basis).toBe('nothing counts it');

@@ -35,6 +35,12 @@ export type SiteSpend = {
 	rowsToday?: number | null;
 	/** `dailyDoRequests()`; the same UTC-day keying, and it counts what reached this object */
 	doRequestsToday?: number | null;
+	/** pages PHP rendered today, from the packed day-meter row */
+	rendersToday?: number | null;
+	/** alarm firings today, from the same row */
+	alarmsToday?: number | null;
+	/** outbound fetches the drain attempted today, from the same row */
+	fetchesToday?: number | null;
 	/** `storedBytes()` over this object's SQLite */
 	storage?: number | null;
 	/** `config` rows matching `image.style.%`; null on a site that has not migrated */
@@ -236,22 +242,22 @@ export function attributeSpend(spend: SiteSpend, env?: SpendEnv | null): SpendRe
 		meteredLine(
 			{ id: 'renders', label: 'Renders', unit: 'requests' },
 			doRequests,
-			null,
-			'phpLaneEntries counts requests that passed the storage lane in THIS incarnation, so it is neither a daily total nor a count of renders',
+			num(spend.rendersToday),
+			'renders today, a UTC-day total in the packed meter row; an eviction loses at most those since the last meter flush',
 			env
 		),
 		meteredLine(
-			{ id: 'warm-alarms', label: 'Warm alarm firings', unit: 'requests' },
+			{ id: 'warm-alarms', label: 'Alarm firings', unit: 'requests' },
 			doRequests,
-			null,
-			'alarmFirings is in-memory and resets when the object is evicted, so it counts an incarnation rather than a day',
+			num(spend.alarmsToday),
+			'alarm firings today, every firing and not only warming ones, from the same row',
 			env
 		),
 		meteredLine(
 			{ id: 'outbound-fetches', label: 'Outbound fetches', unit: 'requests' },
 			doRequests,
-			null,
-			'cfw_http_queue is a queue depth and a drained entry is deleted, so it cannot say how many fetches ran today',
+			num(spend.fetchesToday),
+			'fetches the drain attempted today, answered or not, from the same row',
 			env
 		),
 		meteredLine(

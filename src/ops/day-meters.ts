@@ -31,6 +31,12 @@ export type DayMeters = {
 	encounters: EncounterCounts;
 	/** page writes to `PAGE_KV` this object granted today, against `KV_WRITES_PER_DAY` */
 	kvWrites: number;
+	/** pages PHP rendered today, inline or in a fill */
+	renders: number;
+	/** alarm firings today; each is a Durable Object request */
+	alarms: number;
+	/** outbound fetches the drain performed today */
+	fetches: number;
 };
 
 export const ZERO_DAY_METERS: DayMeters = {
@@ -38,7 +44,10 @@ export const ZERO_DAY_METERS: DayMeters = {
 	doRequests: 0,
 	serveTotal: 0,
 	encounters: { ...ZERO_ENCOUNTERS },
-	kvWrites: 0
+	kvWrites: 0,
+	renders: 0,
+	alarms: 0,
+	fetches: 0
 };
 
 /** the prefix a day row is found under, and the one `carriedServeTotal()` scans */
@@ -54,7 +63,10 @@ export function writeDayMeters(meters: DayMeters): string {
 		Math.max(0, Math.round(meters.doRequests)),
 		Math.max(0, Math.round(meters.serveTotal)),
 		serialiseEncounters(meters.encounters),
-		Math.max(0, Math.round(meters.kvWrites))
+		Math.max(0, Math.round(meters.kvWrites)),
+		Math.max(0, Math.round(meters.renders)),
+		Math.max(0, Math.round(meters.alarms)),
+		Math.max(0, Math.round(meters.fetches))
 	].join(':');
 }
 
@@ -68,18 +80,31 @@ export function writeDayMeters(meters: DayMeters): string {
 export function readDayMeters(raw: string | null | undefined): DayMeters | null {
 	if (!raw) return null;
 	const parts = raw.split(':');
-	// four parts is a row written before `kvWrites` existed, which counted none
-	if (parts.length !== 4 && parts.length !== 5) return null;
+	// four parts predates `kvWrites` and five the three activity counters; each counted none
+	if (parts.length !== 4 && parts.length !== 5 && parts.length !== 8) return null;
 	const [rows, doRequests, serveTotal] = parts.slice(0, 3).map((n) => Number(n)) as [
 		number,
 		number,
 		number
 	];
-	const kvWrites = Number(parts[4] ?? 0);
-	if (![rows, doRequests, serveTotal, kvWrites].every((n) => Number.isFinite(n) && n >= 0)) {
-		return null;
-	}
-	return { rows, doRequests, serveTotal, encounters: parseEncounters(parts[3]), kvWrites };
+	const [kvWrites, renders, alarms, fetches] = [4, 5, 6, 7].map((i) => Number(parts[i] ?? 0)) as [
+		number,
+		number,
+		number,
+		number
+	];
+	const all = [rows, doRequests, serveTotal, kvWrites, renders, alarms, fetches];
+	if (!all.every((n) => Number.isFinite(n) && n >= 0)) return null;
+	return {
+		rows,
+		doRequests,
+		serveTotal,
+		encounters: parseEncounters(parts[3]),
+		kvWrites,
+		renders,
+		alarms,
+		fetches
+	};
 }
 
 /**

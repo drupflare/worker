@@ -27,13 +27,25 @@ describe('the packed day row', () => {
 			doRequests: 903,
 			serveTotal: 71_004,
 			encounters: { noPhp: 40, warm: 8, cold: 2, absorbed: 400 },
-			kvWrites: 37
+			kvWrites: 37,
+			renders: 212,
+			alarms: 1_080,
+			fetches: 9
 		};
 		expect(readDayMeters(writeDayMeters(meters))).toEqual(meters);
 	});
 
 	it('reads a row written before `kvWrites` existed as having granted none', () => {
 		expect(readDayMeters('10:20:30:1,2,3,4')?.kvWrites).toBe(0);
+	});
+
+	it('reads a row written before the activity counters existed as having counted none', () => {
+		expect(readDayMeters('10:20:30:1,2,3,4:5')).toMatchObject({
+			kvWrites: 5,
+			renders: 0,
+			alarms: 0,
+			fetches: 0
+		});
 	});
 
 	it('keys by UTC day, so an eviction loses a flush rather than a day', () => {
@@ -66,13 +78,16 @@ describe('the packed day row', () => {
 			doRequests: 20,
 			serveTotal: 30,
 			encounters: { noPhp: 1, warm: 2, cold: 3, absorbed: 0 },
-			kvWrites: 0
+			kvWrites: 0,
+			renders: 0,
+			alarms: 0,
+			fetches: 0
 		});
 	});
 
 	it('starts at zero on every counter', () => {
 		expect(ZERO_DAY_METERS.encounters).toEqual(ZERO_ENCOUNTERS);
-		expect(writeDayMeters(ZERO_DAY_METERS)).toBe('0:0:0:0,0,0,0:0');
+		expect(writeDayMeters(ZERO_DAY_METERS)).toBe('0:0:0:0,0,0,0:0:0:0:0');
 	});
 });
 

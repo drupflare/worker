@@ -778,19 +778,20 @@ tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
 cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
 without booting PHP at all, so warming cannot make one faster by any amount.
 
-**The curve**, measured 2026-09-25 on paid throwaways: a page that needs PHP, requested after 150-300 s
-of idle, with the intervals swapped between workers once to separate the interval from the host.
+**There is no curve past hibernation.** Measured 2026-09-25 on 18 paid throwaways: a page that needs
+PHP, requested after 150-300 s of idle, with every worker driven at the same instants.
 
-| re-arm            | firings a day | share of free's budgets | the request                                     |
-| ----------------- | ------------- | ----------------------- | ----------------------------------------------- |
-| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | never hibernated: 156-371 ms                    |
-| 30-120 s          | 720-2,880     | 0.7-2.9%                | adopted the interpreter in 188-396 ms, 27 of 28 |
-| 240 s             | 360           | 0.4%                    | booted: 3,151-3,506 ms                          |
+| re-arm            | firings a day | share of free's budgets | the request                              |
+| ----------------- | ------------- | ----------------------- | ---------------------------------------- |
+| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | never hibernated: 156-371 ms             |
+| 120-600 s         | 144-720       | 0.1-0.7%                | adopted in 188-396 ms or booted in 2-4 s |
 
-One host recycled isolates and booted at every interval, 30 s and 120 s alike, so the adoption rows
-describe an ordinary host rather than a guarantee. A site the thermal policy declines re-arms at 120 s,
-the cheapest interval that adopted; `SITE_WARM=0` keeps the 240 s re-arm for an operator who wants the
-fewest firings.
+Past 10 s, adoption depends on where the platform places the next instance, not on the interval. Two
+workers with identical configuration adopted 8 of 8 and 0 of 8. The same account adopted 27 of 28 in
+one hour and 0 of 60 two hours later, at 120, 240 and 600 s alike. A refused visit recorded no
+refusal reason, so each of those visits found no retained interpreter in its isolate. Wakes do not
+hold an isolate open. A site that is not warming therefore re-arms at 240 s whether the thermal policy
+declined it or an operator set `SITE_WARM=0`.
 
 **The interval is priced per site rather than flat.** A flat 8 s re-arm is 10,800 object requests and
 10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged

@@ -1191,15 +1191,20 @@ read 86-108 and `fetchMs` 31-71. A warm render is 180-220 ms, and waking an obje
 PHP is ~310 ms against ~150 warm. So the 500 / 700 ms target is not met for a fully cold isolate,
 and retention plus warming remain what keeps visitors off that path.
 
-**WARMING HAS A CURVE ONCE RETENTION EXISTS, and the 8 s interval is only its top.** Past 10 s the
-object hibernates, and the next instance adopts the retained interpreter when it lands in the same
-isolate. Measured 2026-09-25, a PHP-needing request after 150-300 s idle: re-arms of 30, 60 and 120 s
-adopted in 188-396 ms on an ordinary host, 240 s booted (~3.2-3.5 s), and one host that recycled
-isolates booted at every interval. **That host is the trap**: with one worker per interval its 30 s
-arm read 0 of 8 and looked like a property of 30 s, until swapping the intervals between workers
-moved the zeros with the worker. So a thermally declined site now re-arms at `ADOPTABLE_REARM_MS`
-(120 s, 720 firings a day) rather than 240 s; an unset `SITE_WARM` warms a paid site at 8 s and leaves
-a free one to the thermal policy; `SITE_WARM` and `WARM_INTERVAL_MS` are both on `/settings`.
+**WARMING HAS NO CURVE PAST HIBERNATION, and I shipped one for an afternoon.** Past 10 s the object
+hibernates, and the next instance adopts the retained interpreter only when it lands in the same
+isolate. The first curve (3 workers, 16:00-17:10 UTC 2026-09-25) read 30-120 s adopting 27 of 28 and
+became `ADOPTABLE_REARM_MS = 120_000`. Eighteen workers driven at the same instants over the next two
+hours read nothing ordered by interval: 120/150/180/210/240 s at 2, 5, 2, 1 and 1 of 16, two
+identically configured 120 s workers at 8 of 8 and 0 of 8, and the whole account at 0 of 60 from
+19:00, 600 s included. `/serve-stats` read seconds after a booted visit shows `retention.last: null`,
+which `adoptRetained()` leaves only when no retained interpreter exists in the isolate, so the code
+refused nothing: placement did. Wakes do not hold an isolate. The re-arm is back at `KEEP_WARM_MS`
+(240 s). **Two traps from it**: a curve taken on a few workers in one hour measures their hosts and
+that hour, so drive many workers at the same instants and repeat across hours before crediting an
+interval; and an A/B whose arms both read 0 during a churn phase separates nothing, so read the
+refusal reason instead. An unset `SITE_WARM` warms a paid site at 8 s and leaves a free one to the
+thermal policy; `SITE_WARM` and `WARM_INTERVAL_MS` are both on `/settings`.
 Deterministic residency cannot be made much cheaper: the solver's 9.5 s ceiling saves 16%, and holding
 an object open by other means is billed as duration.
 

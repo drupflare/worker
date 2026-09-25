@@ -243,8 +243,33 @@ export function declaredRouteNames(files: Record<string, string>): string[] {
 	return [...names].sort();
 }
 
+/**
+ * The `_permission` requirement of every packed route that has one, keyed by route name.
+ *
+ * Same shallow read as {@link declaredRouteNames}: an indented `_permission:` line belongs to the
+ * last route name above it.
+ */
+export function declaredRoutePermissions(files: Record<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [path, body] of Object.entries(files)) {
+		if (!path.endsWith('.routing.yml')) continue;
+		let route: string | undefined;
+		for (const line of body.split('\n')) {
+			const name = /^([A-Za-z0-9_.]+):\s*$/.exec(line)?.[1];
+			if (name !== undefined) route = name;
+			const permission = /^\s+_permission:\s*['"]?([^'"]+?)['"]?\s*$/.exec(line)?.[1];
+			if (permission !== undefined && route !== undefined) out[route] = permission;
+		}
+	}
+	return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
 /** the exact bytes that belong in src/ops/driver-digest.ts for a given pack */
-export function serialiseDriverDigest(digest: string, routes: readonly string[] = []): string {
+export function serialiseDriverDigest(
+	digest: string,
+	routes: readonly string[] = [],
+	permissions: Record<string, string> = {}
+): string {
 	return `/**
  * The packed driver's identity. GENERATED -- run \`bun run assets:driver\` after any change in a
  * sibling; \`tests/node/driver-pack.spec.ts\` fails on drift.
@@ -261,6 +286,16 @@ export const DRIVER_DIGEST = '${digest}';
 export const DRIVER_ROUTES: readonly string[] = [
 ${routes.map((r) => `\t'${r}'`).join(',\n')}
 ];
+
+/**
+ * The permission each packed route requires. A router row keeps the requirement it was built with,
+ * so a renamed permission reaches an existing site only when the router step sees the difference.
+ */
+export const DRIVER_ROUTE_PERMISSIONS: Readonly<Record<string, string>> = {
+${Object.entries(permissions)
+	.map(([r, p]) => `\t'${r}': '${p}'`)
+	.join(',\n')}
+};
 `;
 }
 
@@ -316,7 +351,10 @@ if (import.meta.main) {
 	await writeFile(dest, body);
 	const digest = driverDigest(body);
 	const routes = declaredRouteNames(files);
-	await writeFile(DRIVER_DIGEST_PATH, serialiseDriverDigest(digest, routes));
+	await writeFile(
+		DRIVER_DIGEST_PATH,
+		serialiseDriverDigest(digest, routes, declaredRoutePermissions(files))
+	);
 	const bytes = Object.values(files).reduce((n, s) => n + s.length, 0);
 	console.log(
 		JSON.stringify(

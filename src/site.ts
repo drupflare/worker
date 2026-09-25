@@ -78,6 +78,7 @@ import {
 import {
 	canWriteKv,
 	KV_OVERRIDABLE,
+	LEVER_DOMAINS,
 	resolvePlan,
 	resolveSettings,
 	withPlan,
@@ -190,6 +191,7 @@ const PUBLIC_ROUTES = new Set([
  */
 const DIAGNOSTIC_ROUTES = new Set([
 	'/php',
+	'/opcache',
 	'/probe',
 	'/mb',
 	'/migrate',
@@ -447,6 +449,7 @@ const DO_ROUTE: Record<string, string> = {
 	'/files': '/__files',
 	'/enable': '/__enable',
 	'/php': '/__php',
+	'/opcache': '/__opcache',
 	'/probe': '/__probe',
 	'/mb': '/__mb',
 	'/migrate': '/__migrate',
@@ -1982,7 +1985,8 @@ async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Pr
 		levers: KV_OVERRIDABLE.map((name) => ({
 			name,
 			value: settings[name] ?? (env as unknown as Record<string, string>)[name] ?? null,
-			source: settings[name] !== undefined ? 'kv' : name in env ? 'var' : 'default'
+			source: settings[name] !== undefined ? 'kv' : name in env ? 'var' : 'default',
+			domain: LEVER_DOMAINS[name]
 		}))
 	});
 

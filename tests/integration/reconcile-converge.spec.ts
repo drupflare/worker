@@ -119,6 +119,60 @@ describe('bringing an already-provisioned site up to the shipping pack', () => {
 		TIMEOUT
 	);
 
+	it(
+		'moves a role off a retired permission and gives uid 1 the owner role',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+				site.sql.exec(
+					'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
+					'first_run_at',
+					String(Date.now())
+				);
+				// the grant an operator could have made before the tiers existed; a role save would
+				// refuse it now, so it goes in the way an old site already holds it
+				const editor = asText(
+					rows(site, "SELECT data FROM config WHERE name = 'user.role.content_editor'")[0]
+						?.data
+				);
+				const old = 'administer drupflare settings';
+				const regressed = (editor ?? '').replace(
+					/s:11:"permissions";a:(\d+):\{/,
+					(_m, n) =>
+						`s:11:"permissions";a:${Number(n) + 1}:{i:999;s:${old.length}:"${old}";`
+				);
+				site.sql.exec(
+					"UPDATE config SET data = ? WHERE name = 'user.role.content_editor'",
+					regressed
+				);
+				site.sql.exec("DELETE FROM cache_config WHERE cid = 'user.role.content_editor'");
+				site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'reconcile_state');
+				const before = asText(
+					rows(site, "SELECT data FROM config WHERE name = 'user.role.content_editor'")[0]
+						?.data
+				);
+				await reconcileToDone(site);
+				const after = asText(
+					rows(site, "SELECT data FROM config WHERE name = 'user.role.content_editor'")[0]
+						?.data
+				);
+				const held = rows(
+					site,
+					"SELECT COUNT(*) AS n FROM user__roles WHERE entity_id = 1 AND roles_target_id = 'drupflare_owner'"
+				)[0]?.n;
+				return { before, after, held: Number(held) };
+			});
+
+			expect(out.before, 'the role was not regressed').toContain(
+				'administer drupflare settings'
+			);
+			expect(out.after).not.toContain('administer drupflare settings');
+			expect(out.after).toContain('administer drupflare site');
+			expect(out.held).toBe(1);
+		},
+		TIMEOUT
+	);
+
 	/**
 	 * A deferred step answers null from `reconcileStepOnce()` exactly as a reconciled site does, and
 	 * the first version of `reconcileSkipReason()` reported the reconciled reason for both. So an

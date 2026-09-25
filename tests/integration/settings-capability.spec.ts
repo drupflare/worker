@@ -22,10 +22,11 @@ type Installed = Record<string, (json: string) => string>;
 
 type LeverReply = {
 	ok?: boolean;
-	levers?: { name: string; value: string | null; source: string }[];
+	levers?: { name: string; value: string | null; source: string; domain?: { kind?: string } }[];
 	writable?: boolean;
 	accepted?: string[];
 	refused?: string[];
+	invalid?: { name: string; reason: string }[];
 	error?: string;
 	packages?: { name: string; source: string; revisions: number; active: string }[];
 };
@@ -101,6 +102,22 @@ describe('the capabilities Drupal admin pages read', () => {
 			expect((view.refused ?? []).sort()).toEqual(
 				['PLAN', 'PW_DIAGNOSTICS', 'Plan', 'plan'].sort()
 			);
+		});
+	});
+
+	it('refuses an out-of-domain value before the unawaited write, and names why', async () => {
+		await inObject(freshSite(), async (site: ServeDo) => {
+			await (site as unknown as { adoptSettings(): Promise<void> }).adoptSettings();
+			const view = call(site, 'cfwSettings', {
+				action: 'set',
+				patch: { OPCACHE_MODE: 'turbo', RENDER_BUDGET_MS: '250' }
+			});
+			if (unwritable(view)) return;
+			expect(view.accepted).toEqual(['RENDER_BUDGET_MS']);
+			expect((view.invalid ?? []).map((i) => i.name)).toEqual(['OPCACHE_MODE']);
+			// the form builds its fields from this, so every lever has to carry one
+			const read = call(site, 'cfwSettings', { action: 'get' });
+			expect((read.levers ?? []).every((l) => typeof l.domain?.kind === 'string')).toBe(true);
 		});
 	});
 

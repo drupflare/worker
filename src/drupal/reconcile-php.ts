@@ -79,6 +79,42 @@ echo json_encode($out);
 }
 
 /**
+ * Moves a site onto the three owner tiers and gives uid 1 the owner role.
+ *
+ * Every retired name is revoked before any save, because `Role::save()` throws on a permission no
+ * module declares, which is what a retired name becomes once the driver moves.
+ */
+export function reconcileOwnerPhp(renamed: Record<string, string>, origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false, 'moved' => []];
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+  // an entity save returns SAVED_NEW or SAVED_UPDATED, which live in an include a boot never loads
+  if (!defined('SAVED_UPDATED')) { require_once '/drupal/core/includes/common.inc'; }
+  $renamed = json_decode(${JSON.stringify(JSON.stringify(renamed))}, true);
+  foreach (\Drupal\user\Entity\Role::loadMultiple() as $role) {
+    $held = array_values(array_intersect(array_keys($renamed), $role->getPermissions()));
+    if ($held === []) { continue; }
+    foreach ($held as $old) { $role->revokePermission($old); }
+    foreach ($held as $old) { $role->grantPermission($renamed[$old]); }
+    $role->save();
+    $out['moved'][$role->id()] = $held;
+  }
+  $admin = \Drupal\user\Entity\User::load(1);
+  $out['established'] = $admin === NULL ? [] : \Drupal\drupflare\Hook\OwnerTier::establish($admin);
+  $out['ok'] = $admin !== NULL && $admin->hasRole(\Drupal\drupflare\Hook\OwnerTier::ROLE);
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+echo json_encode($out);
+`;
+}
+
+/**
  * Rebuilds the route table, so a driver module's own routes exist on an already-provisioned site.
  *
  * THE SHIPPED PACK HAS `drupflare` IN `core.extension` AND NONE OF ITS ROUTES. Measured 2026-09-09

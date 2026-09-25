@@ -1,9 +1,11 @@
 import {
 	reconcileClockPhp,
 	reconcileConfigPhp,
+	reconcileOwnerPhp,
 	reconcileRouterPhp
 } from '../drupal/reconcile-php.js';
-import { DRIVER_DIGEST, DRIVER_ROUTES } from './driver-digest.js';
+import { DRIVER_DIGEST, DRIVER_ROUTE_PERMISSIONS, DRIVER_ROUTES } from './driver-digest.js';
+import { UNREAD_NODE_INDEXES } from './node-indexes.js';
 import { base64Bytes, packedContainerFor, type PackedContainer } from './packed-container.js';
 
 /**
@@ -180,6 +182,51 @@ export function configMaxAge(sql: ReconcileSql): { config: number | null; cached
 
 /** what the pack ships, and therefore what a reconciled site must converge on */
 export const SHIPPED_PAGE_MAX_AGE = 300;
+
+/** the drupflare permission names the three tiers replaced, and the tier each one became */
+export const RETIRED_PERMISSIONS: Readonly<Record<string, string>> = {
+	'administer drupflare': 'view drupflare status',
+	'administer drupflare settings': 'administer drupflare site',
+	'administer drupflare operations': 'administer drupflare site',
+	'administer drupflare code': 'administer drupflare owner'
+};
+
+/** the roles whose stored config still names a retired permission, or null when unreadable */
+export function rolesHoldingRetired(sql: ReconcileSql): string[] | null {
+	let rows: Record<string, unknown>[];
+	try {
+		rows = sql.exec("SELECT name, data FROM config WHERE name LIKE 'user.role.%'").toArray();
+	} catch {
+		return null;
+	}
+	// the serialized form carries the length, so `administer drupflare` cannot match a longer name
+	const needles = Object.keys(RETIRED_PERMISSIONS).map((p) => `s:${p.length}:"${p}";`);
+	return rows
+		.filter((r) => needles.some((n) => (columnText(r.data) ?? '').includes(n)))
+		.map((r) => String(r.name).slice('user.role.'.length));
+}
+
+/**
+ * The packed routes whose stored row does not require the permission the pack declares.
+ *
+ * `router.route` is a serialized `Route`, so the requirement is matched in its serialized form.
+ */
+export function staleRoutePermissions(sql: ReconcileSql): string[] {
+	const stale: string[] = [];
+	for (const [name, permission] of Object.entries(DRIVER_ROUTE_PERMISSIONS)) {
+		let text: string | null = null;
+		try {
+			text = columnText(
+				sql.exec('SELECT route FROM router WHERE name = ?', name).toArray()[0]?.route
+			);
+		} catch {
+			text = null;
+		}
+		const wanted = `s:11:"_permission";s:${permission.length}:"${permission}";`;
+		if (text !== null && !text.includes(wanted)) stale.push(name);
+	}
+	return stale;
+}
 
 /**
  * The declarative list. Order is the order they run in; `since` is what makes the version monotonic.
@@ -375,14 +422,78 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 				...DRIVER_ROUTES
 			);
 			if (have === null) return { state: 'deferred', detail: 'router not readable' };
-			if (have >= DRIVER_ROUTES.length) return { state: 'satisfied' };
-			return {
-				state: 'owed',
-				detail: `${have} of ${DRIVER_ROUTES.length} driver routes present in ${rows} rows`
-			};
+			if (have < DRIVER_ROUTES.length) {
+				return {
+					state: 'owed',
+					detail: `${have} of ${DRIVER_ROUTES.length} driver routes present in ${rows} rows`
+				};
+			}
+			// a row keeps the requirement it was built with, so a renamed permission is invisible
+			// to the name count above and every existing site would demand the old one
+			const stale = staleRoutePermissions(sql);
+			return stale.length === 0
+				? { state: 'satisfied' }
+				: { state: 'owed', detail: `permission changed on ${stale.join(', ')}` };
 		},
 		php(host) {
 			return reconcileRouterPhp(host.origin());
+		}
+	},
+	{
+		id: 'owner-tiers',
+		since: 4,
+		describe:
+			'the five drupflare permissions folded into three, and the owner role uid 1 is given at claim',
+		verdict(sql, host) {
+			if (host.claimedAtMs() === null) {
+				return { state: 'deferred', detail: 'never claimed, so there is no owner yet' };
+			}
+			const retired = rolesHoldingRetired(sql);
+			if (retired === null) return { state: 'deferred', detail: 'no config table' };
+			const role = count(
+				sql,
+				'SELECT COUNT(*) AS n FROM config WHERE name = ?',
+				'user.role.drupflare_owner'
+			);
+			const held = count(
+				sql,
+				'SELECT COUNT(*) AS n FROM user__roles WHERE entity_id = ? AND roles_target_id = ?',
+				1,
+				'drupflare_owner'
+			);
+			const owed = [
+				...(retired.length > 0 ? [`retired names on ${retired.join(', ')}`] : []),
+				...(role === 0 ? ['no owner role'] : []),
+				...(held === 0 ? ['uid 1 lacks the owner role'] : [])
+			];
+			return owed.length === 0
+				? { state: 'satisfied' }
+				: { state: 'owed', detail: owed.join('; ') };
+		},
+		php: (host) => reconcileOwnerPhp(RETIRED_PERMISSIONS, host.origin())
+	},
+	{
+		id: 'node-unread-indexes',
+		since: 5,
+		describe:
+			'three node_field_data indexes no default workload reads, each two charged rows on every node save',
+		verdict(sql) {
+			const placeholders = UNREAD_NODE_INDEXES.map(() => '?').join(', ');
+			const present = count(
+				sql,
+				`SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'index' AND name IN (${placeholders})`,
+				...UNREAD_NODE_INDEXES
+			);
+			if (present === null)
+				return { state: 'deferred', detail: 'sqlite_master not readable' };
+			return present === 0
+				? { state: 'satisfied' }
+				: { state: 'owed', detail: `${present} unread node indexes present` };
+		},
+		// SQL rather than PHP: an index has no cached copy anywhere, and Drupal's own
+		// `Schema::dropIndex()` checks for one before dropping, so a later schema update is unharmed
+		sql(sql) {
+			for (const index of UNREAD_NODE_INDEXES) sql.exec(`DROP INDEX IF EXISTS ${index}`);
 		}
 	}
 ];

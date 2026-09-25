@@ -2,7 +2,7 @@
  * The packed driver's identity. GENERATED -- run `bun run assets:driver` after any change in a
  * sibling; `tests/node/driver-pack.spec.ts` fails on drift.
  */
-export const DRIVER_DIGEST = 'db06c15b8363c111';
+export const DRIVER_DIGEST = '9cbc5c32c89c1f3a';
 
 /**
  * The route names the packed modules declare, so a site can be asked whether its router has them.
@@ -19,3 +19,15 @@ export const DRIVER_ROUTES: readonly string[] = [
 	'drupflare.settings',
 	'drupflare.status'
 ];
+
+/**
+ * The permission each packed route requires. A router row keeps the requirement it was built with,
+ * so a renamed permission reaches an existing site only when the router step sees the difference.
+ */
+export const DRIVER_ROUTE_PERMISSIONS: Readonly<Record<string, string>> = {
+	'drupflare.admin': 'view drupflare status+administer site configuration',
+	'drupflare.modules': 'administer drupflare owner',
+	'drupflare.ops_terminal': 'administer drupflare site',
+	'drupflare.settings': 'administer drupflare site',
+	'drupflare.status': 'view drupflare status+administer site configuration'
+};

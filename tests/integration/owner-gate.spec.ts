@@ -288,8 +288,8 @@ describe('the runtime levers are writable, within the allow-list', () => {
 	it(
 		'stores a listed lever and reports it as sourced from kv afterwards',
 		async () => {
-			const name = KV_OVERRIDABLE[0] as string;
-			const wrote = await put({ [name]: 'written-by-the-spec' });
+			const name = 'RENDER_BUDGET_MS';
+			const wrote = await put({ [name]: '4321' });
 			expect(wrote.status).toBe(200);
 			expect(((await wrote.json()) as { ok: boolean }).ok).toBe(true);
 
@@ -297,8 +297,18 @@ describe('the runtime levers are writable, within the allow-list', () => {
 				levers: { name: string; value: unknown; source: string }[];
 			};
 			const lever = after.levers.find((l) => l.name === name);
-			expect(lever?.value).toBe('written-by-the-spec');
+			expect(lever?.value).toBe('4321');
 			expect(lever?.source).toBe('kv');
+
+			// a listed name with a value outside its domain is reported and not stored
+			const bad = (await (await put({ [name]: 'written-by-the-spec' })).json()) as {
+				invalid: { name: string }[];
+			};
+			expect(bad.invalid.map((i) => i.name)).toEqual([name]);
+			const kept = (await (await settings()).json()) as {
+				levers: { name: string; value: unknown }[];
+			};
+			expect(kept.levers.find((l) => l.name === name)?.value).toBe('4321');
 		},
 		TIMEOUT
 	);

@@ -311,6 +311,68 @@ describe('the re-drive record says a re-drive HAPPENED, not what one looks like'
 	});
 });
 
+describe('what a re-drive costs, against the same fill without one', () => {
+	/**
+	 * A re-drive happens only when `cfwFetch` defers, which the park makes rare: a Guzzle request
+	 * parks, and only an `fopen('https://...')` through the stream wrapper still defers. What one
+	 * costs is a second render, the drain it waits on and the rows that drain writes; the render's
+	 * CPU is a warm render's, priced from deployed `cpuTime` in the report.
+	 */
+	it('is one extra render, one outbound fetch, and the rows the drain writes', async () => {
+		const stub = freshSite();
+		const fetched = stubFetch(async () => new Response('landed', { status: 200 }));
+		const out = await inObject(stub, async (site) => {
+			markProvisioned(site);
+			const rows = () => (site as unknown as { dailyRows(): number }).dailyRows();
+			let defer = false;
+			const calls = stubRender(site, (call) => {
+				if (defer) {
+					site.deferredInRender = 1;
+					defer = false;
+				}
+				return pageFor(call.path);
+			});
+			const r0 = rows();
+			const c0 = calls.length;
+			await site.fillOne('/plain');
+			const plain = { rows: rows() - r0, renders: calls.length - c0 };
+
+			// the tables exist on any site that has queued once, so they are not charged here
+			site.ensureHttpTables();
+			const r1 = rows();
+			const c1 = calls.length;
+			const f1 = fetched('redrive.test').length;
+			// the queue row the deferring render writes is part of what the re-drive costs
+			site.queueHttp('https://redrive.test/x');
+			defer = true;
+			await site.fillOne('/redriven');
+			// the daily counters the spend report reads, and they survive a flush
+			(site as unknown as { flushMeters(): void }).flushMeters();
+			const stored = (
+				site as unknown as { storedMeters(): { renders: number; fetches: number } }
+			).storedMeters();
+			return {
+				counted: { renders: stored.renders, fetches: stored.fetches },
+				plain,
+				redrive: {
+					rows: rows() - r1,
+					renders: calls.length - c1,
+					fetches: fetched('redrive.test').length - f1
+				},
+				seq: site.lastRedrive?.seq
+			};
+		});
+		console.log(`[redrive-cost] ${JSON.stringify(out)}`);
+
+		expect(out.seq).toBe(1);
+		expect(out.plain.renders).toBe(1);
+		expect(out.redrive.renders).toBe(2);
+		expect(out.redrive.fetches).toBe(1);
+		expect(out.redrive.rows).toBeGreaterThan(out.plain.rows);
+		expect(out.counted).toEqual({ renders: 3, fetches: 1 });
+	});
+});
+
 // #region TEMPORARY assertion counter
 import { afterAll as __afterAll, afterEach as __afterEach } from 'vitest';
 let __asserts = 0;

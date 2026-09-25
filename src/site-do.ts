@@ -346,6 +346,7 @@ import {
 	readOnlyResponse,
 	type Degradation
 } from './ops/degrade.js';
+import { DRIVER_DIGEST } from './ops/driver-digest.js';
 import {
 	FLEET_SCHEMA_VERSION,
 	ensureFleetTable,
@@ -395,6 +396,7 @@ import {
 	type PollState,
 	type SyncPlan
 } from './ops/git-sync.js';
+import { healthTree, reconcileNode, repairNode, supervisorNode } from './ops/health-tree.js';
 import { hibernationEligible } from './ops/hibernation.js';
 import { phpLogCeiling, phpLogPasses } from './ops/log-level.js';
 import {
@@ -446,6 +448,7 @@ import {
 	type Blob,
 	type DeclaredFile
 } from './ops/module-rev.js';
+import { OPCACHE_PACK } from './ops/opcache-pack.js';
 import { resolveInstallable, type OracleResult } from './ops/oracle.js';
 import { outboundGuardEnabled, refuseOutbound } from './ops/outbound-guard.js';
 import {
@@ -462,9 +465,11 @@ import { installPark, parkEnabled, type ParkClassName, type ParkInstall } from '
 import { planProfile, resolvePlanNumber } from './ops/plan-profile.js';
 import {
 	KV_OVERRIDABLE,
+	LEVER_DOMAINS,
 	canWriteKv,
 	isFree,
 	isPaid,
+	leverRefusal,
 	planFlag,
 	resetSettingsMemo,
 	resolveSettings,
@@ -611,8 +616,11 @@ import {
 } from './ops/write-forwarding.js';
 import {
 	DEFAULT_OPCACHE_MODE,
+	OPCACHE_PACK_ROOT,
 	opcacheIni,
 	opcacheMode,
+	opcacheSourceKey,
+	opcachePackState as packedOpcacheState,
 	type OpcacheMode
 } from './runtime/opcache.js';
 
@@ -992,7 +1000,11 @@ interface PhpInstance {
 type PhpOutputEvent = Event & { detail?: string | string[] };
 
 /** What a mount reported, plus the driver overlay written on top of it. */
-type SiteMountInfo = (MountResult | LazyMountResult) & { driver?: DriverMountResult };
+type SiteMountInfo = (MountResult | LazyMountResult) & {
+	driver?: DriverMountResult;
+	/** the shipped opcache cache's system id when the `pack` arm linked one, else absent */
+	opcachePack?: string;
+};
 
 /**
  * The JS-SIDE half of what a booted interpreter occupies.
@@ -2356,6 +2368,26 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	doRequestsSinceFlush?: number;
 	/** `PAGE_KV` page writes granted since the last meter flush */
 	kvGrantsSinceFlush?: number;
+
+	/** today's renders, alarm firings and drained fetches since the last meter flush */
+	activitySinceFlush?: { renders: number; alarms: number; fetches: number };
+
+	countActivity(kind: 'renders' | 'alarms' | 'fetches', n = 1): void {
+		const held = this.activitySinceFlush ?? { renders: 0, alarms: 0, fetches: 0 };
+		held[kind] += n;
+		this.activitySinceFlush = held;
+	}
+
+	/** today's activity counters, stored plus pending, so a read between flushes is current */
+	activityToday(nowMs = this.nowMs()): { renders: number; alarms: number; fetches: number } {
+		const stored = this.storedMeters(nowMs);
+		const pending = this.activitySinceFlush ?? { renders: 0, alarms: 0, fetches: 0 };
+		return {
+			renders: stored.renders + pending.renders,
+			alarms: stored.alarms + pending.alarms,
+			fetches: stored.fetches + pending.fetches
+		};
+	}
 	/**
 	 * When the alarm this object last set is due, in memory only.
 	 *
@@ -2588,15 +2620,28 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// cold start; the lazy mount creates the nodes and inflates each file when PHP
 		// first opens it. Both are kept because the streaming figures are what every
 		// recorded boot number was taken on.
+		const lazyOptions = {
+			dbPrefix: this.env?.SITE_DB_PREFIX || undefined,
+			// same condition as the streaming path below; the lazy mount used to fetch
+			// the database unconditionally, which is the one boot cost LAZY_MOUNT did
+			// not remove
+			database: migrateEngine(null, this.env) === 'php'
+		};
+		const opcachePackState = packedOpcacheState(
+			OPCACHE_PACK,
+			opcacheMode(this.env?.OPCACHE_MODE),
+			this.env?.LAZY_MOUNT === '1',
+			opcacheSourceKey(DRIVER_DIGEST, SHIPPED_LOCK_VERSIONS)
+		);
+		const packedOpcache = opcachePackState === 'usable';
 		this.mountInfo =
 			this.env?.LAZY_MOUNT === '1'
-				? await mountDrupalLazy(binary, this.env, {
-						dbPrefix: this.env?.SITE_DB_PREFIX || undefined,
-						// same condition as the streaming path below; the lazy mount used to fetch
-						// the database unconditionally, which is the one boot cost LAZY_MOUNT did
-						// not remove
-						database: migrateEngine(null, this.env) === 'php'
-					})
+				? packedOpcache
+					? await mountDrupalLazy(binary, this.env, {
+							...lazyOptions,
+							layers: [{ prefix: 'drupal-pf' }, { prefix: 'drupal-opc' }]
+						}).catch(() => mountDrupalLazy(binary, this.env, lazyOptions))
+					: await mountDrupalLazy(binary, this.env, lazyOptions)
 				: await mountDrupalStreaming(binary, this.env, {
 						dbPrefix: this.env?.SITE_DB_PREFIX || undefined,
 						// the packed .sqlite is only ever opened by the PHP migration engine; the
@@ -2604,6 +2649,23 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						database: migrateEngine(null, this.env) === 'php'
 					});
 		this.mountInfo.driver = await mountDriver(binary, this.env);
+		// opcache looks under /tmp/<system id>; the layer lands beside the tree, so a link joins them
+		const opcLayer =
+			'layers' in this.mountInfo &&
+			this.mountInfo.layers.some((l) => l.name === 'drupal-opc');
+		if (packedOpcache && opcLayer && OPCACHE_PACK !== null) {
+			try {
+				(binary.FS as unknown as { symlink(target: string, path: string): void }).symlink(
+					`${OPCACHE_PACK_ROOT}/${OPCACHE_PACK.systemId}`,
+					`/tmp/${OPCACHE_PACK.systemId}`
+				);
+				this.mountInfo.opcachePack = OPCACHE_PACK.systemId;
+			} catch {
+				// an unlinked cache is a miss on every script, which is the `off` arm's cost
+			}
+		} else if (opcachePackState === 'stale') {
+			this.mountInfo.opcachePack = 'stale';
+		}
 		// AT MOUNT TIME, not from settings.php. A restored heap never boots a kernel, so the
 		// `@mkdir()` in SETTINGS_OVERRIDE never runs on the path that needs it most and the status
 		// report says the sync directory does not exist. The mount runs on every boot
@@ -2960,7 +3022,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const levers = KV_OVERRIDABLE.map((name) => ({
 				name,
 				value: env[name] ?? null,
-				source: this.kvLeverNames?.has(name) ? 'kv' : name in env ? 'var' : 'default'
+				source: this.kvLeverNames?.has(name) ? 'kv' : name in env ? 'var' : 'default',
+				domain: LEVER_DOMAINS[name]
 			}));
 			if (String(req.action ?? 'get') === 'get') {
 				return reply({ ok: true, levers, writable: canWriteKv(kv) });
@@ -2975,11 +3038,19 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const allowed = new Set<string>(KV_OVERRIDABLE);
 			const accepted: Record<string, unknown> = {};
 			const refused: string[] = [];
+			const invalid: { name: string; reason: string }[] = [];
 			for (const [name, value] of Object.entries(patch as Record<string, unknown>)) {
 				// `PLAN` is not on `KV_OVERRIDABLE`, so the allow-list already refuses it at every
 				// spelling; named here because a reader of this branch must not have to go and check
-				if (allowed.has(name)) accepted[name] = value;
-				else refused.push(name);
+				if (!allowed.has(name)) {
+					refused.push(name);
+					continue;
+				}
+				// checked here too, because the write below is not awaited and its verdict never
+				// reaches the form
+				const reason = leverRefusal(name as (typeof KV_OVERRIDABLE)[number], value);
+				if (reason === null) accepted[name] = value;
+				else invalid.push({ name, reason });
 			}
 			if (Object.keys(accepted).length > 0) {
 				this.ctx.waitUntil(
@@ -2995,7 +3066,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 						.catch(() => {})
 				);
 			}
-			return reply({ ok: true, accepted: Object.keys(accepted), refused });
+			return reply({ ok: true, accepted: Object.keys(accepted), refused, invalid });
 		};
 
 		/**
@@ -3852,6 +3923,14 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				{
 					rowsToday: this.dailyRows(),
 					doRequestsToday: this.dailyDoRequests(),
+					...(() => {
+						const today = this.activityToday();
+						return {
+							rendersToday: today.renders,
+							alarmsToday: today.alarms,
+							fetchesToday: today.fetches
+						};
+					})(),
 					// the byte count, not the {files, bytes} pair the line above reports.
 					//
 					// GUARDED, BECAUSE A READ MUST NOT RUN DDL. `storedBytes()` calls
@@ -4179,6 +4258,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			const settled = await Promise.allSettled(
 				batch.map((b) => this.performOutbound(b.url, b.method, b.sent, b.outbound))
 			);
+			// every attempt is a subrequest, answered or not
+			this.countActivity('fetches', batch.length);
 			for (let j = 0; j < batch.length; j++) {
 				const entry = batch[j];
 				const outcome = settled[j];
@@ -6250,7 +6331,10 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			doRequests: Number(this.metaGet(`do_requests_${day}`, '0') ?? 0),
 			serveTotal: this.carriedServeTotal(),
 			encounters: parseEncounters(this.metaGet(`encounters_${day}`)),
-			kvWrites: 0
+			kvWrites: 0,
+			renders: 0,
+			alarms: 0,
+			fetches: 0
 		};
 	}
 
@@ -6289,6 +6373,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		const doPending = this.doRequestsSinceFlush ?? 0;
 		const servePending = this.serveRequestsPending ?? 0;
 		const kvPending = this.kvGrantsSinceFlush ?? 0;
+		const activity = this.activitySinceFlush ?? { renders: 0, alarms: 0, fetches: 0 };
 		const seen = this.encounters;
 		const encountersPending =
 			seen.noPhp !== 0 || seen.warm !== 0 || seen.cold !== 0 || seen.absorbed !== 0;
@@ -6298,6 +6383,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 			doPending === 0 &&
 			servePending === 0 &&
 			kvPending === 0 &&
+			activity.renders + activity.alarms + activity.fetches === 0 &&
 			!encountersPending
 		) {
 			return stored;
@@ -6306,13 +6392,17 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		this.doRequestsSinceFlush = 0;
 		this.serveRequestsPending = 0;
 		this.kvGrantsSinceFlush = 0;
+		this.activitySinceFlush = { renders: 0, alarms: 0, fetches: 0 };
 		this.encounters = { ...ZERO_ENCOUNTERS };
 		const total: DayMeters = {
 			rows: stored.rows + rowsPending,
 			doRequests: stored.doRequests + doPending,
 			serveTotal: stored.serveTotal + servePending,
 			encounters: addEncounters(stored.encounters, seen),
-			kvWrites: stored.kvWrites + kvPending
+			kvWrites: stored.kvWrites + kvPending,
+			renders: stored.renders + activity.renders,
+			alarms: stored.alarms + activity.alarms,
+			fetches: stored.fetches + activity.fetches
 		};
 		this.carriedServe = total.serveTotal;
 		// yesterday's key is left in place: one row per day is nothing, and a
@@ -9742,6 +9832,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// and the half of it that survives a hibernation; the ring alone made the rate branch
 		// unreachable in exactly the band it exists for
 		this.rendersSinceFlush = (this.rendersSinceFlush ?? 0) + 1;
+		this.countActivity('renders');
 		let result = await this.runJsonMaybeParked(
 			renderPage(path, bins, destruct, { ...request, origin })
 		);
@@ -9764,6 +9855,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 				);
 				if (landed) {
 					this.deferredInRender = 0;
+					this.countActivity('renders');
 					result = await this.runJson(
 						renderPage(path, bins, destruct, { ...request, origin })
 					);
@@ -10716,6 +10808,7 @@ export class SitePhpDurableObject extends SiteDurableObject {
 	 */
 	override async alarm(): Promise<any> {
 		this.adoptRetained();
+		this.countActivity('alarms');
 		// An alarm is an invocation and it writes authoritative state. Cron runs here, and the seal
 		// used to live only on the `fetch()` path -- so a cron write buffered a record nothing sealed,
 		// and the buffer then leaked into the next request and would have been sealed there with the
@@ -12345,6 +12438,50 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 				// `DEFAULT_PLATFORM` listed `ext-mbstring` on a build that has none. Function-name
 				// evidence cannot substitute: opcache's optimizer carries a `func_info` table
 				// naming `curl_init` and `imagecreatetruecolor` in a binary that has neither.
+				// the file cache this interpreter wrote, for `scripts/bake-opcache.ts` to pack: `op=list`
+				// names every `.bin` under /tmp, `op=read&path=` answers one as bytes
+				case '/__opcache': {
+					const { binary } = await this.ensurePhp();
+					const fs = binary.FS as unknown as {
+						readdir(p: string): string[];
+						stat(p: string): { mode: number; size: number };
+						isDir(mode: number): boolean;
+						readFile(p: string): Uint8Array;
+					};
+					if (url.searchParams.get('op') === 'read') {
+						const path = url.searchParams.get('path') ?? '';
+						if (
+							!path.startsWith('/tmp/') ||
+							path.includes('..') ||
+							!path.endsWith('.bin')
+						) {
+							return Response.json(
+								{ ok: false, error: 'a .bin path under /tmp' },
+								{ status: 400 }
+							);
+						}
+						return new Response(fs.readFile(path), {
+							headers: { 'content-type': 'application/octet-stream' }
+						});
+					}
+					const files: { path: string; bytes: number }[] = [];
+					const walk = (dir: string) => {
+						for (const name of fs.readdir(dir)) {
+							if (name === '.' || name === '..') continue;
+							const path = `${dir}/${name}`;
+							const st = fs.stat(path);
+							if (fs.isDir(st.mode)) walk(path);
+							else if (path.endsWith('.bin')) files.push({ path, bytes: st.size });
+						}
+					};
+					walk('/tmp');
+					return Response.json({
+						ok: true,
+						mode: opcacheMode(this.env?.OPCACHE_MODE),
+						files
+					});
+				}
+
 				case '/__php': {
 					const out = await this.runJson(
 						`<?php $e = get_loaded_extensions(); sort($e); echo json_encode(['v' => PHP_VERSION, 'e' => $e]);`
@@ -12614,6 +12751,11 @@ foreach (\\Drupal\\image\\Entity\\ImageStyle::loadMultiple() as $style) {
 						return Response.json({ ok: true, released, was: state });
 					}
 					return Response.json({
+						tree: healthTree([
+							repairNode(state),
+							reconcileNode(this.reconcileStatus()),
+							supervisorNode(this.lastFindings ?? [])
+						]),
 						repair: state,
 						quarantined: isQuarantined(state),
 						rollback: shouldRollback(state, latestImport(this.sql), this.nowMs()),

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
+import { layerPath, serialiseOpcachePack, systemIdOf } from '../../scripts/opcache-layer';
 import { memfsCensus, renderPage } from '../../src/drupal/site-php';
 import {
 	DEFAULT_OPCACHE_MODE,
 	OPCACHE_MODES,
 	opcacheIni,
-	opcacheMode
+	opcacheMode,
+	opcachePackState,
+	opcacheSourceKey
 } from '../../src/runtime/opcache';
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
@@ -98,8 +101,12 @@ async function armProfile(mode: string) {
 }
 
 describe('P30: the opcache arms', () => {
-	it('names three arms and falls back to the shipping one', () => {
-		expect([...OPCACHE_MODES]).toEqual(['file', 'shm', 'off']);
+	it('names four arms and falls back to the shipping one', () => {
+		expect([...OPCACHE_MODES]).toEqual(['file', 'shm', 'off', 'pack']);
+		// the shipped cache is read and never written, or a miss spends the MEMFS `file` spends
+		expect(opcacheIni('pack')).toContain('opcache.file_cache_read_only=1');
+		expect(opcacheIni('pack')).toContain('opcache.file_cache=/tmp');
+		expect(opcacheIni('file')).not.toContain('opcache.file_cache_read_only=1');
 		expect(DEFAULT_OPCACHE_MODE).toBe('off');
 		expect(opcacheMode('shm')).toBe('shm');
 		expect(opcacheMode('nonsense')).toBe('off');
@@ -155,5 +162,94 @@ describe('P30: the opcache arms', () => {
 			by('off').heap,
 			'the off arm grew more than one step, so something other than opcache allocated'
 		).toBeLessThanOrEqual(oneStep);
+	}, 900_000);
+});
+
+describe('the pack arm, which ships a baked cache as a second layer', () => {
+	const ID = '944d2daeb7b3af487437a92413cf43ac';
+
+	it('places a core script beside the tree and never packs sites/', () => {
+		expect(layerPath(`/tmp/${ID}/drupal/core/lib/Drupal.php.bin`)).toBe(
+			`.opcache/${ID}/drupal/core/lib/Drupal.php.bin`
+		);
+		// settings.php compiles with the baking site's hash_salt in it, and the layer is public
+		expect(layerPath(`/tmp/${ID}/drupal/sites/default/settings.php.bin`)).toBeNull();
+		expect(layerPath('/tmp/not-an-id/drupal/core/x.php.bin')).toBeNull();
+		expect(layerPath(`/tmp/${ID}/elsewhere/x.php.bin`)).toBeNull();
+	});
+
+	it('refuses a cache that mixes two interpreter builds', () => {
+		expect(systemIdOf([`.opcache/${ID}/drupal/a.bin`, `.opcache/${ID}/drupal/b.bin`])).toBe(ID);
+		expect(() =>
+			systemIdOf([`.opcache/${ID}/drupal/a.bin`, '.opcache/other/drupal/b.bin'])
+		).toThrow();
+	});
+
+	it('writes a descriptor the mount reads, and null when nothing was baked', () => {
+		expect(serialiseOpcachePack(null)).toContain('| null = null;');
+		const written = serialiseOpcachePack({ systemId: ID, files: 3, bytes: 9, source: 'd:k' });
+		expect(written).toContain(`systemId: '${ID}'`);
+		expect(written).toContain(`source: 'd:k'`);
+	});
+
+	it('keys a cache on the driver and every locked version, in any order', () => {
+		const lock = { 'drupal/core': '11.4.7', 'drupal/token': '1.15.0' };
+		const key = opcacheSourceKey('9cbc5c32c89c1f3a', lock);
+		expect(key).toMatch(/^9cbc5c32c89c1f3a:[0-9a-f]{8}$/);
+		expect(
+			opcacheSourceKey('9cbc5c32c89c1f3a', {
+				'drupal/token': '1.15.0',
+				'drupal/core': '11.4.7'
+			})
+		).toBe(key);
+		expect(opcacheSourceKey('2c2c311d38e6d68c', lock)).not.toBe(key);
+		expect(
+			opcacheSourceKey('9cbc5c32c89c1f3a', { ...lock, 'drupal/token': '1.16.0' })
+		).not.toBe(key);
+	});
+
+	it('refuses a cache compiled from other sources, since scripts are never revalidated', () => {
+		expect(opcacheIni('pack')).toContain('opcache.validate_timestamps=0');
+		const pack = { source: 'a:1' };
+		expect(opcachePackState(pack, 'pack', true, 'a:1')).toBe('usable');
+		expect(opcachePackState(pack, 'pack', true, 'b:1')).toBe('stale');
+		expect(opcachePackState(null, 'pack', true, 'a:1')).toBe('none');
+		expect(opcachePackState(pack, 'off', true, 'a:1')).toBe('none');
+		expect(opcachePackState(pack, 'pack', false, 'a:1')).toBe('none');
+	});
+
+	it('lists and reads what the file arm wrote, and refuses any other path', async () => {
+		const out = await inObject(freshSite(), async (site: ServeDo) => {
+			site.env.OPCACHE_MODE = 'file';
+			await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+			await site.runJson(renderPage('/', ['dynamic_page_cache', 'render']));
+			const listed = (await (
+				await site.fetch(new Request('https://do.local/__opcache?op=list'))
+			).json()) as { mode: string; files: { path: string; bytes: number }[] };
+			const first = listed.files[0];
+			const read = first
+				? await site.fetch(
+						new Request(
+							`https://do.local/__opcache?op=read&path=${encodeURIComponent(first.path)}`
+						)
+					)
+				: null;
+			const refused = await site.fetch(
+				new Request(
+					'https://do.local/__opcache?op=read&path=%2Fdrupal%2Fsites%2Fdefault%2Fsettings.php'
+				)
+			);
+			return {
+				mode: listed.mode,
+				files: listed.files.length,
+				readBytes: read ? (await read.arrayBuffer()).byteLength : 0,
+				expected: first?.bytes ?? -1,
+				refused: refused.status
+			};
+		});
+		expect(out.mode).toBe('file');
+		expect(out.files).toBeGreaterThan(0);
+		expect(out.readBytes).toBe(out.expected);
+		expect(out.refused).toBe(400);
 	}, 900_000);
 });

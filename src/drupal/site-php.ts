@@ -2415,6 +2415,10 @@ ${PACK_CONSISTENCY}
     $admin->save();
     $out['adminName'] = $admin->getAccountName();
     $out['adminMail'] = $admin->getEmail();
+    // the claimed account is the owner, as a role so a team can share it
+    if (class_exists(\Drupal\drupflare\Hook\OwnerTier::class)) {
+      $out['owner'] = \Drupal\drupflare\Hook\OwnerTier::establish($admin);
+    }
   }
 
   // THE CLOCK IN THE PACK IS THE ONE FROM THE BAKE, and the status report reads it. install_time

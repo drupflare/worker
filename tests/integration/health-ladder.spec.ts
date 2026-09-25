@@ -397,9 +397,22 @@ describe('/__health exposes the ledger and releases quarantine', () => {
 			rollback: { rollback: boolean; reason: string };
 			ledger: { code: string }[];
 			ledgerRows: number;
+			tree: {
+				level: string;
+				nodes: { id: string; level: string; children: { id: string; source: string }[] }[];
+			};
 		};
 		expect(body.quarantined).toBe(true);
 		expect(body.repair.rung).toBe('quarantine');
+		// the same facts on one scale, which is what the control plane renders
+		expect(body.tree.level).toBe('critical');
+		expect(body.tree.nodes.map((n) => n.id)).toEqual(['repair', 'reconcile', 'supervisor']);
+		const reconcile = body.tree.nodes.find((n) => n.id === 'reconcile');
+		expect(reconcile?.children.length).toBeGreaterThan(0);
+		expect(reconcile?.children.every((c) => c.source === 'reconcile')).toBe(true);
+		expect(body.tree.nodes.find((n) => n.id === 'supervisor')?.children[0]?.id).toBe(
+			'supervisor.render.empty'
+		);
 		expect(body.ledgerRows).toBe(3);
 		expect(body.ledger.every((r) => r.code === 'render.empty')).toBe(true);
 		expect(body.rollback.rollback).toBe(false);

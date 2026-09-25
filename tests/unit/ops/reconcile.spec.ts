@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { reconcileRouterPhp } from '../../../src/drupal/reconcile-php';
-import { DRIVER_DIGEST, DRIVER_ROUTES } from '../../../src/ops/driver-digest';
+import {
+	DRIVER_DIGEST,
+	DRIVER_ROUTES,
+	DRIVER_ROUTE_PERMISSIONS
+} from '../../../src/ops/driver-digest';
 import {
 	base64Bytes,
 	extensionFingerprint,
@@ -12,6 +16,7 @@ import {
 	DRIVER_DIGEST_KEY,
 	PACK_VERSION,
 	RECONCILE_STEPS,
+	RETIRED_PERMISSIONS,
 	SHIPPED_PAGE_MAX_AGE,
 	STEP_ATTEMPT_LIMIT,
 	configMaxAge,
@@ -20,8 +25,10 @@ import {
 	reconcileReport,
 	reconciled,
 	recordStep,
+	rolesHoldingRetired,
 	serialiseReconcileState,
 	serialisedInt,
+	staleRoutePermissions,
 	versionReached,
 	type ReconcileHost,
 	type ReconcileSql,
@@ -74,6 +81,14 @@ function fakeSql(tables: Record<string, Record<string, unknown>[]>): ReconcileSq
 							{ n: rows.filter((r) => wanted.has(String(r.name))).length }
 						]
 					};
+				}
+				// `col = ?` pairs, bound in order
+				const equal = [...sql.matchAll(/(\w+) = \?/g)].map((m) => m[1] as string);
+				if (equal.length > 0) {
+					const n = rows.filter((r) =>
+						equal.every((col, i) => String(r[col]) === String(bindings[i]))
+					).length;
+					return { toArray: () => [{ n }] };
 				}
 				const before = Number(bindings[0] ?? Infinity);
 				const n = /timestamp <\s*\?/.test(sql)
@@ -322,6 +337,91 @@ describe('the packed container file', () => {
 	});
 });
 
+describe('the owner-tier step', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'owner-tiers') as ReconcileStep;
+	const role = (id: string, perms: string[]) => ({
+		name: `user.role.${id}`,
+		data: new TextEncoder().encode(
+			`a:1:{s:11:"permissions";a:${perms.length}:{${perms
+				.map((p, i) => `i:${i};s:${p.length}:"${p}";`)
+				.join('')}}}`
+		)
+	});
+	const owned = {
+		user__roles: [{ entity_id: 1, roles_target_id: 'drupflare_owner' }]
+	};
+
+	it('waits for a claim, since there is no owner before one', () => {
+		expect(step.verdict(fakeSql({ config: [] }), fakeHost(null)).state).toBe('deferred');
+	});
+
+	it('owes a role still holding a retired name, matched exactly', () => {
+		const sql = fakeSql({
+			...owned,
+			config: [
+				role('drupflare_owner', ['administer drupflare owner']),
+				role('editor', ['administer drupflare settings']),
+				// `administer drupflare` is a prefix of the new names and must not match them
+				role('staff', ['administer drupflare site'])
+			]
+		});
+		expect(rolesHoldingRetired(sql)).toEqual(['editor']);
+		expect(step.verdict(sql, fakeHost(1_000)).state).toBe('owed');
+	});
+
+	it('owes a claimed site with no owner role, or a uid 1 without it', () => {
+		const noRole = fakeSql({ ...owned, config: [] });
+		expect(step.verdict(noRole, fakeHost(1_000)).state).toBe('owed');
+		const unheld = fakeSql({
+			user__roles: [],
+			config: [role('drupflare_owner', ['administer drupflare owner'])]
+		});
+		expect(step.verdict(unheld, fakeHost(1_000)).state).toBe('owed');
+	});
+
+	it('is satisfied once the role exists, uid 1 holds it and nothing retired remains', () => {
+		const sql = fakeSql({
+			...owned,
+			config: [role('drupflare_owner', ['administer drupflare owner'])]
+		});
+		expect(step.verdict(sql, fakeHost(1_000)).state).toBe('satisfied');
+	});
+
+	it('hands the fragment every retired name and the tier it became', () => {
+		const php = step.php?.(fakeHost(1_000)) ?? '';
+		for (const [old, now] of Object.entries(RETIRED_PERMISSIONS)) {
+			expect(php).toContain(old);
+			expect(php).toContain(now);
+		}
+		expect(php).toContain('OwnerTier::establish');
+	});
+});
+
+describe('the unread node index step', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'node-unread-indexes') as ReconcileStep;
+
+	it('owes a site that still carries any of the three, and drops them by SQL', () => {
+		const sql = fakeSql({
+			sqlite_master: [
+				{ type: 'index', name: 'node_field_data_node__vid' },
+				{ type: 'index', name: 'node_field_data_node__status_type' }
+			]
+		});
+		const verdict = step.verdict(sql, fakeHost(null));
+		expect(verdict.state).toBe('owed');
+		// no claim is needed: an index is schema, not something a birthday decides
+		expect(step.php).toBeUndefined();
+		expect(step.sql).toBeDefined();
+	});
+
+	it('is satisfied when none remains, whatever else the table is indexed on', () => {
+		const sql = fakeSql({
+			sqlite_master: [{ type: 'index', name: 'node_field_data_node__status_type' }]
+		});
+		expect(step.verdict(sql, fakeHost(null)).state).toBe('satisfied');
+	});
+});
+
 describe('the router step, which was 404 on every site', () => {
 	const step = RECONCILE_STEPS.find((s) => s.id === 'router-driver-routes') as ReconcileStep;
 	const host = fakeHost(1_000);
@@ -356,6 +456,32 @@ describe('the router step, which was 404 on every site', () => {
 
 	it('defers rather than failing on a pack with no router table at all', () => {
 		expect(step.verdict(fakeSql({}), host).state).toBe('deferred');
+	});
+
+	/** a row keeps the requirement it was built with, which the name count cannot see */
+	const routeRow = (name: string, permission: string) => ({
+		name,
+		route: `O:31:"Symfony\\Component\\Routing\\Route":1:{s:12:"requirements";a:1:{s:11:"_permission";s:${permission.length}:"${permission}";}}`
+	});
+
+	it('owes a site whose route rows require a permission the pack renamed', () => {
+		const rows = DRIVER_ROUTES.map((name) =>
+			routeRow(name, DRIVER_ROUTE_PERMISSIONS[name] ?? 'access content')
+		);
+		rows[rows.findIndex((r) => r.name === 'drupflare.settings')] = routeRow(
+			'drupflare.settings',
+			'administer drupflare settings'
+		);
+		const verdict = step.verdict(fakeSql({ router: rows }), host);
+		expect(verdict.state).toBe('owed');
+		if (verdict.state === 'owed') expect(verdict.detail).toContain('drupflare.settings');
+	});
+
+	it('is satisfied when every row requires what the pack declares', () => {
+		const rows = DRIVER_ROUTES.map((name) =>
+			routeRow(name, DRIVER_ROUTE_PERMISSIONS[name] ?? 'access content')
+		);
+		expect(staleRoutePermissions(fakeSql({ router: rows }))).toEqual([]);
 	});
 
 	/**

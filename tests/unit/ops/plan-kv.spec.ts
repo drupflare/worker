@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-	KV_OVERRIDABLE,
-	PLAN_KV_KEY,
-	PLAN_MEMO_MS,
-	SETTINGS_KV_KEY,
 	canWriteKv,
 	isPaid,
+	KV_OVERRIDABLE,
+	LEVER_DOMAINS,
+	leverRefusal,
+	PLAN_KV_KEY,
+	PLAN_MEMO_MS,
 	resetPlanMemo,
 	resetSettingsMemo,
 	resolvePlan,
 	resolveSettings,
+	SETTINGS_KV_KEY,
 	withPlan,
 	withSettings,
 	writePlan,
@@ -310,6 +312,55 @@ describe('writing the levers', () => {
 		await writePlan(kv, null);
 		// an empty override is not `free`; it defers, so the deployed var comes back into force
 		expect(await resolvePlan({ PLAN: 'paid' }, kv)).toEqual({ plan: 'paid', source: 'var' });
+	});
+
+	it('refuses a value outside its lever domain and leaves the stored one alone', async () => {
+		const { held, kv } = kvStore({ [SETTINGS_KV_KEY]: JSON.stringify({ MIRROR_LIMIT: '9' }) });
+		const out = await writeSettings(kv, {
+			MIRROR_LIMIT: '900',
+			OPCACHE_MODE: 'turbo',
+			SITE_WARM: 'yes',
+			SITE_LOCATION_HINT: 'mars',
+			MEMORY_CACHE_BINS: 'menu;drop',
+			FILL_BATCH_SIZE: '2.5',
+			REPLICA_COUNT: '4'
+		});
+
+		expect(out.invalid.map((i) => i.name).sort()).toEqual(
+			[
+				'FILL_BATCH_SIZE',
+				'MEMORY_CACHE_BINS',
+				'MIRROR_LIMIT',
+				'OPCACHE_MODE',
+				'SITE_LOCATION_HINT',
+				'SITE_WARM'
+			].sort()
+		);
+		expect(out.invalid.find((i) => i.name === 'MIRROR_LIMIT')?.reason).toContain(
+			'between 1 and 25'
+		);
+		expect(stored(held).MIRROR_LIMIT).toBe('9');
+		expect(stored(held).OPCACHE_MODE).toBeUndefined();
+		// CONTROL: an in-domain value in the same patch still lands
+		expect(stored(held).REPLICA_COUNT).toBe('4');
+	});
+
+	it('accepts every domain kind at its edges', () => {
+		expect(leverRefusal('RENDER_BUDGET_MS', '0')).toBeNull();
+		expect(leverRefusal('RENDER_BUDGET_MS', '60000')).toBeNull();
+		expect(leverRefusal('RENDER_BUDGET_MS', '60001')).toContain('between');
+		expect(leverRefusal('RENDER_BUDGET_MS', '-1')).toContain('whole number');
+		expect(leverRefusal('EDGE_PLAN', '0')).toBeNull();
+		expect(leverRefusal('MAIL_TRANSPORT', 'smtp')).toBeNull();
+		expect(leverRefusal('MEMORY_CACHE_BINS', 'none')).toBeNull();
+		expect(leverRefusal('MEMORY_CACHE_BINS', 'dynamic_page_cache, menu')).toBeNull();
+		// empty clears the override, so it is never out of domain
+		expect(leverRefusal('OPCACHE_MODE', '')).toBeNull();
+		expect(leverRefusal('OPCACHE_MODE', null)).toBeNull();
+	});
+
+	it('names a domain for every lever, so the form never has to guess one', () => {
+		expect(Object.keys(LEVER_DOMAINS).sort()).toEqual([...KV_OVERRIDABLE].sort());
 	});
 
 	it('reports a read-only binding rather than throwing on it', () => {

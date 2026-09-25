@@ -180,3 +180,28 @@ describe('the checkpoint the object actually applies', () => {
 		REQUEST_TIMEOUT
 	);
 });
+
+describe('the daily alarm count the spend report reads', () => {
+	it(
+		'counts every firing into the day row, where an eviction cannot reset it',
+		async () => {
+			const seen = await inObject(await provisionedSite(), async (site: ServeDo) => {
+				markProvisioned(site);
+				site.ensureServeTables();
+				const s = site as unknown as {
+					activityToday(): { alarms: number };
+					flushMeters(): void;
+					storedMeters(): { alarms: number };
+				};
+				const before = s.activityToday().alarms;
+				for (let i = 0; i < 3; i++) await site.alarm();
+				const after = s.activityToday().alarms;
+				s.flushMeters();
+				return { counted: after - before, stored: s.storedMeters().alarms };
+			});
+			expect(seen.counted).toBe(3);
+			expect(seen.stored).toBeGreaterThanOrEqual(3);
+		},
+		REQUEST_TIMEOUT
+	);
+});

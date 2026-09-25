@@ -242,6 +242,89 @@ export const KV_OVERRIDABLE = [
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
 
+/**
+ * What a lever accepts, read off the function that parses it.
+ *
+ * `int` bounds are the reader's own clamps where it has one; `unit` is for display. `flag` is `0` or
+ * `1`, because every flag reader here tests for one of the two and treats anything else as the other.
+ */
+export type LeverDomain =
+	| { kind: 'int'; min: number; max: number; unit?: 'ms' | 'bytes' }
+	| { kind: 'flag' }
+	| { kind: 'enum'; values: readonly string[] }
+	| { kind: 'bins' };
+
+export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
+	RENDER_BUDGET_MS: { kind: 'int', min: 0, max: 60_000, unit: 'ms' },
+	FILL_BATCH_SIZE: { kind: 'int', min: 1, max: 50 },
+	HTTP_DRAIN_LIMIT: { kind: 'int', min: 1, max: 25 },
+	MIRROR_LIMIT: { kind: 'int', min: 1, max: 25 },
+	// the reader has no clamp; 16 MiB was measured to take a module install past the JS ceiling
+	// (`lazy-fs-budget.spec.ts`), so the writer stops at half of it
+	LAZY_FS_BUDGET_BYTES: { kind: 'int', min: 0, max: 8 * 1024 * 1024, unit: 'bytes' },
+	PREFILL: { kind: 'flag' },
+	GEN_BUCKET_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
+	MAIL_TRANSPORT: { kind: 'enum', values: ['auto', 'binding', 'api', 'smtp', 'off'] },
+	MAIL_DRAIN_LIMIT: { kind: 'int', min: 1, max: 25 },
+	SHELL_ASSEMBLY: { kind: 'flag' },
+	OPCACHE_MODE: { kind: 'enum', values: ['file', 'shm', 'off'] },
+	ARGON2: { kind: 'flag' },
+	SITE_LOCATION_HINT: {
+		kind: 'enum',
+		values: [
+			'wnam',
+			'enam',
+			'sam',
+			'weur',
+			'eeur',
+			'apac',
+			'apac-ne',
+			'apac-se',
+			'oc',
+			'afr',
+			'me'
+		]
+	},
+	REPLICA_COUNT: { kind: 'int', min: 0, max: 256 },
+	REPLICA_LAG_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
+	SITE_WARM: { kind: 'flag' },
+	EDGE_PLAN: { kind: 'flag' },
+	ASSET_AGGREGATES: { kind: 'flag' },
+	MEMORY_CACHE_BINS: { kind: 'bins' },
+	MEMORY_CACHE_MAX_ITEMS: { kind: 'int', min: 1, max: 4_096 }
+};
+
+/**
+ * Why a value is outside its lever's domain, or null when it is inside.
+ *
+ * An empty value is always inside: it clears the override.
+ */
+export function leverRefusal(name: KvOverridable, value: unknown): string | null {
+	const text = value === null || value === undefined ? '' : String(value).trim();
+	if (text === '') return null;
+	const domain = LEVER_DOMAINS[name];
+	switch (domain.kind) {
+		case 'int': {
+			if (!/^\d+$/.test(text)) return `${name} must be a whole number; got ${text}`;
+			const n = Number(text);
+			if (n < domain.min || n > domain.max) {
+				return `${name} must be between ${domain.min} and ${domain.max}; got ${text}`;
+			}
+			return null;
+		}
+		case 'flag':
+			return text === '0' || text === '1' ? null : `${name} must be 0 or 1; got ${text}`;
+		case 'enum':
+			return domain.values.includes(text)
+				? null
+				: `${name} must be one of ${domain.values.join(', ')}; got ${text}`;
+		case 'bins':
+			return text === 'none' || /^[a-z0-9_]{1,40}(\s*,\s*[a-z0-9_]{1,40})*$/.test(text)
+				? null
+				: `${name} must be none or comma-separated bin names; got ${text}`;
+	}
+}
+
 const settingsMemo = new Map<
 	string,
 	{ at: number; value: Partial<Record<KvOverridable, string>> }
@@ -299,6 +382,8 @@ export type SettingsWrite = {
 	refused: string[];
 	/** names the caller cleared, which fall back to the deployed var */
 	cleared: string[];
+	/** allow-listed names whose value is outside {@link LEVER_DOMAINS}, left as they were */
+	invalid: { name: string; reason: string }[];
 };
 
 /**
@@ -344,17 +429,23 @@ export async function writeSettings(
 
 	const refused: string[] = [];
 	const cleared: string[] = [];
+	const invalid: { name: string; reason: string }[] = [];
 	for (const [name, value] of Object.entries(patch)) {
 		if (!allowed.has(name)) {
 			refused.push(name);
 			continue;
 		}
-		if (value === null || value === undefined || String(value) === '') {
+		if (value === null || value === undefined || String(value).trim() === '') {
 			delete current[name];
 			cleared.push(name);
 			continue;
 		}
-		current[name] = String(value);
+		const reason = leverRefusal(name as KvOverridable, value);
+		if (reason !== null) {
+			invalid.push({ name, reason });
+			continue;
+		}
+		current[name] = String(value).trim();
 	}
 
 	// only allow-listed names survive the round trip, so a document that arrived carrying something
@@ -370,7 +461,7 @@ export async function writeSettings(
 	// the isolate would otherwise serve the old document for up to PLAN_MEMO_MS, which reads as the
 	// write having been ignored
 	resetSettingsMemo();
-	return { written: next as Partial<Record<KvOverridable, string>>, refused, cleared };
+	return { written: next as Partial<Record<KvOverridable, string>>, refused, cleared, invalid };
 }
 
 /**

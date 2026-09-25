@@ -69,6 +69,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/git-smart.ts': 'host',
 	// where a repository lands in the Drupal tree
 	'src/ops/git-sync.ts': 'mixed',
+	'src/ops/health-tree.ts': 'host',
 	'src/ops/hibernation.ts': 'host',
 	'src/ops/image-runtime.ts': 'host',
 	'src/ops/image-transform.ts': 'host',
@@ -82,7 +83,11 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/module-tiers.ts': 'cms',
 	// Drupal's key_value security state
 	'src/ops/mutation-oracle.ts': 'mixed',
+	// index names on Drupal's node_field_data
+	'src/ops/node-indexes.ts': 'cms',
 	'src/ops/oidc.ts': 'host',
+	// a cache of compiled Drupal scripts
+	'src/ops/opcache-pack.ts': 'cms',
 	// install verdicts keyed on the Drupal core version, tiers from the contrib catalog
 	'src/ops/oracle.ts': 'mixed',
 	'src/ops/outbound-guard.ts': 'host',
@@ -152,6 +157,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 /** every `DO_ROUTE` key in `src/site.ts`, by what its handler does */
 export const ROUTE_SIDES: Readonly<Record<string, Side>> = {
 	'/heap': 'host',
+	'/opcache': 'host',
 	'/bootphase': 'cms',
 	'/ops': 'mixed',
 	'/installable': 'cms',

@@ -9,6 +9,10 @@
  * every lookup is a guaranteed miss; within one instance, three entries deleted by hand did not
  * reappear across three further renders.
  *
+ * It is write-only for want of persistence, not of reading: planted into a fresh instance before it
+ * boots, the 92 files a kernel boot writes are all read and none recompiled, against a control that
+ * writes all 92 (measured 2026-09-24 in the workers pool). A cache shipped with the pack would load.
+ *
  * That is an obvious thing to delete and it must not be deleted blind. `file_cache_only=1` makes the
  * file cache opcache's ONLY backing store, so removing the path may disable opcache rather than
  * merely stop the writes -- and removing opcache ini blind is exactly what produced the 8.5

@@ -501,7 +501,12 @@ describe('the interpreter recycle', () => {
 
 			expect(series.length).toBe(16);
 			expect(Math.min(...series)).toBeGreaterThan(0);
-			expect(Math.max(...series)).toBe(Math.min(...series));
+			// NO GROWTH PER ROUND, which is the leak this hunts. A hook's first run may still cross
+			// one growth rung: on the rebuilt pack the heap sits just under one and steps once at
+			// firing 5, then holds through the ring's second pass. A leak climbs past the first pass
+			const secondPass = series.slice(8);
+			expect(new Set(secondPass).size, JSON.stringify(series)).toBe(1);
+			expect(secondPass[0], JSON.stringify(series)).toBe(series[7]);
 		},
 		REQUEST_TIMEOUT
 	);

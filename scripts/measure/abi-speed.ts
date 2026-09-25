@@ -139,7 +139,10 @@ const ABI_WASM: Record<string, string> = {
 	wasm64: '.interp/php8.5-wasm64.wasm',
 	// long64 with the Zend VM threaded through musttail. Score it against `long64` and nothing
 	// else: against wasm32 the reading carries the integer-width difference as well
-	vmtailcall: '.interp/php8.5-vmtailcall.wasm'
+	vmtailcall: '.interp/php8.5-vmtailcall.wasm',
+	// long64 after phasm's `import-stack-pointer.mjs --grow-table`, the shape a host needs to place a
+	// side module; score it against `long64`, which it differs from by that edit alone
+	spimport: '.interp/php8.5-spimport.wasm'
 };
 
 export type Arm = {

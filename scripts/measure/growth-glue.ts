@@ -42,7 +42,8 @@ export type Abi =
 	| 'bulkmem'
 	| 'impmem'
 	| 'zendalloc'
-	| 'vmtailcall';
+	| 'vmtailcall'
+	| 'spimport';
 
 /** the pristine glue for an ABI, as `phasm` publishes it */
 export function glueFor(abi: Abi): string {

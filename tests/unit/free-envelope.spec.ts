@@ -1246,24 +1246,21 @@ describe('the daily row quota, split by what spends it', () => {
 		expect(editorialRowsPerDay({ nodeCreate: 2, fileCreate: 3 })).toBe(
 			2 * ROWS_PER_WRITE.nodeCreate + 3 * ROWS_PER_WRITE.fileCreate
 		);
-		// a revision is over twice a create, so one figure for "a save" cannot describe both
+		// a revision is over twice a user create, so one figure for "a write" cannot describe both
 		expect(ROWS_PER_WRITE.nodeRevision).toBeGreaterThan(2 * ROWS_PER_WRITE.userCreate);
 	});
 
 	/**
-	 * FIFTY REVISIONS A DAY COSTS MORE THAN KEEPING THE OBJECT RESIDENT, which is the finding.
+	 * An editorial day is priced against the same meter as the fills.
 	 *
-	 * The warming subtraction was worth a paragraph in three documents. An editorial rate a busy
-	 * news site would call unremarkable is larger, and no document mentions it at all.
+	 * At 218 rows a revision, fifty a day outweighed the warming chain. The narrowed replay took a
+	 * revision to 53, so fifty is 2,650 rows, about a quarter of the chain, and ~3% off the ceiling.
 	 */
 	it('takes a busy editorial day off the regeneration ceiling', () => {
 		const quiet = envelope(DEFAULT_MIX, { windowed: true });
 		const busy = envelope(DEFAULT_MIX, { windowed: true, editorial: { nodeRevision: 50 } });
 		expect(busy.writeBudget.editorialRows).toBe(50 * ROWS_PER_WRITE.nodeRevision);
-		expect(busy.writeBudget.editorialRows).toBeGreaterThan(quiet.writeBudget.warmingRows);
 		expect(busy.regenerationsPerDay).toBeLessThan(quiet.regenerationsPerDay);
-		// and it is not a rounding difference: over a tenth of the ceiling
-		expect(1 - busy.regenerationsPerDay / quiet.regenerationsPerDay).toBeGreaterThan(0.1);
 	});
 
 	it('cannot drive the budget negative', () => {

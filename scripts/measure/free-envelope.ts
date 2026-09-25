@@ -710,16 +710,17 @@ export const DEFAULT_MIX: TrafficMix = { edgeHit: 0.85, doHit: 0.14, miss: 0.01 
 /**
  * What an editorial write costs, measured on a deployed object.
  *
- * `TECHNICAL_REPORT.md`'s Writes table, n=8 per class, medians. Every figure is charged rows rather
- * than statements, because the driver replays a speculative transaction and a replayed row is
- * billed like any other.
+ * `TECHNICAL_REPORT.md`'s Writes table, deployed 2026-09-24, n=8 per class, medians. Every figure
+ * is charged rows rather than statements, because the driver replays a speculative transaction and a
+ * replayed row is billed like any other. They were 103 / 218 / 33 / 14 / 41 until the replay sent
+ * only the statements that write a table the asked-about statement touches.
  */
 export const ROWS_PER_WRITE = {
-	nodeCreate: 103,
-	nodeRevision: 218,
-	userCreate: 33,
-	fileCreate: 14,
-	aliasCreate: 41
+	nodeCreate: 48,
+	nodeRevision: 53,
+	userCreate: 17,
+	fileCreate: 7,
+	aliasCreate: 24
 } as const;
 
 export type EditorialDay = Partial<Record<keyof typeof ROWS_PER_WRITE, number>>;
@@ -884,9 +885,8 @@ export function envelope(
 		/**
 		 * What the editors do in a day, which the model used to price at nothing.
 		 *
-		 * A node revision is 218 charged rows, so 50 a day is 10,900 -- larger than the warming
-		 * chain and comparable to the whole regeneration ceiling. Left empty by default because no
-		 * real site's rate has been measured here.
+		 * A node revision is 53 charged rows, so 50 a day is 2,650, about a quarter of the warming
+		 * chain. Left empty by default because no real site's rate has been measured here.
 		 */
 		editorial?: EditorialDay;
 	} = {}

@@ -11,7 +11,7 @@
 <li><a href="../modules/site-do.html">site-do</a></li>
 <li><a href="" aria-current="page">DEFAULT_MEMORY_CACHE_BINS</a></li></ul>
 <h1>Variable DEFAULT_MEMORY_CACHE_BINS<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">DEFAULT_MEMORY_CACHE_BINS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">&quot;dynamic_page_cache&quot;</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">DEFAULT_MEMORY_CACHE_BINS</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">&quot;dynamic_page_cache&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;menu&quot;</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>The bins held in memory when nobody says otherwise.</p>
 <p>ON BY DEFAULT, AND IT SHIPPED OFF UNTIL THE COST WAS MEASURED RATHER THAN REASONED ABOUT. The
 saving was never in doubt: a real re-render charges 8 charged rows with the bin in SQL and 4 with
@@ -22,11 +22,29 @@ was that a render which could no longer reassemble would pay more.</p>
 with the bin in SQL against 2 in memory</strong>. A cold render REWRITES the SQL bin rather than reading
 it, so surviving the drop buys that render nothing, while the memory arm writes no SQL at all.
 The lever is cheaper in both states and the conditional default had no evidence under it.</p>
-<p>What it still costs is CPU on that render and isolate memory for what it holds, and neither is
-the binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.</p>
+<p>What it costs is latency on the first render after a drop, MEASURED 2026-09-24 on deployed
+workers forced to recycle after every request (medians, n=10 interleaved): a cold reassemble is
+1,324 ms against 1,073 with every bin in SQL, and a cold re-render 1,458 against 1,346. It stays
+the default because of the write budget. On a modelled free day -- the whole request allowance at
+a 4.38% render fraction, plus 50 saves each invalidating 34 pages, plus warming and those saves'
+own rows -- it takes rows written from 72% of the quota to 32%, the margin before read-only.</p>
+<p><code>menu</code> JOINED ON 2026-09-23, chosen by a census rather than by being a Drupal cache bin. Of the
+reconstructible bins measured in the audit's sequence, it is the only one that writes on a warm
+re-render, the class carrying 70% of the steady-state mix, so it is the largest single step. It
+passed the same three checks this bin did: never a row more, the page identical in content, and
+an entry refused once its tag checksum moves through SQL alone. That last one matters most here,
+because a menu save invalidates every cached page.</p>
+<p><code>render</code> and <code>discovery</code> were measured for the default on 2026-09-24 and both REFUSED, each on a
+cost the rows census cannot see. <code>render</code> passes the stale-entry check and fits the heap, and would
+take a fill 1.75 -&gt; 1.50 rows -- but the first render after an interpreter drop is 2,696 ms with it
+in memory against 1,450 with it in SQL (medians, n=10 interleaved, deployed), because the SQL bin
+survives the drop and the memory one does not. That lifts a ceiling free traffic does not reach
+(the request allowance drives ~4,380 renders/day against 50,916) and charges every cold render
+1.25 s. <code>discovery</code> sat at its 64-entry bound, evicting, and cost 12.4 MiB of heap. Both stay
+available through <code>MEMORY_CACHE_BINS</code> for a site that is warm and write-heavy.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/site-do.ts#L1471">src/site-do.ts:1471</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/site-do.ts#L1663">src/site-do.ts:1663</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

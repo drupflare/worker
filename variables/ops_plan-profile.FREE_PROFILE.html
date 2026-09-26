@@ -18,9 +18,9 @@
 that a cold boot obviously cannot fit, and against an implicit alternative of &quot;the chain fills it
 shortly&quot;. Both halves are now measured and both are wrong:</p>
 <ul>
-<li><strong>The cap does not fail a request.</strong> A single invocation reading 1,882 ms of <code>cpuTime</code>
-completed on a deployed FREE worker. The 10 ms figure is an amortised allowance, not a
-per-request limit, so &quot;a cold boot cannot fit&quot; was never the thing being enforced.</li>
+<li><strong>The cap does not fail an object invocation.</strong> A single invocation reading 1,882 ms of
+<code>cpuTime</code> completed on a deployed FREE worker, and a boot runs in the object. (A Worker handler
+running ~1.6 s burns back to back was cut to 10 ms, which is why this is scoped to the object.)</li>
 <li><strong>The alternative is not a short wait.</strong> Time-to-served for an anonymous miss on a cold object,
 deployed: <strong>19,004 ms, and only 4 of 8 paths served at all.</strong> A cold boot plus render is ~3.8 s.
 Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the
@@ -36,7 +36,7 @@ concurrent identical misses cost ONE render), the daily row and request meters, 
 are <strong>0.13% of all visitor requests</strong>, so this path is rare by construction.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/plan-profile.ts#L73">src/ops/plan-profile.ts:73</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/ops/plan-profile.ts#L73">src/ops/plan-profile.ts:73</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -11,14 +11,15 @@
 <li><a href="../modules/ops_auth-budget.html">ops/auth-budget</a></li>
 <li><a href="" aria-current="page">ROWS_PER_AUTH_RENDER</a></li></ul>
 <h1>Variable ROWS_PER_AUTH_RENDER<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">ROWS_PER_AUTH_RENDER</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">9</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">ROWS_PER_AUTH_RENDER</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">8</span></div>
 <div class="tsd-comment tsd-typography"><p><code>ROWS_PER_FILL.realRender</code>; both cache bins empty, which is what an authenticated view costs.</p>
-<p>It describes <code>MEMORY_CACHE_BINS=none</code>; with the shipping default an authenticated view is 3, and
-this tracks <code>ROWS_PER_FILL.realRender</code> rather than leading it. See that class for why the model
-has not been re-derived against the new default yet.</p>
+<p>It describes <code>MEMORY_CACHE_BINS=none</code>; with the shipping default an authenticated view is 2, and
+this tracks <code>ROWS_PER_FILL.realRender</code> rather than leading it.</p>
+<p>9 -&gt; 8 on 2026-09-23, and the row that went was never PHP's: the audit harness deleted the page
+row inside its own tracked window before re-filling, and a DELETE is charged where a fill upserts.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/auth-budget.ts#L49">src/ops/auth-budget.ts:49</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/ops/auth-budget.ts#L53">src/ops/auth-budget.ts:53</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

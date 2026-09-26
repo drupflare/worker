@@ -19,7 +19,7 @@
 <div class="tsd-comment tsd-typography"><p>How many chunks a plan should replay per invocation.</p>
 <p><strong>FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.</strong> That premise is retracted in writing
 one file over: a single invocation reading 1,882 ms of <code>cpuTime</code> completed on a deployed free
-worker, so the cap is an amortised allowance rather than a per-request limit -- see
+worker, so the cap does not bind an object invocation, which is where migration runs -- see
 <code>FREE_PROFILE</code> in <code>src/ops/plan-profile.ts</code>. At 1, a shipped pack of 75 chunks provisions a site
 over <strong>75 separate
 Durable Object invocations</strong>, each paying an alarm turnaround, a <code>setAlarm</code> row and a cursor row,
@@ -40,7 +40,7 @@ invocation and the chunking is only a crash-resume property there.</p>
 <li><span><code class="tsd-tag">Optional</code><span class="tsd-kind-parameter">env</span>: <a href="../interfaces/db_migrate-sql.MigratePlanEnv.html" class="tsd-signature-type tsd-kind-interface">MigratePlanEnv</a> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">null</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">number</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/db/migrate-sql.ts#L565">src/db/migrate-sql.ts:565</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/db/migrate-sql.ts#L565">src/db/migrate-sql.ts:565</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

@@ -48,11 +48,11 @@ deployed sweep with <code>HEAP_RESTORE_CHUNKS=1</code> showed the record cap is 
 </table>
 <p>So the goal of chunking -- one restore step inside one free-plan invocation -- only holds
 at roughly this size. 41 rows for an 8.1 MB elided image is still a handful of reads, and rows are
-not the meter that binds. The cost is not the memcpy: each chunk is also digested by a per-byte
-JS loop (<code>digestBytes</code>), so per-firing CPU tracks chunk size closely.</p>
+not the meter that binds. Per-firing CPU tracks chunk size; the per-chunk digest is not what
+scales it, at about 0.1 ms per 200,000 bytes on V8 (<code>scripts/measure/heap-digest-cost.ts</code>).</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/db/heap-store.ts#L43">src/db/heap-store.ts:43</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/db/heap-store.ts#L43">src/db/heap-store.ts:43</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

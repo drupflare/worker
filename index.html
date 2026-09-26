@@ -20,8 +20,9 @@
 the database. <strong>8.5 is what ships</strong>, with nothing dropped to fit.</p>
 <p>The interpreter ships as a raw WebAssembly module the platform compiles ahead of time, so startup
 costs a few milliseconds rather than the hundred a compressed frame did. A cold boot is expensive and
-a site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
-re-arm, measured across 71 consecutive alarms. Rows written is the meter that binds, not CPU. See
+a paid site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
+re-arm, measured across 71 consecutive alarms. A quiet free site pays it unless it opts into warming.
+Rows written is the meter that binds, not CPU. See
 <a href="#-free-vs-paid">Free vs Paid</a>.</p>
 <p>A site is one Durable Object by default and does not have to be. <code>REPLICA_COUNT</code> gives it read
 replica lanes, each a separate object filled from the primary and kept current by a replication log,
@@ -818,9 +819,12 @@ buy features, and free is not a demo -- both are viable Drupal hosts, or the pro
 constrains one execution unit; the architecture chooses what an execution unit is. Score any change
 with <code>bun scripts/measure/free-envelope.ts</code>, never against a millisecond figure.</p>
 <h3 id="what-one-site-gets" class="tsd-anchor-link">What One Site Gets<a href="#what-one-site-gets" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>Both performance levers are <strong>on by default on both plans</strong>. A warm object spends 10.8% of free's two
-daily meters and $0 marginal on paid, so the numbers below are what a site gets rather than what it
-can be configured into.</p>
+<p>Both performance levers are <strong>on by default on paid</strong>, managed or self-managed, where a warm object
+costs $0 marginal. On free, shell assembly is on and warming follows the thermal policy: a site
+rendering more than about 505 pages a day warms itself and a quieter one does not, because a warm
+object spends 10.8% of free's two daily meters. <code>SITE_WARM=1</code> on <code>/settings</code> forces it, and
+<code>WARM_INTERVAL_MS=30000</code> is a cheaper middle point at 2.9%. So the numbers below are what a paid site
+gets, and what a free site gets once it is busy or has opted in.</p>
 <table>
 <thead>
 <tr>
@@ -941,8 +945,8 @@ drops back to the slow re-arm on its own and recovers at midnight UTC.</p>
 <tr>
 <td><strong>Regeneration</strong></td>
 <td>distinct pages re-rendered per day</td>
-<td><strong>rows written</strong></td>
-<td><strong>9,685/day</strong></td>
+<td>rows written</td>
+<td><strong>50,916/day</strong></td>
 </tr>
 </tbody>
 </table>

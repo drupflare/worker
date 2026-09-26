@@ -13,12 +13,13 @@
 <h1>Variable SWEEP_MAX_FRACTION<code class="tsd-tag">Const</code></h1></div>
 <div class="tsd-signature"><span class="tsd-kind-variable">SWEEP_MAX_FRACTION</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">0.5</span></div>
 <div class="tsd-comment tsd-typography"><p>The largest share an operator may declare.</p>
-<p>At 0.5 the demand-driven anonymous slice is 25,000 rows, 2,777 <code>realRender</code> fills against the
-measured 1,000/day need -- 2.7x. Past that a sweep is competing with visitors for the meter
-rather than using its slack.</p>
+<p>At 0.5 the demand-driven anonymous slice is 25,000 rows, 3,125 <code>realRender</code> fills against the
+measured 1,000/day need -- 3.1x. Past that a sweep is competing with visitors for the meter
+rather than using its slack. It read 2.7x until <code>realRender</code> lost the audit harness's own
+DELETE (9 -&gt; 8); the cap was left where it was, so it is now slightly more conservative.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/sweep.ts#L103">src/ops/sweep.ts:103</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/ops/sweep.ts#L104">src/ops/sweep.ts:104</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

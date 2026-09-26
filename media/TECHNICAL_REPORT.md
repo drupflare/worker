@@ -31,7 +31,7 @@ project shipped before it is gone from the path.
 | Full uncached render, both bins emptied | **2,127 ms** (n=10, 1,982-2,579) | edge `cpuTime` |
 | Authenticated page, RENDER path | **208 ms p50**, and it is the render path rather than the median | see the mixture below |
 | Serving ceiling, free | **3.0M visits/month**, saturated at 1.00x | model over measured meters |
-| Regeneration ceiling, free | **9,685 renders/day** windowed, **2,477** on the alarm chain | rows written binds, warming subtracted |
+| Regeneration ceiling, free | **50,916 renders/day** at the shipping default, **10,866** with `MEMORY_CACHE_BINS=none`; the same on the alarm chain and the fill window | rows written on both arms |
 | Wasm penalty against native PHP | **3.57x** warm, **3.94x** cold | local, ratio only |
 | Re-render against a real VPS, tag-invalidated page | **30 ms against 24 ms**, 1.21x, server clocks, n=25 | `docker/vps.yml`, same machine |
 | Re-render against a real VPS, dynamic page cache hit | **22 ms against 24 ms** | the shape a save leaves on every page it did not invalidate |
@@ -45,23 +45,87 @@ Free's limits are aggregate daily budgets, not the 10 ms per-invocation CPU cap.
 one execution unit and the architecture decides what an execution unit is: 20 Durable Object hops
 accumulate 142 ms with no single invocation over 10 ms.
 
-**And the cap does not fail a request either, measured directly.** A single invocation reading
-**1,882 ms of `cpuTime`** completed on a deployed free worker on 2026-09-07. Read the 10 ms figure as
-the amortised allowance it is; a proposal refused because "it will not fit in 10 ms" has been refused
-against a limit nobody measured.
+**The cap does not fail a Durable Object invocation, and it fails a Worker handler only under
+sustained heavy CPU.** A single invocation reading **1,882 ms of `cpuTime`** completed on a deployed
+free worker on 2026-09-07. A later probe ran ~1.5 s burns back to back: the object completed 10/10
+at 1.35-1.54 s, while the Worker handler completed two and was then killed at 412 ms and at 10 ms on
+every call after. The front worker's image transform does not meet that limit at page-load rates. On
+a fresh free deploy, 1090 px transforms of a 3000x1571 JPEG ran 30 in sequence and 40 in two
+concurrent waves of 20, at `cpuTime` p50 ~180 ms and max 493 ms, with every invocation reported as
+`success`. Where between those two workloads the Worker limit sits is unmeasured.
 
 | ceiling | what it limits | bound by | free |
 | --- | --- | --- | --- |
 | **Serving** | visits/month answerable at all | Worker requests, 100k/day | **3.0M/month**, saturated |
-| **Regeneration** | distinct pages re-rendered per day | **rows written** | **9,685/day** |
+| **Regeneration** | distinct pages re-rendered per day | rows written | **50,916/day** |
 
 **The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
 divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
-`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default,
-and at the 8 s interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
+`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default
+(since 2026-09-25 on paid; an unset value on free is the thermal policy's call), and at the 8 s
+interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
 resident. The published ceiling was therefore the ceiling of a configuration the product does not
-ship. Subtracting it takes the windowed figure **10,869 -> 9,685/day**, which is **10.9% lower**,
+ship. Subtracting it took the windowed figure **10,869 -> 9,685/day**, which was **10.9% lower**,
 and the alarm-chain figure 2,777 -> 2,477.
+
+**Both have since moved again, on 2026-09-23, and in the other direction.** Four modelling defects
+were found in one pass, each by predicting the mechanism before the measurement and confirming it
+against a control:
+
+| defect | what it did | the control |
+| --- | --- | --- |
+| a cold fill priced at **180** sliced invocations | put the alarm chain at 2,477, DO-bound, 4x below the fill window | no slicing code exists; a deployed free worker drains a batch in ONE invocation, to k=20 |
+| the audit harness charged its own `DELETE` | read `realRender` and `warmReassemble` one row high | both cold classes unchanged, since a `DELETE` matching no row writes nothing |
+| `byR2ClassA` unconditional | capped regeneration at 33,333/day with no R2 binding | invisible until rows/fill fell below 2.65 |
+| the class quoted instead of the mix | optimistic at the shipping default, where the class sits below the mix | the mix is honest in both configurations |
+
+| arm | rows/fill | regeneration/day | bound by |
+| --- | --- | --- | --- |
+| `MEMORY_CACHE_BINS=none`, `realRender` class | 8.20 | **10,866** | rows |
+| `dynamic_page_cache` in memory, warmth mix | 2.50 | 35,641 | rows |
+| **shipping default**: `dynamic_page_cache` and `menu` | 1.75 | **50,916** | rows |
+
+The alarm chain and the fill window now give the SAME ceiling, because the gap between them was the
+180-slice constant. Duration would take over only below ~0.27 rows/fill.
+
+**`menu` joined the default on 2026-09-23, chosen by a census rather than by being a Drupal bin.**
+Each reconstructible bin was held in memory on a fresh object, in the audit's sequence so its figures
+map onto the model's classes:
+
+| held in memory | rows/fill | regeneration/day | bound by |
+| --- | --- | --- | --- |
+| `dynamic_page_cache` | 2.50 | 35,641 | rows |
+| + `menu` | 1.75 | **50,916** | rows |
+| + `render` | 2.25 | 39,601 | rows |
+| + `discovery` | 2.40 | 37,126 | rows |
+| + all three | 1.40 | 63,645 | rows |
+
+`menu` is the only candidate that writes on a warm re-render, the class carrying 70% of the mix, so it
+is the largest single step. Adding `render` and `discovery` on top takes a fill to 1.40 rows and the
+ceiling to 63,645, and both were refused on costs the rows census cannot see. Both refuse a stale
+entry. `discovery` sat at its 64-entry bound, evicting, and added 12.4 MiB of heap. `render` fit the
+heap but made the first render after an interpreter drop 2,696 ms against 1,450 (medians, n=10,
+deployed, forced recycle), for about 1.5% of a free day's rows. The shipped two cost a cold
+reassemble 1,324 ms against 1,073 all-SQL and stay, because they take a modelled free day's rows
+written from 72% of the quota to 32%. Every arm produced a page
+identical in CONTENT, not just length, once two values were normalised that have nothing to do with a
+cache bin: the random `form_build_id`, which `Html::getId()` shortens by a byte whenever the token
+contains consecutive hyphens, and `permissionsHash`, an HMAC keyed on each site's randomly minted
+private key. `menu` also refuses an entry whose tag checksum moves through SQL alone, which matters
+more for it than for any other bin, since a menu save invalidates every cached page.
+
+**Duration does not bind, measured on a deployed object.** A steady-state fill costs 209-308 ms of
+wall clock with three bins emptied (n=9) and 52-95 ms reassembling from a warm dynamic page cache
+(n=18); the first fill after an idle boots and costs 4.5-8.4 s. `x-worker-ms` agreed with billed
+`activeTime` to within 2-6%. Priced at the 308 ms maximum, duration allows 329,748 fills a day. Until
+2026-09-24 the model priced a fill at the 2,127 ms cold-bins figure, which made duration read as
+binding at 47,749.
+
+**Each class is priced on its dearer path.** `/user/login` realRenders in 8 and reassembles in 1; `/`
+realRenders in 3 and reassembles in 2, because the login form carries six `dynamic_page_cache`
+variants to the front page's one. So `realRender` comes from login and `warmReassemble` from `/`.
+Setting the reassemble to the login figure made the warmest priced class undercut a real fill, and
+`fill-bins.spec.ts` failed on exactly that.
 
 The row half of that was 12,240 until the daily meters stopped checkpointing on a flat 60 s clock.
 `meterFlushBudget()` scales both flush triggers with the remaining budget and answers the old 25
@@ -300,6 +364,13 @@ value across statements with `col = col || ?`, which is how three 520 KB rows be
 
 A half-migrated site refuses to serve.
 
+**The pack's router has to match the packed driver, or every new site rebuilds it.** Measured
+2026-09-25: with the packed router four routes short of the driver's six, reconciliation rebuilt the
+router in PHP on each fresh site's first cold alarm, and that invocation was reset for the isolate's
+memory with the first visitor waiting, 8 of 8 throwaways. Rebuilding the pack database against the
+current driver took two more to 0 resets across six cold visits. `driver-pack.spec.ts` compares the
+packed router with the driver's routes and permissions.
+
 ### The Database Driver
 
 `cfw_do_sqlite` (sibling repo `rom`) is a Drupal 11 driver over `ctx.storage.sql`. It extends
@@ -359,6 +430,12 @@ INTEGERs back as JS doubles, so the read is lossy above 2^53 while the storage i
 own output column names cast to TEXT. `SELECT *`, aliases, JOINs, aggregates, `UNION` and bound
 parameters are covered by construction. It triggers on detection, so a site storing no wide integers
 pays nothing; `WITH`, `PRAGMA` and non-SELECT are refused.
+
+**An external database is reachable from the object through Hyperdrive.** `DB_BACKEND=hyperdrive`
+routes the driver's statements to PostgreSQL or MySQL through the park. Verified 2026-09-25 on a paid
+throwaway: a Durable Object ran `SELECT 1` through a Hyperdrive configuration backed by a Workers VPC
+service and a Cloudflare Tunnel, in 6-9 ms of query time. `docs/external-database.md` has the TLS and
+permission requirements that surfaced.
 
 ### The PHP Filesystem
 
@@ -611,13 +688,56 @@ its share of a real write is small.
 
 ### Memory
 
-The isolate ceiling is **134,217,728 bytes**. The heap starts at `INITIAL_MEMORY` = 100,663,296 and
-peaks where the growth step puts it; at the shipping configuration the authenticated peak is
-**113,770,496**, leaving 19.50 MiB.
+The documented isolate ceiling is **134,217,728 bytes**, and it is not what resets an object. Ramped
+on a paid object on 2026-09-25, retaining committed JS buffers until the module scope changed: 180-192
+MiB held with no interpreter, so the budget is ~195 MiB; beside a freshly booted interpreter only
+20-40 MiB more in six of seven ramps. A booted interpreter therefore costs ~165-175 MiB, its linear
+growth afterwards is mostly already paid, and the JS side is what runs out. The table below is the
+estimate `isolateNow()` computes, not the platform's meter. The shipping binary starts linear memory at
+`INITIAL_MEMORY` = 83,886,080 (1,280 pages, 80.00 MiB) and grows it where the growth step puts it.
 
-**That 19.50 MiB is gross, and every memory figure below measures wasm linear memory alone.** The
-isolate's budget also covers the JS heap, and the JS half is not small. Measured on a deployed
-worker 2026-09-11 by reading all four terms together for the first time:
+**Re-derived on that binary 2026-09-24**, one incarnation read through `/__serve-stats`
+`isolateBytes` after each step (a scratch spec in the workers pool, deleted after):
+
+| step                                            | linear      | whole isolate          |
+| ----------------------------------------------- | ----------- | ---------------------- |
+| booted and idle                                 | 83,886,080  | 97,907,893             |
+| migrated + firstrun, which drop the interpreter | 83,886,080  | 97,907,893             |
+| `/admin/content`, then `/`, `/user/1`, `/admin/people`, authenticated | 107,216,896 | 125,387,248 (**93.4%**) |
+
+The four authenticated pages land on one rung and stay there. The whole isolate is 8.42 MiB under
+the ceiling; the rest of it is the resident pack blob (12,001,784), the merged index (1,980,912) and
+MEMFS at its 4 MiB budget.
+
+**The provisioning drops are still what keep that true.** With both commented out for the control
+arm, the provisioned incarnation sits at 107,216,896 and the first authenticated render grows linear
+memory to **136,970,240, past the ceiling on linear memory alone**, the whole isolate at 155,137,454.
+The test pool does not enforce the limit, which is why the run continued; `recycleIfOversized()`
+dropped it at the end of that invocation. The history below is the same mechanism on the older
+96 MiB-initial binary.
+
+**A pack update reset the object on a deployed site, 2026-09-25, and the container rebuild was
+why.** Reproduced twice on a paid throwaway, both times on a deploy that moved the driver digest:
+reconciliation empties `cache_container` and `cache_discovery`, the next fill rebuilds both inside
+its render and completes (3,615 ms of CPU), and the invocation after it (75 ms) is reset with
+`isolate exceeded its memory limit`, taking a waiting visitor request with it as a 1101 or 500. The
+same two drops made by hand did not reproduce it (0 of 2). Both thresholds read clear at the time
+(linear 107,216,896, the whole-isolate estimate 93.4%), so what crossed is the rebuild's garbage,
+which the estimate does not see. Three closes: `recycleIfOversized()` now reads the whole-isolate
+threshold that `oversized()` always had, a boot that rebuilt the container drops at the end of its
+invocation, and reconciliation writes the pack's own container when one matches the site's
+`core.extension` (the migrated pack and the claimed site, `drupal-sql/container.json`), so an update
+needs no rebuild. Not yet read on a second deployed update.
+
+**The whole-isolate estimate overcounts.** A deployed object answered 200 with linear memory at
+121,176,064 plus the ~18 MB JS-side estimate, ~139 MB against the 134,217,728 ceiling, and then
+recycled on the linear threshold. So a workers-pool ladder past 100% on that estimate does not show
+a page resets the object: in the pool, `/admin/modules` read 103.8% and `/node/add/page` 115.6%
+after a chain of heavier pages with the drops suppressed, and neither reset on the deploy.
+
+**The figures below this point were taken on that older binary** and are kept for the mechanism;
+the table above is the current reading. Measured on a deployed worker 2026-09-11 by reading all four
+terms together for the first time:
 
 | term                                     | bytes           | how                                     |
 | ---------------------------------------- | --------------- | --------------------------------------- |
@@ -954,12 +1074,115 @@ without deploying.
 | global-scope memory | **128 MB** |
 | what exceeding it does | rejects the DEPLOY with error 10021, not a runtime failure |
 
-`wrangler check startup` on the shipping config: **104.0 ms active** of that budget, bundle 2,904 KiB
-gzip. The zstd inflate and the `WebAssembly.Module` compile are what spends it.
+Startup on the shipping config: **33 ms for the whole worker, of which the interpreter seam is 5**
+(n=5, 4/5/5/6/7 ms, deployed free worker importing the seam and nothing else). The **104.0 ms** this
+line used to carry was the brotli seam, and the zstd-through-wasm path it blamed read 233-246; both
+are gone. A raw `CompiledWasm` import performs no runtime codegen, so the work that spent the budget
+no longer runs.
 
-This closes the "pre-warm at startup" idea. PHP's boot is 1,398 ms of `cpuTime` against a 1,000 ms
-ceiling, and its heap peaks near 115 MB against 128 MB, so the interpreter cannot be booted at module
-scope at any price. The headroom that does exist is for cheap work, and nothing cheap has been named.
+This closes "pre-warm at startup" as a MECHANISM. PHP's boot is 1,398 ms of `cpuTime` against a
+1,000 ms ceiling, so the interpreter cannot be booted at module scope. **Both supporting facts have
+moved since that sentence was written, and only the first still carries it:**
+
+- **The ceiling is a DEPLOY-time check**, the third row of the table above: exceeding it rejects the
+  upload with error 10021 rather than failing at runtime. That distinction is what separates booting
+  at module scope from a snapshot taken at deploy.
+- **"its heap peaks near 115 MB against 128 MB" was measured on a binary that no longer ships.** The
+  shipping `php8.5.tuned.wasm` declares 1,280 pages and reads **83,886,080 bytes (80.00 MiB) booted
+  idle** on `growth-ladder.ts`, worst case 92.69 MiB across the three real workloads. The Memory
+  section below still states `INITIAL_MEMORY` = 100,663,296; those figures are the 96 MiB-initial
+  binary's and are correct for it.
+
+**AND THE 1,398 ms IS THE WRONG METER FOR THIS REFUSAL, measured 2026-09-23.** This document says so
+itself under the brotli comparison above: 1,398 ms is "PHP's boot plus Drupal's bootstrap, charged
+per invocation on a cold OBJECT". Only the first half can run at module scope, and it is cheap.
+
+`cfw-startup-boot` on the free account, two arms differing by one boolean, byte-identical uploads at
+13,611.11 KiB, `Worker Startup Time` read off each deploy:
+
+| module-scope boot | Worker Startup Time |
+| ----------------- | ------------------- |
+| off               | 2, 2, 2, 2 ms       |
+| on                | 91, 91, 106, 125 ms |
+
+**Booting the interpreter at module scope costs about 96 ms of the 1,000 ms budget, and the deploy is
+accepted every time.** The terminating observation is a file PHP wrote and the handler read back
+through `FS`: `8.5.2|27`, so PHP 8.5.2 with 27 extensions ran there. `Date.now()` around the boot
+reads 0 ms in both arms, which is the frozen clock recorded elsewhere here, so the upload meter is
+the only instrument that answers this.
+
+Three things the run established that were not the question:
+
+- **`setTimeout` and random generation are disallowed at global scope, not only `fetch`.** The
+  probe's own hang guard tripped it and the error names all three.
+- **The tuned glue is built `ENVIRONMENT=worker` and reads `self.location.href`**, and workerd has no
+  `location` at module scope, so a boot there needs a shim for it. Whether request scope has one was
+  NOT isolated, because the shim was installed at module scope in every arm.
+- **`PhpBase` is not optional.** A direct emscripten factory call reaches `pib_run` without
+  `pib_storage_init` and without `/preload`, and dies as `RuntimeError: null function`. What caught
+  it was running the identical code at REQUEST time, which failed identically; without that control
+  the harness bug would have been filed as a module-scope refusal.
+
+**What this does NOT establish.** Drupal's bootstrap is the rest of the cold path and cannot run at
+module scope at any price: it needs the pack, the pack arrives by `env.ASSETS.fetch()`, `env` is not
+a module-scope value, and `fetch` is the disallowed operation above.
+
+**AND THE 96 ms IS NOT COMPARABLE TO THE EDGE'S "interpreter up" FIGURE, which is the comparison that
+matters.** `/php` on a cold object reads **415 / 446 / 490 / 523 / 752 ms of cpuTime, median 490**
+(n=5, free account, 2026-09-23) against the ladder's published 402 / 484 / 695 -- so that figure
+REPRODUCES and has not moved. The gap to 96 ms is the Durable Object invocation plus the LAZY MOUNT,
+which fetches pack blobs (`fetchMs` 32-242 across the same run). About 390 ms of the cold path is
+therefore mount rather than interpreter, and the mount is exactly the part that cannot move to module
+scope. Do not quote the 96 ms as a cold-boot saving.
+
+**THE TENANCY OBJECTION STANDS, AND MY REFUTATION OF IT WAS A SMALL-SAMPLE ARTIFACT.** For one day
+this paragraph said the opposite. `cfw-tenancy` drove six named objects twice each, saw six distinct
+module-scope identities and no cross-object state in either JS or PHP's `$GLOBALS`, and concluded
+module scope is per object. **A larger probe refuted it the same day**: burrow's `burrow-par-probe`,
+907 Durable Object invocations across 171 isolates, found **32-40 isolates hosting more than one
+distinct object and 7 hosting two LIVE objects interleaved** -- one object served, a different object
+served from the same isolate, the first resumed there, both reading the same module-level state.
+Cloudflare's own documentation says it plainly: a single isolate can host multiple Durable Objects of
+the same class and they all share that isolate's memory.
+
+Six objects driven twice simply did not land two in one isolate. **Module scope is per ISOLATE**, so
+a module-scope PHP interpreter would be shared by every object that lands there, `$GLOBALS` included,
+which is a cross-tenant leak. The rule this cost: a negative result over a handful of samples is not
+a property, and placement is the kind of thing that needs a sample large enough to hit the collision.
+
+Three constraints stand, and the first is now the decisive one:
+
+- **Module scope is shared between tenants**, so nothing tenant-specific may live there.
+- **`ctx.abort()` does not clear module state**, measured by the same probe, so a poisoned
+  module-scope interpreter survives the one reset the object has.
+- **The front worker evaluates module scope too**, and reported `interpreterBooted: true` for an
+  interpreter it never uses. Anything expensive there needs guarding to the object, and module-scope
+  linear memory is not reclaimable by `recycleIfOversized()` in any case.
+
+Also recorded because it cost a deploy: **`Date.now()` returns 0 at module scope**, so an identity
+minted there is the same on every isolate. Mint it lazily on the first request instead.
+
+#### A Deploy-Time Snapshot Is the Surviving Mechanism, and It Is Not Exposed
+
+Cloudflare's Python Workers snapshot the Worker's wasm linear memory at DEPLOY time, after executing
+the entrypoint and everything it imports at top level, and ship that snapshot beside the code. Their
+published figure is 10 s of init becoming 1 s, which is init an order of magnitude past the 1,000 ms
+global-scope ceiling, so the snapshot path does not score against that ceiling the way module-scope
+execution does.
+
+Applied here it would capture a booted interpreter. **The prize is smaller than the 45% it first
+looks like, and the module-scope measurement above is why.** The `cfw-bootphase` ladder puts generic
+execution state at 466 of 1,036 ms, which bounds a two-level bootstrap at 45%; but a snapshot can
+only capture what module scope can REACH, and module scope cannot reach the pack. The interpreter
+boot is ~96 ms of that 466, so a snapshot of what runs there today is worth about 9% of a cold
+render, not 45%. Closing the gap would mean the pack arriving as a bundled import rather than
+through `env.ASSETS.fetch()`, which is its own change and is not scored. Either way it moves the
+regeneration ceiling about 1%, for the reason under "Boot work is saturated" below.
+
+**It is documented for Python Workers only.** Nothing states it is reachable from a Worker that is
+not one, and a secondary summary asserting wider application is an inference with no test behind it.
+The mechanism is unavailable, the objective stays open, and what to watch for is a configuration
+surface on the snapshot.
 
 **It does NOT close pre-warming as an objective, and the two were conflated.** Booting at STARTUP is
 refused by the numbers above. Keeping an object that has already booted RESIDENT is a different
@@ -976,6 +1199,15 @@ Two paths, and only two, cost nothing against the 100,000/day serving ceiling:
   assets directory is served without invoking the Worker, and Cloudflare bills those at zero. The
   serving ceiling is therefore ~100,000 page views rather than 100,000 divided by the asset count.
 - **A hostname not routed to the Worker at all**, which is what an R2 custom domain is.
+
+**The 100,000/day cap did not refuse, so whether an asset or a binding hop counts toward it is
+unmeasured.** Driven 2026-09-25 on the free account: 95,000 asset requests, ~7,300 worker requests,
+4,765 requests making 20 service-binding hops each, then 100,000 plain worker requests as the
+positive control. Analytics counted 209,512 invocations that day and nothing was refused, including
+a probe every 20 s for 30 minutes after. A hop is its own invocation in `workersInvocationsAdaptive`
+(94,540 of them, `clientDisconnected` because the caller does not read the body); an asset request
+does not appear there at all. The serving ceiling the envelope scores against is the published
+figure, not one observed as a refusal.
 
 A zone Cache Rule is NOT one of them: a Worker route runs the Worker before the cache is consulted.
 The Workers Caching feature does skip the Worker on a hit, but bills the request anyway -- and its
@@ -1310,6 +1542,48 @@ requests. PHP-FPM keeps one alive, and that is the whole difference.
 **The per-object instantiate is 484 ms**, which is the figure a heap-restore or always-warm proposal
 is scored against.
 
+#### Re-measured 2026-09-23 on `cfw-bootphase`, free account, and two of three hold
+
+A throwaway deploy of the canonical config, seven sites, every arm tagged and read back through
+`obs-cpu.ts` so each cpuTime joins to the request that produced it. Every render arm is controlled on
+a byte-identical body of **17,686 bytes**, which is what makes the arms comparable at all.
+
+| quantity                                    | published            | re-measured                                    | verdict          |
+| ------------------------------------------- | -------------------- | ---------------------------------------------- | ---------------- |
+| interpreter up, no PHP                      | 402 / **484** / 695  | 415/446/490/523/752, median **490**, n=5       | **reproduces**   |
+| re-boot, warm bins (the 1,398 ms)           | **1,398**            | 1,214/1,259/1,328/1,370/1,432, med **1,328**   | **reproduces**   |
+| both bins emptied (`RENDER_COLD_BINS_MS`)   | **2,127**, 1,982-2,579 | median **1,229**, n=13, 1,049-2,923           | **splits, below** |
+
+**The first two have not moved and need no action.** The re-boot figure in particular is the one the
+warming policy prices `P(render inside the hibernation threshold)` against, and it still stands.
+
+**The third is not one workload, and that is the defect rather than drift.** `RENDER_COLD_BINS_MS`'s
+own docblock names three entry points -- "a first fill, a cold boot or a container rebuild" -- and
+they are not the same cost. Holding the bins empty and varying only `cache_container`:
+
+| container            | cpuTime                                |
+| -------------------- | -------------------------------------- |
+| warm (1 row)         | **1,229** median, n=13, 1,049-2,923    |
+| emptied before the render | **3,080**, n=3, 2,880-3,176       |
+
+The published 2,127 sits between the two arms and its range overlaps neither. So the constant
+describes a MIXTURE of container states, and a model that multiplies it is charging some sites for a
+rebuild they will not do and under-charging the ones that will. **Splitting it is a change to
+`scripts/economics/measured.ts` with pinned specs behind it, so it is named here rather than made.**
+
+Three rig facts worth keeping, each of which cost a wrong reading first:
+
+- **One `/migrate?site=X&all=1` returns `done: true` with an EMPTY `router` table.** A second call
+  fills it (0 -> 423 rows). Until then `/` answers 500 with a 61-byte body and
+  `RouteNotFoundException: Route "view.frontpage.feed_1" does not exist` in `watchdog`. Four samples
+  were taken against that 500 before the body was checked; they cost 2,123-4,586 ms, which is close
+  enough to a real render to pass unnoticed. `bootphase-drive.ts`'s `migrate()` returns on the first
+  `done`, so it inherits this.
+- **A 500 is not cheap here.** It boots everything and fails at routing, so its cost is dominated by
+  the same boot a render pays. Status and byte count are the only things that separate them.
+- **`warmInterpreter` is reported by `/drupal` and reads 0 on these arms**, which is what makes them
+  cold-interpreter samples rather than an assumption.
+
 **These figures predate the `cache_container` fix and the first-ever boot has since moved.** The
 packed row was keyed to a stale `DrupalInstalled::VERSIONS_HASH`, so every site's first kernel boot
 missed and rebuilt a 482 KB container. Measured on deployed paid workers, a new site per
@@ -1331,6 +1605,11 @@ cumulative `cpuTime` per phase, n=3:
 | kernel-boot           |             616 ms |
 | pre-handle            |             660 ms |
 | render                |           1,036 ms |
+
+Re-read 2026-09-24 on the current build (`cfw-boot`, paid, n=5, rotated, tail `cpuTime` on the
+object): 500 / 535 / 541 / 531 / 649 / 647 / **1,131 ms**, the same ladder within about 10%. The
+~500 ms before Drupal runs anything is the interpreter and the lazy mount, and it is the largest
+single phase of a cold boot.
 
 Generic execution state is 466 of 1,036, so **tenant attach is 55% and is the majority**. A split
 recovers at most 45%, of a cost the previous-generation read already removes from the visitor. The
@@ -1365,6 +1644,22 @@ one:
 places in this codebase had promoted "an armed alarm buys no warmth" into a general fact; it is true
 at 240 s and false at 8 s, because the FIRING resets the idle clock. Arming does not warm. Firing
 under the threshold does.
+
+**Past the threshold, retention decides, and placement decides retention.** A hibernated object's
+next instance adopts the interpreter its isolate kept, in 100-692 ms against ~2.1-2.3 s booting, when
+it lands in that isolate. Measured 2026-09-25 on 12 paid workers over four phases, every worker at
+every interval, a PHP-needing request after 150-300 s idle, n=72 per interval:
+
+| re-arm | adopted | on the 8 workers that ever adopted |
+| --- | ---: | ---: |
+| 30 s | 36% | 54% |
+| 60 s | 15% | 23% |
+| 90 s | 15% | 23% |
+| 120 s | 14% | 21% |
+
+Four workers adopted at no interval. `/serve-stats`, read seconds after each visit, showed
+`retention.last: null` on every miss, which means no interpreter was in the isolate; the code refused
+none. A 240 s re-arm adopted ~2%. So the declined default stays 240 s and 30 s is an opt-in.
 
 **Duration is not the meter, and ROWS are.** An object waiting on an armed alarm is idle and ELIGIBLE
 to hibernate, and an idle-eligible object is not billed for duration. Measured on a deployed worker,
@@ -1442,25 +1737,34 @@ stored. Warming one member of the family warms the interpreter every member need
 
 ### Writes
 
-Deployed, the shipping config, n=8 per class, one object per class, each provisioned and warmed
-before the measured sequence. Rows and bytes are exact per call; CPU is per-invocation `cpuTime`.
+Deployed 2026-09-24 (`cfw-writes`, torn down), the shipping config, n=8 per class, one object per
+class, each provisioned and warmed before the measured sequence. Rows are exact per call from
+`scripts/measure/write-workloads.ts`; CPU is the object's per-invocation `cpuTime` from `wrangler
+tail`.
 
 | op | charged rows (min/med/max) | statements | replays | cpuTime ms (min/med/max) |
 | --- | --- | --- | --- | --- |
-| node-create | 103 / 103 / 108 | 34 | 4 | 18 / **23** / 1,868 |
-| node-revision | 218 / 218 / 226 | 78 | 9 | 51 / **78** / 1,673 |
-| user-create | 33 / 33 / 37 | 16 | 3 | 510 / **578** / 1,212 |
-| file-create | 14 / 14 / 18 | 7 | 1 | 10 / **14** / 861 |
-| alias-create | 41 / 41 / 57 | 19 | 2 | 18 / **26** / 1,198 |
-| txn-autoinc | 2 / 2 / 2 | 3 | 0 | 3 / **3** / 644 |
-| txn-rowid | 1 / 1 / 1 | 2 | 0 | 5 / **6** / 997 |
+| node-create | 48 / 48 / 58 | 21 | 4 | 39 / **49** / 1,337 |
+| node-revision | 53 / 53 / 64 | 31 | 9 | 50 / **66** / 178 |
+| user-create | 17 / 17 / 30 | 11 | 3 | 450 / **478** / 3,227 |
+| file-create | 7 / 7 / 22 | 6 | 1 | 14 / **17** / 184 |
+| alias-create | 24 / 24 / 28 | 15 | 2 | 15 / **18.5** / 73 |
+| txn-autoinc | 2 / 2 / 2 | 3 | 0 | 3 / **4.5** / 19 |
+| txn-rowid | 1 / 1 / 1 | 2 | 0 | 3 / **4** / 8 |
 
-**A user create is 578 ms and 25x a node create on CPU while writing a fifth of the rows.** That is
-the password hash, and it makes an account-creation burst a CPU problem where every other write here
-is a rows problem.
+**The rows halved or better against the 2026-08-27 reading of 103 / 218 / 33 / 14 / 41, with the
+same replay counts.** rom's `dependencyIndexesUpTo()` sends a replay only the statements that write a
+table the asked-about statement touches, falling back to the whole buffer on any failure, so a
+revision's nine passes no longer re-send every earlier statement. What remains is index maintenance:
+`node_field_data` charges 11 rows per stored row, and it and `node` carry 41 of a revision's 56
+locally counted rows. `tests/integration/write-amplification.spec.ts` prints the per-table split.
 
-**The max column is a cold boot on every row.** The first call after an object goes cold pays the
-boot; reporting a mean would fold a 1.4 s boot into a 23 ms write.
+**A user create is 478 ms and ten times a node create on CPU while writing a third of the rows.**
+That is the password hash, and it makes an account-creation burst a CPU problem where every other
+write here is a rows problem.
+
+**The max column is the first priced call of each class**, and on node-create and user-create it
+paid a boot. Reporting a mean would fold a 1.3 s boot into a 49 ms write.
 
 ### Rows Per Fill
 
@@ -1492,8 +1796,8 @@ Measured on a steady-state render at **8 charged rows -> 6**, bins' index
 charge **3 -> 0**, n=3 with zero spread. Every warmth class fell with it: `firstFillOnFreshObject`
 156 -> **103**, `firstEverForPath` 24 -> **14**, `realRender` 12 -> **9**, and `warmReassemble`
 alone unchanged at 2 because it writes only `cfw_page`. The windowed regeneration ceiling moved
-**8,196 -> 10,869/day**. Both of those are pre-warming figures: the ceiling is 9,685 now, for the
-reason the next section gives, and the 1.33x this conversion bought is unaffected by it.
+**8,196 -> 10,869/day**. Both of those are pre-warming figures and the ceiling has moved twice since,
+for the reasons given under The Two Ceilings; the 1.33x this conversion bought is unaffected by it.
 
 Two things that were nearly reported wrong here. A first pass read 11 -> 6 and **3 of those 5 rows
 were warmth, not the conversion**: one warming render leaves `cache_menu` and `cache_discovery` cold,
@@ -1879,6 +2183,15 @@ the restore cost ~648 ms. Both readings are correct about the image they took; t
 expensive one on the path that matters, which is a fresh site's first alarm. `HEAP_IMAGE` is off by
 default because of it.
 
+**The cost is the row count and the inflate, measured 2026-09-25.** Four paid workers at the same
+instants, fully cold, an 11,206,656-byte elided image, n=12 per arm: no image read 2,303 ms visitor
+wall and 1,704 ms object cpuTime at p50; the shipping 200 KB deflated rows (57) read 2,918 and 1,981;
+2 MB deflated rows (6) read 2,550 and 1,823; 2 MB raw rows (6) read 2,345 and 1,639. Raw rows remove
+the penalty and still only match booting, because this image replaces the kernel boot and nothing
+after it. A warm image taken right after a render (53.1 MB, 27 raw rows, restored 12 of 12) read
+2,366 ms wall and 1,603 ms cpuTime against 1,412 and 1,015 booting at the same instants, so no image
+shape beats a boot.
+
 Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
 `tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;
 nothing guarded the figure, which is how it drifted.
@@ -1938,6 +2251,23 @@ shared-instrument shape as every other one on this list.
 An image style is write-once-serve-many: Drupal generates a derivative on first request and serves the
 stored file afterwards. So the CPU is paid once per derivative rather than once per request, which is
 what makes a per-transform figure this size affordable.
+
+**gd as a third engine loses to tinyimg.** libgd 2.3.3 with libjpeg 9f, libpng 1.6.44 and zlib
+1.3.1, built with emcc 6.0.9 to a standalone native module (252,329 bytes, seven stubbable
+imports), deployed beside tinyimg on a paid throwaway, n=20 each on the same 3000x1571 JPEG to
+1090 px, `cpuTime`:
+
+| engine           | median | range   |
+| ---------------- | -----: | ------- |
+| tinyimg to JPEG  | 184 ms | 118-322 |
+| tinyimg to WebP  | 214 ms | 163-428 |
+| gd to JPEG       | 294 ms | 199-495 |
+
+It also cannot write WebP without libwebp, which the pipeline defaults to. Through burrow's dylink it
+did not load: an interpreted side module needs its host to supply emscripten's `invoke_*` setjmp
+calls, the allocator with `memcpy`/`memset`, and dlmalloc's `GOT.mem` globals. What gd would add is
+the PHP functions for contrib code that calls them directly, which only gd inside the interpreter
+provides.
 
 ### One Object Is Not a Site-Wide Throughput Ceiling
 
@@ -2697,7 +3027,7 @@ into each other.
 ### A lane is paid for on the rows-written meter
 
 Replication writes every primary row again on each lane, so a pool of N costs **N+1 rows per
-change**. Rows written is the meter that bounds regeneration at 9,685 rows/day windowed, so an
+change**. Rows written is the budget regeneration shares with everything else, so an
 8-lane pool reaches that ceiling nine times sooner than a single object, and it is also the dominant
 Durable Object cost line on paid -- requests, duration and storage are not close to it.
 
@@ -2806,6 +3136,22 @@ linear memory, reaching 191.25 MiB against a 128 MiB cap, so it cannot ship. `of
 of `file` at n=5 and frees 5,046,272 bytes of linear memory plus 32,141,312 of MEMFS. `OPCACHE_MODE`
 is the seam and is KV-overridable.
 
+**A cache baked at pack time is read, and it cuts CPU but not reliably wall.** `pack` mounts a layer
+`scripts/bake-opcache.ts` captures from the `file` arm: 1,839 scripts, 8,581,446 bytes. Measured
+2026-09-25 on two deployed paid workers, one cold first render per minute, then with the levers
+swapped between the two deploys:
+
+| run     | object cpuTime, `pack` | object cpuTime, `off` | visitor wall p50, `pack` | `off`    |
+| ------- | ---------------------- | --------------------- | ------------------------ | -------- |
+| first   | ~820-1,020 ms          | ~1,800 ms             | 1,482 ms                 | 2,291 ms |
+| swapped | 1,204-1,524 ms         | 1,636-2,236 ms        | 2,341 ms                 | 2,286 ms |
+
+CPU is the per-minute p90 from `durableObjectsInvocationsAdaptiveGroups`; wall is n=8 per arm. The
+first run's wall gap belonged to the deploys. The layer adds its full size to the isolate estimate
+(121.7 MB against 113.2 after one render, of a 134.2 MB ceiling), so it stays opt-in. Because
+`validate_timestamps=0` never checks a cached script against its source, the descriptor records the
+driver digest and the locked versions it was baked from, and the mount refuses a mismatch.
+
 `USE_ZEND_ALLOC=1` is built as an arm and refused: it costs **2.66x the heap** (authenticated peak
 342,294,528 against a 134,217,728 limit) and prints `munmap() failed: [28] Invalid argument` into
 PHP's output stream, so in a render that text is prepended to the HTML. `emmalloc` costs +196,608
@@ -2815,6 +3161,14 @@ every one ACTIVE, writing 3,011,834 bytes during instantiation, so pre-filling s
 phase rather than removing it.
 
 `tests/node/abi-arms.spec.ts` pins the import/export shape and segment count for all four arms.
+
+**Sharing the stack pointer with a side module costs 3.4% imported and 8.3% exported.** A side
+module imports `env.__stack_pointer`, so an in-process extension needs the host's own global. Exporting
+it stops the linker proving it module-private; phasm's `import-stack-pointer.mjs` instead moves it to
+an `env` import after the link, keeping every global index. Interleaved on node, n=9, against the same
+`long64` binary: 1.034x blended for the import (A/A 1.000x), 1.083x for the export. phasm's
+`long64.rc` builds the import form. A side module has been linked only against the exported global,
+so the import form is verified for PHP itself and not yet for loading one.
 
 ### Extensions
 

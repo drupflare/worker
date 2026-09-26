@@ -11,17 +11,18 @@
 <li><a href="../modules/ops_fanout.html">ops/fanout</a></li>
 <li><a href="" aria-current="page">ROWS_PER_TAGGED_PAGE</a></li></ul>
 <h1>Variable ROWS_PER_TAGGED_PAGE<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">ROWS_PER_TAGGED_PAGE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">9</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">ROWS_PER_TAGGED_PAGE</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">8</span></div>
 <div class="tsd-comment tsd-typography"><p>What a re-render costs when the save reached the page's own tags, in charged rows.</p>
 <p><code>ROWS_PER_FILL.realRender</code>, copied rather than imported: the measured table lives in
 <code>scripts/measure/free-envelope.ts</code> and a CLI script has no business in the Worker bundle. Pinned
 against the original in <code>tests/unit/ops/fanout.spec.ts</code>, the same arrangement <code>auth-budget.ts</code>
 uses for the two constants it copies.</p>
-<p>It describes <code>MEMORY_CACHE_BINS=none</code>; with the shipping default a tagged page is 3, and the
-constant tracks <code>ROWS_PER_FILL.realRender</code> deliberately rather than leading it. See that class.</p>
+<p>It describes <code>MEMORY_CACHE_BINS=none</code>; with the shipping default a tagged page is 2, and the
+constant tracks <code>ROWS_PER_FILL.realRender</code> deliberately rather than leading it. See that class,
+which says why both of these lost a row on 2026-09-23.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fanout.ts#L32">src/ops/fanout.ts:32</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/ops/fanout.ts#L33">src/ops/fanout.ts:33</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

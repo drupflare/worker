@@ -15,10 +15,11 @@
 <div class="tsd-comment tsd-typography"><p>And what a re-queued page costs when the save did NOT reach its tags.</p>
 <p><code>ROWS_PER_FILL.warmReassemble</code>. A <code>cachetags</code> bump leaves <code>dynamic_page_cache</code> alone except for
 tag-matched entries, so a page re-queued by a wholesale purge re-renders from a warm bin: it
-stores its row and writes nothing else.</p>
+stores its row and writes nothing else. 2, priced on the front page: <code>/user/login</code> reassembles in
+one row and <code>/</code> in two, and the class takes the dearer path so it cannot undercut a real fill.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/ops/fanout.ts#L41">src/ops/fanout.ts:41</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/ops/fanout.ts#L43">src/ops/fanout.ts:43</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

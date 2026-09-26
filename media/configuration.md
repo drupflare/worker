@@ -28,15 +28,18 @@ it is bound and absent otherwise.
 | `FILES`               | R2               | **not declared** | the page and file mirror drains nothing; the off-Worker serving path is unavailable  |
 | `CF_VERSION_METADATA` | version metadata | declared         | the fleet row records `workerVersion: "unknown"`                                     |
 | `PAGE_KV`             | KV               | declared         | the cross-colo page tier is absent, and so is the stale-generation serve             |
+| `RENDER_LANES`        | Durable Object   | declared         | image styles render on first view instead of on upload                               |
 | `SEND_EMAIL`          | `send_email`     | not declared     | the credential-free mail transport is absent; `api` or `smtp` still work             |
 
 **`FILES` is the one binding the shipping config leaves out, because naming it breaks the deploy
 button.** R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
 config that names one is refused with _"Please enable R2 through the Cloudflare Dashboard.
-[code: 10042]"_ on every account that has not done that. KV and D1 have no such requirement:
-wrangler creates `CONFIG_KV` and `FLEET_DB` on first deploy.
+[code: 10042]"_ on every account that has not done that. Enabling R2 requires a payment card on
+either Workers plan, even when usage stays inside the monthly allocation. KV and D1 have no such
+requirement: wrangler creates `CONFIG_KV` and `FLEET_DB` on first deploy.
 
-Add it when you want the mirror:
+Once R2 is enabled, wrangler creates the named bucket on deploy as it does for KV and D1. Add the
+binding when you want the mirror:
 
 ```jsonc
 "r2_buckets": [{ "binding": "FILES", "bucket_name": "drupflare-files" }]
@@ -45,6 +48,13 @@ Add it when you want the mirror:
 An unbound optional binding always wins over the var that would enable the feature. Asking for a tier
 that is not bound is a configuration error, and answering it with a crash on the serving path would
 be the wrong trade.
+
+## CMS
+
+`CMS` selects which CMS the build packs, and `drupal` is the only value. It is read at BUILD time by
+`bun run assets:driver`, from the environment and then from `wrangler.jsonc`, which sets it. Unlike
+every other var it has no default: a missing or unknown value fails the build instead of packing
+Drupal under another name. At runtime it is only reported, as the fleet row's `cms`.
 
 ## Site Identity and Origin
 
@@ -157,8 +167,9 @@ value all fall through to the var.
 | `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
 | `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                |
 | `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off   |
-| `PAGE_KV_ENABLED`        | per plan | force the cross-colo KV page tier on (`1`) or off (`0`)                        |
+| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans  |
 | `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
+| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, paid unset  |
 | `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off  |
 | `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation        |
 | `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on        |
@@ -210,10 +221,18 @@ Consumer: `bodyTooLarge()` in `src/site.ts`.
 
 ### The KV Page Tier
 
-`PAGE_KV` is a cross-colo tier between the edge cache and the Durable Object. It is **on for paid and
-off for free** by default. It still costs one Worker request, since the Worker has to run to consult
-it, so what it buys is latency and never serving ceiling. A missing binding always wins over
+`PAGE_KV` is a cross-colo tier between the edge cache and the Durable Object, on for both plans
+whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
+consult it, so what it buys is latency and never serving ceiling. A missing binding always wins over
 `PAGE_KV_ENABLED`.
+
+Free KV allows 1,000 writes a day for the whole account, and `CONFIG_KV` draws on the same allowance.
+So the object grants each page write: an answer that may be stored carries `x-cfw-kv-grant`, and the
+front worker stores nothing without it. The object counts its grants in its daily meter row and stops
+at `KV_WRITES_PER_DAY`, 800 on free. Past that, the site keeps serving from what it already stored
+and from the object. Only the primary grants, so replica lanes do not multiply the budget.
+`/serve-stats` reports `pageKv.writesToday` against `pageKv.budget`. Compiled plans share the namespace
+and carry no budget, so on free they are written only when `PAGE_KV_ENABLED` is `1`.
 
 Stored pages are keyed by site, generation and path, so a generation bump invalidates every one of
 them without enumerating or deleting anything. KV has no bulk delete, so a scheme needing one would
@@ -537,9 +556,10 @@ cross-site request carries it, including a top-level link.
 | `CACHE_DATA_MAX_ROWS`   | 5,000     | row cap on `cache_data`                                                                         |
 | `WATCHDOG_ROW_LIMIT`    | unset     | row cap on `watchdog`; unset reads `dblog.settings` from the site                               |
 | `KEEP_WARM_MS`          | 240,000   | idle alarm re-arm; NOT a keep-warm, see below                                                   |
-| `SITE_WARM`             | on        | re-arms below the hibernation threshold so the object stays resident; `0` opts out              |
-| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm; clamped under 10,000 whatever is set                                           |
+| `SITE_WARM`             | by plan   | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy |
+| `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm, KV-overridable; clamped under 10,000 only when `RETAIN_INTERPRETER=0`          |
 | `RECYCLE_ABOVE_BYTES`   | 117440512 | drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB |
+| `RETAIN_INTERPRETER`    | on        | keeps an evicted instance's interpreter for the next instance to adopt; `0` is off              |
 | `REPLICA_READ_ONLY`     | off       | `1` puts the object in replica mode; see below                                                  |
 | `REPLICA_COUNT`         | 0         | replica lanes per site beyond the primary; 0 is one object per site                             |
 | `REPLICA_LAG_MS`        | 30,000    | how long a serving lane may go without pulling the log; the bound on staleness                  |
@@ -553,6 +573,17 @@ cumulative; `/__migrate` and `/__firstrun` drop the interpreter when they finish
 everything else. It must fire BETWEEN invocations: linear memory is reclaimed only when the old
 module is collected, so dropping mid-request holds both allocations at once. `/serve-stats` reports
 `recycles` and `lastRecycle`; an object recycling every request is paying a boot per page.
+
+The limit is per isolate, not per object, and an isolate can host several objects of one class.
+`/serve-stats` reports `isolate`: its `id`, the `interpreters` it holds and their `linearBytes`
+added together. Two interpreters do not fit 128 MiB, so `interpreters` above 1 is the thing to look
+for on a replica pool.
+
+`RETAIN_INTERPRETER` keeps the interpreter in the isolate when the instance is evicted, so the next
+request skips the boot while the isolate survives: 61-169 ms against about 1-2.5 s measured, after gaps
+up to 150 s in most rounds. When the isolate is gone the next request boots as it would have anyway.
+An adopted interpreter is refused when the site committed a write since it was kept. `/serve-stats`
+reports `retention`.
 
 **`REPLICA_READ_ONLY` is a SAFETY interlock.** Setting it wraps every installed `cfw*` capability so
 the object physically cannot commit an authoritative write, and refuses anything unrecognised. That
@@ -734,13 +765,40 @@ and 45 s the constructor ran again on every probe.
 `KEEP_WARM_MS` ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps
 nothing warm. The name is older than the measurement; it is an idle re-arm.
 
-`SITE_WARM` re-arms at `WARM_INTERVAL_MS` instead, clamped below 10,000 because a larger value
-spends a request and a row per firing and holds nothing, the worst of both.
+`SITE_WARM` re-arms at `WARM_INTERVAL_MS` instead. At 8,000 the object never hibernates, so every
+request finds the interpreter it left. A longer interval lets it hibernate, and the next instance then
+adopts the retained interpreter only when it lands in the same isolate; without retention
+(`RETAIN_INTERPRETER=0`) nothing can be adopted and the interval stays clamped below 10,000.
 
-On by default on both plans; `siteWarmEnabled()` returns true when the var is unset and carries no
-plan branch. An idle tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
+**The default follows the economics.** An explicit `SITE_WARM` always wins. Unset, a paid site warms:
+one site's 10,800 firings a day sit inside paid's included Durable Object requests and rows. Unset on
+free it is the thermal policy below, because the same firings are 10.8% of free's daily row and request
+budgets, and whether that buys enough is the operator's call. Both levers are on `/settings`. An idle
+tick charges one row, the `setAlarm` itself. What warming buys is the 1,398 ms
 cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
 without booting PHP at all, so warming cannot make one faster by any amount.
+
+**Past hibernation the curve has one knee, at 30 s.** Measured 2026-09-25 on paid throwaways: a page
+that needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four
+phases, rotated so every worker ran every interval (288 visits).
+
+| re-arm            | firings a day | share of free's budgets | paid, per site-month | adopted | the request                    |
+| ----------------- | ------------- | ----------------------- | -------------------- | ------- | ------------------------------ |
+| 8 s (`SITE_WARM`) | 10,800        | 10.8%                   | $0.373               | always  | never hibernated: 156-371 ms   |
+| 30 s              | 2,880         | 2.9%                    | $0.099               | 36%     | 100-692 ms adopted, ~2.1 s not |
+| 60-120 s          | 720-1,440     | 0.7-1.4%                | $0.025-0.050         | 14-15%  | 106-888 ms adopted, ~2.2 s not |
+| 240 s             | 360           | 0.4%                    | $0.012               | ~2%     | booted: 2-4 s                  |
+
+Past 10 s, adoption depends first on where the platform places the object. Four of the twelve
+workers never adopted at any interval; on the other eight, 30 s adopted 54% and 60-120 s 21-23%. Every
+visit that did not adopt found no retained interpreter in its isolate, so the code refused none. The
+same account also swings by the hour: 27 of 28 at 16:00 UTC, 0 of 60 at 19:00.
+
+A site that is not warming re-arms at 240 s, whether the thermal policy declined it or an operator
+set `SITE_WARM=0`, because that is the cheapest point and the thermal policy declines exactly the
+sites whose firings cost more than the boots they save. 60-120 s cost two to four times the firings
+for little more. An operator who wants the middle point sets `SITE_WARM=1` and
+`WARM_INTERVAL_MS=30000` on `/settings`; 30 s is also the shortest interval under $0.10 a month.
 
 **The interval is priced per site rather than flat.** A flat 8 s re-arm is 10,800 object requests and
 10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged
@@ -806,6 +864,7 @@ Cron renders against the site's origin, so links in mail it sends point at the s
 | `off`  | default; opcache disabled                                |
 | `file` | opcache on with the file cache as its only backing store |
 | `shm`  | opcache on with shared memory as its backing store       |
+| `pack` | reads a file cache baked into the pack, read-only        |
 
 The default is `off`, and the arms are measured. `file` writes 2,346 `.bin` files and 32,141,312
 bytes into the in-memory filesystem for a cache nothing ever reads, and `opcache_get_status()`
@@ -813,6 +872,13 @@ reports opcache DISABLED on that arm because `file_cache_only=1` turns the share
 off. `shm` does accelerate (2,346 cached scripts, no filesystem writes) and puts its arena in PHP's
 linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. `off` renders within 1 ms of
 `file` and leaves 37 MiB more room.
+
+`pack` needs `bun scripts/bake-opcache.ts` first and mounts nothing without it. It loads the baked
+cache as a second layer and cuts a cold render's object CPU by roughly 500-900 ms (deployed, n=8
+per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate,
+and the visitor's wall time did not follow the CPU across the swap. Re-bake after any driver or
+composer change: scripts are never revalidated against their source, so the mount refuses a layer
+baked from other sources.
 
 ### `ARGON2`
 
@@ -871,10 +937,9 @@ only in these two vars, `cpuTime` on the cold render, nothing asked of either ob
 | both `0`                             | 1277, 1343, 1113, 1251       |   4 |  1,264 |
 
 The ranges do not overlap, so a restore costs about 648 ms more than booting from scratch, and it
-consumes storage against an account-wide 5 GB cap. The likely mechanism is `digestBytes`, a per-byte
-JS loop over the restored bytes. That is also why deflating the stored chunks does not help: the
-digest is taken over heap bytes rather than stored ones, so it catches a bad inflate as well as bad
-storage.
+consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known. Checking
+the restored bytes is not it: that costs 13-20 ms for a 37 MB image
+(`node scripts/measure/heap-digest-cost.ts`).
 
 **The size of the image depends on when it is taken, and the producer takes the expensive one.**
 `snapshotStep()` fires on an alarm arriving with no resident interpreter, so on a fresh site it
@@ -955,18 +1020,35 @@ readable when the object dies mid-run. A `wrangler tail` has a 256 KB budget, so
 
 ## Prefill and Mirroring
 
-| var                     | default                   | what it does                                                |
-| ----------------------- | ------------------------- | ----------------------------------------------------------- |
-| `PREFILL`               | on for free, off for paid | seed the serving table from `assets/prefill.json`           |
-| `PREFILL_ON_SAVE`       | on                        | re-render invalidated paths after a content save            |
-| `PREFILL_ON_SAVE_LIMIT` | 25                        | paths one save may queue                                    |
-| `MIRROR_LIMIT`          | per plan                  | files one alarm firing may push to R2; capped at 25         |
-| `HTTP_DRAIN_ON_ALARM`   | on                        | drain queued outbound requests from the alarm               |
-| `HTTP_DRAIN_LIMIT`      | per plan                  | queued outbound requests one firing may fetch; capped at 25 |
+| var                     | default                   | what it does                                                                        |
+| ----------------------- | ------------------------- | ----------------------------------------------------------------------------------- |
+| `PREFILL`               | on for free, off for paid | seed the serving table from `assets/prefill.json`                                   |
+| `PREFILL_ON_SAVE`       | on                        | re-render invalidated paths after a content save                                    |
+| `PREFILL_ON_SAVE_LIMIT` | 25                        | paths one save may queue                                                            |
+| `SAVE_DEBOUNCE_MS`      | 2000                      | how long the refill after a save waits for the rest of a burst; `0` refills at once |
+| `MIRROR_LIMIT`          | per plan                  | files one alarm firing may push to R2; capped at 25                                 |
+| `R2_WRITES_PER_MONTH`   | 900000                    | R2 writes both mirrors may spend in a UTC month; `0` turns both off                 |
+| `HTTP_DRAIN_ON_ALARM`   | on                        | drain queued outbound requests from the alarm                                       |
+| `HTTP_DRAIN_LIMIT`      | per plan                  | queued outbound requests one firing may fetch; capped at 25                         |
 
 `PREFILL` is on for free because free is where a cold first request costs the most: a prefilled path
 is a hit on its first ever request. It is off during a bake, or every render would be a hit of the
 file being rebuilt.
+
+`SAVE_DEBOUNCE_MS` holds the refill after a save for a short window, so a burst of saves costs one
+generation bump and one render of each affected page. A refill that ran between two saves would
+reopen the invalidation and make the second save pay for both again. The window starts at the first
+save and later saves do not extend it. A visitor who asks for an invalidated page is still served at
+once; only the pages nobody has asked for wait.
+
+`R2_WRITES_PER_MONTH` caps what the file and page mirrors spend together. R2's allocation is
+1,000,000 Class A operations a month per account, and every put past it is billed; the default stops
+one site at 90% of that. The count is kept in `cfw_meta` under a key that names the month, so it
+resets on the first of each month. Deletes count as well, so the tally reads high. A spent budget
+leaves the rest of the queue in place and every file keeps serving from the object, which holds the
+bytes either way. `/serve-stats` reports the month's tally as `r2`. Set it to `0` to stop both
+mirrors while leaving `FILES` bound. On an account running several sites, divide the allocation
+between them.
 
 **Mirror to the optimum.** Once R2's read meter binds, moving more traffic off-Worker spends a
 333,333/day meter to save a 100,000/day one. On the default traffic mix the peak is 0.769 off-Worker
@@ -980,15 +1062,41 @@ reads cannot bind at all, the peak lands at 0.898 and is bound by rows.
 
 ## Files and Images
 
-| var                | default   | what it does                                                        |
-| ------------------ | --------- | ------------------------------------------------------------------- |
-| `FILES_PUBLIC_URL` | unset     | origin a mirrored public file is linked from; unset uses the Worker |
-| `IMAGE_ENGINE`     | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
+| var                 | default   | what it does                                                        |
+| ------------------- | --------- | ------------------------------------------------------------------- |
+| `FILES_PUBLIC_URL`  | unset     | origin a mirrored public file is linked from; unset uses the Worker |
+| `IMAGE_ENGINE`      | `tinyimg` | which engine produces derivatives; `images` for Cloudflare Images   |
+| `EAGER_DERIVATIVES` | on        | render an upload's image styles on the rendering lanes; `0` off     |
+
+### Image Styles
+
+A public image style's URL points at the Worker's delivery path, `/cfw-img/<id>/<uri>?<transform>`,
+where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL
+from the style's effect chain: scale, scale-and-crop, resize and convert each map to one transform.
+A chain that cannot be expressed as one transform, and any private file, keeps Drupal's stock URL.
+Before this, the toolkit copied the original to the derivative path and every style served the
+full-size source.
+
+With `RENDER_LANES` bound, an image written to `public://` is queued, and the next alarm renders
+every configured style at once on the rendering lanes, Durable Objects that hold no Drupal state.
+The results are stored under `public://cfw-derivatives/`, and the image route answers a stored copy
+in place of the source on the request it already makes, marked `x-cfw-image: STORED`. Measured on a
+deployed worker with the four shipped styles, n=5: the job took 984-1,718 ms on four lanes with five
+or six Durable Object requests, a stored first view answered in 41-91 ms, and the same style
+rendered on first view took up to 1,647 ms. Stored and rendered bytes were identical in all 20
+comparisons. Driven through the media form on a deployed worker, n=5, an upload answered 303 in
+750-939 ms and all four styles were stored 3.9-4.4 s after the POST. `EAGER_DERIVATIVES=0` returns
+to rendering on first view.
 
 ### `FILES_PUBLIC_URL`
 
 Unset, every file is served through the Worker, which is correct and costs one Worker request per
-file. Set to an R2 custom domain, a public file that has already mirrored to the `FILES` bucket is
+file. The front worker answers `/sites/default/files/<path>` from the object's file store and caches
+it for 300 seconds. Drupal has no route for a public file, so until this route existed every public
+original answered Drupal's 404 on a site with no mirror. PNG, JPEG, GIF, WebP and AVIF render inline;
+every other type, SVG and PDF included, is sent as a download under a sandboxing
+`Content-Security-Policy`, because the file shares the site's origin and its session cookie. Set to
+an R2 custom domain, a public file that has already mirrored to the `FILES` bucket is
 linked at that origin instead and costs **no Worker request at all**.
 
 That is one of only two paths on the platform that cost nothing. A zone Cache Rule is not one of them:
@@ -1019,6 +1127,10 @@ fallback.
 Measured on a deployed free worker, `cpuTime` amortised over 10 transforms per invocation, median of
 12, against a source-only control at 0 ms: thumbnail 36.3 ms, medium 48.6, large 63.5, wide 188.2.
 Styles at or below 480 px on the long edge are produced inline; larger ones go to the fill queue.
+
+gd is not an engine and is not planned. Built to native wasm and deployed beside tinyimg on the same
+3000x1571 JPEG, it used ~294 ms of CPU against tinyimg's ~184 ms, and it cannot write WebP. Code
+that calls PHP's `imagecreate*` functions directly finds them absent on this runtime.
 
 ## Outbound Mail
 
@@ -1564,10 +1676,34 @@ already holds.
 ### From Drupal, Without the Owner Token
 
 The same levers are editable at `/admin/config/drupflare/settings`, gated on the
-`administer drupflare settings` permission. Each field shows its value and its source, so an
-operator can tell an override they chose from a default nobody has looked at. Only the fields that
-changed are sent, because a patch carrying every field would turn a deployed value into a stored
-override by the act of pressing save.
+`administer drupflare site` permission. Each field holds the stored override, with the deployed value
+beside it and its source named, so an operator can tell an override they chose from a default nobody
+has looked at. Only the fields that changed are sent, because a patch carrying every field would turn
+a deployed value into a stored override by the act of pressing save.
+
+Every lever has a domain, `LEVER_DOMAINS` in `src/ops/plan.ts`: a flag is `0` or `1`, a number has
+the range its reader clamps to, and a fixed choice (`OPCACHE_MODE`, `MAIL_TRANSPORT`,
+`SITE_LOCATION_HINT`) is one of its listed values. The form offers a select or a bounded number
+field from it, and `writeSettings()` refuses a value outside it and names the reason, so a mistyped
+value cannot reach a reader. `LAZY_FS_BUDGET_BYTES` stops at 8 MiB, half of the 16 MiB a module
+install was measured to fail at.
+
+### The Three Permissions
+
+| permission                   | reaches                                                        |
+| ---------------------------- | -------------------------------------------------------------- |
+| `view drupflare status`      | the runtime status page, read only                             |
+| `administer drupflare site`  | the levers, and the operations terminal's cache and queue work |
+| `administer drupflare owner` | code delivery, including the terminal's `en` and package lines |
+
+`administer drupflare owner` is granted at claim, through a `Site Owner` role given to the claimed
+account, and only an account that already holds it can grant it. Holding `administer permissions` is
+not enough: the permission forms disable its checkboxes, and a role or user save that adds or removes
+it is put back when the acting user lacks it. An administrator role carries every permission, so
+assigning one is the same grant. The owner token outranks all three and works when Drupal does not.
+
+A site created before the tiers reconciles onto them: the five older names map to the three, and
+uid 1 is given the owner role.
 
 **`PLAN` is not on that form and cannot be written through it.** Every lever there has a worst case
 of a slower site; `PLAN` selects a limits profile whose quotas are account-wide, while whoever
@@ -1577,7 +1713,7 @@ capability behind the form refuses it at every spelling.
 `/admin/modules/drupflare` is the matching read-only page for code delivery: it names the three
 delivery paths and lists what has been delivered to this site. Delivering code stays an owner action
 on `/_cfw/git`, for the same tenancy reason. Within the operations terminal, `en` and any package
-line now additionally require `administer drupflare code`, so a site can grant the terminal without
+line additionally require `administer drupflare owner`, so a site can grant the terminal without
 granting the ability to add code to the runtime.
 
 **Every one of them reaches a reader inside the Durable Object, and for a while only two did.**

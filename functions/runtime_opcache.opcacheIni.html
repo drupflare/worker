@@ -14,7 +14,7 @@
 <section class="tsd-panel">
 <ul class="tsd-signatures">
 <li class="">
-<div class="tsd-signature tsd-anchor-link" id="opcacheini"><span class="tsd-kind-call-signature">opcacheIni</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">mode</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">&quot;off&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;file&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;shm&quot;</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><a href="#opcacheini" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
+<div class="tsd-signature tsd-anchor-link" id="opcacheini"><span class="tsd-kind-call-signature">opcacheIni</span><span class="tsd-signature-symbol">(</span><span class="tsd-kind-parameter">mode</span><span class="tsd-signature-symbol">?:</span> <span class="tsd-signature-type">&quot;off&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;file&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;shm&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;pack&quot;</span><span class="tsd-signature-symbol">)</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span><a href="#opcacheini" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></div>
 <div class="tsd-description">
 <div class="tsd-comment tsd-typography"><p>The ini lines for one arm.</p>
 <p><code>/tmp</code>, NOT <code>/tmp/opcache</code>, and the ordering is the whole reason. opcache reads this during PHP's
@@ -25,10 +25,10 @@ and startup aborts. Emscripten's MEMFS always creates <code>/tmp</code>.</p>
 <div class="tsd-parameters">
 <h4 class="tsd-parameters-title">Parameters</h4>
 <ul class="tsd-parameter-list">
-<li><span><span class="tsd-kind-parameter">mode</span>: <span class="tsd-signature-type">&quot;off&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;file&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;shm&quot;</span><span class="tsd-signature-symbol"> = DEFAULT_OPCACHE_MODE</span></span></li></ul></div>
+<li><span><span class="tsd-kind-parameter">mode</span>: <span class="tsd-signature-type">&quot;off&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;file&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;shm&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;pack&quot;</span><span class="tsd-signature-symbol"> = DEFAULT_OPCACHE_MODE</span></span></li></ul></div>
 <h4 class="tsd-returns-title">Returns <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">[]</span></h4><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/runtime/opcache.ts#L75">src/runtime/opcache.ts:75</a></li></ul></aside></div></li></ul></section></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/runtime/opcache.ts#L88">src/runtime/opcache.ts:88</a></li></ul></aside></div></li></ul></section></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

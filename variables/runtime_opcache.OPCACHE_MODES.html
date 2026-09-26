@@ -11,7 +11,7 @@
 <li><a href="../modules/runtime_opcache.html">runtime/opcache</a></li>
 <li><a href="" aria-current="page">OPCACHE_MODES</a></li></ul>
 <h1>Variable OPCACHE_MODES<code class="tsd-tag">Const</code></h1></div>
-<div class="tsd-signature"><span class="tsd-kind-variable">OPCACHE_MODES</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">&quot;file&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;shm&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;off&quot;</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
+<div class="tsd-signature"><span class="tsd-kind-variable">OPCACHE_MODES</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-keyword">readonly</span> <span class="tsd-signature-symbol">[</span><span class="tsd-signature-type">&quot;file&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;shm&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;off&quot;</span><span class="tsd-signature-symbol">,</span> <span class="tsd-signature-type">&quot;pack&quot;</span><span class="tsd-signature-symbol">]</span><span class="tsd-signature-symbol"> = ...</span></div>
 <div class="tsd-comment tsd-typography"><p>The opcache ini, as a seam with three arms.</p>
 <h2 id="why-this-is-a-seam-and-not-a-config-edit" class="tsd-anchor-link">Why this is a seam and not a config edit<a href="#why-this-is-a-seam-and-not-a-config-edit" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>The file cache is WRITE-ONLY on this runtime, measured on the edge: 112 <code>.bin</code> files after a
@@ -19,6 +19,9 @@ kernel boot and 1,301 across 425 directories after one render, and nothing ever 
 MEMFS belongs to the interpreter instance, so every cold boot starts with an empty <code>/tmp</code> and
 every lookup is a guaranteed miss; within one instance, three entries deleted by hand did not
 reappear across three further renders.</p>
+<p>It is write-only for want of persistence, not of reading: planted into a fresh instance before it
+boots, the 92 files a kernel boot writes are all read and none recompiled, against a control that
+writes all 92 (measured 2026-09-24 in the workers pool). A cache shipped with the pack would load.</p>
 <p>That is an obvious thing to delete and it must not be deleted blind. <code>file_cache_only=1</code> makes the
 file cache opcache's ONLY backing store, so removing the path may disable opcache rather than
 merely stop the writes -- and removing opcache ini blind is exactly what produced the 8.5
@@ -34,7 +37,7 @@ merely stop the writes -- and removing opcache ini blind is exactly what produce
 <tbody>
 <tr>
 <td><code>file</code></td>
-<td>shipping: opcache on, file cache is the only store</td>
+<td>opcache on, file cache is the only store</td>
 </tr>
 <tr>
 <td><code>shm</code></td>
@@ -44,14 +47,25 @@ merely stop the writes -- and removing opcache ini blind is exactly what produce
 <td><code>off</code></td>
 <td>opcache disabled entirely</td>
 </tr>
+<tr>
+<td><code>pack</code></td>
+<td>the file cache the pack ships, read-only</td>
+</tr>
 </tbody>
 </table>
+<p><code>pack</code> is opt-in, and <code>off</code> stays the default. Measured 2026-09-25 on two deployed paid workers,
+one cold first render per minute, then again with the levers swapped between the deploys: object
+cpuTime per cold render (per-minute p90) read ~820-1,020 ms on <code>pack</code> against ~1,800 on <code>off</code>, and
+1,204-1,524 against 1,636-2,236 after the swap, so the CPU saving follows the lever. Visitor wall
+did not: p50 1,482 against 2,291, then 2,341 against 2,286 (n=8 each), because the deploy moves it
+more than the lever does. The layer is 1,839 scripts and 8,581,446 bytes, and it holds that much
+more of the isolate. <code>scripts/bake-opcache.ts</code> builds it.</p>
 <p><code>shm</code> is the arm with a real chance of not working at all. opcache's shared-memory backend wants
 <code>mmap</code>/<code>shmget</code>, which is why <code>file_cache_only=1</code> is there in the first place; if the arm aborts,
 that IS the measurement and it is what justifies keeping the write-only file cache.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/9045cf77b17e43bda43c303cf71516931f470071/src/runtime/opcache.ts#L30">src/runtime/opcache.ts:30</a></li></ul></aside></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/005348278d5be47e1ca18bf0ddb9a4e4d7219d05/src/runtime/opcache.ts#L43">src/runtime/opcache.ts:43</a></li></ul></aside></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

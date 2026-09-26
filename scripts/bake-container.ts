@@ -185,6 +185,9 @@ async function claim(base: string): Promise<void> {
  */
 async function captureClaimed(base: string, wanted: string): Promise<CapturedVariant> {
 	await sql(base, HOST, 'DELETE FROM cache_container');
+	// the claim's own alarm fills pages before its process ends, and a stored page answers without
+	// booting, so every claimed path read 200 or 403 with no container built (CI, 2026-09-26)
+	await sql(base, HOST, 'DELETE FROM cfw_page');
 	return renderUntilRow(base, wanted, CLAIMED_PATHS);
 }
 

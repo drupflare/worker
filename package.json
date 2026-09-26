@@ -54,6 +54,7 @@
 		"fetch:interp85": "bun scripts/fetch-interpreter.ts long64 8.5",
 		"fetch:drupal": "bun scripts/fetch-drupal-tree.ts",
 		"build:site-db": "php -d opcache.enable_cli=0 -d xdebug.mode=off scripts/drupal/install-site-db.php drupal-src",
+		"check:artifact-specs": "bun scripts/find-artifact-specs.ts",
 		"check:await": "bun scripts/check-await-shape.ts",
 		"check:reachability": "bun scripts/qa/reachability.ts",
 		"check:site-db": "node scripts/diff-site-db.ts assets/drupal/site.sqlite",

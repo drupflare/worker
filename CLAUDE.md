@@ -1003,17 +1003,11 @@ was never re-measured. The lane prints both numbers when it skips.
 
 **A LOCAL GATE CANNOT SEE THIS AND MASTER STAYED RED FOR SIX DAYS BECAUSE OF IT.** Every dev machine
 has the pack, so a spec that reaches a real render passes here and fails on a clean checkout with
-`per-file pack not reachable: core.pf.json 404`. Twenty had accumulated. Reproduce the clean-checkout
-state before trusting a green local run on anything that renders:
-
-```sh
-mv assets/drupal-pf/core.pf.json assets/drupal-pf/core.pf.json.absent
-bun run test
-mv assets/drupal-pf/core.pf.json.absent assets/drupal-pf/core.pf.json
-```
-
-Back the file up first -- it arrives only from a release payload, so a lost rename is not recoverable
-from this repository. Anything that fails there belongs in `ARTIFACT_SPECS`.
+`per-file pack not reachable: core.pf.json 404`. Twenty had accumulated, and six more on 2026-09-26.
+**Run `bun run check:artifact-specs` before pushing anything that adds a render-reaching spec**: it
+parks `core.pf.json` and `.dev.vars` (keeping a copy of each), runs the workers lane, restores both
+whatever happens, and names each failing file as needing the pack or failing anyway; `--write`
+appends the first kind to `ARTIFACT_SPECS`.
 
 Same rule for `.github/workflows/interpreter.yml`: it prices a new interpreter against the tree that
 ships, so with no release it now **fetches, verifies and pins anyway** and skips only the pricing.
@@ -1395,7 +1389,9 @@ every fresh site and nothing said so. The bake now records the digest it baked w
 `src/ops/container-digest.ts`, skips only when that matches `DRIVER_DIGEST`, and provisioning stamps
 that recorded digest, so a stale bake reads as owed. **Run `bun run assets:container` after
 `assets:driver`** whenever a sibling changed, then update `cdn-manifest.json`, which the spec will
-name.
+name. Once a changed `assets/drupal/site.sqlite` is committed, `bun run backup:cdn` publishes it,
+archives the old object and records the archive in the manifest; otherwise the scheduled backup
+verify goes red with a size mismatch, which it did on 2026-09-26.
 
 **A bake must not share `.wrangler/state`.** Every object an earlier bake left there wakes with its
 alarms and renders beside the new one; three bakes in a row died with an empty wrangler `ERROR` that

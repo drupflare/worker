@@ -184,10 +184,22 @@ async function claim(base: string): Promise<void> {
  * logged, and workerd died straight after `/firstrun` answered (2026-09-26, both pack lanes).
  */
 async function captureClaimed(base: string, wanted: string): Promise<CapturedVariant> {
-	await sql(base, HOST, 'DELETE FROM cache_container');
-	// the claim's own alarm fills pages before its process ends, and a stored page answers without
-	// booting, so every claimed path read 200 or 403 with no container built (CI, 2026-09-26)
-	await sql(base, HOST, 'DELETE FROM cfw_page');
+	// enabling cfw_do_sqlite rebuilds the container inside the claim, so the row is usually there
+	// already, and the migrated one never names that module. Emptying it regardless failed on CI: the
+	// alarm had booted a kernel first, which holds its container in memory and never rewrites the row
+	const claimed = (
+		await sql(
+			base,
+			HOST,
+			`SELECT COUNT(*) AS n FROM cache_container WHERE instr(cid, ${quote(wanted)}) > 0 ` +
+				`AND instr(data, 'cfw_do_sqlite') > 0`
+		)
+	)[0] as { n: number } | undefined;
+	if (!Number(claimed?.n)) {
+		await sql(base, HOST, 'DELETE FROM cache_container');
+		// a stored page answers without booting, so none of the claimed paths would render
+		await sql(base, HOST, 'DELETE FROM cfw_page');
+	}
 	return renderUntilRow(base, wanted, CLAIMED_PATHS);
 }
 

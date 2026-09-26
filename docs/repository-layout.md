@@ -11,8 +11,9 @@ exist in the `drupflare-cdn` bucket: `.pack-backup/site.sqlite.bak`, which is th
 the current lineage, and an older hand-trimmed artifact from a different one. The SQLite header
 change counter is what orders them.
 
-`bun run backup:cdn --upload` archives a key's remote bytes to `snapshots/<name>.<sha12>` before
-replacing them, so nothing is lost by replacing one. It refuses for a tracked file with uncommitted
+`bun run backup:cdn` archives a key's remote bytes to `snapshots/<name>.<sha12>` before replacing
+them, so nothing is lost by replacing one, and records the archive in `cdn-manifest.json` in the same
+run, so the manifest is the only file left to commit. It refuses for a tracked file with uncommitted
 changes, where the bytes going up are recorded nowhere. `bun run backup:verify` compares every key by
 size and ETag.
 

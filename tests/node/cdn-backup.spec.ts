@@ -16,6 +16,7 @@ import {
 	ORIGIN_FALLBACK,
 	ORIGINS,
 	verdictFor,
+	withArchives,
 	type CdnEntry,
 	type CdnManifest
 } from '../../scripts/backup-cdn.ts';
@@ -205,8 +206,24 @@ describe('what the backup is allowed to contain', () => {
 		]);
 	});
 
-	it('agrees with the archive list the script carries', () => {
-		expect(committed.archived.map((e) => e.key)).toEqual(ARCHIVED.map((e) => e.key));
+	it('reads its archive list from the committed manifest', () => {
+		expect(ARCHIVED).toEqual(committed.archived);
+	});
+
+	// an upload records what it archived; a key archived twice keeps the entry it was given first
+	it('appends an upload archive to the list without replacing an entry already there', () => {
+		const old = { key: 'snapshots/a.1', bytes: 1, sha256: 'x', md5: 'y', note: 'kept' };
+		const next = withArchives(
+			[old],
+			[
+				{ ...old, note: 'replaced' },
+				{ key: 'snapshots/b.2', bytes: 2, sha256: 'z', md5: 'w', note: 'new' }
+			]
+		);
+		expect(next.map((e) => [e.key, e.note])).toEqual([
+			['snapshots/a.1', 'kept'],
+			['snapshots/b.2', 'new']
+		]);
 	});
 });
 

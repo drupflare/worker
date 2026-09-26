@@ -250,7 +250,14 @@
 			"bytes": 7585792,
 			"sha256": "f97005b968897b0b16c5c7d1513253f6ca6399682ae970ec2d5c46bde50975e1",
 			"md5": "ea53ebfc02519dfa1bfba6d7220e71fd",
-			"note": "the packed database as it stood before the 11.4.6 rebuild at 3e4f2737; archived by the upload that replaced it with the 5,349,376-byte tree copy"
+			"note": "the packed database before the 11.4.6 rebuild at 3e4f2737; the bucket still held it while the tree had moved to 5,349,376 bytes, which is the size-mismatch the scheduled verify reported. Archived by the upload that replaced it"
+		},
+		{
+			"key": "snapshots/site.sqlite.aa7c5cb00024",
+			"bytes": 5349376,
+			"sha256": "aa7c5cb00024ad1a94ba25e534fda9cb98c57c831795fab2e2a2863055eaddde",
+			"md5": "71909c7da0183f3c8e75cc520a75b63e",
+			"note": "the packed database before the 2026-09-25 rebuild against the driver (d8f6097f), whose router lagged it; the bucket still held it while the tree had moved to 5,832,704 bytes. Archived by the upload that replaced it"
 		},
 		{
 			"key": "snapshots/php8.5-worker.mjs.wasm.94d598fc403b",
@@ -264,7 +271,7 @@
 			"bytes": 13401767,
 			"sha256": "4e8501623f72a7236f43e3f3641fec5b46a496aa25b120da33e1e61ce78f0c02",
 			"md5": "d9a4237fd2498ca9a68ac23ae722a08f",
-			"note": "the TABLE_GROWTH arm: a growable __indirect_function_table and an exported __stack_pointer. Measured 8.29%/7.90%/8.14% SLOWER than the shipping binary across five arms, and isolated to the EXPORT rather than the table -- neutralising both reads -0.20%. Kept because the v1.0.2 stack-pointer question is scored against it"
+			"note": "the TABLE_GROWTH arm, 8% slower and isolated to the exported __stack_pointer rather than the growable table; kept because the v1.0.2 stack-pointer question is scored against it"
 		},
 		{
 			"key": "snapshots/php8.5-worker.mjs.7bd7190c8965",

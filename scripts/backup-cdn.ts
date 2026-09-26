@@ -141,104 +141,19 @@ export const IRREPRODUCIBLE: readonly { path: string; dir?: boolean; tracked?: b
  *
  * Verified, never uploaded.
  */
-export const ARCHIVED: readonly ArchivedEntry[] = [
-	{
-		key: 'assets/drupal/site.sqlite.trimmed-1618p-cc13',
-		bytes: 6_627_328,
-		sha256: '94911463f798d3bbefb66f8e9a2b17decb453048af59d559a407b2bf61e8dab8',
-		md5: 'd7a5801614964886e4834e287b189432',
-		note: 'the original hand-trimmed lineage: 1618 pages, change counter 13'
-	},
-	{
-		key: 'snapshots/site.sqlite.064105ca7223',
-		bytes: 7_585_792,
-		sha256: '064105ca7223ef57f48e3e979d7ddcf53293060939c1202400110f08ea760380',
-		md5: '6a6a872406851f8947b2c03b1e86283d',
-		mirrors: '.pack-backup/site.sqlite.bak',
-		note: 'the rollback point bun run bake:pack overwrites on its next run: change counter 16'
-	},
-	{
-		key: 'snapshots/site.sqlite.a18db26a417b',
-		bytes: 7_585_792,
-		sha256: 'a18db26a417b65e163b7a4a5a3ac250d41048e40f2eb84a7e6da51777f5d8974',
-		md5: 'd62c74571fc35f2b0b3559b8f70e2b9d',
-		note: 'change counter 19, superseded by cc27; no mirrors field because it is history now'
-	},
-	{
-		key: 'snapshots/site.sqlite.2259f3f96066',
-		bytes: 7_585_792,
-		sha256: '2259f3f96066719fc3f9a0e9c0c1bfc383a0ebefbbe4900d443da70e9210355a',
-		md5: 'bb6d5813b0638d00835aaeaf522e2e52',
-		note: 'change counter 27, the FIRST page max_age fix; superseded by the committed f97005b9 lineage and kept because an archive is a snapshot'
-	},
-	{
-		key: 'snapshots/site.sqlite.f97005b96889',
-		bytes: 7_585_792,
-		sha256: 'f97005b968897b0b16c5c7d1513253f6ca6399682ae970ec2d5c46bde50975e1',
-		md5: 'ea53ebfc02519dfa1bfba6d7220e71fd',
-		note: 'the packed database before the 11.4.6 rebuild at 3e4f2737; the bucket still held it while the tree had moved to 5,349,376 bytes, which is the size-mismatch the scheduled verify reported. Archived by the upload that replaced it'
-	},
-	{
-		key: 'snapshots/php8.5-worker.mjs.wasm.94d598fc403b',
-		bytes: 12_234_575,
-		sha256: '94d598fc403bf66690b76cf05aff508bb5dc47e641e963dc57dd4c43bcd28458',
-		md5: '1488008fc46b3182f335beff4d29cad7',
-		note: 'the shipping 8.5 binary before ext/cfwpark gained park_flatten; archived by the upload that replaced it'
-	},
-	// ORDER MATTERS AND IS ASSERTED: `cdn-backup.spec.ts` compares this list against the manifest's
-	// `archived` positionally, so an entry added here has to land at the same index there
-	{
-		key: 'snapshots/php8.5-worker.mjs.wasm.4e8501623f72',
-		bytes: 13_401_767,
-		sha256: '4e8501623f72a7236f43e3f3641fec5b46a496aa25b120da33e1e61ce78f0c02',
-		md5: 'd9a4237fd2498ca9a68ac23ae722a08f',
-		note: 'the TABLE_GROWTH arm, 8% slower and isolated to the exported __stack_pointer rather than the growable table; kept because the v1.0.2 stack-pointer question is scored against it'
-	},
-	{
-		key: 'snapshots/php8.5-worker.mjs.7bd7190c8965',
-		bytes: 876_368,
-		sha256: '7bd7190c8965dc29bbec008e887a28263f21e1370ad721b973dfc3d003064c5e',
-		md5: '1b880e440d1eff99351b5bc92b23e76d',
-		note: 'its glue, measured innocent: the same wasm across both glues reads -0.60% against a -0.34% control'
-	},
-	{
-		key: 'snapshots/php8.5-worker.mjs.6ec19188e65e',
-		bytes: 865_849,
-		sha256: '6ec19188e65e0491a54fffd3485a90ab9d3ddd75950c7fe207b2c894ab1ffc72',
-		md5: '44123585c3daabf58e30978404d6bf2f',
-		note: 'its glue, same replacement'
-	},
-	{
-		key: 'vendor/static-control85/php8.5-worker.mjs.wasm',
-		bytes: 12_218_393,
-		sha256: '02244ae68d49a5b97116646447151c310b9d29d449ed33993d5ad99578539148',
-		md5: '988a338279a50604fac00c565a42b6b4',
-		note: 'THE KEY NAME IS WRONG AND THE BYTES ARE WHAT MATTER: this is the wasm32 arm, byte-identical to .interp/php8.5-wasm32.wasm, and NOT phasm vendor/static-control85, which is a different 12,676,181-byte build. It was the shipping binary when it was uploaded and the name has meant nothing since; this sha appears nowhere else here, so it is the only off-machine copy of the arm and is pinned rather than deleted. No mirrors field: it is history, and `.interp/` is a build output that may legitimately be rebuilt'
-	},
-	{
-		key: 'vendor/static-control85/php8.5-worker.mjs',
-		bytes: 863_402,
-		sha256: '016b01a2853445ff549fdc735a5f7899897970b63e6788f17fda1ca572d39bcb',
-		md5: '36aa14c39812465961b522d4065daba8',
-		note: 'its glue; the same misnamed key, and the same reason for keeping it'
-	},
-	{
-		key: 'vendor/static-long64/php8.5-worker.mjs.wasm',
-		bytes: 13_401_742,
-		sha256: 'fc6a660dec094cba2daf7461849e3c40ccc270e78f40d7ea289c827f6b7a85ac',
-		md5: '8512cebe6ca6795f400be8edc78d67d8',
-		mirrors: '.interp/php8.5.wasm',
-		note: 'the shipping PHP 8.5 binary: wasm32 pointers with 64-bit zend_long, so PHP_INT_SIZE is 8'
-	},
-	{
-		key: 'vendor/static-long64/php8.5-worker.mjs',
-		bytes: 876_467,
-		sha256: 'e86ef3e20ff94f136a1bc1ed7ec926fdb171bcd2b08b8a843449911d21f944ae',
-		md5: '9de83d79aad46b4c4bbada9204e8e69a',
-		mirrors: '.interp/php8.5-worker.mjs',
-		note: 'its glue, which the seam imports as PHPFactory'
+export const ARCHIVED: readonly ArchivedEntry[] = readArchived();
+
+/** the list lives in the manifest, and `--upload` appends to it, so no entry is written by hand */
+function readArchived(): readonly ArchivedEntry[] {
+	try {
+		const raw = JSON.parse(
+			readFileSync(resolve(import.meta.dirname, '..', MANIFEST_PATH), 'utf8')
+		);
+		return Array.isArray(raw?.archived) ? raw.archived : [];
+	} catch {
+		return [];
 	}
-];
+}
 
 /** files that are noise rather than artifacts */
 const SKIP = /(^|\/)\.DS_Store$/;
@@ -380,7 +295,7 @@ function put(root: string, key: string, file = join(root, key)): void {
  *
  * @returns the archive key, so the caller can name it in the manifest.
  */
-export function archiveRemote(root: string, key: string): string {
+export function archiveRemote(root: string, key: string): ArchivedEntry {
 	const scratch = join(root, '.cdn-archive');
 	mkdirSync(scratch, { recursive: true });
 	const local = join(scratch, key.replaceAll('/', '_'));
@@ -396,7 +311,22 @@ export function archiveRemote(root: string, key: string): string {
 	console.log(
 		`  archived ${key} -> ${archived} (${body.length} bytes, sha256 ${sha.slice(0, 12)})`
 	);
-	return archived;
+	return {
+		key: archived,
+		bytes: body.length,
+		sha256: sha,
+		md5: createHash('md5').update(body).digest('hex'),
+		note: `${key} as the bucket held it until an upload replaced it on ${new Date().toISOString().slice(0, 10)}`
+	};
+}
+
+/** the archive list with new entries appended, a key already present keeping its own entry and note */
+export function withArchives(
+	archived: readonly ArchivedEntry[],
+	added: readonly ArchivedEntry[]
+): ArchivedEntry[] {
+	const have = new Set(archived.map((e) => e.key));
+	return [...archived, ...added.filter((e) => !have.has(e.key))];
 }
 
 /**
@@ -517,8 +447,8 @@ if (import.meta.main) {
 		}
 
 		const problems: string[] = [];
-		/** archive keys written this run, so the operator knows what to add to the manifest */
-		const archived: string[] = [];
+		/** archive entries written this run, recorded in the manifest before the upload returns */
+		const archived: ArchivedEntry[] = [];
 		/**
 		 * A SUPERSEDED LINEAGE IS IMMUTABLE; A MIRROR OF A LIVE FILE IS NOT, and treating both as
 		 * archives is why an interpreter bump could not be published.
@@ -584,9 +514,12 @@ if (import.meta.main) {
 			for (const p of problems) console.error(`  ${p}`);
 			process.exit(1);
 		}
-		if (archived.length) {
-			console.log(`\n${archived.length} archive key(s) written; add them to \`archived\`:`);
-			for (const a of archived) console.log(`  ${a}`);
+		if (has('upload')) {
+			// the manifest is the archive list, so recording what was archived and re-deriving the
+			// keys the upload just made current is one write, and committing it is the only step left
+			const fresh = { ...current(), archived: withArchives(ARCHIVED, archived) };
+			writeFileSync(join(root, MANIFEST_PATH), JSON.stringify(fresh, null, '\t') + '\n');
+			for (const a of archived) console.log(`  recorded ${a.key} in ${MANIFEST_PATH}`);
 		}
 		console.log(`\n${checked.length} keys verified against ${manifest.origin}`);
 		process.exit(0);

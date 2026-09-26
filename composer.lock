@@ -1152,16 +1152,16 @@
         },
         {
             "name": "drupflare/drupflare",
-            "version": "v0.3.3",
+            "version": "v0.4.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/drupflare/drupflare.git",
-                "reference": "df0751a8d4e5468a29d707be142d6c296c56e5ec"
+                "reference": "ec83c25a147a63a55d56f0fc7d9b5e3909cd155c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/df0751a8d4e5468a29d707be142d6c296c56e5ec",
-                "reference": "df0751a8d4e5468a29d707be142d6c296c56e5ec",
+                "url": "https://api.github.com/repos/drupflare/drupflare/zipball/ec83c25a147a63a55d56f0fc7d9b5e3909cd155c",
+                "reference": "ec83c25a147a63a55d56f0fc7d9b5e3909cd155c",
                 "shasum": ""
             },
             "require": {
@@ -1231,7 +1231,7 @@
                     "type": "patreon"
                 }
             ],
-            "time": "2026-09-19T17:38:55+00:00"
+            "time": "2026-09-26T03:40:52+00:00"
         },
         {
             "name": "drupflare/rom",

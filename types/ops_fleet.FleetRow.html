@@ -16,7 +16,7 @@
 </div></section>
 <div class="tsd-signature"><span class="tsd-signature-keyword">type</span> <span class="tsd-kind-type-alias">FleetRow</span> <span class="tsd-signature-symbol">=</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#cms">cms</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#coreversion">coreVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#health">health</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;ok&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;degraded&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;quarantined&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#lastseenms">lastSeenMs</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#packgeneration">packGeneration</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#plan">plan</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;free&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;paid&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#reconcileversion">reconcileVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#schemaversion">schemaVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#site">site</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#tier">tier</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;managed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;self-hosted&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#workerversion">workerVersion</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L47">src/ops/fleet.ts:47</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L47">src/ops/fleet.ts:47</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -48,14 +48,14 @@ migration on every live site, which is the stated reason the site-kind record wa
 out of v1.1: the cost is a column now against a fleet-wide migration later.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L82">src/ops/fleet.ts:82</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L82">src/ops/fleet.ts:82</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="coreversion"><span>core<wbr/>Version</span><a href="#coreversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">coreVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the Drupal core version the pack carries</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L52">src/ops/fleet.ts:52</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L52">src/ops/fleet.ts:52</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="health"><span>health</span><a href="#health" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">health</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;ok&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;degraded&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;quarantined&quot;</span></div>
@@ -66,24 +66,24 @@ site per refresh. A site that cannot report is <code>stale</code>, which is a di
 <code>degraded</code> and must not be folded into it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L93">src/ops/fleet.ts:93</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L93">src/ops/fleet.ts:93</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="lastseenms"><span>last<wbr/>Seen<wbr/>Ms</span><a href="#lastseenms" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">lastSeenMs</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L56">src/ops/fleet.ts:56</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L56">src/ops/fleet.ts:56</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="packgeneration"><span>pack<wbr/>Generation</span><a href="#packgeneration" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">packGeneration</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the migration pack it replayed, which is what a patch actually changes</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L50">src/ops/fleet.ts:50</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L50">src/ops/fleet.ts:50</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="plan"><span>plan</span><a href="#plan" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">plan</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;free&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;paid&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L55">src/ops/fleet.ts:55</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L55">src/ops/fleet.ts:55</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="reconcileversion"><span>reconcile<wbr/>Version</span><a href="#reconcileversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">reconcileVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
@@ -93,7 +93,7 @@ since reached it. Without it &quot;every site is patched&quot; is a claim about 
 cannot distinguish, because the pack generation of an old site never moves.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L64">src/ops/fleet.ts:64</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L64">src/ops/fleet.ts:64</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="schemaversion"><span>schema<wbr/>Version</span><a href="#schemaversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">schemaVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">number</span></div>
@@ -105,26 +105,26 @@ three different Worker versions has no way to tell which fields it can trust wit
 A reader compares it; it does not parse it.</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L74">src/ops/fleet.ts:74</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L74">src/ops/fleet.ts:74</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="site"><span>site</span><a href="#site" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">site</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L48">src/ops/fleet.ts:48</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L48">src/ops/fleet.ts:48</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="tier"><span>tier</span><a href="#tier" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">tier</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;managed&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;self-hosted&quot;</span></div>
 <div class="tsd-comment tsd-typography"><p>managed on a Cloudflare account, or self-hosted on the operator's own workerd</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L84">src/ops/fleet.ts:84</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L84">src/ops/fleet.ts:84</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="workerversion"><span>worker<wbr/>Version</span><a href="#workerversion" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">workerVersion</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the Worker version serving it, which is the rollback unit</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/d40c0c5e85b6b85e5135a5e95655e66b9fc4ada1/src/ops/fleet.ts#L54">src/ops/fleet.ts:54</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/fleet.ts#L54">src/ops/fleet.ts:54</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

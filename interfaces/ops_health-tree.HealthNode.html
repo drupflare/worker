@@ -13,7 +13,7 @@
 <h1>Interface HealthNode</h1></div>
 <div class="tsd-signature"><span class="tsd-signature-keyword">interface</span> <span class="tsd-kind-interface">HealthNode</span> <span class="tsd-signature-symbol">{</span><br/>    <a class="tsd-kind-property" href="#children">children</a><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-interface">HealthNode</a><span class="tsd-signature-symbol">[]</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#detail">detail</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#id">id</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#level">level</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;error&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;ok&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;warn&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;info&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;critical&quot;</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#source">source</a><span class="tsd-signature-symbol">:</span> <a href="../types/ops_health-tree.HealthSource.html" class="tsd-signature-type tsd-kind-type-alias">HealthSource</a><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#state">state</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/>    <a class="tsd-kind-property" href="#title">title</a><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span><span class="tsd-signature-symbol">;</span><br/><span class="tsd-signature-symbol">}</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L20">src/ops/health-tree.ts:20</a></li></ul></aside>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L20">src/ops/health-tree.ts:20</a></li></ul></aside>
 <section class="tsd-panel-group tsd-index-group">
 <section class="tsd-panel tsd-index-panel">
 <details class="tsd-index-content tsd-accordion" open><summary class="tsd-accordion-summary tsd-index-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="../assets/icons.svg#icon-chevronDown"></use></svg>
@@ -36,43 +36,43 @@
 <h3 class="tsd-anchor-link" id="children"><span>children</span><a href="#children" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">children</span><span class="tsd-signature-symbol">:</span> <a href="" class="tsd-signature-type tsd-kind-interface">HealthNode</a><span class="tsd-signature-symbol">[]</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L30">src/ops/health-tree.ts:30</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L30">src/ops/health-tree.ts:30</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="detail"><span>detail</span><a href="#detail" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">detail</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>empty when there is nothing to say</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L29">src/ops/health-tree.ts:29</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L29">src/ops/health-tree.ts:29</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="id"><span>id</span><a href="#id" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">id</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>stable, prefixed by source: <code>reconcile.owner-tiers</code>, <code>supervisor.memory.trend_rising</code></p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L22">src/ops/health-tree.ts:22</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L22">src/ops/health-tree.ts:22</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="level"><span>level</span><a href="#level" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">level</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">&quot;error&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;ok&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;warn&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;info&quot;</span> <span class="tsd-signature-symbol">|</span> <span class="tsd-signature-type">&quot;critical&quot;</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L24">src/ops/health-tree.ts:24</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L24">src/ops/health-tree.ts:24</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="source"><span>source</span><a href="#source" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">source</span><span class="tsd-signature-symbol">:</span> <a href="../types/ops_health-tree.HealthSource.html" class="tsd-signature-type tsd-kind-type-alias">HealthSource</a></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L23">src/ops/health-tree.ts:23</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L23">src/ops/health-tree.ts:23</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="state"><span>state</span><a href="#state" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">state</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div>
 <div class="tsd-comment tsd-typography"><p>the producer's own word for it: <code>owed</code>, <code>applied</code>, <code>quarantine</code>, a severity</p>
 </div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L26">src/ops/health-tree.ts:26</a></li></ul></aside></section>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L26">src/ops/health-tree.ts:26</a></li></ul></aside></section>
 <section class="tsd-panel tsd-member">
 <h3 class="tsd-anchor-link" id="title"><span>title</span><a href="#title" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="../assets/icons.svg#icon-anchor"></use></svg></a></h3>
 <div class="tsd-signature"><span class="tsd-kind-property">title</span><span class="tsd-signature-symbol">:</span> <span class="tsd-signature-type">string</span></div><aside class="tsd-sources">
 <ul>
-<li>Defined in <a href="https://github.com/drupflare/worker/blob/ff892ad69e8d86fdc9810eec80612b052794d983/src/ops/health-tree.ts#L27">src/ops/health-tree.ts:27</a></li></ul></aside></section></section></details></div>
+<li>Defined in <a href="https://github.com/drupflare/worker/blob/d896567a317692cec1b3ea2b759435e4195467b1/src/ops/health-tree.ts#L27">src/ops/health-tree.ts:27</a></li></ul></aside></section></section></details></div>
 <div class="col-sidebar">
 <div class="page-menu">
 <div class="tsd-navigation settings">

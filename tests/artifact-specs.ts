@@ -151,7 +151,15 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/serve-provision.spec.ts',
 	'tests/integration/unicode-runtime.spec.ts',
 	'tests/node/build-from-source.spec.ts',
-	'tests/node/container-cid.spec.ts'
+	'tests/node/container-cid.spec.ts',
+	// six joined 2026-09-26, each written since the last green push and each reaching a real render;
+	// CI's clean checkout failed all six with the same 404, and hiding core.pf.json reproduced it
+	'tests/integration/image-derivatives.spec.ts',
+	'tests/integration/member-for.spec.ts',
+	'tests/integration/memory-cache-bin.spec.ts',
+	'tests/integration/module-census.spec.ts',
+	'tests/integration/owner-tiers.spec.ts',
+	'tests/integration/status-page.spec.ts'
 ];
 
 /**

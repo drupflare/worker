@@ -341,11 +341,14 @@ async function main(): Promise<void> {
 	// its own state, shared by both sessions and nothing else: `.wrangler/state` keeps every object
 	// an earlier bake left, alarms included, and those render beside this one until workerd dies
 	const state = await mkdtemp(join(tmpdir(), 'container-bake-'));
+	// no reconciliation: its container step writes the pack's own row from an alarm, which replaced
+	// the row a render had just built between two reads of it on a from-source build (CI, 2026-09-26)
+	const vars = ['RECONCILE:0'];
 	let variants: CapturedVariant[];
 	try {
 		variants = [
-			await withWrangler(state, (base) => captureMigrated(base, wanted)),
-			await withWrangler(state, (base) => captureClaimed(base, wanted))
+			await withWrangler(state, (base) => captureMigrated(base, wanted), vars),
+			await withWrangler(state, (base) => captureClaimed(base, wanted), vars)
 		];
 	} finally {
 		await rm(state, { recursive: true, force: true });

@@ -30,7 +30,7 @@ services:
       retries: 30
 
   mysql:
-    image: mysql@sha256:57c892ddeb17e6c7dddf219914db017b2cf3e2797806a75424444b83622cc8ef
+    image: mysql@sha256:ade067ae2fb15eeb6143e81185afe22573e3b3addc58aaf90c41999fa6883991
     environment:
       MYSQL_ROOT_PASSWORD: 'drupflarepass'
       MYSQL_DATABASE: 'drupflare'

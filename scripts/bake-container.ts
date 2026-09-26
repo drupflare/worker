@@ -164,11 +164,11 @@ async function captureMigrated(base: string, wanted: string): Promise<CapturedVa
  * The same site claimed, whose container differs: first-run enables `cfw_do_sqlite`, which the pack
  * lists as absent, so a claimed site cannot be handed the pack's row.
  *
- * Run in a SECOND wrangler process. In the first, workerd died straight after the claim on three of
+ * Run in its own wrangler process. In the first, workerd died straight after the claim on three of
  * four attempts (2026-09-25, an empty `ERROR` and a restart) while holding the migrated pass's
  * interpreter; local state persists across processes, so the site carries over.
  */
-async function captureClaimed(base: string, wanted: string): Promise<CapturedVariant> {
+async function claim(base: string): Promise<void> {
 	const claimed = await fetch(`${base}/firstrun`, {
 		method: 'POST',
 		headers: { ...HOST, 'content-type': 'application/json' },
@@ -176,6 +176,14 @@ async function captureClaimed(base: string, wanted: string): Promise<CapturedVar
 	});
 	if (!claimed.ok)
 		throw new Error(`firstrun answered ${claimed.status}: ${await claimed.text()}`);
+}
+
+/**
+ * The claimed site's row, in a THIRD process. The claim drops its interpreter and the site's next
+ * alarm boots another at once; on CI's workerd the first was not yet collected, `boot-beside-resident`
+ * logged, and workerd died straight after `/firstrun` answered (2026-09-26, both pack lanes).
+ */
+async function captureClaimed(base: string, wanted: string): Promise<CapturedVariant> {
 	await sql(base, HOST, 'DELETE FROM cache_container');
 	return renderUntilRow(base, wanted, CLAIMED_PATHS);
 }
@@ -346,8 +354,10 @@ async function main(): Promise<void> {
 	const vars = ['RECONCILE:0'];
 	let variants: CapturedVariant[];
 	try {
+		const migrated = await withWrangler(state, (base) => captureMigrated(base, wanted), vars);
+		await withWrangler(state, claim, vars);
 		variants = [
-			await withWrangler(state, (base) => captureMigrated(base, wanted), vars),
+			migrated,
 			await withWrangler(state, (base) => captureClaimed(base, wanted), vars)
 		];
 	} finally {

@@ -1155,11 +1155,35 @@ costs about 648 ms MORE than booting from scratch**, and it also costs ~8 MB a s
 account-wide 5 GB cap. A cost on both meters and no benefit on either, so `HEAP_IMAGE` defaults off.
 
 It agrees in direction with the local `/bootphase` reading of 0.962 and separates far more cleanly.
-**The mechanism is unattributed, and it is NOT `digestBytes`,** which this paragraph named for two
-weeks without a reading behind it. The digest walks words, not bytes, and verifying a 37,158,912-byte
-image costs 13-16 ms whole and 19-20 ms as 200 KB chunks on a laptop's V8
-(`node scripts/measure/heap-digest-cost.ts`), about 3% of the gap. Inflate, the 186 chunk reads and
-the write into linear memory are the remaining candidates, none measured.
+**It is NOT `digestBytes`,** which this paragraph named for two weeks without a reading behind it.
+The digest walks words, not bytes, and verifying a 37,158,912-byte image costs 13-16 ms whole and
+19-20 ms as 200 KB chunks on a laptop's V8 (`node scripts/measure/heap-digest-cost.ts`), about 3% of
+the gap.
+
+**ATTRIBUTED 2026-09-25: the row count and the inflate, and removing both buys nothing.** Four paid
+workers at the same instants, fully cold (`SITE_WARM=0`, `RETAIN_INTERPRETER=0`), an 11,206,656-byte
+elided image, n=12 per arm, visitor wall p50 and object cpuTime p50 (the largest invocation in each
+visit minute):
+
+| arm                         | rows | wall     | cpu      |
+| --------------------------- | ---: | -------- | -------- |
+| no image                    |   -- | 2,303 ms | 1,704 ms |
+| 200 KB deflated (the codec) |   57 | 2,918    | 1,981    |
+| 2 MB deflated               |    6 | 2,550    | 1,823    |
+| 2 MB raw                    |    6 | 2,345    | 1,639    |
+
+So ~160 ms of CPU is the small rows and ~180 ms the inflate, and raw 2 MB rows restore at no cost.
+But the image only replaces the kernel boot, which is about what reading it costs, so no arm beats
+booting. `DEFAULT_CHUNK_BYTES` was sized for a 10 ms-per-invocation cap a Durable Object does not
+have. Arms were shadow trees; the codec is unchanged. gmux restores a 64 MiB machine in 112 ms the
+same way, which is what prompted the re-measure.
+
+**A WARM image is worse, which closes the last shape.** Taken with `/heap?op=snapshot` right after a
+render, at 94.8 MB linear: 810 kept pages, 53.1 MB in 27 raw rows, restored on 12 of 12 cold visits
+after growing the fresh heap through `_malloc`. Wall p50 2,366 ms against 1,412 booting from the pack
+at the same instants, object cpuTime 1,603 against 1,015. Reading and writing 53 MB costs more than
+the boot and compile it replaces. **So no image shape beats a boot here**, and the cold number moves
+only by frequency: warming and retention.
 
 **AND THE EARLIER RUN THAT MEASURED A SAVING WAS RIGHT ABOUT A DIFFERENT IMAGE.** It read a cold
 serve at 904 ms with an image against 1,218.5 without, a 314.5 ms saving, on a **9,699,328-byte**
@@ -1196,7 +1220,11 @@ cost of one. A proposal to make the boot faster has to be scored against that sh
 (n=10), object cpuTime p90 ~865-959 ms per cold minute. The mount is not where it goes: `bootMs`
 read 86-108 and `fetchMs` 31-71. A warm render is 180-220 ms, and waking an object without booting
 PHP is ~310 ms against ~150 warm. So the 500 / 700 ms target is not met for a fully cold isolate,
-and retention plus warming remain what keeps visitors off that path.
+and retention plus warming remain what keeps visitors off that path. **The target is settled by
+warming, decided 2026-09-25**: an 8 s re-arm is the default on paid sites, managed and self-managed,
+and a free site leaves it to the thermal policy with 30 s and 8 s available on `/settings`. Do not
+reopen it by trying to make the fully cold boot faster; every lever measured for that is recorded
+below and none beat a boot.
 
 **PAST HIBERNATION THE WARMING CURVE HAS ONE KNEE, AT 30 s, and I shipped the wrong point for an
 afternoon.** Past 10 s the object hibernates, and the next instance adopts the retained interpreter
@@ -1378,6 +1406,17 @@ way before the cause showed in a debug log as requests to an old bake's host. Th
 the ~18 MB JS-side estimate, answered 200 and recycled after). So `isolateNow()` overcounts what the
 platform meters, or the ceiling is not a hard 128 MiB on that sum. A workers-pool ladder that reads
 past 100% on that estimate is not evidence a page resets the object; confirm on a deploy.
+
+**RAMPED 2026-09-25, and the ceiling is not 128 MiB on that sum.** A paid object retaining committed
+JS buffers at 1 request per second until its module-scope id changed: with no interpreter it held
+180, 192 and 184 MiB, so the object's budget is ~195 MiB, which gmux measured independently. Beside a
+freshly booted interpreter (linear 80 MiB, `isolateNow()` ~93.5 MiB) it held only 20-40 MiB more in
+six ramps, and 80 in one taken after a render. So a booted interpreter costs ~165-175 MiB of the
+budget, far more than its linear memory, and linear growth after that is largely already paid:
+`/admin/content` grows linear 27 MB and survives, and a second interpreter is a second reservation,
+which is the update reset. **The JS side is what runs out**, with ~20-32 MiB to spare, and
+`isolateAboveBytes()` watches linear growth rather than it. That headroom is also why
+`OPCACHE_MODE=pack` stays off: its 8.58 MB lives in MEMFS on the JS side.
 
 **THE THREE CLOSES DID NOT CLOSE IT, read on a deployed update 2026-09-25.** Two paid throwaways
 provisioned on one build and redeployed on the next (driver `2c2c311d` -> `9cbc5c32`, re-baked

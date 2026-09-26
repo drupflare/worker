@@ -61,8 +61,9 @@ concurrent waves of 20, at `cpuTime` p50 ~180 ms and max 493 ms, with every invo
 
 **The regeneration ceiling now subtracts warming, and it did not until 2026-09-22.** `envelope()`
 divided the whole 100,000 rows/day as though nothing had been spent before a visitor arrived.
-`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default,
-and at the 8 s interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
+`siteWarmEnabled()` returns true when the var is unset, so a warmed object is the shipping default
+(since 2026-09-25 on paid; an unset value on free is the thermal policy's call), and at the 8 s
+interval it spends **10,896 rows/day and 10,800 DO requests/day** keeping itself
 resident. The published ceiling was therefore the ceiling of a configuration the product does not
 ship. Subtracting it took the windowed figure **10,869 -> 9,685/day**, which was **10.9% lower**,
 and the alarm-chain figure 2,777 -> 2,477.
@@ -687,7 +688,12 @@ its share of a real write is small.
 
 ### Memory
 
-The isolate ceiling is **134,217,728 bytes**. The shipping binary starts linear memory at
+The documented isolate ceiling is **134,217,728 bytes**, and it is not what resets an object. Ramped
+on a paid object on 2026-09-25, retaining committed JS buffers until the module scope changed: 180-192
+MiB held with no interpreter, so the budget is ~195 MiB; beside a freshly booted interpreter only
+20-40 MiB more in six of seven ramps. A booted interpreter therefore costs ~165-175 MiB, its linear
+growth afterwards is mostly already paid, and the JS side is what runs out. The table below is the
+estimate `isolateNow()` computes, not the platform's meter. The shipping binary starts linear memory at
 `INITIAL_MEMORY` = 83,886,080 (1,280 pages, 80.00 MiB) and grows it where the growth step puts it.
 
 **Re-derived on that binary 2026-09-24**, one incarnation read through `/__serve-stats`
@@ -2176,6 +2182,15 @@ measured 1,912 ms against 1,264 unimaged (n=5/4, ranges not overlapping) on the 
 the restore cost ~648 ms. Both readings are correct about the image they took; the producer takes the
 expensive one on the path that matters, which is a fresh site's first alarm. `HEAP_IMAGE` is off by
 default because of it.
+
+**The cost is the row count and the inflate, measured 2026-09-25.** Four paid workers at the same
+instants, fully cold, an 11,206,656-byte elided image, n=12 per arm: no image read 2,303 ms visitor
+wall and 1,704 ms object cpuTime at p50; the shipping 200 KB deflated rows (57) read 2,918 and 1,981;
+2 MB deflated rows (6) read 2,550 and 1,823; 2 MB raw rows (6) read 2,345 and 1,639. Raw rows remove
+the penalty and still only match booting, because this image replaces the kernel boot and nothing
+after it. A warm image taken right after a render (53.1 MB, 27 raw rows, restored 12 of 12) read
+2,366 ms wall and 1,603 ms cpuTime against 1,412 and 1,015 booting at the same instants, so no image
+shape beats a boot.
 
 Cross-site heap dedup is **34.7-38.0%** on a provisioned pair, n=7, and
 `tests/integration/snapshot-dedup.spec.ts` holds it as a band. It read 33.09% until 2026-08-28;

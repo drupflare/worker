@@ -15,8 +15,9 @@ the database. **8.5 is what ships**, with nothing dropped to fit.
 
 The interpreter ships as a raw WebAssembly module the platform compiles ahead of time, so startup
 costs a few milliseconds rather than the hundred a compressed frame did. A cold boot is expensive and
-a site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
-re-arm, measured across 71 consecutive alarms. Rows written is the meter that binds, not CPU. See
+a paid site does not normally pay it: a Durable Object holds its interpreter across an 8-second alarm
+re-arm, measured across 71 consecutive alarms. A quiet free site pays it unless it opts into warming.
+Rows written is the meter that binds, not CPU. See
 [Free vs Paid](#-free-vs-paid).
 
 A site is one Durable Object by default and does not have to be. `REPLICA_COUNT` gives it read
@@ -437,9 +438,12 @@ with `bun scripts/measure/free-envelope.ts`, never against a millisecond figure.
 
 ### What One Site Gets
 
-Both performance levers are **on by default on both plans**. A warm object spends 10.8% of free's two
-daily meters and $0 marginal on paid, so the numbers below are what a site gets rather than what it
-can be configured into.
+Both performance levers are **on by default on paid**, managed or self-managed, where a warm object
+costs $0 marginal. On free, shell assembly is on and warming follows the thermal policy: a site
+rendering more than about 505 pages a day warms itself and a quieter one does not, because a warm
+object spends 10.8% of free's two daily meters. `SITE_WARM=1` on `/settings` forces it, and
+`WARM_INTERVAL_MS=30000` is a cheaper middle point at 2.9%. So the numbers below are what a paid site
+gets, and what a free site gets once it is busy or has opted in.
 
 | authenticated page      |     boot |   render |       total | vs neither |
 | ----------------------- | -------: | -------: | ----------: | ---------: |

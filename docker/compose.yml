@@ -105,7 +105,7 @@ services:
 
   gitlab:
     profiles: ['heavy']
-    image: gitlab/gitlab-ce@sha256:a948f7a7ed49ae469fb2bfed9fd75fa4f44b3f098e1dfd33b223bd5487068518
+    image: gitlab/gitlab-ce@sha256:9b33b45b9f42d176bada85ee5ecb81ddab7e506c435f44cd582206e284b2809c
     shm_size: '256m'
     environment:
       GITLAB_ROOT_PASSWORD: 'drupflare-rig-password'

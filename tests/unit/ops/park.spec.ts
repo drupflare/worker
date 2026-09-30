@@ -24,6 +24,7 @@ import {
 	parkRun,
 	parseParkFetch,
 	parseSocketTarget,
+	performFetch,
 	stripPhpTag
 } from '../../../src/ops/park-drive';
 
@@ -313,6 +314,59 @@ describe('the fetch descriptor parser', () => {
 		).toBeUndefined();
 	});
 
+	it('carries a positive timeout and drops anything else', () => {
+		expect(parseParkFetch(packed({ url: 'https://e.test/', timeoutMs: 2500 }))?.timeoutMs).toBe(
+			2500
+		);
+		expect(
+			parseParkFetch(packed({ url: 'https://e.test/', timeoutMs: 0 }))?.timeoutMs
+		).toBeUndefined();
+		expect(
+			parseParkFetch(packed({ url: 'https://e.test/', timeoutMs: '5' }))?.timeoutMs
+		).toBeUndefined();
+	});
+
+	it('aborts a fetch at the timeout a module asked for', async () => {
+		let signal: AbortSignal | undefined;
+		const doFetch = (async (_url: string, init?: RequestInit) => {
+			signal = init?.signal ?? undefined;
+			return new Response('ok');
+		}) as typeof fetch;
+		await performFetch(
+			{ method: 'GET', url: 'https://e.test/', headers: {}, timeoutMs: 50 },
+			doFetch
+		);
+		expect(signal).toBeInstanceOf(AbortSignal);
+		signal = undefined;
+		await performFetch({ method: 'GET', url: 'https://e.test/', headers: {} }, doFetch);
+		expect(signal).toBeUndefined();
+	});
+
+	it('encodes a large body in chunks, not one string per byte', async () => {
+		const body = new Uint8Array(256 * 1024).map((_, i) => (i * 131) & 255);
+		const doFetch = (async () => new Response(body)) as unknown as typeof fetch;
+		const real = String.fromCharCode;
+		let calls = 0;
+		String.fromCharCode = (...codes: number[]) => {
+			calls++;
+			return real(...codes);
+		};
+		let reply: Uint8Array;
+		try {
+			reply = await performFetch(
+				{ method: 'GET', url: 'https://e.test/', headers: {} },
+				doFetch
+			);
+		} finally {
+			String.fromCharCode = real;
+		}
+		const decoded = JSON.parse(new TextDecoder().decode(reply)) as { body: string };
+		const back = Uint8Array.from(atob(decoded.body), (c) => c.charCodeAt(0));
+		expect(back).toEqual(body);
+		// a string per byte is 262,144 calls and ~44 MB of garbage per MB before a collection
+		expect(calls).toBeLessThan(body.length / 1000);
+	});
+
 	it.each([
 		['not base64 at all', 'not-base64'],
 		['base64 of nothing useful', btoa('nonsense')],
@@ -519,6 +573,53 @@ describe('the drive loop', () => {
 		// the token is minted read-only, so a REFUSED park fails at the first write instead of
 		// corrupting the conversation
 		expect(binary.seen[2]).toContain('"r"');
+	});
+
+	it('waits on a timer for a parked sleep and spends the invocation allowance', async () => {
+		const sleepTarget = btoa('cfwpark+sleep://60');
+		const binary = parkingBinary([
+			['cfw_park_run', '{"state":"PARKED"}'],
+			['cfw_park_pending', `{"fn":"stream_socket_client","args":[{"b64":"${sleepTarget}"}]}`],
+			['cfw_park_resume(base64_decode(', '{"state":"DONE"}']
+		]);
+		const budget = { remainingMs: 100 };
+		const t0 = Date.now();
+		const out = await drivePark(
+			binary,
+			new ParkSockets(),
+			REDIS,
+			'<?php sleep(1);',
+			fetch,
+			budget
+		);
+		expect(out.state).toBe('done');
+		expect(out.trips.map((t) => t.op)).toEqual(['sleep']);
+		expect(Date.now() - t0).toBeGreaterThanOrEqual(55);
+		expect(budget.remainingMs).toBe(40);
+	});
+
+	it('cuts a wait past the allowance short instead of refusing the chain', async () => {
+		const binary = parkingBinary([
+			['cfw_park_run', '{"state":"PARKED"}'],
+			[
+				'cfw_park_pending',
+				`{"fn":"stream_socket_client","args":[{"b64":"${btoa('cfwpark+sleep://5000')}"}]}`
+			],
+			['cfw_park_resume(base64_decode(', '{"state":"DONE"}']
+		]);
+		const budget = { remainingMs: 0 };
+		const t0 = Date.now();
+		const out = await drivePark(
+			binary,
+			new ParkSockets(),
+			REDIS,
+			'<?php sleep(5);',
+			fetch,
+			budget
+		);
+		// done, not refused: a refusal unwinds every later park in the render
+		expect(out.state).toBe('done');
+		expect(Date.now() - t0).toBeLessThan(1000);
 	});
 
 	/** the render prints into the same buffer as the loop, so the two have to come apart */

@@ -10,7 +10,9 @@ import {
 	type BackendEnv,
 	type BackendSelection
 } from '../db/backend.js';
+import { bytesToBase64 } from '../db/file-store.js';
 import { backendExec } from '../db/pg-exec.js';
+import { runParkImage, type ParkImageRequest } from './image-runtime.js';
 import { outboundGuardEnabled, refuseOutbound } from './outbound-guard.js';
 import { resolveTcpEndpoint, type TcpEndpoint, type TcpEnv } from './tcp.js';
 
@@ -43,6 +45,8 @@ export type ParkOp =
 	| { kind: 'open'; endpoint: TcpEndpoint }
 	| { kind: 'fetch'; request: ParkFetch }
 	| { kind: 'sql'; statement: ParkSql; selection: BackendSelection }
+	| { kind: 'sleep'; ms: number }
+	| { kind: 'image'; request: ParkImageRequest }
 	| { kind: 'write'; id: number; bytes: Uint8Array }
 	| { kind: 'read'; id: number; max: number }
 	| { kind: 'line'; id: number }
@@ -94,6 +98,8 @@ export type ParkFetch = {
 	/** base64, because a request body is not text */
 	body?: string;
 	redirect?: 'follow' | 'manual';
+	/** the caller's whole-request timeout (Guzzle `timeout`, `CURLOPT_TIMEOUT`) */
+	timeoutMs?: number;
 };
 
 /**
@@ -115,6 +121,26 @@ export const PARK_FETCH_SCHEME = 'cfwpark+fetch://';
  * without a phasm rebuild.
  */
 export const PARK_SQL_SCHEME = 'cfwpark+sql://';
+
+/**
+ * The scheme a parked wait arrives under, `cfwpark+sleep://<ms>`; must match `Park::SLEEP_SCHEME`.
+ *
+ * The clock does not advance across a synchronous `_run()`, so PHP cannot wait by itself: a spin
+ * never ends and a return-at-once ignores the caller. The host waits on a timer instead, which
+ * bills wall time and no CPU.
+ */
+export const PARK_SLEEP_SCHEME = 'cfwpark+sleep://';
+
+/**
+ * The scheme a queued gd operation set arrives under; must match `Gd::SCHEME` in `drupflare`.
+ *
+ * The target is base64 of the request JSON and the reply is a JSON string, `{bytes, width, height}`
+ * with the bytes in base64, or `{error}`.
+ */
+export const PARK_IMAGE_SCHEME = 'cfwpark+image://';
+
+/** what is left of an invocation's waiting allowance, shared by every parked wait inside it */
+export type SleepBudget = { remainingMs: number };
 
 /** a read that has not arrived in this long is a hung peer holding the object; give up on it */
 export const PARK_IO_TIMEOUT_MS = 10_000;
@@ -277,6 +303,17 @@ export function classifyParkOp(
 			const refusal = outboundGuardEnabled(env) ? refuseOutbound(request.url) : null;
 			if (refusal) return { kind: 'refused', why: `${refusal.reason}: ${refusal.url}` };
 			return { kind: 'fetch', request };
+		}
+		if (target.startsWith(PARK_SLEEP_SCHEME)) {
+			const ms = Number(target.slice(PARK_SLEEP_SCHEME.length));
+			if (!Number.isFinite(ms) || ms < 0) return { kind: 'refused', why: 'unreadable sleep' };
+			return { kind: 'sleep', ms: Math.ceil(ms) };
+		}
+		if (target.startsWith(PARK_IMAGE_SCHEME)) {
+			const request = parseParkImage(target.slice(PARK_IMAGE_SCHEME.length));
+			return request
+				? { kind: 'image', request }
+				: { kind: 'refused', why: 'unreadable image request' };
 		}
 		if (target.startsWith(PARK_SQL_SCHEME)) {
 			const statement = parseParkSql(target.slice(PARK_SQL_SCHEME.length));
@@ -469,7 +506,8 @@ export async function drivePark(
 	sockets: ParkSockets,
 	env: ParkEnv,
 	code: string,
-	doFetch: typeof fetch = fetch
+	doFetch: typeof fetch = fetch,
+	budget: SleepBudget = { remainingMs: 0 }
 ): Promise<ParkRun> {
 	const trips: ParkTrip[] = [];
 	const printed: string[] = [];
@@ -521,7 +559,7 @@ export async function drivePark(
 			return out;
 		}
 
-		state = stateOf(await perform(collect, sockets, op, doFetch));
+		state = stateOf(await perform(collect, sockets, op, doFetch, budget));
 		if (state === null) {
 			const out = give('refused', 'a resume answered nothing');
 			await unwind(binary);
@@ -538,8 +576,18 @@ async function perform(
 	collect: Collect,
 	sockets: ParkSockets,
 	op: ParkOp,
-	doFetch: typeof fetch
+	doFetch: typeof fetch,
+	budget: SleepBudget
 ): Promise<unknown> {
+	if (op.kind === 'sleep') {
+		// past the allowance the wait is cut short rather than refused: a refusal unwinds the whole
+		// chain, and the render after the sleep still has to run
+		const slept = Math.max(0, Math.min(op.ms, budget.remainingMs));
+		if (slept > 0) await new Promise((resolve) => setTimeout(resolve, slept));
+		budget.remainingMs -= slept;
+		const reply = { slept, requested: op.ms, remaining: budget.remainingMs };
+		return await collect(parkResumeBytes(new TextEncoder().encode(JSON.stringify(reply))));
+	}
 	if (op.kind === 'open') {
 		const minted = (await collect(PARK_MINT)) as Record<string, unknown> | null;
 		const id = Number(minted?.['id'] ?? 0);
@@ -551,6 +599,9 @@ async function perform(
 	}
 	if (op.kind === 'fetch') {
 		return await collect(parkResumeBytes(await performFetch(op.request, doFetch)));
+	}
+	if (op.kind === 'image') {
+		return await collect(parkResumeBytes(await performImage(op.request)));
 	}
 	if (op.kind === 'sql') {
 		return await collect(parkResumeBytes(await performSql(op.statement, op.selection)));
@@ -627,7 +678,8 @@ export async function performFetch(
 			method: request.method,
 			headers: request.headers,
 			...(request.body ? { body: bytes(request.body) } : {}),
-			redirect: request.redirect === 'manual' ? 'manual' : 'follow'
+			redirect: request.redirect === 'manual' ? 'manual' : 'follow',
+			...(request.timeoutMs ? { signal: AbortSignal.timeout(request.timeoutMs) } : {})
 		});
 		const headers: Record<string, string> = {};
 		res.headers.forEach((v, k) => {
@@ -644,6 +696,48 @@ export async function performFetch(
 }
 
 /** the descriptor a `cfwpark+fetch://` target carries, base64 of JSON */
+/**
+ * Applies a queued gd operation set, answered as a JSON string.
+ *
+ * A failure is a reply, as with a fetch: the module turns `error` into a refused call and the render
+ * carries on, where a throw would end the whole parked run.
+ */
+export async function performImage(
+	request: ParkImageRequest,
+	run: typeof runParkImage = runParkImage
+): Promise<Uint8Array> {
+	const reply = (value: Record<string, unknown>) =>
+		new TextEncoder().encode(JSON.stringify(value));
+	try {
+		const out = await run(request);
+		return reply({ bytes: b64Bytes(out.bytes), width: out.width, height: out.height });
+	} catch (e: unknown) {
+		return reply({ error: e instanceof Error ? e.message : String(e) });
+	}
+}
+
+/** decodes a `cfwpark+image://` descriptor, or null when it is not a well-formed request */
+export function parseParkImage(packed: string): ParkImageRequest | null {
+	let raw: unknown;
+	try {
+		raw = JSON.parse(new TextDecoder().decode(bytes(packed)));
+	} catch {
+		return null;
+	}
+	if (raw === null || typeof raw !== 'object') return null;
+	const r = raw as Record<string, unknown>;
+	if (!['jpeg', 'png', 'webp', 'gif'].includes(String(r['format']))) return null;
+	if (!Array.isArray(r['ops']) || r['ops'].length > 32) return null;
+	if (typeof r['source'] !== 'string' && r['source'] !== null) return null;
+	return {
+		source: r['source'] as string | null,
+		canvas: (r['canvas'] as ParkImageRequest['canvas']) ?? null,
+		ops: r['ops'] as ParkImageRequest['ops'],
+		format: r['format'] as ParkImageRequest['format'],
+		quality: typeof r['quality'] === 'number' ? r['quality'] : -1
+	};
+}
+
 /** one statement a parked render asked the host to run against an external database */
 export type ParkSql = { sql: string; params: unknown[] };
 
@@ -689,7 +783,10 @@ export function parseParkFetch(packed: string): ParkFetch | null {
 		url: one['url'],
 		headers,
 		...(typeof one['body'] === 'string' && one['body'] !== '' ? { body: one['body'] } : {}),
-		...(one['redirect'] === 'manual' ? { redirect: 'manual' as const } : {})
+		...(one['redirect'] === 'manual' ? { redirect: 'manual' as const } : {}),
+		...(typeof one['timeoutMs'] === 'number' && one['timeoutMs'] > 0
+			? { timeoutMs: one['timeoutMs'] }
+			: {})
 	};
 }
 
@@ -745,11 +842,9 @@ function bytes(b64text: string): Uint8Array {
 
 const text = (b64text: string): string => new TextDecoder().decode(bytes(b64text));
 
-function b64Bytes(input: Uint8Array): string {
-	let raw = '';
-	for (const byte of input) raw += String.fromCharCode(byte);
-	return btoa(raw);
-}
+// chunked: a per-byte string left ~44 MB of garbage per MB of body, twice per parked fetch reply,
+// and an update check over 30 projects reset a farmOS object at 84 MB of linear memory
+const b64Bytes = bytesToBase64;
 
 const b64 = (input: string): string => b64Bytes(new TextEncoder().encode(input));
 

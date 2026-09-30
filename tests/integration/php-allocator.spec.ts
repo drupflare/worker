@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
- * `USE_ZEND_ALLOC=0` is baked in, so `memory_get_usage()` reading 0, the collector never running and
- * `memory_limit` never binding are ONE cause. A runaway takes the object, not one request.
+ * `USE_ZEND_ALLOC=0` is baked in, so `memory_get_usage()` reading 0 and `memory_limit` never binding
+ * are ONE cause. A runaway takes the object, not one request.
  */
 
 const run = (code: string) =>
@@ -51,23 +51,29 @@ describe("PHP's allocator on the shipping build", () => {
 		expect(out.peak).toBe(0);
 	}, 900_000);
 
-	it('never runs the cycle collector, so baseline GC is not a cost', async () => {
+	it('runs the cycle collector by itself once cycles pass its threshold', async () => {
+		// this asserted the collector never runs, over strings, which are never roots; an admin
+		// session reads 12 automatic runs, and forcing one after each page changes no linear memory
 		const out = await run(
 			`<?php
-				$acc = [];
-				for ($i = 0; $i < 20000; $i++) { $acc[] = str_repeat('x', 64); }
-				$acc = null;
-				$s = gc_status();
+				$strings = [];
+				for ($i = 0; $i < 20000; $i++) { $strings[] = str_repeat('x', 64); }
+				$strings = null;
+				$before = gc_status();
+				for ($i = 0; $i < 30000; $i++) { $o = new \\stdClass(); $o->self = $o; }
+				$o = null;
+				$after = gc_status();
 				echo json_encode([
-					'runs' => $s['runs'],
-					'collected' => $s['collected'],
-					'threshold' => $s['threshold'],
-					'forced' => gc_collect_cycles(),
+					'enabled' => gc_enabled(),
+					'stringRuns' => $before['runs'],
+					'runs' => $after['runs'],
+					'collected' => $after['collected'],
 				]);`
 		);
 		// counts, not clocks; RULE 0 forbids the duration and not the counter
-		expect(out.runs).toBe(0);
-		expect(out.collected).toBe(0);
-		expect(out.forced).toBe(0);
+		expect(out.enabled).toBe(true);
+		expect(out.stringRuns).toBe(0);
+		expect(out.runs).toBeGreaterThan(0);
+		expect(out.collected).toBeGreaterThan(0);
 	}, 900_000);
 });

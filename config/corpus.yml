@@ -1,0 +1,356 @@
+rows:
+  - install
+  - container build
+  - anon render
+  - auth render
+  - entity crud
+  - form submit
+  - file rw
+  - queue cron
+  - outbound http
+  - update
+  - cache rebuild
+  - config import
+  - module workflow
+repos:
+  - id: webcms
+    repo: https://github.com/USEPA/webcms
+    sha: 0d7d615044ca2352bb7393b9089badf6793f0bc5
+    shape: project
+    core: '10.6.15'
+    install: project
+    root: services/drupal
+    assessment: structural
+    needs:
+      [
+        core-version,
+        core-patches,
+        project-delivery,
+        http-client,
+        zip,
+        exec,
+        mysql-dialect,
+        regexp,
+        cache-backend,
+        object-storage,
+        search-engine,
+        saml
+      ]
+  - id: farmos
+    repo: https://github.com/farmOS/farmOS
+    sha: 41f6e4091dba924a781cee4759bfd2d99bfc00f3
+    shape: profile
+    core: '11.4.7'
+    install: profile
+    assessment: needs-runtime
+    needs: [core-patches, project-delivery, install-profile, openssl, exif, declared-extensions]
+  - id: open_social
+    repo: https://github.com/goalgorilla/open_social
+    sha: dc52b9ad9779d33933828245002fcf494ea712e4
+    shape: profile
+    core: '^10.5.6'
+    install: profile
+    assessment: structural
+    needs:
+      [
+        core-version,
+        core-patches,
+        project-delivery,
+        install-profile,
+        batch-yield,
+        sleep,
+        http-client,
+        transliterator,
+        background-workers,
+        mysql-dialect,
+        regexp
+      ]
+  - id: yusaopeny
+    repo: https://github.com/YCloudYUSA/yusaopeny
+    sha: 745e87981954f9d8ee857363dd43a406c5c25b84
+    shape: profile
+    core: '^11.4'
+    install: profile
+    install_args: [openy_select_content.content=0]
+    assessment: needs-runtime
+    needs: [core-patches, project-delivery, install-profile, gd]
+    notes:
+      install: >-
+        installed without demo content: the demo import instantiates openy_prgf_class_location's
+        block, which type-hints the concrete EntityTypeManager that drupal/trash (enabled by the
+        profile) replaces, so the stock install throws on native PHP too
+  - id: thunder
+    repo: https://github.com/thunder/thunder-distribution
+    sha: 50686db3e03c3749588dc9aa7a65cf8cea8b0879
+    shape: profile
+    core: '~11.4.0'
+    install: profile
+    assessment: needs-runtime
+    needs: [core-patches, project-delivery, install-profile, background-workers]
+  - id: varbase
+    repo: https://github.com/Vardot/varbase
+    sha: 4431d589aabac63f2bacd30b128dcd3bc1002faa
+    shape: profile
+    core: '~11.4.0'
+    install: profile
+    assessment: needs-runtime
+    needs: [project-delivery, install-profile, background-workers]
+  - id: govcms
+    repo: https://github.com/govCMS/GovCMS
+    sha: 8fbe9c748e7a441abab5488b7d40dc01fad5d697
+    shape: profile
+    core: '11.4.5'
+    install: profile
+    assessment: needs-runtime
+    needs: [core-version, project-delivery, install-profile, openssl, zip, saml, mail-transport]
+  - id: herbie
+    repo: https://github.com/unlcms/project-herbie
+    sha: 06881419e26e5bc2ea5f38fea179359c8e3aef3e
+    shape: project
+    core: '^11'
+    install: project
+    assessment: degrades
+    needs: [core-patches, project-delivery, zip, broker-sockets, cache-backend, multisite]
+    credential: git.unl.edu/dxg/icon-library, the University of Nebraska's private icon library
+    omit: [dxg/icon-library]
+    notes:
+      install: >-
+        installed without dxg/icon-library, which needs a git.unl.edu credential; only unl_icon reads
+        it, as an icon asset
+  - id: openculturas
+    repo: https://github.com/openculturas/openculturas-distribution
+    sha: ce2b54b419036fa6aa7cbaf02aa93a3a72d1e331
+    shape: project
+    core: '~11.4.8'
+    install: project
+    install_args: [--existing-config]
+    assessment: needs-runtime
+    needs: [core-version, core-patches, project-delivery, http-client, like-prefix]
+    notes:
+      install: >-
+        installed from its own config/sync with sqlite added to core.extension (the export came
+        from MySQL) and its moderation_state base field overrides left out, because core imports
+        them before the workflow that defines the field
+  - id: droopler
+    repo: https://github.com/droptica/droopler
+    sha: eb5b3a4f9cf8bfed57dc8404f1934df13967fcdf
+    shape: profile
+    core: '^11'
+    install: profile
+    recipe_requires: { droopler: [page_content_type] }
+    notes:
+      install: >-
+        its recipe assumes node's body field storage, which Drupal 11 ships only in core's
+        page_content_type recipe, so that recipe is added to its list before the install applies it
+    assessment: needs-runtime
+    needs: [core-patches, project-delivery, install-profile]
+  - id: localgov_microsites
+    repo: https://github.com/localgovdrupal/localgov_microsites_project
+    sha: 4de8403b60f8c9c91d8966a65ff4ebb0537582bc
+    shape: project
+    core: '^10.0'
+    install: project
+    assessment: structural
+    needs: [core-version, project-delivery, multi-hostname]
+  - id: essex
+    repo: https://github.com/essexcountycouncil/essex-intranet-drupal
+    sha: 34f325e784fa72a7485404434f9e806a28b57cef
+    shape: project
+    core: '10.3.13'
+    install: project
+    assessment: structural
+    needs:
+      [
+        core-version,
+        core-patches,
+        project-delivery,
+        openssl,
+        zip,
+        background-workers,
+        dbal,
+        mail-transport
+      ]
+  - id: atelier
+    repo: https://github.com/aincient-labs/atelier-cms
+    sha: 717890c5746733001ae4b423e958673ba6bdfd25
+    shape: project
+    core: '^11.4.7'
+    install: profile
+    install_args: [--existing-config]
+    requires:
+      league/commonmark: ^2.10.1
+      symfony/ai-platform: ^0.12
+      symfony/ai-anthropic-platform: ^0.12
+      symfony/ai-deep-seek-platform: ^0.12
+      symfony/ai-gemini-platform: ^0.12
+      symfony/ai-generic-platform: ^0.12
+      symfony/ai-mistral-platform: ^0.12
+      symfony/ai-ollama-platform: ^0.12
+      symfony/ai-open-ai-platform: ^0.12
+    assessment: needs-runtime
+    needs:
+      [
+        project-delivery,
+        sleep,
+        streaming-response,
+        http-client,
+        gd,
+        zip,
+        fileinfo,
+        temp-files,
+        directory-realpath
+      ]
+  - id: openintranet
+    repo: https://github.com/droptica/openintranet
+    sha: 15727c10bb7048e9f7069f396b4515818895179d
+    shape: profile
+    core: '~11.3.0'
+    install: profile
+    assessment: needs-runtime
+    needs:
+      [core-version, core-patches, project-delivery, install-profile, batch-yield, mysql-dialect]
+  - id: islandora
+    repo: https://github.com/Islandora/islandora
+    sha: a518aea24986d3db9dcf66be340638d0d0637d52
+    shape: suite
+    core: '^10 || ^11'
+    install: modify
+    modules: [islandora]
+    assessment: needs-runtime
+    needs: [shutdown-callbacks, openssl, http-client, broker-sockets]
+  - id: activity_finder
+    repo: https://github.com/YCloudYUSA/yusaopeny_activity_finder
+    sha: 68e11f8e3e6522cd07bd02d3f4007b4639d3911c
+    shape: suite
+    core: '^10 || ^11'
+    install: modify
+    modules: [openy_activity_finder]
+    base: yusaopeny
+    stability: dev
+    assessment: runs
+    needs: []
+  - id: ymca360
+    repo: https://github.com/YCloudYUSA/yusaopeny_ymca360
+    sha: a21e6bf678fa90b301e966d0ed7fe9315c13f6d9
+    shape: suite
+    core: '^10 || ^11'
+    install: modify
+    modules: [yusaopeny_ymca360]
+    base: yusaopeny
+    stability: dev
+    assessment: degrades
+    needs: [sleep]
+  - id: strawberryfield
+    repo: https://github.com/esmero/strawberryfield
+    sha: 95129453b7ad8d422670a1c8723fdea31ad911b0
+    shape: module
+    core: '^10.3 || ^11'
+    install: modify
+    modules: [strawberryfield]
+    assessment: structural
+    needs: [sleep, exec, background-workers]
+    force: [frictionlessdata/datapackage]
+    notes:
+      install: >-
+        upstream conflict: frictionlessdata/datapackage dev-main requires justinrainbow/json-schema
+        ^5.2, and drupal/core-recommended pins ~6.8.2, so a native Drupal 11 site on
+        core-recommended cannot resolve it either; it is installed past the check and runs against
+        the shipped 6.8.2; enabling it is a fatal on any Drupal 11 as
+        well: its generated ProxyClass\StrawberryfieldMimeService::setMapping(array $mapping = NULL) is
+        not compatible with core's ExtensionMimeTypeGuesser::setMapping(?array $mapping = null): void
+  - id: fairwell
+    repo: https://github.com/sealionking/fairwell-drupal
+    sha: f1851b473595987b04bc3b83f45e0ec4408d7e79
+    shape: modules
+    core: '^10 || ^11'
+    install: modify
+    modules:
+      [
+        slow_query_monitor,
+        divo_module_guard,
+        book_nav,
+        node_export_json_md,
+        divoblog_api,
+        divopal_ai_gateway,
+        tts_backend
+      ]
+    notes:
+      install: >-
+        ragflow_auth is left out: its routing file names RagflowLoginController::logout(), which the
+        class does not define, and enabling it leaves every later render answering 500
+    assessment: needs-runtime
+    needs: [foreign-database]
+  - id: entity_reference_integrity
+    repo: https://github.com/victorstack-ai/drupal-entity-reference-integrity
+    sha: 147497534a6e95bafb3d872711989a3548a6bc63
+    shape: module
+    core: '^10 || ^11'
+    install: modify
+    modules: [entity_reference_integrity]
+    checks: [/admin/reports/entity-reference-integrity]
+    notes:
+      install: >-
+        upstream defect: the routing file names its controller with doubled backslashes inside a
+        single-quoted YAML string, and native PHP 8.5 with the same Composer autoloader refuses the
+        class identically
+    assessment: runs
+    needs: []
+  - id: migration_example
+    repo: https://github.com/jigarius/drupal-migration-example
+    sha: 171af0727375ff663da3e4b235e966b7f9e0b1fc
+    shape: module
+    core: '8.x'
+    install: none
+    assessment: structural
+    needs: []
+  - id: simple_oauth_21
+    repo: https://github.com/e0ipso/simple_oauth_21
+    sha: f2b73148a83c99697e2d7ba7fcd36084fe0f8c40
+    shape: suite
+    core: '^11'
+    install: modify
+    modules: [simple_oauth_21]
+    assessment: needs-runtime
+    needs: [openssl]
+  - id: lagoon_cachebackend
+    repo: https://github.com/lagoon-examples/drupal-cachebackend
+    sha: dc070ad689afcb0b5a055b27788b991c62df7a0e
+    shape: project
+    core: '11.3.13'
+    install: project
+    assessment: degrades
+    needs: [core-version, broker-sockets, cache-backend]
+  - id: fflch
+    repo: https://github.com/fflch/drupal
+    sha: 75fc28a784560ba8b044043603870a7d9acc42a2
+    shape: project
+    core: '9.1.0'
+    install: none
+    assessment: structural
+    needs: [core-version, foreign-database]
+  - id: drupalx
+    repo: https://github.com/nextagencyio/drupalx-project
+    sha: d665d327d509d26301a79e74383d833692c604c5
+    shape: project
+    core: '^11.3.10'
+    install: project
+    assessment: needs-runtime
+    needs: [project-delivery, install-profile, exec, foreign-database]
+  - id: varbase_patches
+    repo: https://github.com/Vardot/varbase-patches
+    sha: 6f1d782cf857f99f0789fee27dcec9c2ce32f54d
+    shape: composer-plugin
+    core: 'n/a'
+    install: none
+    assessment: structural
+    needs: [project-delivery]
+  - id: mantle2
+    repo: https://github.com/earth-app/mantle2
+    sha: 8d10eff7f825a20b789eb766827dbf8c3490e2e7
+    shape: module
+    core: '^11.3'
+    install: modify
+    modules: [mantle2]
+    database: pgsql
+    assessment: needs-runtime
+    needs: [project-delivery, openssl, http-client]

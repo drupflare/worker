@@ -52,6 +52,8 @@ export interface DevServerOptions {
 	timeoutMs?: number;
 	/** leave the scratch directory behind, for debugging a boot that came up wrong */
 	keep?: boolean;
+	/** reuse an earlier boot's scratch directory, so a restart keeps the site the last one built */
+	stateDir?: string;
 	/** where to print progress; `null` is silent */
 	log?: ((line: string) => void) | null;
 }
@@ -109,10 +111,13 @@ export async function startDevServer(opts: DevServerOptions): Promise<DevServer>
 	} = opts;
 
 	const marker = `cfw-${label}-`;
-	const stateDir = join(tmpdir(), `${marker}${Date.now().toString(36)}`);
+	const stateDir = opts.stateDir ?? join(tmpdir(), `${marker}${Date.now().toString(36)}`);
 	assertDisposable(stateDir, marker);
 	mkdirSync(stateDir, { recursive: true });
-	const logFile = join(stateDir, 'dev.log');
+	const logFile = join(
+		stateDir,
+		opts.stateDir ? `dev-${Date.now().toString(36)}.log` : 'dev.log'
+	);
 
 	const argv = [
 		'wrangler',

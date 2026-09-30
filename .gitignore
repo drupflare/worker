@@ -80,3 +80,5 @@ dist/
 
 # staged build context for the Cloudflare Container VPS arm; rebuilt by `vps:cf:up`
 .vps-context/
+# corpus clones scripts/e2e/corpus-lane.ts loads
+/.corpus/

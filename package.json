@@ -117,8 +117,8 @@
 	},
 	"dependencies": {
 		"@drupflare/burrow": "^1.1.1",
-		"@drupflare/cartridge": "^0.2.0",
-		"@drupflare/durabledb": "^0.1.3",
+		"@drupflare/cartridge": "^0.3.1",
+		"@drupflare/durabledb": "^0.1.4",
 		"@drupflare/untarl": "^0.1.0",
 		"@gmitch215/tinyimg": "^1.1.0",
 		"@noble/ciphers": "^2.4.0",

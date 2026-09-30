@@ -10,14 +10,15 @@
  *   EIA 2025 US generation mix: ~41% gas + 17% coal + 0.7% petroleum = 58.7% fossil
  */
 import { num, sweep } from './args.js';
+import { WATER_DIRECT_L_PER_KWH, WATER_INDIRECT_L_PER_KWH } from './fleet.js';
 import { f, nr, r } from './fmt.js';
 
 const SITES = sweep('sites', [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]);
 
 const LB_KG = 0.45359237;
 const EG = { CO2: 767.2, CH4: 0.057, N2O: 0.008, NOx: 0.452, SO2: 0.359 }; // lb/MWh
-const W_DIRECT = 0.375;
-const W_INDIRECT = 4.55; // L/kWh
+const W_DIRECT = WATER_DIRECT_L_PER_KWH;
+const W_INDIRECT = WATER_INDIRECT_L_PER_KWH;
 const FOSSIL = 0.587;
 const EMBODIED_KG = 900.0;
 const LIFE_Y = 4.0;

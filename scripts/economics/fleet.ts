@@ -26,6 +26,9 @@ export const PUE_COLO = 1.54;
 export const PUE_HYPER = 1.15;
 export const HOURS_YEAR = 8766.0;
 export const G_US = num('grid-us', 384.0);
+// LBNL 2024 US data center energy report: 66 bn L direct over 176 TWh, ~800 bn L via generation
+export const WATER_DIRECT_L_PER_KWH = 0.375;
+export const WATER_INDIRECT_L_PER_KWH = 4.55;
 const RAM_GB_HOST = 1536.0; // a large modern 2-socket host
 const RAM_GB_SITE = 1.0; // php-fpm pool + opcache + MySQL share for a small Drupal site; generous
 
@@ -64,6 +67,24 @@ export function sharedHosting(
 	const util = Math.min(1.0, cpuS / (hosts * coreSPerHost));
 	const kwh = (hosts * watts(util) * PUE_COLO * HOURS_YEAR) / 1000.0;
 	return { hosts, util, kwh };
+}
+
+const HOSTILE_VIEWS = sweep(
+	'hostile-views',
+	[50_000_000, 100_000_000, 250_000_000, 500_000_000, 1_000_000_000, 10_000_000_000]
+);
+const SOLVE_MAX = 1e12;
+const sfxViews = (v: number) => `${v / 1e9}B`;
+
+/** percent of the shared-hosting fleet's energy drupflare avoids, 1,000 sites */
+export function saving(viewsMonth: number): number {
+	return (1 - drupflare(1000, viewsMonth) / sharedHosting(1000, viewsMonth).kwh) * 100;
+}
+
+/** first per-site traffic, on a 1% log ladder from 1,000 views, where the saving is under `pct` */
+export function firstBelow(pct: number, max = SOLVE_MAX): number | null {
+	for (let v = 1_000; v <= max; v *= 1.01) if (saving(v) < pct) return Math.round(v);
+	return null;
 }
 
 export function drupflare(
@@ -113,6 +134,35 @@ if (import.meta.main) {
 		const df = drupflare(1000, v);
 		console.log(
 			`  ${nr(v, 12)} views/site/mo: ${fr(s.hosts, 6, 1)} hosts at ${pctr(s.util, 5, 1)} util, saving ${fr((1 - df / s.kwh) * 100, 5, 1)}%`
+		);
+	}
+
+	console.log('\nbeyond any institutional estate: the saving at hostile per-site traffic');
+	for (const v of HOSTILE_VIEWS) {
+		const s = sharedHosting(1000, v);
+		const df = drupflare(1000, v);
+		console.log(
+			`  ${nr(v, 14)} views/site/mo: ${fr(s.hosts, 8, 1)} hosts at ${pctr(s.util, 5, 1)} util, saving ${fr(saving(v), 6, 2)}%`
+		);
+	}
+
+	console.log('\nwhere the saving first falls below each threshold, 1,000 sites:');
+	for (const t of [90, 75, 50, 25, 10, 0]) {
+		const v = firstBelow(t);
+		console.log(
+			`  below ${r(`${t}%`, 3)}: ${v === null ? `never, up to ${sfxViews(SOLVE_MAX)} views/site/mo` : `${nr(v, 16)} views/site/mo`}`
+		);
+	}
+	console.log(`  asymptote as both arms go CPU-bound: ${fr(saving(SOLVE_MAX), 2, 2)}%`);
+
+	console.log(`\ncarbon and water avoided per year, 1,000 sites, from the kWh gap above:`);
+	console.log(
+		`${r('views/site/mo', 15)} ${r('kWh avoided', 12)} ${r(`CO2e @${G_US} g`, 14)} ${r('water direct', 13)} ${r('water indirect', 15)}`
+	);
+	for (const v of [10_000, 100_000, 1_000_000, 20_000_000, 100_000_000, 1_000_000_000]) {
+		const gap = sharedHosting(1000, v).kwh - drupflare(1000, v);
+		console.log(
+			`${nr(v, 15)} ${nr(gap, 12)} ${r(`${nr((gap * G_US) / 1000, 0)} kg`, 14)} ${r(`${fr((gap * WATER_DIRECT_L_PER_KWH) / 1000, 0, 2)} kL`, 13)} ${r(`${fr((gap * WATER_INDIRECT_L_PER_KWH) / 1000, 0, 2)} kL`, 15)}`
 		);
 	}
 }

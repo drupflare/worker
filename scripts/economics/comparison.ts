@@ -127,14 +127,14 @@ const ORIGIN_RENDER_FRAC = num('origin-render-frac', 1.0); // derived, not an as
 const PEAK_RATIO = num('peak', 5.0);
 const TARGET_UTIL = num('util', 0.5);
 const SECONDS_MONTH = 2_629_800.0;
-const PANTHEON_BASIC = num('pantheon', 41.0);
+// Pantheon Basic at $500 a year billed annually ($55 billed monthly), pricing page 2026-09-28
+const PANTHEON_BASIC = num('pantheon', 500 / 12);
 // a latency-matched conventional host: the floor box in each region plus one global load balancer.
 // DigitalOcean's global LB is $15/mo (docs, verified 2026-07-13). Three regions still leave most
 // visitors tens of ms from an origin where the edge answers from their colo, and no database
 // replication is priced, so this too is a floor
 const MATCHED_REGIONS = num('regions', 3);
 const GLOBAL_LB_USD = num('global-lb', 15.0);
-const ACQUIA_ENTRY = num('acquia', 148.0);
 
 /**
  * One self-managed VPS per site, never below the smallest instance.
@@ -248,6 +248,53 @@ function table(title: string, headers: string[], rows: string[][]): void {
 	for (const row of rows) console.log(row.map((c, i) => r(c, w[i]!)).join('  '));
 }
 
+// #region crossover
+// where the per-site bill meets each conventional price, solved on the real functions: the VPS is
+// sized by its render load, so extrapolating the flat low-traffic price would misplace every line
+if (process.argv.includes('--crossover')) {
+	const perSite = (sites: number, v: number) => account(sites, v).total / sites;
+	const first = (sites: number, price: (v: number) => number): number | null => {
+		for (let v = 10_000; v <= 1e12; v *= 1.01)
+			if (perSite(sites, v) >= price(v)) return Math.round(v);
+		return null;
+	};
+	// the VPS is priced in whole boxes, so drupflare can fall behind and pull ahead again; this is the
+	// point above which it stays behind, when there is one
+	const last = (sites: number, price: (v: number) => number): number | null => {
+		let v = 1e12;
+		while (v >= 10_000 && perSite(sites, v) >= price(v)) v /= 1.01;
+		return v >= 1e12 ? null : Math.round(v * 1.01);
+	};
+	const at = (v: number | null) => (v === null ? 'never, to 1T' : `${n(v, 0)} views/site/mo`);
+	const band = (sites: number, price: (v: number) => number) => {
+		const a = first(sites, price);
+		const z = last(sites, price);
+		return a === null
+			? 'never, to 1T'
+			: a === z
+				? at(a)
+				: `first ${at(a)}, for good above ${at(z)}`;
+	};
+	for (const sites of [1, 1_000]) {
+		console.log(
+			`\n${n(sites, 0)} site${sites === 1 ? '' : 's'}: where drupflare stops being the cheaper bill`
+		);
+		console.log(`  VPS floor            ${band(sites, vpsUsdMonth)}`);
+		console.log(`  latency-matched VPS  ${band(sites, matchedUsdMonth)}`);
+		console.log(
+			`  managed floor        ${at(first(sites, () => PANTHEON_BASIC))} (held flat; a real plan at that traffic is far dearer)`
+		);
+	}
+	console.log('\nper site, 1,000 sites, at hostile traffic');
+	for (const v of [10_000_000, 20_000_000, 50_000_000, 100_000_000, 1_000_000_000]) {
+		console.log(
+			`  ${nr(v, 14)} views/site/mo: drupflare ${usd(perSite(1_000, v))}, VPS ${usd(vpsUsdMonth(v))}, matched ${usd(matchedUsdMonth(v))}`
+		);
+	}
+	process.exit(0);
+}
+// #endregion
+
 const siteCols = SITES.map((x) => `${n(x, 0)} site${x === 1 ? '' : 's'}`);
 
 table(
@@ -330,7 +377,7 @@ console.log(
 	'              the labour of running it, which for most people is the largest real cost.'
 );
 console.log(
-	`managed       Published. Pantheon Basic $${f(PANTHEON_BASIC, 0)}/mo for 20K visits; Acquia $${f(ACQUIA_ENTRY, 0)}/mo.`
+	`managed       Published. Pantheon Basic $${f(PANTHEON_BASIC, 2)}/mo, billed annually at $500.`
 );
 console.log('energy        The conventional arm is charged its idle allocation AND the marginal');
 console.log('              joules of the work it does, both measured. Per-request energy is at');

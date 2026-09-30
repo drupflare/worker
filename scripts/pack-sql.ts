@@ -343,6 +343,11 @@ for (const o of master) {
 	if (String(o.tbl_name ?? '') === PACKED_CONTAINER_TABLE) continue;
 	const stmt = { s: String(o.sql).replace(/;+\s*$/, ''), p: [] };
 	if (o.type === 'table') {
+		// the object creates its own cfw_* tables before a replay starts, and a migrated database
+		// carries uploads and code in them, so a plain CREATE would fail on the table that exists
+		if (name.startsWith('cfw_')) {
+			stmt.s = stmt.s.replace(/^CREATE\s+TABLE\s+/i, 'CREATE TABLE IF NOT EXISTS ');
+		}
 		if (wantsWithoutRowid(name, stmt.s)) {
 			stmt.s += ' WITHOUT ROWID';
 			withoutRowidTables.push(name);
@@ -487,11 +492,17 @@ for (const table of tables) {
 
 // read before the close; published beside the manifest below. The pack's own variant is the
 // `cache_container` row, fingerprinted by the pack's `core.extension`; the rest are the bake's table
-const packRow = db
-	.prepare(
-		'SELECT cid, CAST(data AS BLOB) AS data, expire, created, serialized, tags, checksum FROM cache_container'
-	)
-	.get() as Record<string, SQLOutputValue> | undefined;
+// a database fresh from an install may not have created the bin yet; then there is no packed variant
+const hasContainerBin = db
+	.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cache_container'")
+	.get();
+const packRow = hasContainerBin
+	? (db
+			.prepare(
+				'SELECT cid, CAST(data AS BLOB) AS data, expire, created, serialized, tags, checksum FROM cache_container'
+			)
+			.get() as Record<string, SQLOutputValue> | undefined)
+	: undefined;
 const packExtension = db
 	.prepare(
 		"SELECT CAST(data AS BLOB) AS data FROM config WHERE collection = '' AND name = 'core.extension'"

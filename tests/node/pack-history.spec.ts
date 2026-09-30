@@ -1,5 +1,8 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -69,5 +72,71 @@ describe('the shipped pack carries no history of the bake', () => {
 		if (!ready) return ctx.skip();
 		const config = statements().filter((s) => /INSERT INTO ["`]?config\b/i.test(s));
 		expect(config.length).toBeGreaterThan(50);
+	});
+});
+
+describe('a migrated database that carries the host tables', () => {
+	it('creates the cfw_* tables IF NOT EXISTS and every other table plainly', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'pack-host-tables-'));
+		try {
+			const db = new DatabaseSync(join(dir, 'site.sqlite'));
+			db.exec(
+				'CREATE TABLE node (nid INTEGER PRIMARY KEY); INSERT INTO node VALUES (1);' +
+					'CREATE TABLE cache_container (cid TEXT PRIMARY KEY, data BLOB, expire INTEGER, created INTEGER, serialized INTEGER, tags TEXT, checksum TEXT);' +
+					'CREATE TABLE config (collection TEXT, name TEXT, data BLOB, PRIMARY KEY (collection, name));' +
+					'CREATE TABLE IF NOT EXISTS cfw_file (uri TEXT PRIMARY KEY, size INTEGER NOT NULL);' +
+					"INSERT INTO cfw_file VALUES ('public://a.png', 3);"
+			);
+			db.close();
+			execFileSync(
+				'node',
+				['scripts/pack-sql.ts', join(dir, 'site.sqlite'), join(dir, 'out')],
+				{
+					cwd: ROOT,
+					stdio: 'pipe'
+				}
+			);
+			const ddl: string[] = [];
+			for (const file of readdirSync(join(dir, 'out')).sort()) {
+				if (!/^\d+\.json$/.test(file)) continue;
+				const parsed = JSON.parse(readFileSync(join(dir, 'out', file), 'utf8')) as {
+					statements?: Array<{ s?: unknown }>;
+				};
+				for (const e of parsed.statements ?? []) {
+					if (typeof e.s === 'string' && /^CREATE TABLE/i.test(e.s)) ddl.push(e.s);
+				}
+			}
+			// SQLite drops IF NOT EXISTS from the stored schema, so the source file cannot carry it
+			expect(ddl.find((s) => /\bcfw_file\b/.test(s))).toMatch(
+				/^CREATE TABLE IF NOT EXISTS cfw_file/
+			);
+			expect(ddl.find((s) => /\bnode\b/.test(s))).toMatch(/^CREATE TABLE "?node"?/);
+			expect(ddl.find((s) => /\bnode\b/.test(s))).not.toContain('IF NOT EXISTS');
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('packs a database fresh from an install, which has not created cache_container yet', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'pack-no-container-'));
+		try {
+			const db = new DatabaseSync(join(dir, 'site.sqlite'));
+			db.exec(
+				'CREATE TABLE node (nid INTEGER PRIMARY KEY); INSERT INTO node VALUES (1);' +
+					'CREATE TABLE config (collection TEXT, name TEXT, data BLOB, PRIMARY KEY (collection, name));'
+			);
+			db.close();
+			execFileSync(
+				'node',
+				['scripts/pack-sql.ts', join(dir, 'site.sqlite'), join(dir, 'out')],
+				{
+					cwd: ROOT,
+					stdio: 'pipe'
+				}
+			);
+			expect(readdirSync(join(dir, 'out')).some((f) => /^\d+\.json$/.test(f))).toBe(true);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

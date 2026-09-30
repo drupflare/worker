@@ -15,7 +15,10 @@ import { CURL_FIX, CURL_INERT, CURL_OPTIONS } from '../../../src/drupal/curl-fix
  */
 
 /** the option ids `CurlShim::OPTIONS` maps, transcribed from the sibling */
-const SHIM_OPTION_IDS = [10002, 10015, 10023, 10036, 47, 19913, 52];
+const SHIM_OPTION_IDS = [
+	10002, 10015, 10023, 10036, 47, 19913, 52, 80, 44, 42, 13, 155, 78, 156, 64, 81, 10065, 84, 32,
+	10102, 75, 99, 10018, 10005, 107, 10004, 20079, 20011, 2
+];
 
 describe('the curl option constants', () => {
 	it('names exactly the ids the shim maps, with nothing extra', () => {
@@ -30,6 +33,32 @@ describe('the curl option constants', () => {
 		expect(CURL_OPTIONS.CURLOPT_URL).toBe(10002);
 		expect(CURL_OPTIONS.CURLOPT_RETURNTRANSFER).toBe(19913);
 		expect(CURL_OPTIONS.CURLOPT_POSTFIELDS).toBe(10015);
+	});
+
+	it('defines every constant Stripe CurlClient names on its request and error paths', () => {
+		for (const name of [
+			'CURLOPT_CONNECTTIMEOUT',
+			'CURLOPT_TIMEOUT',
+			'CURLOPT_HTTPGET',
+			'CURLOPT_CAINFO',
+			'CURLOPT_SSL_VERIFYPEER',
+			'CURLOPT_HTTP_VERSION',
+			'CURLOPT_HEADERFUNCTION',
+			'CURLOPT_WRITEFUNCTION',
+			'CURLINFO_HEADER_OUT',
+			'CURLINFO_HTTP_CODE',
+			'CURLE_OPERATION_TIMEOUTED',
+			'CURLE_SSL_CACERT',
+			'CURLE_SSL_PEER_CERTIFICATE',
+			'CURL_HTTP_VERSION_2TLS'
+		]) {
+			expect(CURL_FIX, name).toContain(`define('${name}',`);
+		}
+	});
+
+	it('hands a CURLINFO_* number to the shim as a number', () => {
+		// cast to a string it matched no info key, so curl_getinfo($ch, CURLINFO_HTTP_CODE) was NULL
+		expect(CURL_FIX).toContain('$shim->getinfo($handle, $key)');
 	});
 
 	it('carries the error codes the shim actually returns', () => {
@@ -57,6 +86,7 @@ describe('the declared functions', () => {
 			'curl_errno',
 			'curl_error',
 			'curl_close',
+			'curl_reset',
 			'curl_version'
 		]) {
 			expect(CURL_FIX).toContain(`function ${fn}(`);

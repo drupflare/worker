@@ -236,6 +236,17 @@ if (!class_exists('XMLWriter', false)) {
 			return $written === false ? 0 : $written;
 		}
 
+		/** a method this writer does not implement degrades with a reason and answers false */
+		public function __call(string $method, array $args) {
+			if (class_exists('Drupal\drupflare\Degradation')) {
+				Drupal\drupflare\Degradation::record(
+					'xmlwriter.' . $method,
+					'the XMLWriter stand-in does not implement ' . $method . '()'
+				);
+			}
+			return false;
+		}
+
 		public function __destruct() {
 			if ($this->cfwHandle === null) {
 				return;

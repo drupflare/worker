@@ -11,11 +11,11 @@
  * and so do many others. Shimming curl once fixes every one of them, which is the argument for
  * doing it here rather than case by case for each SDK.
  *
- * THE SEMANTICS ARE DEFERRED AND HONEST. `CfwDeferredHttp` queues the request and the object drains
- * it between PHP invocations, because PHP here cannot await. So the FIRST `curl_exec()` for a URL
- * returns FALSE with `CURLE_COULDNT_CONNECT` and a later one returns the body. That is a real curl
- * error code for a real condition rather than a pretend success, which is what lets a caller's own
- * retry logic work unmodified.
+ * THE ANSWER ARRIVES INSIDE `curl_exec()` WHERE THE RUNTIME CAN PARK. `CurlShim` hands the request
+ * to `ParkFetchHandler`, which suspends the PHP call while the Worker performs the fetch. Where a park
+ * is refused, or the build has no park, it falls back to `CfwDeferredHttp`: the first `curl_exec()`
+ * for a URL returns FALSE with `CURLE_COULDNT_CONNECT` and a later one returns the body. That is a real
+ * curl error code for a real condition, so a caller's own retry logic works unmodified.
  *
  * NO `eval()`, like `zlib-fix` and unlike `mb-fix`: a conditional function declaration binds at
  * runtime, so this compiles clean on a build that HAS ext-curl and the branch simply never runs.
@@ -38,7 +38,29 @@ export const CURL_OPTIONS: Record<string, number> = {
 	CURLOPT_CUSTOMREQUEST: 10036,
 	CURLOPT_POST: 47,
 	CURLOPT_RETURNTRANSFER: 19913,
-	CURLOPT_FOLLOWLOCATION: 52
+	CURLOPT_FOLLOWLOCATION: 52,
+	CURLOPT_HTTPGET: 80,
+	CURLOPT_NOBODY: 44,
+	CURLOPT_HEADER: 42,
+	CURLOPT_TIMEOUT: 13,
+	CURLOPT_TIMEOUT_MS: 155,
+	CURLOPT_CONNECTTIMEOUT: 78,
+	CURLOPT_CONNECTTIMEOUT_MS: 156,
+	CURLOPT_SSL_VERIFYPEER: 64,
+	CURLOPT_SSL_VERIFYHOST: 81,
+	CURLOPT_CAINFO: 10065,
+	CURLOPT_HTTP_VERSION: 84,
+	CURLOPT_SSLVERSION: 32,
+	CURLOPT_ENCODING: 10102,
+	CURLOPT_FORBID_REUSE: 75,
+	CURLOPT_NOSIGNAL: 99,
+	CURLOPT_USERAGENT: 10018,
+	CURLOPT_USERPWD: 10005,
+	CURLOPT_HTTPAUTH: 107,
+	CURLOPT_PROXY: 10004,
+	CURLOPT_HEADERFUNCTION: 20079,
+	CURLOPT_WRITEFUNCTION: 20011,
+	CURLINFO_HEADER_OUT: 2
 };
 
 /**
@@ -55,6 +77,20 @@ export const CURL_INERT: Record<string, number> = {
 	CURLE_COULDNT_RESOLVE_HOST: 6,
 	CURLE_COULDNT_CONNECT: 7,
 	CURLE_OPERATION_TIMEDOUT: 28,
+	CURLE_OPERATION_TIMEOUTED: 28,
+	CURLE_SSL_PEER_CERTIFICATE: 51,
+	CURLE_SSL_CACERT: 60,
+	CURLAUTH_BASIC: 1,
+	CURLAUTH_ANY: -17,
+	CURLAUTH_ANYSAFE: -18,
+	CURL_HTTP_VERSION_NONE: 0,
+	CURL_HTTP_VERSION_1_0: 1,
+	CURL_HTTP_VERSION_1_1: 2,
+	CURL_HTTP_VERSION_2_0: 3,
+	CURL_HTTP_VERSION_2TLS: 4,
+	CURL_SSLVERSION_TLSv1_2: 6,
+	CURLINFO_HEADER_SIZE: 2097163,
+	CURLINFO_SIZE_DOWNLOAD: 3145736,
 	CURLINFO_HTTP_CODE: 2097154,
 	CURLINFO_RESPONSE_CODE: 2097154,
 	CURLINFO_EFFECTIVE_URL: 1048577,
@@ -68,7 +104,7 @@ const defines = (map: Record<string, number>) =>
 		.join('\n');
 
 /**
- * The PHP half: the eight functions plus the constants they are called with.
+ * The PHP half: the ten functions plus the constants they are called with.
  *
  * Guarded on `!extension_loaded('curl')` so a build that ever gains the real extension keeps it.
  * The handle is an ARRAY passed by reference rather than an object, matching `CurlShim`'s own
@@ -147,7 +183,12 @@ ${defines(CURL_INERT)}
 		function curl_getinfo($handle, $key = null) {
 			$shim = cfw_curl_shim();
 			if ($shim === null || !is_array($handle)) { return cfw_curl_absent(); }
-			return $shim->getinfo($handle, $key === null ? null : (string) $key);
+			return $shim->getinfo($handle, $key);
+		}
+
+		function curl_reset(&$handle) {
+			$shim = cfw_curl_shim();
+			if ($shim !== null && is_array($handle)) { $shim->reset($handle); }
 		}
 
 		function curl_errno($handle) {

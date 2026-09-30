@@ -333,17 +333,18 @@ export const VECTORS: readonly Vector[] = [
 		expected: true,
 		blocker: null,
 		evidence:
-			'MEASURED, and it is a hazard rather than a capability: `exec` is declared AND absent from `disable_functions`, so every feature-detect passes and the call then fails. Split from `runtime.exec.works` because the two answer differently'
+			'DECLARED ON PURPOSE: the built-in is removed through `disable_functions` and `STANDIN_FIX` declares an `exec` that calls the router, or fails the way a failed launch does and records a degradation, so a feature-detect passes and the status report names any gap. Split from `runtime.exec.works` because the two answer differently'
 	},
 	{
 		id: 'runtime.exec.works',
 		group: 'RUNTIME',
 		kind: 'executed',
-		claim: 'shelling out to a binary and reading its output',
+		claim: "running a program from the exec router's table and reading its output",
 		probe: "(function () { $o = []; $r = @exec('echo hi', $o); return $r !== false && count($o) > 0; })()",
-		expected: false,
-		blocker: 'permanent',
-		evidence: 'a Worker has no process table; nothing can make this true'
+		expected: true,
+		blocker: null,
+		evidence:
+			'ROUTED, not forked: a Worker has no process table, so `exec` and the rest of the family tokenise the line and serve a fixed table of programs themselves (echo, base64, sha256sum, which, the archive tools and single-URL wget and curl). A pipe, a redirect, `&`, a substitution or a program outside the table is a failed launch (127) recorded as a degradation naming the program, so a binary such as pngquant still finds nothing'
 	},
 	{
 		id: 'runtime.monotonic_clock',
@@ -363,12 +364,12 @@ export const VECTORS: readonly Vector[] = [
 		id: 'media.gd',
 		group: 'MEDIA',
 		kind: 'executed',
-		claim: 'an image toolkit that writes derivative files',
+		claim: 'gd image handles that scale, crop, rotate and encode',
 		probe: "(function () { if (!function_exists('imagecreatetruecolor')) { return false; } return @imagecreatetruecolor(1, 1) !== false; })()",
-		expected: false,
-		blocker: 'by-design',
+		expected: true,
+		blocker: null,
 		evidence:
-			'image styles are applied at DELIVERY by Cloudflare Images rather than by rewriting'
+			"ROUTED to the host image engine: the gd functions a CMS upload path uses build a handle that queues crop, resize and rotate operations, and writing the image out parks PHP on `cfwpark+image://` while tinyimg decodes, applies the queue and encodes. `extension_loaded('gd')` stays false and the per-pixel and drawing functions stay undefined, so a module that reads or paints pixels still fails at the call"
 	},
 	{
 		id: 'media.delivery_styles',

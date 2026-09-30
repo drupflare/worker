@@ -269,3 +269,71 @@ describe('key operations, which were refused on a premise about the wrong API', 
 		expect(OPENSSL_FIX).toContain('a passphrase is not supported here');
 	});
 });
+
+describe('the symmetric, detail and exchange ops', () => {
+	it('refuses a cipher it does not implement by name', () => {
+		const r = signHostCall({ op: 'cipher', dir: 'enc', cipher: 'des-ede3-cbc', b64: '' });
+		expect(r).toEqual({ ok: false, error: 'unsupported cipher des-ede3-cbc' });
+	});
+
+	it('round-trips AES-128-CBC with padding switched off on a block-sized input', () => {
+		const common = {
+			op: 'cipher',
+			cipher: 'aes-128-cbc',
+			keyB64: btoa('k'.repeat(16)),
+			ivB64: btoa('i'.repeat(16)),
+			padding: false
+		};
+		const enc = signHostCall({ ...common, dir: 'enc', b64: btoa('0123456789abcdef') }) as {
+			b64: string;
+		};
+		expect(atob(enc.b64)).toHaveLength(16);
+		const dec = signHostCall({ ...common, dir: 'dec', b64: enc.b64 }) as { b64: string };
+		expect(atob(dec.b64)).toBe('0123456789abcdef');
+	});
+
+	it('reports RSA and EC details under the names ext-openssl uses', () => {
+		const r = signHostCall({ op: 'pkeyDetails', key: rsa.privateKey }) as {
+			details: Record<string, any>;
+		};
+		expect(r.details.keyType).toBe('rsa');
+		expect(r.details.bits).toBe(2048);
+		expect(r.details.rsa.d).toBeTruthy();
+		const e = signHostCall({ op: 'pkeyDetails', key: ec.publicKey }) as {
+			details: Record<string, any>;
+		};
+		expect(e.details.ec.curve_name).toBe('prime256v1');
+		expect(e.details.ec.d).toBeUndefined();
+	});
+
+	it('refuses ECDH across two curves rather than deriving garbage', () => {
+		const other = generateKeyPairSync('ec', {
+			namedCurve: 'P-384',
+			publicKeyEncoding: { type: 'spki', format: 'pem' },
+			privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+		});
+		const r = signHostCall({ op: 'derive', key: ec.privateKey, peer: other.publicKey });
+		expect(r.ok).toBe(false);
+	});
+
+	it('declares the functions SSO and OAuth libraries reach for', () => {
+		for (const fn of [
+			'openssl_encrypt',
+			'openssl_decrypt',
+			'openssl_pkey_get_private',
+			'openssl_pkey_get_details',
+			'openssl_pkey_derive',
+			'openssl_public_encrypt',
+			'openssl_private_decrypt',
+			'openssl_x509_read',
+			'openssl_x509_parse',
+			'openssl_x509_fingerprint',
+			'openssl_x509_checkpurpose',
+			'openssl_random_pseudo_bytes',
+			'openssl_cipher_iv_length',
+			'openssl_error_string'
+		]) {
+			expect(OPENSSL_FIX, fn).toContain(`function ${fn}(`);
+		}
+	});
+});

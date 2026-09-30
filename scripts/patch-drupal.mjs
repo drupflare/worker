@@ -83,6 +83,75 @@ for (const rel of FIBER_SITES) {
 	applied.push(rel);
 }
 
+// #region batch yield
+// _batch_process() yields only after Timer::read('batch_processing') passes 1000 ms, and the
+// clock reads 0 inside a run, so every progressive batch ran to completion in one invocation.
+// cfw_batch_yield() (src/drupal/standin-fix.ts) adds an operation count and the host's memory
+// verdict; a native bake has no such function and keeps core's behaviour
+const BATCH = 'core/includes/batch.inc';
+const BATCH_TIMER = "Timer::start('batch_processing');";
+const BATCH_CHECK = "if ($batch['progressive'] && Timer::read('batch_processing') > 1000) {";
+const BATCH_PATCHED =
+	"if ($batch['progressive'] && (Timer::read('batch_processing') > 1000 || (function_exists('cfw_batch_yield') && cfw_batch_yield(++$cfw_batch_ops)))) {";
+
+{
+	const path = join(root, BATCH);
+	try {
+		const src = await readFile(path, 'utf8');
+		if (src.includes('cfw_batch_yield')) {
+			skipped.push(`${BATCH} (batch yield already patched)`);
+		} else if (!src.includes(BATCH_TIMER) || !src.includes(BATCH_CHECK)) {
+			// a core release that reshaped the loop must fail the build, not ship a batch that never yields
+			throw new Error(`${BATCH}: the yield condition moved; update scripts/patch-drupal.mjs`);
+		} else {
+			await writeFile(
+				path,
+				src
+					.replace(BATCH_TIMER, `${BATCH_TIMER}\n    $cfw_batch_ops = 0;`)
+					.replace(BATCH_CHECK, BATCH_PATCHED)
+			);
+			applied.push(`${BATCH} (yield on operation count or memory)`);
+		}
+	} catch (e) {
+		if (e instanceof Error && e.message.includes('update scripts/patch-drupal.mjs')) throw e;
+		skipped.push(`${BATCH} (not present)`);
+	}
+}
+// #endregion
+
+// #region guzzle's default handler
+// a Guzzle client built with no handler (an SDK, a flysystem adapter) calls chooseHandler(), which
+// picks a curl or stream handler neither of which can answer here. cfw_guzzle_handler()
+// (src/drupal/standin-fix.ts) returns the transport the drupflare module installed for
+// Drupal::httpClient(); a native bake has no such function and keeps Guzzle's choice
+const GUZZLE = 'vendor/guzzlehttp/guzzle/src/Utils.php';
+const GUZZLE_SIGNATURE = /(public static function chooseHandler\([^)]*\): callable\s*\{)/;
+const GUZZLE_HOOK = `$1
+        if (\\function_exists('cfw_guzzle_handler') && ($cfw = \\cfw_guzzle_handler()) !== null) {
+            return $cfw;
+        }`;
+
+{
+	const path = join(root, GUZZLE);
+	let src = null;
+	try {
+		src = await readFile(path, 'utf8');
+	} catch {
+		skipped.push(`${GUZZLE} (not present)`);
+	}
+	if (src !== null) {
+		if (src.includes('cfw_guzzle_handler')) {
+			skipped.push(`${GUZZLE} (default handler already patched)`);
+		} else if (!GUZZLE_SIGNATURE.test(src)) {
+			throw new Error(`${GUZZLE}: chooseHandler() moved; update scripts/patch-drupal.mjs`);
+		} else {
+			await writeFile(path, src.replace(GUZZLE_SIGNATURE, GUZZLE_HOOK));
+			applied.push(`${GUZZLE} (default handler -> drupflare transport)`);
+		}
+	}
+}
+// #endregion
+
 // #region twig php storage
 const SETTINGS = 'sites/default/settings.php';
 const TWIG_STORAGE_MARKER = "$settings['php_storage']['twig']";

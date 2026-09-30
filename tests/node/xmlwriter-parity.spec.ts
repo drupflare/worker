@@ -305,4 +305,19 @@ $out = %W%->outputMemory();`);
 		expect(real).toContain('<kept a="1"/>');
 		expect(real).toContain('&lt;escaped&gt;');
 	});
+	it('answers false for a method it does not implement instead of fataling', () => {
+		const file = join(dir, 'unimplemented.php');
+		writeFileSync(
+			file,
+			`<?php\n${POLYFILL_AS_PROBE}\n$w = new CfwXmlWriterProbe();\n$w->openMemory();\n` +
+				`$w->startElement('r');\n$a = $w->writeCdata('x');\n$b = $w->startAttribute('y');\n` +
+				`$w->endElement();\necho var_export($a, true) . var_export($b, true) . trim($w->outputMemory());\n`
+		);
+		try {
+			expect(execFileSync('php', [file], { encoding: 'utf8' })).toBe('falsefalse<r/>');
+		} catch (e) {
+			if ((e as { code?: string }).code === 'ENOENT') return;
+			throw e;
+		}
+	});
 });

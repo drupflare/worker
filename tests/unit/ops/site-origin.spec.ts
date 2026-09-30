@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	FALLBACK_ORIGIN,
+	aliasRewrite,
 	chooseOrigin,
 	normaliseOrigin,
-	pinnable
+	pinnable,
+	replaceStream
 } from '../../../src/ops/site-origin';
 
 /**
@@ -104,5 +106,77 @@ describe('what may be pinned', () => {
 		expect(pinnable('')).toBe(false);
 		expect(pinnable(null)).toBe(false);
 		expect(pinnable('javascript://evil')).toBe(false);
+	});
+});
+
+describe('re-addressing a response to an alias host', () => {
+	const canonical = 'https://primary.example.com';
+	const alias = 'https://alias.example.org';
+
+	async function through(pairs: [string, string][], chunks: string[]): Promise<string> {
+		const source = new ReadableStream<string>({
+			start(ctl) {
+				for (const c of chunks) ctl.enqueue(c);
+				ctl.close();
+			}
+		});
+		let out = '';
+		const reader = source.pipeThrough(replaceStream(pairs)).getReader();
+		for (let r = await reader.read(); !r.done; r = await reader.read()) out += r.value;
+		return out;
+	}
+
+	it('replaces a needle split across every possible chunk boundary', async () => {
+		const text = `<a href="${canonical}/node/1">x</a> and ${canonical}`;
+		for (let cut = 0; cut <= text.length; cut++) {
+			const out = await through([[canonical, alias]], [text.slice(0, cut), text.slice(cut)]);
+			expect(out).toBe(`<a href="${alias}/node/1">x</a> and ${alias}`);
+		}
+	});
+
+	it('does not replace twice when the alias starts with the canonical origin', async () => {
+		const longer = `${canonical}.au`;
+		const out = await through([[canonical, longer]], [`${canonical}/a `, `${canonical}/b`]);
+		expect(out).toBe(`${longer}/a ${longer}/b`);
+	});
+
+	it('moves body URLs, the JSON-escaped form, Location and the cookie Domain', async () => {
+		const headers = new Headers({
+			'content-type': 'text/html; charset=UTF-8',
+			'content-length': '999',
+			location: `${canonical}/user/1`
+		});
+		headers.append(
+			'set-cookie',
+			'SSESSabc=1; expires=x; path=/; domain=.primary.example.com; secure'
+		);
+		headers.append('set-cookie', 'other=2; path=/');
+		const body = `<link rel="canonical" href="${canonical}/"><script>{"u":"https:\\/\\/primary.example.com\\/x"}</script>`;
+		const res = aliasRewrite(new Response(body, { status: 302, headers }), canonical, alias);
+		expect(res.status).toBe(302);
+		expect(res.headers.get('location')).toBe(`${alias}/user/1`);
+		expect(res.headers.getSetCookie()).toEqual([
+			'SSESSabc=1; expires=x; path=/; Domain=.alias.example.org; secure',
+			'other=2; path=/'
+		]);
+		expect(res.headers.get('content-length')).toBeNull();
+		expect(res.headers.get('x-cfw-alias')).toBe('primary.example.com');
+		const text = await res.text();
+		expect(text).not.toContain('primary.example.com');
+		expect(text).toContain(`href="${alias}/"`);
+		expect(text).toContain('"https:\\/\\/alias.example.org\\/x"');
+	});
+
+	it('leaves a binary body and a foreign Location alone', async () => {
+		const bytes = new TextEncoder().encode(canonical);
+		const res = aliasRewrite(
+			new Response(bytes, {
+				headers: { 'content-type': 'image/png', location: 'https://elsewhere.example/' }
+			}),
+			canonical,
+			alias
+		);
+		expect(res.headers.get('location')).toBe('https://elsewhere.example/');
+		expect(new TextDecoder().decode(await res.arrayBuffer())).toBe(canonical);
 	});
 });

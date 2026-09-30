@@ -1,3 +1,11 @@
+import {
+	censusOf,
+	readDeployment,
+	settlePrimary,
+	unmappedSite,
+	type DeploymentKv
+} from './deployment-site.js';
+
 /**
  * Which site a request belongs to, when the caller did not say.
  *
@@ -9,14 +17,17 @@
  * The `site` parameter is layer 0 and is REFUSED unless the caller opts in, because the catch-all
  * resolves a URL whose query string belongs to the visitor. See {@link ResolveSiteOptions}.
  *
- * Four layers, and the ORDER follows from which of them can be absent:
+ * Five layers, and the ORDER follows from which of them can be absent:
  *
  * 1. **KV**, keyed by host. Operator-writable at runtime, so two hostnames can share one site and a
  *    site can be renamed without a redeploy. First because it is the only layer that can be changed
  *    without shipping anything.
  * 2. **`SITE_ID`**, a var. The per-deployment answer, set at deploy time.
- * 3. **The hostname**, derived. No configuration at all: a deploy serves the host it was pointed at.
- * 4. **`site`**, the literal `src/site.ts` has always defaulted the `site` param to.
+ * 3. **The deployment's primary site** (`src/ops/deployment-site.ts`). One deployment is one site,
+ *    so once a site has been claimed every unmapped host reaches it.
+ * 4. **The hostname**, derived, only while nothing has been claimed: a fresh deploy serves the host
+ *    it was pointed at, and that is how its first site is made.
+ * 5. **`site`**, the literal `src/site.ts` has always defaulted the `site` param to.
  *
  * THE OPTIONAL LAYERS COME FIRST BECAUSE THE GUARANTEED ONE WOULD SHADOW THEM. Derivation answers
  * for every real host, so anything below it is unreachable on exactly the hosts it exists to
@@ -162,7 +173,7 @@ export function encodeSiteId(identity: string): string {
 /** what a site resolution decided, and which layer decided it */
 export interface ResolvedSite {
 	site: string;
-	from: 'param' | 'kv' | 'var' | 'host' | 'fallback';
+	from: 'param' | 'kv' | 'var' | 'primary' | 'host' | 'fallback';
 }
 
 export interface ResolveSiteOptions {
@@ -183,8 +194,10 @@ export interface ResolveSiteOptions {
 export interface SiteIdEnv {
 	// nullable to match the binding's own optionality: an unbound namespace leaves derivation in
 	// force rather than breaking, the same way it does for the plan
-	CONFIG_KV?: { get(key: string): Promise<string | null> } | null;
+	CONFIG_KV?: DeploymentKv | null;
 	SITE_ID?: string | null;
+	/** the site namespace, asked what each claimed site holds when several compete for primary */
+	SITE?: DurableObjectNamespace | null;
 }
 
 /**
@@ -263,6 +276,18 @@ export async function resolveSite(
 
 	const configured = env?.SITE_ID?.trim();
 	if (configured) return { site: configured, from: 'var' };
+
+	if (env?.CONFIG_KV) {
+		const decided = unmappedSite(await readDeployment(env.CONFIG_KV, nowMs));
+		if (decided?.from === 'primary') return { site: decided.site, from: 'primary' };
+		if (decided?.from === 'choose' && env.SITE) {
+			const ns = env.SITE;
+			const chosen = await settlePrimary(env.CONFIG_KV, decided.candidates, (site) =>
+				censusOf(ns, site)
+			).catch(() => null);
+			if (chosen !== null) return { site: chosen, from: 'primary' };
+		}
+	}
 
 	const derived = siteFromHost(host, url.protocol);
 	if (derived !== null) return { site: derived, from: 'host' };

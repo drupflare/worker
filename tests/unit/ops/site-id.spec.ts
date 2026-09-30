@@ -1,4 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import {
+	chooseByContent,
+	choosePrimary,
+	DEPLOYMENT_KEY,
+	recordClaimed,
+	resetDeploymentMemo,
+	settlePrimary,
+	type SiteCensus
+} from '../../../src/ops/deployment-site';
 import { KV_OVERRIDABLE } from '../../../src/ops/plan';
 import {
 	FALLBACK_SITE,
@@ -14,7 +23,10 @@ import {
 
 // the host mapping is memoised per isolate, so a spec that did not reset it would read the
 // previous spec's mapping for the same host
-beforeEach(resetHostMemo);
+beforeEach(() => {
+	resetHostMemo();
+	resetDeploymentMemo();
+});
 
 /**
  * Which site a request belongs to, when the caller did not say.
@@ -268,7 +280,8 @@ describe('the host mapping is read once, not once per call site', () => {
 		expect(await resolveSite(new URL('https://example.com/b'), env)).toMatchObject({
 			from: 'host'
 		});
-		expect(state.reads).toBe(1);
+		// the host mapping and the deployment document, each read once
+		expect(state.reads).toBe(2);
 	});
 
 	it("keeps one host out of another host's answer", async () => {
@@ -318,7 +331,8 @@ describe('the host mapping is read once, not once per call site', () => {
 			site: 'recovered',
 			from: 'kv'
 		});
-		expect(reads).toBe(2);
+		// the host and the deployment document both threw, and neither was memoised
+		expect(reads).toBe(3);
 	});
 
 	// `?site=` is answered above the memo, so a diagnostic call still costs no read at all
@@ -394,5 +408,163 @@ describe('the KV-over-var convention', () => {
 		expect(KV_OVERRIDABLE).not.toContain('PW_DIAGNOSTICS');
 		expect(KV_OVERRIDABLE).not.toContain('SITE_ID');
 		expect(KV_OVERRIDABLE).not.toContain('PLAN');
+	});
+});
+
+describe('one deployment is one site', () => {
+	const at = (href: string) => new URL(href);
+	/** a writable KV, so the objects' own records and the owner's choice land in it */
+	const store = (entries: Record<string, string> = {}) => ({
+		entries,
+		get: async (key: string) => entries[key] ?? null,
+		put: async (key: string, value: string) => {
+			entries[key] = value;
+		}
+	});
+	const census = (
+		site: string,
+		nodes: number,
+		accounts: number,
+		claimedAt: number
+	): SiteCensus => ({
+		site,
+		nodes,
+		accounts,
+		claimedAt,
+		lastWrite: null
+	});
+	/** a SITE namespace answering /__deployment from a table of censuses */
+	const namespace = (table: Record<string, SiteCensus>) =>
+		({
+			idFromName: (name: string) => name,
+			get: (id: string) => ({
+				fetch: async () => Response.json(table[id] ?? { nodes: 0, accounts: 0 })
+			})
+		}) as unknown as DurableObjectNamespace;
+
+	it('sends a second, unmapped host to the site the first claim recorded', async () => {
+		const kv = store();
+		await recordClaimed(kv, 'drupflare-test.example.workers.dev', true);
+		expect(await resolveSite(at('https://demo.example.com/'), { CONFIG_KV: kv })).toEqual({
+			site: 'drupflare-test.example.workers.dev',
+			from: 'primary'
+		});
+	});
+
+	it('still lets a KV host mapping and SITE_ID win over the primary', async () => {
+		const kv = store({ [siteKvKey('shop.example.com')]: 'shop' });
+		await recordClaimed(kv, 'main', true);
+		expect(await resolveSite(at('https://shop.example.com/'), { CONFIG_KV: kv })).toEqual({
+			site: 'shop',
+			from: 'kv'
+		});
+		resetHostMemo();
+		expect(
+			await resolveSite(at('https://other.example.com/'), {
+				CONFIG_KV: kv,
+				SITE_ID: 'pinned'
+			})
+		).toEqual({ site: 'pinned', from: 'var' });
+	});
+
+	it('keeps a site claimed before the document existed, under its derived id', async () => {
+		// adoption never makes a site primary, and one claimed site needs no primary to be it
+		const kv = store();
+		await recordClaimed(kv, 'old.example.com', false);
+		expect(JSON.parse(kv.entries[DEPLOYMENT_KEY] ?? '{}').primary).toBeNull();
+		expect(await resolveSite(at('https://old.example.com/'), { CONFIG_KV: kv })).toEqual({
+			site: 'old.example.com',
+			from: 'primary'
+		});
+		expect(await resolveSite(at('https://new.example.com/'), { CONFIG_KV: kv })).toEqual({
+			site: 'old.example.com',
+			from: 'primary'
+		});
+	});
+
+	it('derives from the host while nothing is claimed, which is how the first site is made', async () => {
+		expect(await resolveSite(at('https://fresh.example.com/'), { CONFIG_KV: store() })).toEqual(
+			{
+				site: 'fresh.example.com',
+				from: 'host'
+			}
+		);
+	});
+
+	it.each([
+		['the populated site claimed first', 100, 200],
+		['the populated site claimed second', 200, 100]
+	])('picks the site with content over an empty one, %s', async (_label, realAt, emptyAt) => {
+		const kv = store();
+		await recordClaimed(kv, 'real', false);
+		await recordClaimed(kv, 'accidental', false);
+		const SITE = namespace({
+			real: census('real', 40, 3, realAt),
+			accidental: census('accidental', 0, 0, emptyAt)
+		});
+		expect(await resolveSite(at('https://anything.example/'), { CONFIG_KV: kv, SITE })).toEqual(
+			{
+				site: 'real',
+				from: 'primary'
+			}
+		);
+		expect(JSON.parse(kv.entries[DEPLOYMENT_KEY] ?? '{}')).toMatchObject({
+			primary: 'real',
+			chosen: 'content'
+		});
+	});
+
+	it('breaks a content tie on the oldest claim, never on the newest', () => {
+		expect(chooseByContent([census('b', 1, 0, 200), census('a', 1, 0, 100)])).toBe('a');
+	});
+
+	it('does not flip once chosen, even after the other site gains content', async () => {
+		const kv = store();
+		await recordClaimed(kv, 'real', false);
+		await recordClaimed(kv, 'accidental', false);
+		const table = {
+			real: census('real', 5, 0, 100),
+			accidental: census('accidental', 0, 0, 200)
+		};
+		expect(
+			await settlePrimary(kv, ['real', 'accidental'], async (s) => table[s as 'real'])
+		).toBe('real');
+		table.accidental = census('accidental', 500, 20, 200);
+		resetDeploymentMemo();
+		expect(
+			await resolveSite(at('https://anything.example/'), {
+				CONFIG_KV: kv,
+				SITE: namespace(table)
+			})
+		).toEqual({ site: 'real', from: 'primary' });
+	});
+
+	it('lets an explicit choice override the content count, and only among claimed sites', async () => {
+		const kv = store();
+		await recordClaimed(kv, 'real', false);
+		await recordClaimed(kv, 'demo', false);
+		await settlePrimary(kv, ['real', 'demo'], async (s) =>
+			s === 'real' ? census('real', 9, 9, 1) : census('demo', 0, 0, 2)
+		);
+		expect(await choosePrimary(kv, 'demo')).toMatchObject({
+			ok: true,
+			deployment: { primary: 'demo', chosen: 'explicit' }
+		});
+		expect(await choosePrimary(kv, 'stranger')).toMatchObject({ ok: false });
+		expect(await resolveSite(at('https://anything.example/'), { CONFIG_KV: kv })).toEqual({
+			site: 'demo',
+			from: 'primary'
+		});
+	});
+
+	it('lets a later claim be listed without taking the deployment over', async () => {
+		const kv = store();
+		await recordClaimed(kv, 'first', true);
+		await recordClaimed(kv, 'second', true);
+		expect(JSON.parse(kv.entries[DEPLOYMENT_KEY] ?? '{}')).toEqual({
+			primary: 'first',
+			claimed: ['first', 'second'],
+			chosen: 'first-claim'
+		});
 	});
 });

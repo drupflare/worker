@@ -100,3 +100,94 @@ export function pinnable(origin: string | null | undefined): boolean {
 
 /** the same set `site-id.ts` refuses to derive a site identity from, for the same reason */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', 'do.local']);
+
+/** response types whose bodies can carry an absolute URL worth rewriting */
+const REWRITABLE_TYPE = /^text\/|json|xml|javascript/i;
+
+/**
+ * A response rendered against the canonical origin, re-addressed to an alias host.
+ *
+ * The page store keys on path alone and every render uses the pinned origin, so one stored copy
+ * serves every host a site answers on. An alias visitor needs three things moved to its own host:
+ * the absolute URLs in the body (plain and JSON-escaped, since drupalSettings and AJAX carry the
+ * second), a `Location` that would send it to the canonical host, and the cookie `Domain` Drupal
+ * derives from the render host, which a browser refuses from any other host -- so a login on an
+ * alias never held. The session cookie NAME stays the canonical one, which is what the next render
+ * looks for, so one session works on every alias.
+ *
+ * The body is rewritten as a stream, so a BigPipe response still arrives progressively.
+ */
+export function aliasRewrite(res: Response, canonical: string, visitor: string): Response {
+	const from = new URL(canonical);
+	const to = new URL(visitor);
+	const headers = new Headers(res.headers);
+	const location = headers.get('location');
+	if (location !== null && location.startsWith(from.origin)) {
+		headers.set('location', to.origin + location.slice(from.origin.length));
+	}
+	const cookies = headers.getSetCookie();
+	if (cookies.length > 0) {
+		headers.delete('set-cookie');
+		const domain = new RegExp(
+			`;\\s*domain=\\.?${from.hostname.replace(/\./g, '\\.')}(?=;|$)`,
+			'i'
+		);
+		for (const line of cookies)
+			headers.append('set-cookie', line.replace(domain, `; Domain=.${to.hostname}`));
+	}
+	headers.set('x-cfw-alias', from.host);
+	const type = headers.get('content-type') ?? '';
+	if (res.body === null || !REWRITABLE_TYPE.test(type)) {
+		return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+	}
+	headers.delete('content-length');
+	const pairs: [string, string][] = [
+		[from.origin, to.origin],
+		[from.origin.replace(/\//g, '\\/'), to.origin.replace(/\//g, '\\/')]
+	];
+	const body = res.body
+		.pipeThrough(new TextDecoderStream())
+		.pipeThrough(replaceStream(pairs))
+		.pipeThrough(new TextEncoderStream());
+	return new Response(body, { status: res.status, statusText: res.statusText, headers });
+}
+
+/**
+ * Replaces every needle across chunk boundaries.
+ *
+ * A match that starts before the last `longest - 1` characters of the buffered text lies wholly
+ * inside it; anything later is held back and scanned again with the next chunk.
+ */
+export function replaceStream(pairs: [string, string][]): TransformStream<string, string> {
+	const keep = Math.max(...pairs.map(([a]) => a.length)) - 1;
+	let tail = '';
+	const scan = (text: string, safe: number): [string, number] => {
+		let out = '';
+		let i = 0;
+		for (;;) {
+			let at = -1;
+			let pair: [string, string] | null = null;
+			for (const p of pairs) {
+				const j = text.indexOf(p[0], i);
+				if (j !== -1 && (at === -1 || j < at)) [at, pair] = [j, p];
+			}
+			if (pair === null || at >= safe) break;
+			out += text.slice(i, at) + pair[1];
+			i = at + pair[0].length;
+		}
+		const end = Math.max(i, safe);
+		return [out + text.slice(i, end), end];
+	};
+	return new TransformStream({
+		transform(chunk, ctl) {
+			const text = tail + chunk;
+			const [out, end] = scan(text, Math.max(0, text.length - keep));
+			tail = text.slice(end);
+			if (out !== '') ctl.enqueue(out);
+		},
+		flush(ctl) {
+			const [out] = scan(tail, tail.length);
+			if (out !== '') ctl.enqueue(out);
+		}
+	});
+}

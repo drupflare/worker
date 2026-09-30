@@ -15,6 +15,10 @@ that catch the most mistakes:
   delta SPANNING I/O is usable: the clock updates on I/O completion, and an `x-worker-ms` delta
   bracketing `stub.fetch()` tracked the platform's own `wallTimeMs` to within 1 ms on every arm of a
   deployed run. So the rule is about deltas across synchronous PHP, not about `Date.now()` as such.
+- **A built-in that WAITS for the clock to move never returns on the platform.** `uniqid()` polls
+  `gettimeofday()` until the microsecond changes; a migrated farmOS claim spun to 302,500 ms on it
+  while a local workerd, whose clock advances, answered in 10 s. It is a stand-in now (`standin-fix.ts`).
+  Suspect this shape first when a deployed invocation burns CPU with no host call.
 - **`x-cfw-serve-ms` is that same frozen clock**, taken inside the object around a serve that may run
   PHP, so on a render it under-reads by the whole synchronous span. `x-worker-ms` brackets the hop and
   is the wall figure. And `x-cfw-inline-boot: 1` is what says a request booted; `x-cfw-php-booted`
@@ -24,6 +28,10 @@ that catch the most mistakes:
   `durableObjectsInvocationsAdaptiveGroups` quantiles read cpuTime p90 ~865-959 ms. Read the object
   dataset per minute, one cold sample per minute per arm, and check the join against it before
   quoting a per-request object figure.
+- **For a throwaway, read Workers Observability events rather than the GraphQL object datasets.** Measured
+  2026-09-30: `durableObjectsInvocationsAdaptiveGroups` returned 9 of ~340 invocations for a namespace
+  younger than ~10 minutes, and deleting the worker deletes those rows; Observability events survive a
+  teardown and carry per-invocation CPU, wall and outcome.
 - **`cpuTime` is 1 ms granular**, so a reading of 1 ms is the meter's floor rather than a measurement
   of 1.0 ms. It bounds an invocation; it cannot resolve below itself. Amortise over many requests
   when the quantity is sub-millisecond.
@@ -524,8 +532,8 @@ shipping-code change: `parseRemote()` discards the host for Bitbucket, `cloneUrl
 
 ## The database HAS a producer now, and four claims here were stale
 
-`assets/drupal/site.sqlite` is **5,349,376 bytes** as of `3e4f2737` and
-`scripts/drupal/install-site-db.php` builds it
+`assets/drupal/site.sqlite` is **5,832,704 bytes** as of the 2026-09-30 rebuild against drupflare
+v0.5.0 and rom v0.4.0, and `scripts/drupal/install-site-db.php` builds it
 from nothing. `docs/database.md` is the recipe; `bun run build:site-db` runs it and
 `node scripts/diff-site-db.ts` is the acceptance check. Measured 2026-09-09, a fresh build against
 the shipped file agrees on **41 modules of 41 and 175 config rows of 175**, with every remaining
@@ -534,9 +542,9 @@ difference attributed.
 **This section said the opposite until 2026-09-09, and each correction is worth knowing:**
 
 - "6.6 MB" was the superseded R2-archived lineage `site.sqlite.trimmed-1618p-cc13` at 6,627,328
-  bytes, pinned in `scripts/backup-cdn.ts`. It then read 7,585,792 from 2026-08-14, and 5,349,376
-  since `3e4f2737 chore: rebuild the packed database at 11.4.6`. **Count it, do not quote it** --
-  this line has been wrong twice.
+  bytes, pinned in `scripts/backup-cdn.ts`. It then read 7,585,792 from 2026-08-14, 5,349,376
+  from `3e4f2737 chore: rebuild the packed database at 11.4.6`, and 5,832,704 since 2026-09-30.
+  **Count it, do not quote it** -- this line has been wrong three times.
 - "nothing in this repo produces it" -- `install-site-db.php` had existed for two weeks and
   `bake-pack.ts` already said so. What had no producer was three DELTAS: the `page_content_type`
   recipe, enabling `drupflare`, and 16 cache index drops. All three are in the script now.
@@ -732,6 +740,167 @@ destroys one silently -- it needs a terminating OBSERVATION, like `/user/passwor
 The premise behind the fiber proposal, "Zend already manages the continuation", is true of generators
 and false of fibers: a generator copies `execute_data` and the VM stack to the HEAP, a fiber switches
 a real C stack.
+
+## `subarray` THROWS ABOVE 128 MiB ON THE PLATFORM, AND A LOCAL WORKERD DOES NOT
+
+Measured 2026-09-29 on a deployed Durable Object. Once a wasm memory has grown past 128 MiB,
+`TypedArray.prototype.subarray` throws `RangeError: Invalid array buffer length` for any begin
+BYTE offset from 2^27 (134,217,728) up. Only that method does: `new Uint8Array(buffer, offset,
+length)`, `slice`, `set`, `copyWithin`, `fill` and `DataView` work at the same offsets on the same
+buffer. The threshold is on the byte offset, so a wide view (`Int32Array`, `Float64Array`) hits it at
+a smaller element index.
+
+Emscripten decodes every string longer than 16 bytes with `HEAPU8.subarray`, so a PHP string that
+lived above 128 MiB failed a host call and the request answered a 1101. It needed the heap to have
+grown past 128 MiB and a string to sit in the top of it, which is why about half of the live drives
+failed and the other half read clean on the same tree. Two greens (p3, p5) were two draws.
+
+`safeHeapSubarray()` in `scripts/measure/growth-glue.ts` gives every heap view its own `subarray`
+that calls the native one below 2^27 bytes and builds `new View(buffer, offset, length)` above it.
+It is installed inside `updateMemoryViews()`, so every rebuild after a grow gets it. It costs about
+0.03 microseconds per call below the limit and nothing above it (node, 2M calls).
+
+**A green local lane proves nothing about this.** `wrangler dev` and the vitest pool do not enforce
+it, and `growth-glue.spec.ts` emulates the platform with a view whose native `subarray` throws at
+the same offset. To retest the platform: `scripts/e2e/subarray-probe` is a 40-line Durable Object
+that grows a memory to 2,362 pages and tries each operation at offsets around 2^27; deploy it as a
+`cfw-e2e-*` worker, read `/?pages=2362`, tear it down. `new Function` is refused on the platform
+(the probe answers 1101), so a probe cannot build its subject from a string.
+
+The fix lives in the generated tuned glue. A fresh clone gets it from `restore-artifacts`; a tree
+filled by `bun run hydrate` does not until the release payload is rebuilt and republished. The glue
+also records failed growths and failed decodes on `globalThis.__cfwGrow` and `__cfwSub`, and
+`/serve-stats` reports them with any RangeError a handler caught (`rangeErrors`, `growth`,
+`decodeFailures`), each with its stack.
+
+## A DROPPED INTERPRETER'S MEMORY IS REUSED, NOT COLLECTED
+
+A dropped `WebAssembly.Memory` stays alive until V8 runs a FULL collection, and nothing an object does
+forces one. The next boot used to allocate a second heap beside it and reset the object for memory: on
+a deployed farmOS every reset after a drop (the post-claim login, `/admin/content` after a recycle)
+found the old 93-113 MB heap still alive. Measured 2026-09-29, paid `cfw-e2e-farmos`.
+
+**The interpreter is built with an imported memory now, and a boot after a drop instantiates into the
+dropped one after zeroing it** (`withImportedMemory()` in `scripts/measure/initial-memory.ts`, applied by
+`emitTunedWasm()`, so the CDN wasm is unchanged; the one-slot `WeakRef` and `newInterpreterMemory()` in
+`src/site-do.ts`). An isolate never holds two heaps for a drop. `oversized()` counts growth since the
+boot, because a reused memory starts large and a drop cannot shrink it; without that it recycled on
+every invocation. Interleaved speed against the defined-memory binary: 0.984 and 0.995 (A/A 0.998).
+`/serve-stats` reports `heapsReused` and `spareMemoryBytes`.
+
+**The pressure-buffer trick it replaced was watching the wrong object.** `collectByPressure()` allocated
+48 MiB to provoke a collection and read success off a `WeakRef` to the small `{php, binary, out}`
+wrapper. The wrapper dies in a scavenge while the heap needs a full collection, so it reported `freed`
+with the heap resident, and 3 of 4 boots after a drop found the heap alive; the untouched buffer also
+counted in full toward the object. Hold a `WeakRef` on the memory itself when the question is memory.
+The earlier probe (`scripts/e2e/gc-probe`) was right that a 36 MiB+ buffer CAN trigger a collection;
+it did not show that it reliably does.
+
+## A DEPLOYED MEMORY IS CHARGED AT ITS FULL SIZE, touched or not
+
+Measured 2026-09-30 on deployed farmOS, one fresh isolate per arm: an untouched 80 MiB
+`WebAssembly.Memory` added 84 MB to the platform reading, and instantiating the interpreter against it
+added 1-4 MB more, so compiled code is not charged up front. `/php` (PHP started, site mounted) cost
+112-125 MB over the isolate's own baseline, and a render only ~7 MB on top. A fresh isolate therefore
+paid for the unused tail of the start size, and a render needs 67-71 MB, so the binary starts at 64 MiB
+(1,024 pages, `INITIAL_PAGES` and `INTERPRETER_MEMORY.initial` together): 13-17 MB less per fresh
+isolate, same boot CPU, and farmOS's reset spiral stopped (lane 10/13 -> 13/13, 0 resets).
+
+**The per-isolate instrument is `durableObjectsPeriodicGroups` grouped by `datetime`**: a row starts
+when an isolate starts and then one per minute, so an arm reads per isolate rather than per namespace
+minute. Request 78 s after a redeploy so the isolate's first row is its own baseline, which varied
+13-42 MB by placement alone. Co-tenancy was checked with an isolate nonce and a served-object map and
+did not occur (one object per isolate, 39 isolates).
+
+## A MEMORY RESET IS `overloaded`, NOT `retryable`, and a write before an await survives it
+
+Read off a deployed probe (`cfw-e2e-resetprobe`, n=8, 2026-09-30): a Durable Object reset for memory
+reaches the caller's `stub.fetch()` as an error with `overloaded: true` and `durableObjectReset: true` and
+no `retryable`. The same stub then fails at once; a new stub answers in ~54 ms. `resetRecovery()` in
+`src/site.ts` required `retryable` and refused anything `overloaded`, so every GET that met a memory reset
+got the Try Again page instead of its one retry. It keys on `durableObjectReset` now
+(`serve-edge.spec.ts` uses the measured shape).
+
+**A POST is repeated only when the object never started it**, and the reason the rest are not is measured:
+a write the object makes before it awaits I/O is committed when the reset lands, and a record written just
+before a PHP run survived the memory kill of that same request. Thunder's claim reset after committing and
+its retry answered 409, the half-applied shape a retried save produces. So the front worker mints an attempt
+id (`src/ops/attempt.ts`, stripped from client input) and the serve route records it before PHP runs; a
+repeat that finds the record is refused. Writes commit in order and the output gate holds subrequests, so no
+record means nothing landed. Cost: about one row per POST, kept 10 minutes. On deployed farmOS the one
+repeat that fired was correctly refused: that Run cron had reached `update_cron()`.
+
+**After a "Network connection lost" reset the object was unreachable for ~10 s**, and every immediate retry
+failed. And start a corpus lane ~60 s after `corpus-deploy.ts`: a package install that lands in the first
+minute meets "Durable Object reset because its code was updated" and the lane is invalid.
+
+## A LARGE SITE'S FRESH ISOLATE HAS ALMOST NO ROOM, and placement decides who survives
+
+Measured 2026-09-30 on deployed farmOS: an idle isolate holding a booted interpreter read ~187 MB for four
+minutes against resets at ~200-217 MB. Boot plus nine admin pages on fresh isolates finished at 184.0 and
+189.6 MB or died at 216-236 MB (n=4) with identical linear memory and JS counters; the one dying isolate
+with a baseline read 40.4 MB before any PHP against 13.9 for a survivor. A page costs the same young or warm
+(+8-11 MB linear for structure, people, config, modules). Each successor of a reset isolate pays its own
+boot (nothing is carried: reuse 0, recycles 0), so a busy admin session can reset isolate after isolate.
+The demo's one remaining failure was Run cron on an isolate under ~40 s old, dying inside `update_cron()`.
+That was read as a memory limit and it was a re-fetch: see the next section.
+
+## AN INSTALLED MODULE'S FILES CARRIED THE BOOT TIME, so every young isolate re-fetched update data
+
+`mountInstalledModules()` created each node with `FS.create()` and never set its timestamp, so every file
+of every installed module reported the isolate's boot as its ctime and mtime. The update module compares
+each project's `.info.yml` ctime against its `last_fetch`, so a project list rebuilt on a young isolate
+marked every installed project pending, and `update_get_available(TRUE)` drained the fetch queue: release
+XML for every contrib project, parked, parsed into arrays, for up to `fetch.timeout` (30 s). On farmOS
+that was the 20-25 MB, and it was why only young isolates died. The node now carries the row's
+`installed_at`; `modify-upload.spec.ts` failed first (ctime read the boot, 1790769651). Deployed farmOS on
+the fix: demo 3 of 3 clean, 117 requests, 0 failed, 0 retries, 0 object exceptions, against 1 of 3 before.
+Packed files were never affected, since the lazy mount copies the packer's mtime. The same stamp also moved
+the compiled Twig directory names of installed templates, which hash `filemtime()`, so each young isolate
+recompiled them. **A stat a module reads is part of its input**: check what a file reports before
+attributing a young-isolate cost to memory.
+
+## THE PACK BLOB IN SQLITE WAS BUILT, MEASURED AND REMOVED
+
+The lazy mount holds the whole compressed pack (12,185,657 bytes) in the isolate for its life. On
+2026-09-30 it was moved into the object's SQLite (64 KiB rows, one `substr` query per member on first
+open; `/serve-stats` read `mount: 0` on a deploy) and taken out again the same day, because it did not
+move Thunder's memory resets: three paired deploys per arm, run at the same time, read 29 reset retries
+with the store and 9 without, per-deploy spread 0-19. It cost ~12 MB of storage per object, and each read
+copies the member out of SQLite where the resident blob hands out a view. cartridge shipped the
+`LayerSpec.store` option it needed in v0.3.0 and removed it in v0.3.1. Do not re-propose it for headroom
+without a new mechanism and a paired measurement.
+
+## BACKGROUND PHP WAITS A MINUTE AFTER A BOOT, and `wrangler tail` blames the alarm for the visitor
+
+Measured 2026-09-30 on deployed farmOS: every memory reset in a demo drive was on an isolate 0-10 s after
+a fresh boot with alarm PHP running, typically the fill re-rendering ten pages 3-5 s in. `FILL_SETTLE_MS`
+(default 60,000) holds the alarm's fill batch, cron, reconcile steps and fill window while the interpreter
+is younger than that; queue rows stay and the alarm re-arms for the end of the hold, so nothing is
+dropped. `/serve-stats` reports `fillHold`. Paired arms, one drive each: control failed a POST in 3 of 3
+drives with 77 fill pages rendered during them, the hold 1 of 3 with 9. The test pool binds it to `0`
+(`vitest.config.ts`) because ~20 alarm specs fill straight after a boot; the shipping default is not off.
+
+**A request waiting on the object's gate is charged to the alarm it queued behind** in `wrangler tail`:
+its CPU and its logs appear on the ALARM event. So a 1.3-2.8 s ALARM row on a fresh isolate is usually a
+visitor's boot, not background work. Read the request's own row before blaming the alarm.
+
+## A CLAIM IS THREE INVOCATIONS, because a CPU kill rolls back everything in one
+
+Measured 2026-09-30 on a deployed Thunder, each stage as its own invocation: cold boot 5.1 s, plugin
+discovery 6.2 s, container compile 3.2 s, router 1.9 s, the uid-1 save 2.0 s (bcrypt alone). No stage passed
+~7 s; together they passed the 30 s default, and a killed invocation commits nothing, so every retry reinstalled
+the same two modules from scratch. The front worker sends `/__firstrun?phase=warm` (fills discovery, installs
+nothing), then `phase=consistency` (the driver and `drupflare` install), then the claim: 7.1 / 10.0 / 3.3 s.
+Two phases were not enough, since the install alone read over 32.5 s cold. **Only a migrated site splits**: a site still on a
+module set the pack baked (its `core.extension` fingerprint matches a `container.json` variant) answers
+both phases at once, because splitting a stock claim took it from 5.5-8.4 s of CPU to ~25 s (three paired
+deploys) and the skip brought it back to 9.1 s in one invocation. The SQL bridge moved 44 MB in and
+7 MB out and is not the lever. Before raising `cpu_ms` for anything, check whether the work splits at a
+commit boundary.
+
+In Drupal 11.4 the multi-module branch of `ModuleInstaller::install()` calls `resetContainer()`, which drops
+instantiated services and does not recompile, so installing two modules in one call costs one compile.
 
 ## The Zend park ships, and every instrument that measured it was wrong once
 
@@ -2387,13 +2556,13 @@ of each `.wasm`:
 
 | binary                      | initial pages | initial memory |
 | --------------------------- | ------------- | -------------- |
-| `php8.5.tuned.wasm` (ships) | 1,280         | **80.00 MiB**  |
+| `php8.5.tuned.wasm` (ships) | 1,024         | **64.00 MiB**  |
 | `php8.5.wasm`               | 1,536         | 96.00 MiB      |
 | `php8.5-long64.wasm`        | 1,536         | 96.00 MiB      |
 
 The audit modelled the ladder from 96 MiB and matched the published peaks to the byte, because those
-peaks were taken on a 96 MiB-initial binary. The shipping one starts 16 MiB lower and its idle reads
-83,886,080, which is 1,280 pages exactly. So the memory section's figures describe a binary this
+peaks were taken on a 96 MiB-initial binary. The shipping one started 16 MiB lower (1,280 pages, idle
+83,886,080) until 2026-09-30 and starts at 1,024 pages since; see the fresh-isolate section. So the memory section's figures describe a binary this
 project no longer ships, and the ladder's are the current ones. Re-measure before quoting either.
 
 **AND A STEP RECOMMENDATION FROM ANOTHER HARNESS DOES NOT TRANSFER HERE, measured.** The audit found

@@ -67,8 +67,9 @@ Drupal under another name. At runtime it is only reported, as the fleet row's `c
 ### `SITE_ID`
 
 One object per site, and the object's **name** is the site identity, so a wrong answer here serves a
-request from a different site's database. Four layers, in `src/ops/site-id.ts`: a `site:host:<host>`
-KV mapping, then `SITE_ID`, then the hostname itself, then the literal `site`.
+request from a different site's database. Five layers, in `src/ops/site-id.ts`: a `site:host:<host>`
+KV mapping, then `SITE_ID`, then the deployment's primary site (`src/ops/deployment-site.ts`), then
+the hostname itself, then the literal `site`.
 
 The two optional layers sit above the derived one because derivation answers for every real host, so
 anything below it would be unreachable on exactly the hosts it exists to configure. `localhost`,
@@ -130,6 +131,26 @@ resolves to is a separate question, answered by `SITE_ID`.
 
 Specs: `tests/unit/ops/site-origin.spec.ts`, `tests/integration/render-origin.spec.ts`.
 
+### Alias Hosts
+
+A site answers on more than one hostname through `site:host:<host>` entries in `CONFIG_KV`, one per
+host, each naming the site. `drangler domain add <host>` writes the entry with your wrangler login
+and adds a Custom Domain route for the next deploy.
+
+Every render uses the site's origin, so the stored page carries the canonical host. On a request
+whose host resolved through a KV entry and differs from that origin, the front worker rewrites the
+response for the visitor's host: absolute URLs in text bodies (plain and JSON-escaped), `Location`,
+and the `Domain` on `Set-Cookie`, which Drupal derives from the render host and a browser refuses
+from any other. The session cookie keeps its name, so one login works on every alias. The response
+carries `x-cfw-alias: <canonical host>`.
+
+Only a KV-mapped host is rewritten. An operator wrote that entry, so a forged `Host` cannot turn it
+on, and an unmapped host that reaches the site through the deployment primary keeps the canonical
+links. The first request a site ever answers still pins its origin, so claim the site on its main
+host before adding aliases.
+
+Specs: `tests/unit/ops/site-origin.spec.ts`, `tests/integration/deployment-site.spec.ts`.
+
 ## Plan
 
 | var    | default | what it does                                    |
@@ -162,24 +183,25 @@ value all fall through to the var.
 
 ## Serving and Caching
 
-| var                      | default  | what it does                                                                   |
-| ------------------------ | -------- | ------------------------------------------------------------------------------ |
-| `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it       |
-| `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                |
-| `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off   |
-| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans  |
-| `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                  |
-| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, paid unset  |
-| `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off  |
-| `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation        |
-| `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on        |
-| `MEMORY_CACHE_BINS`      | unset    | cache bins the interpreter holds in memory instead of in SQL, comma-separated  |
-| `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                  |
-| `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm       |
-| `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                 |
-| `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet |
-| `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                     |
-| `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                               |
+| var                      | default  | what it does                                                                    |
+| ------------------------ | -------- | ------------------------------------------------------------------------------- |
+| `GEN_BUCKET_MS`          | 5,000    | how long the edge reuses a resolved site generation before re-reading it        |
+| `MAX_BODY_BYTES`         | 2 MiB    | largest non-file request body the edge forwards                                 |
+| `OUTBOUND_GUARD`         | on       | refuse an outbound fetch to a private, loopback or metadata address; `0` off    |
+| `PAGE_KV_ENABLED`        | on       | the cross-colo KV page tier; `0` off, `1` also lets free store compiled plans   |
+| `PAGE_KV_TTL`            | 86,400   | seconds a stored page lives; floored at KV's own 60 s minimum                   |
+| `KV_WRITES_PER_DAY`      | per plan | page writes to `PAGE_KV` one site may make a UTC day; 800 on free, paid unset   |
+| `EDGE_PLAN`              | on       | serve an authenticated page from a compiled plan in the front worker; `0` off   |
+| `NEVER_STALE`            | unset    | extra path prefixes that may never be served from a previous generation         |
+| `AGED_SERVE_MAX_MS`      | 60,000   | how long a page a save superseded may still be answered while it refills; 0 off |
+| `ASSET_AGGREGATES`       | off      | substitute the build's CSS and JS aggregates into a stored page; `1` on         |
+| `MEMORY_CACHE_BINS`      | unset    | cache bins the interpreter holds in memory instead of in SQL, comma-separated   |
+| `MEMORY_CACHE_MAX_ITEMS` | 64       | entries one in-memory bin may hold before it drops its oldest                   |
+| `RENDER_BUDGET_MS`       | per plan | wall-clock ms a MISS may spend rendering before handing off to the alarm        |
+| `FILL_BATCH_SIZE`        | per plan | pages one alarm firing may fill before re-arming; capped at 50                  |
+| `WINDOW_SITES`           | unset    | narrows the scheduled fill window to these sites; unset drives the whole fleet  |
+| `WINDOW_MAX_FILLS`       | 50       | fills one window may drive                                                      |
+| `WINDOW_WALL_MS`         | 60,000   | wall-clock ms one window may run                                                |
 
 ### `OUTBOUND_GUARD`
 
@@ -409,8 +431,49 @@ have different failure modes. `/install` also accepts `version=<constraint>` and
 `drupal/*` resolves against `packages.drupal.org/8` and everything else against
 `repo.packagist.org`.
 
+A config import and a queue drain run in steps. `POST /ops?op=cim&drive=1` with the config objects as the
+body, or `POST /ops?op=queue-drain&drive=1&arg=<queue>&limit=<n>`, runs the first step in the request and
+leaves the rest to the alarm, one step per firing, until a step reports `done` or fails. A failed step
+ends the job and stays failed. `cim` also takes `collections=a,b` and `budget=<units>`, which ride on
+every step. `/serve-stats` reports the last step under `lastOpsJob` and the exec router's per-program
+counters under `exec` on `/serve-stats?exec=1`.
+
 A module you wrote yourself arrives through a git remote, or through `/modify` when it is not on a
 host at all. `/enable` is the same next step either way.
+
+## Migrated Project Settings
+
+A project moved from another host usually reads environment variables, `$config` overrides, header
+rules and redirects that the old host supplied. Four names carry them.
+
+| name                | form                        | what it does                                                                   |
+| ------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| `DRUPAL_ENV_<NAME>` | var or secret, one per name | PHP reads it as `getenv('<NAME>')`, `$_ENV['<NAME>']` and `$_SERVER['<NAME>']` |
+| `DRUPAL_CONFIG`     | JSON object, as a secret    | merged over `$config` with `array_replace_recursive` at boot                   |
+| `RESPONSE_HEADERS`  | JSON array, KV-overridable  | `[{"path":"/blog/*","set":{"X-Frame-Options":"DENY"}}]`                        |
+| `REDIRECTS`         | JSON array, KV-overridable  | `[{"from":"/old/*","to":"/new/*","status":301}]`                               |
+
+Only the `DRUPAL_ENV_` prefix and `DRUPAL_CONFIG` reach PHP. The owner token, `PW_DIAGNOSTICS`, mail
+credentials and API tokens live on the same environment and are never read into it. A malformed
+value is ignored, and `/serve-stats` lists the names that were ignored under `deploymentEnv`. A heap
+image is not taken or restored while either is set, because the image would carry the old values.
+Values change with a redeploy.
+
+`RESPONSE_HEADERS` matches an exact path or a `/prefix*`. It cannot set `Set-Cookie`, anything
+starting `x-cfw-`, or the headers that frame the body. `REDIRECTS` matches an exact path (a trailing
+slash is ignored) or a trailing `*` that carries the rest of the path into the target. It answers
+before routing, so a redirect costs no Durable Object request, and it never applies to the Worker's
+own routes such as `/settings`. Status is 301, 302, 307 or 308, 301 by default, and at most 100 rules
+are read.
+
+`/enable` is not needed for a text asset a migrated module ships: a `.css`, `.js` or `.svg` file
+stored in `cfw_module_file` is served from `/modules`, `/themes`, `/profiles` and `/libraries` when
+the pack does not hold the path. Binary assets are not served this way, because the table stores
+source as text.
+
+A migrated site claims with `POST /firstrun` and a body of `{"migrated": true}`. That mints the owner
+token and marks the site claimed without changing uid 1, the site name or any mail setting. It takes no
+`adminPass`, and an already claimed site answers 409.
 
 ## Module Revisions
 
@@ -443,6 +506,17 @@ parses is rolled back and the reply names the parse error.
 
 Bytes are bounded twice, by `MAX_BODY_BYTES` per request and by a 2,199,995-byte cap per file. A
 client batches to stay under both.
+
+A `commit` body may carry `autoload`, one object or an array, for vendor packages a build delivers:
+`{"name":"acme/widget","version":"1.4.0","mount":"vendor/acme/widget","autoload":{"psr-4":{...}}}`. The
+mount must sit under `vendor/` or `libraries/`. The site registers each map with the class loader
+before it boots the kernel and puts the row back if the boot refuses, and `/install` does not fetch a
+package that is already registered. A revision may also carry paths under `core/`, which shadow the
+packed files at the next boot; a changed `core/**/*.yml` drops `cache_container` and `cache_discovery`
+first, so the verifying boot rebuilds them.
+
+A requirement on a virtual package such as `psr/log-implementation` is met by the shipped lock's
+`provide` and `replace` entries and is not fetched.
 
 ## Site Maintenance
 
@@ -559,6 +633,8 @@ cross-site request carries it, including a top-level link.
 | `SITE_WARM`             | by plan   | `1` warms, `0` never warms; unset warms a paid site and leaves a free one to the thermal policy |
 | `WARM_INTERVAL_MS`      | 8,000     | the warm re-arm, KV-overridable; clamped under 10,000 only when `RETAIN_INTERPRETER=0`          |
 | `RECYCLE_ABOVE_BYTES`   | 117440512 | drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB |
+| `ISOLATE_ABOVE_BYTES`   | 130023424 | the same drop against the whole-isolate estimate (linear memory plus the JS side); floor 64 MiB |
+| `FILL_SETTLE_MS`        | 60,000    | ms after a boot before the alarm runs PHP (fills, cron, reconcile); `0` is off                  |
 | `RETAIN_INTERPRETER`    | on        | keeps an evicted instance's interpreter for the next instance to adopt; `0` is off              |
 | `REPLICA_READ_ONLY`     | off       | `1` puts the object in replica mode; see below                                                  |
 | `REPLICA_COUNT`         | 0         | replica lanes per site beyond the primary; 0 is one object per site                             |
@@ -624,10 +700,12 @@ An object's role comes from its own name. `REPLICA_READ_ONLY` is deployment-wide
 primary read-only too, so raising `REPLICA_COUNT` cannot put an existing object into replica mode by
 accident. It tells the router how many lanes to spread across, and nothing else.
 
-A lane is chosen by hashing a stable per-visitor key -- the session cookie, else the client address,
-else the path -- because a shared-counter round robin produced a completely flat scaling curve on the
-rig while per-client affinity produced 1.00 / 1.80 / 2.14. A write spreads only where the lane can
-forward it; with `WRITE_FORWARD=0` it goes to the primary without asking a replica first.
+A lane is chosen by hashing a stable key: the path for a request carrying a session, else the client
+address, else the path (`affinityKey()` in `src/ops/replica-routing.ts`). A shared-counter round robin
+produced a completely flat scaling curve on the rig while per-client affinity produced 1.00 / 1.80 /
+2.14; an authenticated session keys on the path so one editor's pages spread. A write spreads only
+where the lane can forward it; with `WRITE_FORWARD=0` it goes to the primary without asking a replica
+first.
 
 **Only the serving path spreads.** `/serve` is an allow-list of one and every other route pins to the
 primary, because the two mistakes do not cost the same: a route wrongly pinned loses capacity nobody
@@ -986,6 +1064,7 @@ three; `tests/unit/runtime/assets-ignore.spec.ts` fails when the two disagree.
 | `PHP_LOG_LEVEL`     | `info`  | RFC 5424 ceiling on what PHP's log mirrors to `console.log`               |
 | `PW_SQL_TRACE`      | off     | logs every Drupal statement through `console.log`                         |
 | `PW_SQL_TRACE_FROM` | 0       | first statement number to log                                             |
+| `MEMORY_TRACE`      | off     | logs memory readings at each boot and invocation end, for a reset         |
 
 ### `PW_DIAGNOSTICS`
 
@@ -1334,10 +1413,20 @@ trip is 1 ms to a same-region server and 53 ms to a distant one, and every cache
 Redis is here for a deployment that already has a server and wants Drupal pointed at it, not because
 it is quicker. The status report says so on any site that enables the module.
 
-A blocking outbound call over **HTTP** is a different question and is not served. PHP reaches HTTPS
-through a stream wrapper that the runtime invokes from inside a C frame, and a park under one cannot
-resume, so `drupal/openid_connect` cannot complete its own token exchange; the Worker does it at
-`/oidc` instead. `TECHNICAL_REPORT.md` has the mechanism and the measured trip counts.
+A blocking outbound call over **HTTP** is served by replacing the transport rather than trapping it.
+PHP reaches HTTPS through a stream wrapper the runtime invokes from inside a C frame, and a park under
+one cannot resume, so Guzzle and Symfony's HTTP client are given a handler that yields from userland
+instead. `drupal/openid_connect` completes a login through its own client that way. A call made from
+inside an internal function such as `array_map` cannot park; it falls back to the deferred transport
+rather than failing. `TECHNICAL_REPORT.md` has the mechanism and the measured trip counts.
+
+| var               | default | what it does                                                               |
+| ----------------- | ------- | -------------------------------------------------------------------------- |
+| `PARK`            | on      | whether the park may arm at all; anything but `1` routes renders around it |
+| `SLEEP_BUDGET_MS` | 2,000   | total ms PHP may wait through the park per request; an alarm gets 15x      |
+
+`sleep()`, `usleep()` and a Guzzle `delay` park for real, up to the budget. Past it, a sleep returns at
+once and records how much it was short, so a retry loop never holds a visitor longer than a slow render.
 
 ## Workers AI
 
@@ -1398,8 +1487,9 @@ A login is completed by the Worker. The callback is an ordinary request, so the 
 the `id_token` signature check happen in JavaScript before PHP is entered, and PHP is handed a
 decided result. `src/ops/oidc.ts` is the implementation.
 
-Correctness forces that split. The interpreter carries no OpenSSL, so it cannot verify an RS256
-`id_token` at all, and an unverified `id_token` is an unauthenticated login.
+This route needs no module. `drupal/openid_connect` also works, through its own client: the
+`openssl_*` functions are bridged to the host's crypto and the token POST is parked. An unverified
+`id_token` is an unauthenticated login either way, so both paths verify the signature.
 
 | setting              | where      | what it does                                         |
 | -------------------- | ---------- | ---------------------------------------------------- |

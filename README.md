@@ -567,7 +567,7 @@ switching to the default engine, and all three are decisions a human makes. `/he
 
 ## 📋 Table of Contents
 
-- [Drupflare vs a Traditional VPS](#-drupflare-vs-a-traditional-vps)
+- [Drupflare vs a Traditional VPS](#️-drupflare-vs-a-traditional-vps)
 - [Replica Lanes](#-replica-lanes)
 - [Free vs Paid](#-free-vs-paid)
 - [Why](#-why)
@@ -582,6 +582,7 @@ switching to the default engine, and all three are decisions a human makes. `/he
 - [Contributing](#-contributing)
 - [Repositories](#-repositories)
 - [Contrib Modules](#-contrib-modules)
+- [Production Codebases](#️-production-codebases)
 - [Limitations](#-limitations)
 - [Technical Report](#-technical-report)
 
@@ -977,10 +978,12 @@ cannot disagree.
 
 ### Single Sign-On
 
-The Access page configures an OpenID Connect provider. The host performs the token exchange and
-verifies the `id_token` signature, because the exchange has to complete before the login response can
-be written and PHP has nowhere to wait for it. An unverified `id_token` is an unauthenticated login,
-so the verification is not optional and is not delegated.
+The Access page configures an OpenID Connect provider that the host serves at `/oidc`: it performs
+the token exchange and verifies the `id_token` signature before PHP is entered, so a site gets single
+sign-on without installing an OIDC module. An unverified `id_token` is an unauthenticated login, so
+the verification is not optional. A site that prefers `drupal/openid_connect` can use it instead; its
+own client completes the login, with the token request parked and the signature checked over the
+host's crypto.
 
 Single sign-on needs `drupal/externalauth`, which maps the verified identity onto an account. No
 contrib module ships in the packed tree, so install it from the Extend page before the first login.
@@ -1005,8 +1008,11 @@ Drupal does not generate; its diagnostic and owner routes are single-segment nam
 and `/export`.
 
 Which site a request resolves to is decided in [`src/ops/site-id.ts`](src/ops/site-id.ts): a KV
-mapping for the host, then the `SITE_ID` var, then the hostname itself, then `site`. On `localhost`
-the hostname names no site, so it lands on `site`. `?site=` is refused on the public routes, so a
+mapping for the host, then the `SITE_ID` var, then the deployment's primary site, then the hostname
+itself, then `site`. One deployment is one site, so a second domain pointed at the worker reaches the
+site already claimed rather than opening a new one. A host mapped in KV is an alias: its pages,
+redirects and login cookie carry that host (`drangler domain add <host>` writes the mapping and the
+Custom Domain route). On `localhost` the hostname names no site, so it lands on `site`. `?site=` is refused on the public routes, so a
 link cannot choose which site answers; an owner route accepts it because the object checks the token
 itself, and `PW_DIAGNOSTICS=1` accepts it everywhere, which is what `/serve?site=X&path=Y` uses.
 
@@ -1454,9 +1460,9 @@ one and boots the kernel against the new tree, rolling back if it fatals. See
 `colorbox`, `config_ignore`, `crop`, `csv_serialization`, `ctools`, `devel`, `easy_breadcrumb`,
 `editor_advanced_link`, `entity`, `entity_browser`, `entity_reference_revisions`, `externalauth`,
 `facets`, `field_group`, `filefield_sources`, `focal_point`, `google_analytics`, `google_tag`,
-`honeypot`, `imageapi_optimize`, `imce`, `jquery_ui`, `jquery_ui_autocomplete`,
+`honeypot`, `imageapi_optimize`, `imageapi_optimize_binaries`, `imce`, `jquery_ui`, `jquery_ui_autocomplete`,
 `jquery_ui_datepicker`, `jquery_ui_menu`, `json_field`, `key`, `libraries`, `linkit`, `mailsystem`,
-`menu_block`, `metatag`, `metatag_search_gov`, `migrate_plus`, `module_filter`, `openid_connect`,
+`memcache`, `menu_block`, `metatag`, `metatag_search_gov`, `migrate_plus`, `module_filter`, `openid_connect`,
 `paragraphs`, `pathauto`, `purge`, `queue_ui`, `recaptcha`, `redirect`, `redis`, `scheduler`,
 `search_api`, `search_api_solr`, `simple_sitemap`, `smtp`, `stage_file_proxy`, `svg_image`, `token`,
 `twig_tweak`, `usfedgov_google_analytics`, `uswds_base`, `video_embed_field`,
@@ -1481,6 +1487,22 @@ SQLite is still the faster cache backend and the recommended one.
 now completes inside the render that makes it, so a search answers on the first request. No run has
 exercised it against a live Search.gov key.
 
+## 🏛️ Production Codebases
+
+27 real Drupal codebases, each pinned to a commit in `config/corpus.yml`, are delivered the way a
+migration would deliver them and scored on 13 capabilities: install, container build, anonymous and
+authenticated render, entity CRUD, form submit, file read and write, queue and cron, outbound HTTP,
+update, cache rebuild, config import and module workflow. 15 pass all 13, among them GovCMS, Thunder,
+farmOS, Droopler, DrupalX, Open Intranet and YMCA Open Y, on a local runtime. farmOS, GovCMS and Thunder
+also pass all 13 on a Worker deployed to a Cloudflare account, migrated and claimed the way a customer
+site would be. Thunder's heaviest admin pages can still exhaust a fresh isolate's memory, so its deployed
+result varies by deploy (11 of 13 on one); a GET that meets the reset is retried once. The rest are listed with the capability each misses and why, or as needing an upgrade from
+Drupal 10 or older.
+
+[`docs/compatibility.md`](docs/compatibility.md) is the per-codebase table, rendered from
+`docs/compatibility.json`, which the lane writes. `bun scripts/e2e/corpus-lane.ts --repo=<id>`
+drives one codebase.
+
 ## 🧱 Limitations
 
 Measured properties of the runtime, listed so they are known before they are hit.
@@ -1491,20 +1513,20 @@ Measured properties of the runtime, listed so they are known before they are hit
 - **`LIKE`/`GLOB` patterns cap at 50 bytes.** A Views "contains" filter on a longer search
   string fails in the engine.
 - **A statement caps at 100 bound parameters.**
-- **`REGEXP` does not exist**, so Views regex filters do not work.
+- **`REGEXP` is evaluated in PHP by the driver**, as are `MD5()` and `SUBSTRING_INDEX()` in a select
+  list. The engine has none of them, so the driver widens the statement and filters the rows itself:
+  Views regex filters work, and on a large table they cost a scan.
 - **Integers above 2^53** are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.
 - **A 64-bit integer does not survive a JSON round trip.** `PHP_INT_SIZE` is 8 and `PHP_INT_MAX` is
   9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
   host boundary comes back rounded. Cast it to a string first. The database path already does this.
-- **The interpreter loads 25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
-  ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
-  tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see
-  `OPCACHE_MODE` in the configuration reference. `mbstring` and `iconv` are supplied by Symfony's
-  polyfills, which diverge from the real extensions on a small number of cases, of which the ones
-  Drupal core reaches are all in `mb_convert_encoding`. There is no `gd` and no `pdo_sqlite`.
-  `/php` reports the live list.
-- **`curl_*` works without `ext-curl`.** The functions are supplied over the same deferred-HTTP
-  queue as the rest of outbound traffic, so an SDK that bundles its own curl transport runs
+- **The interpreter loads 27 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
+  cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
+  session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
+  default; see `OPCACHE_MODE` in the configuration reference. `mbstring` is the native extension;
+  `iconv` is a stand-in. There is no `gd` and no `pdo_sqlite`. `/php` reports the live list.
+- **`curl_*` works without `ext-curl`.** The functions are supplied over the same transport as the
+  rest of outbound traffic, so an SDK that bundles its own curl transport runs
   unmodified. `curl_version()` reports `0.0.0-drupflare-shim`, and an option the shim does not
   understand is refused rather than ignored.
 - **Passwords hash with bcrypt by default, and argon2id is available.** `ARGON2=1` switches the
@@ -1518,9 +1540,11 @@ Measured properties of the runtime, listed so they are known before they are hit
   effect and falls through to the style's `webp` fallback. Cloudflare Images is reachable with
   `IMAGE_ENGINE=images` on a zone that wants AVIF. Styles at or below 480 px on the long edge are
   produced during the request; larger ones are produced on the alarm chain.
-- **Outbound HTTP is answered from cache, warmed ahead, or re-driven once.** A Worker cannot open a
-  socket synchronously, so `Drupal::httpClient()` and `file_get_contents('https://...')` return a
-  previous fetch's response rather than opening a connection. A URL the site can predict from its own
+- **Outbound HTTP completes inside the request that asks.** `Drupal::httpClient()` and a Symfony
+  HTTP client park the PHP call while the Worker performs the fetch, and the same call resumes with
+  the answer. Where a park is refused (a call made from inside an internal function such as
+  `array_map`), the request falls back to the deferred transport: a previous fetch's response is
+  returned rather than a connection opened. A URL the site can predict from its own
   installed projects is warmed on the alarm before Drupal asks for it. A URL it cannot predict is
   queued, and an idempotent request that deferred is drained and rendered once more inside the same
   visit, so the answer usually arrives on the first request rather than the second. Request headers
@@ -1542,16 +1566,27 @@ Measured properties of the runtime, listed so they are known before they are hit
   and `SYSLOG_URL` rather than from the calling code, and administrative Redis commands are refused.
   **The Durable Object's own SQLite is still the recommended cache backend**, because a parked get is
   a network round trip where SQLite is a local read.
+- **Shell commands run only through a router.** `exec()`, `shell_exec()`, `proc_open()` and the rest
+  serve a fixed set of programs with platform equivalents (`echo`, `date`, `file`, `zip`, `unzip`,
+  `gzip`, `wget`, `curl`, checksums and a few more). Pipes, redirection and any other program fail
+  with a recorded degradation rather than a fatal. `sleep()` parks the call and is capped per request
+  by `SLEEP_BUDGET_MS`.
 - **Greek word-final sigma lowercases differently** from native PHP, and `mb_strwidth`
   under-counts emoji. Neither affects Drupal core.
 - **Writes do not scale, and a replica pool does not change that.** A lane refuses an authoritative
   write and hands it back, so every write is still one object and one thread. What a pool scales is
   authenticated reads; see [Replica Lanes](#-replica-lanes).
-- **A module install leaves the object with no room to do anything else.** It is the most expensive
-  thing a site can do, and it ends with the wasm heap near the isolate's 128 MB limit. `memory.grow`
+- **A module install leaves the object with little room to do anything else.** It is the most
+  expensive thing a site can do, and a booted interpreter already holds most of the object's
+  ~195 MiB memory budget. `memory.grow`
   has no inverse, so the heap never shrinks; a further growth is served at a smaller step rather than
   refused. The install queues the pages it invalidated instead of re-rendering them, and the cache is
   cold for one visit.
+- **An object reset for memory costs a form submission a retry by hand.** A GET or HEAD that meets a
+  reset is sent once more to the fresh instance and answers normally with `x-cfw-retried: reset`. A
+  POST is repeated only when the object never started it: it records an attempt id before the page
+  runs, so a missing record means nothing was saved. A POST it had started gets a short "Try Again in a
+  Moment" page with `Retry-After: 2` instead of Cloudflare's 1101, because it may already have saved.
 - **A cold object rebuilds Drupal, and the heap image does not help.** An evicted Durable Object has
   no interpreter, so the next request that needs one pays a boot. `HEAP_IMAGE` stores a heap so that
   boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the

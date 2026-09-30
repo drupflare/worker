@@ -77,6 +77,71 @@ async function reconcileToDone(site: ServeDo, passes = 12): Promise<Payload[]> {
 	return seen;
 }
 
+/** the toolkit a serialized `system.image` names, in both copies Drupal keeps */
+function toolkitOf(site: ServeDo): { config: string | null; cached: string | null } {
+	const read = (query: string) =>
+		/s:7:"toolkit";s:\d+:"([^"]*)";/.exec(asText(rows(site, query)[0]?.data) ?? '')?.[1] ??
+		null;
+	return {
+		config: read("SELECT data FROM config WHERE name = 'system.image'"),
+		cached: read("SELECT data FROM cache_config WHERE cid = 'system.image'")
+	};
+}
+
+/** a site whose `system.image` names a toolkit this runtime has no binary for */
+function setToolkit(site: ServeDo, toolkit: string): void {
+	for (const [table, key] of [
+		['config', 'name'],
+		['cache_config', 'cid']
+	] as const) {
+		const data = asText(
+			rows(site, `SELECT data FROM ${table} WHERE ${key} = 'system.image'`)[0]?.data
+		);
+		if (data === null) continue;
+		site.sql.exec(
+			`UPDATE ${table} SET data = ? WHERE ${key} = 'system.image'`,
+			data.replace(
+				/s:7:"toolkit";s:\d+:"[^"]*";/,
+				`s:7:"toolkit";s:${toolkit.length}:"${toolkit}";`
+			)
+		);
+	}
+	site.sql.exec('DELETE FROM cfw_meta WHERE k = ?', 'reconcile_state');
+}
+
+describe('a migrated site brings an image toolkit that cannot run here', () => {
+	it(
+		'moves a claimed site from imagemagick to cfw_images, and leaves an unclaimed one alone',
+		async () => {
+			const run = async (claimed: boolean) =>
+				inObject(freshSite(), async (site: ServeDo) => {
+					await site.fetch(new Request(`${ORIGIN}/__migrate?all=1&prefill=0`));
+					if (claimed) {
+						site.sql.exec(
+							'INSERT INTO cfw_meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v',
+							'first_run_at',
+							String(Date.now())
+						);
+					}
+					setToolkit(site, 'imagemagick');
+					const before = toolkitOf(site);
+					await reconcileToDone(site);
+					return { before, after: toolkitOf(site) };
+				});
+			const claimed = await run(true);
+			expect(claimed.before.config, 'the site was not regressed').toBe('imagemagick');
+			expect(claimed.after.config).toBe('cfw_images');
+			expect(claimed.after.cached === null || claimed.after.cached === 'cfw_images').toBe(
+				true
+			);
+			// the control: an unclaimed site gets its toolkit from the claim, so the step waits
+			const unclaimed = await run(false);
+			expect(unclaimed.after.config).toBe('imagemagick');
+		},
+		TIMEOUT
+	);
+});
+
 describe('bringing an already-provisioned site up to the shipping pack', () => {
 	it(
 		'converges both copies of the config object, not only the row a SQL fix would touch',

@@ -2,11 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+	importsMemory,
 	INITIAL_PAGES,
 	PRISTINE_PAGES,
 	PRISTINE_WASM,
 	readMemorySection,
 	TUNED_WASM,
+	withImportedMemory,
 	withInitialPages
 } from '../../scripts/measure/initial-memory.ts';
 import { artifactGate } from './helpers/artifact-gate';
@@ -56,6 +58,53 @@ describe('the page count the shipping binary declares', () => {
 	});
 });
 
+describe('the memory the shipping binary imports', () => {
+	/** a module with one function import, one memory and a `memory` export: the shipping shape */
+	const tiny = () =>
+		Uint8Array.from([
+			0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+			// type: () -> ()
+			0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+			// import env.f
+			0x02, 0x09, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x01, 0x66, 0x00, 0x00,
+			// memory: min 2, max 10
+			0x05, 0x04, 0x01, 0x01, 0x02, 0x0a,
+			// export memory 0
+			0x07, 0x0a, 0x01, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00,
+			// data: 3 bytes at 16
+			0x0b, 0x0a, 0x01, 0x00, 0x41, 0x10, 0x0b, 0x03, 0x61, 0x62, 0x63
+		]);
+
+	it('moves the memory to an env.memory import with the same limits', async () => {
+		const out = withImportedMemory(tiny());
+		const module = await WebAssembly.compile(out);
+		expect(WebAssembly.Module.imports(module)).toEqual([
+			{ module: 'env', name: 'f', kind: 'function' },
+			{ module: 'env', name: 'memory', kind: 'memory' }
+		]);
+		expect(WebAssembly.Module.exports(module)).toEqual([{ name: 'memory', kind: 'memory' }]);
+		expect(importsMemory(out)).toBe(true);
+		expect(importsMemory(tiny())).toBe(false);
+		expect(readMemorySection(out)).toMatchObject({ minPages: 2, maxPages: 10 });
+	});
+
+	it('instantiates into a passed memory, rewriting the data but nothing else', async () => {
+		const memory = new WebAssembly.Memory({ initial: 3, maximum: 10 });
+		const view = new Uint8Array(memory.buffer);
+		view[100] = 7;
+		const { instance } = await WebAssembly.instantiate(withImportedMemory(tiny()), {
+			env: { f: () => {}, memory }
+		});
+		expect(instance.exports.memory).toBe(memory);
+		expect([...view.subarray(16, 19)]).toEqual([0x61, 0x62, 0x63]);
+		expect(view[100], 'the host is what zeroes a reused memory, not the module').toBe(7);
+	});
+
+	it('refuses a module that already imports its memory', () => {
+		expect(() => withImportedMemory(withImportedMemory(tiny()))).toThrow(/no memory section/);
+	});
+});
+
 describe.skipIf(artifactGate([PRISTINE_WASM]))('the binaries on disk', () => {
 	it('leaves the pristine download untouched, so its sha256 still verifies', () => {
 		expect(pagesIn(PRISTINE_WASM)).toBe(PRISTINE_PAGES);
@@ -64,6 +113,15 @@ describe.skipIf(artifactGate([PRISTINE_WASM]))('the binaries on disk', () => {
 	it('emits a tuned binary carrying the lower figure', () => {
 		expect(existsSync(resolve(ROOT, TUNED_WASM)), `${TUNED_WASM} was never emitted`).toBe(true);
 		expect(pagesIn(TUNED_WASM)).toBe(INITIAL_PAGES);
+		expect(importsMemory(new Uint8Array(readFileSync(resolve(ROOT, TUNED_WASM))))).toBe(true);
+	});
+
+	// the host builds the memory the binary imports, so the two figures disagreeing is a LinkError on every boot
+	it('matches the memory the host creates for a boot', () => {
+		const host = readFileSync(resolve(ROOT, 'src/site-do.ts'), 'latin1');
+		const initial = /INTERPRETER_MEMORY = \{ initial: (\d+),/.exec(host)?.[1];
+		expect(Number(initial)).toBe(INITIAL_PAGES);
+		expect(pagesIn(TUNED_WASM)).toBe(Number(initial));
 	});
 
 	it('is what the shipping seam imports, not the pristine one', () => {

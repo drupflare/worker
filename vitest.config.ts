@@ -1,5 +1,5 @@
 import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { availableParallelism, totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
@@ -11,7 +11,14 @@ import {
 	tunedGlueFor,
 	type Abi
 } from './scripts/measure/growth-glue.js';
-import { PRISTINE_WASM, TUNED_WASM, emitTunedWasm } from './scripts/measure/initial-memory.js';
+import {
+	INITIAL_PAGES,
+	PRISTINE_WASM,
+	TUNED_WASM,
+	emitTunedWasm,
+	importsMemory,
+	readMemorySection
+} from './scripts/measure/initial-memory.js';
 
 const SHIPPING_CODE = [
 	'src/site.ts',
@@ -34,7 +41,13 @@ const PRISTINE_WASM_PATH = PRISTINE_WASM;
  * divergence at the one seam this project has already had one at.
  */
 const SHIPPING_WASM = TUNED_WASM;
-if (!existsSync(SHIPPING_WASM) && existsSync(PRISTINE_WASM_PATH)) {
+// and when it predates the imported memory or the page count, since the host builds the memory it imports
+const shippingStale = (bytes: Uint8Array) =>
+	!importsMemory(bytes) || readMemorySection(bytes).minPages !== INITIAL_PAGES;
+if (
+	existsSync(PRISTINE_WASM_PATH) &&
+	(!existsSync(SHIPPING_WASM) || shippingStale(new Uint8Array(readFileSync(SHIPPING_WASM))))
+) {
 	emitTunedWasm(process.cwd());
 }
 
@@ -319,6 +332,8 @@ export default defineConfig({
 							// hermetic; forwarded because the pool has its own env
 							bindings: {
 								PW_DIAGNOSTICS: '1',
+								// specs boot and fill in one breath; the hold's own case sets it back
+								FILL_SETTLE_MS: '0',
 								DRUPFLARE_MEASURE: process.env.DRUPFLARE_MEASURE ?? '0',
 								DRUPFLARE_PLAN_ON_DPC: process.env.DRUPFLARE_PLAN_ON_DPC ?? '0',
 								DRUPFLARE_PLAN_ROUTES: process.env.DRUPFLARE_PLAN_ROUTES ?? '0',

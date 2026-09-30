@@ -7,7 +7,7 @@
  *
  * The measurement and the reasoning for this value are in `initial-memory.ts`.
  */
-export const INITIAL_PAGES = 1280;
+export const INITIAL_PAGES = 1024;
 
 /** the WebAssembly page size, which is what a module's memory section counts in */
 export const WASM_PAGE = 65536;

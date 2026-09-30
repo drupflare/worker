@@ -38,6 +38,19 @@ if ($name === '') {
   return;
 }
 
+// THE FILE SCAN IS A STATIC AND THIS SAPI NEVER TEARS ONE DOWN, so it is cleared first: the theme
+// check below reads it too, and a theme /install delivered after the first render was never found.
+// No public reset exists in Drupal 11 and the property is protected, so reflection is the only way
+// in. Guarded: a core that drops the property must not take the enable down with it
+try {
+  $prop = new \ReflectionProperty(\Drupal\Core\Extension\ExtensionDiscovery::class, 'files');
+  $prop->setAccessible(true);
+  $prop->setValue(null, []);
+  $out['discoveryScanCleared'] = true;
+} catch (\Throwable $e) {
+  $out['discoveryScanCleared'] = false;
+}
+
 // A THEME IS A DIFFERENT INSTALLER, and it was not reachable at all.
 // composer/installers puts a drupal-theme under themes/contrib, extension.list.module does not
 // list themes and module_installer cannot install one -- so a contrib theme had no route in and
@@ -105,16 +118,7 @@ try {
   // the interpreter. A site that rendered anything before the install therefore holds a scan taken
   // without the new module, and extension.list.module's own reset() does not reach it. Measured:
   // /install wrote 27 files, the boot mounted them, and discoverable stayed false forever.
-  // there is no public reset in Drupal 11 and the property is protected, so reflection is the only
-  // way to reach it. Guarded: a core that drops the property must not take the enable down with it
-  try {
-    $prop = new \ReflectionProperty(\Drupal\Core\Extension\ExtensionDiscovery::class, 'files');
-    $prop->setAccessible(true);
-    $prop->setValue(null, []);
-    $out['discoveryScanCleared'] = true;
-  } catch (\Throwable $e) {
-    $out['discoveryScanCleared'] = false;
-  }
+  // (the scan itself is cleared above, before the theme check reads it)
   // whether the module is on disk at all, which separates a mount failure from a stale scan. Without
   // it both read as "discoverable: false" and the two have completely different fixes
   $out['filesMounted'] = is_dir('/drupal/modules/contrib/' . $name);
@@ -248,7 +252,8 @@ $before = $meter();
 try {
   $installer = \Drupal::service('module_installer');
   $out['installerClass'] = get_class($installer);
-  $result = $installer->install([$name], true);
+  $with = array_values(array_diff((array) ($GLOBALS['__cfw_enable_with'] ?? []), [$name]));
+  $result = $installer->install(array_merge([$name], $with), true);
   $out['installReturned'] = $result;
   $out['ok'] = $result === true;
 } catch (\Throwable $e) {

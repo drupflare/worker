@@ -10,34 +10,7 @@
  * dead invocation with no cursor update.
  */
 
-/**
- * The eager Fiber stand-in, guarded so it composes with the copy in
- * src/site-php.js -- whichever fragment runs first defines it.
- *
- * `scripts/patch-drupal.mjs` rewrites core's five `new \Fiber()` sites to this
- * class, so any fragment that can reach the render pipeline needs it. A cache
- * flush rebuilds the theme registry and the router, both of which can.
- */
-const UPDB_FIBER_SHIM = String.raw`
-if (!class_exists('PhpWasmSyncFiber', false)) { eval('
-class PhpWasmSyncFiber {
-  private $callable;
-  private $result = null;
-  private $started = false;
-  public function __construct(callable $callable) { $this->callable = $callable; }
-  public function start(...$args) { $this->started = true; $this->result = ($this->callable)(...$args); return null; }
-  public function isStarted(): bool { return $this->started; }
-  public function isSuspended(): bool { return false; }
-  public function isRunning(): bool { return false; }
-  public function isTerminated(): bool { return $this->started; }
-  public function resume($value = null) { return null; }
-  public function throw(\\Throwable $e) { throw $e; }
-  public function getReturn() { return $this->result; }
-  public static function getCurrent(): ?object { return null; }
-  public static function suspend($value = null) { return null; }
-}
-'); }
-`;
+import { FIBER_SHIM } from './fiber-shim.js';
 
 /**
  * Boots (or reuses) the kernel and loads everything the update runners need.
@@ -94,6 +67,9 @@ try {
 require_once '/drupal/core/includes/common.inc';
 require_once '/drupal/core/includes/install.inc';
 require_once '/drupal/core/includes/update.inc';
+// procedural hooks live in .module files, which a bare boot never includes: the cache_flush step
+// read scheduler_cache_flush as a class name and halted every Thunder update
+\Drupal::moduleHandler()->loadAll();
 drupal_load_updates();
 `;
 
@@ -168,7 +144,7 @@ export const UPDB_FLUSH_STEPS = [
  */
 export function updbPlan(checkRequirements = true): string {
 	return String.raw`<?php
-${UPDB_FIBER_SHIM}
+${FIBER_SHIM}
 chdir('/drupal');
 
 $out = ['ok' => false, 'updates' => [], 'postUpdates' => []];
@@ -382,7 +358,7 @@ export function updbUnit(unit: UpdbUnitSpec = {}): string {
 		unbounded: unit.unbounded === true
 	});
 	return String.raw`<?php
-${UPDB_FIBER_SHIM}
+${FIBER_SHIM}
 chdir('/drupal');
 
 $u = json_decode(${JSON.stringify(payload)}, true);
@@ -662,7 +638,7 @@ echo json_encode($out);
  * as after a success, and it must never write.
  */
 export const UPDB_VERIFY = String.raw`<?php
-${UPDB_FIBER_SHIM}
+${FIBER_SHIM}
 chdir('/drupal');
 
 $out = ['ok' => false];

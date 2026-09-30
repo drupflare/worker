@@ -310,6 +310,14 @@ describe('the update chain is readable and drivable', () => {
 		expect((body.ran.beats as unknown[]).length).toBeGreaterThanOrEqual(1);
 	}, 900_000);
 
+	it('boots a cold interpreter for a unit rather than waiting for traffic to warm it', async () => {
+		const stub = await withKeyValue(freshSite());
+		await post(stub, 'action=prepare');
+		const { body } = await post(stub, 'action=drain&maxBeats=3');
+		const reasons = (body.ran.beats as Array<{ reason?: string }>).map((b) => b.reason);
+		expect(reasons).not.toContain('cold-interpreter');
+	}, 900_000);
+
 	it('names an unknown action rather than silently beating', async () => {
 		const stub = freshSite();
 		const { body } = await post(stub, 'action=demolish');

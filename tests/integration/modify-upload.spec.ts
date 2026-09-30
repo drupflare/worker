@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { drupalOp } from '../../src/drupal/site-php';
+import { updbUnit } from '../../src/drupal/updb-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -185,6 +187,33 @@ describe('an uploaded revision lands the way a git pull does', () => {
 	 * written, so a route that wrote the files and answered ok would report success on a site that
 	 * can no longer render.
 	 */
+	it('makes the extension lists rediscover, so a delivered extension is listed without an enable', async () => {
+		const THEME = 'cfw_probe_theme';
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const listed = async () =>
+				(
+					(await site.runJson(
+						drupalOp(
+							`$out['themes'] = array_keys(\\Drupal::service('extension.list.theme')->getAllAvailableInfo());`
+						)
+					)) as { themes: string[] }
+				).themes;
+			const before = await listed();
+			const { commit } = await upload(
+				call,
+				{
+					[`themes/custom/${THEME}/${THEME}.info.yml`]: `name: Probe theme\ntype: theme\nbase theme: false\ncore_version_requirement: ^11\n`
+				},
+				'theme'
+			);
+			return { before, commit: commit.body, after: await listed() };
+		});
+		expect(seen.before).not.toContain(THEME);
+		expect(seen.commit).toMatchObject({ ok: true, applied: true });
+		expect(seen.after).toContain(THEME);
+	}, 900_000);
+
 	it('rolls back a revision the kernel refuses to boot, and leaves the previous one serving', async () => {
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
 			const token = await ownerToken(site);
@@ -196,10 +225,11 @@ describe('an uploaded revision lands the way a git pull does', () => {
 			);
 			const bad = await upload(call, moduleTree(BROKEN_MODULE), 'bad');
 			const status = await call('status', { package: PACKAGE });
+			const revisions = await call('revisions', { package: PACKAGE });
 			const files = site
 				.execSql('SELECT path, source FROM cfw_module_file WHERE package = ?', [PACKAGE])
 				.rows.map((row) => String(row['source']));
-			return { good, bad, status, files, enabled: enabled.status };
+			return { good, bad, status, revisions, files, enabled: enabled.status };
 		});
 		console.log(
 			`[modify-rollback] enable=${seen.enabled} ${JSON.stringify(seen.bad.commit.body)}`
@@ -215,6 +245,9 @@ describe('an uploaded revision lands the way a git pull does', () => {
 		// the mounted tree is what it was before the bad upload, byte for byte
 		expect(seen.files.some((source) => source.includes('// good'))).toBe(true);
 		expect(seen.files.some((source) => source.includes('name: [Probe'))).toBe(false);
+		// the refused revision is stored, but the active one is still the revision that serves;
+		// a rollback steps back from the active revision, so a wrong pointer skips a good one
+		expect(seen.revisions.body['active']).toBe(seen.good.commit.body['rev']);
 	}, 900_000);
 
 	it('activates a stored revision with no bytes on the wire, and refuses one it does not have', async () => {
@@ -246,11 +279,177 @@ describe('an uploaded revision lands the way a git pull does', () => {
 	}, 900_000);
 });
 
+describe('a build-delivered vendor package', () => {
+	const VENDOR = 'acme__widget';
+	const tree = {
+		'vendor/acme/widget/src/Widget.php': '<?php\nnamespace Acme\\Widget;\nclass Widget {}\n',
+		'vendor/acme/widget/legacy/Old.php': '<?php\nclass Acme_Old {}\n'
+	};
+	const autoload = {
+		name: 'acme/widget',
+		version: '1.4.0',
+		mount: 'vendor/acme/widget',
+		autoload: { 'psr-4': { 'Acme\\Widget\\': 'src/' }, classmap: ['legacy/'] }
+	};
+
+	async function commitVendor(call: ReturnType<typeof modify>, declared: unknown) {
+		const files = await Promise.all(
+			Object.entries(tree).map(async ([path, source]) => ({
+				path,
+				source,
+				hash: await sha256(source),
+				bytes: source.length
+			}))
+		);
+		await call(
+			'blobs',
+			{ package: VENDOR },
+			{ blobs: files.map((f) => ({ hash: f.hash, source: f.source })) }
+		);
+		return await call(
+			'commit',
+			{ package: VENDOR, label: 'vendor', origin: '/project' },
+			{
+				files: files.map((f) => ({ path: f.path, hash: f.hash })),
+				autoload: declared
+			}
+		);
+	}
+
+	it('registers the autoload the commit carries, so the next boot can load its classes', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const commit = await commitVendor(call, [
+				autoload,
+				{ ...autoload, name: 'acme/gadget', mount: 'vendor/acme/gadget' }
+			]);
+			const registered = (
+				site as unknown as {
+					packageAutoloads(): { mount: string; classmap: Record<string, string> }[];
+				}
+			).packageAutoloads();
+			const tree = await (
+				site as unknown as {
+					installTree(r: 'composer', n: string): Promise<Record<string, unknown>[]>;
+				}
+			).installTree('composer', 'acme/widget');
+			return { commit, registered, tree };
+		});
+		expect(seen.commit.body).toMatchObject({ ok: true, applied: true });
+		const row = seen.registered.find((r) => r.mount === 'vendor/acme/widget');
+		expect(row?.classmap).toEqual({ Acme_Old: 'legacy/Old.php' });
+		expect(seen.registered).toHaveLength(2);
+		// what a build delivered is not fetched again from a registry
+		expect(seen.tree).toEqual([]);
+	}, 900_000);
+
+	it('refuses an autoload that names a mount outside vendor and libraries', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const commit = await commitVendor(call, { ...autoload, mount: 'core/lib' });
+			const rows = site.execSql('SELECT package FROM cfw_package_autoload').rows;
+			return { commit, rows };
+		});
+		expect(seen.commit.status).toBe(400);
+		expect(seen.rows).toEqual([]);
+	}, 900_000);
+});
+
+describe('a revision at a packed core path', () => {
+	const CORE_FILE = 'core/lib/Drupal/Component/Utility/Mail.php';
+
+	it('shadows the pack file the next boot mounts, so a patched core file can ship per site', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const read = async () =>
+				(await site.runJson(
+					`<?php echo json_encode(['source' => file_get_contents('/drupal/${CORE_FILE}')]);`
+				)) as { source: string };
+			const packed = (await read()).source;
+			const patched = `${packed}\n// cfw overlay marker\n`;
+			const hash = await sha256(patched);
+			await call(
+				'blobs',
+				{ package: 'core_overlay' },
+				{ blobs: [{ hash, source: patched }] }
+			);
+			const commit = await call(
+				'commit',
+				{ package: 'core_overlay', label: 'overlay', origin: '/project' },
+				{ files: [{ path: CORE_FILE, hash }] }
+			);
+			return { commit, packed, after: (await read()).source };
+		});
+		expect(seen.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.packed).not.toContain('cfw overlay marker');
+		expect(seen.after).toContain('cfw overlay marker');
+	}, 900_000);
+
+	it('drops the cached container and discovery when the overlay carries a core yml', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const sentinel = (table: string) =>
+				site.execSql(`SELECT cid FROM ${table} WHERE cid = 'cfw_sentinel'`).rows.length;
+			for (const table of ['cache_container', 'cache_discovery']) {
+				site.execSql(
+					`INSERT INTO ${table} (cid, data, expire, created, serialized, tags, checksum) VALUES ('cfw_sentinel', x'00', -1, 0, 0, '', 0)`
+				);
+			}
+			const before = [sentinel('cache_container'), sentinel('cache_discovery')];
+			const source = 'name: overlay probe\n';
+			const hash = await sha256(source);
+			await call('blobs', { package: 'core_overlay' }, { blobs: [{ hash, source }] });
+			const commit = await call(
+				'commit',
+				{ package: 'core_overlay', label: 'yml', origin: '/project' },
+				{ files: [{ path: 'core/modules/system/cfw_probe.yml', hash }] }
+			);
+			return {
+				before,
+				commit,
+				after: [sentinel('cache_container'), sentinel('cache_discovery')]
+			};
+		});
+		expect(seen.before).toEqual([1, 1]);
+		expect(seen.commit.body).toMatchObject({ ok: true, applied: true });
+		expect(seen.after).toEqual([0, 0]);
+	}, 900_000);
+
+	it("drops them when a module's wiring changes, and keeps them for a PHP-only edit", async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const call = modify(site, await ownerToken(site));
+			const seed = () =>
+				site.execSql(
+					`INSERT OR REPLACE INTO cache_container (cid, data, expire, created, serialized, tags, checksum) VALUES ('cfw_sentinel', x'00', -1, 0, 0, '', 0)`
+				);
+			const kept = () =>
+				site.execSql(`SELECT cid FROM cache_container WHERE cid = 'cfw_sentinel'`).rows
+					.length;
+			seed();
+			await upload(call, moduleTree('<?php\n'), 'first');
+			const afterInfo = kept();
+			seed();
+			await upload(call, moduleTree('<?php\n// edited\n'), 'edit');
+			return { afterInfo, afterEdit: kept() };
+		});
+		// a migrated site enables its modules before their code arrives (farmOS)
+		expect(seen.afterInfo).toBe(0);
+		expect(seen.afterEdit).toBe(1);
+	}, 900_000);
+});
+
 describe('the route refuses what it cannot verify', () => {
 	it('needs an owner token, a package, a known action and a JSON body', async () => {
 		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			// an unclaimed diagnostics site lets /modify through, so a rig can deliver before the claim
+			const diagnostic = await site.fetch(new Request(`${ORIGIN}/__modify?action=status`));
 			const token = await ownerToken(site);
 			const call = modify(site, token);
+			// once claimed the token is required, flag or not
+			const claimedDiagnostic = await site.fetch(
+				new Request(`${ORIGIN}/__modify?action=status`)
+			);
+			site.env = { ...site.env, PW_DIAGNOSTICS: '0' };
 			const anonymous = await site.fetch(new Request(`${ORIGIN}/__modify?action=status`));
 			const wrongToken = await site.fetch(
 				new Request(`${ORIGIN}/__modify?action=status`, {
@@ -258,6 +457,8 @@ describe('the route refuses what it cannot verify', () => {
 				})
 			);
 			return {
+				diagnostic: diagnostic.status,
+				claimedDiagnostic: claimedDiagnostic.status,
 				anonymous: anonymous.status,
 				wrongToken: wrongToken.status,
 				noPackage: await call('revisions'),
@@ -267,6 +468,8 @@ describe('the route refuses what it cannot verify', () => {
 			};
 		});
 
+		expect(seen.diagnostic).not.toBe(401);
+		expect(seen.claimedDiagnostic).toBe(401);
 		expect(seen.anonymous).toBe(401);
 		expect(seen.wrongToken).toBe(401);
 		expect(seen.noPackage.status).toBe(400);
@@ -319,10 +522,11 @@ describe('the route refuses what it cannot verify', () => {
 		expect(owned.headers.get('x-cfw-deny')).toBe('body-too-large');
 
 		// and the credential still governs a request the cap lets through, which is the control:
-		// without it the assertion above would pass on a route with no gate at all
+		// without it the assertion above would pass on a route with no gate at all (diagnostics off,
+		// since an unclaimed diagnostics site lets /modify through)
 		const uncapped = await front.fetch(
 			new Request('https://cfw.local/modify?action=status&site=y', { method: 'GET' }),
-			env as never
+			{ ...env, PW_DIAGNOSTICS: '0' } as never
 		);
 		expect(uncapped.status).toBe(401);
 
@@ -372,5 +576,217 @@ describe('the route refuses what it cannot verify', () => {
 		expect(seen.forged.body['rejected']).toHaveLength(1);
 		expect(seen.dangling.status).toBe(409);
 		expect(String(seen.dangling.body['error'])).toContain('does not hold');
+	}, 900_000);
+});
+
+/**
+ * A module whose install builds a route to its own controller, which is what a real custom module
+ * is. The corpus lane found `entity_reference_integrity` refused with the controller class "does not
+ * exist" on a `wrangler dev` using the shipping lazy mount.
+ */
+function routedTree(): Record<string, string> {
+	const dir = `modules/custom/${PACKAGE}`;
+	return {
+		[`${dir}/${PACKAGE}.info.yml`]:
+			'name: Probe\ntype: module\ncore_version_requirement: ^11\n',
+		[`${dir}/${PACKAGE}.routing.yml`]: `${PACKAGE}.page:\n  path: '/cfw-probe-page'\n  defaults:\n    _controller: 'Drupal\\${PACKAGE}\\Controller\\ProbeController::page'\n  requirements:\n    _access: 'TRUE'\n`,
+		[`${dir}/src/Controller/ProbeController.php`]: `<?php\n\nnamespace Drupal\\${PACKAGE}\\Controller;\n\nclass ProbeController {\n  public function page() { return ['#markup' => 'probe page']; }\n}\n`
+	};
+}
+
+describe.each([
+	['the streaming mount', undefined],
+	['the lazy mount that ships', '1']
+])('an uploaded module with a routed controller, on %s', (_label, lazy) => {
+	it('enables, because its classes load during the install that builds its route', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			if (lazy) site.env = { ...site.env, LAZY_MOUNT: lazy };
+			const token = await ownerToken(site);
+			await upload(modify(site, token), routedTree(), 'routed');
+			const res = await site.fetch(
+				new Request(`${ORIGIN}/__enable?module=${PACKAGE}`, { method: 'POST' })
+			);
+			return (await res.json()) as Record<string, unknown>;
+		});
+		expect(seen['throwMessage'] ?? null).toBeNull();
+		expect(seen['ok']).toBe(true);
+	}, 900_000);
+});
+
+describe('enabling modules together', () => {
+	it('installs the modules named in with= in the same call', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const token = await ownerToken(site);
+			const info = (label: string) =>
+				`name: ${label}\ntype: module\ncore_version_requirement: ^11\n`;
+			await upload(
+				modify(site, token),
+				{
+					[`modules/custom/${PACKAGE}/${PACKAGE}.info.yml`]: info('Probe'),
+					[`modules/custom/${PACKAGE}/${PACKAGE}.module`]: '<?php\n',
+					[`modules/custom/${PACKAGE}/cfw_probe_two/cfw_probe_two.info.yml`]:
+						info('Probe two')
+				},
+				'pair'
+			);
+			const res = await site.fetch(
+				new Request(`${ORIGIN}/__enable?module=${PACKAGE}&with=cfw_probe_two`, {
+					method: 'POST'
+				})
+			);
+			const enabled = (await res.json()) as Record<string, unknown>;
+			const probe = (await site.runJson(
+				drupalOp(`$m = \\Drupal::config('core.extension')->get('module') ?: [];
+					$out['both'] = isset($m['${PACKAGE}'], $m['cfw_probe_two']);`)
+			)) as Record<string, unknown>;
+			return { ok: enabled['ok'], both: probe['both'] };
+		});
+		expect(seen.ok).toBe(true);
+		expect(seen.both).toBe(true);
+	}, 900_000);
+});
+
+describe('a database update run over an enabled module', () => {
+	it('reaches a procedural hook_cache_flush, which lives in the .module file', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			const token = await ownerToken(site);
+			await upload(
+				modify(site, token),
+				moduleTree(
+					`<?php\n\nfunction ${PACKAGE}_cache_flush() {\n  \\Drupal::state()->set('${PACKAGE}.flushed', 1);\n}\n`
+				),
+				'flush'
+			);
+			const enabled = await site.fetch(
+				new Request(`${ORIGIN}/__enable?module=${PACKAGE}`, { method: 'POST' })
+			);
+			expect(((await enabled.json()) as Record<string, unknown>)['ok']).toBe(true);
+			// a fresh interpreter, which is what an alarm-driven unit meets
+			site.php = null;
+			const unit = (await site.runJson(
+				updbUnit({ kind: 'flush', step: 'cache_flush' })
+			)) as Record<string, unknown>;
+			const flushed = (await site.runJson(
+				drupalOp(`$out['flushed'] = \\Drupal::state()->get('${PACKAGE}.flushed');`)
+			)) as Record<string, unknown>;
+			return { unit, flushed: flushed['flushed'] };
+		});
+		expect(seen.unit['error'] ?? null).toBeNull();
+		expect(seen.flushed).toBe(1);
+	}, 900_000);
+});
+
+describe('installed module files are read on first open, not at boot', () => {
+	it('mounts sizes only, loads a file when PHP reads it, and drops clean files past the budget', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.ensureServeTables();
+			// three rows under the per-row ceiling that together pass the 2 MiB budget
+			const big = 'x'.repeat(900_000);
+			const dir = '/drupal/modules/contrib/lazy_probe';
+			const rows: [string, string][] = [
+				['modules/contrib/lazy_probe/a.txt', 'caf\u00e9 first'],
+				['modules/contrib/lazy_probe/big1.txt', big],
+				['modules/contrib/lazy_probe/big2.txt', big],
+				['modules/contrib/lazy_probe/big3.txt', big]
+			];
+			for (const [path, source] of rows) {
+				site.sql.exec(
+					'INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, ?, ?, 0)',
+					path,
+					'drupal/lazy_probe',
+					'1.0.0',
+					source
+				);
+			}
+			const php = await site.ensurePhp();
+			type Node = { contents: Uint8Array | null; usedBytes: number };
+			const fs = (
+				php as unknown as { binary: { FS: { lookupPath(p: string): { node: Node } } } }
+			).binary.FS;
+			const node = (p: string) => fs.lookupPath(p).node;
+			const atBoot = {
+				contents: node(`${dir}/a.txt`).contents,
+				size: node(`${dir}/a.txt`).usedBytes
+			};
+			const first = (await site.runJson(
+				`<?php echo json_encode(['text' => file_get_contents('${dir}/a.txt'), 'size' => filesize('${dir}/big1.txt')]);`
+			)) as { text: string; size: number };
+			const loaded = node(`${dir}/a.txt`).contents !== null;
+			const total = (await site.runJson(
+				`<?php $n = 0; foreach (['big1', 'big2', 'big3'] as $f) { $n += strlen(file_get_contents('${dir}/' . $f . '.txt')); } echo json_encode(['n' => $n]);`
+			)) as { n: number };
+			const afterBig = node(`${dir}/a.txt`).contents;
+			const again = (await site.runJson(
+				`<?php echo json_encode(['text' => file_get_contents('${dir}/a.txt')]);`
+			)) as { text: string };
+			return { atBoot, first, loaded, total, afterBig, again };
+		});
+		// the byte length, which a character count gets wrong for the accented letter
+		expect(seen.atBoot).toEqual({ contents: null, size: 11 });
+		expect(seen.first).toEqual({ text: 'caf\u00e9 first', size: 900_000 });
+		expect(seen.loaded).toBe(true);
+		expect(seen.total).toEqual({ n: 2_700_000 });
+		expect(seen.afterBig).toBeNull();
+		expect(seen.again).toEqual({ text: 'caf\u00e9 first' });
+	}, 900_000);
+
+	it('stamps each file with its install time, so a fresh boot does not read as an upgrade', async () => {
+		// update module compares an .info.yml ctime against its last fetch; a boot-time stamp made
+		// every young isolate re-fetch release data for every installed project
+		const installedAt = 1_600_000_000_000;
+		const file = '/drupal/modules/contrib/stamp_probe/stamp_probe.info.yml';
+		const read = `<?php clearstatcache(); echo json_encode(['c' => filectime('${file}'), 'm' => filemtime('${file}')]);`;
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.ensureServeTables();
+			site.sql.exec(
+				'INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, ?, ?, ?)',
+				'modules/contrib/stamp_probe/stamp_probe.info.yml',
+				'drupal/stamp_probe',
+				'1.0.0',
+				'name: Stamp probe',
+				installedAt
+			);
+			const first = await site.runJson(read);
+			site.php = null;
+			const reboot = await site.runJson(read);
+			return { first, reboot };
+		});
+		expect(seen.first).toEqual({ c: installedAt / 1000, m: installedAt / 1000 });
+		expect(seen.reboot).toEqual(seen.first);
+	}, 900_000);
+});
+
+describe('a delivered module asset is readable by the front worker', () => {
+	it('answers the stored source for a path the site holds and 404s the rest', async () => {
+		const seen = await inObject(freshSite(), async (site: ServeDo) => {
+			site.ensureServeTables();
+			for (const path of ['modules/custom/probe/css/probe.css', '/themes/custom/t/t.js']) {
+				site.sql.exec(
+					'INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, ?, ?, 0)',
+					path,
+					'migrated/probe',
+					'migrated',
+					`/* ${path} */`
+				);
+			}
+			const get = async (path: string) => {
+				const res = await site.fetch(
+					new Request(`https://do.local/__moduleasset?path=${encodeURIComponent(path)}`)
+				);
+				return { status: res.status, body: await res.text() };
+			};
+			return {
+				css: await get('modules/custom/probe/css/probe.css'),
+				slash: await get('themes/custom/t/t.js'),
+				missing: await get('modules/custom/probe/css/other.css'),
+				climbing: await get('modules/../etc/x.css'),
+				rooted: await get('/themes/custom/t/t.js')
+			};
+		});
+		expect(seen.css).toEqual({ status: 200, body: '/* modules/custom/probe/css/probe.css */' });
+		expect(seen.slash.status, 'a row stored with a leading slash is still found').toBe(200);
+		expect(seen.missing.status).toBe(404);
+		expect(seen.climbing.status).toBe(400);
+		expect(seen.rooted.status).toBe(400);
 	}, 900_000);
 });

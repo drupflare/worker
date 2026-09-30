@@ -32,6 +32,13 @@ export type CrossingTally = {
 	 * every render. `tests/integration/statement-census.spec.ts` is what arms it.
 	 */
 	calls?: CensusCall[];
+	/**
+	 * string bytes crossing the bridge since the last reset, and the largest single argument and reply.
+	 *
+	 * Cheap enough to leave on: a length read per call. The host resets it at the start of a request
+	 * or alarm and reads it at the end, which is what names the request that moved a large string.
+	 */
+	bytes?: { in: number; out: number; maxIn: number; maxOut: number; maxName: string };
 };
 
 /** an empty tally; NOT named `emptyTally`, which `write-tally.ts` already exports */
@@ -107,6 +114,17 @@ export function wrapCrossings(
 			tally.total += 1;
 			tally.byName[name] = (tally.byName[name] ?? 0) + 1;
 			const result = inner(...args);
+			if (tally.bytes) {
+				const sent = typeof args[0] === 'string' ? args[0].length : 0;
+				const got = typeof result === 'string' ? result.length : 0;
+				tally.bytes.in += sent;
+				tally.bytes.out += got;
+				if (sent > tally.bytes.maxIn) tally.bytes.maxIn = sent;
+				if (got > tally.bytes.maxOut) {
+					tally.bytes.maxOut = got;
+					tally.bytes.maxName = name;
+				}
+			}
 			if (tally.calls) recordCrossing(tally.calls, name, args[0], result);
 			return result;
 		};

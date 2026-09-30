@@ -170,6 +170,9 @@ const AUTHORITATIVE_TABLES: ReadonlySet<string> = new Set([
 	 */
 	'cfw_module_blob',
 	'cfw_module_rev',
+	// the composer autoload map of each delivered library; settings.php registers it at boot, so a
+	// replica that lacked it would fatal on the first class a delivered library provides
+	'cfw_package_autoload',
 	'file_usage',
 	'inline_block_usage',
 	'taxonomy_index',

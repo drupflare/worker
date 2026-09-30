@@ -1,5 +1,6 @@
 import { createExecutionContext, env, SELF, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { ATTEMPT_HEADER, ATTEMPT_TTL_MS } from '../../src/ops/attempt';
 import { DEFAULT_MAX_BODY_BYTES } from '../../src/ops/body-limit';
 import { isCacheTier } from '../../src/ops/cache-tiers';
 import { resetEdgePlans, SAMPLES_PER_COMPILE } from '../../src/ops/edge-plan';
@@ -9,8 +10,9 @@ import {
 	reportSite,
 	type FleetDb
 } from '../../src/ops/fleet';
+import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
-import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
+import worker, { bodyTooLarge, isNeverDrupal, resetRecovery } from '../../src/site';
 import {
 	inObject,
 	namedSite,
@@ -21,6 +23,7 @@ import {
 	serveThroughWorker,
 	SESSION_COOKIE,
 	stubRender,
+	type ServeDo,
 	type ServeProbe
 } from '../helpers/serve-do';
 
@@ -1563,5 +1566,266 @@ describe('the compiled plan tier', () => {
 			expect(res.tier).not.toBe('PLAN');
 			expect(res.plan).toBe('skip:set-cookie');
 		}
+	});
+});
+
+describe("a reset object is not the visitor's 1101", () => {
+	/** a namespace whose object throws on the first hop the way a reset one does */
+	function resettingSite(error: Record<string, unknown>, repeat = new Response('rendered\n')) {
+		const methods: string[] = [];
+		const attempts: (string | null)[] = [];
+		const bodies: string[] = [];
+		let calls = 0;
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					methods.push(r.method);
+					attempts.push(r.headers.get(ATTEMPT_HEADER));
+					bodies.push(new TextDecoder().decode(await r.arrayBuffer()));
+					if (calls++ === 0)
+						throw Object.assign(
+							new Error('Durable Object reset because it exceeded its memory limit'),
+							error
+						);
+					return repeat;
+				}
+			})
+		};
+		return { methods, attempts, bodies, namespace };
+	}
+
+	const send = (request: Request, namespace: unknown) =>
+		worker.fetch(request, { ...env, SITE: namespace } as unknown as typeof env);
+
+	it('sends a GET once more to the fresh instance', async () => {
+		const s = resettingSite({ retryable: true });
+		const res = await send(new Request('https://cfw.local/reset-get'), s.namespace);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-retried')).toBe('reset');
+		expect(s.methods).toEqual(['GET', 'GET']);
+	});
+
+	it('repeats a POST with its body and the same attempt id, for the object to refuse if it started', async () => {
+		const s = resettingSite({ retryable: true });
+		const res = await send(
+			new Request('https://cfw.local/user/login', {
+				method: 'POST',
+				body: 'name=admin',
+				headers: {
+					'content-type': 'application/x-www-form-urlencoded',
+					// a client cannot choose the id the object keys its marker on
+					[ATTEMPT_HEADER]: '00000000-0000-4000-8000-000000000000'
+				}
+			}),
+			s.namespace
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-retried')).toBe('reset');
+		expect(s.methods).toEqual(['POST', 'POST']);
+		expect(s.bodies).toEqual(['name=admin', 'name=admin']);
+		expect(s.attempts[0]).toMatch(/^[0-9a-f-]{36}$/);
+		expect(s.attempts[0]).not.toBe('00000000-0000-4000-8000-000000000000');
+		expect(s.attempts[1]).toBe(s.attempts[0]);
+	});
+
+	it('answers the reset page when the object says the first try had started', async () => {
+		const s = resettingSite(
+			{ retryable: true },
+			new Response(null, { status: 503, headers: { [ATTEMPT_HEADER]: 'started' } })
+		);
+		const res = await send(
+			new Request('https://cfw.local/user/login', {
+				method: 'POST',
+				body: 'name=admin',
+				headers: { 'content-type': 'application/x-www-form-urlencoded' }
+			}),
+			s.namespace
+		);
+		expect(res.status).toBe(503);
+		expect(res.headers.get('x-cfw-object-reset')).toBe('1');
+		expect(res.headers.get('retry-after')).toBe('2');
+		expect(await res.text()).toContain('may not have been saved');
+		expect(s.methods).toEqual(['POST', 'POST']);
+	});
+
+	it('sends no attempt id with a GET, which is repeated on its own terms', async () => {
+		const s = resettingSite({ retryable: true });
+		await send(new Request('https://cfw.local/attempt-get'), s.namespace);
+		expect(s.attempts).toEqual([null, null]);
+	});
+
+	/**
+	 * The shape a memory reset really arrives in, read off a deployed probe (2026-09-30, n=8, both
+	 * for the request that grew the isolate and for one waiting beside it): `overloaded` and
+	 * `durableObjectReset` set, `retryable` absent. A fresh stub then answered in 54 ms
+	 */
+	const MEMORY_RESET = { overloaded: true, remote: true, durableObjectReset: true };
+
+	it('sends a GET once more after a memory reset, which the platform marks overloaded', async () => {
+		const s = resettingSite(MEMORY_RESET);
+		const res = await send(new Request('https://cfw.local/reset-memory'), s.namespace);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-retried')).toBe('reset');
+		expect(s.methods).toEqual(['GET', 'GET']);
+	});
+
+	it('gives the failover to the primary the same one retry after a memory reset', async () => {
+		// a lane that is not ready hands back with a 421, and the primary it fails over to can be
+		// resetting; that hop answered the visitor a 500 while the first hop retried
+		const cookie = `${SESSION_COOKIE}=reset-failover`;
+		const path = Array.from({ length: 64 }, (_, i) => `/failover-${i}`).find(
+			(p) =>
+				chooseTarget({
+					site: 'cfw.local',
+					method: 'GET',
+					affinity: affinityKey({
+						session: 'reset-failover',
+						address: null,
+						pathname: p
+					}),
+					replicas: 4,
+					pathname: '/serve',
+					hasSession: true
+				}).role === 'replica'
+		)!;
+		const methods: string[] = [];
+		let calls = 0;
+		const namespace = {
+			idFromName: (name: string) => ({ name, toString: () => name }),
+			newUniqueId: () => ({ toString: () => 'unique' }),
+			get: () => ({
+				fetch: async (r: Request) => {
+					methods.push(r.method);
+					calls++;
+					if (calls === 1)
+						return new Response('lane not ready', {
+							status: 421,
+							headers: {
+								'x-cfw-requires-primary': 'session',
+								'x-cfw-retry-safe': '1'
+							}
+						});
+					if (calls === 2)
+						throw Object.assign(new Error('Durable Object reset'), MEMORY_RESET);
+					return new Response('rendered\n');
+				}
+			})
+		};
+		const res = await worker.fetch(
+			new Request(`https://cfw.local${path}`, { headers: { cookie } }),
+			{
+				...env,
+				SITE: namespace,
+				REPLICA_COUNT: '4'
+			} as unknown as typeof env
+		);
+		expect(res.status).toBe(200);
+		expect(res.headers.get('x-cfw-retried')).toBe('reset');
+		expect(methods).toEqual(['GET', 'GET', 'GET']);
+	});
+
+	it('repeats a POST after a memory reset, carrying the attempt id', async () => {
+		const s = resettingSite(MEMORY_RESET);
+		const res = await send(
+			new Request('https://cfw.local/admin/config/system/cron', {
+				method: 'POST',
+				body: 'op=Run+cron'
+			}),
+			s.namespace
+		);
+		expect(res.status).toBe(200);
+		expect(s.methods).toEqual(['POST', 'POST']);
+		expect(s.attempts[1]).toBe(s.attempts[0]);
+	});
+
+	it('answers a 503 rather than retrying an error that is neither retryable nor a reset', async () => {
+		const s = resettingSite({});
+		const res = await send(new Request('https://cfw.local/reset-plain'), s.namespace);
+		expect(res.status).toBe(503);
+		expect(s.methods).toEqual(['GET']);
+	});
+
+	it('does not retry an object that is overloaded without having been reset', () => {
+		expect(resetRecovery({ retryable: true, overloaded: true }, 'GET')).toBe('refuse');
+		expect(resetRecovery(MEMORY_RESET, 'GET')).toBe('retry');
+		expect(resetRecovery(MEMORY_RESET, 'POST')).toBe('refuse');
+		expect(resetRecovery(MEMORY_RESET, 'POST', true)).toBe('retry');
+		expect(resetRecovery({ retryable: true, overloaded: true }, 'POST', true)).toBe('refuse');
+		expect(resetRecovery({}, 'POST', true)).toBe('refuse');
+		expect(resetRecovery({ retryable: true }, 'HEAD')).toBe('retry');
+		expect(resetRecovery(null, 'GET')).toBe('refuse');
+	});
+});
+
+describe('an attempt the object has started is never run twice', () => {
+	const ID = '11111111-2222-4333-8444-555555555555';
+	const post = (id: string | null) =>
+		new Request('https://do.local/__serve?path=%2Fadmin%2Fconfig%2Fsystem%2Fcron', {
+			method: 'POST',
+			body: 'op=Run+cron',
+			headers: {
+				'content-type': 'application/x-www-form-urlencoded',
+				...(id === null ? {} : { [ATTEMPT_HEADER]: id })
+			}
+		});
+	const markers = (obj: ServeDo) =>
+		obj.sql
+			.exec("SELECT k FROM cfw_meta WHERE k >= 'attempt:' AND k < 'attempt;' ORDER BY k")
+			.toArray()
+			.map((r) => String(r.k));
+
+	it('records the attempt before its render runs, and refuses a repeat of it', async () => {
+		const site = 'attempt-once';
+		await provisionedNamedSite(site);
+		const first = await inObject(namedSite(site), async (obj) => {
+			const seen: (string | null)[] = [];
+			stubRender(obj, ({ path }) => {
+				seen.push(obj.metaGet(`attempt:${ID}`));
+				return pageFor(path);
+			});
+			const res = await obj.fetch(post(ID));
+			return { status: res.status, seen };
+		});
+		expect(first.status).toBe(200);
+		expect(first.seen).toHaveLength(1);
+		expect(first.seen[0]).not.toBeNull();
+
+		const again = await inObject(namedSite(site), async (obj) => {
+			const calls = stubRender(obj, ({ path }) => pageFor(path));
+			const res = await obj.fetch(post(ID));
+			return {
+				status: res.status,
+				said: res.headers.get(ATTEMPT_HEADER),
+				rendered: calls.length
+			};
+		});
+		expect(again).toEqual({ status: 503, said: 'started', rendered: 0 });
+	});
+
+	it('keeps no marker for a POST without an id or with one the front worker did not mint', async () => {
+		const site = 'attempt-none';
+		await provisionedNamedSite(site);
+		const left = await inObject(namedSite(site), async (obj) => {
+			const calls = stubRender(obj, ({ path }) => pageFor(path));
+			await obj.fetch(post(null));
+			await obj.fetch(post('not-an-id'));
+			return { rendered: calls.length, markers: markers(obj) };
+		});
+		expect(left).toEqual({ rendered: 2, markers: [] });
+	});
+
+	it('drops markers past their ttl when it writes one', async () => {
+		const site = 'attempt-ttl';
+		await provisionedNamedSite(site);
+		const left = await inObject(namedSite(site), async (obj) => {
+			stubRender(obj, ({ path }) => pageFor(path));
+			const old = 'attempt:99999999-2222-4333-8444-555555555555';
+			obj.metaSet(old, obj.nowMs() - ATTEMPT_TTL_MS - 1);
+			await obj.fetch(post(ID));
+			return markers(obj);
+		});
+		expect(left).toEqual([`attempt:${ID}`]);
 	});
 });

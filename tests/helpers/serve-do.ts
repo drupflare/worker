@@ -69,6 +69,7 @@ export type FillOutcome = {
 	remaining: number;
 	failed?: string;
 	error?: string;
+	raw?: string;
 	attempts?: number;
 	bytes?: number;
 	renderMs?: number;
@@ -126,6 +127,10 @@ export type ServeDo = {
 	sql: Sql;
 	env: Record<string, unknown>;
 	php: unknown;
+	/** when the resident interpreter booted; the young-interpreter hold reads it */
+	phpBootedAt?: number;
+	/** the end of that hold, or null */
+	backgroundHold: () => number | null;
 	/** stub for a parked HTTP yield; see `parkFetchDep` on the object */
 	parkFetchDep?: typeof fetch;
 	/** how the last parked render went, which is how a spec tells a park from a fall-through */
@@ -152,7 +157,7 @@ export type ServeDo = {
 	txnSkipOverlap?: number;
 	txnSpeculativeWithRead?: number;
 	txnSpeculativeNoRead?: number;
-	alarm: () => Promise<unknown>;
+	alarm: (info?: AlarmInvocationInfo) => Promise<unknown>;
 	/** the fleet inventory write the alarm performs; see `tests/integration/fleet-wire.spec.ts` */
 	reportToFleet: () => Promise<void>;
 	/** outbound calls the render in flight has deferred; see the re-drive in `fillOne()` */
@@ -528,7 +533,7 @@ export async function provisionedNamedSite(name: string): Promise<DurableObjectS
 	return stub;
 }
 
-/** runs `fn` against the real instance, narrowed to the surface above */
+/** Runs `fn` against the real instance, narrowed to the surface above. */
 export function inObject<T>(
 	stub: DurableObjectStub,
 	fn: (site: ServeDo) => T | Promise<T>

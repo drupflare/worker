@@ -612,6 +612,20 @@ describe('a path that can never render is retried and then dropped', () => {
 		expect(out.stats.cached).toHaveLength(0);
 	});
 
+	it('logs where the render threw, and keeps it out of the answered error', async () => {
+		const stub = await provisionedSite();
+		const outcome = await inObject(stub, async (site) => {
+			stubRender(site, () => ({
+				error: 'JsonException: Syntax error',
+				at: '/drupal/modules/contrib/x/src/Y.php:42'
+			}));
+			queuePath(site, '/admin/config');
+			return site.fillOne();
+		});
+		expect(outcome.error).toBe('JsonException: Syntax error');
+		expect(outcome.raw).toBe('/drupal/modules/contrib/x/src/Y.php:42');
+	});
+
 	it('records why it failed while the path is still queued', async () => {
 		const stub = await provisionedSite();
 		const queued = await inObject(stub, async (site) => {
@@ -683,6 +697,27 @@ describe('a path that can never render is retried and then dropped', () => {
 		expect(out.rows).toEqual([1, 2, undefined]);
 		// and the chain has gone back to the keep-warm interval rather than +1 ms
 		expect((out.nextAlarm ?? 0) - out.now).toBeGreaterThan(1000);
+	});
+
+	it('strikes the head when the platform retries an alarm, since the render that died cannot', async () => {
+		// a render that resets its isolate dies with the strike it would have recorded, so the
+		// retried alarm counts it; the control is the same firing without `isRetry`
+		const attemptsAfter = async (info?: AlarmInvocationInfo) => {
+			const stub = await provisionedSite();
+			return inObject(stub, async (site) => {
+				stubRender(site, () => {
+					throw new TypeError('target is not a function');
+				});
+				queuePath(site, '/killer');
+				await site.alarm(info);
+				return site.sql
+					.exec('SELECT attempts FROM cfw_fill_queue WHERE path = ?', '/killer')
+					.toArray()
+					.map((r) => Number(r.attempts))[0];
+			});
+		};
+		expect(await attemptsAfter()).toBe(1);
+		expect(await attemptsAfter({ isRetry: true, retryCount: 1, scheduledTime: 0 })).toBe(2);
 	});
 
 	it('reports the throw as the outcome rather than swallowing it', async () => {

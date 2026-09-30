@@ -32,6 +32,7 @@ export const ARTIFACT_SPECS = [
 	// the ROUTE token rather than the form token; it signs in twice and renders a real admin page
 	'tests/integration/csrf-route-token.spec.ts',
 	'tests/integration/degrade-serve.spec.ts',
+	'tests/integration/deployment-env.spec.ts',
 	'tests/integration/effect-census.spec.ts',
 	'tests/integration/enable-memory.spec.ts',
 	'tests/integration/fill-bins.spec.ts',
@@ -48,6 +49,8 @@ export const ARTIFACT_SPECS = [
 	'tests/integration/heap-image-storage.spec.ts',
 	'tests/integration/host-bridges.spec.ts',
 	'tests/integration/image-toolkit.spec.ts',
+	// boots a kernel from the pack to drive the patched batch.inc and the module's stand-in classes
+	'tests/integration/standins.spec.ts',
 	// eight joined on 2026-09-08, found the same way: hide `assets/drupal-pf/core.pf.json` and run
 	// the gate. All eight reach the interpreter and several a real render. The park four and
 	// `mb-native` had landed EARLIER the same day without this reproduction being run, which is the

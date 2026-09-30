@@ -1,7 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { transformPath, type Transform } from '../../src/ops/image-transform';
-import worker, { publicFileUri } from '../../src/site';
+import worker, { moduleAssetPath, publicFileUri } from '../../src/site';
 import { druplicon } from '../fixtures/png';
 
 /**
@@ -210,5 +210,52 @@ describe('a public file is served by the front worker', () => {
 		expect(fileReads(spy.seen)).toEqual([]);
 		expect(publicFileUri('POST', '/sites/default/files/a.png')).toBeNull();
 		expect(publicFileUri('GET', '/sites/default/files/a.png')).toBe('public://a.png');
+	});
+});
+
+describe('a delivered module asset is served by the front worker', () => {
+	const reads = (seen: URL[]) =>
+		seen.filter((u) => u.pathname === '/__moduleasset').map((u) => u.searchParams.get('path'));
+	const css = { 'content-type': 'text/plain' };
+
+	it('answers the stored source with the type its extension names', async () => {
+		const spy = fileSpy(200, 'a { color: red }', css);
+		const out = await get('/modules/custom/probe/css/probe.css', spy.namespace);
+		expect(reads(spy.seen)).toEqual(['modules/custom/probe/css/probe.css']);
+		expect(out.status).toBe(200);
+		expect(new TextDecoder().decode(out.bytes)).toBe('a { color: red }');
+		expect(out.file).toBe('MODULE');
+		expect(out.contentType).toBe('text/css; charset=utf-8');
+		expect(out.nosniff).toBe('nosniff');
+		const again = await get('/modules/custom/probe/css/probe.css', spy.namespace);
+		expect(again.status).toBe(200);
+		expect(reads(spy.seen), 'the second read reached the object').toHaveLength(1);
+	});
+
+	it('serves js and svg, and leaves binaries and other roots alone', async () => {
+		const spy = fileSpy(200, 'x', css);
+		const js = await get('/themes/custom/t/app.js', spy.namespace);
+		expect(js.contentType).toBe('text/javascript; charset=utf-8');
+		const svg = await get('/libraries/l/i.svg', spy.namespace);
+		expect(svg.contentType).toBe('image/svg+xml');
+		await get('/modules/custom/probe/img/logo.png', spy.namespace);
+		await get('/sites/default/notes.css', spy.namespace);
+		expect(reads(spy.seen)).toEqual(['themes/custom/t/app.js', 'libraries/l/i.svg']);
+	});
+
+	it('falls through to Drupal for an asset the site does not hold', async () => {
+		const spy = fileSpy(404);
+		await get('/modules/custom/probe/css/none.css', spy.namespace);
+		expect(reads(spy.seen)).toEqual(['modules/custom/probe/css/none.css']);
+		expect(spy.seen.some((u) => u.pathname !== '/__moduleasset')).toBe(true);
+	});
+
+	it('refuses a climbing or doubled path and a write method', () => {
+		expect(moduleAssetPath('GET', '/modules/a/../../settings.css')).toBeNull();
+		expect(moduleAssetPath('GET', '/modules/a/%2e%2e/b.css')).toBeNull();
+		expect(moduleAssetPath('GET', '/modules//a.css')).toBeNull();
+		expect(moduleAssetPath('GET', '/modules/a%00.css')).toBeNull();
+		expect(moduleAssetPath('POST', '/modules/a/b.css')).toBeNull();
+		expect(moduleAssetPath('GET', '/modules/a/b.css')).toBe('modules/a/b.css');
 	});
 });

@@ -224,6 +224,110 @@ describe('the curl and openssl shims are LIVE, not inert', () => {
 	}, 900_000);
 });
 
+/** a self-signed P-256 certificate; the expected values below are native ext-openssl readings of it */
+const EC_CERT_PEM =
+	'-----BEGIN CERTIFICATE-----\nMIIB9zCCAZygAwIBAgIUEU4OgDcy77BiOJs/CoaDMdrty20wCgYIKoZIzj0EAwIw\nQTELMAkGA1UEBhMCVVMxFzAVBgNVBAoMDkRydXBmbGFyZSBUZXN0MRkwFwYDVQQD\nDBBzc28uZXhhbXBsZS50ZXN0MCAXDTI2MDkyODIwNTA1M1oYDzIxMjYwOTA0MjA1\nMDUzWjBBMQswCQYDVQQGEwJVUzEXMBUGA1UECgwORHJ1cGZsYXJlIFRlc3QxGTAX\nBgNVBAMMEHNzby5leGFtcGxlLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC\nAAS6wEjFSK6z2cIlLiiARxI9n25P+CizJN6BjF2gTOdA74LtBJ4KJoABoH0P0mJx\n5NX6uxIAkU8LqOqDFHOL1Qndo3AwbjAdBgNVHQ4EFgQUGz605tCx1DuYKCfZSI0p\nW2AByTQwHwYDVR0jBBgwFoAUGz605tCx1DuYKCfZSI0pW2AByTQwDwYDVR0TAQH/\nBAUwAwEB/zAbBgNVHREEFDASghBzc28uZXhhbXBsZS50ZXN0MAoGCCqGSM49BAMC\nA0kAMEYCIQDhDyV1bMIEG7R/1lbFEetRpyqdDEnByon6BQ/E+clcxwIhAILmdhPN\nrhpeLkAynzxatFqldTQPI5F+4umUaIkLDen3\n-----END CERTIFICATE-----\n';
+
+describe('the openssl symmetric, key-detail and certificate half, from PHP', () => {
+	it('matches native ext-openssl on AES CBC, CTR and GCM', async () => {
+		const out = await run(`<?php
+			$tag = '';
+			$gcm = openssl_encrypt('gcm payload', 'aes-256-gcm', str_repeat('K', 32), OPENSSL_RAW_DATA, '123456789012', $tag, 'aad');
+			echo json_encode([
+				'cbc' => base64_encode(openssl_encrypt('attack at dawn', 'aes-256-cbc', 'k', OPENSSL_RAW_DATA, '0123456789abcdef')),
+				'ctr' => openssl_encrypt('attack at dawn', 'aes-128-ctr', '0123456789abcdef0123', 0, 'fedcba9876543210'),
+				'gcm' => base64_encode($gcm),
+				'tag' => base64_encode($tag),
+				'gcmBack' => openssl_decrypt($gcm, 'aes-256-gcm', str_repeat('K', 32), OPENSSL_RAW_DATA, '123456789012', $tag, 'aad'),
+				'gcmForged' => openssl_decrypt($gcm, 'aes-256-gcm', str_repeat('K', 32), OPENSSL_RAW_DATA, '123456789012', str_repeat("\\0", 16), 'aad'),
+				'cbcBack' => openssl_decrypt('XVPvDovcH8vX8x9Bv+X/4w==', 'aes-256-cbc', 'k', 0, '0123456789abcdef'),
+				'ivLen' => openssl_cipher_iv_length('aes-256-gcm'),
+				'unknown' => @openssl_encrypt('x', 'des-ede3', 'k'),
+			]);`);
+		expect(out.cbc).toBe('XVPvDovcH8vX8x9Bv+X/4w==');
+		expect(out.ctr).toBe('aj+iEJUbX2jMGKe3vXI=');
+		expect(out.gcm).toBe('GOWoRgZs94Iw9Ss=');
+		expect(out.tag).toBe('0d7Q/7g1yd3oSCNUfLZqvQ==');
+		expect(out.gcmBack).toBe('gcm payload');
+		expect(out.gcmForged).toBe(false);
+		expect(out.cbcBack).toBe('attack at dawn');
+		expect(Number(out.ivLen)).toBe(12);
+		expect(out.unknown).toBe(false);
+	}, 900_000);
+
+	it('hands lcobucci/jwt and league/oauth2-server the key objects and details they check', async () => {
+		const out = await run(`<?php
+			$key = openssl_pkey_get_private(${JSON.stringify(RSA_PRIVATE_PEM)});
+			$d = openssl_pkey_get_details($key);
+			$sig = '';
+			openssl_sign('jwt body', $sig, $key, OPENSSL_ALGO_SHA256);
+			$ec = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+			$peer = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+			$ecd = openssl_pkey_get_details($ec);
+			$sealed = '';
+			openssl_public_encrypt('session key', $sealed, openssl_pkey_get_public(${JSON.stringify(RSA_PUBLIC_PEM)}), OPENSSL_PKCS1_OAEP_PADDING);
+			$opened = '';
+			openssl_private_decrypt($sealed, $opened, $key, OPENSSL_PKCS1_OAEP_PADDING);
+			echo json_encode([
+				'class' => get_class($key),
+				'bits' => $d['bits'],
+				'type' => $d['type'],
+				'rsaE' => bin2hex($d['rsa']['e']),
+				'publicPem' => $d['key'],
+				'verified' => openssl_verify('jwt body', $sig, $d['key'], OPENSSL_ALGO_SHA256),
+				'ecType' => $ecd['type'],
+				'ecCurve' => $ecd['ec']['curve_name'],
+				'ecX' => strlen($ecd['ec']['x']),
+				'ecdh' => bin2hex(openssl_pkey_derive($peer, $ec)) === bin2hex(openssl_pkey_derive($ec, $peer)),
+				'ecdhLen' => strlen(openssl_pkey_derive($peer, $ec)),
+				'oaep' => $opened,
+				'badPrivate' => openssl_pkey_get_private('not a key'),
+				'error' => is_string(openssl_error_string()),
+			]);`);
+		expect(out.class).toBe('OpenSSLAsymmetricKey');
+		expect(Number(out.bits)).toBe(2048);
+		expect(Number(out.type)).toBe(0);
+		expect(out.rsaE).toBe('010001');
+		expect(out.publicPem).toBe(RSA_PUBLIC_PEM);
+		expect(Number(out.verified)).toBe(1);
+		expect(Number(out.ecType)).toBe(3);
+		expect(out.ecCurve).toBe('prime256v1');
+		expect(Number(out.ecX)).toBe(32);
+		expect(out.ecdh).toBe(true);
+		expect(Number(out.ecdhLen)).toBe(32);
+		expect(out.oaep).toBe('session key');
+		expect(out.badPrivate).toBe(false);
+		expect(out.error).toBe(true);
+	}, 900_000);
+
+	it('reads a certificate the way php-saml and xmlseclibs ask', async () => {
+		const out = await run(`<?php
+			$pem = ${JSON.stringify(EC_CERT_PEM)};
+			$cert = openssl_x509_read($pem);
+			$p = openssl_x509_parse($cert);
+			$pub = openssl_pkey_get_public($cert);
+			echo json_encode([
+				'class' => get_class($cert),
+				'cn' => $p['subject']['CN'],
+				'name' => $p['name'],
+				'serial' => $p['serialNumberHex'],
+				'from' => $p['validFrom_time_t'],
+				'fp' => openssl_x509_fingerprint($cert, 'sha256'),
+				'pubType' => openssl_pkey_get_details($pub)['type'],
+				'purpose' => openssl_x509_checkpurpose($cert, X509_PURPOSE_ANY),
+			]);`);
+		expect(out.class).toBe('OpenSSLCertificate');
+		expect(out.cn).toBe('sso.example.test');
+		expect(out.name).toBe('/C=US/O=Drupflare Test/CN=sso.example.test');
+		expect(out.serial).toBe('114E0E803732EFB062389B3F0A868331DAEDCB6D');
+		expect(Number(out.from)).toBe(1790628653);
+		expect(out.fp).toBe('865bf0a7b18cc0858646d6dfd7e6ac138eb950c26cd234339d27c91704e76f42');
+		expect(Number(out.pubType)).toBe(3);
+		// undetermined, and recorded as a degradation rather than guessed
+		expect(Number(out.purpose)).toBe(-1);
+	}, 900_000);
+});
+
 describe('the argon2id bridge is LIVE, and does not shadow a built-in', () => {
 	it('declares helpers rather than password_hash, which PHP always provides', async () => {
 		const out = await run(`<?php

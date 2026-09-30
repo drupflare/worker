@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BOOT_KERNEL } from '../../src/drupal/site-php';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -164,6 +165,43 @@ describe('a module enable in the workers pool lane', () => {
 					`${routerStatements} of them router over ${routes} routes\n` +
 					JSON.stringify(out['byTable']).slice(0, 400)
 			);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
+describe('a theme delivered after the site first rendered', () => {
+	it(
+		'is found by the enable, because the stale file scan is cleared before the theme check',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				// the scan a site that rendered anything before the install already holds
+				await site.runJson(BOOT_KERNEL);
+				await site.runJson(
+					"<?php \\Drupal::service('extension.list.theme')->reset()->getList(); echo '{}';"
+				);
+				const { binary } = await (
+					site as unknown as {
+						ensurePhp(): Promise<{
+							binary: {
+								FS: {
+									mkdirTree(p: string): void;
+									writeFile(p: string, d: string): void;
+								};
+							};
+						}>;
+					}
+				).ensurePhp();
+				binary.FS.mkdirTree('/drupal/themes/contrib/cfw_late_theme');
+				binary.FS.writeFile(
+					'/drupal/themes/contrib/cfw_late_theme/cfw_late_theme.info.yml',
+					"name: 'Late Theme'\ntype: theme\nbase theme: false\ncore_version_requirement: ^11\n"
+				);
+				// keep=1 enables on the live interpreter; without it the route boots a fresh one
+				return call(site, '/__enable?module=cfw_late_theme&keep=1');
+			});
+			expect(out['kind'], JSON.stringify(out).slice(0, 400)).toBe('theme');
 		},
 		REQUEST_TIMEOUT
 	);

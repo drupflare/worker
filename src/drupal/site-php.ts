@@ -7,6 +7,7 @@
  */
 
 import { bytesToBase64 } from '../db/file-store.js';
+import { FIBER_SHIM } from './fiber-shim.js';
 
 /**
  * A host-call helper shared by the fragments below.
@@ -387,35 +388,6 @@ echo json_encode([
   'biggestTables' => array_slice($perTable, 0, 12, true),
   'elapsedMs' => round(microtime(true) * 1000 - $t0, 1),
 ]);
-`;
-
-/**
- * The synchronous stand-in for \Fiber that the patched tree expects.
- *
- * PHP builds Fibers on ucontext when --disable-fiber-asm is set and emscripten
- * has no ucontext, so a real Fiber aborts the runtime with
- * "Aborted(missing function: getcontext)". scripts/patch-drupal.mjs rewrites
- * core's five call sites to this class; it has to exist before Drupal loads.
- */
-const FIBER_SHIM = String.raw`
-if (!class_exists('PhpWasmSyncFiber', false)) { eval('
-class PhpWasmSyncFiber {
-  private $callable;
-  private $result = null;
-  private $started = false;
-  public function __construct(callable $callable) { $this->callable = $callable; }
-  public function start(...$args) { $this->started = true; $this->result = ($this->callable)(...$args); return null; }
-  public function isStarted(): bool { return $this->started; }
-  public function isSuspended(): bool { return false; }
-  public function isRunning(): bool { return false; }
-  public function isTerminated(): bool { return $this->started; }
-  public function resume($value = null) { return null; }
-  public function throw(\\Throwable $e) { throw $e; }
-  public function getReturn() { return $this->result; }
-  public static function getCurrent(): ?object { return null; }
-  public static function suspend($value = null) { return null; }
-}
-'); }
 `;
 
 /**
@@ -814,6 +786,15 @@ function cfw_serve($path, $destruct = true, $method = "GET", $body = "", $conten
   // response that was being reported as a render failure.
   $response = $kernel->handle($request, \\Symfony\\Component\\HttpKernel\\HttpKernelInterface::MAIN_REQUEST, true);
 
+  // shutdown callbacks and the named TERMINATE subscribers, which a persistent interpreter never
+  // runs by itself; a server error skips them inside drain()
+  if (class_exists("Drupal\\drupflare\\Terminate")) {
+    try {
+      \\Drupal\\drupflare\\Terminate::drain($kernel, $request, $response);
+    } catch (\\Throwable $e) {
+    }
+  }
+
   // Nothing had ever completed the request lifecycle, so every needs_destruction
   // service -- theme.registry, library.discovery, library.parsing_cache,
   // menu.active_trail, router.builder, path_alias -- discarded its accumulated
@@ -991,6 +972,15 @@ try {
   if ($kernel === null || !\Drupal::hasContainer()) {
     echo json_encode(['ok' => false, 'error' => 'no kernel to verify against']);
   } else {
+    // delivered code can add an extension, so the scan and every list rediscover, as a cache
+    // rebuild would (a profile uploaded after the claim read as not installed)
+    try {
+      $prop = new \ReflectionProperty(\Drupal\Core\Extension\ExtensionDiscovery::class, 'files');
+      $prop->setValue(null, []);
+    } catch (\Throwable $e) {}
+    foreach (['module', 'theme', 'profile'] as $type) {
+      \Drupal::service('extension.list.' . $type)->reset();
+    }
     $handler = \Drupal::service('module_handler');
     $handler->loadAll();
     $modules = array_keys($handler->getModuleList());
@@ -1205,12 +1195,18 @@ echo json_encode([
  *
  * @param name - a registry operation
  * @param args - positional arguments, already stripped of flags
- * @param options - offset/limit for cex, payload for cim
+ * @param options - offset/limit for cex, payload for cim, and the collections and budget a step takes
  */
 export function opsRun(
 	name: string,
 	args: readonly string[] = [],
-	options: { offset?: number; limit?: number; payload?: unknown } = {}
+	options: {
+		offset?: number;
+		limit?: number;
+		payload?: unknown;
+		collections?: unknown;
+		budget?: unknown;
+	} = {}
 ): string {
 	const encoded = JSON.stringify(
 		JSON.stringify({
@@ -1219,7 +1215,9 @@ export function opsRun(
 			options: {
 				...(Number.isFinite(options.offset) ? { offset: Number(options.offset) } : {}),
 				...(Number.isFinite(options.limit) ? { limit: Number(options.limit) } : {}),
-				...(options.payload === undefined ? {} : { payload: options.payload })
+				...(options.payload === undefined ? {} : { payload: options.payload }),
+				...(options.collections === undefined ? {} : { collections: options.collections }),
+				...(options.budget === undefined ? {} : { budget: options.budget })
 			}
 		})
 	);
@@ -1725,6 +1723,7 @@ try {
   $out['setCookie'] = array_values(array_unique($cookies));
 } catch (\Throwable $e) {
   $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
 }
 
 // what the between-request reset actually did, and who Drupal thinks is asking. Both are cheap
@@ -2217,15 +2216,37 @@ const PACK_CONSISTENCY = String.raw`
   } catch (\Throwable $e) {
     $fixed[] = 'includes-failed:' . substr($e->getMessage(), 0, 120);
   }
+  // ONE install() for both modules: each call rebuilds the container and the router, and on a
+  // migrated 160-module site two rebuilds took the claim to 25 s of CPU against a 30 s limit
+  $want = [];
   try {
-    $installer = \Drupal::service('module_installer');
     $driverModule = \Drupal::database()->getProvider();
     if ($driverModule && $driverModule !== 'core' && !\Drupal::moduleHandler()->moduleExists($driverModule)) {
-      $installer->install([$driverModule]);
-      $fixed[] = 'module:' . $driverModule;
+      $want[$driverModule] = 'module';
     }
   } catch (\Throwable $e) {
     $fixed[] = 'module-failed:' . substr($e->getMessage(), 0, 120);
+  }
+  // a migrated database never had the platform module; without it core's requirements for a php.ini
+  // this runtime does not have stay errors, and every database update run halts on them
+  try {
+    // the config row, as the installer itself reads it; a container can list a module config dropped
+    $enabled = \Drupal::config('core.extension')->get('module') ?: [];
+    if (!isset($enabled['drupflare'])
+      && isset(\Drupal::service('extension.list.module')->getList()['drupflare'])) {
+      $want['drupflare'] = 'drupflare';
+    }
+  } catch (\Throwable $e) {
+    $fixed[] = 'drupflare-failed:' . substr($e->getMessage(), 0, 120);
+  }
+  if ($want) {
+    try {
+      \Drupal::service('module_installer')->install(array_keys($want));
+      $out['packConsistencyInstalls'] = ($out['packConsistencyInstalls'] ?? 0) + 1;
+      foreach (array_keys($want) as $module) { $fixed[] = 'module:' . $module; }
+    } catch (\Throwable $e) {
+      foreach ($want as $kind) { $fixed[] = $kind . '-failed:' . substr($e->getMessage(), 0, 120); }
+    }
   }
 
   try {
@@ -2280,6 +2301,112 @@ const PACK_CONSISTENCY = String.raw`
   $out['packConsistency'] = $fixed;
 `;
 
+/** the kernel boot a claim needs, shared by its two invocations */
+const CLAIM_BOOT = String.raw`
+  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
+    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
+  }
+  $autoloader = $GLOBALS['__pw_autoloader'];
+
+  if (!isset($GLOBALS['__pw_kernel'])) {
+    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
+    \Drupal\Core\DrupalKernel::bootEnvironment();
+    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
+    $kernel->setSitePath($sitePath);
+    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
+    $kernel->boot();
+    $GLOBALS['__pw_kernel'] = $kernel;
+  }
+  // A MIGRATED SITE HAS PROCEDURAL HOOKS IN .module FILES, and saving the account dispatches them
+  // before anything has included one: farmOS answered Class "entity_entity_type_build" does not
+  // exist, DrupalX a RequestContext built from no request. The enable fragment does the same two
+  $stack = \Drupal::service('request_stack');
+  if ($stack->getCurrentRequest() === null) {
+    $claimRequest = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
+    // a hook asks the request for its session (varbase: SessionNotFoundException); in memory, so
+    // the claim writes no session row
+    $claimRequest->setSession(new \Symfony\Component\HttpFoundation\Session\Session(
+      new \Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage()
+    ));
+    $stack->push($claimRequest);
+  }
+  \Drupal::moduleHandler()->loadAll();
+  // The first WRITE path anything in this project has exercised, and it found a
+  // new instance of the trace-blind class immediately: SAVED_NEW / SAVED_UPDATED
+  // are plain constants in core/includes/common.inc, which a render never needs
+  // and DrupalKernel::boot() does not include. EntityStorageBase::doSave()
+  // returns SAVED_UPDATED, so every entity save fatals with
+  // "Undefined constant Drupal\\Core\\Entity\\SAVED_UPDATED" until it is loaded.
+  // Read paths are not evidence about write paths. Before the first config write, because a
+  // config save subscriber can save an entity (open y's upgrade_tool logs every change).
+  if (!defined('SAVED_UPDATED')) {
+    require_once '/drupal/core/includes/common.inc';
+    $out['loadedCommonInc'] = true;
+  }
+`;
+
+/**
+ * The half of a claim that needs no claim data: the schema repair and the pack consistency install.
+ *
+ * Run as its OWN invocation before the claim, because the CPU limit is per invocation and a killed
+ * one rolls every write back. On a migrated ~150-module site (Thunder) the claim was reset at 32 s
+ * of CPU on every attempt and so reinstalled the same two modules each time. Both halves are
+ * idempotent, so the claim that follows repeats them as no-ops.
+ */
+export function packConsistencyRun(): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+$out = ['ok' => false];
+try {
+${CLAIM_BOOT}
+${SCHEMA_REPAIR}
+${PACK_CONSISTENCY}
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+echo json_encode($out);
+`;
+}
+
+/**
+ * The claim's first invocation: fills the discovery caches the install reads, and installs nothing.
+ *
+ * Measured on a deployed Thunder: the consistency install alone was reset at 32.5 s of CPU from a
+ * cold object, and 7.1 s when earlier invocations had filled these caches. Each piece stays cached
+ * in the site's own tables for the invocations after it, whatever happens to the interpreter.
+ */
+export function claimWarmRun(): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+${HOST_HELPERS}
+chdir('/drupal');
+$out = ['ok' => false, 'warmed' => []];
+try {
+${CLAIM_BOOT}
+  \Drupal::service('extension.list.module')->getList();
+  \Drupal::entityTypeManager()->getDefinitions();
+  \Drupal::service('entity_field.manager')->getFieldMap();
+  $out['warmed'][] = 'entity';
+  \Drupal::service('config.typed')->getDefinitions();
+  $out['warmed'][] = 'typed';
+  foreach (\Drupal::getContainer()->getServiceIds() as $id) {
+    if (!str_starts_with($id, 'plugin.manager.')) { continue; }
+    try { \Drupal::service($id)->getDefinitions(); } catch (\Throwable $e) {}
+  }
+  $out['warmed'][] = 'plugins';
+  \Drupal::service('router.builder')->rebuildIfNeeded();
+  $out['ok'] = true;
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+}
+echo json_encode($out);
+`;
+}
+
 /** the site identity and uid-1 account a first run establishes; every field is validated below */
 export type FirstRunOptions = {
 	siteName?: string;
@@ -2298,6 +2425,8 @@ export type FirstRunOptions = {
 	 * account is not new and rewriting its birthday would be a lie in the other direction.
 	 */
 	claimedAt?: number;
+	/** claim a site that already has an administrator and a site identity, changing neither */
+	migrated?: boolean;
 };
 
 /** a node to create on the write path, which is the path renders never exercise */
@@ -2318,7 +2447,8 @@ export function firstRunConfig(options: FirstRunOptions = {}): string {
 		claimedAt:
 			typeof options.claimedAt === 'number' && Number.isFinite(options.claimedAt)
 				? Math.floor(options.claimedAt)
-				: null
+				: null,
+		migrated: options.migrated === true
 	});
 	return String.raw`<?php
 ${FIBER_SHIM}
@@ -2329,33 +2459,21 @@ $opt = json_decode(${JSON.stringify(payload)}, true);
 $out = ['ok' => false, 'applied' => [], 'skipped' => []];
 
 try {
-  if (!isset($GLOBALS['__pw_autoloader']) || !is_object($GLOBALS['__pw_autoloader'])) {
-    $GLOBALS['__pw_autoloader'] = require '/drupal/autoload.php';
-  }
-  $autoloader = $GLOBALS['__pw_autoloader'];
-
-  if (!isset($GLOBALS['__pw_kernel'])) {
-    $request = \Symfony\Component\HttpFoundation\Request::create('/', 'GET');
-    $kernel = new \Drupal\Core\DrupalKernel('prod', $autoloader);
-    \Drupal\Core\DrupalKernel::bootEnvironment();
-    $sitePath = \Drupal\Core\DrupalKernel::findSitePath($request);
-    $kernel->setSitePath($sitePath);
-    \Drupal\Core\Site\Settings::initialize('/drupal', $sitePath, $autoloader);
-    $kernel->boot();
-    $GLOBALS['__pw_kernel'] = $kernel;
-  }
+${CLAIM_BOOT}
 
   // site name, mail and timezone are config, so go through the config factory
-  $editable = \Drupal::configFactory()->getEditable('system.site');
-  foreach (['siteName' => 'name', 'siteMail' => 'mail'] as $key => $configKey) {
-    if (!empty($opt[$key])) {
-      $editable->set($configKey, $opt[$key]);
-      $out['applied'][] = 'system.site.' . $configKey;
-    } else {
-      $out['skipped'][] = 'system.site.' . $configKey;
+  if (empty($opt['migrated'])) {
+    $editable = \Drupal::configFactory()->getEditable('system.site');
+    foreach (['siteName' => 'name', 'siteMail' => 'mail'] as $key => $configKey) {
+      if (!empty($opt[$key])) {
+        $editable->set($configKey, $opt[$key]);
+        $out['applied'][] = 'system.site.' . $configKey;
+      } else {
+        $out['skipped'][] = 'system.site.' . $configKey;
+      }
     }
+    $editable->save();
   }
-  $editable->save();
 
   if (!empty($opt['timezone'])) {
     \Drupal::configFactory()->getEditable('system.date')
@@ -2381,25 +2499,16 @@ try {
     }
   }
 
-  // The first WRITE path anything in this project has exercised, and it found a
-  // new instance of the trace-blind class immediately: SAVED_NEW / SAVED_UPDATED
-  // are plain constants in core/includes/common.inc, which a render never needs
-  // and DrupalKernel::boot() does not include. EntityStorageBase::doSave()
-  // returns SAVED_UPDATED, so every entity save fatals with
-  // "Undefined constant Drupal\\Core\\Entity\\SAVED_UPDATED" until it is loaded.
-  // Read paths are not evidence about write paths.
-  if (!defined('SAVED_UPDATED')) {
-    require_once '/drupal/core/includes/common.inc';
-    $out['loadedCommonInc'] = true;
-  }
 
 ${SCHEMA_REPAIR}
 
 ${PACK_CONSISTENCY}
 
   // uid 1 through the entity API so the password hasher and the presave hooks run
-  $admin = \Drupal\user\Entity\User::load(1);
-  if ($admin === NULL) {
+  $admin = empty($opt['migrated']) ? \Drupal\user\Entity\User::load(1) : NULL;
+  if (!empty($opt['migrated'])) {
+    $out['skipped'][] = 'uid1 (migrated site keeps its administrator)';
+  } elseif ($admin === NULL) {
     $out['skipped'][] = 'uid1 (not loadable)';
   } else {
     if (!empty($opt['adminName'])) { $admin->setUsername($opt['adminName']); $out['applied'][] = 'uid1.name'; }

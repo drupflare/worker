@@ -18,7 +18,13 @@ import { locationHint } from '../../src/ops/site-id';
 import { writeForwardEnabled } from '../../src/ops/write-forwarding';
 import { opcacheIni, opcacheMode } from '../../src/runtime/opcache';
 import worker from '../../src/site';
-import { argon2Enabled, shellAssemblyEnabled } from '../../src/site-do';
+import {
+	argon2Enabled,
+	backgroundPhpHold,
+	fillSettleMs,
+	shellAssemblyEnabled,
+	sleepBudgetMs
+} from '../../src/site-do';
 import {
 	freshSite,
 	inObject,
@@ -190,8 +196,11 @@ describe('the fixture covers the allow-list', () => {
 			'REPLICA_LAG_MS',
 			'SITE_WARM',
 			'WARM_INTERVAL_MS',
+			'SLEEP_BUDGET_MS',
 			'EDGE_PLAN',
-			'ASSET_AGGREGATES'
+			'ASSET_AGGREGATES',
+			'RESPONSE_HEADERS',
+			'REDIRECTS'
 		];
 		// read by a consumer this lane cannot reach; see the block comment above
 		const elsewhere = [
@@ -909,5 +918,80 @@ describe('OPCACHE_MODE and ARGON2 resolve before the interpreter is built', () =
 		expect(argon2Enabled(siteEnv({}))).toBe(false);
 		expect(argon2Enabled(siteEnv({ ARGON2: '1' }))).toBe(true);
 		expect(argon2Enabled(siteEnv({ ARGON2: '0' }))).toBe(false);
+	});
+});
+
+describe('SLEEP_BUDGET_MS sizes the wait a parked sleep may take', () => {
+	it('gives a visitor request the value and an alarm fifteen times it', () => {
+		expect(sleepBudgetMs({ SLEEP_BUDGET_MS: '750' } as never, 'request')).toBe(750);
+		expect(sleepBudgetMs({ SLEEP_BUDGET_MS: '750' } as never, 'alarm')).toBe(11_250);
+	});
+	it('defaults to 2 s and 30 s, and caps a runaway value', () => {
+		expect(sleepBudgetMs({} as never, 'request')).toBe(2000);
+		expect(sleepBudgetMs({} as never, 'alarm')).toBe(30_000);
+		expect(sleepBudgetMs({ SLEEP_BUDGET_MS: '99999999' } as never, 'request')).toBe(60_000);
+	});
+});
+
+describe('FILL_SETTLE_MS holds background PHP off a young interpreter', () => {
+	it('defaults to 60 s, honours 0 and caps a runaway value', () => {
+		expect(fillSettleMs({} as never)).toBe(60_000);
+		expect(fillSettleMs({ FILL_SETTLE_MS: '' } as never)).toBe(60_000);
+		expect(fillSettleMs({ FILL_SETTLE_MS: '0' } as never)).toBe(0);
+		expect(fillSettleMs({ FILL_SETTLE_MS: 'soon' } as never)).toBe(60_000);
+		expect(fillSettleMs({ FILL_SETTLE_MS: '99999999' } as never)).toBe(600_000);
+	});
+	it('holds until the boot plus the window, and never without a boot or a window', () => {
+		expect(backgroundPhpHold(1_000, 5_000, 60_000)).toBe(61_000);
+		expect(backgroundPhpHold(1_000, 61_000, 60_000)).toBeNull();
+		expect(backgroundPhpHold(undefined, 5_000, 60_000)).toBeNull();
+		expect(backgroundPhpHold(1_000, 5_000, 0)).toBeNull();
+	});
+});
+
+describe('RESPONSE_HEADERS and REDIRECTS shape what the front worker answers', () => {
+	const rules = JSON.stringify([
+		{
+			path: '/blog/*',
+			set: { 'X-Frame-Options': 'DENY', 'Set-Cookie': 'a=b', 'x-cfw-cache': 'lie' }
+		}
+	]);
+	const moves = JSON.stringify([
+		{ from: '/old', to: '/new', status: 302 },
+		{ from: '/news/*', to: 'https://example.org/archive/*' },
+		{ from: '/settings', to: '/elsewhere' }
+	]);
+
+	it('sets a header on a matching path and on nothing else', async () => {
+		const bare = await through('/blog/post');
+		const set = await through('/blog/post', { RESPONSE_HEADERS: rules });
+		const other = await through('/about', { RESPONSE_HEADERS: rules });
+		expect(bare.res.headers.get('x-frame-options')).toBeNull();
+		expect(set.res.headers.get('x-frame-options')).toBe('DENY');
+		expect(other.res.headers.get('x-frame-options')).toBeNull();
+	});
+
+	it("cannot set a cookie or overwrite this project's own headers", async () => {
+		const set = await through('/blog/post', { RESPONSE_HEADERS: rules });
+		expect(set.res.headers.get('set-cookie')).toBeNull();
+		expect(set.res.headers.get('x-cfw-cache')).not.toBe('lie');
+	});
+
+	it('answers a redirect before routing, and only where a rule matches', async () => {
+		const none = await through('/old');
+		const moved = await through('/old?a=1', { REDIRECTS: moves });
+		expect(none.res.status).toBe(200);
+		expect(moved.res.status).toBe(302);
+		expect(moved.res.headers.get('location')).toBe('https://cfw.local/new?a=1');
+		expect(moved.names, 'no object was addressed').toEqual([]);
+		const splat = await through('/news/2026/story', { REDIRECTS: moves });
+		expect(splat.res.status).toBe(301);
+		expect(splat.res.headers.get('location')).toBe('https://example.org/archive/2026/story');
+		expect((await through('/about', { REDIRECTS: moves })).res.status).toBe(200);
+	});
+
+	it('never captures an owner route', async () => {
+		const res = await through('/settings', { REDIRECTS: moves });
+		expect(res.res.headers.get('x-cfw-redirect')).toBeNull();
 	});
 });

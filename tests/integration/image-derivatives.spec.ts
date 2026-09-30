@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { bytesToBase64 } from '../../src/db/file-store';
-import { runImageTransform } from '../../src/ops/image-runtime';
+import {
+	engineFeatures,
+	engineLoaded,
+	liveEngineFeatures,
+	runImageTransform
+} from '../../src/ops/image-runtime';
 import type { DeriveTransport } from '../../src/ops/render-lane';
 import { druplicon } from '../fixtures/png';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
@@ -36,6 +41,22 @@ async function uploaded(site: ServeDo): Promise<void> {
 		JSON.stringify({ uri: URI, b64: bytesToBase64(druplicon()), mime: 'image/png' })
 	);
 }
+
+describe('the decoder is instantiated on first use', () => {
+	// first in the file on purpose: a later case that transforms would instantiate it for the isolate
+	it('answers its features without instantiating, and they match a live instance', () => {
+		expect(engineLoaded()).toBe(false);
+		const shipped = [...engineFeatures()];
+		expect(engineLoaded(), 'asking what it can encode must not instantiate it').toBe(false);
+		expect(shipped).toEqual([...liveEngineFeatures()]);
+		expect(engineLoaded()).toBe(true);
+	});
+
+	it('instantiates it for a transform', async () => {
+		await runImageTransform(druplicon(), { width: 16, format: 'webp' });
+		expect(engineLoaded()).toBe(true);
+	});
+});
 
 describe('an uploaded image is queued for its styles', () => {
 	it(

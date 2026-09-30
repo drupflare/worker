@@ -12,34 +12,9 @@
  * ones are skipped and why.
  */
 
-/**
- * Drupal's Fiber use has to resolve to something before Drupal loads.
- *
- * A third guarded copy rather than an import: the original is a private const in
- * src/site-php.js, and src/drupal-boot.js and src/min.js already each carry their
- * own copy, so duplication is this repo's existing answer. The class_exists guard
- * makes a second installation a no-op, so whichever fragment runs first wins.
- */
-export const FIBER_SHIM = String.raw`
-if (!class_exists('PhpWasmSyncFiber', false)) { eval('
-class PhpWasmSyncFiber {
-  private $callable;
-  private $result = null;
-  private $started = false;
-  public function __construct(callable $callable) { $this->callable = $callable; }
-  public function start(...$args) { $this->started = true; $this->result = ($this->callable)(...$args); return null; }
-  public function isStarted(): bool { return $this->started; }
-  public function isSuspended(): bool { return false; }
-  public function isRunning(): bool { return false; }
-  public function isTerminated(): bool { return $this->started; }
-  public function resume($value = null) { return null; }
-  public function throw(\\Throwable $e) { throw $e; }
-  public function getReturn() { return $this->result; }
-  public static function getCurrent(): ?object { return null; }
-  public static function suspend($value = null) { return null; }
-}
-'); }
-`;
+import { FIBER_SHIM } from './fiber-shim.js';
+
+export { FIBER_SHIM };
 
 /**
  * The $_SERVER block and the memoized kernel boot, matching renderPage().

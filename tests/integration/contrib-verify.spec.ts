@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { afterAll, describe, expect, it, type TestContext } from 'vitest';
-import { BOOT_KERNEL } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, renderPage } from '../../src/drupal/site-php';
 import { vectorFor } from '../../src/ops/capability-contract';
 import { SHIPPED_CAPABILITIES, tierFor } from '../../src/ops/catalog';
 import { SHIPPING_PACK_CONTRIB } from '../../src/ops/module-table';
@@ -255,6 +255,19 @@ type Case = {
 };
 
 const CASES: readonly Case[] = [
+	{
+		module: 'memcache',
+		observable: 'its backend factory, its lock factory and the memcache client factory',
+		ask: {
+			services: ['cache.backend.memcache', 'memcache.lock.factory', 'memcache.factory']
+		}
+	},
+	{
+		module: 'imageapi_optimize_binaries',
+		observable:
+			'its shell operations service, which finds and runs image binaries through exec()',
+		ask: { services: ['imageapi_optimize_binaries.shell_operations'] }
+	},
 	{
 		module: 'filefield_sources',
 		observable:
@@ -1244,6 +1257,108 @@ describe('contrib modules, enabled against a real site', () => {
 			// shell. That is why the row is `untested` rather than `verified`: the platform carries the
 			// module and the module does not produce the observable it owns
 			expect(html).not.toContain('Veterans Benefits');
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * A migrated site carries memcache in `core.extension` and selects no memcache backend here.
+	 *
+	 * The module is enabled and unused: its services exist, nothing asks them to connect, so pages
+	 * render, and the one visible consequence is its own runtime requirement, which names the missing
+	 * PHP extension. Both directions: the requirement is absent before the enable, so the reading is
+	 * this module's and not the shipped site's.
+	 */
+	it(
+		'memcache: enabled and not selected as a backend, pages render and the status report names the missing extension',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'memcache'))) return;
+			const REQUIREMENT = String.raw`<?php
+if (!defined('CSS_COMPONENT')) { require_once '/drupal/core/includes/common.inc'; }
+\Drupal::service('request_stack')->push(\Symfony\Component\HttpFoundation\Request::create('/', 'GET'));
+\Drupal::moduleHandler()->loadAll();
+require_once '/drupal/core/includes/install.inc';
+$all = \Drupal::service('system.manager')->listRequirements();
+$row = $all['memcache_extension'] ?? null;
+echo json_encode([
+  'present' => $row !== null,
+  'value' => $row === null ? null : (string) $row['value'],
+  'error' => $row !== null && (int) ($row['severity']->value ?? $row['severity']) === 2,
+  'selected' => \Drupal\Core\Site\Settings::get('cache')['default'] ?? null,
+]);`;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				await site.runJson(BOOT_KERNEL);
+				const before = await site.runJson(REQUIREMENT);
+				const enabled = await enable(site, 'memcache');
+				await site.runJson(BOOT_KERNEL);
+				const after = await site.runJson(REQUIREMENT);
+				const page = (await site.runJson(renderPage('/', []))) as Payload;
+				return { before, enabled, after, page };
+			});
+			expect(
+				out.before['present'],
+				'the shipped site already reported a memcache extension row'
+			).toBe(false);
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.enabled['nowEnabled']).toBe(true);
+			// the installer does not refuse on it (`ModuleInstaller` runs no hook_requirements)
+			expect(out.enabled['requirementsPass']).toBe(false);
+			expect(out.after['present']).toBe(true);
+			expect(out.after['value']).toBe('Extensions not available');
+			expect(out.after['error']).toBe(true);
+			expect(
+				String(out.after['selected']),
+				'a memcache backend was selected on this site'
+			).not.toMatch(/memcache/);
+			expect(out.page['status']).toBe(200);
+			expect(String(out.page['html'] ?? '').length).toBeGreaterThan(500);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	/**
+	 * A module that shells out finds no binary and says so, instead of failing the request.
+	 *
+	 * `ShellOperations` searches with `exec('which ...')` and runs `exec($command)`. There is no
+	 * process table, so a program outside the exec router's table is a failed launch: `false` and
+	 * exit 127. The module's own contract turns that into "binary not found", and each launch is
+	 * recorded as a degradation naming the program, which is what the status report shows. Both
+	 * directions: nothing is recorded before the calls, and a served program (`echo`) still runs, so
+	 * the refusal is about the missing binary and not about exec as a whole.
+	 */
+	it(
+		'imageapi_optimize_binaries: finds no image binary, records the launch as degraded, and the page renders',
+		async (ctx) => {
+			if (!(await reachable(ctx, 'imageapi_optimize_binaries'))) return;
+			const PROBE = String.raw`<?php
+$ops = \Drupal::service('imageapi_optimize_binaries.shell_operations');
+$before = array_keys(\Drupal\drupflare\Degradation::all());
+$found = $ops->findExecutablePath('pngquant');
+$ran = $ops->execShellCommand('pngquant', ['--quality=65-80'], ['/tmp/in.png']);
+$served = exec('echo hi', $lines, $code);
+echo json_encode([
+  'found' => $found,
+  'ran' => $ran,
+  'served' => [$served, $code],
+  'before' => $before,
+  'after' => array_keys(\Drupal\drupflare\Degradation::all()),
+]);`;
+			const out = await inObject(freshSite(), async (site) => {
+				await migrate(site);
+				const enabled = await enable(site, 'imageapi_optimize_binaries');
+				await site.runJson(BOOT_KERNEL);
+				const probe = await site.runJson(PROBE);
+				const page = (await site.runJson(renderPage('/', []))) as Payload;
+				return { enabled, probe, page };
+			});
+			expect(out.enabled['ok'], JSON.stringify(out.enabled).slice(0, 300)).toBe(true);
+			expect(out.probe['found']).toBe(false);
+			expect(out.probe['ran']).toBe(false);
+			expect(out.probe['served']).toEqual(['hi', 0]);
+			expect(out.probe['before']).not.toContain('exec pngquant');
+			expect(out.probe['after']).toContain('exec pngquant');
+			expect(out.page['status']).toBe(200);
 		},
 		REQUEST_TIMEOUT
 	);

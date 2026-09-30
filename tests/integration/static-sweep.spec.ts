@@ -991,6 +991,12 @@ describe('the blind half: every static property of every declared class', () => 
 			// protecting.
 			'a cache bin held in the interpreter; entries are cid-keyed and checksum-validated on read'
 		],
+		[
+			'Drupal\\drupflare\\Cache\\CfwMemoryBackend::bytes',
+			// the byte tally per bin that bounds `store` above (4 MiB a bin), so it changes exactly when
+			// `store` does and is refused on the same terms
+			'the size ledger of the in-interpreter cache bin; it moves with the bin it bounds'
+		],
 		['MabeEnum\\Enum::constants', 'enum reflection keyed by class name'],
 		['MabeEnum\\Enum::instances', 'enum reflection keyed by class name'],
 		['MabeEnum\\Enum::names', 'enum reflection keyed by class name'],

@@ -130,7 +130,10 @@
  *
  *   - On paid, this runs today, and its value is the never-half-applies contract
  *     rather than the CPU split.
- *   - On free, every unit in this design fits 10 ms **provided the object is already
+ *   - **The site no longer passes `phpReady`, 2026-09-29**, because the 10 ms cap does not
+ *     fail a Durable Object invocation (a 1,882 ms one succeeded on free), so a cold unit
+ *     boots. The refusal below stays for a caller that passes it. It was written when
+ *     every unit had to fit 10 ms **provided the object is already
  *     warm**, which is what the keep-warm alarm and (b) exist for. A chain that
  *     starts cold cannot boot, so `updbStep()` refuses on a cold interpreter with
  *     `reason: "cold-interpreter"` rather than burning an invocation that will be

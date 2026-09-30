@@ -36,6 +36,7 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/advisories.ts': 'cms',
 	'src/ops/aggregates.ts': 'host',
 	'src/ops/ai.ts': 'host',
+	'src/ops/attempt.ts': 'host',
 	// Drupal's own cookie names are not sessions
 	'src/ops/auth-budget.ts': 'mixed',
 	'src/ops/body-limit.ts': 'host',
@@ -58,8 +59,15 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/deferred-post.ts': 'mixed',
 	'src/ops/degrade.ts': 'host',
 	'src/ops/dormancy.ts': 'cms',
+	// names PHP reads from the environment and the $config overlay
+	'src/ops/deployment-env.ts': 'mixed',
+	// one deployment is one site: the primary and the sites it lists
+	'src/ops/deployment-site.ts': 'host',
 	'src/ops/driver-digest.ts': 'host',
 	'src/ops/edge-plan.ts': 'host',
+	// header and redirect rules the front worker applies
+	'src/ops/edge-rules.ts': 'host',
+	'src/ops/error-probe.ts': 'host',
 	'src/ops/fanout.ts': 'host',
 	'src/ops/fleet.ts': 'host',
 	// cachetags is Drupal's table
@@ -74,6 +82,8 @@ export const MODULE_SIDES: Readonly<Record<string, Side>> = {
 	'src/ops/image-runtime.ts': 'host',
 	'src/ops/image-transform.ts': 'host',
 	'src/ops/inflate-raw.ts': 'host',
+	'src/ops/json-reply.ts': 'host',
+	'src/ops/lock-map.ts': 'mixed',
 	'src/ops/log-level.ts': 'host',
 	'src/ops/mail-onboard.ts': 'host',
 	// the CfwMail bridge and Drupal's recipient format

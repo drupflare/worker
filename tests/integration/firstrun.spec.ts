@@ -1,7 +1,10 @@
+import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { firstRunConfig } from '../../src/drupal/site-php';
 import { MANDATORY_STATE } from '../../src/ops/replica-admission';
 import { OWNER_TOKEN_KEY } from '../../src/ops/site-secrets';
-import { freshSite, inObject } from '../helpers/serve-do';
+import worker from '../../src/site';
+import { freshSite, inObject, markProvisioned, provisionedSite } from '../helpers/serve-do';
 
 /**
  * First-run configuration, and specifically the two things that made the existing route
@@ -81,7 +84,7 @@ describe('the body must be JSON, because everything else is a secret in the wron
 
 	it('accepts an empty JSON object rather than treating it as malformed', async () => {
 		// an empty object is a legitimate no-op request; only a non-JSON body is an error
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{}' });
 		expect(res.status).not.toBe(400);
 	});
@@ -177,10 +180,54 @@ describe('the trust-on-first-use window closes once the site is provisioned', ()
 	it('still lets an UNPROVISIONED site be claimed with no credential at all', async () => {
 		// the window itself: this is the property that makes one-click provisioning work, and the
 		// three cases above are what stop it staying open
-		const stub = freshSite();
+		const stub = await provisionedSite();
 		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{}' });
 		expect(res.status).not.toBe(401);
 		expect(res.status).not.toBe(409);
+	});
+});
+
+/**
+ * A claim waits for the first-boot replay.
+ *
+ * Measured on `wrangler dev`: a claim POSTed while the replay stood at chunk 44 of 74 answered
+ * `ok: true` without `uid1.pass` in `applied`, and the replay then failed on a `key_value` row the
+ * claim had already written, so the site answered 503 for good. The same claim after the replay
+ * set the password and the site served.
+ */
+describe('a claim waits for the database replay', () => {
+	it('refuses a site that has never migrated, and asks it to start', async () => {
+		const stub = freshSite();
+		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{"siteName":"x"}' });
+		expect(res.status).toBe(503);
+		expect(res.headers.get('retry-after')).toBe('2');
+		expect(res.headers.get('x-cfw-migrate')).toBe('starting');
+		expect(((await res.json()) as { error: string }).error).toBe('migrating');
+		const state = await inObject(stub, (site) => ({
+			claimed: (site as unknown as { metaGet: (k: string) => unknown }).metaGet(
+				'first_run_at'
+			),
+			asked: (site as unknown as { provisionRequested: () => boolean }).provisionRequested()
+		}));
+		expect(state).toEqual({ claimed: null, asked: true });
+	});
+
+	it('refuses a site part-way through its replay, naming the chunk', async () => {
+		const stub = freshSite();
+		await inObject(stub, (site) => {
+			markProvisioned(site);
+			site.sql.exec(`UPDATE cfw_migrate SET state = 'running', chunk = 44, chunks = 74`);
+		});
+		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{"siteName":"x"}' });
+		expect(res.status).toBe(503);
+		expect(res.headers.get('x-cfw-migrate')).toBe('44/74');
+		expect(res.headers.get('x-cfw-migrate-state')).toBe('running');
+	});
+
+	it('CONTROL: a provisioned site is past the guard', async () => {
+		const stub = await provisionedSite();
+		const res = await stub.fetch(URL_BASE, { method: 'POST', body: '{"siteName":"x"}' });
+		expect(res.status).not.toBe(503);
 	});
 });
 
@@ -286,4 +333,154 @@ describe('a claimed site holds the state a replica cannot produce', () => {
 		await stub.fetch('https://do.local/__migrate?all=1&prefill=0');
 		expect(await stateNames(stub)).not.toContain('system.private_key');
 	}, 900_000);
+});
+
+/**
+ * A migrated site already has an administrator and a site identity, and a claim must not touch
+ * either: the normal claim rewrites uid 1's name, mail, password and birthday, which on a migrated
+ * site is the real administrator. The normal claim on the same shape of site is the control.
+ */
+describe('a migrated claim mints the owner token and changes no account', () => {
+	const post = (stub: DurableObjectStub, body: unknown, query = '') =>
+		stub.fetch(`${URL_BASE}${query}`, {
+			method: 'POST',
+			body: JSON.stringify(body),
+			headers: { 'content-type': 'application/json' }
+		});
+
+	/** a site shaped like a migrated one: uid 1 with a known hash, and a distinct site name */
+	async function migratedShape(): Promise<DurableObjectStub> {
+		const stub = freshSite();
+		await stub.fetch('https://do.local/__migrate?all=1&prefill=0');
+		const set = (await inObject(stub, (site) =>
+			site.runJson(
+				firstRunConfig({
+					siteName: 'Legacy Site',
+					siteMail: 'legacy@example.org',
+					adminName: 'legacy_admin',
+					adminMail: 'legacy_admin@example.org',
+					adminPass: 'legacy-password',
+					claimedAt: 1_500_000_000
+				})
+			)
+		)) as { ok: boolean };
+		expect(set.ok, 'building the migrated shape has to succeed').toBe(true);
+		return stub;
+	}
+
+	const account = (stub: DurableObjectStub) =>
+		inObject(stub, (site) => ({
+			user: site.sql
+				.exec('SELECT name, mail, pass, created FROM users_field_data WHERE uid = 1')
+				.toArray(),
+			site: site.sql
+				.exec("SELECT hex(data) AS data FROM config WHERE name = 'system.site'")
+				.toArray()
+		}));
+
+	it('keeps uid 1 and system.site byte-identical and still returns a token', async () => {
+		const stub = await migratedShape();
+		const before = await account(stub);
+		expect(before.user).toHaveLength(1);
+		const res = await post(stub, { migrated: true });
+		const body = (await res.json()) as { ok: boolean; ownerToken?: string; adminPass?: string };
+		expect(body.ok).toBe(true);
+		expect(body.ownerToken).toMatch(/\S{20,}/);
+		expect(
+			body.adminPass,
+			'no password is minted for an account that keeps its own'
+		).toBeUndefined();
+		expect(await account(stub)).toEqual(before);
+		const state = await inObject(stub, (site) => site.metaGet('first_run_at'));
+		expect(state, 'the site is marked claimed').not.toBeNull();
+	}, 900_000);
+
+	it('the normal claim on the same shape of site does change them', async () => {
+		const stub = await migratedShape();
+		const before = await account(stub);
+		const res = await post(stub, {
+			siteName: 'Renamed',
+			adminName: 'renamed_admin',
+			adminMail: 'renamed@example.org',
+			adminPass: 'a-new-password'
+		});
+		expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+		const after = await account(stub);
+		const [was] = before.user as Record<string, unknown>[];
+		const [now] = after.user as Record<string, unknown>[];
+		for (const field of ['name', 'mail', 'pass', 'created']) {
+			expect(now![field], field).not.toEqual(was![field]);
+		}
+		expect(after.site).not.toEqual(before.site);
+	}, 900_000);
+
+	it('refuses an already claimed site, and refuses migrated with an adminPass', async () => {
+		const stub = freshSite();
+		const both = await post(stub, { migrated: true, adminPass: 'x' });
+		expect(both.status).toBe(400);
+		await inObject(stub, (site) => site.metaSet('first_run_at', Date.now()));
+		const again = await post(stub, { migrated: true });
+		expect(again.status).toBe(409);
+		const forced = await post(stub, { migrated: true }, '?force=1');
+		expect(forced.status).toBe(409);
+	});
+});
+
+/**
+ * The front worker sends a claim as three object invocations.
+ *
+ * The CPU limit is per invocation and a reset rolls the whole invocation back, so a claim that
+ * installed modules and then hashed a password on a ~150-module site (Thunder) was reset at 32 s of
+ * CPU on every attempt and reinstalled the same two modules each time.
+ */
+describe('a claim reaches the object as three invocations', () => {
+	function recordingEnv(): { seen: string[]; env: typeof env } {
+		const seen: string[] = [];
+		const SITE = {
+			idFromName: (name: string) => name,
+			get: () => ({
+				fetch: async (input: Request) => {
+					const u = new URL(input.url);
+					const phase = u.searchParams.get('phase');
+					seen.push(u.pathname + (phase ? `?phase=${phase}` : ''));
+					return Response.json({ ok: true });
+				}
+			})
+		};
+		return { seen, env: { ...env, SITE } as unknown as typeof env };
+	}
+
+	it('warms and installs in their own invocations before it forwards the claim', async () => {
+		const { seen, env: recording } = recordingEnv();
+		await worker.fetch(
+			new Request('https://cfw.local/firstrun?site=x', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: '{}'
+			}),
+			recording
+		);
+		expect(seen.filter((p) => p.startsWith('/__firstrun'))).toEqual([
+			'/__firstrun?phase=warm',
+			'/__firstrun?phase=consistency',
+			'/__firstrun'
+		]);
+	});
+
+	it('CONTROL: a force=1 reconfigure and a bare GET are forwarded alone', async () => {
+		for (const [path, method] of [
+			['/firstrun?site=x&force=1', 'POST'],
+			['/firstrun?site=x', 'GET']
+		] as const) {
+			const { seen, env: recording } = recordingEnv();
+			await worker.fetch(
+				new Request(`https://cfw.local${path}`, {
+					method,
+					...(method === 'POST' ? { body: '{}' } : {})
+				}),
+				recording
+			);
+			expect(seen.filter((p) => p.startsWith('/__firstrun'))).toEqual(['/__firstrun']);
+		}
+	});
 });

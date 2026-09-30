@@ -51,6 +51,162 @@ describe('first-run pack consistency', () => {
 	);
 
 	it(
+		'installs the platform module on a site that never had it, the shape a migrated database has',
+		async () => {
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				await site.runJson(
+					drupalOp(`\\Drupal::configFactory()->getEditable('core.extension')->clear('module.drupflare')->save();
+						$out['ok'] = true;`)
+				);
+				const res = await site.fetch(
+					new Request('https://do.local/__firstrun', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							adminPass: 'cfw-Pack-6614-pass',
+							siteName: 'Migrated'
+						})
+					})
+				);
+				expect(res.status, await res.clone().text()).toBe(200);
+				const body = (await res.json()) as Record<string, unknown>;
+				const probe = (await site.runJson(
+					drupalOp(
+						`$out['on'] = array_key_exists('drupflare', \\Drupal::config('core.extension')->get('module') ?: []);`
+					)
+				)) as Record<string, unknown>;
+				return {
+					fixed: (body['packConsistency'] ?? []) as string[],
+					installs: body['packConsistencyInstalls'],
+					on: probe['on']
+				};
+			});
+			expect(out.fixed).toContain('module:drupflare');
+			// both modules in ONE install(): each call is a container and router rebuild, and two of
+			// them took a migrated farmOS claim to 25 s of CPU against the 30 s limit
+			expect(out.fixed).toContain('module:cfw_do_sqlite');
+			expect(out.installs).toBe(1);
+			expect(out.on).toBe(true);
+		},
+		TIMEOUT
+	);
+
+	it(
+		'warms, then installs, each in its own invocation before the claim, so the claim installs nothing',
+		async () => {
+			// the CPU limit is per invocation and a reset rolls the whole one back, so a claim that
+			// installed on a ~150-module site (Thunder) was reset at 32 s and reinstalled every retry
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				// the shape a migrated database has: a module set the pack never baked, so the split runs
+				await site.runJson(
+					drupalOp(`\\Drupal::configFactory()->getEditable('core.extension')->clear('module.drupflare')->save();
+						$out['ok'] = true;`)
+				);
+				const warmed = await site.fetch(
+					new Request('https://do.local/__firstrun?phase=warm', {
+						method: 'POST',
+						body: '{}'
+					})
+				);
+				const warmBody = { status: warmed.status, ...((await warmed.json()) as object) };
+				const claimedAfterWarm = site.metaGet('first_run_at');
+				const prepared = await site.fetch(
+					new Request('https://do.local/__firstrun?phase=consistency', {
+						method: 'POST',
+						body: '{}'
+					})
+				);
+				const prepareBody = (await prepared.json()) as Record<string, unknown>;
+				const claimedAfterPrepare = site.metaGet('first_run_at');
+				// a claim reset for CPU rolls back only its own invocation, so its retry prepares
+				// again over a prepared site; that has to be a clean no-op, never a 409
+				const again = await site.fetch(
+					new Request('https://do.local/__firstrun?phase=consistency', {
+						method: 'POST',
+						body: '{}'
+					})
+				);
+				const againBody = { status: again.status, ...((await again.json()) as object) };
+				const claim = await site.fetch(
+					new Request('https://do.local/__firstrun', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ adminPass: 'cfw-Pack-6615-pass', siteName: 'Split' })
+					})
+				);
+				return {
+					status: prepared.status,
+					prepareBody,
+					claimedAfterPrepare,
+					warmBody,
+					claimedAfterWarm,
+					againBody,
+					claim: (await claim.json()) as Record<string, unknown>
+				};
+			});
+			const warm = out.warmBody as Record<string, unknown>;
+			expect(warm['status'], JSON.stringify(warm).slice(0, 600)).toBe(200);
+			expect(warm['warmed']).toEqual(['entity', 'typed', 'plugins']);
+			expect(warm['packConsistencyInstalls']).toBeUndefined();
+			expect(out.claimedAfterWarm).toBeNull();
+			expect(out.status, JSON.stringify(out.prepareBody)).toBe(200);
+			expect(out.prepareBody['packConsistencyInstalls']).toBe(1);
+			expect(out.prepareBody['packConsistency']).toContain('module:cfw_do_sqlite');
+			expect(out.prepareBody['packConsistency']).toContain('module:drupflare');
+			// preparing is not claiming: the trust-on-first-use window stays open
+			expect(out.claimedAfterPrepare).toBeNull();
+			const again = out.againBody as Record<string, unknown>;
+			expect(again['status'], JSON.stringify(again).slice(0, 600)).toBe(200);
+			expect(again['packConsistencyInstalls']).toBeUndefined();
+			expect(out.claim['ok'], JSON.stringify(out.claim).slice(0, 600)).toBe(true);
+			expect(out.claim['packConsistencyInstalls']).toBeUndefined();
+			expect(out.claim['packConsistency'] as string[]).not.toContain('module:cfw_do_sqlite');
+		},
+		TIMEOUT
+	);
+
+	it(
+		'skips both phases on a site still on the pack module set, whose claim fits one invocation',
+		async () => {
+			// measured on three stock deploys: the claim took 5.5-8.4 s of CPU as one invocation and
+			// 25 s as three, because each phase boots and the warm fills every plugin cache
+			const out = await inObject(freshSite(), async (site: ServeDo) => {
+				await site.fetch(new Request('https://do.local/__migrate?all=1&prefill=0'));
+				const phases: Record<string, unknown>[] = [];
+				for (const phase of ['warm', 'consistency']) {
+					const res = await site.fetch(
+						new Request(`https://do.local/__firstrun?phase=${phase}`, {
+							method: 'POST',
+							body: '{}'
+						})
+					);
+					phases.push({ status: res.status, ...((await res.json()) as object) });
+				}
+				const claim = await site.fetch(
+					new Request('https://do.local/__firstrun', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ adminPass: 'cfw-Pack-6617-pass', siteName: 'Pack' })
+					})
+				);
+				return { phases, claim: (await claim.json()) as Record<string, unknown> };
+			});
+			for (const p of out.phases) {
+				expect(p['status'], JSON.stringify(p).slice(0, 400)).toBe(200);
+				expect(p['skipped']).toBeTruthy();
+				expect(p['warmed']).toBeUndefined();
+				expect(p['packConsistencyInstalls']).toBeUndefined();
+			}
+			// the claim still makes the install the phases left to it
+			expect(out.claim['ok'], JSON.stringify(out.claim).slice(0, 600)).toBe(true);
+			expect(out.claim['packConsistency'] as string[]).toContain('module:cfw_do_sqlite');
+		},
+		TIMEOUT
+	);
+
+	it(
 		'leaves the driver module enabled in core.extension, which is what the status page reads',
 		async () => {
 			await firstrun();

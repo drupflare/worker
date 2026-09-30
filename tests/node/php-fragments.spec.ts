@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { cronHookList, runCronHook, runCronQueue } from '../../src/drupal/cron-php';
 import { CURL_FIX } from '../../src/drupal/curl-fix';
+import { FIBER_SHIM } from '../../src/drupal/fiber-shim';
 import { ICONV_FIX } from '../../src/drupal/iconv-fix';
 import { MB_ASCII } from '../../src/drupal/mb-fix';
 import { OPENSSL_FIX } from '../../src/drupal/openssl-fix';
@@ -15,6 +16,7 @@ import {
 	bootPhaseFragment,
 	BOUNDARY_STATE,
 	CAPABILITY_CHECK,
+	claimWarmRun,
 	createUser,
 	DRIVER_LIVE_SUITE,
 	drupalRequest,
@@ -26,6 +28,7 @@ import {
 	MB_CHECK,
 	MIGRATE_DB,
 	OPS_REGISTRY,
+	packConsistencyRun,
 	PROBE_RUNTIME,
 	renderPage,
 	saveNode,
@@ -33,6 +36,7 @@ import {
 	writeWorkload
 } from '../../src/drupal/site-php';
 import { SODIUM_FIX } from '../../src/drupal/sodium-fix';
+import { STANDIN_FIX } from '../../src/drupal/standin-fix';
 import { tcpLive } from '../../src/drupal/tcp-php';
 import { UNICODE_TABLES } from '../../src/drupal/unicode-tables';
 import { UPDB_VERIFY, updbPlan, updbUnit } from '../../src/drupal/updb-php';
@@ -101,6 +105,9 @@ const FRAGMENTS: Array<[string, string]> = [
 	['invalidateTags', invalidateTags(['rendered', 'node:1'])],
 	['exportDatabase', exportDatabase(5)],
 	['firstRunConfig', firstRunConfig({ siteName: 'S', adminName: 'a', timezone: 'UTC' })],
+	['firstRunConfig migrated', firstRunConfig({ migrated: true })],
+	['packConsistencyRun', packConsistencyRun()],
+	['claimWarmRun', claimWarmRun()],
 	['saveNode', saveNode({ type: 'page', title: 'T', body: 'B' })],
 	['updbPlan', updbPlan(true)],
 	[
@@ -159,6 +166,7 @@ const FRAGMENTS: Array<[string, string]> = [
 	// two of them in one docblock, which truncated the literal and left valid JavaScript
 	// behind. `xmlwriter-parity.spec.ts` proves it matches libxml; this proves it parses
 	['XMLWRITER_FIX', `<?php ${XMLWRITER_FIX}`],
+	['STANDIN_FIX', `<?php ${STANDIN_FIX}`],
 	// the half of MB_FIX that is NOT inside its eval(), and the only half php -l can
 	// read. Both bodies carry regexes with backslash escapes, which is exactly the
 	// shape that survives a botched unescaping as valid JS and broken PHP
@@ -325,7 +333,8 @@ describe('no PHP fragment derives a deadline from a clock that reads 0', () => {
 		/microtime\s*\([^)]*\)\s*[*/]?\s*[\d.]*\s*\+/,
 		/\+\s*[\d.]+\s*[*/]?\s*[\d.]*\s*;?\s*\/\/\s*deadline/i,
 		/while\s*\([^)]*microtime/,
-		/usleep\s*\(/,
+		// a call, not the degraded declaration standin-fix.ts puts under the same name
+		/(?<!function\s+)usleep\s*\(/,
 		/set_time_limit\s*\(/
 	];
 
@@ -366,5 +375,24 @@ describe('no PHP fragment derives a deadline from a clock that reads 0', () => {
 		// and the reporting shapes every fragment uses must stay silent
 		expect(fire('$clock = function () { return microtime(true) * 1000; };')).toBe(false);
 		expect(fire("$out['renderMs'] = round($clock() - $t0, 2);")).toBe(false);
+	});
+});
+
+describe('the Fiber stand-in', () => {
+	// whichever fragment runs first declares PhpWasmSyncFiber, so a fragment with its own copy left
+	// the class without the static that Canvas's rewritten driver reads (varbase, 2026-09-29)
+	it('is one definition, carrying the handler, in every fragment that declares it', () => {
+		expect(FIBER_SHIM).toContain('public static $handler = null;');
+		for (const fragment of [
+			renderPage('/', []),
+			runCronHook('system'),
+			updbPlan(),
+			updbUnit()
+		]) {
+			expect(fragment).toContain(FIBER_SHIM);
+			expect(fragment.split('class PhpWasmSyncFiber {').length - 1).toBe(
+				fragment.split(FIBER_SHIM).length - 1
+			);
+		}
 	});
 });

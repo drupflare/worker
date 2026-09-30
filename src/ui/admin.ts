@@ -424,6 +424,10 @@ export const DRUSH_ALIASES: Readonly<Record<string, string>> = {
 	ws: 'watchdog-show',
 	'queue:list': 'queue-list',
 	'queue-list': 'queue-list',
+	'queue-drain': 'queue-drain',
+	'advancedqueue:queue:process': 'queue-drain',
+	aqp: 'queue-drain',
+	'config-write': 'config-write',
 	'cache:clear-bin': 'cache-clear',
 	'cache-clear': 'cache-clear'
 };

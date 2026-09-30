@@ -34,6 +34,16 @@ import { INITIAL_PAGES, WASM_PAGE as PAGE, PRISTINE_PAGES } from './initial-page
  * in the middle of the region that behaves and still triples the headroom. That margin is the whole
  * point -- at 96 an object five renders old has 2.17 MiB left, and anything that then asks for a
  * second interpreter resets it.
+ *
+ * ## 64 since 2026-09-30, measured on a deployed farmOS object
+ *
+ * That table was read at a growth step of 0.05-0.13, where the rounding decided the figure. At 0.01
+ * the start matters only where demand stays below it, which is a FRESH isolate: after a boot and an
+ * anonymous render linear memory read 67-71 MB from a 64 MiB start, so 80 held ~13 MB nothing
+ * touched. A memory is charged at its full size touched or not (an untouched 80 MiB one read +84 MB),
+ * and read against each isolate's own no-PHP baseline a boot plus a render cost 118.4 and 119.9 MB
+ * at 64 against 135.5 at 80 (163.8 on a placement whose baseline was 36 MB), and `/php` alone 112.3
+ * against 125.2. Boot CPU did not move. A warm object grows past either start, so it gains nothing.
  */
 export { INITIAL_PAGES, PRISTINE_PAGES } from './initial-pages.js';
 
@@ -42,44 +52,143 @@ export const PRISTINE_WASM = '.interp/php8.5.wasm';
 /** the binary the shipping seam imports; emitted after the pristine one is sha256-verified */
 export const TUNED_WASM = '.interp/php8.5.tuned.wasm';
 
-/** the min-pages field of the module's memory section, and where in the file it sits */
+/** one wasm section: its id, where its body starts and ends in the file */
+type Section = { id: number; start: number; end: number };
+
+/** reads an unsigned LEB128 at `at`, answering the value and the offset after it */
+function readLeb(bytes: Uint8Array, at: number): [number, number] {
+	let r = 0;
+	let shift = 0;
+	let by: number;
+	do {
+		by = bytes[at++] as number;
+		r += (by & 0x7f) * 2 ** shift;
+		shift += 7;
+	} while (by & 0x80);
+	return [r, at];
+}
+
+function encodeLeb(v: number): number[] {
+	const out: number[] = [];
+	do {
+		let by = v & 0x7f;
+		v = Math.floor(v / 128);
+		if (v) by |= 0x80;
+		out.push(by);
+	} while (v);
+	return out;
+}
+
+function sectionsOf(bytes: Uint8Array): Section[] {
+	const out: Section[] = [];
+	let p = 8;
+	while (p < bytes.length) {
+		const id = bytes[p] as number;
+		const [size, start] = readLeb(bytes, p + 1);
+		out.push({ id, start, end: start + size });
+		p = start + size;
+	}
+	return out;
+}
+
+/** the limits at `at`: flags, min, optional max, and where the min field sits */
+function readLimits(bytes: Uint8Array, at: number) {
+	const flags = bytes[at] as number;
+	const minAt = at + 1;
+	const [minPages, afterMin] = readLeb(bytes, minAt);
+	const [maxPages, end] = flags & 1 ? readLeb(bytes, afterMin) : [null, afterMin];
+	return { minPages, maxPages, minAt, minLen: afterMin - minAt, end };
+}
+
+/** where the one memory is declared: the memory section, or an import once it has been moved */
+function findMemory(bytes: Uint8Array): ReturnType<typeof readLimits> & { imported: boolean } {
+	const secs = sectionsOf(bytes);
+	const mem = secs.find((s) => s.id === 5);
+	if (mem) {
+		const [count, at] = readLeb(bytes, mem.start);
+		if (count !== 1) throw new Error(`expected one memory, found ${count}`);
+		return { ...readLimits(bytes, at), imported: false };
+	}
+	const imp = secs.find((s) => s.id === 2);
+	if (imp) {
+		let [count, p] = readLeb(bytes, imp.start);
+		for (; count > 0; count--) {
+			for (let n = 0; n < 2; n++) {
+				const [len, at] = readLeb(bytes, p);
+				p = at + len;
+			}
+			const kind = bytes[p++] as number;
+			if (kind === 2) return { ...readLimits(bytes, p), imported: true };
+			if (kind === 0) p = readLeb(bytes, p)[1];
+			else if (kind === 1) p = readLimits(bytes, p + 1).end;
+			else if (kind === 3) p += 2;
+			else if (kind === 4) p = readLeb(bytes, p + 1)[1];
+			else throw new Error(`unknown import kind ${kind}`);
+		}
+	}
+	throw new Error('no memory section in this module');
+}
+
+/** the min-pages field of the module's memory, and where in the file it sits */
 export function readMemorySection(bytes: Uint8Array): {
 	minPages: number;
 	maxPages: number | null;
 	minAt: number;
 	minLen: number;
 } {
-	let p = 8;
-	const leb = () => {
-		let r = 0;
-		let shift = 0;
-		let by: number;
-		do {
-			by = bytes[p++] as number;
-			r |= (by & 0x7f) << shift;
-			shift += 7;
-		} while (by & 0x80);
-		return r >>> 0;
+	const { minPages, maxPages, minAt, minLen } = findMemory(bytes);
+	return { minPages, maxPages, minAt, minLen };
+}
+
+/** whether the module imports its memory as `env.memory` rather than defining it */
+export function importsMemory(bytes: Uint8Array): boolean {
+	return findMemory(bytes).imported;
+}
+
+/**
+ * Moves the module's memory from its memory section to an `env.memory` import, limits unchanged.
+ *
+ * So the host can hand a new instance the memory of one it dropped: a defined memory is created by
+ * `instantiate()` and cannot be shared, and a dropped one is freed only when V8 collects it, which
+ * on the platform is often after the next boot has already allocated beside it. Nothing else in
+ * the module moves: memory indices stay 0, the `memory` export re-exports the import, and active
+ * data segments are written into whatever memory is passed.
+ */
+export function withImportedMemory(bytes: Uint8Array): Uint8Array {
+	const secs = sectionsOf(bytes);
+	const mem = secs.find((s) => s.id === 5);
+	const imp = secs.find((s) => s.id === 2);
+	if (!mem) throw new Error('the module already has no memory section');
+	if (!imp) throw new Error('the module has no import section to extend');
+	const [count, at] = readLeb(bytes, mem.start);
+	if (count !== 1) throw new Error(`expected one memory, found ${count}`);
+	const limits = bytes.subarray(at, mem.end);
+	const name = (s: string) => {
+		const b = new TextEncoder().encode(s);
+		return [...encodeLeb(b.length), ...b];
 	};
-	while (p < bytes.length) {
-		const id = bytes[p++] as number;
-		const size = leb();
-		const end = p + size;
-		if (id === 5) {
-			const count = leb();
-			if (count !== 1) throw new Error(`expected one memory, found ${count}`);
-			const flags = bytes[p++] as number;
-			const minAt = p;
-			let minLen = 0;
-			while ((bytes[minAt + minLen] as number) & 0x80) minLen++;
-			minLen++;
-			const minPages = leb();
-			const maxPages = flags & 1 ? leb() : null;
-			return { minPages, maxPages, minAt, minLen };
-		}
-		p = end;
+	const [imports, rest] = readLeb(bytes, imp.start);
+	const body = [
+		...encodeLeb(imports + 1),
+		...bytes.subarray(rest, imp.end),
+		...name('env'),
+		...name('memory'),
+		0x02,
+		...limits
+	];
+	const parts: Uint8Array[] = [bytes.subarray(0, 8)];
+	for (const s of secs) {
+		if (s.id === 5) continue;
+		const content = s.id === 2 ? Uint8Array.from(body) : bytes.subarray(s.start, s.end);
+		parts.push(Uint8Array.from([s.id, ...encodeLeb(content.length)]), content);
 	}
-	throw new Error('no memory section in this module');
+	const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+	let o = 0;
+	for (const p of parts) {
+		out.set(p, o);
+		o += p.length;
+	}
+	return out;
 }
 
 /**
@@ -108,7 +217,8 @@ export function withInitialPages(bytes: Uint8Array, pages: number): Uint8Array {
 }
 
 /**
- * Emits the tuned binary beside the pristine one.
+ * Emits the tuned binary beside the pristine one: the initial pages above, and the memory
+ * imported rather than defined ({@link withImportedMemory}).
  *
  * BESIDE rather than over, for the reason `emitTunedGlue()` gives: `restore-artifacts.ts` verifies
  * the download against `cdn-manifest.json`, and a hash that covers a file this repo edits guarantees
@@ -126,7 +236,7 @@ export function emitTunedWasm(root = process.cwd(), pages = INITIAL_PAGES): stri
 		);
 	}
 	const out = resolve(root, TUNED_WASM);
-	writeFileSync(out, withInitialPages(pristine, pages));
+	writeFileSync(out, withImportedMemory(withInitialPages(pristine, pages)));
 	return out;
 }
 

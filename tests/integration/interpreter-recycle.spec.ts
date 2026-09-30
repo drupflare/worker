@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
 import { renderPage } from '../../src/drupal/site-php';
 import { writeCursor, type StoredCursor } from '../../src/ops/cron';
@@ -62,6 +63,10 @@ const ISOLATE_LIMIT = 128 * MIB;
  */
 const BOOTED_IDLE = INITIAL_BYTES;
 
+/** the first rung of the growth ladder above a size, which is what one growth event lands on */
+const rungAbove = (bytes: number): number =>
+	Math.ceil((bytes * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
+
 const REQUEST_TIMEOUT = 900_000;
 const AUTH_PASS = 'cfw-Recycle-Pass-4412';
 
@@ -100,6 +105,10 @@ async function provision(site: ServeDo): Promise<string> {
 		})
 	)) as Record<string, unknown>;
 	const lines = Array.isArray(login['setCookie']) ? (login['setCookie'] as string[]) : [];
+	// what provisioning leaves is a drop: the claim and the login above are install residue, and the
+	// serving incarnation starts from a fresh boot. Dropped here rather than relied on, because the
+	// login render itself grows a fresh interpreter by several rungs of the growth ladder
+	site.php = null;
 	return (lines.find((l) => /^S?SESS/.test(l))?.split(';')[0] ?? '').trim();
 }
 
@@ -136,7 +145,8 @@ describe('a cold object is safe on its FIRST authenticated request', () => {
 				`[first-render fresh] ${(out.before / MIB).toFixed(2)} -> ${(out.after / MIB).toFixed(2)} MiB`
 			);
 			expect(out.ok, 'the first authenticated render did not answer 200').toBe(true);
-			expect(out.before).toBe(BOOTED_IDLE);
+			// nothing is resident: what a claim leaves behind is a drop, not an interpreter
+			expect(out.before).toBe(0);
 			expect(out.after).toBeLessThan(ISOLATE_LIMIT);
 			expect(ISOLATE_LIMIT - out.after).toBeGreaterThan(4 * MIB);
 		},
@@ -184,6 +194,41 @@ describe('a cold object is safe on its FIRST authenticated request', () => {
  * which lifts both refusals the chain would otherwise make: the cold one and the over-budget one.
  * A real claimed site and a real session, because an unclaimed one answers its claim page first.
  */
+/**
+ * A host call must not leave its argument behind.
+ *
+ * vrzno asks `zend_is_callable_ex()` about every value it hands to JavaScript and never frees the
+ * error string that call writes, which quotes the value. Every SQL statement crosses as a JSON
+ * string, so each one stranded a copy, and with no request shutdown here nothing reclaimed it: an
+ * authenticated admin render grew linear memory ~0.5 MiB until the recycle dropped the interpreter
+ * every couple of dozen requests. `plugCallableLeak()` rewrites the glue so a string is never asked.
+ */
+describe('a warm interpreter under repeated host calls', () => {
+	it(
+		'keeps linear memory flat across 20,000 host calls carrying a 1 KiB argument',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				await site.fetch(new Request('https://do.local/__php'));
+				const call = String.raw`<?php
+$host = vrzno_env('cfwSqlExec');
+$arg = json_encode(['sql' => 'SELECT 1 WHERE 1 <> ' . "'" . str_repeat('x', 1000) . "'", 'params' => []]);
+$ok = 0;
+for ($i = 0; $i < 20000; $i++) { $ok += strlen($host($arg)) > 0 ? 1 : 0; }
+echo json_encode(['ok' => $ok]);
+`;
+				const before = await heap(site);
+				await site.runJson(call);
+				const reply = (await site.runJson(call)) as { ok?: number };
+				return { before, after: await heap(site), ok: reply.ok ?? 0 };
+			});
+			expect(out.ok).toBe(20_000);
+			// unplugged, each call strands its argument: the two batches read 80 -> 213 MiB
+			expect(out.after - out.before).toBeLessThan(4 * MIB);
+		},
+		REQUEST_TIMEOUT
+	);
+});
+
 describe('an authenticated request is never answered warming', () => {
 	it(
 		'renders inline over budget, where an anonymous request is diverted',
@@ -249,7 +294,7 @@ describe('the interpreter recycle', () => {
 			// A claim rewrites config and rebuilds the container, and the 12.5 MiB it used to leave
 			// resident is what put the first authenticated render past the limit inside ONE
 			// invocation -- where no between-invocation recycle can reach it
-			expect(ladder[0]?.[1]).toBe(BOOTED_IDLE);
+			expect(ladder[0]?.[1]).toBeLessThanOrEqual(rungAbove(BOOTED_IDLE));
 
 			const peak = Math.max(...ladder.map(([, v]) => v));
 			expect(peak).toBeLessThan(ISOLATE_LIMIT);
@@ -403,6 +448,8 @@ describe('the interpreter recycle', () => {
 				await provision(site);
 				await site.ensurePhp();
 				const linear = await heap(site);
+				// as if the heap had grown since its boot: one that has not cannot shrink by a drop
+				(site as unknown as { bootLinear: number }).bootLinear = 0;
 				site.env = { ...site.env, ISOLATE_ABOVE_BYTES: String(1024 * MIB) };
 				const kept = site.recycleIfOversized('alarm');
 				// linear memory stays under the default 112 MiB; only the isolate threshold moves
@@ -476,6 +523,75 @@ describe('the interpreter recycle', () => {
 			// guard stops it after the first
 			expect(out.queuedBefore).toBe(4);
 			expect(out.queuedAfter).toBeGreaterThan(0);
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'holds background PHP off a young interpreter and runs it once the interpreter has settled',
+		async () => {
+			const paths = ['/', '/user/password', '/user/register'];
+			const out = await inObject(freshSite(), async (site) => {
+				await provision(site);
+				site.env = { ...site.env, FILL_SETTLE_MS: '60000' };
+				const young = async () => {
+					// a visitor's boot, which is the young isolate every deployed reset was on
+					await site.runJson(renderPage('/user/login', [], false, { cookie: '' }));
+					for (const path of paths) queuePath(site, path, { arm: false });
+				};
+				const settle = async () => {
+					site.phpBootedAt = Number(site.phpBootedAt) - 60_000;
+					// a claimed site owes a reconcile step first, and each step is a firing of its own
+					const filled = () =>
+						Number(
+							(site as unknown as { pagesFilledByAlarms?: number })
+								.pagesFilledByAlarms ?? 0
+						);
+					const before = filled();
+					for (let i = 0; i < 8 && filled() === before; i++) await site.alarm();
+					return filled() - before;
+				};
+
+				// right after the claim: the reconcile step waits as well as the fill
+				await young();
+				const bootedAt = Number(site.phpBootedAt);
+				await site.alarm();
+				const first = {
+					queued: Number(site.queueDepth()),
+					held: JSON.stringify(
+						(site as unknown as { lastAlarmOutcome: unknown }).lastAlarmOutcome
+					),
+					armed: await site.storage.getAlarm()
+				};
+				const settled = await settle();
+
+				// reconciled now, so a second young interpreter meets the fill batch's own hold
+				await site.ctx.storage.deleteAlarm();
+				await young();
+				const queued = Number(site.queueDepth());
+				await site.alarm();
+				const second = { queued, whileYoung: Number(site.queueDepth()) };
+				const drained = await settle();
+				await site.ctx.storage.deleteAlarm();
+				return {
+					bootedAt,
+					first,
+					settled,
+					second,
+					drained,
+					served: (await stats(site))['fillHold'] as { holds: number }
+				};
+			});
+
+			// held, not dropped: every row survives and the chain re-arms for the end of the hold
+			expect(out.first.queued, out.first.held).toBe(paths.length);
+			expect(out.first.held).toContain('"held"');
+			expect(out.first.armed).not.toBeNull();
+			expect(Number(out.first.armed)).toBeLessThanOrEqual(out.bootedAt + 60_000);
+			expect(out.settled).toBeGreaterThan(0);
+			expect(out.second.whileYoung).toBe(out.second.queued);
+			expect(out.served.holds).toBeGreaterThanOrEqual(1);
+			expect(out.drained).toBeGreaterThan(0);
 		},
 		REQUEST_TIMEOUT
 	);
@@ -568,7 +684,8 @@ describe('one incarnation doing more than rendering', () => {
 
 			// the control: every step has to have been reached, or a short chain reads as a low peak
 			expect(out.steps).toHaveLength(6);
-			for (const s of out.steps) expect(s.heap, s.step).toBeGreaterThan(0);
+			expect(out.steps[0]?.heap, 'provisioning leaves nothing resident').toBe(0);
+			for (const s of out.steps.slice(1)) expect(s.heap, s.step).toBeGreaterThan(0);
 
 			// THE ASSERTION. 128 MiB is the isolate limit and crossing it inside an invocation is a
 			// message-less exception with no stack, not an error anything can catch
@@ -702,6 +819,43 @@ describe('an interpreter kept across an eviction', () => {
 		expect(Number(out.stored)).toBe(1);
 	}, 900_000);
 
+	it('reads an installed module file through the adopting instance, not the evicted one', async () => {
+		const out = await inObject(freshSite(), async (site) => {
+			site.ensureServeTables();
+			site.sql.exec(
+				'INSERT INTO cfw_module_file (path, package, version, source, installed_at) VALUES (?, ?, ?, ?, 0)',
+				'modules/contrib/adopt_probe/src/Probe.php',
+				'drupal/adopt_probe',
+				'1.0.0',
+				'<?php class CfwAdoptProbe { const OK = 1; }'
+			);
+			// the evicted instance's storage is gone on the platform; here the pool shares it, so
+			// the old handle is made to refuse the way a dead one does
+			const real = site.sql;
+			let dead = false;
+			site.sql = new Proxy(real, {
+				get(target, prop) {
+					if (dead) throw new Error('storage of an evicted instance');
+					const v = Reflect.get(target, prop);
+					return typeof v === 'function' ? v.bind(target) : v;
+				}
+			});
+			await booted(site);
+			const next = successor(site);
+			await next.fetch(new Request('https://do.local/__serve-stats'));
+			dead = true;
+			// first opened after the adoption, so its row is read now
+			const read = await next
+				.runJson(
+					`<?php require '/drupal/modules/contrib/adopt_probe/src/Probe.php'; echo json_encode(['ok' => CfwAdoptProbe::OK]);`
+				)
+				.catch((e: unknown) => ({ error: String(e) }));
+			return { adopted: next.lastRetention?.adopted, read };
+		});
+		expect(out.adopted).toBe(true);
+		expect(out.read).toEqual({ ok: 1 });
+	}, 900_000);
+
 	it('is refused when the object committed somewhere else in between', async () => {
 		const out = await inObject(freshSite(), async (site) => {
 			await booted(site);
@@ -742,4 +896,88 @@ describe('an interpreter kept across an eviction', () => {
 		expect(out.php).toBeNull();
 		expect(out.last).toBeNull();
 	}, 900_000);
+});
+
+describe('a boot after a drop instantiates into the dropped memory instead of beside it', () => {
+	type Internals = {
+		php: { binary?: { wasmMemory?: WebAssembly.Memory } } | null;
+		ensurePhp(): Promise<unknown>;
+		runJson(code: string): Promise<Record<string, unknown>>;
+		oversized(): boolean;
+		heapsReused?: number;
+		env: Record<string, unknown>;
+	};
+
+	it(
+		'reuses the memory, starts PHP fresh in it, and does not count its size as growth',
+		async () => {
+			const memoryOf = (s: Internals) => s.php?.binary?.wasmMemory;
+			const out = await inObject(freshSite(), async (site) => {
+				const s = site as unknown as Internals;
+				await s.ensurePhp();
+				const first = memoryOf(s);
+				await s.runJson(
+					`<?php $GLOBALS['cfw_reuse_marker'] = 1; echo json_encode(['ok' => true]);`
+				);
+				s.php = null;
+				await s.ensurePhp();
+				const second = memoryOf(s);
+				const state = await s.runJson(
+					`<?php echo json_encode(['carried' => isset($GLOBALS['cfw_reuse_marker'])]);`
+				);
+				// a threshold under the reused memory's size: before the boot-relative reading this
+				// dropped the interpreter at the end of every invocation
+				s.env = { ...s.env, RECYCLE_ABOVE_BYTES: String(32 * MIB) };
+				return {
+					imported: first instanceof WebAssembly.Memory,
+					same: first !== undefined && first === second,
+					carried: state.carried,
+					reused: s.heapsReused ?? 0,
+					oversized: s.oversized()
+				};
+			});
+			expect(out).toEqual({
+				imported: true,
+				same: true,
+				carried: false,
+				reused: 1,
+				oversized: false
+			});
+		},
+		REQUEST_TIMEOUT
+	);
+
+	it(
+		'mounts the second boot from the pack the first one fetched, so no second blob is held',
+		async () => {
+			const out = await inObject(freshSite(), async (site) => {
+				const s = site as unknown as Internals;
+				const real = s.env['ASSETS'] as Fetcher;
+				const fetched: string[] = [];
+				s.env = {
+					...s.env,
+					ASSETS: {
+						fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+							const url = input instanceof Request ? input.url : String(input);
+							if (/core\.pf\.bin$/.test(url)) fetched.push(url);
+							return real.fetch(input, init);
+						}
+					}
+				};
+				await s.ensurePhp();
+				const first = await s.runJson(
+					`<?php echo json_encode(['ok' => is_file('/drupal/index.php')]);`
+				);
+				s.php = null;
+				await s.ensurePhp();
+				const second = await s.runJson(
+					`<?php echo json_encode(['ok' => strlen(file_get_contents('/drupal/core/lib/Drupal.php')) > 1000]);`
+				);
+				return { fetched: fetched.length, first: first.ok, second: second.ok };
+			});
+			// two before: each boot fetched its own 12 MB copy and the dropped one stayed until a GC
+			expect(out).toEqual({ fetched: 1, first: true, second: true });
+		},
+		REQUEST_TIMEOUT
+	);
 });

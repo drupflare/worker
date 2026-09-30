@@ -10,6 +10,7 @@ import {
 	ownerRefusedForNow,
 	secureOrigin
 } from './ops/admin-session.js';
+import { ATTEMPT_HEADER } from './ops/attempt.js';
 import {
 	AUTH_MODE_HEADER,
 	AUTH_REASON_HEADER,
@@ -28,6 +29,14 @@ import {
 import { DEFAULT_MAX_BODY_BYTES } from './ops/body-limit.js';
 import { isCacheTier } from './ops/cache-tiers.js';
 import { ABSORBED_HEADER, ABSORBED_REPORT_MAX } from './ops/cold-encounter.js';
+import {
+	censusOf,
+	choosePrimary,
+	readDeployment,
+	resetDeploymentMemo,
+	type DeploymentSites,
+	type SiteCensus
+} from './ops/deployment-site.js';
 import {
 	believedCsrf,
 	believedGeneration,
@@ -55,6 +64,8 @@ import {
 	writeEdgePlan,
 	type PlanTier
 } from './ops/edge-plan.js';
+import { edgeRules } from './ops/edge-rules.js';
+import { chunkStack, isLengthError } from './ops/error-probe.js';
 import {
 	ensureFleetTable,
 	fleetSummary,
@@ -104,6 +115,7 @@ import {
 	shouldFailover
 } from './ops/replica-routing.js';
 import { resolveSite, siteStubOptions } from './ops/site-id.js';
+import { aliasRewrite } from './ops/site-origin.js';
 import { bearerToken } from './ops/site-secrets.js';
 import { writeForwardEnabled } from './ops/write-forwarding.js';
 import { SitePhpDurableObject } from './site-do.js';
@@ -317,6 +329,9 @@ const OWNER_ROUTES = new Set([
 	// than diagnostic for the reason `/serve-stats` is: a site owner tuning their own site should
 	// not need the flag that also opens `/sql`
 	'/settings',
+	// Which site this deployment serves on a host with no mapping. Answered in the Worker, beside
+	// `/settings`, because the document lives in CONFIG_KV
+	'/deployment',
 	// The product surfaces, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
 	// also reach. They used to sit in the diagnostic set alone, so the pages that install code were
 	// open to anybody who could reach a worker with the flag on, and each button's
@@ -563,6 +578,49 @@ export interface BodyTooLarge {
 	limit: number;
 	declared: number;
 	reason: string;
+}
+
+/**
+ * What to do when the hop to the object threw instead of answering.
+ *
+ * A reset object throws out of `stub.fetch()`. A safe method is sent once more, to a fresh stub;
+ * anything that may have written is refused rather than repeated, because a retried save could
+ * apply twice. An `overloaded` object is not retried, as the platform asks, UNLESS it was reset:
+ * a memory reset arrives as `overloaded` plus `durableObjectReset` with no `retryable` (read off
+ * a deployed probe, n=8), and the fresh instance behind a new stub answered in 54 ms.
+ *
+ * An unsafe method is repeated only when it carries an attempt id (`src/ops/attempt.ts`): the
+ * object then refuses the repeat itself if the first try had started.
+ */
+export function resetRecovery(e: unknown, method: string, attempted = false): 'retry' | 'refuse' {
+	const err = e as {
+		retryable?: unknown;
+		overloaded?: unknown;
+		durableObjectReset?: unknown;
+	} | null;
+	const reset = err?.durableObjectReset === true;
+	if (!reset && (err?.retryable !== true || err.overloaded === true)) return 'refuse';
+	return method === 'GET' || method === 'HEAD' || attempted ? 'retry' : 'refuse';
+}
+
+/** a short page with a retry hint, in place of the platform's 1101 */
+export function objectResetPage(method: string): Response {
+	const saved =
+		method === 'GET' || method === 'HEAD'
+			? ''
+			: '<p>The form may not have been saved. Check before submitting it again.</p>';
+	return new Response(
+		`<!doctype html><title>Try Again</title><h1>Try Again in a Moment</h1><p>The site restarted while answering this request.</p>${saved}\n`,
+		{
+			status: 503,
+			headers: {
+				'content-type': 'text/html; charset=utf-8',
+				'retry-after': '2',
+				'cache-control': 'no-store',
+				'x-cfw-object-reset': '1'
+			}
+		}
+	);
 }
 
 /**
@@ -1026,7 +1084,9 @@ export default {
 		// here, before the rewrite, an ordinary page path is not in the set -- so a visitor's own
 		// `?site=` would have chosen which tenant's levers this request runs under.
 		// `serve-edge.spec.ts` catches exactly that.
-		const { site: resolvedSite } = await resolveSite(url, env, { allowParam: false });
+		const { site: resolvedSite, from: resolvedFrom } = await resolveSite(url, env, {
+			allowParam: false
+		});
 		const [plan, settings] = await Promise.all([
 			// resolved ONCE and overlaid, so the 16 `isPaid(env)` call sites downstream need no change
 			// and cannot disagree with each other about which plan this request is on
@@ -1036,856 +1096,35 @@ export default {
 			resolveSettings(env.CONFIG_KV, Date.now(), resolvedSite)
 		]);
 		env = withSettings(withPlan(env, plan), settings);
-		// A write that nothing downstream reads does not belong before the response. Measured on a
-		// deployed worker: an awaited `caches.default.put` costs 9 ms for a small body and 12.5 ms for
-		// a 97 KB one, and the same put through `waitUntil` costs 0 before the response leaves. It
-		// does not reduce the invocation's billed wall time, only the time to answer.
-		const defer = (p: Promise<unknown> | undefined) => {
-			if (p === undefined) return;
-			if (ctx) ctx.waitUntil(p);
-			else void p;
-		};
-
-		// Drupal owns the URL space, so anything this Worker does not claim is a page request. Before
-		// this, `/` answered 404 on a deployed site as well as locally -- the only serving route was
-		// `/serve?site=X&path=Y`, so the premise of the product was reachable only by query string.
-		//
-		// A REWRITE, not a second serving path: the request becomes the `/serve` it would have been,
-		// and every tier below -- the edge cache key, the generation counter, the KV page tier, the
-		// DO hop -- is reached unchanged. `inner` downstream is built from `request.url` rather than
-		// from `url`, which is why the REQUEST is replaced and not just the parsed copy.
-		// `__`-prefixed paths are the DURABLE OBJECT's own routes, double-underscored precisely so they
-		// cannot collide with a Drupal path once this front end forwards real requests. They must stay
-		// a 404 from outside: rewriting them into a page render would answer a probe for `/__export`
-		// with a render rather than a refusal, which reads as "the route exists and something went
-		// wrong" instead of "there is no such route here"
-		const internal = url.pathname.startsWith('/__');
-		// set by the catch-all rewrite below, whose `?site=` is the site resolved above
-		let pageRequest = false;
-		// Image derivatives, answered here. In the front worker rather than in the object for two
-		// reasons: the wasm decoder never meets PHP's heap, and a derivative is a static byte range
-		// that has no reason to enter a single-threaded object at all. Before the `/serve` rewrite,
-		// because this path is its own route rather than a Drupal one
-		if (!internal && url.pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`) && ctx !== undefined) {
-			return serveImageTransform(request, url, env, ctx);
-		}
-		if (
-			!internal &&
-			ctx !== undefined &&
-			publicFileUri(request.method, url.pathname) !== null
-		) {
-			const served = await servePublicFile(request, url, env, ctx);
-			if (served !== null) return served;
-		}
-
-		if (!internal && !ROUTES.has(url.pathname)) {
-			// `allowParam: false` because THIS query string is the visitor's. Without it,
-			// `https://customer-a.example/about?site=customer-b` resolves to customer B and serves
-			// their database from customer A's hostname -- the origin rewrite below keeps the
-			// parameter out of `/serve`'s own arguments and does nothing about which object answers.
-			// The site resolved at the top already is that answer: same URL, same flag
-			const rewritten = new URL(url.origin);
-			rewritten.pathname = '/serve';
-			rewritten.searchParams.set('site', resolvedSite);
-			pageRequest = true;
-			// built from the ORIGIN, so the visitor's own query cannot land among /serve's parameters
-			// -- `/about?site=someone-else` would otherwise choose which site answers. The query is
-			// preserved where Drupal wants it, inside `path`
-			rewritten.searchParams.set('path', url.pathname + url.search);
-			request = new Request(rewritten, request);
-			url = rewritten;
-		}
-
-		if (!ROUTES.has(url.pathname)) {
-			return new Response('not found\n', { status: 404 });
-		}
-		// The admin surface is not a diagnostic, so the flag is not a way into it. Everywhere else
-		// `PW_DIAGNOSTICS=1` still opens what it always opened
-		const surface = SURFACE_ROUTES.has(url.pathname);
-		let ownerToken: string | null = null;
-		if (surface || (!PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1')) {
-			// An owner route is not A DIAGNOSTIC. `/export` sat in the diagnostic set beside `/sql`
-			// (arbitrary SQL) and `/restore` (a whole-database overwrite), all behind one boolean --
-			// so the supported way to get your own data out was to expose a remote shell to the
-			// internet first. Export is an owner operation and takes a credential instead of a mode.
-			if (OWNER_ROUTES.has(url.pathname)) {
-				ownerToken = await ownerCredential(request, env, url);
-				if (ownerToken === null) {
-					if (surface) {
-						// a browser gets the sign-in page, not a 401 body it would render as text
-						const to = new URL(LOGIN_PATH, url.origin);
-						to.searchParams.set('next', url.pathname + url.search);
-						return new Response(null, {
-							status: 302,
-							headers: { location: to.toString(), 'cache-control': 'no-store' }
-						});
-					}
-					// 401 with a challenge rather than the 404 a diagnostic gets: this route EXISTS
-					// and the caller is entitled to it, they just have not proved who they are
-					return new Response('owner token required\n', {
-						status: 401,
-						headers: {
-							'www-authenticate': 'Bearer realm="drupflare"',
-							'content-type': 'text/plain; charset=utf-8'
-						}
-					});
-				}
-				request = withOwnerHeader(request, ownerToken);
-			} else {
-				return new Response('not found\n', { status: 404 });
-			}
-		}
-
-		// one object per site; the name is the site identity, and a replica lane is that name plus a
-		// suffix. With no replicas configured `chooseTarget()` always answers the site itself
-		// a rewritten page request carries the site this handler resolved at the top, so asking again
-		// would read back its own parameter; only a route addressed directly resolves here
-		const site = pageRequest ? resolvedSite : await siteFor(url, env);
-		// The visitor's own path, which `url.pathname` no longer holds: the rewrite above moved it
-		// into `?path=` and made every serving request read `/serve`. So the path fallback in
-		// `affinityKey()` -- what a request with no session and no `cf-connecting-ip` spreads on --
-		// was one constant string, and every such request piled onto whichever lane it hashes to.
-		// The query is dropped so a page is one key however a visitor arrived at it
-		const visitorPath = (url.searchParams.get('path') ?? url.pathname).split('?')[0] as string;
-		// LAZY, because the tier that answers 82% of traffic never reads either of them. Choosing a
-		// lane allocates an affinity input, a decision and a copy of it; the stub then costs a
-		// native hash to a 256-bit id, a `DurableObjectId` and a stub object -- all of it upstream
-		// of an edge or memo hit that returns without touching the object at all. Both are memoised
-		// on first read, so every path that does need them sees one construction and the same
-		// values, and the routing decision still happens before any request reaches an object.
-		let laneMemo: ReturnType<typeof chooseTarget> | null = null;
-		// ONCE. It was read twice inside the same object literal -- for the affinity key and for
-		// `hasSession` -- and the read is a regex over the whole cookie header, on the path that
-		// runs for every request that reaches an object
-		const sessionValue = sessionCookieValue(request.headers.get('cookie'));
-		const laneOf = (): ReturnType<typeof chooseTarget> =>
-			(laneMemo ??= chooseTarget({
-				site,
-				method: request.method,
-				affinity: affinityKey({
-					session: sessionValue,
-					address: request.headers.get('cf-connecting-ip'),
-					pathname: visitorPath
-				}),
-				// an operator's REPLICA_COUNT is a floor and what the primary has actually built is
-				// the other half; autoscaling grew lanes nothing routed to until this read the second
-				replicas: Math.max(replicaCount(env), believedLanes(site, t0)),
-				// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or
-				// owner route reads as itself; those pin to the primary
-				pathname: url.pathname,
-				writeForward: writeForwardEnabled(env),
-				// a write arriving without one may MINT one, and a lane's mint never reaches the
-				// primary; see the docblock on the field
-				hasSession: sessionValue !== null,
-				visitorPath,
-				contentType: request.headers.get('content-type')
-			}));
-		let stubMemo: DurableObjectStub | null = null;
-		const stubOf = (): DurableObjectStub =>
-			(stubMemo ??= env.SITE.get(env.SITE.idFromName(laneOf().target), siteStubOptions(env)));
-
-		const cache = caches.default;
-		const origin = url.origin;
-		const bucket = Math.floor(Date.now() / genBucketMs(env));
-		// only the serving path is cacheable, and only for a safe method
-		const serving = url.pathname === '/serve' && request.method === 'GET';
-		// Worker-side, not a DO route: the window driver has to live outside the object
-		// because the CPU budget resets on an INCOMING message and an object cannot send
-		// itself one
-		if (url.pathname === '/fillwindow') {
-			return Response.json(
-				await runFillWindow(env, site, {
-					maxFills: url.searchParams.get('max')
-						? Number(url.searchParams.get('max'))
-						: undefined,
-					wallBudgetMs: url.searchParams.get('wall')
-						? Number(url.searchParams.get('wall'))
-						: undefined
-				})
+		// captured first: the page rewrite inside `frontFetch` moves the path into `?path=`
+		const visited = url.pathname;
+		const edge = edgeRules(env, isReservedPath);
+		const moved = edge.redirect(url);
+		if (moved !== null) return moved;
+		try {
+			const res = edge.decorate(
+				visited,
+				await frontFetch(request, env, ctx, url, t0, resolvedSite)
 			);
-		}
-
-		// #region the product surfaces
-		//
-		// Server-rendered, no client framework and no build step. They live in the Worker rather than
-		// behind the object because three of the four need no PHP at all -- Limits is arithmetic,
-		// Deploy is a static requirement list, and Extend proxies one route.
-		// `/fleet` rides here rather than through DO_ROUTE, because it is answered from D1 without
-		// touching an object. It is named explicitly: it has no DO_ROUTE entry, so falling through
-		// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
-		// including `scripts/security-update.mjs --fleet=`
-		// `/settings` rides here for the same reason `/fleet` does: `CONFIG_KV` is a FRONT WORKER
-		// binding, so an object hop would spend a Durable Object request to reach a namespace this
-		// isolate already holds. It has no `DO_ROUTE` entry for that reason.
-		if (url.pathname === '/settings') {
-			return await settingsRoute(request, url, env);
-		}
-
-		if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
-			return await renderAdmin(request, url, env, stubOf(), ownerToken);
-		}
-
-		const path = url.searchParams.get('path') ?? '/';
-
-		// Refused here rather than in the Durable Object, because reaching the DO is what
-		// costs: one DO request, and a PERMANENT cache_data row per distinct URL that
-		// nothing garbage-collects. On a public site most traffic is scanners, so this is
-		// an oversized body is refused before it reaches wasm, and the interesting case is not a
-		// large file. A form body is `parse_str()`d inside a 128 MB isolate, and a nested-array
-		// bomb -- `foo[][][][][]=bar` repeated -- costs orders of magnitude more heap than it does
-		// bytes on the wire. Refusing at the edge costs no DO request and no interpreter, and a
-		// multipart upload is exempt because that is the one shape where size is expected.
-		const oversized = bodyTooLarge(request, env);
-		if (oversized !== null) {
-			return new Response(`${oversized.reason}\n`, {
-				status: 413,
-				headers: {
-					'content-type': 'text/plain; charset=utf-8',
-					'cache-control': 'no-store',
-					'x-cfw-deny': 'body-too-large',
-					'x-cfw-body-limit': String(oversized.limit)
-				}
-			});
-		}
-
-		// ONE SCAN, not two. It is a `split(/[?#]/)` plus up to six regex tests, and it ran here and
-		// again on the authenticated check below over the same string for the same answer
-		const neverDrupal = isNeverDrupal(path);
-
-		// A core entry point is a LINK a visitor followed, not a probe, so it is answered before the
-		// deny below. `/update.php` is linked from the Extend page by core itself
-		const entryRedirect =
-			serving && neverDrupal ? phpEntryRedirect(path.split(/[?#]/)[0] ?? '') : null;
-		if (entryRedirect) {
-			return new Response(null, {
-				status: 302,
-				headers: {
-					location: entryRedirect,
-					'x-cfw-cache': 'DENY',
-					'x-cfw-deny': 'php-entry-point',
-					'cache-control': `public, max-age=${EDGE_PAGE_TTL_S}`
-				}
-			});
-		}
-
-		// the cheapest request in the system.
-		if (serving && neverDrupal) {
-			return new Response('not found\n', {
-				status: 404,
-				headers: {
-					'x-cfw-cache': 'DENY',
-					'x-cfw-deny': 'never-drupal',
-					'cache-control': `public, max-age=${EDGE_PAGE_TTL_S}`
-				}
-			});
-		}
-
-		// Counted once here rather than at each tier's return, so a tier added later is counted
-		// without anybody remembering to. Everything below either answers from this isolate or hops,
-		// and the hop subtracts its own request back out.
-		if (serving) noteAbsorbed(site);
-
-		// #region the authenticated allowance, decided before ANY DO hop
-		//
-		// An authenticated request can never be answered from a shared cache -- the page is per-user
-		// -- so every one is a full render at 13 rows and ~500 ms. It is decided here rather than
-		// inside the object because a check made after the hop has already spent the DO request the
-		// reservation exists to protect.
-		const authenticated = neverDrupal ? false : isAuthenticatedRequest(request);
-		let authMode: 'render' | 'stale' | 'read-only' = 'render';
-		let authReason = '';
-		// the reservation is enforced on FREE only, and `decideAuthMode()` discards the counter when it
-		// is not -- so reading it on paid cost one `cache.match` (9.5 ms on the first authenticated
-		// request per isolate) for an answer nothing consults
-		//
-		// LAZY, because `authAllowance()` builds an eight-field object with five `Math.floor` and a
-		// clamp, and both of its readers sit behind a check an anonymous request fails. It ran
-		// unconditionally, so 82% of traffic paid for a budget it never consults. Memoised rather
-		// than moved into one branch: the second reader is the deferred spend write further down,
-		// and computing it twice would trade one waste for another
-		let enforcedMemo: boolean | null = null;
-		const enforcedOf = (): boolean =>
-			(enforcedMemo ??= authAllowance(env as AuthBudgetEnv).enforced);
-		if (authenticated && url.pathname === '/serve') {
-			const spend = enforcedOf() ? await readAuthSpend(cache, origin, site, t0) : null;
-			const decision = decideAuthMode(request, spend, env as AuthBudgetEnv, t0);
-			authMode = decision.mode;
-			authReason = decision.reason;
-
-			// never dark: a spent WRITE is refused by name, a spent READ falls through as
-			// anonymous. Going dark because two editors were busy is what the adversarial rule
-			// rejects outright
-			if (authMode === 'read-only') {
-				return new Response(`${authReason}\n`, {
-					status: 503,
-					headers: {
-						'content-type': 'text/plain; charset=utf-8',
-						// the quotas refill at midnight UTC, so that is the retry time
-						'retry-after': String(secondsUntilUtcReset(t0)),
-						'cache-control': 'private, no-store',
-						[AUTH_MODE_HEADER]: authMode,
-						[AUTH_REASON_HEADER]: authReason,
-						'x-worker-ms': String(Date.now() - t0)
-					}
+			// only a KV-mapped host: an operator wrote it, so a forged Host cannot reach this
+			if (resolvedFrom !== 'kv') return res;
+			const canonical = await canonicalOriginOf(env, resolvedSite);
+			return canonical === null || canonical === url.origin
+				? res
+				: aliasRewrite(res, canonical, url.origin);
+		} catch (e) {
+			if (isLengthError(e)) {
+				const stack = chunkStack(String((e as Error)?.stack ?? ''));
+				console.error('cfw-range-error', {
+					where: 'front',
+					method: request.method,
+					path: visited,
+					message: String((e as Error)?.message),
+					...Object.fromEntries(stack.map((piece, i) => [`stack${i}`, piece]))
 				});
 			}
+			throw e;
 		}
-		// in stale mode the request is served as ANONYMOUS: the shared tiers answer it, nothing
-		// personalised is read or written, and the visitor gets the public page rather than a
-		// blank one. A degradation, not a refusal and not a dark site
-		const personalised = authenticated && authMode === 'render';
-		// #endregion
-
-		// #region compiled plans, answered from THIS isolate with no object hop
-		//
-		// The only tier that can answer an AUTHENTICATED page without one. `caches.default` and the KV
-		// page tier are both keyed without a user, so neither may ever hold one. The key carries the
-		// visitor's ROLE SET rather than their cookie; see `src/ops/edge-plan.ts` for what makes the
-		// narrower key safe and for the per-session agreement that is the other half of it.
-		const planCookie = request.headers.get('cookie') ?? '';
-		// what the OBJECT last said this cookie is, which is the only source for it. An isolate that
-		// has not learned one yet skips the tier and the hop below teaches it
-		const planRoles = planCookie === '' ? null : believedRoles(planCookie, t0);
-		// a write is the only thing that queues a Drupal message for the visitor's next page, and a
-		// plan compiled from renders that carried none would serve that page without it. Spending
-		// the session's agreement costs it one render and the message arrives on it
-		if (request.method !== 'GET' && request.method !== 'HEAD') forgetWitness(planCookie);
-		const planWanted =
-			serving && personalised && request.method === 'GET' && edgePlanEnabled(env);
-		let planTier: PlanTier = planWanted ? 'miss' : 'skip:not-wanted';
-		if (planWanted) {
-			const planGeneration = believedGeneration(site, t0);
-			if (planGeneration === null) {
-				// this isolate has not learned a generation recently enough to fence a plan against;
-				// the object's answer below teaches it one
-				planTier = 'skip:generation-unknown';
-			} else if (planRoles === null) {
-				planTier = 'skip:roles-unknown';
-			} else {
-				const planKey = edgePlanKey(site, planGeneration, planRoles, path);
-				let held = lookupEdgePlan(planKey, Date.now(), planCookie);
-				let from: PlanTier = 'mem';
-				// the fallback, and it is consulted SECOND on purpose. A shared plan serves the
-				// whole role set off one entry and mirrors to KV; answering this session from its
-				// own instead would stop the shared key ever seeing a second witness
-				if (held === null) {
-					const own = privatePlanKey(planKey, planCookie);
-					held = lookupEdgePlan(own, Date.now(), planCookie);
-					if (held !== null) from = 'private';
-				}
-				// the tier for an isolate that knows the generation and has never seen this page,
-				// consulted at most once per key and never for longer than the hop it replaces --
-				// see COLD_READ_DEADLINE_MS, which exists because a key this colo has not seen costs
-				// 46-140 ms rather than the 5-6 a warm one does
-				if (held === null && shouldCheckKv(planKey)) {
-					const read = readEdgePlan(env, site, planGeneration, planRoles, path);
-					const arrived = await withDeadline(read);
-					if (arrived !== null) {
-						storeEdgePlan(planKey, arrived);
-						// a plan that arrived from another isolate has NOT been agreed with by this
-						// visitor, so it is stored for later and this request still hops. Serving it
-						// here would be the one thing the per-session proof exists to prevent
-						from = 'kv';
-					} else {
-						// a read that missed the deadline still warms this isolate for the next request
-						const key = planKey;
-						defer(read.then((late) => late && storeEdgePlan(key, late)));
-					}
-				}
-				const html = held === null ? null : runEdgePlan(held, believedCsrf(planCookie, t0));
-				const jump = html === null ? null : readRedirectPlan(html);
-				if (jump !== null) {
-					// `/user` is a 302 to `/user/<uid>` and was the only profile the tier could not
-					// answer; see `redirectPlanBody()` for why this is safe under the private key
-					return new Response(null, {
-						status: jump.status,
-						headers: {
-							location: jump.location,
-							'cache-control': 'private, no-store',
-							'x-cfw-cache': 'PLAN',
-							'x-cfw-plan': from,
-							'x-cfw-generation': String(planGeneration),
-							[AUTH_MODE_HEADER]: authMode,
-							'x-worker-ms': String(Date.now() - t0)
-						}
-					});
-				}
-				if (html !== null) {
-					return new Response(html, {
-						status: 200,
-						headers: {
-							'content-type': 'text/html; charset=UTF-8',
-							// per-user: no shared cache between here and the browser may store it
-							'cache-control': 'private, no-store',
-							'x-cfw-cache': 'PLAN',
-							'x-cfw-plan': from,
-							'x-cfw-generation': String(planGeneration),
-							[AUTH_MODE_HEADER]: authMode,
-							'x-worker-ms': String(Date.now() - t0)
-						}
-					});
-				}
-				// the render below reports `sampling` whether it feeds a compile or a key that has
-				// given up, so a path that permanently left the tier read identically to one about
-				// to join it
-				if (
-					edgePlanRefused(planKey) ||
-					edgePlanRefused(privatePlanKey(planKey, planCookie))
-				) {
-					planTier = 'refused';
-				}
-			}
-		}
-		// #endregion
-
-		const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
-
-		// BEFORE the first routing decision, so a cold isolate routes to the pool on request one
-		// rather than sending it to the primary and learning afterwards. Alongside the generation read
-		// rather than ahead of it: both are edge reads into separate maps, and only a miss routes
-		const [, generationRead] = await Promise.all([
-			serving ? primeLanes(cache, origin, site, env.CONFIG_KV) : undefined,
-			edgeWanted ? readGeneration(cache, origin, site, bucket) : null
-		]);
-
-		let generation = null;
-		if (edgeWanted) {
-			generation = generationRead;
-			if (generation !== null) {
-				// The string before the request, because the memo below is the tier that answers
-				// almost all of this path and it reads only the string. Building the `Request` first
-				// made every MEM hit pay a URL parse and an object allocation it never used
-				const memoKey = pageKeyUrl(origin, site, generation, path);
-				// the tier above `caches.default`, answered with no I/O at all. `anon-cached` costs
-				// 0.70 ms of cpuTime and 7.9-14.0 ms of `x-worker-ms` on a deployed worker, so
-				// almost all of it is the read below; see `src/ops/page-memo.ts`
-				const held = lookupPageMemo(memoKey, t0);
-				if (held) {
-					// the header set was assembled at STORE time; this path only stamps the timing
-					const headers = pageMemoHeaders(memoKey, t0) ?? new Headers();
-					headers.set('x-worker-ms', String(Date.now() - t0));
-					return new Response(held.body, { status: held.status, headers });
-				}
-				const cached = await cache.match(new Request(memoKey, { method: 'GET' }));
-				if (cached) {
-					// the tier that answered, without having touched the Durable Object;
-					// the DO's own verdict is preserved separately so a measurement can
-					// tell EDGE from DO HIT from MISS
-					const headers = new Headers(cached.headers);
-					headers.set('x-cfw-cache', 'EDGE');
-					headers.set('x-cfw-edge', 'HIT');
-					headers.set('cache-control', 'public, max-age=0, must-revalidate');
-					// BUFFERED rather than streamed, which is what makes the memo above possible.
-					// The body is a stored page -- 12 KB for the front page with aggregates on --
-					// so holding it costs one copy and saves this read on every later request
-					const body = new Uint8Array(await cached.arrayBuffer());
-					storePageMemo(
-						memoKey,
-						{
-							body,
-							status: cached.status,
-							contentType:
-								cached.headers.get('content-type') ?? 'text/html; charset=utf-8',
-							// only the object's own verdict travels; the tier headers are set fresh
-							// above so a memo hit never claims to have been an edge hit
-							headers: [...cached.headers].filter(
-								([name]) =>
-									name.startsWith('x-cfw-') &&
-									name !== 'x-cfw-cache' &&
-									name !== 'x-cfw-edge'
-							)
-						},
-						t0
-					);
-					headers.set('x-worker-ms', String(Date.now() - t0));
-					return new Response(body, {
-						status: cached.status,
-						headers
-					});
-				}
-			}
-		}
-
-		// the KV tier, between the per-colo edge cache and the Durable Object.
-		//
-		// Paid only, and the reason is which meter each one spends -- see `src/ops/page-store.ts`. The
-		// win it buys is specific: a page rendered in one colo answers from every colo WITHOUT a DO
-		// request, and a DO request is the paid cost driver. It cannot live inside the object because
-		// `serveFromStorage()` is synchronous by construction and every KV read is not.
-		if (edgeWanted && generation !== null) {
-			const stored = await readPage(env, site, generation, path);
-			if (stored) {
-				return new Response(stored.html, {
-					status: stored.status,
-					headers: {
-						'content-type': stored.contentType,
-						'x-cfw-cache': 'KV',
-						'x-cfw-edge': 'MISS',
-						'x-cfw-generation': String(generation),
-						'cache-control': 'public, max-age=0, must-revalidate',
-						'x-worker-ms': String(Date.now() - t0)
-					}
-				});
-			}
-			// The previous generation, which is already in KV and was never read. A bump changes the
-			// key rather than deleting anything, so the last answer for this path is sitting there
-			// on its own TTL -- and the cold path it replaces is 802 ms at p50 against 4-5 ms warm.
-			// The regeneration goes to the object's own fill queue, so the visitor waits for
-			// neither
-			const stale = await readStalePage(env, site, generation, path, {
-				neverStale: env.NEVER_STALE ?? null
-			});
-			if (stale) {
-				defer(
-					stubOf()
-						.fetch(
-							new Request(`https://do.local/__fill?path=${encodeURIComponent(path)}`)
-						)
-						.then(() => undefined)
-						.catch(() => undefined)
-				);
-				return new Response(stale.page.html, {
-					status: stale.page.status,
-					headers: {
-						'content-type': stale.page.contentType,
-						'x-cfw-cache': 'KV',
-						'x-cfw-edge': 'STALE',
-						'x-cfw-stale-behind': String(stale.behind),
-						'x-cfw-generation': String(generation),
-						// SHORT, and shorter than a fresh answer's: this body is known to be a
-						// content change behind, so it must not settle into anything downstream
-						'cache-control': 'public, max-age=0, must-revalidate',
-						'x-worker-ms': String(Date.now() - t0)
-					}
-				});
-			}
-		}
-
-		// the DO's own routes are double-underscored so they cannot collide with a
-		// Drupal path once this front end starts forwarding real requests
-		const inner = new URL(request.url);
-		// every route in ROUTES has a DO_ROUTE entry except `/fillwindow`, which returned above
-		inner.pathname = DO_ROUTE[url.pathname] as string;
-		// the RESOLVED name, overwriting whatever the caller sent: the object stores this as its own
-		// identity and keys its R2 mirror on it, so it has to be the value that chose the object
-		inner.searchParams.set('site', site);
-		// the consent screen redirects to a PATH; the object switches on ?action=, and a caller
-		// cannot be trusted to add it -- Cloudflare builds this URL, not us
-		if (url.pathname === '/setup/cf/callback') inner.searchParams.set('action', 'callback');
-
-		// Awaited to completion, never raced against a timer.
-		//
-		// A Worker-side deadline looks obvious and does not work: a render is one
-		// synchronous `php._run()` call into wasm, and while it runs nothing else in
-		// that thread does -- measured, a 1 ms `setTimeout` lost to a `stub.fetch()`
-		// that rendered for 119 ms, because the timer could not fire until the wasm
-		// call returned. Racing it would also mean abandoning the subrequest, which
-		// lets the runtime cancel a render mid-flight and leaves the interpreter
-		// parked mid-request for the next entrant. So the render budget is enforced
-		// inside the DO, BEFORE the render starts: see estimateRenderMs().
-		// buffered rather than streamed onward: the object may answer a POST without reading it,
-		// and workerd then throws an UNCAUGHT `read from request stream after response has been sent`
-		const buffered =
-			request.method === 'GET' || request.method === 'HEAD'
-				? undefined
-				: await request.arrayBuffer();
-		// `redirect: 'manual'`, and it is the difference between a working CMS and one that loses
-		// every submission. A subrequest FOLLOWS a 3xx by default, so Drupal's post-submit redirect
-		// -- `303 -> /user/1?check_logged_in=1` after a login, `/node/N` after a save -- was followed
-		// by the runtime against the OBJECT, which has no route by that name and answered its
-		// `not found` default. The write had already landed, so the visitor saw a 404 for something
-		// that worked. The 3xx belongs to the browser, which re-enters through the catch-all.
-		//
-		// Wrapped rather than spread: a `Request`'s method, headers and body live on the prototype,
-		// so `{ ...request }` is an empty object and would have dropped the cookie.
-		const innerRequest = new Request(
-			buffered === undefined
-				? new Request(inner, request)
-				: new Request(inner, {
-						method: request.method,
-						headers: request.headers,
-						body: buffered
-					}),
-			{ redirect: 'manual' }
-		);
-		// cleared first, always: every inbound header is copied onto the subrequest, so a client
-		// could otherwise send this one and have the object read it as this worker's own decision
-		innerRequest.headers.delete(AUTH_REQUEST_HEADER);
-		innerRequest.headers.delete(ABSORBED_HEADER);
-		// the count rides along on a hop already being paid for, same as the generation below
-		const absorbed = drainAbsorbed(site, serving);
-		if (absorbed > 0) innerRequest.headers.set(ABSORBED_HEADER, String(absorbed));
-		if (personalised) {
-			// the object charges the allowance and reports the counter back on this same response, so
-			// learning the spend costs no extra hop
-			innerRequest.headers.set(AUTH_REQUEST_HEADER, '1');
-		} else if (authenticated) {
-			// stale mode: the session is stripped so the object answers the ANONYMOUS page. Leaving
-			// the cookie on would make the object render per-user anyway and spend the very budget
-			// this branch exists because it has run out
-			innerRequest.headers.delete('cookie');
-		}
-		// Built BEFORE the send, because a replica that refuses has already consumed the request.
-		//
-		// A body is rebuilt from `buffered`, NEVER CLONED. This was `innerRequest.clone()` under a
-		// comment asserting only GET and HEAD could arrive, which `chooseTarget()` guaranteed until
-		// write forwarding let a POST reach a lane -- and nothing revisited it. `clone()` tees the
-		// body, the retry branch is read only on a failover, and an unread tee never releases: the
-		// login POST hung forever the first time traffic actually met a lane. The bytes are already
-		// in hand a few lines up, so the retry costs a second `Request` and no stream at all
-		const retryOnPrimary =
-			laneOf().role !== 'replica'
-				? null
-				: buffered === undefined
-					? innerRequest.clone()
-					: new Request(innerRequest.url, {
-							method: innerRequest.method,
-							headers: innerRequest.headers,
-							body: buffered,
-							redirect: 'manual'
-						});
-		let res = await stubOf().fetch(innerRequest);
-		// which lane handed back, so the header below can name the object that ANSWERED rather than
-		// the one routing chose; they differ on exactly the requests a pool measurement cares about
-		let failedOverFrom: number | null = null;
-		// WHY it handed back, which the retry otherwise discards with the lane's own response. A
-		// failover rate says a pool is not carrying traffic; only the reason says which of the
-		// several refusals is doing it, and reading that off the lane afterwards is impossible
-		let failoverReason: string | null = null;
-		if (retryOnPrimary !== null && shouldFailover(res)) {
-			failedOverFrom = laneOf().lane;
-			failoverReason = res.headers.get('x-cfw-requires-primary');
-			// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
-			// from the status alone
-			res = await env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env)).fetch(
-				retryOnPrimary
-			);
-		}
-
-		// an install leaves its object at ~110 MB of a 128 MB cap and wasm memory never shrinks, so
-		// the refill is NOT woken here: the next event in that isolate is refused, and a `setAlarm()`
-		// from inside the install's own event resets the object and rolls the install back (0/6
-		// landed with it, 6/6 without). The queue rows are written and left; the chain wakes on the
-		// next visitor MISS, save or explicit `/armfill`, by which point the isolate is clean.
-		let armedFill = 'n/a';
-		if (url.pathname === '/enable' && res.ok) {
-			try {
-				const body = (await res.clone().json()) as { armFill?: boolean };
-				armedFill = body?.armFill === true ? 'deferred' : 'not-requested';
-			} catch {
-				armedFill = 'unreadable';
-			}
-		}
-
-		// an unrecognised tier means this worker and the object disagree about the header
-		// contract, which is the drift `CACHE_TIERS` exists to make visible rather than silent
-		const rawTier = res.headers.get('x-cfw-cache');
-		const doCache =
-			rawTier === null ? 'n/a' : isCacheTier(rawTier) ? rawTier : `unknown:${rawTier}`;
-		const doGeneration = asGeneration(res.headers.get('x-cfw-generation'));
-
-		// the counter rides along on a response already paid for, same as the generation. The isolate
-		// memo is set synchronously inside these two, so only ANOTHER isolate waits on the cache copy
-		// -- which is why both are deferred rather than awaited
-		if (personalised && enforcedOf()) {
-			const reported = parseAuthSpend(res.headers);
-			if (reported) defer(writeAuthSpend(cache, origin, site, reported));
-		}
-
-		// the generation rides along on a response we already paid for, so learning it costs nothing
-		//
-		// forward only: the generation is per OBJECT and a lane trails the primary by up to
-		// `DEFAULT_REPLICA_LAG_MS`, while this pointer is per SITE and single valued. With `!==` a
-		// lane's older value rewrote it backwards, every `cache.match` then asked for a key nothing
-		// had been stored under, and the edge tier emptied for as long as the lag lasted.
-		//
-		// monotonic within the BUCKET rather than forever, so a genuine backwards move (a restore) is
-		// picked up at the next boundary instead of being pinned out
-		if (doGeneration !== null && (generation === null || doGeneration > generation)) {
-			defer(writeGeneration(cache, origin, site, bucket, doGeneration));
-		}
-		// the plan tier fences on the generation this isolate last learned, which is this one
-		if (doGeneration !== null) rememberEdgeGeneration(site, doGeneration, Date.now());
-		// and the pool the primary has actually built, so a lane autoscaling created receives
-		// traffic. Rides along on a response already paid for, like the two above
-		const reportedLanes = Number(res.headers.get(LANES_HEADER) ?? '');
-		if (Number.isFinite(reportedLanes) && reportedLanes > 0) {
-			const reportedEpoch = Number(res.headers.get(LANES_EPOCH_HEADER) ?? 0) || 0;
-			rememberLanes(site, reportedLanes, Date.now(), reportedEpoch);
-			// and at the edge, so the next COLD isolate routes on it rather than rediscovering it
-			defer(writeLanes(cache, origin, site, reportedLanes, reportedEpoch));
-		}
-
-		// #region compiling a plan out of the render that just happened
-		//
-		// The whole compile runs behind `ctx.waitUntil`: reading the body, diffing two renders and
-		// proving the result are CPU this request does not have to wait for.
-		const eligible = planEligibility({
-			method: request.method,
-			status: res.status,
-			doCache,
-			contentType: res.headers.get('content-type'),
-			setCookie: res.headers.getSetCookie(),
-			personalised,
-			generation: doGeneration,
-			cookie: planCookie,
-			location: res.headers.get('location')
-		});
-		// what the object says this cookie is. Recorded before the compile below, because the compile
-		// keys on it, and taken from the RESPONSE so a client cannot present a role set of its own
-		const reportedRoles = res.headers.get(ROLES_HEADER) ?? '';
-		if (planCookie !== '' && reportedRoles !== '') {
-			rememberRoles(planCookie, reportedRoles, Date.now());
-		}
-		if (planWanted && !eligible.ok) planTier = eligible.reason as PlanTier;
-		if (planWanted && eligible.ok && doGeneration !== null && reportedRoles !== '') {
-			// the key is rebuilt from the generation and the role set the OBJECT reported, which are
-			// the ones this render belongs to; the beliefs above may be a window behind them
-			const key = edgePlanKey(site, doGeneration, reportedRoles, path);
-			// cloned now, read later: the body below is returned to the caller and a clone taken after
-			// that has been consumed is empty
-			const copy = res.clone();
-			const generationForPlan = doGeneration;
-			const rolesForPlan = reportedRoles;
-			const witness = planCookie;
-			planTier = 'sampling';
-			// a redirect has no body; its whole content is the status and the target, expressed as a
-			// body so the compiler's proofs run on it unchanged
-			const jump = res.headers.get('location');
-			const asPlanBody =
-				isRedirectStatus(res.status) && jump !== null
-					? Promise.resolve(redirectPlanBody(res.status, jump))
-					: copy.text();
-			defer(
-				asPlanBody
-					.then((html) => {
-						// the one slot value the front worker cannot generate, taken from this
-						// session's own render so a shared plan can substitute it later
-						rememberCsrf(witness, sessionCsrf(html), Date.now());
-						// the cookie is the WITNESS rather than the key: the compile needs two
-						// different sessions to agree before it may store anything
-						const compiled = noteEdgeRender(key, path, html, Date.now(), witness);
-						if (compiled === null) {
-							// this session may be the only one this page ever sees, so give it a
-							// plan of its own. Skipped once a shared plan is serving: that one is
-							// cheaper and already covers the whole role set
-							if (!hasEdgePlan(key)) {
-								noteEdgeRender(
-									privatePlanKey(key, witness),
-									path,
-									html,
-									Date.now(),
-									witness,
-									true
-								);
-							}
-							return undefined;
-						}
-						return writeEdgePlan(
-							env,
-							site,
-							generationForPlan,
-							rolesForPlan,
-							path,
-							compiled
-						);
-					})
-					.catch(() => undefined)
-			);
-		}
-		// #endregion
-
-		const paged = serving
-			? putPage(cache, origin, site, path, res, doGeneration, doCache, personalised)
-			: { outcome: 'skipped:not-serving' };
-		defer(paged.write);
-		const put = paged.outcome;
-
-		// mirror into KV so the next colo does not pay a DO request. `res.clone()` for the same
-		// reason putPage() does it -- the body below is returned to the caller and can only be read once.
-		let kvPut = 'skipped:not-serving';
-		if (serving && personalised) {
-			// the KV key has no user in it either, so the same structural refusal applies
-			kvPut = 'skipped:authenticated';
-		} else if (serving && res.headers.has('set-cookie')) {
-			kvPut = 'skipped:set-cookie';
-		} else if (serving && pageKvEnabled(env)) {
-			if (doGeneration === null) {
-				kvPut = 'skipped:no-generation';
-			} else if (doCache !== 'HIT' && doCache !== 'RENDER') {
-				// a 503 warming placeholder is not a page; storing it would pin "warming" globally
-				kvPut = `skipped:${doCache}`;
-			} else if (res.headers.get(KV_GRANT_HEADER) !== '1') {
-				// the object holds the daily write budget; no grant means it is spent, or a lane answered
-				kvPut = 'skipped:no-grant';
-			} else {
-				// cloned now, read later: the body below is returned to the caller, and a clone taken
-				// after that has been consumed is empty
-				const copy = res.clone();
-				const status = res.status;
-				const contentType = res.headers.get('content-type') ?? 'text/html; charset=utf-8';
-				const generationForKv = doGeneration;
-				defer(
-					copy
-						.text()
-						.then((html) =>
-							writePage(env, site, generationForKv, path, {
-								status,
-								contentType,
-								html
-							})
-						)
-						.catch(() => undefined)
-				);
-				kvPut = 'deferred';
-			}
-		} else if (serving) {
-			kvPut = 'skipped:disabled';
-		}
-
-		// every header the DO set is carried through; the x-cfw-* ones ARE the result
-		// on the serving path, so rebuilding a fresh header set would discard the
-		// measurement
-		const headers = new Headers(res.headers);
-		if (!headers.has('content-type')) {
-			headers.set('content-type', 'application/json');
-		}
-		headers.set('x-cfw-do-cache', doCache);
-		if (serving) {
-			headers.set('x-cfw-edge', 'MISS');
-			headers.set('x-cfw-edge-put', put);
-			// a tier that silently declined to store looks identical to one that stored, so the
-			// outcome is reported on the header a measurement reads
-			headers.set('x-cfw-kv-put', kvPut);
-			headers.set('x-cfw-plan', planTier);
-		}
-		if (authenticated) {
-			headers.set(AUTH_MODE_HEADER, authMode);
-			if (authReason !== '') headers.set(AUTH_REASON_HEADER, authReason);
-			// a per-user page must not be stored by any shared cache between here and the browser
-			headers.set('cache-control', 'private, no-store');
-		}
-		headers.set('x-worker-ms', String(Date.now() - t0));
-		// Which object ANSWERED, because nothing reported it and a whole class of measurement was
-		// taken without it. A driven copy left `lanes_provisioned` unwritten, so the router never
-		// learned the pool existed and every "with lanes" arm served from the primary while the rig
-		// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object.
-		//
-		// IT NAMED THE ROUTING DECISION UNTIL NOW, AND THAT IS NOT THE SAME OBJECT. A lane that
-		// refuses hands back and the primary re-serves, and this still reported the lane -- so a
-		// pool whose lanes served nothing read as one carrying most of the traffic. The failover is
-		// reported beside it rather than hidden, because the RATE of handing back is the number
-		// that says whether a pool is working.
-		headers.set(
-			REPLICA_HEADER,
-			laneOf().lane === 0 || failedOverFrom !== null ? 'primary' : `r${laneOf().lane}`
-		);
-		if (failedOverFrom !== null) {
-			headers.set('x-cfw-failover', `r${failedOverFrom}`);
-			if (failoverReason !== null) headers.set('x-cfw-failover-reason', failoverReason);
-		}
-		if (armedFill !== 'n/a') headers.set('x-cfw-arm-fill', armedFill);
-		return new Response(res.body, { status: res.status, headers });
 	},
 
 	/**
@@ -1933,6 +1172,994 @@ export default {
 	}
 };
 
+const originMemo = new Map<string, { at: number; origin: string | null }>();
+const ORIGIN_MEMO_MS = 60_000;
+
+/**
+ * The origin a site renders against, or null when it has none of its own yet (the fallback) or
+ * the object could not say. Asked once a minute per isolate, and only for alias traffic.
+ */
+async function canonicalOriginOf(env: SiteWorkerEnv, site: string): Promise<string | null> {
+	const now = Date.now();
+	const memo = originMemo.get(site);
+	if (memo && now - memo.at < ORIGIN_MEMO_MS) return memo.origin;
+	let origin: string | null = null;
+	try {
+		const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+		const choice = (await (await stub.fetch('https://do.local/__origin')).json()) as {
+			origin?: string;
+			from?: string;
+		};
+		if (choice.from !== 'fallback' && typeof choice.origin === 'string') origin = choice.origin;
+	} catch {
+		// an alias answered with canonical links is the pre-alias behaviour, not an outage
+	}
+	if (originMemo.size > 64) originMemo.clear();
+	originMemo.set(site, { at: now, origin });
+	return origin;
+}
+
+/** paths a redirect must never capture: this worker's routes, the object's, the surface and derivatives */
+const isReservedPath = (pathname: string): boolean =>
+	pathname.startsWith('/__') ||
+	ROUTES.has(pathname) ||
+	pathname.startsWith(SURFACE_PREFIX) ||
+	pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`);
+
+/** everything the front worker does once the site and its levers are resolved */
+async function frontFetch(
+	request: Request,
+	env: SiteWorkerEnv,
+	ctx: ExecutionContext | undefined,
+	url: URL,
+	t0: number,
+	resolvedSite: string
+): Promise<Response> {
+	// A write that nothing downstream reads does not belong before the response. Measured on a
+	// deployed worker: an awaited `caches.default.put` costs 9 ms for a small body and 12.5 ms for
+	// a 97 KB one, and the same put through `waitUntil` costs 0 before the response leaves. It
+	// does not reduce the invocation's billed wall time, only the time to answer.
+	const defer = (p: Promise<unknown> | undefined) => {
+		if (p === undefined) return;
+		if (ctx) ctx.waitUntil(p);
+		else void p;
+	};
+
+	// Drupal owns the URL space, so anything this Worker does not claim is a page request. Before
+	// this, `/` answered 404 on a deployed site as well as locally -- the only serving route was
+	// `/serve?site=X&path=Y`, so the premise of the product was reachable only by query string.
+	//
+	// A REWRITE, not a second serving path: the request becomes the `/serve` it would have been,
+	// and every tier below -- the edge cache key, the generation counter, the KV page tier, the
+	// DO hop -- is reached unchanged. `inner` downstream is built from `request.url` rather than
+	// from `url`, which is why the REQUEST is replaced and not just the parsed copy.
+	// `__`-prefixed paths are the DURABLE OBJECT's own routes, double-underscored precisely so they
+	// cannot collide with a Drupal path once this front end forwards real requests. They must stay
+	// a 404 from outside: rewriting them into a page render would answer a probe for `/__export`
+	// with a render rather than a refusal, which reads as "the route exists and something went
+	// wrong" instead of "there is no such route here"
+	const internal = url.pathname.startsWith('/__');
+	// set by the catch-all rewrite below, whose `?site=` is the site resolved above
+	let pageRequest = false;
+	// Image derivatives, answered here. In the front worker rather than in the object for two
+	// reasons: the wasm decoder never meets PHP's heap, and a derivative is a static byte range
+	// that has no reason to enter a single-threaded object at all. Before the `/serve` rewrite,
+	// because this path is its own route rather than a Drupal one
+	if (!internal && url.pathname.startsWith(`${IMAGE_ROUTE_PREFIX}/`) && ctx !== undefined) {
+		return serveImageTransform(request, url, env, ctx);
+	}
+	if (!internal && ctx !== undefined && publicFileUri(request.method, url.pathname) !== null) {
+		const served = await servePublicFile(request, url, env, ctx);
+		if (served !== null) return served;
+	}
+	if (!internal && ctx !== undefined && moduleAssetPath(request.method, url.pathname) !== null) {
+		const served = await serveModuleAsset(request, url, env, ctx);
+		if (served !== null) return served;
+	}
+
+	if (!internal && !ROUTES.has(url.pathname)) {
+		// `allowParam: false` because THIS query string is the visitor's. Without it,
+		// `https://customer-a.example/about?site=customer-b` resolves to customer B and serves
+		// their database from customer A's hostname -- the origin rewrite below keeps the
+		// parameter out of `/serve`'s own arguments and does nothing about which object answers.
+		// The site resolved at the top already is that answer: same URL, same flag
+		const rewritten = new URL(url.origin);
+		rewritten.pathname = '/serve';
+		rewritten.searchParams.set('site', resolvedSite);
+		pageRequest = true;
+		// built from the ORIGIN, so the visitor's own query cannot land among /serve's parameters
+		// -- `/about?site=someone-else` would otherwise choose which site answers. The query is
+		// preserved where Drupal wants it, inside `path`
+		rewritten.searchParams.set('path', url.pathname + url.search);
+		request = new Request(rewritten, request);
+		url = rewritten;
+	}
+
+	if (!ROUTES.has(url.pathname)) {
+		return new Response('not found\n', { status: 404 });
+	}
+	// The admin surface is not a diagnostic, so the flag is not a way into it. Everywhere else
+	// `PW_DIAGNOSTICS=1` still opens what it always opened
+	const surface = SURFACE_ROUTES.has(url.pathname);
+	let ownerToken: string | null = null;
+	if (surface || (!PUBLIC_ROUTES.has(url.pathname) && env?.PW_DIAGNOSTICS !== '1')) {
+		// An owner route is not A DIAGNOSTIC. `/export` sat in the diagnostic set beside `/sql`
+		// (arbitrary SQL) and `/restore` (a whole-database overwrite), all behind one boolean --
+		// so the supported way to get your own data out was to expose a remote shell to the
+		// internet first. Export is an owner operation and takes a credential instead of a mode.
+		if (OWNER_ROUTES.has(url.pathname)) {
+			ownerToken = await ownerCredential(request, env, url);
+			if (ownerToken === null) {
+				if (surface) {
+					// a browser gets the sign-in page, not a 401 body it would render as text
+					const to = new URL(LOGIN_PATH, url.origin);
+					to.searchParams.set('next', url.pathname + url.search);
+					return new Response(null, {
+						status: 302,
+						headers: { location: to.toString(), 'cache-control': 'no-store' }
+					});
+				}
+				// 401 with a challenge rather than the 404 a diagnostic gets: this route EXISTS
+				// and the caller is entitled to it, they just have not proved who they are
+				return new Response('owner token required\n', {
+					status: 401,
+					headers: {
+						'www-authenticate': 'Bearer realm="drupflare"',
+						'content-type': 'text/plain; charset=utf-8'
+					}
+				});
+			}
+			request = withOwnerHeader(request, ownerToken);
+		} else {
+			return new Response('not found\n', { status: 404 });
+		}
+	}
+
+	// one object per site; the name is the site identity, and a replica lane is that name plus a
+	// suffix. With no replicas configured `chooseTarget()` always answers the site itself
+	// a rewritten page request carries the site this handler resolved at the top, so asking again
+	// would read back its own parameter; only a route addressed directly resolves here
+	const site = pageRequest ? resolvedSite : await siteFor(url, env);
+	// The visitor's own path, which `url.pathname` no longer holds: the rewrite above moved it
+	// into `?path=` and made every serving request read `/serve`. So the path fallback in
+	// `affinityKey()` -- what a request with no session and no `cf-connecting-ip` spreads on --
+	// was one constant string, and every such request piled onto whichever lane it hashes to.
+	// The query is dropped so a page is one key however a visitor arrived at it
+	const visitorPath = (url.searchParams.get('path') ?? url.pathname).split('?')[0] as string;
+	// LAZY, because the tier that answers 82% of traffic never reads either of them. Choosing a
+	// lane allocates an affinity input, a decision and a copy of it; the stub then costs a
+	// native hash to a 256-bit id, a `DurableObjectId` and a stub object -- all of it upstream
+	// of an edge or memo hit that returns without touching the object at all. Both are memoised
+	// on first read, so every path that does need them sees one construction and the same
+	// values, and the routing decision still happens before any request reaches an object.
+	let laneMemo: ReturnType<typeof chooseTarget> | null = null;
+	// ONCE. It was read twice inside the same object literal -- for the affinity key and for
+	// `hasSession` -- and the read is a regex over the whole cookie header, on the path that
+	// runs for every request that reaches an object
+	const sessionValue = sessionCookieValue(request.headers.get('cookie'));
+	const laneOf = (): ReturnType<typeof chooseTarget> =>
+		(laneMemo ??= chooseTarget({
+			site,
+			method: request.method,
+			affinity: affinityKey({
+				session: sessionValue,
+				address: request.headers.get('cf-connecting-ip'),
+				pathname: visitorPath
+			}),
+			// an operator's REPLICA_COUNT is a floor and what the primary has actually built is
+			// the other half; autoscaling grew lanes nothing routed to until this read the second
+			replicas: Math.max(replicaCount(env), believedLanes(site, t0)),
+			// after the rewrite above, so a visitor path reads as `/serve` and a diagnostic or
+			// owner route reads as itself; those pin to the primary
+			pathname: url.pathname,
+			writeForward: writeForwardEnabled(env),
+			// a write arriving without one may MINT one, and a lane's mint never reaches the
+			// primary; see the docblock on the field
+			hasSession: sessionValue !== null,
+			visitorPath,
+			contentType: request.headers.get('content-type')
+		}));
+	let stubMemo: DurableObjectStub | null = null;
+	const stubOf = (): DurableObjectStub =>
+		(stubMemo ??= env.SITE.get(env.SITE.idFromName(laneOf().target), siteStubOptions(env)));
+
+	const cache = caches.default;
+	const origin = url.origin;
+	const bucket = Math.floor(Date.now() / genBucketMs(env));
+	// only the serving path is cacheable, and only for a safe method
+	const serving = url.pathname === '/serve' && request.method === 'GET';
+	// Worker-side, not a DO route: the window driver has to live outside the object
+	// because the CPU budget resets on an INCOMING message and an object cannot send
+	// itself one
+	if (url.pathname === '/fillwindow') {
+		return Response.json(
+			await runFillWindow(env, site, {
+				maxFills: url.searchParams.get('max')
+					? Number(url.searchParams.get('max'))
+					: undefined,
+				wallBudgetMs: url.searchParams.get('wall')
+					? Number(url.searchParams.get('wall'))
+					: undefined
+			})
+		);
+	}
+
+	// #region the product surfaces
+	//
+	// Server-rendered, no client framework and no build step. They live in the Worker rather than
+	// behind the object because three of the four need no PHP at all -- Limits is arithmetic,
+	// Deploy is a static requirement list, and Extend proxies one route.
+	// `/fleet` rides here rather than through DO_ROUTE, because it is answered from D1 without
+	// touching an object. It is named explicitly: it has no DO_ROUTE entry, so falling through
+	// sent `undefined` as the inner pathname and the inventory answered 404 to every caller,
+	// including `scripts/security-update.mjs --fleet=`
+	// `/settings` rides here for the same reason `/fleet` does: `CONFIG_KV` is a FRONT WORKER
+	// binding, so an object hop would spend a Durable Object request to reach a namespace this
+	// isolate already holds. It has no `DO_ROUTE` entry for that reason.
+	if (url.pathname === '/settings') {
+		return await settingsRoute(request, url, env);
+	}
+	if (url.pathname === '/deployment') {
+		return await deploymentRoute(request, url, env);
+	}
+
+	if (url.pathname.startsWith(SURFACE_PREFIX) || url.pathname === '/fleet') {
+		return await renderAdmin(request, url, env, stubOf(), ownerToken);
+	}
+
+	const path = url.searchParams.get('path') ?? '/';
+
+	// Refused here rather than in the Durable Object, because reaching the DO is what
+	// costs: one DO request, and a PERMANENT cache_data row per distinct URL that
+	// nothing garbage-collects. On a public site most traffic is scanners, so this is
+	// an oversized body is refused before it reaches wasm, and the interesting case is not a
+	// large file. A form body is `parse_str()`d inside a 128 MB isolate, and a nested-array
+	// bomb -- `foo[][][][][]=bar` repeated -- costs orders of magnitude more heap than it does
+	// bytes on the wire. Refusing at the edge costs no DO request and no interpreter, and a
+	// multipart upload is exempt because that is the one shape where size is expected.
+	const oversized = bodyTooLarge(request, env);
+	if (oversized !== null) {
+		return new Response(`${oversized.reason}\n`, {
+			status: 413,
+			headers: {
+				'content-type': 'text/plain; charset=utf-8',
+				'cache-control': 'no-store',
+				'x-cfw-deny': 'body-too-large',
+				'x-cfw-body-limit': String(oversized.limit)
+			}
+		});
+	}
+
+	// ONE SCAN, not two. It is a `split(/[?#]/)` plus up to six regex tests, and it ran here and
+	// again on the authenticated check below over the same string for the same answer
+	const neverDrupal = isNeverDrupal(path);
+
+	// A core entry point is a LINK a visitor followed, not a probe, so it is answered before the
+	// deny below. `/update.php` is linked from the Extend page by core itself
+	const entryRedirect =
+		serving && neverDrupal ? phpEntryRedirect(path.split(/[?#]/)[0] ?? '') : null;
+	if (entryRedirect) {
+		return new Response(null, {
+			status: 302,
+			headers: {
+				location: entryRedirect,
+				'x-cfw-cache': 'DENY',
+				'x-cfw-deny': 'php-entry-point',
+				'cache-control': `public, max-age=${EDGE_PAGE_TTL_S}`
+			}
+		});
+	}
+
+	// the cheapest request in the system.
+	if (serving && neverDrupal) {
+		return new Response('not found\n', {
+			status: 404,
+			headers: {
+				'x-cfw-cache': 'DENY',
+				'x-cfw-deny': 'never-drupal',
+				'cache-control': `public, max-age=${EDGE_PAGE_TTL_S}`
+			}
+		});
+	}
+
+	// Counted once here rather than at each tier's return, so a tier added later is counted
+	// without anybody remembering to. Everything below either answers from this isolate or hops,
+	// and the hop subtracts its own request back out.
+	if (serving) noteAbsorbed(site);
+
+	// #region the authenticated allowance, decided before ANY DO hop
+	//
+	// An authenticated request can never be answered from a shared cache -- the page is per-user
+	// -- so every one is a full render at 13 rows and ~500 ms. It is decided here rather than
+	// inside the object because a check made after the hop has already spent the DO request the
+	// reservation exists to protect.
+	const authenticated = neverDrupal ? false : isAuthenticatedRequest(request);
+	let authMode: 'render' | 'stale' | 'read-only' = 'render';
+	let authReason = '';
+	// the reservation is enforced on FREE only, and `decideAuthMode()` discards the counter when it
+	// is not -- so reading it on paid cost one `cache.match` (9.5 ms on the first authenticated
+	// request per isolate) for an answer nothing consults
+	//
+	// LAZY, because `authAllowance()` builds an eight-field object with five `Math.floor` and a
+	// clamp, and both of its readers sit behind a check an anonymous request fails. It ran
+	// unconditionally, so 82% of traffic paid for a budget it never consults. Memoised rather
+	// than moved into one branch: the second reader is the deferred spend write further down,
+	// and computing it twice would trade one waste for another
+	let enforcedMemo: boolean | null = null;
+	const enforcedOf = (): boolean =>
+		(enforcedMemo ??= authAllowance(env as AuthBudgetEnv).enforced);
+	if (authenticated && url.pathname === '/serve') {
+		const spend = enforcedOf() ? await readAuthSpend(cache, origin, site, t0) : null;
+		const decision = decideAuthMode(request, spend, env as AuthBudgetEnv, t0);
+		authMode = decision.mode;
+		authReason = decision.reason;
+
+		// never dark: a spent WRITE is refused by name, a spent READ falls through as
+		// anonymous. Going dark because two editors were busy is what the adversarial rule
+		// rejects outright
+		if (authMode === 'read-only') {
+			return new Response(`${authReason}\n`, {
+				status: 503,
+				headers: {
+					'content-type': 'text/plain; charset=utf-8',
+					// the quotas refill at midnight UTC, so that is the retry time
+					'retry-after': String(secondsUntilUtcReset(t0)),
+					'cache-control': 'private, no-store',
+					[AUTH_MODE_HEADER]: authMode,
+					[AUTH_REASON_HEADER]: authReason,
+					'x-worker-ms': String(Date.now() - t0)
+				}
+			});
+		}
+	}
+	// in stale mode the request is served as ANONYMOUS: the shared tiers answer it, nothing
+	// personalised is read or written, and the visitor gets the public page rather than a
+	// blank one. A degradation, not a refusal and not a dark site
+	const personalised = authenticated && authMode === 'render';
+	// #endregion
+
+	// #region compiled plans, answered from THIS isolate with no object hop
+	//
+	// The only tier that can answer an AUTHENTICATED page without one. `caches.default` and the KV
+	// page tier are both keyed without a user, so neither may ever hold one. The key carries the
+	// visitor's ROLE SET rather than their cookie; see `src/ops/edge-plan.ts` for what makes the
+	// narrower key safe and for the per-session agreement that is the other half of it.
+	const planCookie = request.headers.get('cookie') ?? '';
+	// what the OBJECT last said this cookie is, which is the only source for it. An isolate that
+	// has not learned one yet skips the tier and the hop below teaches it
+	const planRoles = planCookie === '' ? null : believedRoles(planCookie, t0);
+	// a write is the only thing that queues a Drupal message for the visitor's next page, and a
+	// plan compiled from renders that carried none would serve that page without it. Spending
+	// the session's agreement costs it one render and the message arrives on it
+	if (request.method !== 'GET' && request.method !== 'HEAD') forgetWitness(planCookie);
+	const planWanted = serving && personalised && request.method === 'GET' && edgePlanEnabled(env);
+	let planTier: PlanTier = planWanted ? 'miss' : 'skip:not-wanted';
+	if (planWanted) {
+		const planGeneration = believedGeneration(site, t0);
+		if (planGeneration === null) {
+			// this isolate has not learned a generation recently enough to fence a plan against;
+			// the object's answer below teaches it one
+			planTier = 'skip:generation-unknown';
+		} else if (planRoles === null) {
+			planTier = 'skip:roles-unknown';
+		} else {
+			const planKey = edgePlanKey(site, planGeneration, planRoles, path);
+			let held = lookupEdgePlan(planKey, Date.now(), planCookie);
+			let from: PlanTier = 'mem';
+			// the fallback, and it is consulted SECOND on purpose. A shared plan serves the
+			// whole role set off one entry and mirrors to KV; answering this session from its
+			// own instead would stop the shared key ever seeing a second witness
+			if (held === null) {
+				const own = privatePlanKey(planKey, planCookie);
+				held = lookupEdgePlan(own, Date.now(), planCookie);
+				if (held !== null) from = 'private';
+			}
+			// the tier for an isolate that knows the generation and has never seen this page,
+			// consulted at most once per key and never for longer than the hop it replaces --
+			// see COLD_READ_DEADLINE_MS, which exists because a key this colo has not seen costs
+			// 46-140 ms rather than the 5-6 a warm one does
+			if (held === null && shouldCheckKv(planKey)) {
+				const read = readEdgePlan(env, site, planGeneration, planRoles, path);
+				const arrived = await withDeadline(read);
+				if (arrived !== null) {
+					storeEdgePlan(planKey, arrived);
+					// a plan that arrived from another isolate has NOT been agreed with by this
+					// visitor, so it is stored for later and this request still hops. Serving it
+					// here would be the one thing the per-session proof exists to prevent
+					from = 'kv';
+				} else {
+					// a read that missed the deadline still warms this isolate for the next request
+					const key = planKey;
+					defer(read.then((late) => late && storeEdgePlan(key, late)));
+				}
+			}
+			const html = held === null ? null : runEdgePlan(held, believedCsrf(planCookie, t0));
+			const jump = html === null ? null : readRedirectPlan(html);
+			if (jump !== null) {
+				// `/user` is a 302 to `/user/<uid>` and was the only profile the tier could not
+				// answer; see `redirectPlanBody()` for why this is safe under the private key
+				return new Response(null, {
+					status: jump.status,
+					headers: {
+						location: jump.location,
+						'cache-control': 'private, no-store',
+						'x-cfw-cache': 'PLAN',
+						'x-cfw-plan': from,
+						'x-cfw-generation': String(planGeneration),
+						[AUTH_MODE_HEADER]: authMode,
+						'x-worker-ms': String(Date.now() - t0)
+					}
+				});
+			}
+			if (html !== null) {
+				return new Response(html, {
+					status: 200,
+					headers: {
+						'content-type': 'text/html; charset=UTF-8',
+						// per-user: no shared cache between here and the browser may store it
+						'cache-control': 'private, no-store',
+						'x-cfw-cache': 'PLAN',
+						'x-cfw-plan': from,
+						'x-cfw-generation': String(planGeneration),
+						[AUTH_MODE_HEADER]: authMode,
+						'x-worker-ms': String(Date.now() - t0)
+					}
+				});
+			}
+			// the render below reports `sampling` whether it feeds a compile or a key that has
+			// given up, so a path that permanently left the tier read identically to one about
+			// to join it
+			if (edgePlanRefused(planKey) || edgePlanRefused(privatePlanKey(planKey, planCookie))) {
+				planTier = 'refused';
+			}
+		}
+	}
+	// #endregion
+
+	const edgeWanted = serving && url.searchParams.get('edge') !== '0' && !personalised;
+
+	// BEFORE the first routing decision, so a cold isolate routes to the pool on request one
+	// rather than sending it to the primary and learning afterwards. Alongside the generation read
+	// rather than ahead of it: both are edge reads into separate maps, and only a miss routes
+	const [, generationRead] = await Promise.all([
+		serving ? primeLanes(cache, origin, site, env.CONFIG_KV) : undefined,
+		edgeWanted ? readGeneration(cache, origin, site, bucket) : null
+	]);
+
+	let generation = null;
+	if (edgeWanted) {
+		generation = generationRead;
+		if (generation !== null) {
+			// The string before the request, because the memo below is the tier that answers
+			// almost all of this path and it reads only the string. Building the `Request` first
+			// made every MEM hit pay a URL parse and an object allocation it never used
+			const memoKey = pageKeyUrl(origin, site, generation, path);
+			// the tier above `caches.default`, answered with no I/O at all. `anon-cached` costs
+			// 0.70 ms of cpuTime and 7.9-14.0 ms of `x-worker-ms` on a deployed worker, so
+			// almost all of it is the read below; see `src/ops/page-memo.ts`
+			const held = lookupPageMemo(memoKey, t0);
+			if (held) {
+				// the header set was assembled at STORE time; this path only stamps the timing
+				const headers = pageMemoHeaders(memoKey, t0) ?? new Headers();
+				headers.set('x-worker-ms', String(Date.now() - t0));
+				return new Response(held.body, { status: held.status, headers });
+			}
+			const cached = await cache.match(new Request(memoKey, { method: 'GET' }));
+			if (cached) {
+				// the tier that answered, without having touched the Durable Object;
+				// the DO's own verdict is preserved separately so a measurement can
+				// tell EDGE from DO HIT from MISS
+				const headers = new Headers(cached.headers);
+				headers.set('x-cfw-cache', 'EDGE');
+				headers.set('x-cfw-edge', 'HIT');
+				headers.set('cache-control', 'public, max-age=0, must-revalidate');
+				// BUFFERED rather than streamed, which is what makes the memo above possible.
+				// The body is a stored page -- 12 KB for the front page with aggregates on --
+				// so holding it costs one copy and saves this read on every later request
+				const body = new Uint8Array(await cached.arrayBuffer());
+				storePageMemo(
+					memoKey,
+					{
+						body,
+						status: cached.status,
+						contentType:
+							cached.headers.get('content-type') ?? 'text/html; charset=utf-8',
+						// only the object's own verdict travels; the tier headers are set fresh
+						// above so a memo hit never claims to have been an edge hit
+						headers: [...cached.headers].filter(
+							([name]) =>
+								name.startsWith('x-cfw-') &&
+								name !== 'x-cfw-cache' &&
+								name !== 'x-cfw-edge'
+						)
+					},
+					t0
+				);
+				headers.set('x-worker-ms', String(Date.now() - t0));
+				return new Response(body, {
+					status: cached.status,
+					headers
+				});
+			}
+		}
+	}
+
+	// the KV tier, between the per-colo edge cache and the Durable Object.
+	//
+	// Paid only, and the reason is which meter each one spends -- see `src/ops/page-store.ts`. The
+	// win it buys is specific: a page rendered in one colo answers from every colo WITHOUT a DO
+	// request, and a DO request is the paid cost driver. It cannot live inside the object because
+	// `serveFromStorage()` is synchronous by construction and every KV read is not.
+	if (edgeWanted && generation !== null) {
+		const stored = await readPage(env, site, generation, path);
+		if (stored) {
+			return new Response(stored.html, {
+				status: stored.status,
+				headers: {
+					'content-type': stored.contentType,
+					'x-cfw-cache': 'KV',
+					'x-cfw-edge': 'MISS',
+					'x-cfw-generation': String(generation),
+					'cache-control': 'public, max-age=0, must-revalidate',
+					'x-worker-ms': String(Date.now() - t0)
+				}
+			});
+		}
+		// The previous generation, which is already in KV and was never read. A bump changes the
+		// key rather than deleting anything, so the last answer for this path is sitting there
+		// on its own TTL -- and the cold path it replaces is 802 ms at p50 against 4-5 ms warm.
+		// The regeneration goes to the object's own fill queue, so the visitor waits for
+		// neither
+		const stale = await readStalePage(env, site, generation, path, {
+			neverStale: env.NEVER_STALE ?? null
+		});
+		if (stale) {
+			defer(
+				stubOf()
+					.fetch(new Request(`https://do.local/__fill?path=${encodeURIComponent(path)}`))
+					.then(() => undefined)
+					.catch(() => undefined)
+			);
+			return new Response(stale.page.html, {
+				status: stale.page.status,
+				headers: {
+					'content-type': stale.page.contentType,
+					'x-cfw-cache': 'KV',
+					'x-cfw-edge': 'STALE',
+					'x-cfw-stale-behind': String(stale.behind),
+					'x-cfw-generation': String(generation),
+					// SHORT, and shorter than a fresh answer's: this body is known to be a
+					// content change behind, so it must not settle into anything downstream
+					'cache-control': 'public, max-age=0, must-revalidate',
+					'x-worker-ms': String(Date.now() - t0)
+				}
+			});
+		}
+	}
+
+	// the site's own health, plus every other site claimed on this deployment: a site that is
+	// not primary is unreachable from an unmapped host, and this is where its owner sees it
+	if (url.pathname === '/health' && request.method === 'GET' && !url.searchParams.has('clear')) {
+		const probe = new URL(request.url);
+		probe.pathname = '/__health';
+		probe.searchParams.set('site', site);
+		const res = await stubOf().fetch(new Request(probe, { headers: request.headers }));
+		if (!res.ok) return res;
+		const body = (await res.json()) as Record<string, unknown>;
+		const report = await deploymentReport(env).catch(() => null);
+		return Response.json(
+			{
+				...body,
+				deployment: report && {
+					...report.deployment,
+					serving: site,
+					otherSites: report.sites.filter((one) => one.site !== site)
+				}
+			},
+			{ status: res.status }
+		);
+	}
+
+	// A claim is three object invocations, because the CPU limit is per invocation and a reset rolls
+	// the whole one back: the caches the install reads, the install, then the claim. Their answers
+	// are not read -- the claim repeats the same idempotent repairs and reports what is still wrong
+	if (
+		url.pathname === '/firstrun' &&
+		request.method === 'POST' &&
+		!url.searchParams.has('force') &&
+		!url.searchParams.has('pass')
+	) {
+		for (const phase of ['warm', 'consistency']) {
+			const prepare = new URL(request.url);
+			prepare.pathname = '/__firstrun';
+			prepare.search = '';
+			prepare.searchParams.set('site', site);
+			prepare.searchParams.set('phase', phase);
+			await stubOf()
+				.fetch(new Request(prepare, { method: 'POST', body: '{}' }))
+				.then((res) => res.body?.cancel())
+				.catch(() => undefined);
+		}
+	}
+
+	// the DO's own routes are double-underscored so they cannot collide with a
+	// Drupal path once this front end starts forwarding real requests
+	const inner = new URL(request.url);
+	// every route in ROUTES has a DO_ROUTE entry except `/fillwindow`, which returned above
+	inner.pathname = DO_ROUTE[url.pathname] as string;
+	// the RESOLVED name, overwriting whatever the caller sent: the object stores this as its own
+	// identity and keys its R2 mirror on it, so it has to be the value that chose the object
+	inner.searchParams.set('site', site);
+	// the consent screen redirects to a PATH; the object switches on ?action=, and a caller
+	// cannot be trusted to add it -- Cloudflare builds this URL, not us
+	if (url.pathname === '/setup/cf/callback') inner.searchParams.set('action', 'callback');
+
+	// Awaited to completion, never raced against a timer.
+	//
+	// A Worker-side deadline looks obvious and does not work: a render is one
+	// synchronous `php._run()` call into wasm, and while it runs nothing else in
+	// that thread does -- measured, a 1 ms `setTimeout` lost to a `stub.fetch()`
+	// that rendered for 119 ms, because the timer could not fire until the wasm
+	// call returned. Racing it would also mean abandoning the subrequest, which
+	// lets the runtime cancel a render mid-flight and leaves the interpreter
+	// parked mid-request for the next entrant. So the render budget is enforced
+	// inside the DO, BEFORE the render starts: see estimateRenderMs().
+	// buffered rather than streamed onward: the object may answer a POST without reading it,
+	// and workerd then throws an UNCAUGHT `read from request stream after response has been sent`
+	const buffered =
+		request.method === 'GET' || request.method === 'HEAD'
+			? undefined
+			: await request.arrayBuffer();
+	// `redirect: 'manual'`, and it is the difference between a working CMS and one that loses
+	// every submission. A subrequest FOLLOWS a 3xx by default, so Drupal's post-submit redirect
+	// -- `303 -> /user/1?check_logged_in=1` after a login, `/node/N` after a save -- was followed
+	// by the runtime against the OBJECT, which has no route by that name and answered its
+	// `not found` default. The write had already landed, so the visitor saw a 404 for something
+	// that worked. The 3xx belongs to the browser, which re-enters through the catch-all.
+	//
+	// Wrapped rather than spread: a `Request`'s method, headers and body live on the prototype,
+	// so `{ ...request }` is an empty object and would have dropped the cookie.
+	const innerRequest = new Request(
+		buffered === undefined
+			? new Request(inner, request)
+			: new Request(inner, {
+					method: request.method,
+					headers: request.headers,
+					body: buffered
+				}),
+		{ redirect: 'manual' }
+	);
+	// cleared first, always: every inbound header is copied onto the subrequest, so a client
+	// could otherwise send this one and have the object read it as this worker's own decision
+	innerRequest.headers.delete(AUTH_REQUEST_HEADER);
+	innerRequest.headers.delete(ABSORBED_HEADER);
+	innerRequest.headers.delete(ATTEMPT_HEADER);
+	// a lane forwards its writes elsewhere, so only the primary's serve route may be repeated
+	const attempt =
+		buffered !== undefined && inner.pathname === '/__serve' && laneOf().role !== 'replica'
+			? crypto.randomUUID()
+			: null;
+	if (attempt !== null) innerRequest.headers.set(ATTEMPT_HEADER, attempt);
+	// the count rides along on a hop already being paid for, same as the generation below
+	const absorbed = drainAbsorbed(site, serving);
+	if (absorbed > 0) innerRequest.headers.set(ABSORBED_HEADER, String(absorbed));
+	if (personalised) {
+		// the object charges the allowance and reports the counter back on this same response, so
+		// learning the spend costs no extra hop
+		innerRequest.headers.set(AUTH_REQUEST_HEADER, '1');
+	} else if (authenticated) {
+		// stale mode: the session is stripped so the object answers the ANONYMOUS page. Leaving
+		// the cookie on would make the object render per-user anyway and spend the very budget
+		// this branch exists because it has run out
+		innerRequest.headers.delete('cookie');
+	}
+	// Built BEFORE the send, because a replica that refuses has already consumed the request.
+	//
+	// A body is rebuilt from `buffered`, NEVER CLONED. This was `innerRequest.clone()` under a
+	// comment asserting only GET and HEAD could arrive, which `chooseTarget()` guaranteed until
+	// write forwarding let a POST reach a lane -- and nothing revisited it. `clone()` tees the
+	// body, the retry branch is read only on a failover, and an unread tee never releases: the
+	// login POST hung forever the first time traffic actually met a lane. The bytes are already
+	// in hand a few lines up, so the retry costs a second `Request` and no stream at all
+	const retryOnPrimary =
+		laneOf().role !== 'replica'
+			? null
+			: buffered === undefined
+				? innerRequest.clone()
+				: new Request(innerRequest.url, {
+						method: innerRequest.method,
+						headers: innerRequest.headers,
+						body: buffered,
+						redirect: 'manual'
+					});
+	let res: Response;
+	let retriedReset = false;
+	const rebuilt = () =>
+		buffered === undefined
+			? new Request(innerRequest)
+			: new Request(innerRequest.url, {
+					method: innerRequest.method,
+					headers: innerRequest.headers,
+					body: buffered,
+					redirect: 'manual'
+				});
+	try {
+		res = await stubOf().fetch(innerRequest);
+	} catch (e) {
+		// a reset object throws out of the hop, and uncaught that is the visitor's 1101
+		if (resetRecovery(e, innerRequest.method, attempt !== null) !== 'retry')
+			return objectResetPage(innerRequest.method);
+		stubMemo = null;
+		retriedReset = true;
+		try {
+			res = await stubOf().fetch(rebuilt());
+		} catch {
+			return objectResetPage(innerRequest.method);
+		}
+	}
+	// the repeat found its first try had started, so it may have been saved
+	if (res.headers.get(ATTEMPT_HEADER) === 'started') return objectResetPage(innerRequest.method);
+	if (retriedReset) {
+		res = new Response(res.body, res);
+		res.headers.set('x-cfw-retried', 'reset');
+	}
+	// which lane handed back, so the header below can name the object that ANSWERED rather than
+	// the one routing chose; they differ on exactly the requests a pool measurement cares about
+	let failedOverFrom: number | null = null;
+	// WHY it handed back, which the retry otherwise discards with the lane's own response. A
+	// failover rate says a pool is not carrying traffic; only the reason says which of the
+	// several refusals is doing it, and reading that off the lane afterwards is impossible
+	let failoverReason: string | null = null;
+	if (retryOnPrimary !== null && shouldFailover(res)) {
+		failedOverFrom = laneOf().lane;
+		failoverReason = res.headers.get('x-cfw-requires-primary');
+		// the replica computed `x-cfw-retry-safe` from `didMutate()`; this never infers safety
+		// from the status alone
+		const primary = () => env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+		try {
+			res = await primary().fetch(retryOnPrimary);
+		} catch (e) {
+			// the primary can be resetting for memory too, and this hop gets the first hop's one retry
+			if (resetRecovery(e, innerRequest.method, attempt !== null) !== 'retry')
+				return objectResetPage(innerRequest.method);
+			try {
+				res = await primary().fetch(rebuilt());
+			} catch {
+				return objectResetPage(innerRequest.method);
+			}
+			if (res.headers.get(ATTEMPT_HEADER) === 'started')
+				return objectResetPage(innerRequest.method);
+			res = new Response(res.body, res);
+			res.headers.set('x-cfw-retried', 'reset');
+		}
+	}
+
+	// an install leaves its object at ~110 MB of a 128 MB cap and wasm memory never shrinks, so
+	// the refill is NOT woken here: the next event in that isolate is refused, and a `setAlarm()`
+	// from inside the install's own event resets the object and rolls the install back (0/6
+	// landed with it, 6/6 without). The queue rows are written and left; the chain wakes on the
+	// next visitor MISS, save or explicit `/armfill`, by which point the isolate is clean.
+	let armedFill = 'n/a';
+	if (url.pathname === '/enable' && res.ok) {
+		try {
+			const body = (await res.clone().json()) as { armFill?: boolean };
+			armedFill = body?.armFill === true ? 'deferred' : 'not-requested';
+		} catch {
+			armedFill = 'unreadable';
+		}
+	}
+
+	// an unrecognised tier means this worker and the object disagree about the header
+	// contract, which is the drift `CACHE_TIERS` exists to make visible rather than silent
+	const rawTier = res.headers.get('x-cfw-cache');
+	const doCache =
+		rawTier === null ? 'n/a' : isCacheTier(rawTier) ? rawTier : `unknown:${rawTier}`;
+	const doGeneration = asGeneration(res.headers.get('x-cfw-generation'));
+
+	// the counter rides along on a response already paid for, same as the generation. The isolate
+	// memo is set synchronously inside these two, so only ANOTHER isolate waits on the cache copy
+	// -- which is why both are deferred rather than awaited
+	if (personalised && enforcedOf()) {
+		const reported = parseAuthSpend(res.headers);
+		if (reported) defer(writeAuthSpend(cache, origin, site, reported));
+	}
+
+	// the generation rides along on a response we already paid for, so learning it costs nothing
+	//
+	// forward only: the generation is per OBJECT and a lane trails the primary by up to
+	// `DEFAULT_REPLICA_LAG_MS`, while this pointer is per SITE and single valued. With `!==` a
+	// lane's older value rewrote it backwards, every `cache.match` then asked for a key nothing
+	// had been stored under, and the edge tier emptied for as long as the lag lasted.
+	//
+	// monotonic within the BUCKET rather than forever, so a genuine backwards move (a restore) is
+	// picked up at the next boundary instead of being pinned out
+	if (doGeneration !== null && (generation === null || doGeneration > generation)) {
+		defer(writeGeneration(cache, origin, site, bucket, doGeneration));
+	}
+	// the plan tier fences on the generation this isolate last learned, which is this one
+	if (doGeneration !== null) rememberEdgeGeneration(site, doGeneration, Date.now());
+	// and the pool the primary has actually built, so a lane autoscaling created receives
+	// traffic. Rides along on a response already paid for, like the two above
+	const reportedLanes = Number(res.headers.get(LANES_HEADER) ?? '');
+	if (Number.isFinite(reportedLanes) && reportedLanes > 0) {
+		const reportedEpoch = Number(res.headers.get(LANES_EPOCH_HEADER) ?? 0) || 0;
+		rememberLanes(site, reportedLanes, Date.now(), reportedEpoch);
+		// and at the edge, so the next COLD isolate routes on it rather than rediscovering it
+		defer(writeLanes(cache, origin, site, reportedLanes, reportedEpoch));
+	}
+
+	// #region compiling a plan out of the render that just happened
+	//
+	// The whole compile runs behind `ctx.waitUntil`: reading the body, diffing two renders and
+	// proving the result are CPU this request does not have to wait for.
+	const eligible = planEligibility({
+		method: request.method,
+		status: res.status,
+		doCache,
+		contentType: res.headers.get('content-type'),
+		setCookie: res.headers.getSetCookie(),
+		personalised,
+		generation: doGeneration,
+		cookie: planCookie,
+		location: res.headers.get('location')
+	});
+	// what the object says this cookie is. Recorded before the compile below, because the compile
+	// keys on it, and taken from the RESPONSE so a client cannot present a role set of its own
+	const reportedRoles = res.headers.get(ROLES_HEADER) ?? '';
+	if (planCookie !== '' && reportedRoles !== '') {
+		rememberRoles(planCookie, reportedRoles, Date.now());
+	}
+	if (planWanted && !eligible.ok) planTier = eligible.reason as PlanTier;
+	if (planWanted && eligible.ok && doGeneration !== null && reportedRoles !== '') {
+		// the key is rebuilt from the generation and the role set the OBJECT reported, which are
+		// the ones this render belongs to; the beliefs above may be a window behind them
+		const key = edgePlanKey(site, doGeneration, reportedRoles, path);
+		// cloned now, read later: the body below is returned to the caller and a clone taken after
+		// that has been consumed is empty
+		const copy = res.clone();
+		const generationForPlan = doGeneration;
+		const rolesForPlan = reportedRoles;
+		const witness = planCookie;
+		planTier = 'sampling';
+		// a redirect has no body; its whole content is the status and the target, expressed as a
+		// body so the compiler's proofs run on it unchanged
+		const jump = res.headers.get('location');
+		const asPlanBody =
+			isRedirectStatus(res.status) && jump !== null
+				? Promise.resolve(redirectPlanBody(res.status, jump))
+				: copy.text();
+		defer(
+			asPlanBody
+				.then((html) => {
+					// the one slot value the front worker cannot generate, taken from this
+					// session's own render so a shared plan can substitute it later
+					rememberCsrf(witness, sessionCsrf(html), Date.now());
+					// the cookie is the WITNESS rather than the key: the compile needs two
+					// different sessions to agree before it may store anything
+					const compiled = noteEdgeRender(key, path, html, Date.now(), witness);
+					if (compiled === null) {
+						// this session may be the only one this page ever sees, so give it a
+						// plan of its own. Skipped once a shared plan is serving: that one is
+						// cheaper and already covers the whole role set
+						if (!hasEdgePlan(key)) {
+							noteEdgeRender(
+								privatePlanKey(key, witness),
+								path,
+								html,
+								Date.now(),
+								witness,
+								true
+							);
+						}
+						return undefined;
+					}
+					return writeEdgePlan(
+						env,
+						site,
+						generationForPlan,
+						rolesForPlan,
+						path,
+						compiled
+					);
+				})
+				.catch(() => undefined)
+		);
+	}
+	// #endregion
+
+	const paged = serving
+		? putPage(cache, origin, site, path, res, doGeneration, doCache, personalised)
+		: { outcome: 'skipped:not-serving' };
+	defer(paged.write);
+	const put = paged.outcome;
+
+	// mirror into KV so the next colo does not pay a DO request. `res.clone()` for the same
+	// reason putPage() does it -- the body below is returned to the caller and can only be read once.
+	let kvPut = 'skipped:not-serving';
+	if (serving && personalised) {
+		// the KV key has no user in it either, so the same structural refusal applies
+		kvPut = 'skipped:authenticated';
+	} else if (serving && res.headers.has('set-cookie')) {
+		kvPut = 'skipped:set-cookie';
+	} else if (serving && pageKvEnabled(env)) {
+		if (doGeneration === null) {
+			kvPut = 'skipped:no-generation';
+		} else if (doCache !== 'HIT' && doCache !== 'RENDER') {
+			// a 503 warming placeholder is not a page; storing it would pin "warming" globally
+			kvPut = `skipped:${doCache}`;
+		} else if (res.headers.get(KV_GRANT_HEADER) !== '1') {
+			// the object holds the daily write budget; no grant means it is spent, or a lane answered
+			kvPut = 'skipped:no-grant';
+		} else {
+			// cloned now, read later: the body below is returned to the caller, and a clone taken
+			// after that has been consumed is empty
+			const copy = res.clone();
+			const status = res.status;
+			const contentType = res.headers.get('content-type') ?? 'text/html; charset=utf-8';
+			const generationForKv = doGeneration;
+			defer(
+				copy
+					.text()
+					.then((html) =>
+						writePage(env, site, generationForKv, path, {
+							status,
+							contentType,
+							html
+						})
+					)
+					.catch(() => undefined)
+			);
+			kvPut = 'deferred';
+		}
+	} else if (serving) {
+		kvPut = 'skipped:disabled';
+	}
+
+	// every header the DO set is carried through; the x-cfw-* ones ARE the result
+	// on the serving path, so rebuilding a fresh header set would discard the
+	// measurement
+	const headers = new Headers(res.headers);
+	if (!headers.has('content-type')) {
+		headers.set('content-type', 'application/json');
+	}
+	headers.set('x-cfw-do-cache', doCache);
+	if (serving) {
+		headers.set('x-cfw-edge', 'MISS');
+		headers.set('x-cfw-edge-put', put);
+		// a tier that silently declined to store looks identical to one that stored, so the
+		// outcome is reported on the header a measurement reads
+		headers.set('x-cfw-kv-put', kvPut);
+		headers.set('x-cfw-plan', planTier);
+	}
+	if (authenticated) {
+		headers.set(AUTH_MODE_HEADER, authMode);
+		if (authReason !== '') headers.set(AUTH_REASON_HEADER, authReason);
+		// a per-user page must not be stored by any shared cache between here and the browser
+		headers.set('cache-control', 'private, no-store');
+	}
+	headers.set('x-worker-ms', String(Date.now() - t0));
+	// Which object ANSWERED, because nothing reported it and a whole class of measurement was
+	// taken without it. A driven copy left `lanes_provisioned` unwritten, so the router never
+	// learned the pool existed and every "with lanes" arm served from the primary while the rig
+	// printed the lanes ready. `x-cfw-lane` is taken; it names the serving tier, not the object.
+	//
+	// IT NAMED THE ROUTING DECISION UNTIL NOW, AND THAT IS NOT THE SAME OBJECT. A lane that
+	// refuses hands back and the primary re-serves, and this still reported the lane -- so a
+	// pool whose lanes served nothing read as one carrying most of the traffic. The failover is
+	// reported beside it rather than hidden, because the RATE of handing back is the number
+	// that says whether a pool is working.
+	headers.set(
+		REPLICA_HEADER,
+		laneOf().lane === 0 || failedOverFrom !== null ? 'primary' : `r${laneOf().lane}`
+	);
+	if (failedOverFrom !== null) {
+		headers.set('x-cfw-failover', `r${failedOverFrom}`);
+		if (failoverReason !== null) headers.set('x-cfw-failover-reason', failoverReason);
+	}
+	if (armedFill !== 'n/a') headers.set('x-cfw-arm-fill', armedFill);
+	return new Response(res.body, { status: res.status, headers });
+}
+
 /**
  * A `?next=` that can only send the browser back into this surface.
  *
@@ -1959,6 +2186,76 @@ function safeNext(value: string | null): string | null {
  * A binding with no `put` answers 501 rather than throwing, so local dev reads as "this deployment
  * cannot store an override" rather than as a fault.
  */
+/**
+ * The deployment document: which sites are claimed here, which one is primary and what each holds.
+ *
+ * GET reports it with a live census of every claimed site. PUT `{"primary": "<site>"}` chooses the
+ * primary explicitly, which no automatic choice overrides. The owner token is checked against the
+ * site the request addresses, so an owner names their own site with `?site=` and a token for it.
+ */
+async function deploymentRoute(request: Request, url: URL, env: SiteWorkerEnv): Promise<Response> {
+	const kv = env.CONFIG_KV;
+	if (!kv) {
+		return Response.json(
+			{ ok: false, error: 'no CONFIG_KV binding, so there is no deployment document' },
+			{ status: 501 }
+		);
+	}
+	if (request.method === 'PUT' || request.method === 'POST') {
+		let body: unknown;
+		try {
+			body = await request.json();
+		} catch {
+			return Response.json({ ok: false, error: 'the body is not JSON' }, { status: 400 });
+		}
+		const wanted = (body as { primary?: unknown } | null)?.primary;
+		if (typeof wanted !== 'string' || wanted === '') {
+			return Response.json(
+				{ ok: false, error: 'send {"primary": "<site id>"}' },
+				{ status: 400 }
+			);
+		}
+		// the token proved ownership of the addressed site, so that is the only one it may promote
+		const addressed = await siteFor(url, env);
+		if (wanted !== addressed) {
+			return Response.json(
+				{
+					ok: false,
+					error: `the token was checked against ${addressed}; address the site you are promoting with ?site=${wanted}`
+				},
+				{ status: 403 }
+			);
+		}
+		const result = await choosePrimary(kv, wanted);
+		return Response.json(result, { status: result.ok ? 200 : 409 });
+	}
+	if (request.method !== 'GET') {
+		return Response.json({ ok: false, error: 'use GET or PUT' }, { status: 405 });
+	}
+	return Response.json({ ok: true, ...(await deploymentReport(env)) });
+}
+
+/** the document plus what every claimed site holds, which `/health` and GET `/deployment` report */
+async function deploymentReport(env: SiteWorkerEnv): Promise<{
+	deployment: DeploymentSites;
+	sites: SiteCensus[];
+}> {
+	resetDeploymentMemo();
+	const deployment = await readDeployment(env.CONFIG_KV);
+	const sites = await Promise.all(
+		deployment.claimed.map((site) =>
+			censusOf(env.SITE, site).catch((): SiteCensus => ({
+				site,
+				nodes: 0,
+				accounts: 0,
+				claimedAt: null,
+				lastWrite: null
+			}))
+		)
+	);
+	return { deployment, sites };
+}
+
 async function settingsRoute(request: Request, url: URL, env: SiteWorkerEnv): Promise<Response> {
 	// the SAME site the owner credential was checked against, so a token for A cannot read or write
 	// B's document. Both documents used to be deployment-wide, which made one tenant's owner an
@@ -2425,6 +2722,73 @@ export function publicFileUri(method: string, pathname: string): string | null {
 		return null;
 	}
 	return normaliseUri(`public://${rest}`);
+}
+
+const MODULE_ASSET_ROOTS = ['/modules/', '/themes/', '/profiles/', '/libraries/'];
+const MODULE_ASSET_TYPES: Record<string, string> = {
+	css: 'text/css; charset=utf-8',
+	js: 'text/javascript; charset=utf-8',
+	mjs: 'text/javascript; charset=utf-8',
+	svg: 'image/svg+xml'
+};
+
+/**
+ * The stored-source path a GET for a module, theme, profile or library asset names, or null.
+ *
+ * The pack's own files are published by the asset layer and never reach the Worker, so a request
+ * that does is either a site-delivered asset or a 404. Text types only: `cfw_module_file.source` is
+ * TEXT, and a binary asset (image, font) has no honest home there.
+ */
+export function moduleAssetPath(method: string, pathname: string): string | null {
+	if (method !== 'GET' && method !== 'HEAD') return null;
+	if (!MODULE_ASSET_ROOTS.some((root) => pathname.startsWith(root))) return null;
+	let path: string;
+	try {
+		path = decodeURIComponent(pathname).slice(1);
+	} catch {
+		return null;
+	}
+	if (/[\0\\]|\/\/|(^|\/)\.\.?(\/|$)/.test(path)) return null;
+	const type = MODULE_ASSET_TYPES[path.slice(path.lastIndexOf('.') + 1).toLowerCase()];
+	return type === undefined ? null : path;
+}
+
+/** a delivered module asset, or null so the request falls through to Drupal */
+async function serveModuleAsset(
+	request: Request,
+	url: URL,
+	env: SiteWorkerEnv,
+	ctx: ExecutionContext
+): Promise<Response | null> {
+	const path = moduleAssetPath(request.method, url.pathname);
+	if (path === null) return null;
+	const cache = caches.default;
+	const key = new Request(url.toString(), { method: 'GET' });
+	const cached = await cache.match(key);
+	if (cached) return request.method === 'HEAD' ? new Response(null, cached) : cached;
+
+	const { site } = await resolveSite(url, env, { allowParam: false });
+	const stub = env.SITE.get(env.SITE.idFromName(site), siteStubOptions(env));
+	const source = await stub.fetch(
+		new Request(`https://do.local/__moduleasset?path=${encodeURIComponent(path)}`)
+	);
+	if (!source.ok) {
+		await source.body?.cancel();
+		return null;
+	}
+	const response = new Response(source.body, {
+		status: 200,
+		headers: {
+			'content-type':
+				MODULE_ASSET_TYPES[path.slice(path.lastIndexOf('.') + 1).toLowerCase()]!,
+			// short, because a module update replaces the file under the same path
+			'cache-control': 'public, max-age=300',
+			'x-content-type-options': 'nosniff',
+			'x-cfw-file': 'MODULE'
+		}
+	});
+	ctx.waitUntil(cache.put(key, response.clone()));
+	return request.method === 'HEAD' ? new Response(null, response) : response;
 }
 
 /** a stored public file, or null so the request falls through to Drupal */

@@ -3462,7 +3462,9 @@ would have reached users:
   behind the alarm got a 503. `FILL_SETTLE_MS` (60 s) holds the fill, cron and reconciliation off an
   interpreter younger than that and re-arms for the end of the hold. Paired deployed arms, one demo drive
   each: a failed POST in 3 of 3 drives without the hold and 1 of 3 with it; fill pages rendered during
-  the drives 77 against 9.
+  the drives 77 against 9. The first version held the mail and HTTP drains as well: a held reconcile
+  step ended the firing, so a reset mail on a young isolate left 62.8 s after it was queued. A held step
+  now lets the firing reach the drains, which run no PHP.
 - **Thunder's claim died at the CPU limit every time, and each retry repeated the same work.** The claim
   was one invocation: a cold boot (5.1 s), plugin discovery (6.2 s), a container compile and a router
   rebuild, then saving the administrator (2.0 s, all of it the bcrypt hash). A CPU kill rolls back every

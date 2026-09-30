@@ -506,7 +506,9 @@ has the commands.
 Two rig traps worth keeping. GitLab's `allow_local_requests_from_web_hooks_and_services` is an
 APPLICATION setting, so the omnibus key for it is **decorative** and silently does nothing; set it
 through `gitlab-rails runner`. And GitLab indexes a pushed branch asynchronously, so a merge-request
-POST answers `source_branch does not exist` on a branch git has already accepted -- retry it.
+POST answers `source_branch does not exist` on a branch git has already accepted -- retry it. Gitea 28
+ignores `[webhook].ALLOWED_HOST_LIST` and refuses the catch-all `*`, so the rig sets
+`[security].ALLOWED_HOST_LIST = private`; with the old key every hook to `host.docker.internal` was denied.
 
 **Bitbucket Cloud is `supported, not exercised`.** Not `verified`, which is reserved for a run that
 asserted an observable, and not `untested`, which is false.
@@ -880,6 +882,12 @@ is younger than that; queue rows stay and the alarm re-arms for the end of the h
 dropped. `/serve-stats` reports `fillHold`. Paired arms, one drive each: control failed a POST in 3 of 3
 drives with 77 fill pages rendered during them, the hold 1 of 3 with 9. The test pool binds it to `0`
 (`vitest.config.ts`) because ~20 alarm specs fill straight after a boot; the shipping default is not off.
+
+**The hold is on PHP, and it once held the mail too.** A held reconcile step returned out of the alarm and
+re-armed for the end of the hold, so the HTTP and mail drains below it did not run: every password reset on
+a young isolate waited ~60 s, measured at 62.8 s from queue to send, and the e2e mail lane's 45 s deadline
+went red. A held step now lets the firing continue to the drains; `interpreter-recycle.spec.ts` asserts the
+mail leaves on the held firing and fails with the old early return.
 
 **A request waiting on the object's gate is charged to the alarm it queued behind** in `wrangler tail`:
 its CPU and its logs appear on the ALARM event. So a 1.3-2.8 s ALARM row on a fresh isolate is usually a

@@ -1,5 +1,8 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
+import { harvestShell, renderFragments } from '../../src/drupal/site-php';
+import { takeSpareMemory } from '../../src/site-do';
+import { claimSite, loginJar } from '../helpers/drupal-forms';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -176,6 +179,112 @@ describe('the ladder arms are what they are named', () => {
 			for (const arm of [out.full, out.dpc, out.bare]) {
 				expect(Number.isFinite(arm.renderMs)).toBe(true);
 				expect(arm.renderMs).toBeGreaterThanOrEqual(0);
+			}
+		},
+		TIMEOUT
+	);
+});
+
+/** one FNV-1a hash per 64 KiB page, the unit gmux diffs its checkpoints by */
+function pageHashes(buf: ArrayBuffer): Uint32Array {
+	const words = new Uint32Array(buf);
+	const perPage = 16_384;
+	const out = new Uint32Array(words.length / perPage);
+	for (let p = 0; p < out.length; p++) {
+		let h = 0x811c9dc5;
+		for (let i = p * perPage; i < (p + 1) * perPage; i++)
+			h = Math.imul(h ^ words[i]!, 16777619);
+		out[p] = h >>> 0;
+	}
+	return out;
+}
+
+/**
+ * Where an admin render's time and memory go, which is what decides whether splitting it pays.
+ *
+ * Asked by the parallel-render and heap-fork proposals (roadmap, v1.1). For each page, on a fresh
+ * 64 MiB interpreter with the kernel booted: the render up to the BigPipe cut, the placeholders
+ * after it, the same render again on the now-warm interpreter, the page's main view alone, and how
+ * many 64 KiB pages of the heap the first render changed. Read 2026-09-30 on the stock site: the cut
+ * holds 96-100% of the growth, the warm render is 72-102 ms against ~1.5 s cold, and one render
+ * dirties ~60% of the heap, so the first render is warm-up any fork inherits.
+ */
+describe.skipIf(!MEASURING)('where an admin render spends its time and memory', () => {
+	it(
+		'splits the render at the placeholder cut, cold against warm, and counts the pages it dirties',
+		async () => {
+			const heapBytes = async (site: ServeDo) =>
+				Number(
+					(
+						(await (
+							await site.fetch(new Request('https://do.local/__heap?op=status'))
+						).json()) as {
+							linearMemoryBytes?: number;
+						}
+					).linearMemoryBytes ?? 0
+				);
+			const memory = (site: ServeDo) =>
+				(site as unknown as { php: { binary: { wasmMemory: WebAssembly.Memory } } }).php
+					.binary.wasmMemory;
+			const origin = 'https://do.local';
+			const rows: Record<string, unknown>[] = [];
+			for (const [path, view, display] of [
+				['/admin/content', 'content', 'page_1'],
+				['/admin/people', 'user_admin_people', 'page_1'],
+				['/admin/reports/dblog', 'watchdog', 'page']
+			] as const) {
+				rows.push(
+					await inObject(freshSite(), async (site: ServeDo) => {
+						await claimSite(site, 'cfw-Ladder-Pass-5521');
+						const jar = await loginJar(site, 'admin', 'cfw-Ladder-Pass-5521', origin);
+						(site as unknown as { php: unknown }).php = null;
+						takeSpareMemory();
+						await site.runJson(renderFragments(path, {}, { cookie: jar, origin }));
+						const booted = await heapBytes(site);
+						const base = pageHashes(memory(site).buffer.slice(0));
+						const cold = (await site.runJson(
+							harvestShell(path, { cookie: jar, origin })
+						)) as Record<string, unknown>;
+						const cut = await heapBytes(site);
+						const after = pageHashes(memory(site).buffer.slice(0));
+						const holes = (await site.runJson(
+							renderFragments(
+								path,
+								(cold['recipes'] ?? {}) as Record<string, unknown>,
+								{
+									cookie: jar,
+									origin
+								}
+							)
+						)) as Record<string, unknown>;
+						const filled = await heapBytes(site);
+						const warm = (await site.runJson(
+							harvestShell(path, { cookie: jar, origin })
+						)) as Record<string, unknown>;
+						const alone = (await site.runJson(
+							`<?php $t = microtime(true); $b = views_embed_view('${view}', '${display}'); \\Drupal::service('renderer')->renderRoot($b); echo json_encode(['ms' => round((microtime(true) - $t) * 1000, 1)]);`
+						)) as Record<string, unknown>;
+						let changed = 0;
+						for (let p = 0; p < base.length; p++) if (base[p] !== after[p]) changed++;
+						return {
+							path,
+							status: cold['status'],
+							placeholders: cold['recipeCount'],
+							coldMs: cold['harvestMs'],
+							warmMs: warm['harvestMs'],
+							viewMs: alone['ms'],
+							cutMiB: (cut - booted) / 1_048_576,
+							placeholderMiB: (filled - cut) / 1_048_576,
+							dirtyPct: (100 * (changed + after.length - base.length)) / after.length
+						};
+					})
+				);
+			}
+			console.log(`[render-phases] ${JSON.stringify(rows)}`);
+			for (const row of rows) {
+				expect(row.status).toBe(200);
+				expect(row.dirtyPct as number).toBeGreaterThan(0);
+				expect(Number.isFinite(row.warmMs as number)).toBe(true);
 			}
 		},
 		TIMEOUT

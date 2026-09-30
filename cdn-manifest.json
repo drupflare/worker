@@ -316,6 +316,13 @@
 			"md5": "9de83d79aad46b4c4bbada9204e8e69a",
 			"mirrors": ".interp/php8.5-worker.mjs",
 			"note": "its glue, which the seam imports as PHPFactory"
+		},
+		{
+			"key": "snapshots/site.sqlite.110877375492",
+			"bytes": 5832704,
+			"sha256": "110877375492baacac46e515ff5bd4756596f95e3a70522e97359e2bafef2327",
+			"md5": "fc935bc9e8637af97f8239af7f142084",
+			"note": "assets/drupal/site.sqlite as the bucket held it until an upload replaced it on 2026-09-30"
 		}
 	]
 }

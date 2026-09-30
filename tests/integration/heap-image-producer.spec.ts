@@ -1,5 +1,5 @@
 import { runDurableObjectAlarm } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { dropAllSnapshots, ensureHeapTables } from '../../src/db/heap-store';
 import { RECONCILE_STEPS } from '../../src/ops/reconcile';
 import { driveAlarms, freshSite, inObject, type ServeDo } from '../helpers/serve-do';
@@ -18,6 +18,14 @@ const TIMEOUT = 1_800_000;
 
 const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do.local${path}`));
 
+// every case's object shares this isolate, so a later case's imaging boot ran beside three resident
+// interpreters at 262 MB of linear memory and its firing died; a dropped heap is reused instead
+const made: DurableObjectStub[] = [];
+afterEach(async () => {
+	for (const stub of made.splice(0))
+		await inObject(stub, (site) => (site as any).dropInterpreter());
+});
+
 /**
  * A site in the state the producer waits for: migrated, rendered once so it has its OWN
  * `cache_container` row, and holding no interpreter -- which is what `/__migrate` and `/__firstrun`
@@ -25,6 +33,7 @@ const call = (site: ServeDo, path: string) => site.fetch(new Request(`https://do
  */
 async function provisioned(): Promise<DurableObjectStub> {
 	const stub = freshSite();
+	made.push(stub);
 	// off while the setup runs, or a setup step images and `latest` is non-null before the subject
 	// arms anything; the default-off decision is pinned separately below
 	await inObject(stub, (site) => {
@@ -213,6 +222,7 @@ describe('the alarm produces this site one heap image', () => {
 			// `container-cid.spec.ts` is what pins the stale-container regression, and the byte figure
 			// belongs in a measurement script rather than in a ceiling somebody has to keep editing.
 			const stub = freshSite();
+			made.push(stub);
 			await inObject(stub, (site) => {
 				(site as any).env = { ...(site as any).env, HEAP_IMAGE: '1' };
 			});
@@ -274,6 +284,7 @@ describe('the alarm produces this site one heap image', () => {
 		'produces nothing when nobody asked, because the default is off',
 		async () => {
 			const stub = freshSite();
+			made.push(stub);
 			await inObject(stub, (site) => call(site, '/__migrate?all=1&prefill=0'));
 			await inObject(stub, (site) => (site as any).fillOne('/'));
 			await inObject(stub, (site) => {

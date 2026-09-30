@@ -203,3 +203,66 @@ ${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
 echo json_encode($out);
 `;
 }
+
+/**
+ * Points `system.image` at the toolkit this runtime can serve.
+ *
+ * A migrated site arrives set to `gd` or `imagemagick`. gd is not compiled in and imagemagick shells
+ * out to `convert`, so every image style on such a site fails until the toolkit is `cfw_images`.
+ */
+export function reconcileToolkitPhp(origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false];
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+  $editable = \Drupal::configFactory()->getEditable('system.image');
+  $out['before'] = (string) $editable->get('toolkit');
+  $editable->set('toolkit', 'cfw_images');
+  $editable->save();
+  $out['after'] = (string) \Drupal::config('system.image')->get('toolkit');
+  $out['ok'] = $out['after'] === 'cfw_images';
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+echo json_encode($out);
+`;
+}
+
+/**
+ * Uninstalls modules whose whole job this runtime does another way.
+ *
+ * `automatic_updates` and `project_browser` rewrite the codebase with composer, and updates here are
+ * delivered by `drangler update` and reconciliation. `mongodb_watchdog` logs into a MongoDB the
+ * runtime cannot reach, and dblog or the host logger takes over when it goes.
+ */
+export function reconcileUninstallPhp(modules: readonly string[], origin = ''): string {
+	return String.raw`<?php
+${FIBER_SHIM}
+chdir('/drupal');
+
+$out = ['ok' => false];
+try {
+${kernelBoot(JSON.stringify(JSON.stringify(String(origin ?? ''))))}
+  $wanted = json_decode(${JSON.stringify(JSON.stringify(modules))}, true);
+  $present = array_values(array_filter($wanted, function ($m) {
+    return \Drupal::moduleHandler()->moduleExists($m);
+  }));
+  $out['before'] = $present;
+  if ($present) {
+    \Drupal::service('module_installer')->uninstall($present, false);
+  }
+  $out['after'] = array_values(array_filter($wanted, function ($m) {
+    return \Drupal::moduleHandler()->moduleExists($m);
+  }));
+  $out['ok'] = $out['after'] === [];
+} catch (\Throwable $e) {
+  $out['error'] = get_class($e) . ': ' . $e->getMessage();
+  $out['at'] = $e->getFile() . ':' . $e->getLine();
+}
+echo json_encode($out);
+`;
+}

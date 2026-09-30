@@ -16,10 +16,14 @@ import {
 	DRIVER_DIGEST_KEY,
 	PACK_VERSION,
 	RECONCILE_STEPS,
+	REPLACED_MODULES,
+	REPLACED_MODULES_STEP,
 	RETIRED_PERMISSIONS,
 	SHIPPED_PAGE_MAX_AGE,
 	STEP_ATTEMPT_LIMIT,
 	configMaxAge,
+	enabledModules,
+	imageToolkit,
 	parseReconcileState,
 	planReconcile,
 	reconcileReport,
@@ -433,6 +437,78 @@ describe('the unread node index step', () => {
 			sqlite_master: [{ type: 'index', name: 'node_field_data_node__status_type' }]
 		});
 		expect(step.verdict(sql, fakeHost(null)).state).toBe('satisfied');
+	});
+});
+
+/** a serialized `core.extension` listing modules and one theme, the shape Drupal stores */
+function coreExtension(modules: string[]): string {
+	const body = modules.map((m) => `s:${m.length}:"${m}";i:0;`).join('');
+	return `a:3:{s:6:"module";a:${modules.length}:{${body}}s:5:"theme";a:1:{s:7:"olivero";i:0;}s:7:"profile";s:8:"standard";}`;
+}
+
+/** a serialized `system.image`, which the pack ships naming gd */
+function systemImage(toolkit: string): string {
+	return `a:2:{s:5:"_core";a:1:{s:19:"default_config_hash";s:3:"abc";}s:7:"toolkit";s:${toolkit.length}:"${toolkit}";}`;
+}
+
+describe('the image toolkit step', () => {
+	const step = RECONCILE_STEPS.find((s) => s.id === 'image-toolkit') as ReconcileStep;
+	const site = (toolkit: string, modules = ['system', 'drupflare']) =>
+		fakeSql({
+			config: [
+				{ name: 'core.extension', data: coreExtension(modules) },
+				{ name: 'system.image', data: new TextEncoder().encode(systemImage(toolkit)) }
+			]
+		});
+
+	it('reads the toolkit and the module list out of the serialized rows', () => {
+		expect(imageToolkit(site('imagemagick'))).toBe('imagemagick');
+		// the theme list must not read as modules
+		expect(enabledModules(site('gd'))).toEqual(['system', 'drupflare']);
+	});
+
+	it('owes a claimed site on imagemagick or gd, and writes through Drupal', () => {
+		for (const toolkit of ['imagemagick', 'gd']) {
+			const verdict = step.verdict(site(toolkit), fakeHost(1_000));
+			expect(verdict).toEqual({ state: 'owed', detail: `toolkit is ${toolkit}` });
+		}
+		expect(step.php?.(fakeHost(1_000))).toContain("->set('toolkit', 'cfw_images')");
+	});
+
+	it('is satisfied on cfw_images, and waits for the claim or for drupflare', () => {
+		expect(step.verdict(site('cfw_images'), fakeHost(1_000)).state).toBe('satisfied');
+		// the claim selects the toolkit on a fresh site, which ships naming gd
+		expect(step.verdict(site('gd'), fakeHost(null)).state).toBe('deferred');
+		expect(step.verdict(site('gd', ['system']), fakeHost(1_000)).state).toBe('deferred');
+	});
+});
+
+describe('the replaced modules step', () => {
+	const step = REPLACED_MODULES_STEP;
+
+	it('is not in the default chain, because removing a module is not decided', () => {
+		expect(RECONCILE_STEPS.some((s) => s.id === 'replaced-modules')).toBe(false);
+	});
+	const site = (modules: string[]) =>
+		fakeSql({ config: [{ name: 'core.extension', data: coreExtension(modules) }] });
+
+	it('owes a site carrying a composer updater or the MongoDB logger, naming each', () => {
+		const verdict = step.verdict(
+			site(['system', 'automatic_updates', 'mongodb', 'mongodb_watchdog']),
+			fakeHost(1_000)
+		);
+		expect(verdict).toEqual({
+			state: 'owed',
+			detail: 'enabled: automatic_updates, mongodb_watchdog'
+		});
+		const php = step.php?.(fakeHost(1_000)) ?? '';
+		for (const m of REPLACED_MODULES) expect(php).toContain(m);
+		expect(php).toContain("service('module_installer')->uninstall(");
+	});
+
+	it('is satisfied on a site with none, and defers when the row is unreadable', () => {
+		expect(step.verdict(site(['system', 'node']), fakeHost(1_000)).state).toBe('satisfied');
+		expect(step.verdict(fakeSql({}), fakeHost(1_000)).state).toBe('deferred');
 	});
 });
 

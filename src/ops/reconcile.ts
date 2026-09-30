@@ -3,7 +3,9 @@ import {
 	reconcileConfigPhp,
 	reconcileDiscoveryPhp,
 	reconcileOwnerPhp,
-	reconcileRouterPhp
+	reconcileRouterPhp,
+	reconcileToolkitPhp,
+	reconcileUninstallPhp
 } from '../drupal/reconcile-php.js';
 import { DRIVER_DIGEST, DRIVER_ROUTE_PERMISSIONS, DRIVER_ROUTES } from './driver-digest.js';
 import { UNREAD_NODE_INDEXES } from './node-indexes.js';
@@ -115,6 +117,14 @@ export interface ReconcileStep {
 	sql?(sql: ReconcileSql, host: ReconcileHost): void;
 	/** a PHP fragment printing a JSON object, for anything Drupal owns a cache of; null boots nothing */
 	php?(host: ReconcileHost): string | null;
+	/**
+	 * Whether the interpreter must be replaced once the step lands.
+	 *
+	 * Only a step that changes what a kernel boots from needs it. A step that ran through Drupal's own
+	 * writers left the resident interpreter consistent with what it wrote, and dropping it anyway put a
+	 * second interpreter beside an uncollected one on the next boot, which resets the object.
+	 */
+	freshKernel?: boolean;
 }
 
 /**
@@ -232,6 +242,43 @@ export function staleRoutePermissions(sql: ReconcileSql): string[] {
 	return stale;
 }
 
+/** modules uninstalled on arrival because the runtime does their job another way */
+export const REPLACED_MODULES = [
+	'automatic_updates',
+	'project_browser',
+	'mongodb_watchdog'
+] as const;
+
+/** the enabled module names in `core.extension`, or null when the row cannot be read */
+export function enabledModules(sql: ReconcileSql): string[] | null {
+	let data: string | null;
+	try {
+		data = columnText(
+			sql.exec('SELECT data FROM config WHERE name = ?', 'core.extension').toArray()[0]?.data
+		);
+	} catch {
+		return null;
+	}
+	if (data === null) return null;
+	const start = data.indexOf('s:6:"module";');
+	if (start < 0) return null;
+	const end = data.indexOf('s:5:"theme";', start);
+	const list = data.slice(start, end < 0 ? undefined : end);
+	return [...list.matchAll(/s:\d+:"([a-z0-9_]+)";i:/g)].map((m) => m[1] as string);
+}
+
+/** the toolkit `system.image` names, or null when the row cannot be read */
+export function imageToolkit(sql: ReconcileSql): string | null {
+	try {
+		const data = columnText(
+			sql.exec('SELECT data FROM config WHERE name = ?', 'system.image').toArray()[0]?.data
+		);
+		return data === null ? null : (/s:7:"toolkit";s:\d+:"([^"]*)";/.exec(data)?.[1] ?? null);
+	} catch {
+		return null;
+	}
+}
+
 /**
  * The declarative list. Order is the order they run in; `since` is what makes the version monotonic.
  *
@@ -326,6 +373,7 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 	},
 	{
 		id: 'container-driver-digest',
+		freshKernel: true,
 		since: 2,
 		// the digest moves with every pack, so this question has a new answer on every release
 		recurring: true,
@@ -509,8 +557,51 @@ export const RECONCILE_STEPS: readonly ReconcileStep[] = [
 		sql(sql) {
 			for (const index of UNREAD_NODE_INDEXES) sql.exec(`DROP INDEX IF EXISTS ${index}`);
 		}
+	},
+	{
+		id: 'image-toolkit',
+		since: 6,
+		describe:
+			'the image toolkit, which a migrated site brings as gd or imagemagick and neither runs here',
+		verdict(sql, host) {
+			// the claim selects the toolkit on a fresh site, so only a claimed site can owe it
+			if (host.claimedAtMs() === null) return { state: 'deferred', detail: 'never claimed' };
+			const modules = enabledModules(sql);
+			const toolkit = imageToolkit(sql);
+			if (modules === null || toolkit === null) {
+				return { state: 'deferred', detail: 'no core.extension or system.image row' };
+			}
+			// the toolkit plugin ships in drupflare, so a site without it has nothing to point at
+			if (!modules.includes('drupflare'))
+				return { state: 'deferred', detail: 'drupflare not enabled' };
+			return toolkit === 'cfw_images'
+				? { state: 'satisfied' }
+				: { state: 'owed', detail: `toolkit is ${toolkit}` };
+		},
+		php: (host) => reconcileToolkitPhp(host.origin())
 	}
 ];
+/**
+ * Uninstalls the modules in {@link REPLACED_MODULES} on a claimed site.
+ *
+ * Not in {@link RECONCILE_STEPS}: removing a module an operator enabled is a product decision that
+ * has not been made, so the step exists and is tested but nothing runs it.
+ */
+export const REPLACED_MODULES_STEP: ReconcileStep = {
+	id: 'replaced-modules',
+	since: 6,
+	describe:
+		'modules whose job the runtime does another way: composer updaters and the MongoDB logger',
+	verdict(sql) {
+		const modules = enabledModules(sql);
+		if (modules === null) return { state: 'deferred', detail: 'no core.extension row' };
+		const present = REPLACED_MODULES.filter((m) => modules.includes(m));
+		return present.length === 0
+			? { state: 'satisfied' }
+			: { state: 'owed', detail: `enabled: ${present.join(', ')}` };
+	},
+	php: (host) => reconcileUninstallPhp(REPLACED_MODULES, host.origin())
+};
 
 /** the pack version this build reconciles to; monotonic because it is the max of every step's */
 export const PACK_VERSION = RECONCILE_STEPS.reduce((max, s) => Math.max(max, s.since), 0);

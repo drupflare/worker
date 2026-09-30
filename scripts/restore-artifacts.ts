@@ -142,8 +142,8 @@ if (import.meta.main) {
 		}
 	}
 	// AFTER verification, never instead of it. The shipping seam imports the TUNED glue, whose
-	// growth step is 0.05 rather than emscripten's 0.20 -- measured, 0.20 does not fit an
-	// authenticated render inside the 128 MiB isolate at all. See `SHIPPING_STEP`.
+	// growth step is `SHIPPING_STEP` rather than emscripten's 0.20 -- measured, 0.20 does not fit
+	// an authenticated render inside the 128 MiB isolate at all
 	try {
 		console.log(`restore-artifacts: tuned glue -> ${emitTunedGlue(ROOT)}`);
 	} catch (e) {

@@ -37,6 +37,8 @@ type Profile = {
 	bootedIdle: number;
 	afterFirstRender: number;
 	afterSecondRender: number;
+	/** eight more renders of the same page on the same object */
+	later: number[];
 };
 
 async function heapOf(site: ServeDo): Promise<number> {
@@ -61,7 +63,13 @@ async function profile(): Promise<Profile> {
 		// a SECOND render on the same warm object: if the peak is a first-render transient this
 		// does not move, and that distinguishes a one-off staging cost from a per-render one
 		await render(site);
-		return { bootedIdle, afterFirstRender, afterSecondRender: await heapOf(site) };
+		const afterSecondRender = await heapOf(site);
+		const later: number[] = [];
+		for (let i = 0; i < 8; i++) {
+			await render(site);
+			later.push(await heapOf(site));
+		}
+		return { bootedIdle, afterFirstRender, afterSecondRender, later };
 	});
 
 	console.log(`[heap-profile] ${JSON.stringify(reading)}`);
@@ -147,12 +155,14 @@ describe('the heap-growth profile, at whatever step the lane was given', () => {
 		expect(heap.afterFirstRender % PAGE).toBe(0);
 	}, 900_000);
 
-	it('does not grow again for a SECOND render, so the peak is reached once', async () => {
+	it('stops growing, so the peak is a property of the workload rather than of traffic', async () => {
 		const heap = await profile();
-		// the render's demand is satisfied from the free list the first render left behind.
-		// If this ever fails the peak is a function of traffic rather than of the workload,
-		// which would make every capacity figure in the model a lower bound
-		expect(heap.afterSecondRender).toBe(heap.afterFirstRender);
+		// which render takes the last rung depends on where the start leaves the ladder; growth that
+		// never settles would make every capacity figure a lower bound
+		const series = [heap.afterFirstRender, heap.afterSecondRender, ...heap.later];
+		series.slice(1).forEach((v, i) => expect(v).toBeGreaterThanOrEqual(series[i]!));
+		const tail = heap.later.slice(-4);
+		expect(tail, 'still growing after eight renders').toEqual(tail.map(() => tail[0]));
 	}, 900_000);
 
 	it('survives an INSTALL, which peaks higher than a render, without exceeding the limit', async () => {

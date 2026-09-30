@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
+import { INTERPRETER_MEMORY, keepSpareMemory } from '../../src/site-do';
 import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-do';
 
 /**
@@ -48,10 +49,10 @@ import { freshSite, inObject, queuePath, type ServeDo } from '../helpers/serve-d
  * asserts the opposite of what it used to. That is opcache: its compile-time working set was
  * roughly 5 MiB of the render peak and 19 MiB of an install, and none of it is spent now.
  *
- * `SHIPPING_STEP` is 0.08, emitted by `restore-artifacts.ts` after the pristine glue is
- * sha256-verified and imported by `src/runtime/php-binary-85.ts`. It is the lowest step whose FIRST
- * rung clears the authenticated demand with real margin, so it reaches the binding peak in one grow
- * rather than two and still leaves 24.31 MiB. 0.05 shipped until 2026-08-24 and was dominated on
+ * `SHIPPING_STEP` was 0.08 when this table was taken, emitted by `restore-artifacts.ts` after the
+ * pristine glue is sha256-verified and imported by `src/runtime/php-binary-85.ts`. It was the lowest
+ * step whose FIRST rung cleared the authenticated demand with real margin, so it reached the binding
+ * peak in one grow rather than two and still left 24.31 MiB. 0.05 shipped until 2026-08-24 and was dominated on
  * every metric; the arms below 0.07 that look better sit on a 7 MiB cliff and one of them was
  * measured falling off it.
  *
@@ -110,21 +111,38 @@ describe('the wasm heap on the shipping 8.5 build', () => {
 		expect(heap.bootedIdle % 65_536, 'wasm pages are 64 KiB').toBe(0);
 	}, 900_000);
 
-	it('costs an anonymous render at most one growth step', async () => {
+	it('starts below what an anonymous render needs, so the start reserves nothing unused', async () => {
 		const heap = await readHeap();
-		// THIS ASSERTED GROWTH UNTIL 2026-08-23, then none, and now one step at most. The middle
-		// reading was true of a 96 MiB INITIAL_MEMORY, where a render's ~90.4 MiB of demand fit
-		// inside the start; at the tuned 80 MiB it does not, so the render grows exactly once --
-		// which is the trade the tuning makes and the reason the equality could not stay.
-		//
-		// What it buys is on the other side of the same measurement: after five renders and an
-		// invalidation between each, the isolate holds 119.58 MiB against 125.83 at 96, so the
-		// object that used to sit 2.17 MiB from a reset now sits 8.42 clear. One `memory.grow` is
-		// the price
-		const oneStep = Math.ceil((heap.bootedIdle * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
-		expect(heap.afterRender).toBeGreaterThanOrEqual(heap.bootedIdle);
-		expect(heap.afterRender).toBeLessThanOrEqual(oneStep);
+		// At 96 MiB a render fitted inside the start, and at 80 it grew exactly once. At 64 it grows
+		// in 1% rungs to the same ~87 MB, because the end size is set by demand and the step, not by
+		// the start. What the lower start removes is memory a FRESH isolate is charged for and never
+		// touches: a deployed memory is billed at its full size, and a fresh farmOS isolate read
+		// 67-71 MB after a boot and a render. The size a render lands on is bounded by the next case
+		expect(heap.afterRender).toBeGreaterThan(heap.bootedIdle);
 		expect(heap.afterRender % 65_536).toBe(0);
+	}, 900_000);
+
+	it('lands a render within one growth step of where a larger start lands it', async () => {
+		const low = await readHeap();
+		// a start still below the render's demand, handed to the next boot as a dropped memory
+		const pages = Math.floor((low.afterRender * 0.9) / 65_536);
+		keepSpareMemory({
+			binary: {
+				wasmMemory: new WebAssembly.Memory({
+					initial: pages,
+					maximum: INTERPRETER_MEMORY.maximum
+				})
+			}
+		});
+		const high = await readHeap();
+		expect(high.bootedIdle, 'the boot took the larger start').toBe(pages * 65_536);
+		expect(high.afterRender).toBeGreaterThan(high.bootedIdle);
+		// both climb 1% rungs to the same demand, so they differ by less than one rung; anything the
+		// start itself reserved would show up here as a gap
+		const rung = Math.ceil(
+			(Math.max(low.afterRender, high.afterRender) * SHIPPING_STEP) / 65_536
+		);
+		expect(Math.abs(low.afterRender - high.afterRender)).toBeLessThanOrEqual(rung * 65_536);
 	}, 900_000);
 
 	it('leaves room an AUTHENTICATED render still has to fit into', async () => {

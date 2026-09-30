@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
+import { CEILING_STEP } from '../../scripts/measure/growth-glue';
 import { renderPage } from '../../src/drupal/site-php';
 import { freshSite, inObject, seedPage, type ServeDo } from '../helpers/serve-do';
 
@@ -108,14 +108,10 @@ describe('the memory an enable costs', () => {
 
 			const heap = heapOf(out);
 			expect(out['ok'], JSON.stringify(out).slice(0, 400)).toBe(true);
-			// four renders raise the highwater; `memory.grow` has no inverse, so an install that
-			// inherited them would start measurably above a fresh one. A small margin absorbs
-			// allocator noise without absorbing a whole render's worth of growth
-			expect(
-				heap.before,
-				`the enable inherited a ${Math.round(heap.before / 1_048_576)} MB heap against a fresh ` +
-					`${Math.round(fresh.before / 1_048_576)} MB; it was supposed to drop the interpreter first`
-			).toBeLessThan(fresh.before + 8 * 1_048_576);
+			// four renders raise the highwater and `memory.grow` has no inverse, so the install boots
+			// into that same memory rather than beside it: a drop frees nothing until V8 collects,
+			// and this lane never does. Never below a fresh install, never a second heap
+			expect(heap.before).toBeGreaterThanOrEqual(fresh.before);
 			expect(
 				heap.after,
 				`the enable peaked at ${Math.round(heap.after / 1_048_576)} MB against a ${ISOLATE_LIMIT / 1_048_576} MB isolate`
@@ -145,7 +141,7 @@ describe('the memory an enable costs', () => {
 			const rungs = 2;
 			let ceiling = heap.before;
 			for (let i = 0; i < rungs; i++) {
-				ceiling = Math.ceil((ceiling * (1 + SHIPPING_STEP)) / 65_536) * 65_536;
+				ceiling = Math.ceil((ceiling * (1 + CEILING_STEP)) / 65_536) * 65_536;
 			}
 			expect(
 				heap.after,
@@ -305,20 +301,13 @@ echo json_encode([
 				})
 			);
 
-			// THE CONTROL, and it is now a RELATIONSHIP rather than an absolute ceiling. It used to
-			// assert `keep=1` exceeded 120 MB, which it no longer does: with opcache off the same
-			// order peaks at 116,588,544 instead. That is P30 removing part of the hazard, not the
-			// hazard disappearing -- keeping the warm interpreter still costs ~20 MB of heap that
-			// dropping it does not, and that difference is the whole reason the fix exists.
-			//
-			// An absolute would have to be re-pinned every time an unrelated memory change lands,
-			// and a re-pinned control is one nobody has seen fail
+			// A RELATIONSHIP, and it used to claim dropping saved ~20 MB. It measured only the new
+			// heap while the dropped one was still resident: this lane never collects, and on the
+			// platform three of four boots after a drop found the old heap alive (2026-09-29), so
+			// the saving was a second heap. The install now boots into the dropped memory, which is
+			// never worse than keeping the warm interpreter and never holds two
 			expect(keep.before).toBeGreaterThan(80 * 1_048_576);
-			expect(
-				keep.after - dropped.after,
-				`keep=1 peaked at ${Math.round(keep.after / 1_048_576)} MB against ` +
-					`${Math.round(dropped.after / 1_048_576)} MB dropped; the order no longer costs anything`
-			).toBeGreaterThan(8 * 1_048_576);
+			expect(dropped.after).toBeLessThanOrEqual(keep.after);
 			// and the fix still lands under the ceiling, which is the half that matters on the edge
 			expect(dropped.after).toBeLessThan(HEAP_CEILING);
 		},

@@ -1,3 +1,5 @@
+import { ruleDocumentRefusal } from './edge-rules.js';
+
 /** the subset of the environment a plan decision reads */
 export type PlanEnv = { PLAN?: string | null };
 
@@ -229,6 +231,9 @@ export const KV_OVERRIDABLE = [
 	// on every request, and longer intervals trade firings for a chance of adopting the interpreter.
 	// Worst case is a cold boot or a costlier site, never a changed reachability
 	'WARM_INTERVAL_MS',
+	// how long PHP may wait through the park per visitor request (an alarm gets fifteen times it).
+	// Worst case is a slower answer or a retry that pauses less, never a changed reachability
+	'SLEEP_BUDGET_MS',
 	// the front worker's compiled-plan tier. Same test as the rest: turning it off costs the object
 	// hop it always paid, which is a slow site and not a changed reachability
 	'EDGE_PLAN',
@@ -241,7 +246,12 @@ export const KV_OVERRIDABLE = [
 	// database one does, so a wrong value costs a rebuilt bin after an eviction and never a changed
 	// reachability
 	'MEMORY_CACHE_BINS',
-	'MEMORY_CACHE_MAX_ITEMS'
+	'MEMORY_CACHE_MAX_ITEMS',
+	// header and redirect rules a migrated project brings from its old host, applied by the front
+	// worker. A wrong value costs a wrong header or redirect on that site's own pages; owner routes
+	// are exempt from redirects and cookies and this project's own headers cannot be set
+	'RESPONSE_HEADERS',
+	'REDIRECTS'
 ] as const;
 
 export type KvOverridable = (typeof KV_OVERRIDABLE)[number];
@@ -256,7 +266,8 @@ export type LeverDomain =
 	| { kind: 'int'; min: number; max: number; unit?: 'ms' | 'bytes' }
 	| { kind: 'flag' }
 	| { kind: 'enum'; values: readonly string[] }
-	| { kind: 'bins' };
+	| { kind: 'bins' }
+	| { kind: 'rules' };
 
 export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	RENDER_BUDGET_MS: { kind: 'int', min: 0, max: 60_000, unit: 'ms' },
@@ -293,10 +304,13 @@ export const LEVER_DOMAINS: Record<KvOverridable, LeverDomain> = {
 	REPLICA_LAG_MS: { kind: 'int', min: 1_000, max: 300_000, unit: 'ms' },
 	SITE_WARM: { kind: 'flag' },
 	WARM_INTERVAL_MS: { kind: 'int', min: 8_000, max: 600_000, unit: 'ms' },
+	SLEEP_BUDGET_MS: { kind: 'int', min: 0, max: 60_000, unit: 'ms' },
 	EDGE_PLAN: { kind: 'flag' },
 	ASSET_AGGREGATES: { kind: 'flag' },
 	MEMORY_CACHE_BINS: { kind: 'bins' },
-	MEMORY_CACHE_MAX_ITEMS: { kind: 'int', min: 1, max: 4_096 }
+	MEMORY_CACHE_MAX_ITEMS: { kind: 'int', min: 1, max: 4_096 },
+	RESPONSE_HEADERS: { kind: 'rules' },
+	REDIRECTS: { kind: 'rules' }
 };
 
 /**
@@ -327,6 +341,8 @@ export function leverRefusal(name: KvOverridable, value: unknown): string | null
 			return text === 'none' || /^[a-z0-9_]{1,40}(\s*,\s*[a-z0-9_]{1,40})*$/.test(text)
 				? null
 				: `${name} must be none or comma-separated bin names; got ${text}`;
+		case 'rules':
+			return ruleDocumentRefusal(name as 'RESPONSE_HEADERS' | 'REDIRECTS', text);
 	}
 }
 
@@ -435,7 +451,9 @@ export async function writeSettings(
 	const refused: string[] = [];
 	const cleared: string[] = [];
 	const invalid: { name: string; reason: string }[] = [];
-	for (const [name, value] of Object.entries(patch)) {
+	for (const [name, raw] of Object.entries(patch)) {
+		// a rule list arrives as the array itself from a JSON body, and is stored as its text
+		const value = typeof raw === 'object' && raw !== null ? JSON.stringify(raw) : raw;
 		if (!allowed.has(name)) {
 			refused.push(name);
 			continue;

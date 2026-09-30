@@ -49,10 +49,13 @@ const PROBE: Record<KvOverridable, string> = {
 	REPLICA_LAG_MS: '45000',
 	SITE_WARM: '0',
 	WARM_INTERVAL_MS: '60000',
+	SLEEP_BUDGET_MS: '750',
 	EDGE_PLAN: '0',
 	ASSET_AGGREGATES: '1',
 	MEMORY_CACHE_BINS: 'dynamic_page_cache',
-	MEMORY_CACHE_MAX_ITEMS: '32'
+	MEMORY_CACHE_MAX_ITEMS: '32',
+	RESPONSE_HEADERS: '[{"path":"/a*","set":{"X-A":"1"}}]',
+	REDIRECTS: '[{"from":"/a","to":"/b"}]'
 };
 
 async function writeSettings(doc: Record<string, string>): Promise<void> {

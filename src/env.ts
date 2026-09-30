@@ -35,6 +35,8 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * the boot this avoids for the reset it exists to prevent.
 	 */
 	RECYCLE_ABOVE_BYTES?: string | number;
+	/** ms a freshly booted interpreter runs no background PHP (fill, cron); 60,000 by default, 0 off */
+	FILL_SETTLE_MS?: string | number;
 	/**
 	 * the WHOLE isolate's drop threshold, wasm linear memory plus the JS-side mount bytes.
 	 *
@@ -139,6 +141,13 @@ export interface SiteEnv extends BaseSiteEnv {
 	 */
 	HEAP_IMAGE?: string;
 	/**
+	 * response header rules for the front worker, as a JSON string or the array itself; see
+	 * `src/ops/edge-rules.ts` for the shape and what may not be set
+	 */
+	RESPONSE_HEADERS?: string | unknown[];
+	/** redirect rules for the front worker, in the same two forms */
+	REDIRECTS?: string | unknown[];
+	/**
 	 * brings an already-provisioned site up to the pack that ships today.
 	 *
 	 * ON unless `0`. The pack delivers only at provisioning, so without this a fix inside it reaches
@@ -146,6 +155,10 @@ export interface SiteEnv extends BaseSiteEnv {
 	 * it off means a security fix in the pack never arrives.
 	 */
 	RECONCILE?: string;
+	/** `1` logs memory readings at each boot and invocation end; for diagnosing a reset */
+	MEMORY_TRACE?: string;
+	/** see `sleepBudgetMs()` */
+	SLEEP_BUDGET_MS?: string;
 	/**
 	 * the object's own namespace, so a replica lane can pull the log from its primary.
 	 *

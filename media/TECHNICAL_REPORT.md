@@ -1,6 +1,6 @@
 # Technical Report: Drupal on Cloudflare Workers
 
-Drupal 11.4.5 runs on Cloudflare Workers with PHP 8.5 executing as WebAssembly inside a Durable
+Drupal 11.4.7 runs on Cloudflare Workers with PHP 8.5 executing as WebAssembly inside a Durable
 Object, using that object's own SQLite as the database. This document is the engineering reference
 for that system: how it is put together, which platform limits shape it, what each operation costs,
 and which classes of defect it has produced.
@@ -20,7 +20,7 @@ project shipped before it is gone from the path.
 
 | | measured | instrument |
 | --- | --- | --- |
-| Worker bundle, uncompressed | **15,495,107** of 67,108,864 (23.1%) | `bun run release:check` |
+| Worker bundle, uncompressed | **17,003,366** of 67,108,864 (25.3%) on 2026-09-29 | `bun run release:check` |
 | PHP 8.5, `long64` variant | **2,671,745** bytes as a zstd frame; 12,234,575 raw | `interp.lock.json` |
 | Isolate startup | **5 ms** median (n=4) of a 1,000 ms budget, was 106 | Cloudflare `Worker Startup Time` |
 | Startup billed to a request | **0-1 ms**; it is not billed | edge `cpuTime`, 3 cold isolates |
@@ -694,7 +694,62 @@ MiB held with no interpreter, so the budget is ~195 MiB; beside a freshly booted
 20-40 MiB more in six of seven ramps. A booted interpreter therefore costs ~165-175 MiB, its linear
 growth afterwards is mostly already paid, and the JS side is what runs out. The table below is the
 estimate `isolateNow()` computes, not the platform's meter. The shipping binary starts linear memory at
-`INITIAL_MEMORY` = 83,886,080 (1,280 pages, 80.00 MiB) and grows it where the growth step puts it.
+`INITIAL_MEMORY` = 67,108,864 (1,024 pages, 64 MiB) since 2026-09-30, 80 MiB before, and grows it where
+the growth step puts it.
+
+**A 160-module site on a deployed object, 2026-09-30** (farmOS, paid `cfw-e2e` throwaways, direct
+readings from the tail and the platform's per-minute `memoryUsageBytes` unless marked):
+
+| component | bytes |
+| --- | --- |
+| no interpreter (bundle and object) | 16.6 MB |
+| linear memory, fresh isolate / warm | 83.9 MB / 114-118 MB |
+| pack blob (per-file compressed, 41.7 MB raw across 11,540 files) | 12.2 MB |
+| pack index | ~2 MB (a constant, not read) |
+| lazy-FS and module-file caches, all resident MEMFS contents | 4.8-7.6 MB |
+| SQL bridge strings | 1-17 MB per page, 0.98 MB largest reply |
+| the rest (compiled wasm, V8 heap, uncollected garbage) | ~45-60 MB warm, unattributed |
+
+Warm serving reads 196-201 MB and the minutes with resets read 213-215 MB, so the kill line is about
+203-204 MiB: a large site runs within ~3-8 MB of it. A fresh isolate that rendered one page at 83.9 MB
+linear was reset on its next event, so it held at least ~130 MB outside linear memory at that moment.
+Workers expose no heap statistics; compiled wasm tiers plus uncollected render garbage is an inference.
+
+**Where a fresh isolate's memory goes, and the 64 MiB start, 2026-09-30.** A fresh isolate that rendered
+one page was reset before anything else happened to it, and each new isolate was reset the same way
+(the reset spiral). Read with `durableObjectsPeriodicGroups` grouped by `datetime`, which gives one row per
+isolate period, each arm on a fresh isolate after a redeploy with one request 78 s later so the
+isolate's first row is its own baseline:
+
+| fresh isolate, farmOS | over its own baseline |
+| --- | ---: |
+| no PHP at all (baseline) | 13-42 MB, by placement |
+| an untouched 80 MiB `WebAssembly.Memory` | +84 MB |
+| that memory plus the interpreter instantiated with stub imports | +1-4 MB more |
+| PHP started and the site mounted (`/php`), 80 / 64 MiB start | 125.2 / 112.3 MB |
+| boot and one anonymous render, 80 MiB start | 135.5-164.0 MB |
+| boot and one anonymous render, 64 MiB start | 118.4-119.9 MB |
+
+A deployed memory is charged at its full size whether PHP touches it or not, and instantiating the
+module adds almost nothing, so the compiled code is not charged up front. The Drupal boot adds ~3 MB
+and a render ~7 MB over `/php`, which puts the SQL bridge, the pack fetch and boot garbage well below
+what matters. The remaining ~40-55 MB of `/php` is inferred to be code compiled as PHP starts plus the
+JS objects the startup and mount build; nothing the platform exposes splits it further. Every arm
+isolate served exactly one object, so co-tenancy does not explain the spread.
+
+A render on farmOS demands 67-71 MB of linear memory, so an 80 MiB start reserved memory a fresh isolate
+paid for and never used. **The shipping binary starts at 64 MiB now** (1,024 pages): 13-17 MB less per
+fresh isolate at the same boot CPU. On a fresh farmOS deploy the lane went from 10/13 with dozens of
+resets to 13/13 with none.
+
+**A boot after a drop reuses the dropped interpreter's memory.** The next boot used to allocate beside
+a dropped heap V8 had not collected: on the deployed farmOS every reset after a drop found the old
+93-113 MB heap alive. The tuned binary imports its memory now (`withImportedMemory()`), and a boot
+after a drop zeroes and reuses it, so an isolate never holds two heaps; interleaved speed against the
+defined-memory binary read 0.984 and 0.995 (A/A 0.998). A consequence: the memory keeps the largest
+size any interpreter reached, so `RECYCLE_ABOVE_BYTES` now sets the permanent linear size rather than a
+point memory returns from. The pressure-buffer collector it replaced read success off a weak reference
+to the small wrapper object, which dies in a scavenge while the heap needs a full collection.
 
 **Re-derived on that binary 2026-09-24**, one incarnation read through `/__serve-stats`
 `isolateBytes` after each step (a scratch spec in the workers pool, deleted after):
@@ -822,11 +877,14 @@ workerd's, enforced by `grow()` throwing. Emscripten catches that and retries wi
 so a growth from the shipping peak degrades rather than aborting.
 
 **`memory_limit` is not enforced.** `USE_ZEND_ALLOC=0` is baked into the binary by upstream php-wasm,
-and three symptoms follow from that one flag: `memory_get_usage()` reads 0, the cycle collector never
-runs (`gc_status()` reports `runs: 0`), and an 8M cap holds 38 MB with no error. The consequence is
+and two symptoms follow from that one flag: `memory_get_usage()` reads 0, and an 8M cap holds 38 MB with
+no error. This paragraph also said the cycle collector never runs; it does. Measured 2026-09-30 over 16
+authenticated admin renders on one interpreter, `gc_status()` read 12 automatic runs and 10,042
+collected, and calling `gc_collect_cycles()` after every render left linear memory identical
+(93.44 -> 102.50 MiB on both arms), so uncollected cycles are not what an admin session accumulates. The consequence is
 availability rather than accounting: a runaway allocation does not stop at a catchable fatal that
 loses one request, it grows linear memory to the ceiling and takes the whole object with every
-session on it. `tests/integration/php-allocator.spec.ts` pins all three.
+session on it. `tests/integration/php-allocator.spec.ts` pins both symptoms and the collector running.
 
 **Heap restore requires reproducing the open file-descriptor table at the same fd numbers.** Inode
 alignment does not matter. Dropping `/dev/urandom`'s fd throws `RandomException`; dropping the three
@@ -1088,7 +1146,7 @@ moved since that sentence was written, and only the first still carries it:**
   upload with error 10021 rather than failing at runtime. That distinction is what separates booting
   at module scope from a snapshot taken at deploy.
 - **"its heap peaks near 115 MB against 128 MB" was measured on a binary that no longer ships.** The
-  shipping `php8.5.tuned.wasm` declares 1,280 pages and reads **83,886,080 bytes (80.00 MiB) booted
+  shipping `php8.5.tuned.wasm` declared 1,280 pages until 2026-09-30 (1,024 since) and read **83,886,080 bytes (80.00 MiB) booted
   idle** on `growth-ladder.ts`, worst case 92.69 MiB across the three real workloads. The Memory
   section below still states `INITIAL_MEMORY` = 100,663,296; those figures are the 96 MiB-initial
   binary's and are correct for it.
@@ -3116,7 +3174,7 @@ the step: flat across a range, then a jump. A smaller step is not reliably a low
 undershoots on its first grow grows again, and the second rung compounds above where a larger single
 rung landed.
 
-`stepFor()` is per-ABI: **0.13 on long64, 0.08 on wasm32**. Applying wasm32's step to long64 makes it
+`stepFor()` is per-ABI: **0.01 on long64 (0.13 until 2026-09-29), 0.08 on wasm32**. Applying wasm32's step to long64 makes it
 grow twice and peak at 117,440,512, which reads as the ABI's cost and is the mistuning's.
 
 Score a step against the **authenticated** render. Read the render column alone and every arm is
@@ -3174,9 +3232,9 @@ so the import form is verified for PHP itself and not yet for loading one.
 
 `get_loaded_extensions()` is the oracle, exposed on `/__php`, and
 `tests/integration/loaded-extensions.spec.ts` asserts the platform map against it in both directions.
-**25 extensions**: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache, ctype, date, dom, filter,
-hash, json, lexbor, libxml, pcre, pib, random, session, standard, tokenizer, uri, vrzno, xml, yaml,
-zlib.
+**27 extensions** on 2026-09-29: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache, cfwpark,
+ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random, session, standard,
+tokenizer, uri, vrzno, xml, yaml, zlib.
 
 mbstring joined the list on 2026-09-08. There is still no iconv, gd, curl or openssl.
 `DEFAULT_PLATFORM` is split into `NATIVE_PLATFORM` and `POLYFILLED_PLATFORM`, and a requirement met
@@ -3330,6 +3388,128 @@ fact: `nowMs()` is `Date.now()` and arms every alarm and every `expires_at`.
 
 ---
 
+## Real Workloads
+
+`config/corpus.yml` pins 27 production Drupal codebases by commit: government, university, non-profit,
+media and product distributions, plus module suites. `scripts/e2e/corpus-lane.ts` delivers each one the
+way a migration would (a native install, the database landed through `drangler migrate install`, the
+locked packages through `/install`, the custom code through `drangler modify`) and scores 13
+capabilities: install, container build, anonymous and authenticated render, entity CRUD, form submit,
+file read and write, queue and cron, outbound HTTP, update, cache rebuild, config import and module
+workflow. `docs/compatibility.md` is the rendered result and the website's fixtures page reads the same
+file.
+
+On 2026-09-29, 15 of the 27 passed all 13 rows on a local runtime, and farmOS, GovCMS and Thunder passed all 13 on
+a deployed Worker. Getting there found 104 defects: 46 in the product, 39 in the lane, its probes and the tests, 16 in the native
+install harness and 3 upstream. The product defects that
+would have reached users:
+
+- **`subarray` throws above 2^27 bytes on the platform.** Once linear memory passed 128 MiB,
+  `TypedArray.prototype.subarray` failed for any begin offset from 134,217,728 up, and emscripten
+  decodes every string longer than 16 bytes with it. About half the live drives failed with a 1101
+  depending on where a string landed. A local workerd does not enforce it. `safeHeapSubarray()` in the
+  tuned glue builds a view with the constructor above the limit.
+- **Every host call leaked a copy of its argument.** vrzno's `vrzno_expose_callable()` passes an error
+  string to `zend_is_callable_ex()` and never frees it, 256 bytes per call for a 56-byte argument and
+  ~185 KB per `/admin/modules` render. The glue now asks only for the argument shapes that can be
+  callable; the upstream `efree` is owed at the next interpreter build.
+- **The installer ignored composer `replace`.** Open Y's sub-projects asked for
+  `ymcatwincities/openy`, which the 11.x distribution replaces, and a depth-first walk fetched the
+  Drupal 9 distro first. `installTree()` walks breadth first and remembers what a package replaces
+  across calls.
+- **A compiled container outlived the code it describes.** A migrated site enables its modules before
+  their code arrives, so farmOS booted a `cache_container` row naming services that did not exist yet.
+  A delivery that changes wiring drops the container and discovery bins after it verifies.
+- **Drupal Canvas's fiber loop could not run on the Fiber stand-in.** Varbase rendered no login form.
+  `PhpWasmSyncFiber` carries a static handler Canvas's loop is rewritten to use, and the render, cron
+  and update fragments now share one stand-in instead of declaring three.
+- **A migrated site's claim never finished on a deployed Worker.** PHP's `uniqid()` polls
+  `gettimeofday()` until the microsecond changes, and inside a synchronous run the platform's clock
+  does not move, so the second call in one run spun to the CPU limit (302,500 ms, 3.4 billion
+  `Date.now()` reads, identified by disassembling `zif_uniqid`). The claim made two, one per lock
+  backend. A local workerd advances the clock, so it finished there in 10 s. The stand-in steps one
+  microsecond past the last id instead of waiting; the claim now answers in 14.9 s of CPU.
+- **A boot after a drop allocated a second heap beside the uncollected one.** On the deployed farmOS every
+  reset after a drop found the old 93-113 MB heap alive. The dropped interpreter's memory is reused now; see
+  Memory above.
+- **A parked fetch built its base64 one character per byte.** 44 MB of heap per MB of body, twice per reply,
+  which reset fresh isolates on farmOS's update check. It uses the chunked encoder the file store already had.
+- **An adopted interpreter read module files through the evicted instance's storage.** Interpreter
+  retention hands a resident interpreter to the next instance, and every boot closure follows the new owner
+  except the installed-module mount, which kept the booting instance's `sql`. A class first loaded after the
+  handover failed, and Drupal's container then refused that service for the life of the interpreter.
+- **The claim rebuilt the container twice.** Installing the driver module and `drupflare` in two calls took
+  farmOS's claim to 25.3 s of CPU against the 30 s paid default; one call takes 9.7 s.
+- **A GET that met a memory reset was refused instead of retried.** The front worker retries a safe
+  request once when the site's object is reset, and required the platform's `retryable` flag. A reset for
+  memory arrives as `overloaded` plus `durableObjectReset` with no `retryable` (read off a deployed probe,
+  n=8), so every such GET got the Try Again page. It keys on `durableObjectReset` now; on the next farmOS
+  demo drive two GETs came back retried and answered 200. A POST is still never repeated: a write made
+  before the reset is committed, which a retried claim answering 409 showed. The hop to the primary
+  after a lane refuses had no retry at all, so a primary resetting at that moment answered 500; it gets
+  the same one retry now.
+- **The 2026-09-29 memory work, checked on a stock site.** Three paired deploys of the shipping config, the tree
+  before tonight against the tree after, both arms of each pair together: failed requests 28 -> 0, distinct
+  memory-reset events 53 -> 0, object exceptions 105 -> 0; every control run failed the live lane and every
+  treatment run passed it.
+- **A reset POST was refused even when it had never started.** The front worker now tags each serve POST to
+  the primary with an attempt id, and the object records it before PHP runs. Writes commit in order and the
+  output gate holds subrequests, so a missing record means nothing landed and the POST is repeated once;
+  a found record means it may have saved and the visitor gets the Try Again page. About one row per POST.
+  It covers a POST that died queued behind other work, not one that died inside its own render.
+- **Background PHP reset a freshly booted isolate and took a visitor's POST with it.** The alarm refilled
+  ten pages 3-5 s after a boot, the isolate passed its memory limit at ~7 s, and the Run cron POST queued
+  behind the alarm got a 503. `FILL_SETTLE_MS` (60 s) holds the fill, cron and reconciliation off an
+  interpreter younger than that and re-arms for the end of the hold. Paired deployed arms, one demo drive
+  each: a failed POST in 3 of 3 drives without the hold and 1 of 3 with it; fill pages rendered during
+  the drives 77 against 9.
+- **Thunder's claim died at the CPU limit every time, and each retry repeated the same work.** The claim
+  was one invocation: a cold boot (5.1 s), plugin discovery (6.2 s), a container compile and a router
+  rebuild, then saving the administrator (2.0 s, all of it the bcrypt hash). A CPU kill rolls back every
+  write in the invocation, so a retry started from nothing. Measured stage by stage on a deployed object,
+  no stage passed ~7 s. The front worker now sends the claim as three invocations: a warm-up that fills the
+  discovery caches, the module install, then the claim, which finds both done. On a fresh Thunder deploy they
+  read 7.1, 10.0 and 3.3 s of CPU. Two invocations were not enough: the install alone took over 32.5 s
+  cold. The SQL bridge moved 44 MB in and 7 MB out over the claim, which is not where the time went.
+  Split on every site, the stock claim went from 5.5-8.4 s of CPU as one invocation to ~25 s as three (three
+  paired stock deploys), since each phase boots and the warm-up fills every plugin cache. A site still on a
+  module set the pack baked now skips both phases: redeployed, the phases took 6 and 1 ms and the claim 9.1 s
+  of CPU in one invocation. Only a migrated site splits.
+- **Every installed module's files carried the isolate's boot time.** The installed-module mount created
+  its nodes without a timestamp, so each file's ctime and mtime read the boot. The update module
+  re-fetches any project whose `.info.yml` ctime is newer than its last fetch, so a young isolate that
+  rebuilt the project list marked every installed project pending, and Run cron drained release XML for
+  all of them inside one request. That was farmOS's remaining demo failure, read at the time as a memory
+  limit. The files carry their `installed_at` now; deployed farmOS then passed 3 of 3 demo drives twice
+  (234 requests, 0 failed, 0 retried) against 1 of 3 before. Installed Twig templates recompiled on each
+  young isolate for the same reason.
+- **Moving the pack blob out of the isolate did not help, so it was removed.** The lazy mount holds the
+  whole 12.2 MB compressed pack in memory. A build that streamed it into the object's SQLite and read
+  each file with one query on first open was deployed against the resident blob on Thunder: three
+  deploys per arm, run in pairs at the same time, 3 demo drives each. With the store 323 requests, 4
+  failed, 29 reset retries (19, 0 and 10 per deploy); with the blob resident 332, 1 and 9 (4, 2, 3). The
+  spread inside one arm is larger than the difference, which is placement, and every failure was a POST
+  repeat correctly refused. It cost ~12 MB of storage per object for no measured headroom. Thunder's
+  heavy admin pages take 90-110 MB of linear memory on a fresh isolate; after the lane's config import
+  linear memory alone read 134.8 MB, and a boot after a drop reuses that memory at its full size. So
+  Thunder's admin pages can still reset a fresh isolate, and its lane read 11 of 13 on one deploy; a GET
+  that meets the reset is retried once. Most of that heap is compiled PHP: a warm stock admin heap holds
+  2,520 files and 40.7 MiB of opcodes.
+- **A login on a second hostname never held.** Drupal derives the session cookie's `Domain` from the
+  render host, which was always the pinned origin, so a browser on an alias refused the cookie. The
+  front worker rewrites links, `Location` and the cookie `Domain` for a KV-mapped alias.
+- **Delivered packages were unknown to `Composer\InstalledVersions`.** `/admin/modules` answered 500 on
+  Open Y the first time a module asked for drush's version. Delivered packages are registered.
+- **The Run cron message was lost across a park.** A request that parked an outbound fetch resumed with
+  the session closed, so the success message never reached the next page. `ParkSession` saves and
+  restarts a started session around the yield.
+- **An oversized cache write failed the render.** A Views data row larger than Durable Object SQLite
+  accepts threw. The driver evicts the cid instead, which is what a cache miss already means.
+- **Smaller ones:** the claim wrote config before `common.inc` loaded; `public://` itself was not a
+  directory; the installer and drangler dropped `.json` files; the update chain did not load module
+  files; `runJson()` took the first `{` in output a notice had prefixed; composer plugins were fetched
+  as runtime packages; drangler measured upload batches in UTF-16 units.
+
 ## Defect Classes
 
 These shapes account for most of what has gone wrong here. Each has a guard that fails on the shape
@@ -3476,6 +3656,19 @@ On an idle object that never converges, and the symptom reads as a slow site rat
 page. Record the verdict: a path the chain has PROVEN unstorable is lifted out of the cold inline
 refusal rather than being asked again. The general form is that a retry loop needs a terminating
 observation, not just a bound.
+
+**A platform limit the local runtime does not enforce.** `subarray` above 2^27 bytes, the collection
+of a dropped interpreter, and the per-object memory ceiling all behave differently on a local workerd,
+so a green local lane says nothing about them. Emulate the platform in the spec where the behaviour is
+known (`growth-glue.spec.ts` builds a view whose `subarray` throws at the same offset), and settle
+anything else with a throwaway deploy.
+
+**A probe that scores the site with the wrong reading.** Nearly half the defects the corpus found were
+in the lane: a 302 to a terms page read as incompatibility, a failure recorded under one requirer and
+then delivered by the lock a moment later, a prefilled required field the probe never sent, a save that
+redirected somewhere other than `/node/N`. Each read as a product gap. Before recording a row as
+unsupported, confirm on the site itself (the database row, the log, the page) that the capability did
+not work.
 
 ---
 

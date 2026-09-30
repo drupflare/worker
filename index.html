@@ -1,5 +1,5 @@
-<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>drupflare/worker - v1.0.2</title><meta name="description" content="Documentation for drupflare/worker"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
-<div class="tsd-toolbar-contents container"><a href="index.html" class="title">drupflare/worker - v1.0.2</a>
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>drupflare/worker - v1.0.3</title><meta name="description" content="Documentation for drupflare/worker"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script></head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar">
+<div class="tsd-toolbar-contents container"><a href="index.html" class="title">drupflare/worker - v1.0.3</a>
 <div id="tsd-toolbar-links"></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/>
 <ul role="listbox" id="tsd-search-results"></ul>
 <div id="tsd-search-status" aria-live="polite" aria-atomic="true">
@@ -7,7 +7,7 @@
 <div class="container container-main">
 <div class="col-content">
 <div class="tsd-page-title">
-<h1>drupflare/worker - v1.0.2</h1></div>
+<h1>drupflare/worker - v1.0.3</h1></div>
 <div class="tsd-panel tsd-typography"><h1 id="🐘-drupflare-drupal-on-cloudflare-workers" class="tsd-anchor-link">🐘 Drupflare: Drupal on Cloudflare Workers<a href="#🐘-drupflare-drupal-on-cloudflare-workers" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h1>
 <p><a href="https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a></p>
 <hr>
@@ -1045,7 +1045,7 @@ carries both the origin and the site id. <code>tests/node/cache-partition.spec.t
 <hr>
 <h2 id="📋-table-of-contents" class="tsd-anchor-link">📋 Table of Contents<a href="#📋-table-of-contents" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <ul>
-<li><a href="#-drupflare-vs-a-traditional-vps">Drupflare vs a Traditional VPS</a></li>
+<li><a href="#%EF%B8%8F-drupflare-vs-a-traditional-vps">Drupflare vs a Traditional VPS</a></li>
 <li><a href="#-replica-lanes">Replica Lanes</a></li>
 <li><a href="#-free-vs-paid">Free vs Paid</a></li>
 <li><a href="#-why">Why</a></li>
@@ -1060,6 +1060,7 @@ carries both the origin and the site id. <code>tests/node/cache-partition.spec.t
 <li><a href="#-contributing">Contributing</a></li>
 <li><a href="#-repositories">Repositories</a></li>
 <li><a href="#-contrib-modules">Contrib Modules</a></li>
+<li><a href="#%EF%B8%8F-production-codebases">Production Codebases</a></li>
 <li><a href="#-limitations">Limitations</a></li>
 <li><a href="#-technical-report">Technical Report</a></li>
 </ul>
@@ -1509,10 +1510,12 @@ administrator looks first:</p>
 <p>Runtime Status reads the same payload <code>/serve-stats</code> returns, so the admin page and the host report
 cannot disagree.</p>
 <h3 id="single-sign-on" class="tsd-anchor-link">Single Sign-On<a href="#single-sign-on" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
-<p>The Access page configures an OpenID Connect provider. The host performs the token exchange and
-verifies the <code>id_token</code> signature, because the exchange has to complete before the login response can
-be written and PHP has nowhere to wait for it. An unverified <code>id_token</code> is an unauthenticated login,
-so the verification is not optional and is not delegated.</p>
+<p>The Access page configures an OpenID Connect provider that the host serves at <code>/oidc</code>: it performs
+the token exchange and verifies the <code>id_token</code> signature before PHP is entered, so a site gets single
+sign-on without installing an OIDC module. An unverified <code>id_token</code> is an unauthenticated login, so
+the verification is not optional. A site that prefers <code>drupal/openid_connect</code> can use it instead; its
+own client completes the login, with the token request parked and the signature checked over the
+host's crypto.</p>
 <p>Single sign-on needs <code>drupal/externalauth</code>, which maps the verified identity onto an account. No
 contrib module ships in the packed tree, so install it from the Extend page before the first login.</p>
 <p>Set the issuer and client id on the page, and the client secret as the <code>OIDC_CLIENT_SECRET</code> binding.
@@ -1530,8 +1533,11 @@ rather than from the token header, and an account is keyed by issuer and subject
 Drupal does not generate; its diagnostic and owner routes are single-segment names like <code>/health</code>
 and <code>/export</code>.</p>
 <p>Which site a request resolves to is decided in <a href="modules/ops_site-id.html"><code>src/ops/site-id.ts</code></a>: a KV
-mapping for the host, then the <code>SITE_ID</code> var, then the hostname itself, then <code>site</code>. On <code>localhost</code>
-the hostname names no site, so it lands on <code>site</code>. <code>?site=</code> is refused on the public routes, so a
+mapping for the host, then the <code>SITE_ID</code> var, then the deployment's primary site, then the hostname
+itself, then <code>site</code>. One deployment is one site, so a second domain pointed at the worker reaches the
+site already claimed rather than opening a new one. A host mapped in KV is an alias: its pages,
+redirects and login cookie carry that host (<code>drangler domain add &lt;host&gt;</code> writes the mapping and the
+Custom Domain route). On <code>localhost</code> the hostname names no site, so it lands on <code>site</code>. <code>?site=</code> is refused on the public routes, so a
 link cannot choose which site answers; an owner route accepts it because the object checks the token
 itself, and <code>PW_DIAGNOSTICS=1</code> accepts it everywhere, which is what <code>/serve?site=X&amp;path=Y</code> uses.</p>
 <h3 id="scripts" class="tsd-anchor-link">Scripts<a href="#scripts" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3>
@@ -2169,9 +2175,9 @@ one and boots the kernel against the new tree, rolling back if it fatals. See
 <code>colorbox</code>, <code>config_ignore</code>, <code>crop</code>, <code>csv_serialization</code>, <code>ctools</code>, <code>devel</code>, <code>easy_breadcrumb</code>,
 <code>editor_advanced_link</code>, <code>entity</code>, <code>entity_browser</code>, <code>entity_reference_revisions</code>, <code>externalauth</code>,
 <code>facets</code>, <code>field_group</code>, <code>filefield_sources</code>, <code>focal_point</code>, <code>google_analytics</code>, <code>google_tag</code>,
-<code>honeypot</code>, <code>imageapi_optimize</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
+<code>honeypot</code>, <code>imageapi_optimize</code>, <code>imageapi_optimize_binaries</code>, <code>imce</code>, <code>jquery_ui</code>, <code>jquery_ui_autocomplete</code>,
 <code>jquery_ui_datepicker</code>, <code>jquery_ui_menu</code>, <code>json_field</code>, <code>key</code>, <code>libraries</code>, <code>linkit</code>, <code>mailsystem</code>,
-<code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>openid_connect</code>,
+<code>memcache</code>, <code>menu_block</code>, <code>metatag</code>, <code>metatag_search_gov</code>, <code>migrate_plus</code>, <code>module_filter</code>, <code>openid_connect</code>,
 <code>paragraphs</code>, <code>pathauto</code>, <code>purge</code>, <code>queue_ui</code>, <code>recaptcha</code>, <code>redirect</code>, <code>redis</code>, <code>scheduler</code>,
 <code>search_api</code>, <code>search_api_solr</code>, <code>simple_sitemap</code>, <code>smtp</code>, <code>stage_file_proxy</code>, <code>svg_image</code>, <code>token</code>,
 <code>twig_tweak</code>, <code>usfedgov_google_analytics</code>, <code>uswds_base</code>, <code>video_embed_field</code>,
@@ -2189,6 +2195,19 @@ SQLite is still the faster cache backend and the recommended one.</p>
 <p><code>search_gov_results_api</code> renders results from an API call made while its form is building. That call
 now completes inside the render that makes it, so a search answers on the first request. No run has
 exercised it against a live <a href="http://Search.gov">Search.gov</a> key.</p>
+<h2 id="🏛️-production-codebases" class="tsd-anchor-link">🏛️ Production Codebases<a href="#🏛️-production-codebases" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
+<p>27 real Drupal codebases, each pinned to a commit in <code>config/corpus.yml</code>, are delivered the way a
+migration would deliver them and scored on 13 capabilities: install, container build, anonymous and
+authenticated render, entity CRUD, form submit, file read and write, queue and cron, outbound HTTP,
+update, cache rebuild, config import and module workflow. 15 pass all 13, among them GovCMS, Thunder,
+farmOS, Droopler, DrupalX, Open Intranet and YMCA Open Y, on a local runtime. farmOS, GovCMS and Thunder
+also pass all 13 on a Worker deployed to a Cloudflare account, migrated and claimed the way a customer
+site would be. Thunder's heaviest admin pages can still exhaust a fresh isolate's memory, so its deployed
+result varies by deploy (11 of 13 on one); a GET that meets the reset is retried once. The rest are listed with the capability each misses and why, or as needing an upgrade from
+Drupal 10 or older.</p>
+<p><a href="media/compatibility.md"><code>docs/compatibility.md</code></a> is the per-codebase table, rendered from
+<code>docs/compatibility.json</code>, which the lane writes. <code>bun scripts/e2e/corpus-lane.ts --repo=&lt;id&gt;</code>
+drives one codebase.</p>
 <h2 id="🧱-limitations" class="tsd-anchor-link">🧱 Limitations<a href="#🧱-limitations" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2>
 <p>Measured properties of the runtime, listed so they are known before they are hit.</p>
 <ul>
@@ -2198,20 +2217,20 @@ collations, so Drupal's <code>NOCASE_UTF8</code> becomes builtin <code>NOCASE</c
 <li><strong><code>LIKE</code>/<code>GLOB</code> patterns cap at 50 bytes.</strong> A Views &quot;contains&quot; filter on a longer search
 string fails in the engine.</li>
 <li><strong>A statement caps at 100 bound parameters.</strong></li>
-<li><strong><code>REGEXP</code> does not exist</strong>, so Views regex filters do not work.</li>
+<li><strong><code>REGEXP</code> is evaluated in PHP by the driver</strong>, as are <code>MD5()</code> and <code>SUBSTRING_INDEX()</code> in a select
+list. The engine has none of them, so the driver widens the statement and filters the rows itself:
+Views regex filters work, and on a large table they cost a scan.</li>
 <li><strong>Integers above 2^53</strong> are read back through a second, casting query. The cursor returns doubles, so the driver detects a value a double cannot hold and re-reads that statement with the affected columns cast to text.</li>
 <li><strong>A 64-bit integer does not survive a JSON round trip.</strong> <code>PHP_INT_SIZE</code> is 8 and <code>PHP_INT_MAX</code> is
 9,223,372,036,854,775,807, but a JSON number is a double, so a value above 2^53 handed across the
 host boundary comes back rounded. Cast it to a string first. The database path already does this.</li>
-<li><strong>The interpreter loads 25 extensions</strong>: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
-ctype, date, dom, filter, hash, json, lexbor, libxml, pcre, pib, random, session, standard,
-tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by default; see
-<code>OPCACHE_MODE</code> in the configuration reference. <code>mbstring</code> and <code>iconv</code> are supplied by Symfony's
-polyfills, which diverge from the real extensions on a small number of cases, of which the ones
-Drupal core reaches are all in <code>mb_convert_encoding</code>. There is no <code>gd</code> and no <code>pdo_sqlite</code>.
-<code>/php</code> reports the live list.</li>
-<li><strong><code>curl_*</code> works without <code>ext-curl</code>.</strong> The functions are supplied over the same deferred-HTTP
-queue as the rest of outbound traffic, so an SDK that bundles its own curl transport runs
+<li><strong>The interpreter loads 27 extensions</strong>: Core, PDO, Reflection, SPL, SimpleXML, Zend OPcache,
+cfwpark, ctype, date, dom, filter, hash, json, lexbor, libxml, mbstring, pcre, pib, random,
+session, standard, tokenizer, uri, vrzno, xml, yaml and zlib. OPcache is loaded and disabled by
+default; see <code>OPCACHE_MODE</code> in the configuration reference. <code>mbstring</code> is the native extension;
+<code>iconv</code> is a stand-in. There is no <code>gd</code> and no <code>pdo_sqlite</code>. <code>/php</code> reports the live list.</li>
+<li><strong><code>curl_*</code> works without <code>ext-curl</code>.</strong> The functions are supplied over the same transport as the
+rest of outbound traffic, so an SDK that bundles its own curl transport runs
 unmodified. <code>curl_version()</code> reports <code>0.0.0-drupflare-shim</code>, and an option the shim does not
 understand is refused rather than ignored.</li>
 <li><strong>Passwords hash with bcrypt by default, and argon2id is available.</strong> <code>ARGON2=1</code> switches the
@@ -2225,9 +2244,11 @@ encodes JPEG, PNG and WebP. It does not encode AVIF: core asks the toolkit befor
 effect and falls through to the style's <code>webp</code> fallback. Cloudflare Images is reachable with
 <code>IMAGE_ENGINE=images</code> on a zone that wants AVIF. Styles at or below 480 px on the long edge are
 produced during the request; larger ones are produced on the alarm chain.</li>
-<li><strong>Outbound HTTP is answered from cache, warmed ahead, or re-driven once.</strong> A Worker cannot open a
-socket synchronously, so <code>Drupal::httpClient()</code> and <code>file_get_contents('https://...')</code> return a
-previous fetch's response rather than opening a connection. A URL the site can predict from its own
+<li><strong>Outbound HTTP completes inside the request that asks.</strong> <code>Drupal::httpClient()</code> and a Symfony
+HTTP client park the PHP call while the Worker performs the fetch, and the same call resumes with
+the answer. Where a park is refused (a call made from inside an internal function such as
+<code>array_map</code>), the request falls back to the deferred transport: a previous fetch's response is
+returned rather than a connection opened. A URL the site can predict from its own
 installed projects is warmed on the alarm before Drupal asks for it. A URL it cannot predict is
 queued, and an idempotent request that deferred is drained and rendered once more inside the same
 visit, so the answer usually arrives on the first request rather than the second. Request headers
@@ -2249,16 +2270,27 @@ mid-frame, the Worker performs the socket read, and the same call resumes with t
 and <code>SYSLOG_URL</code> rather than from the calling code, and administrative Redis commands are refused.
 <strong>The Durable Object's own SQLite is still the recommended cache backend</strong>, because a parked get is
 a network round trip where SQLite is a local read.</li>
+<li><strong>Shell commands run only through a router.</strong> <code>exec()</code>, <code>shell_exec()</code>, <code>proc_open()</code> and the rest
+serve a fixed set of programs with platform equivalents (<code>echo</code>, <code>date</code>, <code>file</code>, <code>zip</code>, <code>unzip</code>,
+<code>gzip</code>, <code>wget</code>, <code>curl</code>, checksums and a few more). Pipes, redirection and any other program fail
+with a recorded degradation rather than a fatal. <code>sleep()</code> parks the call and is capped per request
+by <code>SLEEP_BUDGET_MS</code>.</li>
 <li><strong>Greek word-final sigma lowercases differently</strong> from native PHP, and <code>mb_strwidth</code>
 under-counts emoji. Neither affects Drupal core.</li>
 <li><strong>Writes do not scale, and a replica pool does not change that.</strong> A lane refuses an authoritative
 write and hands it back, so every write is still one object and one thread. What a pool scales is
 authenticated reads; see <a href="#-replica-lanes">Replica Lanes</a>.</li>
-<li><strong>A module install leaves the object with no room to do anything else.</strong> It is the most expensive
-thing a site can do, and it ends with the wasm heap near the isolate's 128 MB limit. <code>memory.grow</code>
+<li><strong>A module install leaves the object with little room to do anything else.</strong> It is the most
+expensive thing a site can do, and a booted interpreter already holds most of the object's
+~195 MiB memory budget. <code>memory.grow</code>
 has no inverse, so the heap never shrinks; a further growth is served at a smaller step rather than
 refused. The install queues the pages it invalidated instead of re-rendering them, and the cache is
 cold for one visit.</li>
+<li><strong>An object reset for memory costs a form submission a retry by hand.</strong> A GET or HEAD that meets a
+reset is sent once more to the fresh instance and answers normally with <code>x-cfw-retried: reset</code>. A
+POST is repeated only when the object never started it: it records an attempt id before the page
+runs, so a missing record means nothing was saved. A POST it had started gets a short &quot;Try Again in a
+Moment&quot; page with <code>Retry-After: 2</code> instead of Cloudflare's 1101, because it may already have saved.</li>
 <li><strong>A cold object rebuilds Drupal, and the heap image does not help.</strong> An evicted Durable Object has
 no interpreter, so the next request that needs one pays a boot. <code>HEAP_IMAGE</code> stores a heap so that
 boot can be replaced by a restore, and it is off by default: measured on two deployed workers, the
@@ -2401,12 +2433,13 @@ and are the authority on their own module.</p>
 <li><a href="#verified"><span>Verified</span></a></li>
 <li><a href="#blocked"><span>Blocked</span></a></li>
 <li><a href="#untested"><span>Untested</span></a></li></ul></li>
+<li><a href="#🏛️-production-codebases"><span>🏛️ <wbr/>Production <wbr/>Codebases</span></a></li>
 <li><a href="#🧱-limitations"><span>🧱 <wbr/>Limitations</span></a></li>
 <li><a href="#📊-technical-report"><span>📊 <wbr/>Technical <wbr/>Report</span></a></li>
 <li><a href="#🤝-contributing"><span>🤝 <wbr/>Contributing</span></a></li>
 <li><a href="#📄-license"><span>📄 <wbr/>License</span></a></li></ul></div></details></div>
 <div class="site-menu">
-<nav class="tsd-navigation"><a href="modules.html">drupflare/worker - v1.0.2</a>
+<nav class="tsd-navigation"><a href="modules.html">drupflare/worker - v1.0.3</a>
 <ul class="tsd-small-nested-navigation" id="tsd-nav-container">
 <li>Loading...</li></ul></nav></div></div></div><footer>
 <p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer>

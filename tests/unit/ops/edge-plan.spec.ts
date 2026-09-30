@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+	believedCsrf,
 	believedGeneration,
 	cookieFingerprint,
 	EDGE_PLAN_ENTRIES,
@@ -20,8 +21,10 @@ import {
 	readEdgePlan,
 	readRedirectPlan,
 	redirectPlanBody,
+	rememberCsrf,
 	rememberEdgeGeneration,
 	resetEdgePlans,
+	ROLE_TRUST_MS,
 	rotatesSession,
 	runEdgePlan,
 	SAMPLES_PER_COMPILE,
@@ -281,6 +284,21 @@ describe('compiling from renders', () => {
  * names the session, which is why dropping the two-witness requirement under it removes no proof --
  * and every other refusal still runs.
  */
+describe("the session's csrf token", () => {
+	beforeEach(() => resetEdgePlans());
+
+	it('is remembered per session and forgotten once the trust window passes', () => {
+		expect(believedCsrf(COOKIE_A, 0)).toBeNull();
+		rememberCsrf(COOKIE_A, 'tok-a', 1_000);
+		rememberCsrf('', 'tok-x', 1_000);
+		rememberCsrf(COOKIE_B, null, 1_000);
+		expect(believedCsrf(COOKIE_A, 1_000 + ROLE_TRUST_MS - 1)).toBe('tok-a');
+		expect(believedCsrf(COOKIE_A, 1_000 + ROLE_TRUST_MS)).toBeNull();
+		expect(believedCsrf(COOKIE_B, 1_000)).toBeNull();
+		expect(believedCsrf('', 1_000)).toBeNull();
+	});
+});
+
 describe('the private fallback', () => {
 	beforeEach(() => resetEdgePlans());
 

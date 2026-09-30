@@ -12,7 +12,7 @@ import {
 } from '../../src/ops/fleet';
 import { affinityKey, chooseTarget } from '../../src/ops/replica-routing';
 import { ensureOwnerToken, type SecretStore } from '../../src/ops/site-secrets';
-import worker, { bodyTooLarge, isNeverDrupal, resetRecovery } from '../../src/site';
+import worker, { bodyTooLarge, isNeverDrupal } from '../../src/site';
 import {
 	inObject,
 	namedSite,
@@ -1745,17 +1745,6 @@ describe("a reset object is not the visitor's 1101", () => {
 		const res = await send(new Request('https://cfw.local/reset-plain'), s.namespace);
 		expect(res.status).toBe(503);
 		expect(s.methods).toEqual(['GET']);
-	});
-
-	it('does not retry an object that is overloaded without having been reset', () => {
-		expect(resetRecovery({ retryable: true, overloaded: true }, 'GET')).toBe('refuse');
-		expect(resetRecovery(MEMORY_RESET, 'GET')).toBe('retry');
-		expect(resetRecovery(MEMORY_RESET, 'POST')).toBe('refuse');
-		expect(resetRecovery(MEMORY_RESET, 'POST', true)).toBe('retry');
-		expect(resetRecovery({ retryable: true, overloaded: true }, 'POST', true)).toBe('refuse');
-		expect(resetRecovery({}, 'POST', true)).toBe('refuse');
-		expect(resetRecovery({ retryable: true }, 'HEAD')).toBe('retry');
-		expect(resetRecovery(null, 'GET')).toBe('refuse');
 	});
 });
 

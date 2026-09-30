@@ -23,8 +23,10 @@ import {
 	parkResumeValue,
 	parkRun,
 	parseParkFetch,
+	parseParkImage,
 	parseSocketTarget,
 	performFetch,
+	performImage,
 	stripPhpTag
 } from '../../../src/ops/park-drive';
 
@@ -269,6 +271,45 @@ describe('a parked fetch is bounded by the outbound guard, not by the endpoint',
 		);
 		expect(op.kind).toBe('refused');
 		expect(op.kind === 'refused' && op.why).toContain('unreadable fetch descriptor');
+	});
+});
+
+describe('the image descriptor and its reply', () => {
+	const packed = (value: unknown) => btoa(JSON.stringify(value));
+	const op = { source: 'aGk=', ops: [{ op: 'scale', width: 10 }], format: 'png' };
+
+	it('decodes a request and defaults what the module left out', () => {
+		const one = parseParkImage(packed(op));
+		expect(one).toEqual({ ...op, canvas: null, quality: -1 });
+		expect(parseParkImage(packed({ ...op, source: null, quality: 80 }))?.quality).toBe(80);
+	});
+
+	it('refuses a format, an op list or a source it cannot run', () => {
+		expect(parseParkImage(packed({ ...op, format: 'bmp' }))).toBeNull();
+		expect(
+			parseParkImage(packed({ ...op, ops: new Array(33).fill({ op: 'scale' }) }))
+		).toBeNull();
+		expect(parseParkImage(packed({ ...op, source: 7 }))).toBeNull();
+		expect(parseParkImage(packed('text'))).toBeNull();
+		expect(parseParkImage('%%%')).toBeNull();
+	});
+
+	it('answers the result as bytes, and a failure as an error the module can refuse on', async () => {
+		const request = parseParkImage(packed(op))!;
+		const ok = await performImage(request, async () => ({
+			bytes: new Uint8Array([1, 2, 3]),
+			width: 4,
+			height: 5
+		}));
+		expect(JSON.parse(new TextDecoder().decode(ok))).toEqual({
+			bytes: 'AQID',
+			width: 4,
+			height: 5
+		});
+		const bad = await performImage(request, async () => {
+			throw new Error('unsupported image');
+		});
+		expect(JSON.parse(new TextDecoder().decode(bad))).toEqual({ error: 'unsupported image' });
 	});
 });
 

@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
 	believedLanes,
 	chooseTarget,
+	DEFAULT_REPLICA_LAG_MS,
 	LANES_TRUST_MS,
 	originationRoute,
 	rememberLanes,
 	replicaCount,
+	replicaLagMs,
 	replicaName,
 	replicaOf,
 	resetLaneBeliefs,
@@ -96,6 +98,17 @@ describe('how many lanes there are', () => {
  * from env, and the canonical `wrangler.jsonc` sets no such var -- so a contended site paid to copy
  * its database into N objects and answered every request from one.
  */
+describe('how stale a serving lane may get', () => {
+	it('defaults, and clamps an explicit value between one second and five minutes', () => {
+		expect(replicaLagMs()).toBe(DEFAULT_REPLICA_LAG_MS);
+		expect(replicaLagMs({ REPLICA_LAG_MS: 'soon' })).toBe(DEFAULT_REPLICA_LAG_MS);
+		expect(replicaLagMs({ REPLICA_LAG_MS: '0' })).toBe(DEFAULT_REPLICA_LAG_MS);
+		expect(replicaLagMs({ REPLICA_LAG_MS: '120000.7' })).toBe(120_000);
+		expect(replicaLagMs({ REPLICA_LAG_MS: '10' })).toBe(1_000);
+		expect(replicaLagMs({ REPLICA_LAG_MS: '9999999' })).toBe(300_000);
+	});
+});
+
 describe('a lane count learned from the primary', () => {
 	beforeEach(() => resetLaneBeliefs());
 

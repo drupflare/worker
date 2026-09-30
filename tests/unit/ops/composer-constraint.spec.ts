@@ -122,6 +122,9 @@ describe('AND and OR, with OR taking precedence', () => {
 		expect(satisfies('10.3.0', '^10 || ^11')).toBe('yes');
 		expect(satisfies('11.4.5', '^10 || ^11')).toBe('yes');
 		expect(satisfies('9.5.0', '^10 || ^11')).toBe('no');
+		// composer accepts a single pipe too, and symfony writes it that way: `^2.5|^3`
+		expect(satisfies('v3.7.1', '^2.5|^3')).toBe('yes');
+		expect(satisfies('1.9.0', '^2.5|^3')).toBe('no');
 	});
 
 	it('survives spaces around >= inside an AND group', () => {

@@ -29,6 +29,15 @@ import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
 /** composer spells an extension `ext-<lowercased module name>` */
 const extName = (module: string) => `ext-${module.toLowerCase()}`;
 
+/** loaded modules no composer package requires by these names */
+const NOT_COMPOSER_NAMES = [
+	'ext-zend opcache',
+	'ext-lexbor',
+	'ext-cfwpark',
+	'ext-pib',
+	'ext-vrzno'
+];
+
 async function loadedExtensions(): Promise<string[]> {
 	const out = await inObject(freshSite(), async (site: ServeDo) => {
 		const res = await site.fetch(new Request('https://do.local/__php'));
@@ -44,6 +53,14 @@ describe('the extensions the shipping binary loads', () => {
 		const claimed = Object.keys(NATIVE_PLATFORM).filter((k) => k.startsWith('ext-'));
 		expect(claimed.length, 'the native map is not empty').toBeGreaterThan(0);
 		expect(claimed.filter((ext) => !loaded.includes(ext))).toEqual([]);
+	}, 900_000);
+
+	it('claims every loaded extension a composer constraint can name', async () => {
+		// the other direction: a loaded extension missing from the map refuses every package that
+		// requires it, which is how ctype, filter and hash read as missing on a build carrying them
+		const loaded = await loadedExtensions();
+		const claimed = [...Object.keys(NATIVE_PLATFORM), ...NOT_COMPOSER_NAMES];
+		expect(loaded.filter((ext) => !claimed.includes(ext))).toEqual([]);
 	}, 900_000);
 
 	it('includes NONE of the names POLYFILLED_PLATFORM claims', async () => {

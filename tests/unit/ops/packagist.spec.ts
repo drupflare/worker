@@ -3,12 +3,15 @@ import {
 	DEFAULT_PLATFORM,
 	NATIVE_PLATFORM,
 	POLYFILLED_PLATFORM,
+	STANDIN_PLATFORM,
 	checkInstallable,
 	checkRequirements,
 	isValidPackageName,
+	lockProvides,
 	lockVersions,
 	newestVersion,
 	packagistUrl,
+	providedSatisfies,
 	verdictFor
 } from '../../../src/ops/packagist';
 
@@ -33,6 +36,54 @@ function fetcherFor(body: unknown, status = 200): (url: string) => Promise<Respo
 
 /** what this site actually ships, trimmed to what the assertions need */
 const INSTALLED = { 'drupal/core': '11.4.5', 'drupal/core-recommended': '11.4.5' };
+
+describe('a branch constraint', () => {
+	it('is answered from the ~dev file, where Composer 2 lists branches', async () => {
+		const seen: string[] = [];
+		const out = await checkInstallable(
+			async (url) => {
+				seen.push(url);
+				return new Response(
+					JSON.stringify(
+						url.endsWith('~dev.json')
+							? p2('frictionlessdata/datapackage', [{ version: 'dev-main' }])
+							: p2('frictionlessdata/datapackage', [{ version: '1.2.0' }])
+					)
+				);
+			},
+			'frictionlessdata/datapackage',
+			INSTALLED,
+			undefined,
+			'dev-main'
+		);
+		expect(out.version).toBe('dev-main');
+		expect(seen).toEqual([
+			'https://repo.packagist.org/p2/frictionlessdata/datapackage.json',
+			'https://repo.packagist.org/p2/frictionlessdata/datapackage~dev.json'
+		]);
+	});
+});
+
+describe('a drupal/* library published on Packagist', () => {
+	it('is found there when drupal.org answers 404', async () => {
+		const seen: string[] = [];
+		const out = await checkInstallable(
+			async (url) => {
+				seen.push(url);
+				return url.includes('packages.drupal.org')
+					? new Response('not found', { status: 404 })
+					: new Response(JSON.stringify(p2('drupal/rat', [{ version: '1.0.0' }])));
+			},
+			'drupal/rat',
+			INSTALLED
+		);
+		expect(out.verdict).toBe('installable');
+		expect(seen).toEqual([
+			'https://packages.drupal.org/files/packages/8/p2/drupal/rat.json',
+			'https://repo.packagist.org/p2/drupal/rat.json'
+		]);
+	});
+});
 
 describe('the URL and the name, because a name becomes a URL', () => {
 	it('sends drupal/* to drupal.org and everything else to Packagist', () => {
@@ -92,6 +143,39 @@ describe('reading the lock and the payload', () => {
 		expect(lockVersions(lock)).toEqual({ 'a/b': '1.2.3', 'c/d': 'v2' });
 	});
 
+	it('reads what locked packages provide and replace, without the platform', () => {
+		const lock = {
+			packages: [
+				{
+					name: 'symfony/console',
+					version: 'v7.4.19',
+					provide: { 'psr/log-implementation': '1.0|2.0|3.0', 'ext-ctype': '*' }
+				},
+				{
+					name: 'symfony/http-kernel',
+					version: 'v7.4.19',
+					provide: { 'psr/log-implementation': '3.0' }
+				},
+				{
+					name: 'drupal/core',
+					version: '11.4.7',
+					replace: { 'drupal/core-render': 'self.version' }
+				}
+			]
+		};
+		expect(lockProvides(lock)).toEqual({
+			'psr/log-implementation': '1.0|2.0|3.0|3.0',
+			'drupal/core-render': '11.4.7'
+		});
+		expect(lockProvides(null)).toEqual({});
+	});
+
+	it('judges a provided range against a constraint', () => {
+		expect(providedSatisfies('1.0|2.0|3.0', '^2.0')).toBe('yes');
+		expect(providedSatisfies('1.0', '^2.0')).toBe('no');
+		expect(providedSatisfies('dev-main', '^2.0')).toBe('unknown');
+	});
+
 	it('returns an empty map for junk rather than throwing', () => {
 		for (const lock of [null, undefined, {}, { packages: 'nope' }, { packages: [{}] }]) {
 			expect(lockVersions(lock)).toEqual({});
@@ -128,6 +212,33 @@ describe('the refusal names the conflict', () => {
 		expect(conflicts[0]!.detail).toContain('drupal/core');
 		expect(conflicts[0]!.detail).toContain('11.4.5');
 		expect(conflicts[0]!.detail).toContain('^10');
+	});
+
+	it('meets a virtual package a locked package provides, and still checks its version', () => {
+		const provides = { 'psr/log-implementation': '1.0|2.0|3.0' };
+		const ok = checkRequirements(
+			{ 'psr/log-implementation': '^3.0' },
+			INSTALLED,
+			undefined,
+			provides
+		);
+		expect(ok.conflicts).toEqual([]);
+		expect(ok.satisfied[0]).toContain('provided at 1.0|2.0|3.0');
+		const no = checkRequirements(
+			{ 'psr/log-implementation': '^4.0' },
+			INSTALLED,
+			undefined,
+			provides
+		);
+		expect(no.conflicts[0]!.reason).toBe('version');
+		// with nothing provided the same name is a missing package, which is what it read as before
+		const none = checkRequirements(
+			{ 'psr/log-implementation': '^3.0' },
+			INSTALLED,
+			undefined,
+			{}
+		);
+		expect(none.conflicts[0]!.reason).toBe('missing');
 	});
 
 	it('blocks a module needing a package this site does not ship at all', () => {
@@ -190,6 +301,21 @@ describe('the refusal names the conflict', () => {
 		const { conflicts, satisfied } = checkRequirements({ 'ext-mbstring': '*' }, INSTALLED);
 		expect(conflicts).toEqual([]);
 		expect(satisfied).toHaveLength(1);
+	});
+
+	it('satisfies the extensions phpmailer, lcobucci/jwt and doctrine/dbal require', () => {
+		const { conflicts, satisfied } = checkRequirements(
+			{
+				'ext-ctype': '*',
+				'ext-filter': '*',
+				'ext-hash': '*',
+				'ext-pdo': '*',
+				'ext-libxml': '*'
+			},
+			INSTALLED
+		);
+		expect(conflicts).toEqual([]);
+		expect(satisfied).toHaveLength(5);
 	});
 
 	it('reports an unjudgeable constraint as unverifiable, NOT as satisfied', () => {
@@ -263,6 +389,58 @@ describe('the whole check, end to end over an injected fetch', () => {
 		expect(out.conflicts[0]!.detail).toContain('^10');
 	});
 
+	it('satisfies ext-curl and ext-zip through the stand-ins, and says so', async () => {
+		const meta = p2('stripe/stripe-php', [
+			{
+				version: 'v21.0.0',
+				require: { php: '>=7.2', 'ext-curl': '*', 'ext-json': '*', 'ext-zip': '*' }
+			}
+		]);
+		const out = await checkInstallable(fetcherFor(meta), 'stripe/stripe-php', INSTALLED);
+		expect(out.verdict).toBe('installable');
+		expect(
+			out.satisfied.filter((s) => s.endsWith('(host stand-in)')).map((s) => s.split(' ')[0])
+		).toEqual(['ext-curl', 'ext-zip']);
+		const sitemap = p2('vendor/sitemap', [
+			{ version: '1.0.0', require: { 'ext-xmlwriter': '*' } }
+		]);
+		const mapped = await checkInstallable(fetcherFor(sitemap), 'vendor/sitemap', INSTALLED);
+		expect(mapped.verdict).toBe('installable');
+		expect(
+			mapped.satisfied.some(
+				(s) => s.startsWith('ext-xmlwriter') && s.endsWith('(host stand-in)')
+			)
+		).toBe(true);
+		// an extension with no stand-in is still missing
+		const gd = p2('vendor/gd', [{ version: '1.0.0', require: { 'ext-gd': '*' } }]);
+		expect((await checkInstallable(fetcherFor(gd), 'vendor/gd', INSTALLED)).verdict).toBe(
+			'blocked'
+		);
+	});
+
+	it('scores the version a constraint picks, not the newest release', async () => {
+		// symfony/cache 8.x needs a symfony this site does not ship; ^7.3 is the one asked for
+		const meta = p2('vendor/lib', [
+			{ version: 'v8.1.0', require: { 'drupal/core': '^12' } },
+			{ version: 'v7.4.2', require: { 'drupal/core': '^11' } }
+		]);
+		const newest = await checkInstallable(fetcherFor(meta), 'vendor/lib', INSTALLED);
+		expect(newest.verdict).toBe('blocked');
+		const pinned = await checkInstallable(
+			fetcherFor(meta),
+			'vendor/lib',
+			INSTALLED,
+			undefined,
+			'^7.3'
+		);
+		expect(pinned.version).toBe('v7.4.2');
+		expect(pinned.verdict).toBe('installable');
+		expect(
+			(await checkInstallable(fetcherFor(meta), 'vendor/lib', INSTALLED, undefined, '^9'))
+				.verdict
+		).toBe('not-found');
+	});
+
 	it('reports not-found for a 404 rather than treating it as installable', async () => {
 		const out = await checkInstallable(fetcherFor({}, 404), 'drupal/nope', INSTALLED);
 		expect(out.verdict).toBe('not-found');
@@ -310,17 +488,22 @@ describe('the whole check, end to end over an injected fetch', () => {
 		expect(calls).toBe(1);
 	});
 
+	it('provides the composer runtime API the pack ships', () => {
+		const { conflicts } = checkRequirements({ 'composer-runtime-api': '>=2.0' }, {});
+		expect(conflicts).toEqual([]);
+	});
+
 	it('has php in the default platform, or every module would be blocked on it', () => {
 		expect(DEFAULT_PLATFORM.php).toBeTruthy();
 	});
 
 	// the maps stay split because a name in both would make `polyfilled` depend on key order
-	it('keeps the native and polyfilled maps disjoint', () => {
-		const native = Object.keys(NATIVE_PLATFORM);
-		const overlap = Object.keys(POLYFILLED_PLATFORM).filter((k) => native.includes(k));
-		expect(overlap).toEqual([]);
-		expect(Object.keys(DEFAULT_PLATFORM).sort()).toEqual(
-			[...native, ...Object.keys(POLYFILLED_PLATFORM)].sort()
+	it('keeps the native, polyfilled and stand-in maps disjoint', () => {
+		const maps = [NATIVE_PLATFORM, POLYFILLED_PLATFORM, STANDIN_PLATFORM].map((m) =>
+			Object.keys(m)
 		);
+		const all = maps.flat();
+		expect(new Set(all).size).toBe(all.length);
+		expect(Object.keys(DEFAULT_PLATFORM).sort()).toEqual(all.sort());
 	});
 });

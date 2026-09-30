@@ -107,11 +107,14 @@ export async function resolveInstallable(
 	fetcher: (url: string) => Promise<Response>,
 	name: string,
 	installed: Record<string, string>,
-	shippedCore: string
+	shippedCore: string,
+	constraint?: string | null,
+	stability?: string
 ): Promise<OracleResult> {
 	const runtime = tierFor(name);
 
-	const hit = await readOracle(env, name, shippedCore);
+	// the oracle scores the newest release, so a constrained install is always checked live
+	const hit = constraint ? null : await readOracle(env, name, shippedCore);
 	if (hit && !hit.stale) {
 		return {
 			name,
@@ -125,7 +128,7 @@ export async function resolveInstallable(
 		};
 	}
 
-	const live = await checkInstallable(fetcher, name, installed);
+	const live = await checkInstallable(fetcher, name, installed, undefined, constraint, stability);
 	return {
 		...live,
 		note: hit?.stale

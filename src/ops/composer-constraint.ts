@@ -155,7 +155,7 @@ export function satisfies(rawVersion: string, constraint: string): Satisfaction 
 	if (text === '') return 'unknown';
 
 	let sawUnknown = false;
-	for (const group of text.split('||')) {
+	for (const group of text.split(/\|\|?/)) {
 		// PER GROUP, not over the whole string: an `as` alias in one OR branch must not stop the
 		// other branch from answering. A global test made `^11.3 || dev-main as 9` unjudgeable.
 		if (/\bas\b|@(dev|alpha|beta|rc|stable)/i.test(group)) {

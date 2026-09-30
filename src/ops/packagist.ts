@@ -1,4 +1,6 @@
 import { satisfies, type Satisfaction } from './composer-constraint.js';
+import { asksForBranch, devMetadataUrl, pickVersion } from './package-install.js';
+import { SHIPPED_PROVIDES } from './shipped-lock.js';
 
 /**
  * Decides whether a module can be installed, in ONE cacheable subrequest, and refuses with the
@@ -63,17 +65,17 @@ export function isValidPackageName(name: string): boolean {
 	);
 }
 
-/** name -> version, from a composer.lock's `packages` array */
-export function lockVersions(lock: unknown): Record<string, string> {
-	const out: Record<string, string> = {};
-	const packages = (lock as { packages?: unknown })?.packages;
-	if (!Array.isArray(packages)) return out;
-	for (const entry of packages) {
-		const name = (entry as { name?: unknown })?.name;
-		const version = (entry as { version?: unknown })?.version;
-		if (typeof name === 'string' && typeof version === 'string') out[name] = version;
+export { lockProvides, lockVersions } from './lock-map.js';
+
+/** whether any version a virtual package is provided at meets a constraint */
+export function providedSatisfies(provided: string, constraint: string): Satisfaction {
+	let unknown = false;
+	for (const version of provided.split('|')) {
+		const result = satisfies(version, constraint);
+		if (result === 'yes') return 'yes';
+		if (result === 'unknown') unknown = true;
 	}
-	return out;
+	return unknown ? 'unknown' : 'no';
 }
 
 /**
@@ -129,7 +131,22 @@ export const NATIVE_PLATFORM: PlatformVersions = {
 	// (`--enable-mbstring --disable-mbregex`), so a module requiring `ext-mbstring` is
 	// `installable` rather than `unverifiable`. `mb_ereg*` is still absent -- that half needs
 	// oniguruma and Drupal core calls none of it
-	'ext-mbstring': PLATFORM_PHP_VERSION
+	'ext-mbstring': PLATFORM_PHP_VERSION,
+	'ext-core': PLATFORM_PHP_VERSION,
+	'ext-standard': PLATFORM_PHP_VERSION,
+	'ext-ctype': PLATFORM_PHP_VERSION,
+	'ext-date': PLATFORM_PHP_VERSION,
+	'ext-filter': PLATFORM_PHP_VERSION,
+	'ext-hash': PLATFORM_PHP_VERSION,
+	'ext-libxml': PLATFORM_PHP_VERSION,
+	'ext-pdo': PLATFORM_PHP_VERSION,
+	'ext-random': PLATFORM_PHP_VERSION,
+	'ext-reflection': PLATFORM_PHP_VERSION,
+	'ext-session': PLATFORM_PHP_VERSION,
+	'ext-uri': PLATFORM_PHP_VERSION,
+	'ext-yaml': PLATFORM_PHP_VERSION,
+	// vendor/composer/InstalledVersions.php ships in the pack, which is what the runtime API is
+	'composer-runtime-api': '2.2.2'
 };
 
 /**
@@ -146,10 +163,29 @@ export const POLYFILLED_PLATFORM: PlatformVersions = {
 	'ext-iconv': PLATFORM_PHP_VERSION
 };
 
+/**
+ * Extensions a module can require and get, served by a stand-in the driver installs at boot.
+ *
+ * Unlike a polyfill these are satisfied rather than unverifiable, because each is parity-tested
+ * against the real extension over the surface it claims: curl over the park (`curl-fix.spec.ts` and
+ * drupflare's health suite), openssl through WebCrypto (`host-bridges.spec.ts`), `ZipArchive`,
+ * `exif_read_data` and `finfo` in drupflare's health suite. What a stand-in does not implement is
+ * refused at the call and recorded as a degradation, never answered wrongly.
+ */
+export const STANDIN_PLATFORM: PlatformVersions = {
+	'ext-curl': PLATFORM_PHP_VERSION,
+	'ext-openssl': PLATFORM_PHP_VERSION,
+	'ext-zip': PLATFORM_PHP_VERSION,
+	'ext-exif': PLATFORM_PHP_VERSION,
+	'ext-fileinfo': PLATFORM_PHP_VERSION,
+	'ext-xmlwriter': PLATFORM_PHP_VERSION
+};
+
 /** everything a requirement can resolve against; the split is what the verdict reports */
 export const DEFAULT_PLATFORM: PlatformVersions = {
 	...NATIVE_PLATFORM,
-	...POLYFILLED_PLATFORM
+	...POLYFILLED_PLATFORM,
+	...STANDIN_PLATFORM
 };
 
 export type Conflict = {
@@ -175,8 +211,20 @@ export type InstallVerdict = {
 /** the newest version in a p2 payload, by the order Packagist returns (newest first) */
 export function newestVersion(
 	meta: unknown,
-	name: string
+	name: string,
+	constraint?: string | null,
+	stability?: string
 ): { version: string; require: Record<string, string> } | null {
+	if (constraint) {
+		// the version an install of `name:constraint` would take, not the newest release
+		const entry = pickVersion(meta, name, constraint, undefined, stability);
+		if (!entry) return null;
+		const cleaned: Record<string, string> = {};
+		for (const [k, v] of Object.entries((entry['require'] ?? {}) as Record<string, unknown>)) {
+			if (typeof v === 'string') cleaned[k] = v;
+		}
+		return { version: String(entry['version']), require: cleaned };
+	}
 	const packages = (meta as { packages?: Record<string, unknown> })?.packages;
 	const list = packages?.[name];
 	if (!Array.isArray(list) || list.length === 0) return null;
@@ -211,12 +259,29 @@ export function newestVersion(
 export function checkRequirements(
 	require: Record<string, string>,
 	installed: Record<string, string>,
-	platform: PlatformVersions = DEFAULT_PLATFORM
+	platform: PlatformVersions = DEFAULT_PLATFORM,
+	provides: Record<string, string> = SHIPPED_PROVIDES
 ): { conflicts: Conflict[]; satisfied: string[] } {
 	const conflicts: Conflict[] = [];
 	const satisfied: string[] = [];
 
 	for (const [dep, constraint] of Object.entries(require)) {
+		const provided = installed[dep] === undefined ? provides[dep] : undefined;
+		if (provided !== undefined && platform[dep] === undefined) {
+			const verdict = providedSatisfies(provided, constraint);
+			if (verdict === 'yes') {
+				satisfied.push(`${dep} is provided at ${provided}, which satisfies ${constraint}`);
+			} else {
+				conflicts.push({
+					requires: dep,
+					constraint,
+					installed: provided,
+					reason: verdict === 'no' ? 'version' : 'unverifiable',
+					detail: `${dep} is provided at ${provided} and ${constraint} is required`
+				});
+			}
+			continue;
+		}
 		const have = installed[dep] ?? platform[dep] ?? null;
 		const polyfilled = installed[dep] === undefined && POLYFILLED_PLATFORM[dep] !== undefined;
 		if (have === null) {
@@ -241,7 +306,13 @@ export function checkRequirements(
 				});
 				continue;
 			}
-			satisfied.push(`${dep} ${have} satisfies ${constraint}`);
+			const standin =
+				installed[dep] === undefined &&
+				NATIVE_PLATFORM[dep] === undefined &&
+				STANDIN_PLATFORM[dep] !== undefined;
+			satisfied.push(
+				`${dep} ${have} satisfies ${constraint}${standin ? ' (host stand-in)' : ''}`
+			);
 			continue;
 		}
 		if (result === 'no') {
@@ -289,7 +360,9 @@ export async function checkInstallable(
 	fetcher: (url: string) => Promise<Response>,
 	name: string,
 	installed: Record<string, string>,
-	platform: PlatformVersions = DEFAULT_PLATFORM
+	platform: PlatformVersions = DEFAULT_PLATFORM,
+	constraint?: string | null,
+	stability?: string
 ): Promise<InstallVerdict> {
 	if (!isValidPackageName(name)) {
 		return {
@@ -303,8 +376,12 @@ export async function checkInstallable(
 	}
 
 	let meta: unknown;
+	let metaUrl = packagistUrl(name);
 	try {
-		const res = await fetcher(packagistUrl(name));
+		let res = await fetcher(metaUrl);
+		// a drupal/* JavaScript library is published on Packagist, not drupal.org; see fallbackMetadataUrl
+		if (res.status === 404 && name.startsWith('drupal/'))
+			res = await fetcher((metaUrl = `https://repo.packagist.org/p2/${name}.json`));
 		if (!res.ok) {
 			return {
 				name,
@@ -328,7 +405,17 @@ export async function checkInstallable(
 		};
 	}
 
-	const newest = newestVersion(meta, name);
+	let newest = newestVersion(meta, name, constraint, stability);
+	// a branch constraint is answered from the `~dev` file; see devMetadataUrl
+	if (!newest && (asksForBranch(constraint) || stability === 'dev')) {
+		try {
+			const branches = await fetcher(devMetadataUrl(metaUrl));
+			if (branches.ok)
+				newest = newestVersion(await branches.json(), name, constraint, stability);
+		} catch {
+			// the release file already answered; a missing branch file leaves it not-found
+		}
+	}
 	if (!newest) {
 		return {
 			name,

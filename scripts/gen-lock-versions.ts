@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from 'node:fs';
-import { lockVersions } from '../src/ops/packagist';
+import { lockProvides, lockVersions } from '../src/ops/lock-map';
 
 /**
  * Bakes `composer.lock`'s name -> version map into a TypeScript constant.
@@ -28,7 +28,9 @@ import { lockVersions } from '../src/ops/packagist';
 const ROOT = new URL('..', import.meta.url).pathname;
 const lock = JSON.parse(readFileSync(`${ROOT}composer.lock`, 'utf8'));
 const versions = lockVersions(lock);
+const provides = lockProvides(lock);
 const names = Object.keys(versions).sort();
+const virtuals = Object.keys(provides).sort();
 
 const body = `/**
  * What this site ships, from the root \`composer.lock\`. GENERATED -- run
@@ -38,6 +40,11 @@ export const SHIPPED_LOCK_VERSIONS: Record<string, string> = {
 ${names.map((n) => `\t${JSON.stringify(n)}: ${JSON.stringify(versions[n])}`).join(',\n')}
 };
 
+/** virtual packages the locked ones provide or replace, which a requirement is met by without a fetch */
+export const SHIPPED_PROVIDES: Record<string, string> = {
+${virtuals.map((n) => `\t${JSON.stringify(n)}: ${JSON.stringify(provides[n])}`).join(',\n')}
+};
+
 /** the Drupal core version these packages were locked against */
 export const SHIPPED_CORE_VERSION = ${JSON.stringify(versions['drupal/core'] ?? '')};
 `;
@@ -45,7 +52,12 @@ export const SHIPPED_CORE_VERSION = ${JSON.stringify(versions['drupal/core'] ?? 
 writeFileSync(`${ROOT}src/ops/shipped-lock.ts`, body);
 console.log(
 	JSON.stringify(
-		{ packages: names.length, core: versions['drupal/core'], bytes: body.length },
+		{
+			packages: names.length,
+			virtual: virtuals.length,
+			core: versions['drupal/core'],
+			bytes: body.length
+		},
 		null,
 		2
 	)

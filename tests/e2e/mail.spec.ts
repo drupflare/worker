@@ -151,18 +151,25 @@ describe('Drupal mail reaches a real SMTP server', () => {
 		// carried: the form answered 303 with `x-cfw-cache: RENDER`, the queue stayed empty, and
 		// there was nothing to distinguish "the transport is broken" from "there was no recipient".
 		// `/firstrun` refuses a second run, so an already-configured site keeps whatever it has and
-		// the assertion below is what reports it
-		await fetch(`${ENDPOINT}/firstrun?site=${encodeURIComponent(SITE)}`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({
-				adminMail: `${MAILBOX}@localhost`,
-				siteName: 'Mail E2E',
-				adminPass: `pw-${Math.random().toString(36).slice(2, 12)}`
-			}),
-			signal: AbortSignal.timeout(60_000)
-		}).catch(() => undefined);
-	});
+		// the assertion below is what reports it. A site still unpacking its database answers 503
+		// `migrating`, and a claim lost to that sent the reset to the pack's admin@example.com
+		const claim = JSON.stringify({
+			adminMail: `${MAILBOX}@localhost`,
+			siteName: 'Mail E2E',
+			adminPass: `pw-${Math.random().toString(36).slice(2, 12)}`
+		});
+		const until = Date.now() + 180_000;
+		for (;;) {
+			const res = await fetch(`${ENDPOINT}/firstrun?site=${encodeURIComponent(SITE)}`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: claim,
+				signal: AbortSignal.timeout(60_000)
+			}).catch(() => null);
+			if ((res !== null && res.status !== 503) || Date.now() >= until) break;
+			await new Promise((r) => setTimeout(r, 2000));
+		}
+	}, 240_000);
 
 	/**
 	 * The precondition, asserted rather than assumed.

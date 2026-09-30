@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BOOT_KERNEL, renderPage } from '../../src/drupal/site-php';
+import { BOOT_KERNEL, drupalOp, renderPage } from '../../src/drupal/site-php';
 import { BATCH_YIELD_OPS, GD_CONSTANTS, GD_FUNCTIONS } from '../../src/drupal/standin-fix';
 import { DRUPLICON_PNG_BASE64 } from '../fixtures/png';
 import { freshSite, inObject, type ServeDo } from '../helpers/serve-do';
@@ -310,6 +310,23 @@ echo json_encode(['queued' => true]);`);
 			expect(seen.after['ran']).toBe(1);
 			// the queue is emptied, so the next render does not repeat it
 			expect(seen.again['ran']).toBe(1);
+		},
+		TIMEOUT
+	);
+
+	it(
+		"answers the fiber stand-in's suspend() only while a handler is installed",
+		async () => {
+			const seen = await inObject(freshSite(), async (site: ServeDo) =>
+				site.runJson(
+					drupalOp(`$out['before'] = [\\PhpWasmSyncFiber::getCurrent(), \\PhpWasmSyncFiber::suspend('x')];
+						\\PhpWasmSyncFiber::$handler = fn($v) => $v . '!';
+						$out['during'] = [\\PhpWasmSyncFiber::getCurrent() !== null, \\PhpWasmSyncFiber::suspend('x')];
+						\\PhpWasmSyncFiber::$handler = null;`)
+				)
+			);
+			expect(seen['before']).toEqual([null, null]);
+			expect(seen['during']).toEqual([true, 'x!']);
 		},
 		TIMEOUT
 	);

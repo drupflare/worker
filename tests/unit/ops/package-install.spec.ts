@@ -1,6 +1,5 @@
 import { gzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
-import { drupalOp } from '../../../src/drupal/site-php';
 import {
 	asksForBranch,
 	autoloadPhp,
@@ -121,7 +120,7 @@ describe('resolving a name to a repository', () => {
 		expect(portFibers('a.php', '<?php echo 1;')).toBe('<?php echo 1;');
 	});
 
-	it("answers Canvas's fiber suspensions inline, since the stand-in cannot suspend", async () => {
+	it("rewrites Canvas's fiber loop to answer its suspensions inline", () => {
 		// the loop as canvas ships it, in CanvasPageVariant::renderComponentTree()
 		const canvas = [
 			'<?php',
@@ -145,18 +144,6 @@ describe('resolving a name to a repository', () => {
 		expect(out).toContain('return $instance instanceof Marker ? $main_content : NULL;');
 		// only canvas's variant is rewritten
 		expect(portFibers('modules/contrib/other/src/A.php', canvas)).toContain('isSuspended');
-
-		// and the stand-in answers suspend() only while a handler is installed
-		const seen = await inObject(freshSite(), async (site) =>
-			site.runJson(
-				drupalOp(`$out['before'] = [\\PhpWasmSyncFiber::getCurrent(), \\PhpWasmSyncFiber::suspend('x')];
-					\\PhpWasmSyncFiber::$handler = fn($v) => $v . '!';
-					$out['during'] = [\\PhpWasmSyncFiber::getCurrent() !== null, \\PhpWasmSyncFiber::suspend('x')];
-					\\PhpWasmSyncFiber::$handler = null;`)
-			)
-		);
-		expect(seen['before']).toEqual([null, null]);
-		expect(seen['during']).toEqual([true, 'x!']);
 	});
 
 	it('falls back to packagist for a drupal/* library drupal.org does not carry', () => {

@@ -149,8 +149,8 @@ test.describe('the surface acts on the site', () => {
 			'the operation registry could not be read'
 		);
 		// and drivers resolve: `OPS_DRIVERS` was read only inside the 501 refusal, so every row
-		// reported none
-		await expect(page.locator('body')).not.toContainText('0 of');
+		// reported none (a boundary, since "20 of 20" contains "0 of")
+		await expect(page.locator('body')).not.toContainText(/\b0 of /);
 
 		await page.locator('input[name="op"]').fill('status');
 		await page.getByRole('button', { name: 'Run' }).click();

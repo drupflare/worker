@@ -1,3 +1,4 @@
+import { encode } from '@drupflare/durabledb/codec';
 import { describe, expect, it } from 'vitest';
 import { SHIPPING_STEP } from '../../scripts/measure/growth-glue';
 import { INITIAL_BYTES } from '../../scripts/measure/initial-pages';
@@ -531,9 +532,14 @@ describe('the interpreter recycle', () => {
 		'holds background PHP off a young interpreter and runs it once the interpreter has settled',
 		async () => {
 			const paths = ['/', '/user/password', '/user/register'];
+			const sent: unknown[] = [];
 			const out = await inObject(freshSite(), async (site) => {
 				await provision(site);
-				site.env = { ...site.env, FILL_SETTLE_MS: '60000' };
+				site.env = {
+					...site.env,
+					FILL_SETTLE_MS: '60000',
+					SEND_EMAIL: { send: async (body: unknown) => void sent.push(body) }
+				};
 				const young = async () => {
 					// a visitor's boot, which is the young isolate every deployed reset was on
 					await site.runJson(renderPage('/user/login', [], false, { cookie: '' }));
@@ -555,12 +561,32 @@ describe('the interpreter recycle', () => {
 				// right after the claim: the reconcile step waits as well as the fill
 				await young();
 				const bootedAt = Number(site.phpBootedAt);
+				// and a mail committed now, which the hold on PHP must not keep from the drain
+				const binary: Record<string, (json: string) => string> = {};
+				site.installCapabilities(binary);
+				binary.cfwMail!(
+					JSON.stringify(
+						encode({
+							to: 'visitor@example.org',
+							from: 'Site <site@example.com>',
+							subject: 'Replacement login information',
+							text: 'reset',
+							html: null,
+							headers: {}
+						})
+					)
+				);
 				await site.alarm();
 				const first = {
 					queued: Number(site.queueDepth()),
 					held: JSON.stringify(
 						(site as unknown as { lastAlarmOutcome: unknown }).lastAlarmOutcome
 					),
+					reconcile: JSON.stringify(
+						(site as unknown as { lastReconcile: unknown }).lastReconcile
+					),
+					mailQueue: site.countOrNull('cfw_mail_queue'),
+					mailSent: sent.length,
 					armed: await site.storage.getAlarm()
 				};
 				const settled = await settle();
@@ -586,6 +612,11 @@ describe('the interpreter recycle', () => {
 			// held, not dropped: every row survives and the chain re-arms for the end of the hold
 			expect(out.first.queued, out.first.held).toBe(paths.length);
 			expect(out.first.held).toContain('"held"');
+			// the held step is the reconcile one, and the mail still left on that firing: returning at
+			// the step kept every reset mail queued for the first minute after a boot
+			expect(out.first.reconcile).toContain('"held"');
+			expect(out.first.mailSent).toBe(1);
+			expect(out.first.mailQueue).toBe(0);
 			expect(out.first.armed).not.toBeNull();
 			expect(Number(out.first.armed)).toBeLessThanOrEqual(out.bootedAt + 60_000);
 			expect(out.settled).toBeGreaterThan(0);

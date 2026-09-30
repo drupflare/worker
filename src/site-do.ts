@@ -11897,15 +11897,18 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// await, and a reconcile step drops the interpreter when it lands, so the render's next boot
 		// was a second interpreter in one object and the isolate was reset for its memory
 		const reconcile = await this.gate.run(() => this.reconcileStepOnce(), 'alarm-reconcile');
-		if (reconcile) {
+		// a HELD step ends nothing: the hold is on PHP, and the drains below are JS, so returning
+		// here kept every mail and fetch queued for the first minute after a boot
+		const reconcileHeld =
+			reconcile !== null &&
+			Number((reconcile.reconcile as Payload | undefined)?.held ?? 0) > 0;
+		if (reconcile && reconcileHeld) this.lastReconcile = reconcile;
+		if (reconcile && !reconcileHeld) {
 			this.lastReconcile = reconcile;
 			this.lastAlarmOutcome = reconcile;
 			this.alarmFirings = (this.alarmFirings ?? 0) + 1;
 			this.alarmRearms = (this.alarmRearms ?? 0) + 1;
-			const heldUntil = Number((reconcile.reconcile as Payload | undefined)?.held ?? 0);
-			await this.setAlarmAt(
-				heldUntil > 0 ? Math.max(this.nowMs() + 1, heldUntil) : this.nowMs() + 1000
-			);
+			await this.setAlarmAt(this.nowMs() + 1000);
 			return reconcile;
 		}
 
@@ -11944,7 +11947,8 @@ export class SitePhpDurableObject extends SiteDurableObject {
 		// a young interpreter takes no background PHP; see fillSettleMs(). The queue keeps its rows
 		// and the re-arm below lands on the end of the hold, so the batch is late rather than lost
 		const hold = this.backgroundHold();
-		let held = false;
+		// the re-arm below still lands on the end of the hold, for the step that waited
+		let held = reconcileHeld && hold !== null;
 		if (hold !== null && this.queueDepth() > 0) {
 			held = true;
 			this.fillHolds += 1;

@@ -1,13 +1,21 @@
-# 🐘 Drupflare: Drupal on Cloudflare Workers
-
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker)
+<div style="display: flex; align-items: center; flex-direction: column;" align="center">
+    <img align="center" style="align-self: center; max-width: 256px" src="https://docs.drupflare.com/drupflare.png" width="30%" alt="" />
+    <h1 style="text-align: center;">Drupflare</h1>
+    <p style="text-align: center;">Drupal 11 on Cloudflare Workers</p>
+    <div align="center">
+        <img src="https://img.shields.io/github/v/release/drupflare/worker" alt="release">
+        <img src="https://img.shields.io/github/license/drupflare/worker" alt="license">
+        <img src="https://img.shields.io/github/stars/drupflare/worker?style=flat" alt="stars">
+        <img src="https://img.shields.io/github/commit-activity/t/drupflare/worker?color=violet" alt="commit activity">
+        <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/build.yml?label=build" alt="build">
+        <img src="https://img.shields.io/github/actions/workflow/status/drupflare/worker/prettier.yml?label=prettier" alt="prettier">
+        <img src="https://img.shields.io/codecov/c/github/drupflare/worker" alt="codecov">
+    </div>
+</div>
 
 ---
 
-[![Build](https://github.com/drupflare/worker/actions/workflows/build.yml/badge.svg)](https://github.com/drupflare/worker/actions/workflows/build.yml)
-[![Prettier](https://github.com/drupflare/worker/actions/workflows/prettier.yml/badge.svg)](https://github.com/drupflare/worker/actions/workflows/prettier.yml)
-[![codecov](https://codecov.io/gh/drupflare/worker/branch/master/graph/badge.svg)](https://codecov.io/gh/drupflare/worker)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/drupflare/worker)
 
 **Drupal 11 running on Cloudflare Workers.** No VPS, no container, no origin server. PHP
 8.5 executes as WebAssembly inside a Durable Object, with the Durable Object's own SQLite as
@@ -1264,8 +1272,14 @@ src/
   env.ts             the vars this worker reads beyond @drupflare/durabledb's own
   runtime/           interpreter plumbing: mount, lazy FS, interrupt mask, gate, binary seam
   db/                codec, the ctx.storage.sql bridge, chunked migration, heap snapshot store
-  drupal/            PHP fragments evaluated inside the interpreter
+  drupal/            PHP composition helpers and the shims Drupal runs
+  do/                the object split by concern: routes/, alarm/ phases, capabilities, meters
+  site/              the front worker split by concern, plus the assets it serves
+    php/             the PHP fragments, real files, packed by gen-assets into generated/assets.ts
+    html|css|js/     the setup, warming and guard pages
   ops/               cron/GC, sliced database updates, site identity, origin, setup page
+  util/              shared helpers and the null/undefined contract types
+  ui/admin/          the /__ops admin surface
   probes/            measurement workers, kept so a report figure can be reproduced
 assets/
   core/              the browser-fetchable Drupal tree, served by Workers Assets
@@ -1276,7 +1290,7 @@ assets/
 tests/               unit (in workerd), integration (live Durable Object), e2e
 scripts/             packers, benches, and the measurement instruments
 experiments/         49 wrangler probe configs, kept for reproduction
-docs/                configuration, the source build, repository layout, measurement classes
+docs/                the pages published at docs.drupflare.com, and the site's template
 ```
 
 The PHP lives in the sibling repositories, not here: `cfw_do_sqlite` in

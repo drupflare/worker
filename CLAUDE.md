@@ -287,7 +287,7 @@ What is no longer checked is `drupal/` against the siblings.
 packed tree IS the vendor directory. `drupflare` requires `drupflare/stream-http` and its
 `HttpsStreamWrapper` extends the packaged class, so the packer mounts `../stream-http/src` at
 `libraries/drupflare-stream-http/src` and the PSR-4 root is registered in **both** autoloader sites
--- `SETTINGS_OVERRIDE` in `src/site-do.ts` and the boot fragment in `src/drupal/site-php.ts`.
+-- `src/site/php/settings-override.php` and the boot fragment in `src/drupal/site-php.ts`.
 Adding a dependency means all three steps; the manifest line alone is a fatal on a missing class.
 It is read from the sibling rather than copied under `drupal/`, because a fourth copy is what
 created the drift the subclass removed.
@@ -907,6 +907,13 @@ deploys) and the skip brought it back to 9.1 s in one invocation. The SQL bridge
 7 MB out and is not the lever. Before raising `cpu_ms` for anything, check whether the work splits at a
 commit boundary.
 
+**The one-invocation stock claim has about 3x headroom, and a slow host used all of it.** Live Deploy
+on free, same tree and same SQL traffic to within 1%: claims of 7.45 and 9.75 s CPU passed, and one
+of 19.3 s CPU / 36.9 s wall ended `exceededWallTime` (run 36764623205, 2026-09-30). That host ran
+EVERY invocation ~2.7x slower, the cold `/` render included (9.5 s against 3.4), so it was placement
+and not the claim. A killed claim leaves `first_run_at` unset, so the retry the reset page asks for
+is safe. Read the cold render's CPU beside the claim's before calling a red claim a regression.
+
 In Drupal 11.4 the multi-module branch of `ModuleInstaller::install()` calls `resetContainer()`, which drops
 instantiated services and does not recompile, so installing two modules in one call costs one compile.
 
@@ -1293,7 +1300,7 @@ gets waved through.
 
 **Count the list, do not quote it** -- this paragraph said five while the list held six, which is the
 same drift the module table and the spec counts have shown. `bun run check:reachability` prints it.
-Every entry today is legitimately off the edge: `src/ops/dormancy.ts`, `src/ops/module-table.ts` and
+Every entry today is legitimately off the edge: `src/ops/dormancy.ts` and
 `src/ops/mutation-oracle.ts` are build-lane or discovery instruments driven by their own vitest
 specs, and `src/runtime/php-binary-{jspi,o2,raw}.ts` are alias targets reached through a wrangler
 `alias` rather than through an import. The list may shrink without ceremony; **adding to it is the
@@ -1301,8 +1308,7 @@ thing to think twice about**, because an entry is a promise the module is reache
 rather than a way to silence the check.
 
 **`dead` MEANS "not imported from the wrangler `main`", NOT "unused", and the difference matters
-before anyone deletes one.** `php-binary-raw.ts` is on that list and it is the SHIPPING interpreter.
-`module-table.ts` renders the contrib table in the README and is pinned by 13 assertions. The o2 and
+before anyone deletes one.** `php-binary-raw.ts` is on that list and it is the SHIPPING interpreter. The o2 and
 jspi seams are named by six configs under `experiments/wrangler/`. Check what aliases a file before
 concluding nothing reaches it.
 
@@ -2847,8 +2853,9 @@ needed: bytes the site does not hold are new to it, so the path being stored is 
   re-registers nothing. `tests/integration/heap-restore-autoload.spec.ts` is falsified against it.
 - **A backtick inside a comment in a `String.raw` block terminates the block**, and a comment is
   where it is least expected. Writing ``// `require` rather than `require_once` `` inside a PHP
-  fragment broke the TypeScript, not the PHP. The apostrophe hazard is already recorded below; this
-  is the same shape one punctuation mark over.
+  fragment broke the TypeScript, not the PHP. Rare now that the PHP lives in real files under
+  `src/site/php/`, but any remaining `String.raw` block still carries it. The apostrophe hazard is
+  recorded below; this is the same shape one punctuation mark over.
 - **Never pass fflate's `{ out }` hint to `inflateSync`.** A preallocated buffer makes it TRUNCATE
   to that length and return quietly, so a payload longer than the buffer inflates to exactly the
   length a caller would compare against -- right length, wrong content, which is this repository's
@@ -2866,28 +2873,48 @@ needed: bytes the site does not hold are new to it, so the path being stored is 
 - **`src/site-do.ts` is detected as BINARY by grep, so a plain `grep` over it silently returns
   NOTHING.** Not an error, not a warning, no matches. Two sessions have concluded a function was
   missing from it on that evidence. Use `/usr/bin/grep -a`, or `rg`, or the Grep tool.
-- Imports use a `.js` specifier even for `.ts` files (`from './site-do.js'`). This matches what bun
-  resolves; `node` cannot resolve it, which is why some scripts must run under bun.
+- Absence is `undefined`: `x?: T` for properties and options, `T | undefined` for returns, not
+  `T | null`. `null` stays at the boundary, where it differs from absent: JSON that leaves the
+  process (`JSON.stringify` drops undefined keys, so a `/serve-stats` field would vanish), SQL NULLs,
+  PHP replies, and platform APIs that return `null`. Convert at the edge with `?? null`.
+- Paired state is one object: `lastCron?: { at, value }`, not `lastCron` plus `lastCronAt`; emitters
+  keep their old keys.
+- Every export, class property and non-delegator method has a one-line TSDoc; delegators
+  (`return fn(this, ...)`) have none, their function does.
+- Relative imports omit the extension (`from './site-do'`); `moduleResolution: bundler` resolves
+  them under tsc, vite and esbuild. The one exception is `from './runtime/php-binary.js'` in
+  `src/site-do.ts`: wrangler aliases that exact string, and any other spelling bundles the default
+  seam. `tests/node/import-specifiers.spec.ts` guards it.
+  **A file a `node`-run script reaches cannot use one.** Plain node resolves a relative specifier as
+  an exact path, so `src/ops/packed-container.ts` (read by `scripts/pack-sql.ts`) and
+  `src/db/heap-store.ts` (timed by `scripts/measure/heap-digest-cost.ts`) keep no relative imports.
+  A DRY pass gave both `../util` imports and `build:local` failed with the gate green. The same
+  spec walks every script a `node ...` invocation names and fails on a specifier node cannot find.
 - **Check `pragma_table_info` before an `ALTER TABLE`; never wrap one in `try`/`catch`.** A
   caught-and-ignored `ALTER` inside `ensureServeTables()` still dirties `sqlite_master` on every call,
   and that took the serve path into `migrate: starting` on 2 of 3 runs. The exception is not the cost;
   attempting the statement is.
 - `src/probes/**` are frozen measurement instruments cited by figure in the report. Moving a file
   does not change what it measures; rewriting it might. Do not refactor them.
-- `src/drupal/*-php.ts` are mostly `String.raw` blocks holding PHP source. A backtick inside a PHP
-  comment truncates the block and breaks the PHP while leaving the JavaScript valid - this has
-  happened twice. `tests/node/php-fragments.spec.ts` runs `php -l` over all of them; keep it green.
+- The PHP source lives under `src/site/php/` and is packed by `scripts/gen-assets.ts` into
+  `src/site/generated/assets.ts`; run `bun run gen:assets:check` after editing any of it.
+  `src/drupal/*-php.ts` still hold a few `String.raw` blocks (composition helpers go through
+  `phpWhen`/`phpScript` in `src/util/php.ts`). A backtick inside a PHP comment truncated a block
+  and broke the PHP while leaving the JavaScript valid - this has happened twice.
+  `tests/node/php-fragments.spec.ts` runs `php -l` over the compositions; keep it green.
   **An APOSTROPHE is the same hazard one level in.** `PW_SERVE_INLINE` is embedded in a
   single-quoted PHP string, so a `'` anywhere inside it - including in a `//` comment, where it
   reads as ordinary prose - closes that string and the next word becomes a stray identifier.
   Writing "the status report's Web server row" in a comment produced
   `syntax error, unexpected identifier "s"`. Say "the Web server row on the status report" instead.
-- **A shim over an INTERNAL PHP function does not need `eval()`.** `mb-fix.ts` wraps its
-  declarations in one and `zlib-fix.ts` does not: a conditional function declaration is
-  bound at runtime, not at compile time, so `if (!extension_loaded('zlib')) { function gzencode(){} }`
-  compiles clean on a build that HAS the extension and the branch never runs. That matters for
-  coverage rather than style - `php -l` sees INSIDE plain PHP and sees only a string literal inside
-  an `eval`, which is why `ZLIB_FIX` is in the fragment gate and `MB_FIX` cannot be.
+- **A shim over an INTERNAL PHP function does not need `eval()`.** A conditional function
+  declaration is bound at runtime, not at compile time, so
+  `if (!extension_loaded('zlib')) { function gzencode(){} }` compiles clean on a build that HAS
+  the extension and the branch never runs. The PHP fragments now live as real files under
+  `src/site/php/` (packed by `scripts/gen-assets.ts` into `src/site/generated/assets.ts`), so
+  `php -l` sees inside every one of them. `src/site/php/mb/fix.php` is the one that still cannot be
+  linted STANDALONE, because it redeclares internal `mb_*` functions; the fragment gate lints it
+  wrapped in `phpWhen('true', ...)`.
 - `experiments/` is prettier-ignored: probe configs kept for reproduction, not maintained.
 - Comments: lowercase, terse, one line, no trailing period, only where the WHY is non-obvious.
 

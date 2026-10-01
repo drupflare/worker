@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Federal Sites - Drupflare</title>
+		<meta
+			name="description"
+			content="OMB M-23-22 and the 21st Century IDEA for US federal sites."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Federal Sites - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="OMB M-23-22 and the 21st Century IDEA for US federal sites."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="federal-sites">Federal Sites</h1>
+<p>A US federal public website is governed by OMB M-23-22, which implements the 21st Century IDEA. It
+sets requirements in two groups: what a page contains, and how a server behaves. This project is a
+server. It carries none of the first group and part of the second.</p>
+<h2 id="what-the-site-owner-owns">What the Site Owner Owns</h2>
+<p>Section 508 conformance of rendered pages. The Revised 508 Standards incorporate WCAG 2.0 Level AA
+by reference; M-23-22 directs agencies to the most current WCAG, which was 2.1 at publication.
+Conformance is a property of the markup an author produces, and no host establishes it.</p>
+<p>USWDS adoption and the federal government banner. Three federal website standards are published: the
+banner, the HTML page title, and the meta page description. All three are theme and content output.</p>
+<p><code>.gov</code> domain registration through CISA, agency brand identity, plain language, the accessibility
+statement and its public feedback mechanism, the vulnerability disclosure policy required by CISA
+BOD 20-01, and the three-year review cadence for content that is not actively maintained.</p>
+<p>Participation in the Digital Analytics Program, which M-23-22 requires. The DAP module
+(<code>usfedgov_google_analytics</code>) is verified here: its settings, its route, its three hook services and
+its seven asset libraries install and resolve. The DAP tag is a script the browser fetches from
+<code>dap.digitalgov.gov</code>, so no outbound call happens in PHP.</p>
+<h2 id="what-the-host-owns">What the Host Owns</h2>
+<p>HTTPS on every request, and HSTS. M-23-22 requires agencies to preload their <code>.gov</code> domains as
+HTTPS-only; the preload submission belongs to the domain owner, the transport does not.</p>
+<p>Serving crawlers and archivers unimpeded. Agencies must not limit which crawlers reach public
+content, and must not present challenge-response restrictions such as CAPTCHAs to them. Cloudflare
+bot management or a Turnstile interstitial in front of a site built here puts the deployment out of
+compliance, so those stay off.</p>
+<p>HTTP 301 for retired content, which <code>drupal/redirect</code> produces and the edge honours.</p>
+<h2 id="searchgov-splits-in-two">Search.gov Splits in Two</h2>
+<p>Search.gov offers two integrations and this architecture hosts one of them.</p>
+<p>The crawl route works. Search.gov indexes the public site from an XML sitemap and renders results on
+a Search.gov-hosted page. Nothing outbound happens in PHP: <code>simple_sitemap</code> and <code>xmlsitemap</code> produce
+the sitemap, <code>metatag_search_gov</code> produces the <code>searchgov_custom1-3</code> fields the index reads, and
+stored pages serve the crawler. All three are verified.</p>
+<p>The Results API route does not. <code>search_gov_results_api</code> renders results on the site&#39;s own page by
+calling <code>api.gsa.gov</code> while building the form, and the results are the page. This runtime performs an
+outbound call between invocations rather than inside one, so a deferred exchange returns nothing on
+the first request. The module is recorded untested with that mechanism: measured, the deferred tier
+does carry its GET across two renders, and what it lacks is a live Search.gov key.</p>
+<p><code>drupal/redis</code> was named here as refused for the same reason and no longer is. <strong>Nor is HTTP</strong>, which
+this page said could not take that route: PHP does reach HTTPS through a wrapper the runtime invokes
+from inside a C frame a suspended call cannot return through, and the answer was to stop going that
+way rather than to accept it. <code>ParkFetchHandler</code> replaces Guzzle&#39;s transport with plain userland
+code, which is a frame the park can suspend under, so an HTTP response arrives inside the render that
+asked for it. <code>config/modules.yml</code> records the park carrying <code>api.gsa.gov</code> that way.</p>
+<p>What keeps the module untested is now its own: a live Search.gov key, and its <code>#pre_render</code>
+behaviour. Neither is a runtime refusal.</p>
+<h2 id="the-uswds-theme">The USWDS Theme</h2>
+<p><code>uswds_base</code> is a theme, and a theme reaches this runtime through a different installer than a
+module. <code>composer/installers</code> places it under <code>themes/contrib</code>, <code>extension.list.module</code> does not list
+themes, and <code>module_installer</code> cannot install one. The pack now sweeps the theme tree, <code>/__enable</code>
+routes a theme to <code>theme_installer</code>, and <code>assets:static</code> copies the theme subtree alongside <code>core</code>
+and <code>modules</code>.</p>
+<p>Its default library mode loads USWDS from a CDN. M-23-22 prohibits embedding static third-party
+assets hosted outside the agency&#39;s control and carves out only dynamic resources such as analytics,
+so a federal deployment uses the local library mode. The DAP tag is the carved-out case and is fine
+as shipped.</p>
+<h2 id="what-this-project-does-not-claim">What This Project Does Not Claim</h2>
+<p>No FedRAMP authorization, no Authority to Operate, no Authority to Use, and no accessibility audit.
+The Cloudflare Workers platform&#39;s own authorization status is not established here.</p>
+<p>cloud.gov Pages is the near comparison. It offers a FedRAMP-authorized platform, an ATU kit of
+boilerplate text and evidence, and a shared responsibility model, and it still leaves the
+authorization decision with the agency. This project offers less than that.</p>
+<p>A site built on this host can meet the requirements a host is responsible for. Whether the site meets
+the rest is a determination its agency makes.</p>
+<h2 id="sources">Sources</h2>
+<ul>
+<li>OMB M-23-22, <em>Delivering a Digital-First Public Experience</em></li>
+<li>Federal website standards, <code>standards.digital.gov</code></li>
+<li>Revised Section 508 Standards, <code>section508.gov</code></li>
+<li>CISA BOD 20-01, vulnerability disclosure policy</li>
+<li><code>search.gov</code> documentation on crawl-based indexing and the Results API</li>
+<li><code>cloud.gov/pages</code> on its FedRAMP posture and shared responsibility model</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

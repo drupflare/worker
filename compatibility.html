@@ -1,0 +1,1166 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Compatibility - Drupflare</title>
+		<meta
+			name="description"
+			content="Which Drupal codebases run, per codebase, from the corpus lane."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Compatibility - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Which Drupal codebases run, per codebase, from the corpus lane."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html" aria-current="page">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="compatibility">Compatibility</h1>
+<p>Generated by <code>bun scripts/e2e/corpus-lane.ts</code> from <code>docs/compatibility.json</code>. Two lanes write it: the
+local lane drives each codebase on a drupflare site in <code>wrangler dev</code>, and the deployed lane drives
+it on a Worker deployed to a Cloudflare account. <strong>verified</strong> means every capability passed in the
+local lane at the pinned commit, and <strong>deployed</strong> means they also passed on a deployed Worker. A pass
+is <code>inline</code> (answered inside the request), <code>parked</code> (answered through the park) or <code>degraded</code>
+(answered with a recorded degradation); <code>unsupported</code> was refused with a reason, and <code>unknown</code> means
+no run asserted it. The website fixtures page reads the same file by the same rule.</p>
+<p>27 codebases: 3 deployed, 12 verified, 3 partial, 3 unsupported, 6 need an upgrade to Drupal 11, 0 pending.</p>
+<h2 id="local-runs">Local Runs</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>repository</th>
+<th>commit</th>
+<th>status</th>
+<th>last run</th>
+<th>install</th>
+<th>container build</th>
+<th>anon render</th>
+<th>auth render</th>
+<th>entity crud</th>
+<th>form submit</th>
+<th>file rw</th>
+<th>queue cron</th>
+<th>outbound http</th>
+<th>update</th>
+<th>cache rebuild</th>
+<th>config import</th>
+<th>module workflow</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://github.com/USEPA/webcms">webcms</a></td>
+<td><code>0d7d6150</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/farmOS/farmOS">farmos</a></td>
+<td><code>41f6e409</code></td>
+<td>deployed</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/goalgorilla/open_social">open_social</a></td>
+<td><code>dc52b9ad</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/YCloudYUSA/yusaopeny">yusaopeny</a></td>
+<td><code>745e8798</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/thunder/thunder-distribution">thunder</a></td>
+<td><code>50686db3</code></td>
+<td>deployed</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Vardot/varbase">varbase</a></td>
+<td><code>4431d589</code></td>
+<td>11 of 13</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>unsupported</td>
+<td>inline</td>
+<td>unsupported</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/govCMS/GovCMS">govcms</a></td>
+<td><code>8fbe9c74</code></td>
+<td>deployed</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/unlcms/project-herbie">herbie</a></td>
+<td><code>06881419</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/openculturas/openculturas-distribution">openculturas</a></td>
+<td><code>ce2b54b4</code></td>
+<td>12 of 13</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>unsupported</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/droptica/droopler">droopler</a></td>
+<td><code>eb5b3a4f</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/localgovdrupal/localgov_microsites_project">localgov_microsites</a></td>
+<td><code>4de8403b</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/essexcountycouncil/essex-intranet-drupal">essex</a></td>
+<td><code>34f325e7</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/aincient-labs/atelier-cms">atelier</a></td>
+<td><code>717890c5</code></td>
+<td>7 of 13</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>parked</td>
+<td>unsupported</td>
+<td>inline</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/droptica/openintranet">openintranet</a></td>
+<td><code>15727c10</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Islandora/islandora">islandora</a></td>
+<td><code>a518aea2</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/YCloudYUSA/yusaopeny_activity_finder">activity_finder</a></td>
+<td><code>68e11f8e</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/YCloudYUSA/yusaopeny_ymca360">ymca360</a></td>
+<td><code>a21e6bf6</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/esmero/strawberryfield">strawberryfield</a></td>
+<td><code>95129453</code></td>
+<td>unsupported</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/sealionking/fairwell-drupal">fairwell</a></td>
+<td><code>f1851b47</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/victorstack-ai/drupal-entity-reference-integrity">entity_reference_integrity</a></td>
+<td><code>14749753</code></td>
+<td>unsupported</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/jigarius/drupal-migration-example">migration_example</a></td>
+<td><code>171af072</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/e0ipso/simple_oauth_21">simple_oauth_21</a></td>
+<td><code>f2b73148</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/lagoon-examples/drupal-cachebackend">lagoon_cachebackend</a></td>
+<td><code>dc070ad6</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/fflch/drupal">fflch</a></td>
+<td><code>75fc28a7</code></td>
+<td>needs upgrade</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/nextagencyio/drupalx-project">drupalx</a></td>
+<td><code>d665d327</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/Vardot/varbase-patches">varbase_patches</a></td>
+<td><code>6f1d782c</code></td>
+<td>unsupported</td>
+<td>2026-09-29</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+<td>unsupported</td>
+</tr>
+<tr>
+<td><a href="https://github.com/earth-app/mantle2">mantle2</a></td>
+<td><code>8d10eff7</code></td>
+<td>verified</td>
+<td>2026-09-29</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+</tbody></table></div>
+<h2 id="deployed-runs">Deployed Runs</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>repository</th>
+<th>commit</th>
+<th>date</th>
+<th>plan</th>
+<th>passed</th>
+<th>install</th>
+<th>container build</th>
+<th>anon render</th>
+<th>auth render</th>
+<th>entity crud</th>
+<th>form submit</th>
+<th>file rw</th>
+<th>queue cron</th>
+<th>outbound http</th>
+<th>update</th>
+<th>cache rebuild</th>
+<th>config import</th>
+<th>module workflow</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="https://github.com/farmOS/farmOS">farmos</a></td>
+<td><code>41f6e409</code></td>
+<td>2026-09-30</td>
+<td>paid</td>
+<td>13 of 13</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/thunder/thunder-distribution">thunder</a></td>
+<td><code>50686db3</code></td>
+<td>2026-09-30</td>
+<td>paid</td>
+<td>13 of 13</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+<tr>
+<td><a href="https://github.com/govCMS/GovCMS">govcms</a></td>
+<td><code>8fbe9c74</code></td>
+<td>2026-09-30</td>
+<td>paid</td>
+<td>13 of 13</td>
+<td>degraded</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>parked</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+<td>inline</td>
+</tr>
+</tbody></table></div>
+<h2 id="notes">Notes</h2>
+<ul>
+<li><strong>webcms</strong>: needs upgrade: core 10.6.15 does not accept Drupal 11; drangler plans the 10 -&gt; 11 upgrade</li>
+<li><strong>farmos</strong><ul>
+<li>install: 30/30 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 7 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 403 (a front page for signed-in users), so /user/login was rendered anonymously</li>
+<li>entity crud: a term in log_category was created and deleted (the site defines no node type)</li>
+<li>file rw: written through public:// and read back after the interpreter was dropped; the site has no media image form</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun7zpqu; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>open_social</strong>: needs upgrade: core ^10.5.6 does not accept Drupal 11; drangler plans the 10 -&gt; 11 upgrade</li>
+<li><strong>yusaopeny</strong><ul>
+<li>install: 165/167 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 21 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded; installed without demo content: the demo import instantiates openy_prgf_class_location&#39;s block, which type-hints t...</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 404 (a front page set to content this install does not carry), so /user/login was rendered anonymously</li>
+<li>auth render: the administrator accepted /admin/openy/terms-and-conditions, which the site puts in front of every admin page, before the probes</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun8y4gc; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>thunder</strong><ul>
+<li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 56/56 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 4 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>file rw: written through public:// and read back after the interpreter was dropped; the site has no media image form</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5ft5g; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>varbase</strong><ul>
+<li>install: 195/196 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 65 composer patches not applied; 1 not enabled on the site, skipped: drupal/ai_provider_amazeeio; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: the run halted: unit-aborted: flush:final:rebuild_hooks aborted: JsonSchema\Exception\ResourceNotFoundException: PHP Request Startup: Failed to open stream: No such file or directory</li>
+<li>config import: import answered 200, confirm 200, read 200; class=&quot;messages-list&quot;&gt; Error message | class=&quot;messages__content&quot;&gt; 1 error has been found: Paste your configuration here | class=&quot;messages-list&quot;&gt; Error message | class=&quot;messages__content&quot;&gt; 2 errors have been found: Configuration type Paste your configuration here; posted 352 characters into a form with fields op, config_type, config_name, import, custo...</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>govcms</strong><ul>
+<li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 103/103 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 9 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5hii8; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>herbie</strong><ul>
+<li>install: 109/112 registry packages; 46/46 custom uploaded; 0/0 modules enabled; 26 composer patches not applied; 3 not enabled on the site, skipped: drupal/entity_share_cron, drupal/salesforce, drupal/theme_per_user; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded; installe...</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>entity crud: no content type or vocabulary; a user account was created and deleted</li>
+<li>file rw: written through public:// and read back after the interpreter was dropped; the site has no media image form</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun7hwwa; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>openculturas</strong><ul>
+<li>install: 107/107 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 64 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded; installed from its own config/sync with sqlite added to core.extension (the export came from MySQL) and its modera...</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 404 (a front page set to content this install does not carry), so /user/login was rendered anonymously</li>
+<li>file rw: upload answered 200 and no media row names the file; class=&quot;messages-list&quot;&gt; Error message | class=&quot;messages__content&quot;&gt; Name field is required.; flagged fields: name[0][value]</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun837kb; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>droopler</strong><ul>
+<li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 48/48 registry packages; 2/2 custom uploaded; 0/0 modules enabled; 5 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; its recipe assumes node&#39;s body field storage, which Drupal 11 ships only in core&#39;s page_content_type recipe, so that ...</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>entity crud: no content type or vocabulary; a user account was created and deleted</li>
+<li>file rw: written through public:// and read back after the interpreter was dropped; the site has no media image form</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5itz0; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>localgov_microsites</strong>: needs upgrade: core ^10.0 does not accept Drupal 11; drangler plans the 10 -&gt; 11 upgrade</li>
+<li><strong>essex</strong>: needs upgrade: core 10.3.13 does not accept Drupal 11; drangler plans the 10 -&gt; 11 upgrade</li>
+<li><strong>atelier</strong><ul>
+<li>install: 4 failed: aincient_audit: upload failed: uploading 25 blob(s) drangler: rolled back: Symfony\Component\DependencyInjection\Exception\ServiceNotFoundException: The service &quot;aincient_audit.meta_reader&quot; has a dependency on a non-existent service &quot;aincient_pages.metatags&quot;. | aincient_chat: upload failed: uploading 52 blob(s) uploading 15 blob(s) drangler: rolled back: Symfony\Component\DependencyIn...</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 404 (a front page set to content this install does not carry), so /user/login was rendered anonymously</li>
+<li>file rw: upload answered 500 and no media row names the file; no message on the page; log: {&quot;cfw&quot;:&quot;php&quot;,&quot;level&quot;:&quot;warn&quot;,&quot;severity&quot;:4,&quot;channel&quot;:&quot;access denied&quot;,&quot;message&quot;:&quot;Path: /user/1. Drupal\Core\Http\Exception\CacheableAccessDeniedHttpException: The &#39;access user profiles&#39; permission is required. in Drupal\Core\Routing\AccessAwareRouter-&gt;checkAccess() (line 114 of /drupal/core/lib/</li>
+<li>queue cron: the run answered 303; no message on the page; the log has no Cron run completed entry</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: the run halted: requirements-error: core reports requirement errors: {&quot;aincient_assistant_ui-aincient_chat&quot;:&quot;AIncient assistant-ui requires this module.&quot;,&quot;aincient_brand-aincient_pages&quot;:&quot;AIncient Brand requires this module.&quot;,&quot;invalid_module&quot;:&quot;Array&quot;}</li>
+<li>config import: import answered 200, confirm 200, read 200; no message on the page | no message on the page; posted 343 characters into a form with fields config_type, config_name, import, custom_entity_id, form_build_id, form_token, form_id, op</li>
+<li>module workflow: /admin/reports/status answered 500: The website encountered an unexpected error. Try again later.; /admin/config answered 500: The website encountered an unexpected error. Try again later.; log: {&quot;cfw&quot;:&quot;php&quot;,&quot;level&quot;:&quot;error&quot;,&quot;severity&quot;:3,&quot;channel&quot;:&quot;php&quot;,&quot;message&quot;:&quot;Drupal\Component\Plugin\Exception\PluginNotFoundException: The &quot;aincient_block_fragment&quot; plugin does not exist. Valid plugin ID...</li>
+</ul>
+</li>
+<li><strong>openintranet</strong><ul>
+<li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 107/109 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 6 composer patches not applied; 2 not enabled on the site, skipped: drupal/ckeditor5_allowed_html, drupal/other_view_filter; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>entity crud: no content type or vocabulary; a user account was created and deleted</li>
+<li>file rw: written through public:// and read back after the interpreter was dropped; the site has no media image form</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun56u79; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>islandora</strong><ul>
+<li>container build: the container was rebuilt by the enable</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun57fwt; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /admin/config/islandora, /admin/config/islandora/core, /admin/reports/islandora/rdf_mappings, /media/delete_with_files, /node/delete_with_media</li>
+</ul>
+</li>
+<li><strong>activity_finder</strong><ul>
+<li>install: 165/167 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 21 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 404 (a front page set to content this install does not carry), so /user/login was rendered anonymously</li>
+<li>auth render: the administrator accepted /admin/openy/terms-and-conditions, which the site puts in front of every admin page, before the probes</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun8z8ua; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /af/get-data, /admin/openy/settings/activity-finder, /af/more-info</li>
+</ul>
+</li>
+<li><strong>ymca360</strong><ul>
+<li>install: 165/167 registry packages; 1/1 custom uploaded; 0/0 modules enabled; 21 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; migrated: native install, database landed through migrate install, profile and custom code uploaded</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>anon render: / answered 404 (a front page set to content this install does not carry), so /user/login was rendered anonymously</li>
+<li>auth render: the administrator accepted /admin/openy/terms-and-conditions, which the site puts in front of every admin page, before the probes</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun8xtry; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /admin/config/system/yusaopeny-ymca360, /admin/config/system/yusaopeny-ymca360/settings, /admin/config/system/yusaopeny-ymca360/locations-mapping</li>
+</ul>
+</li>
+<li><strong>strawberryfield</strong><ul>
+<li>install: enabling strawberryfield was refused: unparseable: Expected property name or &#39;}&#39; in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\strawberryfield\ProxyClass\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\Core\File\MimeType\ExtensionMimeTypeGuesser::setMapping(?array $mapping = null): voi); upstream conflict: frict...</li>
+<li>container build, anon render, auth render, entity crud, form submit, file rw, queue cron, outbound http, update, cache rebuild, config import, module workflow: blocked by install: enabling strawberryfield was refused: unparseable: Expected property name or &#39;}&#39; in JSON at position 1 (line 1 column 2) (output: Fatal error: Declaration of Drupal\strawberryfield\ProxyClass\StrawberryfieldMimeService::setMapping(?array $mapping = null) must be compatible with Drupal\Core\File\Mime</li>
+</ul>
+</li>
+<li><strong>fairwell</strong><ul>
+<li>container build: the container was rebuilt by the enable</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5c5m4; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /admin/config/content/node-export-json-md, /admin/config/content/divoblog-api, /api/divoblog/index</li>
+</ul>
+</li>
+<li><strong>entity_reference_integrity</strong><ul>
+<li>install: enabling entity_reference_integrity was refused: Class &quot;Drupal\entity_reference_integrity\Controller\IntegrityReportController&quot; does not exist at /drupal/core/lib/Drupal/Core/Entity/EntityResolverManager.php:136; upstream defect: the routing file names its controller with doubled backslashes inside a single-quoted YAML string, and native PHP 8.5 with the same Composer autoloader refuses the ...</li>
+<li>container build, anon render, auth render, entity crud, form submit, file rw, queue cron, outbound http, update, cache rebuild, config import, module workflow: blocked by install: enabling entity_reference_integrity was refused: Class &quot;Drupal\entity_reference_integrity\Controller\IntegrityReportController&quot; does not exist at /drupal/core/lib/Drupal/Core/Entity/EntityResolverManager.php:136</li>
+</ul>
+</li>
+<li><strong>migration_example</strong>: needs upgrade: core 8.x does not accept Drupal 11; an upgrade from Drupal 8 is v1.1 work (drangler migrate upgrade)</li>
+<li><strong>simple_oauth_21</strong><ul>
+<li>container build: the container was rebuilt by the enable</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun6p14u; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /admin/config/people/simple_oauth/oauth-21</li>
+</ul>
+</li>
+<li><strong>lagoon_cachebackend</strong><ul>
+<li>install: 2/2 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
+<li>container build: the project enables no module, so the container is the one the first boot built</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5eihh; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>fflch</strong>: needs upgrade: core 9.1.0 does not accept Drupal 11; an upgrade from Drupal 9 is v1.1 work (drangler migrate upgrade)</li>
+<li><strong>drupalx</strong><ul>
+<li>install: migrated: native install, database landed through migrate install, profile and custom code uploaded; 71/72 registry packages; 2/2 custom uploaded; 0/0 modules enabled; 1 not enabled on the site, skipped: drupal/ai_provider_amazeeio; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid</li>
+<li>container build: the container was built on the first boot over the migrated database</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5zt41; drained to phase complete, with no unit to run</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: /admin/reports/status, /admin/config</li>
+</ul>
+</li>
+<li><strong>varbase_patches</strong>: not a site: varbase_patches is a composer plugin that patches other packages at install time</li>
+<li><strong>mantle2</strong><ul>
+<li>container build: the container was rebuilt by the enable</li>
+<li>file rw: a multipart image upload through the media form was stored and read back byte for byte</li>
+<li>queue cron: cron ran from the administration form and the log records Cron run completed</li>
+<li>outbound http: the update check fetched from the registry through the parked fetch</li>
+<li>update: prepared run rmun5em03; drained to phase complete</li>
+<li>config import: system.site was imported from YAML and read back</li>
+<li>module workflow: routes from its routing file: /openapi, /swagger-ui, /v2/hello, /v2/info, /v2/motd, /v2/users</li>
+</ul>
+</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

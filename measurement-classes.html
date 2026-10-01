@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Measurement Classes - Drupflare</title>
+		<meta
+			name="description"
+			content="The four classes a number belongs to, and which instrument each allows."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Measurement Classes - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The four classes a number belongs to, and which instrument each allows."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="measurement-classes">Measurement Classes</h1>
+<p>Every number this project produces belongs to one of four classes. The class decides which
+instrument may produce it, where it may be archived, and whether a regression in it can fail a
+build. Picking the wrong class is how a verdict moves without the system changing: of the free-tier
+verdicts that have moved here, four out of five moved because the instrument was wrong.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Class</th>
+<th>What it is</th>
+<th>Instrument</th>
+<th>CI</th>
+<th>Gated</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>A</td>
+<td>Counts and bytes</td>
+<td><code>collect-metrics.ts</code></td>
+<td>Yes</td>
+<td>Yes</td>
+</tr>
+<tr>
+<td>B</td>
+<td>Same-process ratios</td>
+<td>PHP closures, paired probes</td>
+<td>No</td>
+<td>No</td>
+</tr>
+<tr>
+<td>C</td>
+<td>Absolute wall clock</td>
+<td>None that is trustworthy</td>
+<td>Banned</td>
+<td>No</td>
+</tr>
+<tr>
+<td>D</td>
+<td>Deployed CPU</td>
+<td><code>wrangler tail</code>, <code>cpuTime</code></td>
+<td>Manual</td>
+<td>No</td>
+</tr>
+</tbody></table></div>
+<h2 id="class-a-deterministic-counts-and-bytes">Class A: Deterministic Counts and Bytes</h2>
+<p>Same input, same output, no clock. A bundle&#39;s gzipped size, the number of <code>CREATE INDEX</code> statements
+in the shipped pack, the charged rows one stored row costs, the chunk count of a migration, the
+number of collected test cases. Asking the question twice gives the same answer by definition.</p>
+<p>This is the only class a shared CI runner can produce reliably, so it is the only class the
+<code>Class A Metrics</code> workflow collects, archives and gates. <code>scripts/measure/collect-metrics.ts</code>
+emits one JSON document; <code>scripts/measure/metrics-gate.ts</code> compares it to the document archived by
+the last passing master run and exits non-zero when a metric crosses its tolerance.</p>
+<p>The baseline is that archived document, fetched with <code>gh run download</code>. There is no committed
+baseline file: the one that existed had to be refreshed by hand whenever master moved, so it was
+not, and it recorded 305,599 driver-pack bytes against an actual 331,533 and a case count no run
+had been able to collect. <code>--require-baseline</code> makes a download that produced nothing a failure
+rather than a thin pass on the two checks that need no baseline at all.</p>
+<p>The document carries no timestamp. Two runs on one commit produce identical bytes, so a diff
+between two archived documents is a real change rather than a clock reading.
+<code>tests/node/metrics.spec.ts</code> asserts that property directly.</p>
+<p>Three rules keep the class honest:</p>
+<ul>
+<li><strong>A metric whose inputs are absent reports <code>{ &quot;skipped&quot;: &quot;&lt;why&gt;&quot; }</code>.</strong> Never omitted, never zero.
+A zero would be compared against a baseline and pass a no-decrease check.</li>
+<li><strong>The gate fails when no check could be evaluated.</strong> A run where everything skipped is
+indistinguishable from a run where everything passed, and a step that can only skip is worse than
+no step.</li>
+<li><strong>Tolerances live in code, not in the baseline.</strong> A newer master document moves the recorded
+values and cannot widen what is allowed. The baseline is data; <code>CHECKS</code> is the contract. What a
+master-relative baseline gives up is the cumulative reading -- creep since a release rather than
+since the previous commit -- which the absolute checks carry instead, and which any archived
+document restores by being passed as <code>--baseline-metrics</code>.</li>
+</ul>
+<h3 id="what-the-toolchain-contributes">What the Toolchain Contributes</h3>
+<p>Two Class A metrics are deterministic only against a pinned toolchain. The bundle figure is what
+wrangler&#39;s own compressor prints, so the wrangler version travels with the number in the document.
+The collected case count comes from <code>vitest list</code>, which is collection without execution. A version
+bump moves either one, the gate reports it, and the next master document records the move.</p>
+<p>The case count is collected under <code>DRUPFLARE_LIST_ALL=1</code>, which is what keeps it a property of the
+checkout. <code>vitest list</code> otherwise honours the <code>ARTIFACT_SPECS</code> exclusion, so it read 1,862 in CI
+against 2,066 on a checkout carrying the pack: the same lane dependence that kept coverage out of
+Class A, in a metric that had already been accepted. The gap held still while the exclusion list
+did; the commit that added two files to it was reported as deleting 21 tests.</p>
+<h3 id="what-was-rejected-from-class-a">What Was Rejected From Class A</h3>
+<p><strong>Coverage percentage.</strong> It depends on which specs ran. Artifact-gated specs skip when
+<code>assets/drupal-sql</code> is absent and <code>tests/node/zlib-php.spec.ts</code> skips without a PHP binary carrying
+ext-zlib, so the same source yields different coverage on different machines. The repository already
+enforces coverage thresholds in <code>vitest.config.ts</code> through the <code>Check Test Coverage</code> workflow, which
+is the right place for a number that depends on the lane.</p>
+<p><strong>The node lane&#39;s test-case count.</strong> <code>tests/node/zlib-php.spec.ts</code> builds its <code>it.each</code> table from a
+live <code>php</code> subprocess, so the count changes with whether PHP is installed and with what that driver
+reports. It is an environment reading wearing a count&#39;s clothes. The lane&#39;s spec-FILE count is
+collected instead, because a glob over the checkout is deterministic everywhere.</p>
+<h2 id="class-b-same-process-ratios">Class B: Same-Process Ratios</h2>
+<p>A ratio between two measurements taken in one process, in one invocation, on one machine: the
+bucket attribution that puts event dispatch at 4.3x native, <code>cache_contexts</code> at 5.8x, the renderer
+at 1.6x. Both halves move together when the machine is loaded, so the ratio survives what the
+absolutes do not.</p>
+<p>These stay out of CI. A ratio is only meaningful next to the conditions it was taken under, and a
+runner cannot state those conditions. They are recorded in <code>TECHNICAL_REPORT.md</code> with the cache
+bins that were emptied, the <code>n</code>, and the spread, which is what makes them readable a year later.</p>
+<h2 id="class-c-absolute-wall-clock">Class C: Absolute Wall Clock</h2>
+<p>Banned outright, in CI and out of it.</p>
+<p>In-PHP <code>microtime()</code> returns 0 on the edge. <code>Date.now()</code> inside the isolate returns 0 or a
+plausible wrong number; it has reported 114 ms for a 1,374 ms invocation. Zero is obviously broken
+and 114 survives review, which is what makes this class dangerous as well as useless. A local
+<code>wrangler dev</code> wall clock cannot even order two profiles correctly.</p>
+<p>Nothing in the metrics workflow may emit, archive or render a duration. <code>tests/node/metrics.spec.ts</code>
+asserts that the collected document matches no <code>durationMs</code>/<code>elapsed</code>/<code>timestamp</code> key and that the
+rendered summary carries no millisecond figure, so a build enforces the ban.</p>
+<h3 id="the-one-wall-clock-that-is-allowed-and-why">The one wall clock that is allowed, and why</h3>
+<p>A <code>Date.now()</code> delta <strong>spanning I/O</strong> is a different measurement and is usable. The clock updates on
+I/O completion, so a delta bracketing an HTTP call measures that call; what it cannot do is span a
+synchronous <code>php._run()</code>, where the clock does not advance at all.</p>
+<p>That is what <code>scripts/measure/vps-compare.ts</code> runs on. It executes under bun rather than inside a
+Worker, and every reading brackets a request from outside the thing serving it. It is still a Class C
+figure in one respect: it is a SAME-MACHINE RATIO between two arms, never an absolute, and the
+absolute for the drupflare side comes from Class D. The rig also measures its own ceiling first
+(<code>--workload=ceiling</code>), because the generator shares a machine with both arms and this project has
+produced three confidently wrong scaling curves from generator errors.</p>
+<h2 id="class-d-deployed-cpu">Class D: Deployed CPU</h2>
+<p>The only trustworthy absolute: <code>cpuTime</code> from <code>wrangler tail</code> on a deployed worker, with
+<code>durableObject</code> events explicitly requested, because a tail silently omits them otherwise and an
+empty tail proves nothing.</p>
+<p>It cannot be automated here. It needs a real deploy against an account that holds production
+workers, a <code>cfw-*</code> name, a teardown, and a check that the worker list returns to its prior
+baseline. It also needs an <code>n</code> and a spread with every figure: the platform&#39;s reported 400-600 ms
+bimodality is unverified as a standing property
+on the same object, so an n=1 or n=3 verdict about anything under ~500 ms is unsupportable.</p>
+<p>That makes it a <code>workflow_dispatch</code> shape with a credential and a human deciding to spend it, never
+a nightly. <code>scripts/measure/read-tail-cpu.mjs</code> is the reader; the readings live in
+<code>TECHNICAL_REPORT.md</code>.</p>
+<h2 id="running-it">Running It</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> metrics</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D">                         # the document, to stdout</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> metrics</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --no-bundle</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --no-vitest</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # the cheap collectors only</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> metrics</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --out=dist/metrics.json</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> metrics:gate</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --metrics=dist/metrics.json</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # exits 1 on a regression</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> metrics:gate</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --metrics=dist/metrics.json</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --baseline-metrics=master.json</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/ensure-artifacts.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --dry-run</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # what a lane can and cannot measure here</span></span></code></pre><p><code>bun scripts/ensure-artifacts.ts</code> produces what the collectors read, and CI runs it before the
+collector. Three of the four inputs need no release payload: <code>assets/drupal/site.sqlite</code> is tracked
+so <code>assets:sql</code> always works, the modules come from the sibling checkouts, and the interpreter comes
+from the public CDN with no credential. Only <code>assets/drupal-pf</code> needs a payload, and no gated metric
+reads it, so a clean checkout gates every Class A metric, and a metric reporting itself as not
+collected means something broke.</p>
+<p>A master run that could not measure a metric contributes no baseline value for it rather than a
+zero, so a partially hydrated master run cannot silently drop the bundle figure to nothing.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

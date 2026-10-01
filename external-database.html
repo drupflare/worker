@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>External Databases and Hyperdrive - Drupflare</title>
+		<meta
+			name="description"
+			content="Hyperdrive and external databases, and what they change."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="External Databases and Hyperdrive - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Hyperdrive and external databases, and what they change."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="external-databases-and-hyperdrive">External Databases and Hyperdrive</h1>
+<p>Drupflare stores a site in the Durable Object that serves it. There is one object per site and it
+holds both the interpreter and the SQLite database. That is the default and it stays the default.</p>
+<p><strong>This page used to say an external database was not an option the product offers. It is one now,
+for the self-hosted tier, and the reasons below are why it is not one for the managed tier.</strong> Every
+blocker this page lists is a property of a Cloudflare account -- the configuration cap, the daily
+query limit, the missing MySQL <code>COM_STMT_PREPARE</code> -- and a workerd an operator runs has no account
+behind it. An external database is also what makes a site portable in the sense the self-hosted tier
+promises, and it removes the 5 GB account-wide storage cap that is otherwise the only hard limit on
+fleet size.</p>
+<h2 id="selecting-one">Selecting One</h2>
+<p><code>DB_BACKEND</code> chooses: <code>do-sqlite</code> (the default, the object&#39;s own storage) or <code>hyperdrive</code>. Choosing
+<code>hyperdrive</code> with no <code>HYPERDRIVE</code> binding is reported as misconfigured rather than falling back
+silently, because a site running on a different database from the one its operator chose is worse
+than one that refuses to start.</p>
+<p>The clients are <code>pg</code> and <code>mysql2</code>, ordinary npm dependencies in the Worker. <strong>Hyperdrive supplies no
+client</strong> -- it supplies a pooled endpoint and a connection string, and Cloudflare&#39;s own get-started
+says &quot;you will need a database driver&quot;. Together they cost about 1.1 MB of the 65,536 KiB bundle
+ceiling, and both are imported dynamically so a deployment that never selects this backend evaluates
+neither.</p>
+<p>Which one answers is read from the connection string&#39;s scheme rather than from a second setting,
+because a setting that can disagree with the string is one that will. <code>postgres://</code>,
+<code>postgresql://</code> and <code>mysql://</code> are what Hyperdrive itself accepts.</p>
+<p>Two differences between them are handled here rather than in the driver, which stays ignorant of
+which backend it is on:</p>
+<ul>
+<li><strong>Placeholders.</strong> The driver emits <code>?</code>, which MySQL takes as-is and PostgreSQL does not, so a
+PostgreSQL statement is rewritten to <code>$1..$n</code>. A <code>?</code> inside a string literal is left alone, which
+is the case a regex gets wrong on the first row of real content.</li>
+<li><strong>No prepared statements on MySQL.</strong> <code>mysql2</code>&#39;s <code>execute()</code> sends <code>COM_STMT_PREPARE</code>, which
+Hyperdrive does not support; <code>query()</code> interpolates client-side and sends one text statement,
+which is what survives the pool. This is the blocker listed further down, met in code.</li>
+</ul>
+<p>The two result shapes were measured against the rig rather than assumed. PostgreSQL 17.6 answers a
+<code>SELECT</code> as <code>{rows: [...], rowCount: n}</code> and an <code>INSERT</code> as <code>{rows: [], rowCount: n}</code>; MySQL 9.5
+answers a <code>SELECT</code> as an array and an <code>INSERT</code> as a header object carrying <code>affectedRows</code>. The
+adapter reduces both to the one shape the host&#39;s own SQL seam uses.</p>
+<p>What made this reachable is the park. <code>cfwSqlExec</code> is synchronous by construction -- the same
+property that puts KV, R2, D1 and <code>env.ASSETS.fetch()</code> out of reach of a read -- and a <code>pg</code> query is
+not. So the driver yields the statement instead: <code>rom</code>&#39;s <code>CfwSqlClient</code> opens a
+<code>cfwpark+sql://</code> pseudo-socket, <code>ext/cfwpark</code> freezes the continuation, the Worker runs the query,
+and the chain resumes inside the same invocation. It needs no change to the extension, because the
+HTTP transport already rides the same trap under a different scheme.</p>
+<p><strong>A refused yield is an error rather than a fallback</strong>, and that is the one place this differs from
+the parked HTTP transport. A refused fetch falls back to the deferred one; there is no local copy of
+an external database to answer from, so a refusal reaches Drupal as a database error instead of
+quietly answering from the wrong store.</p>
+<h3 id="verifying-it-without-a-deploy">Verifying It Without A Deploy</h3>
+<p><code>localConnectionString</code> makes <code>wrangler dev</code> connect straight to a database, so the whole path is
+drivable against the rig:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">docker</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> compose</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -f</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> docker/compose.yml</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> up</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> postgres</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or: mysql</span></span>
+<span class="line"><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">export</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583">=</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"postgres://drupflare:drupflarepass@127.0.0.1:5432/drupflare"</span></span>
+<span class="line"><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"># mysql://drupflare:drupflarepass@127.0.0.1:3306/drupflare</span></span></code></pre><p>The <code>hyperdrive</code> binding is deliberately NOT in the canonical <code>wrangler.jsonc</code>. A binding naming a
+configuration that does not exist refuses the deploy, which is what <code>r2_buckets</code> did to the one-click
+button; it is an opt-in addition for a deployment that has one.</p>
+<p><strong>A deployed worker answers the one thing the rig cannot</strong>: whether a Hyperdrive binding works from
+inside a Durable Object rather than from a plain fetch handler. It does; see the section below.
+<code>/backend</code> (diagnostic-gated) runs <code>SELECT 1</code> through the binding from inside the object and reports
+the dialect and latency, without ever echoing the connection string.</p>
+<h2 id="what-hyperdrive-is-for">What Hyperdrive Is For</h2>
+<p>Hyperdrive is connection pooling and query caching in front of a database you already run. It does
+not store data. You point it at a PostgreSQL or PostgreSQL-compatible database, or a MySQL database,
+and it gives a Worker a pooled connection string on <code>env.HYPERDRIVE.connectionString</code> that a normal
+driver such as <code>pg</code> connects to. The pooling is the primary value: a Worker that dials a remote
+database directly pays TCP, TLS and authentication on every request.</p>
+<p>Current Cloudflare documentation:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Plan availability</td>
+<td>Free and Paid Workers plans</td>
+</tr>
+<tr>
+<td>Free plan limit</td>
+<td>100,000 database queries/day, reset 00:00 UTC</td>
+</tr>
+<tr>
+<td>What counts as a query</td>
+<td>any statement, cached or uncached, <code>SELECT</code> through <code>DROP</code></td>
+</tr>
+<tr>
+<td>Configurations per account</td>
+<td>10 on Free, 25 on Paid</td>
+</tr>
+<tr>
+<td>Origin connections</td>
+<td>~20 per configuration on Free, ~100 on Paid</td>
+</tr>
+<tr>
+<td>Query cache defaults</td>
+<td><code>max_age</code> 60 s, <code>stale_while_revalidate</code> 15 s</td>
+</tr>
+<tr>
+<td>Query cache maximum</td>
+<td><code>max_age</code> 1 hour</td>
+</tr>
+<tr>
+<td>Maximum cached response</td>
+<td>50 MB</td>
+</tr>
+<tr>
+<td>Maximum statement duration</td>
+<td>60 s</td>
+</tr>
+<tr>
+<td>Initial connection timeout</td>
+<td>15 s</td>
+</tr>
+<tr>
+<td>Idle connection timeout</td>
+<td>10 minutes</td>
+</tr>
+<tr>
+<td>Egress charge</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Pooling and caching charge</td>
+<td>none beyond the plan limits</td>
+</tr>
+</tbody></table></div>
+<p>Exceeding the free query limit fails the operation with an error rather than billing for it.
+Hyperdrive does not support MySQL <code>COM_STMT_PREPARE</code>, so prepared statements have to be removed from
+MySQL queries; named prepared statements work only through <code>postgres.js</code> and <code>node-postgres</code>.</p>
+<p>Two properties govern what the cache buys. <strong>A cached query still counts</strong> against the daily limit, so
+query caching buys latency and origin load, never quota. And <strong>the cache is keyed on statement text</strong>
+including comments, which means a comment naming a volatile function such as <code>NOW()</code> can make a
+query uncacheable; Cloudflare does not document SQL comments as a cache-control API and recommends a
+cache-disabled configuration where a guaranteed fresh read is needed.</p>
+<p><strong>Local development is documented two ways and they disagree.</strong> The Workers local-development page
+lists Hyperdrive among the bindings with no local simulation (&quot;currently unsupported&quot;), while a changelog entry and the Hyperdrive local-development page describe <code>localConnectionString</code> and
+<code>CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_&lt;BINDING_NAME&gt;</code> connecting <code>wrangler dev</code> to a real
+database, including a remote one over TLS. Treat the <code>localConnectionString</code> mechanism as the working
+answer and the local-development page as stale.</p>
+<p><strong>A Hyperdrive binding is usable from inside a Durable Object</strong>, verified 2026-09-25 on a paid
+throwaway. The origin was PostgreSQL 17 behind a Cloudflare Tunnel, reached through a Workers VPC
+service, and the object read <code>env.HYPERDRIVE.connectionString</code> and completed <code>SELECT 1</code> in 6-9 ms of
+query time on three consecutive requests.</p>
+<p>Three requirements surfaced while building that path:</p>
+<ul>
+<li><strong>The origin must speak TLS.</strong> Hyperdrive refuses a plaintext PostgreSQL (<code>code 2012</code>).</li>
+<li><strong>A VPC-service origin takes no <code>--sslmode</code> or custom CA.</strong> Hyperdrive answers <code>mtls cannot be used with service_id</code> (<code>code 2007</code>), so certificate verification is set on the VPC service
+(<code>--cert-verification-mode</code>) rather than on the Hyperdrive configuration. A self-signed origin
+certificate is otherwise refused with <code>CERTIFICATE_VERIFY_FAILED</code> (<code>code 2015</code>).</li>
+<li><strong>An account API token may carry no Hyperdrive permission at all.</strong> The configuration was created
+through <code>wrangler login</code>, whose OAuth scopes include it.</li>
+</ul>
+<h2 id="why-the-site-database-is-not-external">Why the Site Database Is Not External</h2>
+<h3 id="the-configuration-cap-bounds-the-product-shape">The Configuration Cap Bounds the Product Shape</h3>
+<p>A Hyperdrive configuration is per origin database. Free allows 10 per account and Paid 25, so a
+product that gives each site its own database tops out at 25 sites per Cloudflare account regardless
+of traffic. Sharing one configuration across every site means sharing ~20 origin connections on Free
+or ~100 on Paid, against a design where each site is an independently woken object that answers with
+no coordination.</p>
+<p>Today a new site costs one Durable Object and no account-level resource at all.</p>
+<h3 id="the-statement-boundary-not-the-await">The Statement Boundary, Not the Await</h3>
+<p>The interpreter can await. <code>ext/cfwpark</code> freezes the Zend continuation, <code>longjmp</code>s out of <code>pib_run</code>,
+and lets the Worker perform I/O in JavaScript before resuming the same PHP call, so a Promise-based
+client is reachable from PHP; <code>drupal/redis</code> runs on that path against a real server.</p>
+<p>What survives is narrower and sits one level down. <code>SqlLike.exec()</code> in <code>src/db/migrate-sql.ts</code> is
+synchronous and returns a cursor, and every write path runs inside <code>ctx.storage.transactionSync()</code>.
+The park suspends a PHP call; it cannot suspend the host callback a statement is already executing
+inside. So an external database is reachable from PHP code that has not yet entered a statement, and
+unreachable from inside one -- which is where Drupal&#39;s driver spends a render.</p>
+<p>Costing it needs a number nobody has taken: <strong>a single park&#39;s <code>cpuTime</code> on a deployed worker</strong>. A
+database makes about fifteen calls per warm render, so fifteen parks is either negligible or the
+whole request depending on that figure, and no proposal here should be scored until it exists.</p>
+<p>Every documented Hyperdrive call is Promise-based. PostgreSQL usage is <code>env.HYPERDRIVE.connectionString</code>
+handed to <code>postgres.js</code> or <code>node-postgres</code> and awaited; MySQL usage is <code>mysql2/promise</code>. There is no
+synchronous form of either, and no synchronous escape hatch appears anywhere in Cloudflare&#39;s
+Hyperdrive documentation.</p>
+<p>The project already lives with this on the outbound HTTP path, and the shape of that workaround is
+the argument. PHP&#39;s HTTP goes through a stream wrapper and a queue drained on the alarm
+(<code>HTTP_DRAIN_LIMIT</code>), and <code>TECHNICAL_REPORT.md</code> records what it costs: <code>Drupal::httpClient()</code> cannot
+retrieve response headers through it at all, because only PHP&#39;s own http wrapper populates
+<code>$http_response_header</code>. That is one subsystem making a handful of calls. A database makes fifteen
+per warm render, and none of them can be deferred to an alarm, because the render is waiting on the
+answer.</p>
+<h3 id="the-consistency-story-lives-in-the-object">The Consistency Story Lives in the Object</h3>
+<p>One object per site is what makes the rest of the design work. The Durable Object gives strict
+serializability for free, which is what the generation counter, the resumable migration cursor in
+<code>cfw_migrate</code>, and the chunked restore in <code>src/db/import-sql.ts</code> are all built on. Each of those
+assumes a single writer whose transactions cannot interleave with another writer&#39;s.</p>
+<p>Postgres behind Hyperdrive is a different concurrency model reached over a pooled connection from
+any isolate in any colo. Moving the data there does not swap a binding; it removes the property the
+migration, the invalidation and the restore are written against.</p>
+<p>The pooler runs in transaction mode, and Cloudflare documents three consequences that bear directly
+on Drupal. Session state does not persist, because connections are <code>RESET</code> when returned to the
+pool. A single Worker invocation may obtain several different connections. And wrapping multiple
+operations in one transaction to hold <code>SET</code> state is explicitly discouraged, since the connection
+cannot be reused while the transaction is open. Drupal opens transactions around entity saves, batch
+API runs and the installer.</p>
+<h3 id="the-query-cache-cannot-be-used-for-a-cms-on-the-same-database">The Query Cache Cannot Be Used for a CMS on the Same Database</h3>
+<p>Query caching is the latency lever, it is on by default, and it has no write invalidation:
+Cloudflare states that it does not purge cached read results when the application writes. Its own
+guidance is to create a second binding to the same database with <code>--caching-disabled</code> and route
+&quot;authentication, sessions, permissions, billing state, admin settings, and reads immediately after a
+write&quot; through it.</p>
+<p>For Drupal that list is <code>sessions</code>, <code>users_field_data</code>, <code>key_value</code>, <code>config</code>, <code>semaphore</code> and every
+<code>cache_*</code> bin. A 60-second uninvalidated window over <code>cache_config</code> or <code>semaphore</code> is a correctness
+failure rather than a staleness tradeoff. What remains after disabling the cache is connection
+pooling, which buys back a TCP, TLS and authentication handshake the current architecture never
+pays.</p>
+<p>Cache eligibility is also decided by text matching: both <code>VOLATILE</code> and <code>STABLE</code>
+PostgreSQL functions make a query uncacheable, and a function name such as <code>NOW()</code> appearing in a SQL
+comment is enough to trigger it.</p>
+<h3 id="latency-moves-from-zero-to-regional">Latency Moves From Zero to Regional</h3>
+<p>Cloudflare quantifies an uncached query at 20-30 ms from a distant region and 1-3 ms when the Worker
+is placed near the database, and says that multiple queries compound. A first render here is 48 SQL
+statements and a repeat render 18, so a cold render would spend roughly 1 to 1.4 seconds in network
+alone at the distant figure, on top of the boot.</p>
+<p>The documented remedy is <code>placement.region</code>, which pins the Worker to the database&#39;s cloud region.
+That is the opposite of <code>SITE_LOCATION_HINT</code>, a per-call, KV-overridable lever that exists so a site
+can live near its visitors. Today those statements cost no network at all, because the storage is
+inside the object making the call.</p>
+<h3 id="an-open-socket-bills-duration">An Open Socket Bills Duration</h3>
+<p>Independently of Hyperdrive, an outbound TCP connection held open inside a Durable Object blocks
+hibernation, defers eviction and continues to accrue duration charges, for up to 15 minutes per
+connection. A driver connection held across a render is therefore a billed residency decision. This
+is the same eligibility list <code>src/ops/hibernation.ts</code> transcribes.</p>
+<h3 id="the-arithmetic-does-not-help-either">The Arithmetic Does Not Help Either</h3>
+<p>Hyperdrive on Free allows 100,000 database queries/day. A warm render costs <strong>15 host statements</strong>,
+measured on a deployed throwaway with the <code>page</code> and <code>dynamic_page_cache</code> bins emptied and the rest
+warm (14 without the theme reset; 20 with <code>bootstrap</code> also emptied). So 100,000 queries is roughly
+<strong>6,666 renders/day</strong>.</p>
+<p>Score that against the two ceilings. The regeneration ceiling is <strong>2,477 renders/day</strong> cold and
+<strong>9,685</strong> windowed, bound by rows written once warming is subtracted. Hyperdrive&#39;s free query budget lands inside that
+range rather than above it, so it does not raise the ceiling it would have to raise to be a capacity
+lever. The serving ceiling is untouched: an edge cache hit never reaches the object and issues no
+database query under either design, so 100,000 Worker requests/day still binds first.</p>
+<h2 id="what-hyperdrive-would-buy">What Hyperdrive Would Buy</h2>
+<p>It is a real answer to a question this product does not ask. Someone who already runs a PostgreSQL
+or MySQL database and wants Drupal in front of it gets pooling, a shared query cache, and no egress
+charge. If that database is the system of record for something other than the Drupal site, keeping
+it where it is may be the only correct architecture.</p>
+<p>Where it fits this project, if anywhere, is the tier <code>src/ops/tcp.ts</code> already defines: a secondary,
+host-side, deferrable read against a database the operator owns, dispatched by scheme through
+<code>cfw_http_queue</code>, with the endpoint set by the operator and never by the caller. A search index, an
+analytics sink or an external content feed has that shape. The site&#39;s own database does not: the
+answer has to arrive inside the request that asked, and a deferred exchange always misses the first
+time.</p>
+<p>A socket protocol escapes this. A trapped socket call freezes PHP where it stands, the Worker
+performs the exchange, and the call returns with the answer in the same request, which is how
+<code>drupal/redis</code> runs. It costs a network round trip per exchange where the Durable Object&#39;s own
+SQLite costs a local read, which is why SQLite is still the cache backend.</p>
+<p>It would also close a set of compatibility gaps that come from Durable Object SQLite specifically
+rather than from SQLite: the 100 bound-parameter cap, the 50-byte LIKE/GLOB pattern limit, integer
+reads that lose precision above 2^53, and the absence of <code>NOCASE_UTF8</code> and <code>REGEXP</code>. Those are
+documented under Platform Constraints in <code>TECHNICAL_REPORT.md</code> and each one has broken something
+real. Hyperdrive is a compatibility escape hatch, and no kind of capacity lever.</p>
+<h2 id="what-it-costs">What It Costs</h2>
+<ul>
+<li><strong>The one-click goal.</strong> Standing a site up would require provisioning and paying for a database
+first. There is no free tier of &quot;a Postgres you own&quot;.</li>
+<li><strong>The consistency primitives.</strong> The generation counter, the resumable migration and the chunked
+restore would each need rewriting against a different concurrency model.</li>
+<li><strong>An async bridge for every statement.</strong> This is the blocking item, and the bridge exists at the
+wrong level: the park suspends a PHP call, not the host callback a statement executes inside. JSPI
+is not the answer either -- it is dominated by the park and is worth about 1% of the regeneration
+ceiling on its own.</li>
+<li><strong>A second failure domain.</strong> Today a site is up when its object is up. With an external database it
+is up when the object, Hyperdrive and the database are all up.</li>
+</ul>
+<h2 id="related">Related</h2>
+<ul>
+<li><code>docs/recovery.md</code> -- what backs the site up and what restores it</li>
+<li><code>docs/configuration.md</code> -- every var and binding</li>
+<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints -- the measured Durable Object SQLite limits</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

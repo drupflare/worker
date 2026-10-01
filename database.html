@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>The Site Database - Drupflare</title>
+		<meta
+			name="description"
+			content="How the site database every new site starts from is built."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="The Site Database - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How the site database every new site starts from is built."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html" aria-current="page">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="the-site-database">The Site Database</h1>
+<p><code>assets/drupal/site.sqlite</code> is the Drupal database every new site is created from. It is the only
+tracked artifact under <code>assets/</code>, and this page is how it is built. Read its current size and shape
+off the file rather than from here; <code>bun run check:site-db</code> diffs a fresh build against it.</p>
+<p>One command produces it:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">php</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> opcache.enable_cli=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">0</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> xdebug.mode=off</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">  scripts/drupal/install-site-db.php</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> drupal-src</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><p><code>bun run build:site-db</code> is the same thing with the flags already set. The script refuses to write
+<code>assets/drupal/site.sqlite</code> unless given <code>--allow-shipping-pack</code>, so the normal loop is build
+elsewhere and compare:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">node</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/diff-site-db.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> assets/drupal/site.sqlite</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><h2 id="what-the-script-does">What the Script Does</h2>
+<ol>
+<li><strong>Installs Drupal</strong> into <code>drupal-src/sites/build</code> with the <code>standard</code> profile, driving
+<code>install_drupal()</code> directly. It never installs into <code>sites/default</code>, which holds the baked Twig
+cache and the working settings.</li>
+<li><strong>Enables <code>media</code> and <code>drupflare</code>.</strong> The shipped module set is the <code>standard</code> profile&#39;s
+dependency closure, plus <code>update</code> from the install form, plus these two.</li>
+<li><strong>Applies the <code>page_content_type</code> recipe.</strong> Drupal 11.4 ships no node type in <code>standard</code>; <code>page</code>
+and <code>article</code> are recipes under <code>core/recipes/</code>.</li>
+<li><strong>Writes four configuration values</strong> through <code>ConfigFactory::save()</code>.</li>
+<li><strong>Drops the cache secondary indexes</strong> on every bin except <code>cache_data</code>.</li>
+<li><strong>Truncates <code>watchdog</code></strong>, checkpoints the WAL and vacuums.</li>
+</ol>
+<p>Each step prints what it did, so a build log records the module set, the recipe list, the config keys
+and the index count.</p>
+<h2 id="the-four-configuration-values">The Four Configuration Values</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Value</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>system.performance:cache.page.max_age</code></td>
+<td><code>300</code></td>
+<td>at <code>0</code> every render answers <code>private, no-store</code> and no page is stored</td>
+</tr>
+<tr>
+<td><code>system.performance:css.preprocess</code></td>
+<td><code>false</code></td>
+<td>the aggregates are built at pack time and served from <code>/agg/</code></td>
+</tr>
+<tr>
+<td><code>system.performance:js.preprocess</code></td>
+<td><code>false</code></td>
+<td>the same</td>
+</tr>
+<tr>
+<td><code>automated_cron.settings:interval</code></td>
+<td><code>0</code></td>
+<td>the host owns the schedule; Drupal must not run cron inside a serve</td>
+</tr>
+</tbody></table></div>
+<p><code>max_age</code> is the one to understand. Drupal&#39;s installer default of <code>0</code> is right for a host that
+configures a reverse proxy separately. Here the reverse proxy is the product: at <code>0</code> the fill chain
+declines to store every response it renders, and the page table stays empty on every site.</p>
+<p><strong>Write these through Drupal, never with SQL.</strong> <code>ConfigFactory::save()</code> writes the <code>config</code> row and
+clears the <code>cache_config</code> copy. Drupal reads the bin first, so an <code>UPDATE</code> against <code>config</code> alone
+leaves the old value in force. That happened: the <code>max_age</code> fix was committed correctly and had no
+effect on any site until a later commit moved the cached row as well.</p>
+<h2 id="the-cache-indexes">The Cache Indexes</h2>
+<p>Every cache bin ships <code>&lt;bin&gt;_created</code> and <code>&lt;bin&gt;_expire</code>. Sixteen of them are dropped, leaving the
+pair on <code>cache_data</code> only.</p>
+<p>Nothing on this runtime reads them. <code>DatabaseBackend::getMultiple()</code> selects by <code>cid</code>, and
+<code>garbageCollection()</code> never runs because the host sweeps expiry itself. Each surviving index costs a
+charged row on every insert into the bin, and the fill path is what the free plan&#39;s row budget
+binds. <code>cache_data</code> keeps both because the host&#39;s own <code>gcPass()</code> caps that bin with
+<code>ORDER BY created</code> and sweeps it with <code>expire &lt; ?</code>; dropping them turns every alarm into a full scan.</p>
+<p><code>tests/node/index-audit.spec.ts</code> asserts both halves: thirteen bins at one charged row per stored
+row, and <code>cache_data</code> at three.</p>
+<h2 id="what-reproducible-means-here">What Reproducible Means Here</h2>
+<p>Structurally, not byte for byte. A Drupal install mints a random hash salt, a UUID per config
+object, a password hash and per-row timestamps, so two correct runs differ in thousands of bytes
+while describing the same site. <code>scripts/diff-site-db.ts</code> compares the table set, the module set,
+the config names and five row counts.</p>
+<p>Measured against the shipped file, a fresh build gives: <strong>41 modules against 41, 175 config
+rows against 175, and every table present.</strong> The differences that remain are these, and each is
+accounted for:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Difference</th>
+<th>Direction</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>4 <code>drupflare.*</code> routes, 3 menu links</td>
+<td>build only</td>
+<td>the shipped file predates those routes; see below</td>
+</tr>
+<tr>
+<td><code>state:drupflare.router_fingerprint</code></td>
+<td>build only</td>
+<td>written when the module is enabled</td>
+</tr>
+<tr>
+<td><code>state:twig_extension_hash_prefix</code></td>
+<td>shipped only</td>
+<td>written by <code>bun run assets:twig</code>, a later build step</td>
+</tr>
+<tr>
+<td><code>state:system.theme.files</code></td>
+<td>shipped only</td>
+<td>written on the first request</td>
+</tr>
+<tr>
+<td>six <code>cache_*</code> bins</td>
+<td>shipped only</td>
+<td>Drupal creates them on the first request, not at install</td>
+</tr>
+<tr>
+<td>739 free pages</td>
+<td>shipped only</td>
+<td>the shipped file has never been vacuumed after an edit</td>
+</tr>
+</tbody></table></div>
+<p>The six lazy bins and the two first-request state rows are named in <code>diff-site-db.ts</code> rather than
+tolerated by a wildcard, so a seventh missing table is a failure instead of a rounding error.</p>
+<h2 id="the-shipped-file-is-missing-its-own-routes">The Shipped File Is Missing Its Own Routes</h2>
+<p>The comparison found this. <code>core.extension</code> in the shipped database lists <code>drupflare</code>, and the
+<code>router</code> table carries none of its four routes and none of its three menu links, because the module
+was enabled into the database before those routes existed. <code>router</code> is a table that
+<code>RouteBuilder</code> writes, not a cache Drupal rebuilds on demand, so the Drupflare admin section,
+Runtime Status and the Operations Terminal answer 404 on every site created from it.</p>
+<p>Rebuilding the database fixes it for new sites. Existing sites are reached by the
+<code>router-driver-routes</code> step in <code>src/ops/reconcile.ts</code>, which compares a site&#39;s <code>router</code> rows against
+<code>DRIVER_ROUTES</code> and rebuilds when any are absent.</p>
+<h2 id="changing-one-row">Changing One Row</h2>
+<p>Rebuilding is preferred. A surgical edit is still sometimes right, and two rules apply.</p>
+<p><strong>Find every cached copy of what you are editing.</strong> A <code>config</code> row usually has a serialized twin in
+<code>cache_config</code>, and Drupal reads the twin first.</p>
+<p><strong>When copying a cache row between databases, check <code>expire = -1</code> and that both databases carry
+identical <code>cachetags</code>.</strong> A checksum that disagrees with the destination&#39;s tags means the row is
+present and rejected, so the cost it was meant to remove is still paid and nothing looks wrong.</p>
+<p>After any change, run <code>bun run assets:sql</code> to rewrite the migration chunks the Durable Object
+replays, then <code>node scripts/diff-site-db.ts</code> to see what moved.</p>
+<h2 id="reading-it-with-other-tools">Reading It With Other Tools</h2>
+<p>The user tables are declared <code>COLLATE NOCASE_UTF8</code>, a collation the Drupal SQLite driver registers
+per connection. A plain <code>sqlite3</code> client or a raw <code>new PDO()</code> cannot rebuild an index over them and
+fails with <code>no such collation sequence</code>. Read-only queries are fine; anything that rewrites an index
+has to go through Drupal&#39;s own connection.</p>
+<h2 id="upgrading-drupal-core">Upgrading Drupal Core</h2>
+<p>The root <code>composer.lock</code> decides which core the pack is built from. <code>bun run gen:lock</code> bakes the
+version into <code>src/ops/shipped-lock.ts</code>, and <code>bun run fetch:drupal</code> materialises that version into
+<code>drupal-src</code>. So an upgrade is:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">composer</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> update</span><span style="--shiki-light:#6A737D;--shiki-dark:#6A737D"> # or bump the pin in composer.json first</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> gen:lock</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> fetch:drupal</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --force</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> build:site-db</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">node</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/diff-site-db.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> assets/drupal/site.sqlite</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> /tmp/site.sqlite</span></span></code></pre><p><code>bun run qa:core-freshness</code> reports whether the shipped core is behind upstream, including whether
+its branch still receives security fixes.</p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

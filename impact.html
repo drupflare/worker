@@ -1,0 +1,1340 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Impact - Drupflare</title>
+		<meta
+			name="description"
+			content="Cost, electricity, carbon and water, and how far each figure holds."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Impact - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Cost, electricity, carbon and water, and how far each figure holds."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html" aria-current="page">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="impact">Impact</h1>
+<p>What drupflare costs to run, in money, electricity, carbon and water, and how far each figure can be
+trusted.</p>
+<h2 id="measurement-labels">Measurement Labels</h2>
+<p>Every number here carries one of three labels, and they are not interchangeable.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>label</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>measured</code></td>
+<td>read off an instrument on real hardware, with an n and a spread</td>
+</tr>
+<tr>
+<td><code>derived</code></td>
+<td>arithmetic over measured inputs and published constants</td>
+</tr>
+<tr>
+<td><code>derived (modelled)</code></td>
+<td>arithmetic that also takes an input nobody has measured for a real site</td>
+</tr>
+<tr>
+<td><code>published</code></td>
+<td>quoted from a named external source, cited where it appears</td>
+</tr>
+</tbody></table></div>
+<p>A figure never moves up a tier by being repeated.</p>
+<h3 id="where-each-figure-comes-from">Where Each Figure Comes From</h3>
+<p>Three deployments are involved and they are not equally observable.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>deployment</th>
+<th>label</th>
+<th>what it answers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>conventional VPS, nginx plus PHP-FPM</td>
+<td><code>measured</code></td>
+<td>joules per cached serve and per render</td>
+</tr>
+<tr>
+<td>drupflare on standalone <code>workerd</code></td>
+<td><code>measured</code></td>
+<td>the same, for this runtime, on one counter</td>
+</tr>
+<tr>
+<td>drupflare on Cloudflare</td>
+<td>measured CPU, <code>derived</code> joules</td>
+<td>the workload; joules need published W/core</td>
+</tr>
+</tbody></table></div>
+<p>Rows one and two are the same machine and the same RAPL counter, which is what makes the runtime
+comparison below a measurement rather than a model. Row three is permanently derived: Cloudflare
+exposes no energy counter to a container and no energy field in its analytics, so its CPU time is
+real and its wattage is an allocation.</p>
+<h2 id="energy-per-request">Energy Per Request</h2>
+<p><code>measured</code>. RAPL package and core domains on a bare-metal AMD Ryzen 9 9900X, load generated off-box,
+arms rotated per round, idle subtracted, n=5 per rung with no sample discarded. Both stacks run on
+the same machine against the same counter in one interleaved run: the shipped <code>docker/vps.yml</code>
+(nginx plus PHP 8.5 FPM with opcache and JIT) and drupflare under standalone <code>workerd serve</code>, each
+capped at 3 CPUs by cgroup.</p>
+<p>The cap is the VPS stack&#39;s total, <code>vps-php</code> at 2 plus <code>vps-web</code> at 1. It was read back from the
+running containers as a <code>cpu.max</code> of <code>200000 100000</code> and <code>100000 100000</code> rather than from the compose
+file, because a <code>deploy.resources</code> block is honoured by some Compose versions and ignored by others.</p>
+<h3 id="a-per-request-figure-needs-its-rate">A Per-Request Figure Needs Its Rate</h3>
+<p>The same arm reads 279, 202 and 131 mJ per request at 29, 57 and 114 requests per second. The decline
+is the processor package leaving its idle C-states, a step that costs the same whether the window
+carried 300 requests or 1,100. Idle subtraction cannot remove it, because it is absent from the idle
+arm by definition. A per-request figure quoted without its rate is that fixed cost divided by
+whatever throughput the run happened to reach.</p>
+<p>Splitting the curve into a fixed term and a marginal term does not rescue it. The marginal cost
+itself falls with rate, 123 mJ per additional request between 29 and 57 per second against 60 mJ
+between 57 and 114, so the curve is concave and a fitted slope describes the spacing of the rungs.
+Both arms are compared at the same request count instead, interpolating between measured rungs.</p>
+<h3 id="the-two-runtimes-at-matched-load">The Two Runtimes At Matched Load</h3>
+<p>Package joules over idle, per 10-second window. Two independent runs, n=5 and n=3 per rung, 104
+samples with zero failed requests. The second ran on a freshly provisioned site.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>tier</th>
+<th>requests</th>
+<th>drupflare</th>
+<th>VPS</th>
+<th align="right">ratio</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>cached</td>
+<td>565</td>
+<td>114.62 J</td>
+<td>114.72 J</td>
+<td align="right">0.999x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td>1,101</td>
+<td>154.60 J</td>
+<td>147.28 J</td>
+<td align="right">1.050x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td>532</td>
+<td>105.53 J</td>
+<td>100.68 J</td>
+<td align="right">1.048x</td>
+</tr>
+<tr>
+<td>cached</td>
+<td>1,043</td>
+<td>145.51 J</td>
+<td>144.62 J</td>
+<td align="right">1.006x</td>
+</tr>
+<tr>
+<td>render</td>
+<td>332</td>
+<td>248.63 J</td>
+<td>220.80 J</td>
+<td align="right">1.126x</td>
+</tr>
+<tr>
+<td>render</td>
+<td>409</td>
+<td>253.31 J</td>
+<td>252.27 J</td>
+<td align="right">1.004x</td>
+</tr>
+<tr>
+<td>render</td>
+<td>342</td>
+<td>247.23 J</td>
+<td>218.48 J</td>
+<td align="right">1.132x</td>
+</tr>
+<tr>
+<td>render</td>
+<td>408</td>
+<td>255.39 J</td>
+<td>241.69 J</td>
+<td align="right">1.057x</td>
+</tr>
+</tbody></table></div>
+<p><strong>The two runtimes cost the same energy per request to within about 13%</strong>, on identical hardware, on
+both the cached tier and a full render. PHP compiled to wasm and executed inside a Durable Object is
+not cheaper per unit of work than native PHP-FPM, and it is not meaningfully more expensive either.</p>
+<p>That agrees with the same-machine timing already on record: a re-render on a tag-invalidated page is
+24 ms on the VPS against 30 on drupflare, and a page whose dynamic page cache is still warm is 24
+against 22.</p>
+<p>Throughput is not at parity. On this host the VPS stack saturates near 525 requests per second and
+the drupflare arm near 220, because a site is one Durable Object and a Durable Object is
+single-threaded, against 32 PHP-FPM children. The replica pool exists for that and was not enabled
+here. Both arms were driven well below their ceilings so the energy figures measure work rather than
+queueing.</p>
+<h3 id="what-the-idle-floor-costs">What The Idle Floor Costs</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>arm</th>
+<th>package</th>
+<th>core</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>idle floor</td>
+<td>18.17 W</td>
+<td>0.15 W</td>
+</tr>
+</tbody></table></div>
+<p><strong>RAPL covers the processor package only.</strong> PSU loss, fans, drives and DRAM sit outside its domains,
+so these are a floor on machine energy rather than a total. Bounding the wall draw from a measured
+29.3 W DC floor and an 80 Plus Bronze supply gives 35 to 42 W, depending where a 750 W unit running
+at a few percent load sits on its efficiency curve. A wall meter needs physical access to the host
+and has not been run.</p>
+<p>On Cloudflare the equivalent readings are CPU time rather than joules, taken from <code>cpuTime</code> on a
+deployed worker: 60.2 ms for a re-render on a page a content change invalidated, and 0.42 ms
+of Durable Object time for a cached serve. A page served from the previous generation at the edge
+answers in 12 ms at the median and costs no Durable Object invocation at all.</p>
+<h2 id="the-two-hosts">The Two Hosts</h2>
+<p>The energy figures above come from one machine and the CPU figures from another, because only one
+of the two can report energy at all. Both were probed before either was trusted.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th></th>
+<th>Cloudflare Container</th>
+<th><code>paisley-park</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td>kind</td>
+<td>Firecracker microVM</td>
+<td>bare metal</td>
+</tr>
+<tr>
+<td>processor</td>
+<td>AMD EPYC, Zen 4</td>
+<td>AMD Ryzen 9 9900X, Zen 5</td>
+</tr>
+<tr>
+<td>cores visible</td>
+<td>1 vCPU</td>
+<td>12 cores, 24 threads</td>
+</tr>
+<tr>
+<td>cores enforced</td>
+<td>1/16 vCPU on the <code>lite</code> type</td>
+<td>all</td>
+</tr>
+<tr>
+<td>memory</td>
+<td>256 MiB</td>
+<td>30 GB</td>
+</tr>
+<tr>
+<td>kernel</td>
+<td><code>6.18.36-cloudflare-firecracker</code></td>
+<td>Ubuntu 24.04, 6.8</td>
+</tr>
+<tr>
+<td>discrete GPU</td>
+<td>none</td>
+<td>RTX 4070, 11.1 W idle</td>
+</tr>
+<tr>
+<td>power supply</td>
+<td>not visible</td>
+<td>750 W, 80 Plus Bronze</td>
+</tr>
+</tbody></table></div>
+<p><strong>The container has more privilege than expected and less instrumentation.</strong> It runs as root with
+the full capability set, no seccomp filter, a writable <code>/sys</code>, and <code>/dev/cpu/0/msr</code> present. None of
+that helps: <code>/sys/class/powercap</code> is absent, no <code>power</code> PMU is registered, the AMD RAPL MSRs answer
+<code>I/O error</code> and the Intel ones return a constant zero. <code>nomodule</code> on the kernel command line means
+no driver can be inserted to change it. There is no counter being withheld; there is no counter.</p>
+<p><strong><code>paisley-park</code> carries the counter the comparison needs.</strong> <code>/sys/class/powercap/intel-rapl:0</code>
+exposes real <code>package-0</code> and <code>core</code> domains with a 65,532,610,987 uJ range. The file is root-only by
+default under the Platypus mitigation, and a session-scoped permission change makes it readable.</p>
+<p>Two readings worth carrying from the pair. The container&#39;s <code>lite</code> instance type is enforced outside
+the guest&#39;s view: the guest sees one full vCPU and <code>nr_throttled</code> stays at zero, while <code>/proc/stat</code>
+reports 48% of wall clock as steal time, which is how the 1/16 share actually arrives. And the
+container&#39;s own accounting sits between Cloudflare&#39;s two published datasets for the same run, at
+11.06 CPU-seconds against 5.59 reported for the workload and 22.10 for the workload plus its
+micro-VM sandbox.</p>
+<p><strong>What each host can answer.</strong> The container measures CPU time, memory, disk and network, and can
+never measure joules. <code>paisley-park</code> measures processor-package joules and cannot measure the wall,
+because a wall meter needs physical access. Neither measures the other&#39;s runtime, so the energy
+figures describe the conventional arm and the CPU figures describe drupflare, and the two are not
+subtracted from each other anywhere in this document.</p>
+<h2 id="where-the-saving-comes-from">Where The Saving Comes From</h2>
+<p>Two mechanisms, and neither is a claim that PHP runs faster here.</p>
+<p><strong>Conventional multi-tenant hosting for small sites is memory-bound.</strong> Packed at 1,000 sites of 1 GB
+on a 1.5 TB two-socket host, the fleet runs its processors at approximately zero and draws
+1,823 kWh/year, of which 100% is idle. It buys processors it never uses and powers them
+continuously. A Worker consumes energy only while a request executes.</p>
+<p><strong>A page store invalidates on content change; a CDN expires on a clock.</strong> <code>cfw_page</code> carries a
+<code>stale_at</code> column set when a save invalidates a tag, so a cached page survives until the content
+behind it changes. A CDN in front of a conventional origin re-renders every path, at every edge
+location, once per TTL whether or not anything changed. Modelled at 20 million views per site per
+month with five saves a day, that is 28.34% of requests rendering for a CDN and origin against
+0.004% for drupflare, 186,371 renders a day against 25. A per-location cache miss reaches the page
+store, which answers without PHP, and a stored page goes stale only when a save invalidates one of
+its tags.</p>
+<h2 id="the-render-fraction">The Render Fraction</h2>
+<p><code>derived (modelled)</code>. Economic models for edge-cached hosting usually assume a flat share of
+requests that render. That share is not a free parameter:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>renders = sum over paths of min(requests, window / TTL)   per path, per edge location</span></span>
+<span class="line"><span>          + saves x pages invalidated per save</span></span></code></pre><p>The floor does not depend on traffic, so the fraction falls as traffic rises. It is a property
+of a site&#39;s content-to-traffic ratio rather than a constant of the platform, and a single number for
+a whole fleet is wrong in both directions. For a CDN and origin a common 1% assumption is first
+reached at roughly 723 million views per site per month, far above the range these models cover.</p>
+<p>Drupflare has no TTL term and no location term. Its renders are saves times the pages each save
+invalidates, 5 for an ordinary node save, so at five saves a day a site renders about 25 pages a
+day whatever its traffic. The fraction is 7.6% at 10,000 views a month, 1% at about 76,000 and
+0.004% at 20 million. A save the main menu references invalidates every cached page, 34 on the
+measured site, and is the pessimistic arm.</p>
+<p>Two consequences for anyone reproducing this work. For a CDN and origin the edge-location count is
+the largest term: at 20 million views it spans 4.38% at one location to 62.91% at fifty. And any
+measurement taken from a single source address reads a floor, because a one-address generator
+drives one edge location while real visitors spread across many.</p>
+<p><code>scripts/measure/render-fraction.ts</code> computes it, with each input named as measured or modelled.</p>
+<h2 id="fleet-energy">Fleet Energy</h2>
+<p><code>derived</code>, from the measured inputs above. One thousand sites against consolidated shared hosting
+behind a CDN, each arm on its own render fraction, generated by <code>bun scripts/economics/fleet.ts</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views/site/month</th>
+<th align="right">shared hosting renders</th>
+<th align="right">drupflare renders</th>
+<th align="right">saving</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">100.00%</td>
+<td align="right">7.60%</td>
+<td align="right">99.95%</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">100.00%</td>
+<td align="right">0.76%</td>
+<td align="right">99.84%</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">83.36%</td>
+<td align="right">0.08%</td>
+<td align="right">98.98%</td>
+</tr>
+<tr>
+<td align="right">20,000,000</td>
+<td align="right">28.34%</td>
+<td align="right">0.004%</td>
+<td align="right">92.67%</td>
+</tr>
+<tr>
+<td align="right">50,000,000</td>
+<td align="right">13.32%</td>
+<td align="right">0.0015%</td>
+<td align="right">85.96%</td>
+</tr>
+<tr>
+<td align="right">100,000,000</td>
+<td align="right">6.99%</td>
+<td align="right">0.0008%</td>
+<td align="right">77.14%</td>
+</tr>
+<tr>
+<td align="right">250,000,000</td>
+<td align="right">2.81%</td>
+<td align="right">0.0003%</td>
+<td align="right">60.90%</td>
+</tr>
+<tr>
+<td align="right">500,000,000</td>
+<td align="right">1.40%</td>
+<td align="right">0.0002%</td>
+<td align="right">48.68%</td>
+</tr>
+<tr>
+<td align="right">1,000,000,000</td>
+<td align="right">0.70%</td>
+<td align="right">0.0001%</td>
+<td align="right">39.17%</td>
+</tr>
+</tbody></table></div>
+<p>The saving narrows as the opponent&#39;s processors finally get used. At the top of the original range
+the shared host reaches meaningful utilisation and still loses.</p>
+<p>The rows past 20 million run the same model on hostile traffic rather than stopping where the lines
+converge. Solved on a 1% ladder, the saving first falls below 90% at 31.5 million views per site per
+month, below 75% at 114.9 million and below 50% at 462.7 million.</p>
+<p><strong>It never reaches zero in this model, and the floor comes from an assumption.</strong> Once both arms are
+CPU-bound, per-request energy is at parity, so the remaining gap is the facility
+overhead the model assumes, 1.15 PUE for a hyperscale operator against 1.54 for colocation, which caps
+the saving near 1 - 1.15 / 1.54, or 25.3%. The model reaches 25.34% at a trillion views. An opponent
+hosted at hyperscale PUE would lose that floor, leaving only the render-fraction difference.</p>
+<h2 id="real-institutional-workloads">Real Institutional Workloads</h2>
+<p><code>published</code> traffic from named case studies, run through the fleet model above at each estate&#39;s own
+average per-site traffic. The model is the 1,000-site consolidated opponent, which is the least
+favourable arrangement for drupflare.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>workload</th>
+<th align="right">sites</th>
+<th>traffic, as published</th>
+<th align="right">per site per month</th>
+<th align="right">energy saving</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Arizona State University [1]</td>
+<td align="right">426</td>
+<td>35 M monthly page views</td>
+<td align="right">82,160 (derived)</td>
+<td align="right">99.86%</td>
+</tr>
+<tr>
+<td>Mass.gov [2]</td>
+<td align="right">1</td>
+<td>upward of 15 million page views a month</td>
+<td align="right">15,000,000</td>
+<td align="right">93.83%</td>
+</tr>
+<tr>
+<td>NASA (nasa.gov) [3]</td>
+<td align="right">1</td>
+<td>averaging 1,000,000 page views a day</td>
+<td align="right">30,440,000 (derived)</td>
+<td align="right">90.22%</td>
+</tr>
+<tr>
+<td>a U.S. government news agency [4]</td>
+<td align="right">47</td>
+<td>1 to 2 billion monthly pageviews</td>
+<td align="right">21.3 to 42.6 million (derived)</td>
+<td align="right">92.38% to 87.51%</td>
+</tr>
+</tbody></table></div>
+<p>The traffic column quotes each source. Mass.gov is one site that &quot;hosts over 400+ government
+agencies&quot; [2]; NASA&#39;s peak was &quot;over 40,000,000 page views in a single day&quot; during the 2017 eclipse
+[3]; the news agency serves &quot;1 to 2 billion monthly pageviews across dozens of Drupal sites&quot;, a main
+English site and 46 language sites, and is not named in the source [4].</p>
+<p>Each figure is a vendor case study from its own year, not a measurement taken for this document, and
+each is an estate average. Traffic inside an estate is skewed, so its busiest site sits well above
+the mean and its long tail well below it.</p>
+<p><strong>Every estate lands inside the band where the saving stays above 87%.</strong> NASA&#39;s ordinary traffic
+sits at the 90% boundary, and nothing published here approaches the 114.9 million views where the
+saving falls below 75%. A university estate is two to three orders of magnitude below it.</p>
+<p>What the same shapes cost on your own account, from <code>comparison.ts</code> at each estate&#39;s site count and
+per-site traffic:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>workload</th>
+<th align="right">drupflare, per month</th>
+<th align="right">against one VPS per site</th>
+<th align="right">against a latency-matched VPS</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Arizona State University</td>
+<td align="right">$14.44</td>
+<td align="right">147.5x cheaper</td>
+<td align="right">885.1x cheaper</td>
+</tr>
+<tr>
+<td>Mass.gov</td>
+<td align="right">$6.80</td>
+<td align="right">1.5x cheaper</td>
+<td align="right">4.4x cheaper</td>
+</tr>
+<tr>
+<td>NASA (nasa.gov)</td>
+<td align="right">$12.38</td>
+<td align="right">1.2x cheaper</td>
+<td align="right">2.4x cheaper</td>
+</tr>
+<tr>
+<td>a U.S. government news agency</td>
+<td align="right">$364.44 to $727.29</td>
+<td align="right">1.3x cheaper to 1.0x dearer</td>
+<td align="right">3.9x to 1.9x cheaper</td>
+</tr>
+</tbody></table></div>
+<p>The news agency&#39;s upper figure is where the cheapest VPS catches up, and the section below says
+where that happens in general.</p>
+<h2 id="carbon">Carbon</h2>
+<p><code>derived</code> from the fleet model&#39;s kWh gap above by <code>bun scripts/economics/fleet.ts</code>, and conditioned
+on a grid factor neither system controls. At 384 g/kWh, the US average reported in Ember&#39;s Global
+Electricity Review 2025 [5]:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views/site/month</th>
+<th align="right">CO2e avoided per year, 1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">703 kg</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">729 kg</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">943 kg</td>
+</tr>
+<tr>
+<td align="right">20,000,000</td>
+<td align="right">2,410 kg</td>
+</tr>
+<tr>
+<td align="right">100,000,000</td>
+<td align="right">3,215 kg</td>
+</tr>
+<tr>
+<td align="right">1,000,000,000</td>
+<td align="right">6,131 kg</td>
+</tr>
+</tbody></table></div>
+<p>The EU&#39;s 2024 factor of 213 g/kWh [5] gives 55% of these. <strong>Report energy first and carbon
+with its factor named.</strong> Two systems on the same regional grid can differ in kWh and barely differ
+in kgCO2e, or the reverse.</p>
+<p>A second accounting exists and is less favourable. Charging drupflare its share of Cloudflare&#39;s
+entire published Scope 2 footprint [6] divided by every request the network serves [7] gives 24.6
+micrograms
+CO2e per request, which includes DNS and attack traffic a cached page has nothing to do with. Under
+that accounting, and charging three requests per page view, drupflare&#39;s attributed carbon crosses
+one site&#39;s share of shared hosting at about 792,000 views per month. Below that the saving is 87% to
+99%. Above it the hostile accounting inverts.</p>
+<h2 id="water">Water</h2>
+<p><code>derived</code> from the same kWh gap, per 1,000 sites per year, using 0.375 L/kWh direct and about
+4.55 L/kWh indirect: US data centres used 176 TWh in 2023, with 66 billion litres consumed directly
+and nearly 800 billion indirectly through generation [8].</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th align="right">views/site/month</th>
+<th align="right">direct</th>
+<th align="right">indirect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td align="right">10,000</td>
+<td align="right">0.69 kL</td>
+<td align="right">8.32 kL</td>
+</tr>
+<tr>
+<td align="right">100,000</td>
+<td align="right">0.71 kL</td>
+<td align="right">8.64 kL</td>
+</tr>
+<tr>
+<td align="right">1,000,000</td>
+<td align="right">0.92 kL</td>
+<td align="right">11.17 kL</td>
+</tr>
+<tr>
+<td align="right">20,000,000</td>
+<td align="right">2.35 kL</td>
+<td align="right">28.55 kL</td>
+</tr>
+<tr>
+<td align="right">100,000,000</td>
+<td align="right">3.14 kL</td>
+<td align="right">38.09 kL</td>
+</tr>
+<tr>
+<td align="right">1,000,000,000</td>
+<td align="right">5.99 kL</td>
+<td align="right">72.64 kL</td>
+</tr>
+</tbody></table></div>
+<p><strong>Water behaves differently from carbon and the totals must not be read the same way.</strong> Carbon is
+global and fungible. Water is local: the same volume saved in a water-stressed watershed and in a
+wet one are not equivalent, and aggregate litres carry no information about which.</p>
+<h2 id="embodied-carbon">Embodied Carbon</h2>
+<p><code>published</code>, from lifecycle studies rather than from any measurement here. Boavizta&#39;s
+<code>platform_compute_medium</code> archetype carries 900 kg CO2e embedded, range 461.8 to 2,089.0 [9]. At a
+four-year life that is 225 kg CO2e per server-year, or 0.23 kg per site-year at 1,000 sites per
+host.</p>
+<p><strong>It is not automatically avoided.</strong> A migrated fleet retires no hardware unless the previous
+operator retires some. Embodied carbon here describes hardware a sufficiently efficient architecture
+makes unnecessary, not emissions that stop when a site moves.</p>
+<h2 id="what-it-costs-to-run">What It Costs To Run</h2>
+<p><code>derived</code>, from Cloudflare&#39;s published rates [10], [11] applied to the measured workload. Generated by
+<code>bun scripts/economics/comparison.ts --md</code>, so the tables cannot drift from the model behind them.</p>
+<p><strong>You deploy to your own Cloudflare account.</strong> There is no platform fee in any figure below and no
+per-tenant charge. Quotas are account-wide, so several sites share one envelope rather than each
+paying its own floor.</p>
+<h3 id="the-free-plan-covers-304-million-views-a-month">The Free Plan Covers 3.04 Million Views A Month</h3>
+<p>Across the whole account, split however you like: one site at 3.04 million views, a hundred sites at
+30,439 each, a thousand at 3,043 each. Past that the Workers Paid plan is $5 a month, including 10
+million requests, 50 million rows written and 5 GB of storage.</p>
+<p><strong>The meter that runs out first is Worker requests, one per view.</strong> Every view reaches the Worker,
+cached or not, so no change to rendering moves this ceiling. Only a response that never runs the
+Worker avoids it: a static asset, or a hostname not routed to the Worker. At the shipping default a
+fill writes 1.75 rows, and the re-render ceiling is 50,916 a day, set by rows written. Renders follow
+saves rather than views: at five saves a day a site re-renders about 25 pages, so a thousand active
+sites use under half of that ceiling. For a large idle fleet the binding meter changes to storage, at 4.7 MB
+per site, and uploaded files are stored in each site&#39;s database against the same 5 GB.</p>
+<p><strong>What you pay, on your own account</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>$5.80</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$38.44</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>$5.15</td>
+<td>$37.64</td>
+<td>$365.14</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.15</td>
+<td>$37.56</td>
+<td>$364.34</td>
+<td>$3,644.64</td>
+</tr>
+</tbody></table></div>
+<p><strong>The first free cap you reach, and how much of it is used</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>storage 0%</td>
+<td>storage 1%</td>
+<td>storage 9%</td>
+<td>storage 95%</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>requests 0%</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>requests 3%</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>requests 33%</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+<td>requests</td>
+</tr>
+</tbody></table></div>
+<p><strong>What hosting the same site costs conventionally, per site</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>VPS floor</th>
+<th>latency-matched VPS</th>
+<th>managed floor</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>$5.00</td>
+<td>$30.00</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>$5.00</td>
+<td>$30.00</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>$5.00</td>
+<td>$30.00</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>$5.00</td>
+<td>$30.00</td>
+<td>$41.67</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>$5.00</td>
+<td>$30.00</td>
+<td>$41.67</td>
+</tr>
+</tbody></table></div>
+<p><strong>Against the VPS floor</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>862.3x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>97.1x cheaper</td>
+<td>130.1x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>9.7x cheaper</td>
+<td>13.3x cheaper</td>
+<td>13.7x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>1.0x dearer</td>
+<td>1.3x cheaper</td>
+<td>1.4x cheaper</td>
+<td>1.4x cheaper</td>
+</tr>
+</tbody></table></div>
+<p><strong>Against a latency-matched VPS</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>free</td>
+<td>free</td>
+<td>free</td>
+<td>5174.0x cheaper</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>free</td>
+<td>free</td>
+<td>582.5x cheaper</td>
+<td>780.5x cheaper</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>free</td>
+<td>58.3x cheaper</td>
+<td>79.7x cheaper</td>
+<td>82.2x cheaper</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>5.8x cheaper</td>
+<td>8.0x cheaper</td>
+<td>8.2x cheaper</td>
+<td>8.2x cheaper</td>
+</tr>
+</tbody></table></div>
+<p><strong>Energy avoided per year</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>views/site/mo</th>
+<th>1 site</th>
+<th>10 sites</th>
+<th>100 sites</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1,000</td>
+<td>24.8 kWh</td>
+<td>248.1 kWh</td>
+<td>2.48 MWh</td>
+<td>24.81 MWh</td>
+</tr>
+<tr>
+<td>10,000</td>
+<td>24.8 kWh</td>
+<td>248.1 kWh</td>
+<td>2.48 MWh</td>
+<td>24.81 MWh</td>
+</tr>
+<tr>
+<td>100,000</td>
+<td>24.9 kWh</td>
+<td>248.8 kWh</td>
+<td>2.49 MWh</td>
+<td>24.88 MWh</td>
+</tr>
+<tr>
+<td>1,000,000</td>
+<td>25.5 kWh</td>
+<td>255.1 kWh</td>
+<td>2.55 MWh</td>
+<td>25.51 MWh</td>
+</tr>
+<tr>
+<td>10,000,000</td>
+<td>31.9 kWh</td>
+<td>318.7 kWh</td>
+<td>3.19 MWh</td>
+<td>31.87 MWh</td>
+</tr>
+</tbody></table></div>
+<p><strong>What that is comparable to, at 10,000,000 views per site per month</strong></p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>sites</th>
+<th>electricity</th>
+<th>carbon</th>
+<th>hardware not built</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>one US home for 1.1 days</td>
+<td>27 lb CO2e</td>
+<td>6.3 oz of e-waste</td>
+</tr>
+<tr>
+<td>10</td>
+<td>one US home for 10.8 days</td>
+<td>270 lb CO2e</td>
+<td>4 lb of e-waste</td>
+</tr>
+<tr>
+<td>100</td>
+<td>one US home for 107.9 days</td>
+<td>2,698 lb CO2e</td>
+<td>40 lb of e-waste</td>
+</tr>
+<tr>
+<td>1,000</td>
+<td>3.0 US homes for a year</td>
+<td>2.7 cars off the road</td>
+<td>397 lb of e-waste</td>
+</tr>
+</tbody></table></div>
+<p>A US home is the EIA&#39;s 2022 average of 10,791 kWh a year [12], and a passenger vehicle emits about
+4.6 t of CO2 a year [13].</p>
+<h3 id="what-the-price-column-does-not-buy">What The Price Column Does Not Buy</h3>
+<p><strong>A monthly price is a capacity figure, and capacity is not what this project measures.</strong> The VPS
+floor is flat across the whole range because it is the smallest box on offer, not the output of a
+sizing calculation. Charging a conventional origin every single view as a render, 100,000 views a
+month is 0.04 renders per second, and the measured stack does 67 per second on 1.2 cores while
+holding 172 MB of RAM against the 4.5 GB its own limits allow. Nothing at this scale is
+resource-bound.</p>
+<p>So $5 buys enough throughput for the average load, from one location. It does not buy the latency
+profile: the same workload measures 100.2 ms on a VPS against 8.9 ms on drupflare once an 82 ms
+round trip is injected, because one serves from a region and the other from the visitor&#39;s colo. It
+does not buy the tail either, where the VPS p50 runs from 59 ms at 4 clients to 182 ms at 96 while
+drupflare holds. The latency-matched column prices the first of those; nothing here prices the
+second.</p>
+<h3 id="reading-these-tables">Reading These Tables</h3>
+<p>The shape of the two bills differs more than the totals do. A conventional host charges per site per
+month whether or not anyone visits; this charges for traffic served, against an allowance that costs
+nothing until it is crossed. The comparison therefore widens with the number of idle sites and
+narrows with traffic. On a single site at ten million views a month the VPS floor is the cheaper of
+the two, by the $5 subscription plus $0.15 of usage, and the latency-matched host is 5.8x dearer.</p>
+<p>Energy moves far less than cost does. The conventional arm is charged both its idle allocation and
+the marginal joules of the work it does, and across a ten-thousandfold range of traffic the total
+still moves by under a third, because the idle term dominates everywhere below the top of the range.
+That is the same result the energy section reaches from the other direction.</p>
+<p>What the figures are:</p>
+<ul>
+<li><strong>Your cost.</strong> Cloudflare&#39;s published rates on your own account. <code>free</code> means the whole account
+fits inside the free plan.</li>
+<li><strong>VPS floor.</strong> One self-managed VPS per site at about the cheapest real price. It excludes the
+labour of running it, which for most people is the largest real cost, and it excludes CDN egress.
+The origin is charged every view as a render, derived rather than assumed: a per-location cache
+never warms when a path is requested less often than the edge TTL expires it.</li>
+<li><strong>Latency-matched VPS.</strong> <code>derived (modelled)</code>. The floor box in each of three regions behind one
+global load balancer, DigitalOcean&#39;s at $15 a month [14]. It is what serving visitors from nearby costs
+conventionally, and it is still a floor: three regions leave most visitors tens of milliseconds
+from an origin where the edge answers from their own colo, and no database replication is priced.</li>
+<li><strong>Managed floor.</strong> Published. Pantheon Basic at $500 a year, $41.67 a month, or $55 billed
+monthly [15]. Held flat because overage is not published in a form worth quoting.</li>
+<li><strong>Energy.</strong> Derived, from marginal joules measured on the same counter as everything else. The
+e-waste figure is modelled: servers not built, at an assumed 18 kg each, mass only, with no
+recycling rate applied.</li>
+</ul>
+<h3 id="where-the-curves-meet">Where the Curves Meet</h3>
+<p>The bill grows with traffic and the conventional host&#39;s grows in whole boxes, so the lines cross.
+Solved on the real functions with <code>comparison.ts --crossover</code>, per site:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>against</th>
+<th>1 site</th>
+<th>1,000 sites</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>VPS floor</td>
+<td>from 3.05 million, for good above 134 million</td>
+<td>from 13.9 million, for good above 194 million</td>
+</tr>
+<tr>
+<td>latency-matched VPS</td>
+<td>from 658 million, for good above 1.16 billion</td>
+<td>from 706 million, for good above 1.16 billion</td>
+</tr>
+</tbody></table></div>
+<p>Between the first crossing and &quot;for good&quot;, the two alternate: each time the VPS adds a box it becomes
+the dearer again, so the region is a band near parity rather than a point. At 1,000 sites and 100
+million views per site the VPS floor is $35.00 against $36.39. The single-site band opens at 3.05
+million because that is where the free plan ends and the $5 subscription begins.</p>
+<p>The managed floor would cross near 112 million, but only because it is held flat at the entry plan&#39;s
+price. No managed plan serves that traffic at $41.67, so the crossing is an artifact of the flat price.</p>
+<h2 id="what-this-does-not-claim">What This Does Not Claim</h2>
+<ul>
+<li><strong>No per-tenant Cloudflare wattage.</strong> It is not observable. Probing a deployed Cloudflare
+Container found no energy counter by any of the six routes a Linux process has, and no energy
+field exists anywhere in the account&#39;s analytics schema. The Cloudflare side of every figure above
+is an allocation over measured workload and published hardware.</li>
+<li><strong>No claim that 1,000 sites replace 1,000 servers.</strong> VPS providers and managed platforms already
+consolidate. The comparison is against hosting that has already captured most of the
+multi-tenancy saving.</li>
+<li><strong>Pantheon is a pricing baseline and not an energy baseline.</strong> It is already multi-tenant, and how
+many machines it runs, how well utilised they are, and how much of that would persist without a
+given workload are all unobservable from outside.</li>
+<li><strong>No market-share multiplier.</strong> A CMS&#39;s share of websites is a count of sites, not a quantity of
+compute. It changes the addressable population and transfers no measurement.</li>
+<li><strong>An incremental measurement is not a hosting total.</strong> Idle-subtracted workload energy is what the
+rig produces. A continuously provisioned server also pays its idle, and the equivalent allocation
+on a shared edge fleet is the thing that cannot be measured.</li>
+</ul>
+<h2 id="reproducing-the-numbers">Reproducing The Numbers</h2>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/vps-energy.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> run</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --ssh=</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --ladder=2,4,8</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> &#x3C;</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> host</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> ></span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --target=</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> &#x3C;</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> vps</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> ></span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --target2=</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> &#x3C;</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> drupflare</span><span style="--shiki-light:#D73A49;--shiki-dark:#F97583"> ></span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --n=5</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/measure/render-fraction.ts</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/fleet.ts</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/comparison.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --crossover</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/economics/comparison.ts</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --sites=426</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --views=82160</span></span></code></pre><p><code>--ladder</code> is not optional for a per-request figure. One rate cannot separate the cost of a request
+from the cost of the package being awake, and the two arms must be read at the same request count.</p>
+<p>The first needs a bare-metal x86 host with readable RAPL counters and a generator on a different
+machine. A virtual machine cannot substitute: a Cloudflare Container exposes no energy counter at
+all, and a mainstream KVM guest exposes a <code>power</code> PMU that reads a constant zero, which a tool will
+report as 0 W.</p>
+<p>The economic models live in <code>scripts/economics/</code>. Every measured input they take is in one file with
+its provenance and the workload it was taken under, because a render cost measured with cold caches
+and a render cost measured on the invalidation path differ by 35x and are not substitutable.</p>
+<h2 id="references">References</h2>
+<p>[1] Acquia, &quot;Arizona State University,&quot; Acquia Customer Stories. Accessed: Sep. 28, 2026. [Online].
+Available: <a href="https://www.acquia.com/resources/customer-stories/arizona-state-university">https://www.acquia.com/resources/customer-stories/arizona-state-university</a></p>
+<p>[2] Last Call Media, &quot;Huge Performance Gains for Mass.gov,&quot; Drupal.org Case Studies, Apr. 2, 2019.
+Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://new.drupal.org/case-study/huge-performance-gains-for-massgov">https://new.drupal.org/case-study/huge-performance-gains-for-massgov</a></p>
+<p>[3] Mobomo, &quot;NASA.gov,&quot; Drupal.org Case Studies, May 25, 2018. Accessed: Sep. 28, 2026. [Online].
+Available: <a href="https://new.drupal.org/case-study/nasagov">https://new.drupal.org/case-study/nasagov</a></p>
+<p>[4] DevPanel, &quot;How a U.S. Government News Agency Uncovered 75% Hosting Savings with DevPanel on
+AWS,&quot; DevPanel Blog, Jul. 20, 2025. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://devpanel.com/blog/how-a-u-s-government-news-agency-uncovered-75-hosting-savings-with-devpanel-on-aws/">https://devpanel.com/blog/how-a-u-s-government-news-agency-uncovered-75-hosting-savings-with-devpanel-on-aws/</a></p>
+<p>[5] E. Graham, N. Fulghum, and K. Altieri, &quot;Global Electricity Review 2025,&quot; Ember, Apr. 8, 2025.
+Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://ember-energy.org/app/uploads/2025/04/Report-Global-Electricity-Review-2025.pdf">https://ember-energy.org/app/uploads/2025/04/Report-Global-Electricity-Review-2025.pdf</a></p>
+<p>[6] Cloudflare, &quot;Cloudflare Emissions Inventory, 2024,&quot; Cloudflare, Inc., Jul. 15, 2025. Scope 2
+location-based, facilities and network rows summed. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://cf-assets.www.cloudflare.com/slt3lc6tev37/2lg914L21Lyfpcya6weavX/6ded4e6ca673dbc1197c6b772a92aa29/Emission_inventory_PDF__2024.pdf">https://cf-assets.www.cloudflare.com/slt3lc6tev37/2lg914L21Lyfpcya6weavX/6ded4e6ca673dbc1197c6b772a92aa29/Emission_inventory_PDF__2024.pdf</a></p>
+<p>[7] Cloudflare, &quot;The 2025 Cloudflare Radar Year in Review,&quot; The Cloudflare Blog. Accessed: Sep. 28, 2026. [Online]. Available: <a href="https://blog.cloudflare.com/radar-2025-year-in-review/">https://blog.cloudflare.com/radar-2025-year-in-review/</a></p>
+<p>[8] A. Shehabi et al., &quot;2024 United States Data Center Energy Usage Report,&quot; Lawrence Berkeley
+National Laboratory, Berkeley, CA, USA, Rep. LBNL-2001637, Dec. 2024. Accessed: Sep. 28, 2026.
+[Online]. Available:
+<a href="https://eta-publications.lbl.gov/sites/default/files/2024-12/lbnl-2024-united-states-data-center-energy-usage-report_1.pdf">https://eta-publications.lbl.gov/sites/default/files/2024-12/lbnl-2024-united-states-data-center-energy-usage-report_1.pdf</a></p>
+<p>[9] Boavizta, &quot;Get the impacts of a server,&quot; Boavizta API documentation. Accessed: Sep. 28, 2026.
+[Online]. Available: <a href="https://doc.api.boavizta.org/getting_started/single_server/">https://doc.api.boavizta.org/getting_started/single_server/</a></p>
+<p>[10] Cloudflare, &quot;Pricing,&quot; Cloudflare Workers documentation, Aug. 28, 2026. Accessed: Sep. 28, 2026.
+[Online]. Available: <a href="https://developers.cloudflare.com/workers/platform/pricing/">https://developers.cloudflare.com/workers/platform/pricing/</a></p>
+<p>[11] Cloudflare, &quot;Pricing,&quot; Cloudflare Durable Objects documentation, Aug. 25, 2026. Accessed: Sep.
+28, 2026. [Online]. Available: <a href="https://developers.cloudflare.com/durable-objects/platform/pricing/">https://developers.cloudflare.com/durable-objects/platform/pricing/</a></p>
+<p>[12] U.S. Energy Information Administration, &quot;How much electricity does an American home use?,&quot;
+EIA FAQ, Jan. 8, 2024. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://www.eia.gov/tools/faqs/faq.php?id=97&amp;t=3">https://www.eia.gov/tools/faqs/faq.php?id=97&amp;t=3</a></p>
+<p>[13] U.S. Environmental Protection Agency, &quot;Greenhouse Gas Emissions from a Typical Passenger
+Vehicle,&quot; EPA, Jun. 3, 2026. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://www.epa.gov/greenvehicles/greenhouse-gas-emissions-typical-passenger-vehicle">https://www.epa.gov/greenvehicles/greenhouse-gas-emissions-typical-passenger-vehicle</a></p>
+<p>[14] DigitalOcean, &quot;Load Balancers Pricing,&quot; DigitalOcean Documentation, Jul. 13, 2026. Accessed:
+Sep. 28, 2026. [Online]. Available:
+<a href="https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/">https://docs.digitalocean.com/products/networking/load-balancers/details/pricing/</a></p>
+<p>[15] Pantheon, &quot;Pantheon Pricing,&quot; Pantheon.io. Accessed: Sep. 28, 2026. [Online]. Available:
+<a href="https://pantheon.io/plans/pricing">https://pantheon.io/plans/pricing</a></p>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

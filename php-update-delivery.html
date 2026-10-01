@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>PHP Interpreter Update Delivery - Drupflare</title>
+		<meta
+			name="description"
+			content="How a new PHP interpreter build reaches a deployed site."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="PHP Interpreter Update Delivery - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="How a new PHP interpreter build reaches a deployed site."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="php-interpreter-update-delivery">PHP Interpreter Update Delivery</h1>
+<p>How a PHP wasm interpreter built by <a href="https://github.com/drupflare/phasm"><code>drupflare/phasm</code></a> reaches
+this repository, what is proved about it before anything can consume it, and where the pipeline
+stops.</p>
+<p>Scope: the interpreter only. Drupal core, contrib and the packed database move on their own lane, in
+<a href="#out-of-scope">Out of Scope</a>.</p>
+<h2 id="platform-constraints">Platform Constraints</h2>
+<p>A running Worker cannot swap its PHP binary. The change unit is a redeploy.</p>
+<ul>
+<li><strong>The interpreter is a bundle-time module.</strong> <code>src/runtime/php-binary-raw.ts</code> reaches it with
+<code>import wasmModule from &#39;../../.interp/php8.5.wasm&#39;</code>, and <code>wrangler.jsonc</code> maps <code>**/*.wasm</code> to
+module type <code>CompiledWasm</code>. Wrangler resolves a module import when the bundle is built. No runtime
+API adds a module to a deployed bundle.</li>
+<li><strong>There is no compile step to pay.</strong> A <code>CompiledWasm</code> import arrives already compiled, so the seam
+performs no codegen at all. That matters because <code>workerd</code> permits codegen during startup and
+refuses it at request time, which is what a compressed frame had to work around. Replacing the compressed seam took startup from ~106 ms to ~5 ms.</li>
+<li><strong>Startup cannot fetch.</strong> Cloudflare refuses asynchronous I/O in global scope: &quot;Disallowed
+operation called within global scope. Asynchronous I/O (ex: fetch() or connect()), setting a
+timeout, and generating random values are not allowed within global scope.&quot; <code>env</code> is importable at
+module scope, but calls on a Durable Object stub, a KV store or another Worker do not work there.</li>
+</ul>
+<p>The one place that may compile may not download, and the one place that may download may not
+compile. Together they rule out R2, KV, the asset layer, a service binding and Durable Object
+storage as a source of interpreter bytes.</p>
+<p>Everything after the build is automatable. <code>wrangler versions upload</code> produces a version without
+deploying it, <code>wrangler versions deploy &lt;id&gt;@&lt;pct&gt;</code> splits traffic, and <code>wrangler rollback &lt;id&gt;</code>
+reverses it, all against wrangler 4.120.0.</p>
+<h2 id="the-pipeline">The Pipeline</h2>
+<p>Two workflows, one in each repository.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>step</th>
+<th>where</th>
+<th>result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>phasm</code> <code>.github/workflows/build.yml</code>, <code>notify</code> job</td>
+<td>a <code>repository_dispatch</code> naming a published artifact</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>worker</code> <code>.github/workflows/interpreter.yml</code></td>
+<td>a verified payload artifact and a pull request</td>
+</tr>
+<tr>
+<td>3</td>
+<td>a human</td>
+<td>merge, release, deploy</td>
+</tr>
+</tbody></table></div>
+<p>Step 3 is not automated. The workflow has no deploy step and holds no Cloudflare credential.</p>
+<h2 id="notification">Notification</h2>
+<p>phasm&#39;s <code>notify</code> job runs after <code>publish</code>, so it fires when a build publishes interpreter artifacts
+and not on the pull-request or archive-only paths. It sends one <code>repository_dispatch</code> per variant
+listed in <code>CONSUMER_VARIANTS</code>, currently <code>control85</code>.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">{</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  "event_type"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"phasm-interpreter-published"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  "client_payload"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: {</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "variant"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"control85"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "php_version"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"8.5"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "artifact_id"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"4102938475"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "run_id"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"18273645"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "commit"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"abc1234"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">,</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">    "tag"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"snapshot-abc1234"</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">  }</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">}</span></span></code></pre><p><code>php_version</code> is read from <code>src/rc/&lt;variant&gt;.rc</code>. <code>artifact_id</code> is resolved against the run&#39;s own
+artifact list, so it names the build that just completed rather than whichever artifact is newest
+when the consumer looks.</p>
+<p>A variant with no rc, no <code>PHP_VERSION</code> or no artifact in the run is skipped with a warning. A run
+that notifies nothing fails, because a silent no-op leaves <code>worker</code> on its old pin with a green
+build behind it.</p>
+<p><code>POST /repos/{owner}/{repo}/dispatches</code> requires <strong>Contents: write</strong> on <code>drupflare/worker</code>. When
+<code>PHASM_TOKEN</code> carries only <strong>Actions: write</strong>, the dispatch is refused and the job falls back to
+<code>POST /repos/{owner}/{repo}/actions/workflows/interpreter.yml/dispatches</code>, which that permission
+does cover. The fallback carries the variant, the PHP version and the artifact id; the phasm run id,
+commit and tag reach the consumer only over <code>repository_dispatch</code>.</p>
+<h2 id="verification">Verification</h2>
+<p><code>interpreter.yml</code> accepts <code>repository_dispatch</code> and <code>workflow_dispatch</code>. Both resolve to the same
+three values, and the workflow refuses a variant that is not a phasm rc name, a PHP version that is
+not <code>&lt;major&gt;.&lt;minor&gt;</code>, and a non-numeric artifact id.</p>
+<p>The run hydrates the current release payload first. That supplies <code>assets/</code> and the incumbent
+interpreter, so the bundle is measured against the tree that actually ships, and the incumbent figure
+is recorded before the swap.</p>
+<p>Two checks stand between the download and the pull request. Each throws, each fails its step, and
+a failed step ends the run: no payload is uploaded and no branch is pushed.</p>
+<ol>
+<li><strong>The seam imports what was fetched.</strong> <code>assertSeamImports()</code> in <code>scripts/fetch-interpreter.ts</code>
+reads the interpreter imports out of the seam <code>wrangler.jsonc</code> aliases and requires the fetched
+frame and glue to be among them. On a hydrated tree a fetch for the wrong PHP version otherwise
+builds cleanly, passes the size gate, and measures the incumbent.</li>
+<li><strong>The bundle fits the Worker size limit.</strong> <code>bun run release:check</code> dry-runs the canonical config,
+parses the uncompressed <code>Total Upload</code> figure wrangler prints, and throws above 67,108,864 bytes.
+The dry run also proves the entrypoint and the binary alias still resolve.</li>
+</ol>
+<p><code>tests/node/interp-fetch.spec.ts</code> covers the first directly.
+<code>tests/node/release-payload.spec.ts</code> covers the KiB-to-bytes conversion and the ceiling arithmetic.</p>
+<h2 id="output">Output</h2>
+<p>A run that passes produces two things and deploys neither.</p>
+<ul>
+<li><strong>A payload artifact</strong>, <code>drupflare-worker-payload-&lt;variant&gt;-php&lt;version&gt;</code>, holding the tarball,
+<code>SHA256SUMS</code>, <code>manifest.json</code> and the pin. It is a complete hydrate input, retained 30 days.</li>
+<li><strong>A pull request</strong> carrying <code>interp.lock.json</code>, which records the variant, the PHP version, the
+phasm artifact id, the frame&#39;s raw, packed and declared sizes, and a sha256 per file. The binaries
+are 9-12 MB and gitignored, so the pin is the reviewable part of an interpreter bump. The body
+carries the incumbent and proposed bundle figures side by side.</li>
+</ul>
+<p>The branch is <code>interp/&lt;variant&gt;-php&lt;version&gt;-&lt;artifact id&gt;</code>, so a re-run for the same artifact finds
+the branch on the remote and opens nothing. A pin byte-identical to the one already on the base
+branch opens nothing either.</p>
+<p>The pull request touches one tracked file, so <code>build.yml</code> and <code>coverage.yml</code> run the full code gate
+on it. <code>interpreter.yml</code> gates the bytes and the bundle.</p>
+<p>To reproduce a pinned interpreter by hand, pass the recorded artifact id:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">bun</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> scripts/fetch-interpreter.ts</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> control85</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> 8.5</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> 4102938475</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> --pin</span></span></code></pre><h2 id="manual-runs">Manual Runs</h2>
+<p><code>workflow_dispatch</code> takes <code>variant</code>, <code>php_version</code>, <code>artifact_id</code> and <code>payload_tag</code>. An empty
+<code>artifact_id</code> takes the newest unexpired artifact for the variant. An empty <code>payload_tag</code> hydrates
+the payload for <code>package.json</code>&#39;s version.</p>
+<h2 id="credentials">Credentials</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>what</th>
+<th>where</th>
+<th>scope</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PHASM_TOKEN</code></td>
+<td>organization secret, both</td>
+<td>Actions: read on <code>phasm</code>; Contents: write on <code>worker</code></td>
+</tr>
+<tr>
+<td><code>GITHUB_TOKEN</code></td>
+<td>default, per job</td>
+<td><code>contents: write</code>, <code>pull-requests: write</code> on <code>worker</code></td>
+</tr>
+<tr>
+<td><code>CLOUDFLARE_API_TOKEN</code></td>
+<td>not held by either workflow</td>
+<td>deploys are manual</td>
+</tr>
+</tbody></table></div>
+<p><code>PHASM_TOKEN</code> authenticates two hops: phasm&#39;s dispatch into <code>worker</code>, and <code>worker</code>&#39;s read of phasm&#39;s
+Actions artifacts API. Contents: write is what the <code>repository_dispatch</code> endpoint requires; with
+Actions: write alone the pipeline runs on the <code>workflow_dispatch</code> fallback.</p>
+<p>Opening the pull request also requires &quot;Allow GitHub Actions to create and approve pull requests&quot; in
+the repository&#39;s Actions settings. A pull request opened with <code>GITHUB_TOKEN</code> does not trigger
+workflows that a <code>pull_request</code> event would otherwise start.</p>
+<h2 id="rollback">Rollback</h2>
+<p><strong>The rollback unit is a Worker version.</strong> The binary is not independently addressable at runtime,
+so there is nothing smaller to revert. <code>wrangler rollback</code> and <code>wrangler versions deploy</code> both
+operate on version ids, and a version is a whole bundle.</p>
+<p>The consequence is that an interpreter bump ships in a version containing nothing else. Otherwise
+the change unit and the rollback unit differ, and reverting a bad interpreter reverts unrelated
+fixes with it.</p>
+<p>Two documented limits shape a revert:</p>
+<ul>
+<li>Only the 100 most recent versions are reachable.</li>
+<li>A rollback cannot cross a Durable Object class lifecycle change, and <code>wrangler versions upload</code>
+cannot carry one. <code>wrangler.jsonc</code> holds
+<code>migrations: [{ tag: &quot;v1&quot;, new_sqlite_classes: [&quot;SitePhpDurableObject&quot;] }]</code>, so an interpreter
+bump must never also add a migration tag. Lifecycle changes go out alone, through
+<code>wrangler deploy</code>.</li>
+</ul>
+<p>A rollback restores code, but a heap image is data and it is binary-specific. opcache runs
+<code>file_cache_only=1</code> in MEMFS, which belongs to the interpreter instance and outlives nothing. <strong>The
+stored heap snapshot does outlive it.</strong> <code>HEAP_SNAPSHOT</code> is on by default and each site holds
+31,784,960 bytes across 159 rows, so restoring an image taken on one interpreter into another is
+corruption rather than a slow path.</p>
+<p><code>cfw_heap_snapshot</code> rows are keyed on the <strong>pack generation</strong> (<code>latestSnapshotMeta(sql, packGeneration())</code>), not on the interpreter. An interpreter bump that leaves the pack alone therefore
+selects a snapshot taken on the previous binary. Ship an interpreter bump with <code>HEAP_SNAPSHOT=0</code>, or
+move the pack generation with it, until the snapshot key carries the interpreter pin.</p>
+<h2 id="staged-rollout">Staged Rollout</h2>
+<p>Gradual deployments assign each Durable Object a version for the life of the deployment, and
+Cloudflare guarantees that &quot;for a given deployment, requests to each Durable Object will always use
+the same Worker version&quot;. So <code>wrangler versions deploy &lt;new&gt;@10 &lt;current&gt;@90</code> puts roughly 10% of
+sites entirely on the new interpreter rather than scattering 10% of requests. An object reassigned a
+version is reset and drops its interpreter, so each rollout step costs one cold boot per object
+moved: 1,398 ms of edge cpuTime, n=3, on a platform whose 400-600 ms bimodality is unverified as a
+standing property.</p>
+<p>Percentages are the only lever wrangler exposes, so the canary set cannot be chosen. Treat the
+presence of a quarantined row (<code>isQuarantined()</code> in <code>src/ops/repair.ts</code>) in the canary set as a
+reason to abort, and never as health data.</p>
+<p>Read the result out of <code>cfw_health</code>, which is capped at <code>LEDGER_MAX_ROWS</code> and indexed on <code>ts DESC</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>signal</th>
+<th>catches</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>boot.capability_missing</code></td>
+<td>a build that silently dropped an extension. <code>/php</code> reports <code>get_loaded_extensions()</code>, and the release lane asserts opcache, lexbor and the platform map against it</td>
+</tr>
+<tr>
+<td><code>boot.bridge_missing</code>, <code>boot.sqlite_too_old</code></td>
+<td>a glue or host mismatch before any page is served</td>
+</tr>
+<tr>
+<td><code>render.empty</code>, <code>render.size_anomaly</code></td>
+<td>&quot;it rendered, but wrong&quot;, the class a new binary produces</td>
+</tr>
+<tr>
+<td><code>bridge.asyncify_called</code></td>
+<td>a <code>.mjs</code> glue that does not match the <code>.wasm</code></td>
+</tr>
+<tr>
+<td><code>pack.generation_mismatch</code></td>
+<td>packed assets disagreeing with the database</td>
+</tr>
+<tr>
+<td><code>budget.rows_written</code></td>
+<td>a regression in the meter that binds regeneration</td>
+</tr>
+</tbody></table></div>
+<p>Do not gate on CPU. An absolute figure comes only from <code>cpuTime</code> on a deployed version, and the
+platform&#39;s reported 400-600 ms spread means a canary window cannot support a boot-time verdict at
+n=1 or n=3.</p>
+<p>An available upgrade must not enter <code>recordOutcome()</code>. <code>src/ops/repair.ts</code> counts consecutive
+same-code failures toward quarantine and rollback, and an upgrade is not a fault.</p>
+<h2 id="trust">Trust</h2>
+<p>The interpreter is the entire PHP runtime for every hosted site, and it executes inside the Durable
+Object that holds that site&#39;s database, with the host bridge and the SQL handle in reach. It is also
+the least reviewable artifact in the system: the shipping build is stripped at <code>-O2</code>, so <code>strings</code>
+finds no symbol names, and 97.2% of a link map attributes to a single <code>lto.tmp</code> object. There is no
+post-hoc audit available, so the pre-execution checks are the whole control.</p>
+<p>What the pipeline proves today: the bytes came from a named artifact on a named repository over an
+authenticated API, the frame header agrees with the binary, the seam imports the files that were
+fetched, the bundle resolves and fits, and every file is content-addressed in the pin.</p>
+<p>What it does not prove: provenance. phasm&#39;s <code>build.yml</code> attests <code>subject-path: dist/*</code>, so each
+staged asset carries its own subject digest, but nothing in this repository runs
+<code>gh attestation verify</code> against a downloaded artifact. Add it against
+<code>--repo drupflare/phasm --signer-workflow drupflare/phasm/.github/workflows/build.yml</code> to close the
+gap. Behaviour is proved after deploy by <code>BootSelfTest::run()</code>, which runs before the first request
+is served.</p>
+<h2 id="self-hosted-sites">Self-Hosted Sites</h2>
+<p>A self-hosted site runs in the user&#39;s own Cloudflare account and drupflare holds no credential
+there. The one-click template is the user&#39;s own repository with Workers Builds connected, so an
+upstream interpreter arrives as a release they choose to consume. The mechanism ends at a pull
+request; whether it merges is theirs.</p>
+<h2 id="cost">Cost</h2>
+<p>Nothing in the pipeline runs in the Worker, so it costs zero on both free-tier ceilings.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>component</th>
+<th>Worker requests</th>
+<th>DO requests</th>
+<th>rows written</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Notification and verification (CI)</td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td><code>versions upload</code> / <code>versions deploy</code></td>
+<td>0</td>
+<td>0</td>
+<td>0</td>
+</tr>
+<tr>
+<td>Canary in, then promote</td>
+<td>0</td>
+<td>2 cold boots per site per release</td>
+<td>boot-class rows, which a cold object pays anyway</td>
+</tr>
+</tbody></table></div>
+<p>The only runtime cost is the cold boot each Durable Object pays when it is reassigned a version,
+twice per rollout. At a few interpreter releases per year that does not appear in either ceiling,
+and a version change introduces no new row class.</p>
+<p>Free and paid stay equivalent. Versions, gradual deployments and rollbacks are not plan-gated. The
+one plan-sensitive number is the 3 MiB bundle ceiling against 10 MiB on paid, which the gate reads
+from wrangler.</p>
+<h2 id="rejected-alternatives">Rejected Alternatives</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>rejected</th>
+<th>why</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Runtime swap from R2, KV or DO storage</td>
+<td>Request-time codegen is forbidden and startup I/O is forbidden. Both halves are needed and neither is available.</td>
+</tr>
+<tr>
+<td>Interpreter as a Workers Static Asset, fetched at boot</td>
+<td>Same wall. <code>CLAUDE.md</code> records this as why the binary cannot live on the asset layer.</td>
+</tr>
+<tr>
+<td>Dynamic Workers with <code>{data: ArrayBuffer}</code></td>
+<td>PHP runs inside the Durable Object because <code>ctx.storage.sql</code> is synchronous only there and PHP&#39;s calls block. A Dynamic Worker is a different isolate, so every database call becomes async RPC out of synchronous wasm.</td>
+</tr>
+<tr>
+<td>A scheduled poll of phasm&#39;s releases</td>
+<td>The dispatch delivers the same signal without a 6-hourly job, and GitHub disables <code>schedule</code> workflows after 60 days of repository inactivity.</td>
+</tr>
+<tr>
+<td>Polling GitHub from the Worker</td>
+<td>The site cannot act on the answer. The unauthenticated GitHub API allows 60 requests/hour per source IP on a shared Worker egress, and free allows 5 Cron Triggers per account against 250 on paid, one of which the fill window spends.</td>
+</tr>
+<tr>
+<td>&quot;Update available&quot; as a repair-ladder rung</td>
+<td><code>repair.ts</code> strikes drive quarantine and rollback. An upgrade is not a fault and would contaminate the counters that decide whether a site stops serving.</td>
+</tr>
+<tr>
+<td>Fetching binaries into <code>vendor/</code></td>
+<td>14 unreproducible binaries. A pipeline that writes there is one bad path expansion from the only permanent loss in the project. <code>.interp/</code> is gitignored and disposable.</td>
+</tr>
+<tr>
+<td>Committing the binary to either repository</td>
+<td>9-12 MB per variant. phasm&#39;s <code>lint</code> job fails on a tracked <code>*.wasm</code>.</td>
+</tr>
+<tr>
+<td><code>wrangler deploy</code> on a green gate</td>
+<td>The gate proves the bundle builds and fits. It cannot prove a new interpreter renders correctly on the edge.</td>
+</tr>
+</tbody></table></div>
+<h2 id="out-of-scope">Out of Scope</h2>
+<ul>
+<li><strong>Deploying.</strong> The pipeline ends at a pull request and an artifact. Promotion, canary and rollback
+are <code>wrangler</code> commands a human runs.</li>
+<li><strong>Drupal.</strong> <code>SHIPPED_LOCK_VERSIONS</code>, <code>assets/drupal/site.sqlite</code> and <code>assets/driver.json</code> are a
+separate lane, and <code>site.sqlite</code> has no reproducible recipe. That lane reaches an existing site
+through <code>src/ops/reconcile.ts</code> rather than through a redeploy: a step observes the site&#39;s end state,
+and <code>container-driver-digest</code> compares <code>src/ops/driver-digest.ts</code> against what the site recorded, so
+a <code>#[Hook]</code> class added to a sibling after the bake is discovered on the next boot. A redeploy alone
+does not move it, because <code>DrupalKernel::getContainerCacheKey()</code> is composer&#39;s <code>VERSIONS_HASH</code> plus
+the PHP version and the OS.</li>
+<li><strong>Attestation.</strong> Covered in <a href="#trust">Trust</a>.</li>
+<li><strong>PHP 8.5 on the edge.</strong> The shipping seam is 8.5. A <code>cfw-*</code> deploy once returned 1101 with
+<code>ExitStatus: Program terminated with exit(-2)</code>; the cause was opcache, which reads
+<code>opcache.file_cache</code> during PHP&#39;s module startup, before the mount sequence creates
+<code>/tmp/opcache</code>. <code>src/site-do.ts:599</code> sets it to <code>/tmp</code>, which emscripten&#39;s MEMFS always creates.
+8.5 has rendered on a deployed worker since; the opcache file-cache counts in that comment were
+read off one. Each new build still needs its own deploy to prove it renders; the gate proves the
+bundle builds and fits.</li>
+<li><strong>A minor-version bump.</strong> 8.3 to 8.5 moves the glue filename, needs a new seam plus one line in
+wrangler&#39;s <code>alias</code>, changes <code>DEFAULT_PLATFORM.php</code> in <code>src/ops/packagist.ts</code>, and re-runs
+<code>tests/node/php-fragments.spec.ts</code> and <code>bun run test:health</code> under the new interpreter. The
+version guard in step 2 of <a href="#verification">Verification</a> refuses the fetch until the seam moves
+first.</li>
+<li><strong>Multiple Worker scripts.</strong> Gradual deployments split versions of a single script. A fleet on N
+independently deployed scripts is N rollouts.</li>
+<li><strong>Toolchain pins are split.</strong> The frame needs no external tool -- <code>node:zlib</code> packs it and
+<code>node:zlib</code> inflates it on the edge -- and the interpreter is pinned to a builder image digest.</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Recovery - Drupflare</title>
+		<meta
+			name="description"
+			content="The four ways a site moves backwards and how to come back."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Recovery - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="The four ways a site moves backwards and how to come back."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html" aria-current="page">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="recovery">Recovery</h1>
+<p>A site is a Durable Object holding a SQLite database. Four primitives can move it backwards, and
+they answer different failures. Picking the wrong one either does nothing or destroys more than it
+restores.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Primitive</th>
+<th>Scope</th>
+<th>Window</th>
+<th>Survives object loss</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Point-in-time recovery</td>
+<td>the object&#39;s whole storage</td>
+<td>30 days</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>/export</code> dump</td>
+<td>the site database, as SQL text</td>
+<td>as long as you keep it</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>wrangler rollback</code></td>
+<td>Worker code and config</td>
+<td>100 versions</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td>The R2 mirror</td>
+<td>rendered pages and uploaded files</td>
+<td>current state</td>
+<td>yes</td>
+</tr>
+</tbody></table></div>
+<p><strong>PITR is operational recovery, not backup.</strong> It reverses a change to an object that still exists.
+It lives in the same place as the data it protects, so a deleted namespace, a deleted Worker or a
+lost account takes the recovery log with it. The <code>/export</code> dump is the only thing on this page that
+leaves the platform, and it is the only thing that answers &quot;the object is gone&quot;.</p>
+<h2 id="point-in-time-recovery">Point-in-Time Recovery</h2>
+<p>SQLite-backed Durable Objects can be restored to any point in the <strong>past 30 days</strong>. The window
+covers the whole of <code>ctx.storage</code>, both SQL tables and key-value pairs.</p>
+<p>Recovery is addressed by <strong>bookmarks</strong>, not timestamps. A bookmark is a mostly alphanumeric string
+such as <code>0000007b-0000b26e-00001538-0c3e87bb37b3db5cc52eedb93cd3b96b</code>, and bookmarks are lexically
+comparable, so ordering them as strings orders them in time. Three methods:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ctx.storage.getCurrentBookmark()</code></td>
+<td>a bookmark for now</td>
+</tr>
+<tr>
+<td><code>ctx.storage.getBookmarkForTime(t)</code></td>
+<td>a bookmark for a <code>Date</code> or epoch ms within the last 30 days</td>
+</tr>
+<tr>
+<td><code>ctx.storage.onNextSessionRestoreBookmark(b)</code></td>
+<td>a bookmark that undoes the restore it schedules</td>
+</tr>
+</tbody></table></div>
+<p>The restore is applied on the object&#39;s <strong>next</strong> start, not immediately. The bookmark returned by
+<code>onNextSessionRestoreBookmark()</code> is the undo, so capture it before restarting.</p>
+<p><strong>There is no wrangler command and no dashboard button.</strong> PITR is a runtime API only, so an operator
+can reach it only through code running inside the Durable Object.</p>
+<p><code>GET /pitr</code> is that code. It is diagnostic-gated, like <code>/restore</code>, because scheduling a restore
+overwrites a database.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Request</th>
+<th>Answers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET /pitr</code></td>
+<td>the current bookmark and the window</td>
+</tr>
+<tr>
+<td><code>GET /pitr?at=&lt;ms or ISO&gt;</code></td>
+<td>the bookmark for that time, refused outside 30 days</td>
+</tr>
+<tr>
+<td><code>POST /pitr?bookmark=&lt;b&gt;</code></td>
+<td>schedules the restore and returns the <strong>undo</strong> bookmark</td>
+</tr>
+</tbody></table></div>
+<p>The restore applies on the object&#39;s next start. The undo bookmark is obtainable only from the call
+that schedules the restore, so it is returned rather than logged.</p>
+<p><strong>It is unsupported in local development, and the local runtime signals that badly.</strong> Cloudflare&#39;s
+wording is that &quot;a durable log of data changes is not stored locally&quot;. Measured: all three
+methods EXIST in the local runtime. <code>getBookmarkForTime()</code> throws &quot;This Durable Object&#39;s storage
+back-end does not implement point-in-time recovery&quot;, while <code>getCurrentBookmark()</code> answers
+<code>00000000-00000000-00000000-00000000000000000000000000000000</code> and throws nothing.</p>
+<p>So a feature-detect on the method passes and hands back a bookmark that would schedule a restore to
+the beginning of time. <code>/pitr</code> refuses an all-zero bookmark by VALUE for that reason, and reports
+<code>supported: false</code> with the platform&#39;s own sentence when the API throws. Any claim about what a
+restore does on the edge still needs a deployed test.</p>
+<h2 id="the-export-dump">The Export Dump</h2>
+<p><code>GET /export</code> with <code>Authorization: Bearer &lt;ownerToken&gt;</code> dumps the site database as replayable SQL.
+It is one of four routes the owner token reaches without <code>PW_DIAGNOSTICS=1</code>.</p>
+<p>The dump is produced host-side by <code>dumpDatabase()</code> in <code>src/db/export-sql.ts</code>, not by PHP. Every value
+is read as <code>typeof()</code> plus <code>hex()</code> and never as the column, because a Durable Object SQLite integer
+read loses precision above 2^53 and a <code>hex()</code> of an integer never passes its digits through a double.
+REAL is the one class read directly.</p>
+<p>What a dump contains:</p>
+<ul>
+<li><strong>Structure only</strong> for tables whose rows regenerate: every <code>cache_*</code> bin, <code>cachetags</code>, <code>sessions</code>,
+<code>semaphore</code>, <code>flood</code>, <code>queue</code>, <code>watchdog</code>, <code>history</code>, the <code>search_*</code> tables and <code>cfw_page</code>. Size is
+the smaller half of the reason. A restored <code>cache_container</code> would boot the site on the previous
+site&#39;s service container, and <code>cachetags</code> checksums that disagree with the bins they describe leave
+rows that are present and permanently rejected.</li>
+<li><strong>Nothing at all</strong> from <code>cfw_migrate</code>, <code>cfw_import</code> and <code>cfw_import_chunk</code>. A dump carrying
+<code>cfw_import_chunk</code> would contain itself, and one carrying <code>cfw_migrate</code> would have a replay
+overwrite the cursor that makes the replay resumable.</li>
+<li><strong>No secrets by default.</strong> The owner token, the Cloudflare OAuth access and refresh tokens and
+<code>hash_salt</code> are withheld and the count of withheld rows is reported. <code>?secrets=1</code> carries them. A
+faithful restore needs <code>hash_salt</code>, since it signs one-time login links and form tokens; a backup
+stored anywhere else should not have it.</li>
+</ul>
+<p>Options:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>?cursor=start</code></td>
+<td>chunked and resumable; each response carries <code>nextCursor</code></td>
+</tr>
+<tr>
+<td><code>?body=1</code></td>
+<td>include the SQL text in a chunked response rather than its length</td>
+</tr>
+<tr>
+<td><code>?all=1</code></td>
+<td>carry rows for the regenerable tables too</td>
+</tr>
+<tr>
+<td><code>?secrets=1</code></td>
+<td>carry the four withheld <code>cfw_meta</code> keys</td>
+</tr>
+<tr>
+<td><code>?limit=N</code></td>
+<td>cap rows per table</td>
+</tr>
+<tr>
+<td><code>?chunkChars=N</code></td>
+<td>override the 1,000,000-character chunk size</td>
+</tr>
+</tbody></table></div>
+<p><strong>A dump that cannot be replayed answers 409 rather than 200.</strong> A restore point nobody can replay is
+worse than none, because it reads as a backup. <code>?all=1</code> is the usual way to produce one: the whole
+<code>cache_container</code> row measures 960,544 characters against the 100,000-character Durable Object
+statement ceiling. A chunked export answers 409 on a shape mismatch as well, which is how splicing
+two different dumps into one file is caught.</p>
+<h2 id="restore">Restore</h2>
+<p><code>POST /restore</code> with the dump as the request body. <strong>This route is diagnostic-gated, not
+owner-gated</strong>: it needs <code>PW_DIAGNOSTICS=1</code>, because it overwrites a whole database. Export is a
+supported customer-facing property; restore is an operator action.</p>
+<p>The body is stored, not executed. <code>storeImport()</code> splits it into statements, refuses at store time if
+any statement exceeds the 100,000-character ceiling, and writes the parent row and every chunk in one
+<code>transactionSync()</code>. Then the object arms its alarm and the replay runs there, a chunk at a time. The
+invocation that accepts the upload is never the one holding a half-overwritten site open.</p>
+<p><code>?label=</code> names the restore point; it defaults to the current time. <code>GET /health</code> reports whether a
+complete stored import exists.</p>
+<h2 id="the-recovery-matrix">The Recovery Matrix</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Primitive</th>
+<th>Does not cover</th>
+<th>Command</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Accidental content deletion</td>
+<td>PITR to just before the delete</td>
+<td>anything written after the bookmark; the object must still exist</td>
+<td><code>GET /pitr?at=&lt;t&gt;</code> then <code>POST /pitr?bookmark=&lt;b&gt;</code></td>
+</tr>
+<tr>
+<td>Bad module update</td>
+<td>PITR, then <code>wrangler rollback</code> if code moved</td>
+<td>files already mirrored to R2; a config change an editor made after the update</td>
+<td>as above, plus <code>wrangler rollback [VERSION_ID]</code></td>
+</tr>
+<tr>
+<td>Corrupted config</td>
+<td><code>/restore</code> of the last good dump</td>
+<td>content created since that dump; needs <code>PW_DIAGNOSTICS=1</code></td>
+<td><code>POST /restore?label=pre-fix</code> with the dump as the body</td>
+</tr>
+<tr>
+<td>Failed migration</td>
+<td>re-run the migration</td>
+<td>nothing, if the cursor survived; <code>cfw_migrate</code> is resumable and a dump excludes it</td>
+<td><code>drangler migrate ...</code>; <code>GET /migrate</code> reports <code>chunk</code>, <code>chunks</code> and <code>done</code></td>
+</tr>
+<tr>
+<td>Whole-object loss</td>
+<td><code>/restore</code> into a new object</td>
+<td>PITR entirely -- the log died with the object; <code>hash_salt</code> unless the dump used <code>?secrets=1</code></td>
+<td><code>POST /restore</code> against the new site name</td>
+</tr>
+<tr>
+<td>Worker version rollback</td>
+<td><code>wrangler rollback</code></td>
+<td><strong>the database.</strong> Code moves, data does not. Refused if a Durable Object class lifecycle change or a deleted binding sits between the two versions</td>
+<td><code>wrangler rollback [VERSION_ID] --name &lt;worker&gt;</code></td>
+</tr>
+<tr>
+<td>R2 asset loss</td>
+<td>the mirror refills from the object</td>
+<td>nothing; the object is the durable copy and R2 is a cache in front of it</td>
+<td>no operator route; <code>/__mirror</code> is DO-internal and the alarm drains the queue</td>
+</tr>
+</tbody></table></div>
+<p>Two rows carry the distinctions that matter most.</p>
+<p><strong>A Worker rollback is not a data rollback.</strong> <code>wrangler rollback</code> creates a new deployment from a
+previous version and becomes active across every route immediately. It reaches the 100 most recent
+versions. It does not touch <code>ctx.storage</code>, so a bad deploy that also wrote bad rows needs both a
+rollback and a PITR restore, in that order. Cloudflare refuses the rollback outright if a Durable
+Object class lifecycle change happened between the two versions, or if the target version binds an R2
+bucket, KV namespace or queue that no longer exists.</p>
+<p><strong>R2 is a mirror, not a backup.</strong> With no <code>FILES</code> bucket bound -- the free-tier default -- the object
+is the durable copy and there is nothing to lose. With one bound, the bucket holds rendered pages and
+uploaded files that the object still has, and the mirror queue refills it on the alarm.</p>
+<h2 id="keeping-a-dump">Keeping a Dump</h2>
+<p>Nothing schedules an export. A dump exists because someone asked for one, and it lives wherever they
+put it. For a site whose object still exists, PITR covers the last 30 days with no storage of your
+own; the dump is what covers everything else.</p>
+<p>Two properties make an unattended export practical: <code>?cursor=</code> walks the database in bounded chunks
+instead of building the whole file in one invocation, and a 409 tells the caller the file it just
+built is not replayable, so a backup job can fail loudly instead of storing something that reads
+like a backup.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><code>docs/configuration.md</code> -- <code>PW_DIAGNOSTICS</code>, the <code>FILES</code> binding and the runtime overrides</li>
+<li><code>docs/external-database.md</code> -- why the data lives in the object</li>
+<li><code>TECHNICAL_REPORT.md</code>, Platform Constraints -- the 100,000-character statement ceiling and the other
+measured Durable Object SQLite limits</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

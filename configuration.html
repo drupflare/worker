@@ -1,0 +1,2914 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1"
+		/>
+		<title>Configuration - Drupflare</title>
+		<meta
+			name="description"
+			content="Every variable and binding in wrangler.jsonc, and how each is changed."
+		/>
+		<link
+			rel="icon"
+			href="drupflare.ico"
+		/>
+		<meta
+			property="og:title"
+			content="Configuration - Drupflare"
+		/>
+		<meta
+			property="og:description"
+			content="Every variable and binding in wrangler.jsonc, and how each is changed."
+		/>
+		<meta
+			property="og:image"
+			content="https://docs.drupflare.com/drupflare.png"
+		/>
+		<style>
+			:root {
+				color-scheme: light dark;
+				--fg: #1a1510;
+				--muted: #6a5f52;
+				--bg: #fffdfa;
+				--card: #ffffff;
+				--line: #ece3d8;
+				--accent: #c2540a;
+				--accent-strong: #f07a1a;
+				--glow: color-mix(in oklab, #f07a1a 18%, transparent);
+				--code-bg: #f8f2ea;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--fg: #f3ede5;
+					--muted: #b0a494;
+					--bg: #100d09;
+					--card: #181410;
+					--line: #2c251c;
+					--accent: #ff9a3c;
+					--accent-strong: #ff8a1f;
+					--glow: color-mix(in oklab, #ff8a1f 22%, transparent);
+					--code-bg: #1d1812;
+				}
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 0 1.5rem 6rem;
+				background:
+					radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent 70%),
+					var(--bg);
+				color: var(--fg);
+				font:
+					16px/1.7 ui-sans-serif,
+					system-ui,
+					-apple-system,
+					Segoe UI,
+					Roboto,
+					sans-serif;
+			}
+			main,
+			nav .bar,
+			footer {
+				max-width: 52rem;
+				margin: 0 auto;
+			}
+			nav {
+				margin: 0 -1.5rem 3rem;
+				padding: 0.75rem 1.5rem;
+				border-bottom: 1px solid var(--line);
+			}
+			nav .bar {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 0.25rem 1.25rem;
+			}
+			nav .brand {
+				display: flex;
+				align-items: center;
+				gap: 0.5rem;
+				margin-right: auto;
+				font-weight: 700;
+				letter-spacing: -0.01em;
+			}
+			nav .brand img {
+				width: 1.75rem;
+				height: 1.75rem;
+			}
+			nav a {
+				color: var(--muted);
+				font-size: 0.925rem;
+				text-decoration: none;
+			}
+			nav a:hover,
+			nav a[aria-current] {
+				color: var(--accent);
+			}
+			nav a.brand {
+				color: var(--fg);
+				font-size: 1.05rem;
+			}
+			h1 {
+				margin: 0 0 0.5rem;
+				font-size: 2.5rem;
+				letter-spacing: -0.03em;
+			}
+			.badges {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 0.4rem;
+				margin: 0 0 2rem;
+			}
+			.badges img {
+				vertical-align: middle;
+			}
+			.links {
+				display: grid;
+				gap: 0.85rem;
+				grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+				margin: 0 0 3rem;
+			}
+			a.card {
+				display: block;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				background: var(--card);
+				color: inherit;
+				text-decoration: none;
+				transition:
+					border-color 0.15s,
+					box-shadow 0.15s;
+			}
+			a.card:hover {
+				border-color: var(--accent-strong);
+				box-shadow: 0 0 36px -10px var(--glow);
+			}
+			a.card strong {
+				display: block;
+				font-size: 1.02rem;
+			}
+			a.card span {
+				color: var(--muted);
+				font-size: 0.875rem;
+				line-height: 1.5;
+			}
+
+			.readme h1 {
+				margin: 0 0 1.25rem;
+			}
+			.readme h2 {
+				margin: 3rem 0 1rem;
+				padding-bottom: 0.4rem;
+				border-bottom: 1px solid var(--line);
+				font-size: 1.55rem;
+				letter-spacing: -0.01em;
+			}
+			.readme h3 {
+				margin: 2rem 0 0.75rem;
+				font-size: 1.2rem;
+			}
+			.readme a {
+				color: var(--accent);
+				text-underline-offset: 0.2em;
+			}
+			.readme hr {
+				margin: 3rem 0;
+				border: 0;
+				border-top: 1px solid var(--line);
+			}
+			.readme blockquote {
+				margin: 1.5rem 0;
+				padding: 0.25rem 0 0.25rem 1.25rem;
+				border-left: 3px solid var(--accent-strong);
+				color: var(--muted);
+			}
+			.readme ul,
+			.readme ol {
+				padding-left: 1.4rem;
+			}
+			.readme li {
+				margin: 0.35rem 0;
+			}
+			.readme li::marker {
+				color: var(--accent-strong);
+			}
+			.readme code {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			.readme :not(pre) > code {
+				padding: 0.15em 0.4em;
+				border-radius: 0.35rem;
+				background: var(--code-bg);
+				font-size: 0.85em;
+				overflow-wrap: anywhere;
+			}
+			.readme pre {
+				margin: 1.25rem 0;
+				padding: 1rem 1.25rem;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+				overflow-x: auto;
+				background: var(--code-bg);
+				font-size: 0.85rem;
+				line-height: 1.6;
+			}
+			.readme pre code {
+				display: block;
+			}
+
+			.readme .shiki,
+			.readme .shiki span {
+				color: var(--shiki-light);
+				background-color: var(--shiki-light-bg);
+			}
+			@media (prefers-color-scheme: dark) {
+				.readme .shiki,
+				.readme .shiki span {
+					color: var(--shiki-dark);
+					background-color: var(--shiki-dark-bg);
+				}
+			}
+
+			.readme .table {
+				overflow-x: auto;
+				margin: 1.25rem 0;
+				border: 1px solid var(--line);
+				border-radius: 0.8rem;
+			}
+			.readme table {
+				width: 100%;
+				border-collapse: collapse;
+				font-size: 0.925rem;
+			}
+			.readme th,
+			.readme td {
+				padding: 0.55rem 0.9rem;
+				border-bottom: 1px solid var(--line);
+				text-align: left;
+				vertical-align: top;
+			}
+			.readme th {
+				background: var(--code-bg);
+				font-weight: 600;
+				white-space: nowrap;
+			}
+			.readme tbody tr:last-child td {
+				border-bottom: 0;
+			}
+			.readme p img {
+				max-width: 100%;
+				vertical-align: middle;
+			}
+
+			footer {
+				margin-top: 4rem;
+				padding-top: 1.5rem;
+				border-top: 1px solid var(--line);
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+			footer a {
+				color: inherit;
+			}
+		</style>
+	</head>
+	<body>
+		<nav>
+			<div class="bar">
+				<a
+					class="brand"
+					href="index.html"
+				>
+					<img
+						src="drupflare_128.png"
+						alt=""
+					/>
+					Drupflare
+				</a>
+				<a href="impact.html">Impact</a>
+				<a href="configuration.html" aria-current="page">Configuration</a>
+				<a href="compatibility.html">Compatibility</a>
+				<a href="building-from-source.html">Building From Source</a>
+				<a href="recovery.html">Recovery</a>
+				<a href="database.html">The Site Database</a>
+				<a href="api/index.html">API</a>
+				<a href="php/index.html">PHP</a>
+				<a href="https://github.com/drupflare/worker">GitHub</a>
+			</div>
+		</nav>
+		<main>
+			
+			<div class="readme">
+				<h1 id="configuration">Configuration</h1>
+<p>Every setting is a <code>vars</code> entry or a binding in <code>wrangler.jsonc</code>, and every one has a working
+default. A deploy that sets nothing beyond what the canonical config already carries serves a site.</p>
+<p>Values arrive from wrangler as <strong>strings</strong>, so a boolean is <code>&quot;1&quot;</code> or <code>&quot;0&quot;</code> and a number is a decimal
+string. An unparseable value falls back to the default and never throws: these are read on the
+serving path, and a typo must not take a site down.</p>
+<p>Three layers decide what a value is, most specific first:</p>
+<ol>
+<li><strong>A request parameter</strong>, where the route exposes one (<code>?prefill=</code>, <code>?all=1</code>).</li>
+<li><strong>The <code>CONFIG_KV</code> namespace</strong>, for the plan and the runtime levers on
+<a href="#runtime-overrides">Runtime Overrides</a>. No redeploy needed.</li>
+<li><strong>The <code>vars</code> entry</strong>, then the per-plan default in <code>src/ops/plan-profile.ts</code>, then the constant.</li>
+</ol>
+<h2 id="bindings">Bindings</h2>
+<p><code>wrangler.jsonc</code> is the canonical config and declares seven of the eight. <code>SEND_EMAIL</code> is read where
+it is bound and absent otherwise.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>binding</th>
+<th>kind</th>
+<th>canonical config</th>
+<th>what breaks without it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SITE</code></td>
+<td>Durable Object</td>
+<td>declared</td>
+<td>the Worker has nothing to proxy to; every request fails</td>
+</tr>
+<tr>
+<td><code>ASSETS</code></td>
+<td>Workers Assets</td>
+<td>declared</td>
+<td>no pack, no driver, no <code>/core/**</code>; an object cannot boot</td>
+</tr>
+<tr>
+<td><code>CONFIG_KV</code></td>
+<td>KV</td>
+<td>declared</td>
+<td>the plan override and the runtime levers are absent; the deployed vars stay in force</td>
+</tr>
+<tr>
+<td><code>FLEET_DB</code></td>
+<td>D1</td>
+<td>declared</td>
+<td>the cross-site inventory is absent; a single site does not need one</td>
+</tr>
+<tr>
+<td><code>FILES</code></td>
+<td>R2</td>
+<td><strong>not declared</strong></td>
+<td>the page and file mirror drains nothing; the off-Worker serving path is unavailable</td>
+</tr>
+<tr>
+<td><code>CF_VERSION_METADATA</code></td>
+<td>version metadata</td>
+<td>declared</td>
+<td>the fleet row records <code>workerVersion: &quot;unknown&quot;</code></td>
+</tr>
+<tr>
+<td><code>PAGE_KV</code></td>
+<td>KV</td>
+<td>declared</td>
+<td>the cross-colo page tier is absent, and so is the stale-generation serve</td>
+</tr>
+<tr>
+<td><code>RENDER_LANES</code></td>
+<td>Durable Object</td>
+<td>declared</td>
+<td>image styles render on first view instead of on upload</td>
+</tr>
+<tr>
+<td><code>SEND_EMAIL</code></td>
+<td><code>send_email</code></td>
+<td>not declared</td>
+<td>the credential-free mail transport is absent; <code>api</code> or <code>smtp</code> still work</td>
+</tr>
+</tbody></table></div>
+<p><strong><code>FILES</code> is the one binding the shipping config leaves out, because naming it breaks the deploy
+button.</strong> R2 has to be enabled from the Cloudflare dashboard before any bucket can exist, so a
+config that names one is refused with <em>&quot;Please enable R2 through the Cloudflare Dashboard.
+[code: 10042]&quot;</em> on every account that has not done that. Enabling R2 requires a payment card on
+either Workers plan, even when usage stays inside the monthly allocation. KV and D1 have no such
+requirement: wrangler creates <code>CONFIG_KV</code> and <code>FLEET_DB</code> on first deploy.</p>
+<p>Once R2 is enabled, wrangler creates the named bucket on deploy as it does for KV and D1. Add the
+binding when you want the mirror:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"r2_buckets"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: [{ </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"binding"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"FILES"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"bucket_name"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"drupflare-files"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> }]</span></span></code></pre><p>An unbound optional binding always wins over the var that would enable the feature. Asking for a tier
+that is not bound is a configuration error, and answering it with a crash on the serving path would
+be the wrong trade.</p>
+<h2 id="cms">CMS</h2>
+<p><code>CMS</code> selects which CMS the build packs, and <code>drupal</code> is the only value. It is read at BUILD time by
+<code>bun run assets:driver</code>, from the environment and then from <code>wrangler.jsonc</code>, which sets it. Unlike
+every other var it has no default: a missing or unknown value fails the build instead of packing
+Drupal under another name. At runtime it is only reported, as the fleet row&#39;s <code>cms</code>.</p>
+<h2 id="site-identity-and-origin">Site Identity and Origin</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SITE_ID</code></td>
+<td>derived, then <code>site</code></td>
+<td>which site a request resolves to, when KV maps no host</td>
+</tr>
+<tr>
+<td><code>SITE_ORIGIN</code></td>
+<td>pinned on first use</td>
+<td>the <code>scheme://host[:port]</code> Drupal builds absolute URLs against</td>
+</tr>
+<tr>
+<td><code>SITE_LOCATION_HINT</code></td>
+<td>unset</td>
+<td>which region the site&#39;s Durable Object is created in</td>
+</tr>
+</tbody></table></div>
+<h3 id="site_id"><code>SITE_ID</code></h3>
+<p>One object per site, and the object&#39;s <strong>name</strong> is the site identity, so a wrong answer here serves a
+request from a different site&#39;s database. Five layers, in <code>src/ops/site-id.ts</code>: a <code>site:host:&lt;host&gt;</code>
+KV mapping, then <code>SITE_ID</code>, then the deployment&#39;s primary site (<code>src/ops/deployment-site.ts</code>), then
+the hostname itself, then the literal <code>site</code>.</p>
+<p>The two optional layers sit above the derived one because derivation answers for every real host, so
+anything below it would be unreachable on exactly the hosts it exists to configure. <code>localhost</code>,
+<code>127.0.0.1</code>, <code>0.0.0.0</code> and <code>::1</code> name no site and fall past derivation, which is what lets a local
+dev server and a deployed site run the same code path.</p>
+<p>Set it when one deployment serves one site under a name you choose. Leave it unset when the hostname
+is the identity. Changing it after a site has content points the Worker at a different, empty object;
+the old one still holds the data.</p>
+<h3 id="site_location_hint"><code>SITE_LOCATION_HINT</code></h3>
+<p>One of <code>wnam enam sam weur eeur apac oc afr me</code>, or unset.</p>
+<p>Unset by default. Placement follows the first request a site answers, which for a deploy-button site
+is wherever the deployer was. Pinning a region on an owner&#39;s behalf trades latency for one audience
+against latency for every other, so the choice belongs to whoever knows the audience.</p>
+<p>It applies when the object is <strong>created</strong>. Cloudflare ignores it for an object that already exists,
+so setting it on a running site moves nothing.</p>
+<p>An unrecognised value is ignored. The value reaches <code>SITE.get()</code> on the serving path, and a hint the
+platform rejects would take the site down for the sake of a preference.</p>
+<p>KV-overridable through the <code>settings</code> key, so a region can be chosen without a redeploy.</p>
+<h3 id="site_origin"><code>SITE_ORIGIN</code></h3>
+<p>Every absolute URL Drupal emits is built from the request&#39;s scheme and host: the canonical tag, a
+form action, a <code>Location:</code>, the link in a password-reset mail. The render fragments hardcoded
+<code>localhost</code>, so a deployed site told every visitor and every crawler that it lived on
+<code>http://localhost</code>, and a reset link mailed to a user pointed at their own machine.</p>
+<p>The inbound <code>Host</code> carries no guarantee: an attacker who can set it can move a password-reset link
+onto a host they control. So the origin is a property of the <strong>site</strong>, resolved in
+<code>src/ops/site-origin.ts</code> in this order:</p>
+<ol>
+<li><code>SITE_ORIGIN</code>, which wins outright.</li>
+<li><strong>The pin</strong>, held in <code>cfw_meta</code> under <code>site_origin</code>. Trust on first use: the first non-local
+origin a site serves is stored, and every later request is measured against it. A forged <code>Host</code>
+after the pin changes nothing.</li>
+<li>The observed origin, when there is no pin; that request is the one that sets the pin.</li>
+<li><code>http://localhost</code>, only when nothing above produced a usable value.</li>
+</ol>
+<p>A bare hostname is accepted and assumed <code>https</code>. A full URL is trimmed to its authority, so
+<code>https://example.com/</code> does not become a double slash in every canonical tag. Only <code>http</code> and <code>https</code>
+are accepted: a <code>javascript:</code> form action is why this is an allowlist.</p>
+<p>A local origin is never pinned (<code>localhost</code>, <code>127.0.0.1</code>, <code>0.0.0.0</code>, <code>::1</code>, <code>do.local</code>), so running
+the suite or a <code>wrangler dev</code> against a persisted object cannot fix a real site&#39;s canonical URL to a
+developer&#39;s laptop.</p>
+<p>Set it when the site is reached through a host it cannot observe: behind a proxy that rewrites
+<code>Host</code>, or on a deploy whose first request is a health check. <code>/firstrun</code> re-pins, so claiming a site
+also fixes its origin, and cron boots against the same value.</p>
+<p>Getting it wrong points canonical tags, redirects and mailed links at the wrong host. What a request
+resolves to is a separate question, answered by <code>SITE_ID</code>.</p>
+<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/render-origin.spec.ts</code>.</p>
+<h3 id="alias-hosts">Alias Hosts</h3>
+<p>A site answers on more than one hostname through <code>site:host:&lt;host&gt;</code> entries in <code>CONFIG_KV</code>, one per
+host, each naming the site. <code>drangler domain add &lt;host&gt;</code> writes the entry with your wrangler login
+and adds a Custom Domain route for the next deploy.</p>
+<p>Every render uses the site&#39;s origin, so the stored page carries the canonical host. On a request
+whose host resolved through a KV entry and differs from that origin, the front worker rewrites the
+response for the visitor&#39;s host: absolute URLs in text bodies (plain and JSON-escaped), <code>Location</code>,
+and the <code>Domain</code> on <code>Set-Cookie</code>, which Drupal derives from the render host and a browser refuses
+from any other. The session cookie keeps its name, so one login works on every alias. The response
+carries <code>x-cfw-alias: &lt;canonical host&gt;</code>.</p>
+<p>Only a KV-mapped host is rewritten. An operator wrote that entry, so a forged <code>Host</code> cannot turn it
+on, and an unmapped host that reaches the site through the deployment primary keeps the canonical
+links. The first request a site ever answers still pins its origin, so claim the site on its main
+host before adding aliases.</p>
+<p>Specs: <code>tests/unit/ops/site-origin.spec.ts</code>, <code>tests/integration/deployment-site.spec.ts</code>.</p>
+<h2 id="plan">Plan</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PLAN</code></td>
+<td><code>free</code></td>
+<td>selects the whole per-invocation budget profile</td>
+</tr>
+</tbody></table></div>
+<p><code>paid</code> and <code>free</code> are the only recognised values, and <strong>anything unrecognised is free</strong>: every limit
+in this project is a free-plan limit, and a typo must not silently grant a 30 s CPU budget to
+something that has 10 ms.</p>
+<p>The plan selects six numbers at once, from <code>src/ops/plan-profile.ts</code>. Each is individually
+overridable by its own var, so a paid profile can be run on free or the reverse.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>profile field</th>
+<th>var</th>
+<th>free</th>
+<th>paid</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>fillBatchSize</code></td>
+<td><code>FILL_BATCH_SIZE</code></td>
+<td>5</td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>httpDrainLimit</code></td>
+<td><code>HTTP_DRAIN_LIMIT</code></td>
+<td>3</td>
+<td>15</td>
+</tr>
+<tr>
+<td><code>mirrorLimit</code></td>
+<td><code>MIRROR_LIMIT</code></td>
+<td>2</td>
+<td>10</td>
+</tr>
+<tr>
+<td><code>inlineBudgetMs</code></td>
+<td><code>RENDER_BUDGET_MS</code></td>
+<td>2,000</td>
+<td>10,000</td>
+</tr>
+<tr>
+<td><code>bootInline</code></td>
+<td>none</td>
+<td>off</td>
+<td>on</td>
+</tr>
+</tbody></table></div>
+<p><code>bootInline</code> is the one that changes an outcome rather than a rate: whether a MISS on a <strong>cold</strong>
+object may boot the interpreter and render, or answer 503 and hand the path to the alarm chain. That
+boot is ~1.4 s, which is why it stays off on free. Raising <code>RENDER_BUDGET_MS</code> does not move it; the
+estimate is only consulted once an interpreter exists.</p>
+<p><code>CONFIG_KV</code> under the key <code>plan</code> overrides the var and is read once per isolate per minute, so an
+account upgrade takes effect without a redeploy. A missing binding, a KV error and an unrecognised
+value all fall through to the var.</p>
+<h2 id="serving-and-caching">Serving and Caching</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GEN_BUCKET_MS</code></td>
+<td>5,000</td>
+<td>how long the edge reuses a resolved site generation before re-reading it</td>
+</tr>
+<tr>
+<td><code>MAX_BODY_BYTES</code></td>
+<td>2 MiB</td>
+<td>largest non-file request body the edge forwards</td>
+</tr>
+<tr>
+<td><code>OUTBOUND_GUARD</code></td>
+<td>on</td>
+<td>refuse an outbound fetch to a private, loopback or metadata address; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>PAGE_KV_ENABLED</code></td>
+<td>on</td>
+<td>the cross-colo KV page tier; <code>0</code> off, <code>1</code> also lets free store compiled plans</td>
+</tr>
+<tr>
+<td><code>PAGE_KV_TTL</code></td>
+<td>86,400</td>
+<td>seconds a stored page lives; floored at KV&#39;s own 60 s minimum</td>
+</tr>
+<tr>
+<td><code>KV_WRITES_PER_DAY</code></td>
+<td>per plan</td>
+<td>page writes to <code>PAGE_KV</code> one site may make a UTC day; 800 on free, paid unset</td>
+</tr>
+<tr>
+<td><code>EDGE_PLAN</code></td>
+<td>on</td>
+<td>serve an authenticated page from a compiled plan in the front worker; <code>0</code> off</td>
+</tr>
+<tr>
+<td><code>NEVER_STALE</code></td>
+<td>unset</td>
+<td>extra path prefixes that may never be served from a previous generation</td>
+</tr>
+<tr>
+<td><code>AGED_SERVE_MAX_MS</code></td>
+<td>60,000</td>
+<td>how long a page a save superseded may still be answered while it refills; 0 off</td>
+</tr>
+<tr>
+<td><code>ASSET_AGGREGATES</code></td>
+<td>off</td>
+<td>substitute the build&#39;s CSS and JS aggregates into a stored page; <code>1</code> on</td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_BINS</code></td>
+<td>unset</td>
+<td>cache bins the interpreter holds in memory instead of in SQL, comma-separated</td>
+</tr>
+<tr>
+<td><code>MEMORY_CACHE_MAX_ITEMS</code></td>
+<td>64</td>
+<td>entries one in-memory bin may hold before it drops its oldest</td>
+</tr>
+<tr>
+<td><code>RENDER_BUDGET_MS</code></td>
+<td>per plan</td>
+<td>wall-clock ms a MISS may spend rendering before handing off to the alarm</td>
+</tr>
+<tr>
+<td><code>FILL_BATCH_SIZE</code></td>
+<td>per plan</td>
+<td>pages one alarm firing may fill before re-arming; capped at 50</td>
+</tr>
+<tr>
+<td><code>WINDOW_SITES</code></td>
+<td>unset</td>
+<td>narrows the scheduled fill window to these sites; unset drives the whole fleet</td>
+</tr>
+<tr>
+<td><code>WINDOW_MAX_FILLS</code></td>
+<td>50</td>
+<td>fills one window may drive</td>
+</tr>
+<tr>
+<td><code>WINDOW_WALL_MS</code></td>
+<td>60,000</td>
+<td>wall-clock ms one window may run</td>
+</tr>
+</tbody></table></div>
+<h3 id="outbound_guard"><code>OUTBOUND_GUARD</code></h3>
+<p>PHP names the URL for <code>cfwFetch</code> and <code>cfwQueueFetch</code>, so any module able to build a string chooses
+where the Worker connects. The guard refuses a scheme other than <code>http</code>/<code>https</code>, a URL carrying
+credentials, and any host that resolves to loopback, an RFC 1918 range, carrier-grade NAT, IPv6
+unique-local or link-local, or a name ending <code>.local</code>, <code>.internal</code>, <code>.localhost</code> or <code>.home.arpa</code>.
+<code>169.254.0.0/16</code> is refused as a block because <code>169.254.169.254</code> is the cloud metadata address, and
+an IPv4-mapped IPv6 literal is decoded first so <code>::ffff:a9fe:a9fe</code> cannot smuggle one through.</p>
+<p>It is a deny-list because the legitimate destination set is open-ended: every update server, OIDC
+provider, webhook endpoint and CAPTCHA verifier a site might use. An allow-list would need editing
+to install a module.</p>
+<p>Checked when the request is queued and again next to the <code>fetch()</code> in the drain, since a row can
+reach <code>cfw_http_queue</code> by another path. <code>0</code> turns it off, which is what the e2e rig uses to point a
+site at containers on the host.</p>
+<h3 id="max_body_bytes"><code>MAX_BODY_BYTES</code></h3>
+<p>This guards the heap, and leaves bandwidth alone. <code>parse_str()</code> on a form body allocates inside a
+128 MB isolate, and <code>foo[][][][][]=bar</code> repeated turns a few hundred kilobytes of wire into far more
+of it. Drupal&#39;s own <code>post_max_size</code> default is 8 MB; this is tighter, because there is no separate
+process to lose here.</p>
+<p>The check reads <code>Content-Length</code> and nothing else, the only measurement available before the body has
+been consumed, and consuming it to measure it is the cost the guard exists to avoid. A chunked
+request declares none and falls through to the object&#39;s own limits. <code>GET</code> and <code>HEAD</code> are not checked.</p>
+<p><code>multipart/form-data</code> is exempt. That is the file-upload shape, its size is what a caller is asking
+for, and it never reaches <code>parse_str()</code> as a nested array, so a 2 MiB cap on uploads would be a
+functional regression.</p>
+<p>Over the limit, the edge answers <strong>413 before any Durable Object hop</strong>. <code>0</code> disables the guard
+entirely. Raising it trades isolate headroom for larger non-upload submissions; the failure mode of
+too high is an object that runs out of memory mid-parse.</p>
+<p>Consumer: <code>bodyTooLarge()</code> in <code>src/site.ts</code>.</p>
+<h3 id="the-kv-page-tier">The KV Page Tier</h3>
+<p><code>PAGE_KV</code> is a cross-colo tier between the edge cache and the Durable Object, on for both plans
+whenever the namespace is bound. It still costs one Worker request, since the Worker has to run to
+consult it, so what it buys is latency and never serving ceiling. A missing binding always wins over
+<code>PAGE_KV_ENABLED</code>.</p>
+<p>Free KV allows 1,000 writes a day for the whole account, and <code>CONFIG_KV</code> draws on the same allowance.
+So the object grants each page write: an answer that may be stored carries <code>x-cfw-kv-grant</code>, and the
+front worker stores nothing without it. The object counts its grants in its daily meter row and stops
+at <code>KV_WRITES_PER_DAY</code>, 800 on free. Past that, the site keeps serving from what it already stored
+and from the object. Only the primary grants, so replica lanes do not multiply the budget.
+<code>/serve-stats</code> reports <code>pageKv.writesToday</code> against <code>pageKv.budget</code>. Compiled plans share the namespace
+and carry no budget, so on free they are written only when <code>PAGE_KV_ENABLED</code> is <code>1</code>.</p>
+<p>Stored pages are keyed by site, generation and path, so a generation bump invalidates every one of
+them without enumerating or deleting anything. KV has no bulk delete, so a scheme needing one would
+be uninvalidatable in practice. <code>PAGE_KV_TTL</code> is therefore a floor on garbage, and no kind of
+freshness knob.</p>
+<h3 id="never_stale"><code>NEVER_STALE</code></h3>
+<p>Because the previous generation&#39;s entries are still in KV after a bump, a miss at generation <code>N</code> can
+be answered from <code>N-1</code> or <code>N-2</code> while the current one regenerates on the alarm chain. The response
+carries <code>x-cfw-edge: STALE</code> and <code>x-cfw-stale-behind</code>, and the regeneration is queued rather than run
+inline, so the visitor never waits for a render on a path that has been rendered before.</p>
+<p>Two bounds apply together. The generation depth is 2, so a stale answer is at most two content changes
+behind; a 24 hour wall-clock bound on top of it stops an abandoned site serving last month&#39;s page.</p>
+<p>A session-carrying response can never be served stale, and that is structural rather than a check: the
+stale read sits behind the same <code>edgeWanted</code> gate that requires a non-personalised response. On top of
+it, a built-in deny-list refuses <code>/user</code>, <code>/admin</code>, <code>/cart</code>, <code>/checkout</code> and the other paths where a
+one-change-old answer is wrong rather than merely old. <code>NEVER_STALE</code> is a comma-separated list of extra
+prefixes and is <strong>added to</strong> that list rather than replacing it, so a site cannot make its own login
+page staleable by configuring badly.</p>
+<p>Consumers: <code>staleAllowed()</code> and <code>readStalePage()</code> in <code>src/ops/page-store.ts</code>.</p>
+<h3 id="memory_cache_bins"><code>MEMORY_CACHE_BINS</code></h3>
+<p>A cache bin named here is held in the interpreter&#39;s memory for the life of the incarnation instead of
+in the tenant&#39;s SQLite. <code>pib_run</code> performs no request shutdown, so a class static survives from one
+Worker invocation to the next, which is what makes this a real tier here and a test double on an
+ordinary PHP host.</p>
+<p>What it buys, measured in workerd on the shipping pack with the two arms differing by this variable
+and nothing else: a real re-render after a tag invalidation charges <strong>8 rows with the bin in SQL and
+4 with it in memory</strong>, for a byte-identical page. Four of the eight are the <code>dynamic_page_cache</code> bin,
+and rows written is the meter that bounds regeneration.</p>
+<p>It is ON by default for <code>dynamic_page_cache</code>, and <code>MEMORY_CACHE_BINS=none</code> is the off switch -- an
+unset variable and an empty one are the same string in a Worker env, so turning a default off needs
+a word rather than an absence.</p>
+<p><strong>The default shipped off until the cost was measured rather than reasoned about.</strong> The argument for
+leaving it off was that the bin dies with the interpreter, so a render after an eviction could no
+longer reassemble and would pay more. Measured with both arms dropping the interpreter between two
+fills: <strong>6 charged rows with the bin in SQL against 2 in memory</strong>. A cold render REWRITES the SQL bin
+rather than reading it, so surviving the drop buys that render nothing. The lever is cheaper in both
+states.</p>
+<p>What it still costs is CPU on that render and isolate memory for what it holds, and neither is the
+binding constraint; the CPU is spent on a request already paying a 1,398 ms boot.</p>
+<p><strong>The published ceiling has NOT been re-derived against this default yet, deliberately.</strong>
+<code>ROWS_PER_FILL.realRender</code> is 9, which describes <code>MEMORY_CACHE_BINS=none</code>; at the default a real
+re-render measures 3 to 4. Quoting the lower figure would take the ceiling 9,685 -&gt; 27,845/day and
+invert the safety property it rests on -- a realistic warmth mix prices 3.20 against that class&#39;s
+3.00, where it used to sit below, so the headline would become optimistic rather than a floor.
+<code>tests/integration/rows-per-fill-audit.spec.ts</code> measures both configurations and prints the gap.</p>
+<p>Bin names are bare, without the <code>cache_</code> prefix: <code>MEMORY_CACHE_BINS=dynamic_page_cache,render</code>.</p>
+<p>An entry is validated against the cache-tag checksum on every read, the same test the database
+backend applies, so an invalidation that arrives as replicated SQL rather than as a PHP call still
+refuses it. That is the property a read replica depends on and the reason this is not core&#39;s
+<code>MemoryBackend</code>.</p>
+<p><code>MEMORY_CACHE_MAX_ITEMS</code> bounds each bin. It is a count rather than a byte budget because measuring
+bytes means serialising the value, which is the cost moving the bin out of SQL removes; the isolate&#39;s
+own 112 MiB recycle is the backstop underneath it.</p>
+<p>Both are on <code>KV_OVERRIDABLE</code>. The value is read when <code>settings.php</code> is composed, which happens on
+every boot because the pack&#39;s filesystem is remounted each time, so a change takes effect on the
+next interpreter boot rather than needing a redeploy. Consumers: <code>memoryCacheBins()</code> in
+<code>src/site-do.ts</code> and <code>CfwCacheBackendFactory</code> in the <code>drupflare</code> module.</p>
+<h3 id="asset_aggregates"><code>ASSET_AGGREGATES</code></h3>
+<p>Drupal&#39;s own <code>css.preprocess</code> and <code>js.preprocess</code> ship off, because the source CSS and JS files are not
+in the interpreter&#39;s filesystem and its aggregate route answers a licence header alone. <code>bun run assets:agg</code> reads the library definitions at build time, where the files do exist, and emits immutable
+per-library aggregates plus a file-to-library index. With <code>ASSET_AGGREGATES=1</code>, a page&#39;s contiguous run
+of tags for a library is replaced by that library&#39;s single aggregate tag as the page is stored.</p>
+<p>The substitution is <strong>all or nothing per library</strong>: either every tag in the run is replaced or none is.
+The previous attempt at this shipped a page that loaded faster and had no CSS, and a partial
+replacement is how that happens.</p>
+<p>It is on <code>KV_OVERRIDABLE</code>, so turning it on needs no redeploy.</p>
+<p><strong>The aggregates have to be published as well as built, or the lever cannot work at any setting.</strong>
+<code>assets/.assetsignore</code> denies by default, so it must carry <code>!/agg/</code>. Without that the substitution
+rewrites every asset tag to a URL the asset layer does not publish, the Worker answers it as a Drupal
+path, and the page renders with no CSS. That is the same failure the all-or-nothing rule above exists
+to prevent, arriving from the other side.
+<code>tests/unit/runtime/assets-ignore.spec.ts</code> now resolves every URL the substitution emits, so a page
+whose stylesheets 404 fails the gate rather than shipping.</p>
+<p>Turning it on without running <code>assets:agg</code> changes nothing rather than breaking a page: an absent
+manifest means no library matches.</p>
+<p><strong>What it buys is render time and stored bytes, not Worker requests.</strong> Measured against
+<code>bun run dev</code>: an unaggregated core stylesheet at <code>/core/themes/olivero/css/base/base.css</code> answers
+200 with no <code>x-cfw-*</code> header at all, so the Worker never runs and the file already costs nothing. The
+individual files were on the free path the whole time.</p>
+<h3 id="edge_plan"><code>EDGE_PLAN</code></h3>
+<p>The compiled-plan tier in the front worker. On by default on both plans; <code>0</code> opts out, and an empty
+value is treated as unset. It is the only tier that answers an <strong>authenticated</strong> page without a
+Durable Object hop, because it is the only one whose key is per-visitor: the shared page tiers are
+keyed without a user and must never hold one.</p>
+<p>Three renders of the same page compile a plan; the first is discarded, because it warms Drupal&#39;s
+asset library cache and its stylesheet list differs from every later render. The plan must reproduce
+both remaining renders byte for byte, hold no slot it cannot generate, and survive a re-diff against
+a freshly generated one. Anything else falls through to an ordinary render.</p>
+<p>The key is the site, the generation, the path and the visitor&#39;s <strong>role set</strong>. Two properties make
+that narrow key safe. A plan is compiled only from renders by two DIFFERENT sessions of the role set,
+so anything constant for one user and different for another shows up as a region the compiler cannot
+name and the plan is refused; and it is served to a session only once that session&#39;s own render has
+agreed with it.</p>
+<p>A site with a single editor never produces a second session, so a plan is also compiled under a key
+that names the session and is served to nobody else. It is held in isolate memory and never mirrored
+to <code>PAGE_KV</code>. The shared plan is preferred whenever one exists.</p>
+<p>Slots are the values that differ per request or per visitor: <code>form_build_id</code>, a view&#39;s DOM id, and
+the session CSRF token in the logout link. The first two are generated fresh; the token is
+substituted from what the visitor&#39;s own last render carried, so a plan holding one refuses to run for
+a visitor whose token this isolate has not seen.</p>
+<p>A response that ROTATES the session is never compiled. That means a <code>Set-Cookie</code> setting a value the
+request did not already hold; PHP re-sends the session cookie unchanged on every <code>session_start()</code>
+when <code>session.cookie_lifetime</code> is non-zero, and Drupal ships 2000000, so the header&#39;s presence alone
+says nothing.</p>
+<p>Served responses carry <code>x-cfw-cache: PLAN</code> and <code>x-cfw-plan: mem</code>, <code>private</code> or <code>kv</code>; everything else
+reports on <code>x-cfw-plan</code> why it did not.</p>
+<p><code>x-cfw-plan</code> is the edge plan and nothing else. The Cloudflare account plan is <code>x-cfw-account-plan</code>,
+which is where it moved at header version 2 -- both were <code>x-cfw-plan</code> before, written by three places
+with two meanings, so which one a reader got depended on which of them answered. <code>x-cfw-v</code> carries
+the contract version and is what a client checks before reading either.</p>
+<p>An isolate serves against the last generation it learned from the object, and stops after 10 seconds
+without re-learning one. That is the staleness bound, and it is the same two-window lag the shared
+generation pointer already carries. A write by the visitor moves the generation on its own response,
+so their own save is visible immediately.</p>
+<p>Compiled plans are mirrored into <code>PAGE_KV</code> so a second isolate does not have to compile them again.
+That read is bounded at 8 ms: a KV key a colo already holds answers in 4-5 ms, and one it has not
+seen costs 46-140 ms whether it exists or not, which is more than the object hop it would replace.</p>
+<p>Measured on a deployed paid worker, one session, one 100,748-byte authenticated page:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>where the answer came from</th>
+<th align="right">ms to response</th>
+<th align="right">cpuTimeMs</th>
+<th align="right">wallTimeMs</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>EDGE_PLAN=0</code>, the object hop</td>
+<td align="right">10 median, 7 min (n=40)</td>
+<td align="right">1</td>
+<td align="right">18</td>
+</tr>
+<tr>
+<td>a plan in this isolate&#39;s memory</td>
+<td align="right"><strong>0</strong> median and max, n=57</td>
+<td align="right">0</td>
+<td align="right">1</td>
+</tr>
+</tbody></table></div>
+<h2 id="extensibility-routes">Extensibility Routes</h2>
+<p><code>/installable</code>, <code>/install</code> and <code>/enable</code> take the owner token, the one <code>/firstrun</code> mints when the
+site is claimed.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/installable?module=X</code></td>
+<td>resolves the package and names any conflict with the shipped lock</td>
+</tr>
+<tr>
+<td><code>/install?module=X</code></td>
+<td>fetches it and writes its files; runs the check first unless <code>force=1</code></td>
+</tr>
+<tr>
+<td><code>/enable?module=X</code></td>
+<td>installs it through Drupal&#39;s own module installer</td>
+</tr>
+</tbody></table></div>
+<p>Separate steps, because a package that has landed is not yet a module Drupal knows about and the two
+have different failure modes. <code>/install</code> also accepts <code>version=&lt;constraint&gt;</code> and <code>registry=npm</code>;
+<code>drupal/*</code> resolves against <code>packages.drupal.org/8</code> and everything else against
+<code>repo.packagist.org</code>.</p>
+<p>A config import and a queue drain run in steps. <code>POST /ops?op=cim&amp;drive=1</code> with the config objects as the
+body, or <code>POST /ops?op=queue-drain&amp;drive=1&amp;arg=&lt;queue&gt;&amp;limit=&lt;n&gt;</code>, runs the first step in the request and
+leaves the rest to the alarm, one step per firing, until a step reports <code>done</code> or fails. A failed step
+ends the job and stays failed. <code>cim</code> also takes <code>collections=a,b</code> and <code>budget=&lt;units&gt;</code>, which ride on
+every step. <code>/serve-stats</code> reports the last step under <code>lastOpsJob</code> and the exec router&#39;s per-program
+counters under <code>exec</code> on <code>/serve-stats?exec=1</code>.</p>
+<p>A module you wrote yourself arrives through a git remote, or through <code>/modify</code> when it is not on a
+host at all. <code>/enable</code> is the same next step either way.</p>
+<h2 id="migrated-project-settings">Migrated Project Settings</h2>
+<p>A project moved from another host usually reads environment variables, <code>$config</code> overrides, header
+rules and redirects that the old host supplied. Four names carry them.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>name</th>
+<th>form</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>DRUPAL_ENV_&lt;NAME&gt;</code></td>
+<td>var or secret, one per name</td>
+<td>PHP reads it as <code>getenv(&#39;&lt;NAME&gt;&#39;)</code>, <code>$_ENV[&#39;&lt;NAME&gt;&#39;]</code> and <code>$_SERVER[&#39;&lt;NAME&gt;&#39;]</code></td>
+</tr>
+<tr>
+<td><code>DRUPAL_CONFIG</code></td>
+<td>JSON object, as a secret</td>
+<td>merged over <code>$config</code> with <code>array_replace_recursive</code> at boot</td>
+</tr>
+<tr>
+<td><code>RESPONSE_HEADERS</code></td>
+<td>JSON array, KV-overridable</td>
+<td><code>[{&quot;path&quot;:&quot;/blog/*&quot;,&quot;set&quot;:{&quot;X-Frame-Options&quot;:&quot;DENY&quot;}}]</code></td>
+</tr>
+<tr>
+<td><code>REDIRECTS</code></td>
+<td>JSON array, KV-overridable</td>
+<td><code>[{&quot;from&quot;:&quot;/old/*&quot;,&quot;to&quot;:&quot;/new/*&quot;,&quot;status&quot;:301}]</code></td>
+</tr>
+</tbody></table></div>
+<p>Only the <code>DRUPAL_ENV_</code> prefix and <code>DRUPAL_CONFIG</code> reach PHP. The owner token, <code>PW_DIAGNOSTICS</code>, mail
+credentials and API tokens live on the same environment and are never read into it. A malformed
+value is ignored, and <code>/serve-stats</code> lists the names that were ignored under <code>deploymentEnv</code>. A heap
+image is not taken or restored while either is set, because the image would carry the old values.
+Values change with a redeploy.</p>
+<p><code>RESPONSE_HEADERS</code> matches an exact path or a <code>/prefix*</code>. It cannot set <code>Set-Cookie</code>, anything
+starting <code>x-cfw-</code>, or the headers that frame the body. <code>REDIRECTS</code> matches an exact path (a trailing
+slash is ignored) or a trailing <code>*</code> that carries the rest of the path into the target. It answers
+before routing, so a redirect costs no Durable Object request, and it never applies to the Worker&#39;s
+own routes such as <code>/settings</code>. Status is 301, 302, 307 or 308, 301 by default, and at most 100 rules
+are read.</p>
+<p><code>/enable</code> is not needed for a text asset a migrated module ships: a <code>.css</code>, <code>.js</code> or <code>.svg</code> file
+stored in <code>cfw_module_file</code> is served from <code>/modules</code>, <code>/themes</code>, <code>/profiles</code> and <code>/libraries</code> when
+the pack does not hold the path. Binary assets are not served this way, because the table stores
+source as text.</p>
+<p>A migrated site claims with <code>POST /firstrun</code> and a body of <code>{&quot;migrated&quot;: true}</code>. That mints the owner
+token and marks the site claimed without changing uid 1, the site name or any mail setting. It takes no
+<code>adminPass</code>, and an already claimed site answers 409.</p>
+<h2 id="module-revisions">Module Revisions</h2>
+<p><code>/modify</code> takes the owner token and delivers a module tree from a developer&#39;s machine. It is the
+third delivery path beside <code>/git</code> and <code>/install</code>, and the only one that keeps history.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>action</th>
+<th>method</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>?action=plan&amp;package=X</code></td>
+<td>POST</td>
+<td>splits declared files into what the site has and needs</td>
+</tr>
+<tr>
+<td><code>?action=blobs&amp;package=X</code></td>
+<td>POST</td>
+<td>stores file bytes, verified against the hash sent with it</td>
+</tr>
+<tr>
+<td><code>?action=commit&amp;package=X</code></td>
+<td>POST</td>
+<td>records a revision from a manifest and makes it live</td>
+</tr>
+<tr>
+<td><code>?action=revisions&amp;package=X</code></td>
+<td>GET</td>
+<td>the stored revisions, newest first, and which is active</td>
+</tr>
+<tr>
+<td><code>?action=manifest&amp;package=X&amp;rev=Y</code></td>
+<td>GET</td>
+<td>one revision&#39;s file list; <code>rev</code> takes <code>active</code> by default</td>
+</tr>
+<tr>
+<td><code>?action=activate&amp;package=X&amp;rev=Y</code></td>
+<td>POST</td>
+<td>makes a stored revision live; <code>rev=previous</code> rolls back</td>
+</tr>
+<tr>
+<td><code>?action=status</code></td>
+<td>GET</td>
+<td>what is live per package, with its size and age</td>
+</tr>
+<tr>
+<td><code>?action=drop&amp;package=X&amp;rev=Y</code></td>
+<td>POST</td>
+<td>deletes a revision and the blobs nothing else names</td>
+</tr>
+</tbody></table></div>
+<p>A revision is a manifest of content-addressed blobs, so a second upload sends only the files that
+changed and a blob already present costs no rows. Five revisions per package are kept.</p>
+<p><code>plan</code> answers the have/want split and the change it would make: <code>counts</code> over every declared file,
+the <code>removed</code> paths by name, and the rows an apply would charge. A file whose new bytes have not been
+sent yet counts as <code>modified</code> rather than as a removal, which is what the site not holding those
+bytes means.</p>
+<p><code>commit</code> and <code>activate</code> go through the same apply, verify and restore path a git pull takes: the
+files are written in one transaction, the kernel is booted against them with every enabled module&#39;s
+PHP loaded, and a boot that fails restores the previous file set. A module whose <code>.module</code> no longer
+parses is rolled back and the reply names the parse error.</p>
+<p>Bytes are bounded twice, by <code>MAX_BODY_BYTES</code> per request and by a 2,199,995-byte cap per file. A
+client batches to stay under both.</p>
+<p>A <code>commit</code> body may carry <code>autoload</code>, one object or an array, for vendor packages a build delivers:
+<code>{&quot;name&quot;:&quot;acme/widget&quot;,&quot;version&quot;:&quot;1.4.0&quot;,&quot;mount&quot;:&quot;vendor/acme/widget&quot;,&quot;autoload&quot;:{&quot;psr-4&quot;:{...}}}</code>. The
+mount must sit under <code>vendor/</code> or <code>libraries/</code>. The site registers each map with the class loader
+before it boots the kernel and puts the row back if the boot refuses, and <code>/install</code> does not fetch a
+package that is already registered. A revision may also carry paths under <code>core/</code>, which shadow the
+packed files at the next boot; a changed <code>core/**/*.yml</code> drops <code>cache_container</code> and <code>cache_discovery</code>
+first, so the verifying boot rebuilds them.</p>
+<p>A requirement on a virtual package such as <code>psr/log-implementation</code> is met by the shipped lock&#39;s
+<code>provide</code> and <code>replace</code> entries and is not fetched.</p>
+<h2 id="site-maintenance">Site Maintenance</h2>
+<p><code>/armfill</code>, <code>/invalidate</code>, <code>/bump</code>, <code>/migrate</code> and <code>/updb</code> take the owner token, so purging your own
+page cache does not mean exposing arbitrary SQL and a whole-database overwrite alongside it.</p>
+<p><code>/updb</code> drives a database update run. <code>GET</code> reports the run and its units; <code>POST</code> advances exactly
+one beat and re-arms nothing, so a caller that wants the chain finished polls. The alarm chain drives
+the same step.</p>
+<p><code>POST</code> takes an <code>action</code>, which is what starts a run rather than advancing one. Without it a beat has
+nothing to advance and answers <code>{&quot;beat&quot;:&quot;none&quot;,&quot;reason&quot;:&quot;no-run&quot;}</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>action</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>none, <code>run</code>, <code>beat</code></td>
+<td>advances one beat, which is what the Operate page has always sent</td>
+</tr>
+<tr>
+<td><code>prepare</code></td>
+<td>raises the maintenance fence, snapshots the bookkeeping and plans the units</td>
+</tr>
+<tr>
+<td><code>drain</code></td>
+<td>runs up to <code>maxBeats</code> beats in this invocation; keep it at 1 on free</td>
+</tr>
+<tr>
+<td><code>rollback</code></td>
+<td>restores what the snapshot covers; legal only from a halted run</td>
+</tr>
+<tr>
+<td><code>abandon</code></td>
+<td>accepts a halted run as-is; requires a written <code>reason</code></td>
+</tr>
+</tbody></table></div>
+<p><code>abandon</code> will not take a default reason. The next person reading the run has to see that a human
+decided, and a generated string would forge that signature.</p>
+<h3 id="the-repair-surface">The Repair Surface</h3>
+<p>What an owner token can fix, and what each one costs. The class decides whether a tool may run it
+unattended: <strong>safe</strong> changes nothing a visitor sees, <strong>rebuild</strong> discards derived state that comes
+back on its own, and <strong>stateful</strong> changes what the site serves.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>route</th>
+<th>class</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>/health</code></td>
+<td>safe</td>
+<td>reads the repair state, the ledger and the worker version</td>
+</tr>
+<tr>
+<td><code>/health?clear=1</code></td>
+<td>stateful</td>
+<td>releases a quarantine, so the site serves again</td>
+</tr>
+<tr>
+<td><code>/updb</code></td>
+<td>safe</td>
+<td>reads the update run</td>
+</tr>
+<tr>
+<td><code>/updb</code> (POST)</td>
+<td>stateful</td>
+<td>advances one beat of a database update</td>
+</tr>
+<tr>
+<td><code>/updb?action=prepare</code></td>
+<td>stateful</td>
+<td>starts an update run, fence and snapshot included</td>
+</tr>
+<tr>
+<td><code>/updb?action=rollback</code></td>
+<td>stateful</td>
+<td>restores the bookkeeping a halted run snapshotted</td>
+</tr>
+<tr>
+<td><code>/armfill</code></td>
+<td>rebuild</td>
+<td>queues a fill, so cold paths warm without a visitor</td>
+</tr>
+<tr>
+<td><code>/invalidate</code></td>
+<td>rebuild</td>
+<td>drops stored pages for a path or a tag</td>
+</tr>
+<tr>
+<td><code>/bump</code></td>
+<td>rebuild</td>
+<td>advances the generation, retiring every stored page</td>
+</tr>
+<tr>
+<td><code>/migrate</code></td>
+<td>stateful</td>
+<td>resumes first-run migration on a site that stalled</td>
+</tr>
+<tr>
+<td><code>/git?action=unpin</code></td>
+<td>stateful</td>
+<td>releases a preview pin without reaching the remote</td>
+</tr>
+</tbody></table></div>
+<p><code>/git?action=unpin</code> exists because <code>unpreview</code> cannot help here: it re-syncs to the branch head, so it
+needs the remote to answer, and a pin held against a remote that is down is exactly what an operator
+is trying to release. Releasing without a sync leaves the site serving what it already serves and
+gives the poller the branch back, so the next successful poll converges it.</p>
+<p>A quarantine is released rather than prevented. <code>/health</code> reports what tripped it and the ledger
+entry that recorded it; clearing without reading that first is how the same fault comes back.</p>
+<h3 id="reading-the-degradation-band-off-a-response">Reading the Degradation Band Off a Response</h3>
+<p>Once a site leaves <code>normal</code>, every response it serves carries three headers:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>header</th>
+<th>value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>x-cfw-degrade</code></td>
+<td><code>reduced</code> or <code>read-only</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-degrade-driver</code></td>
+<td>which meter drove it: <code>rows</code> or <code>do</code></td>
+</tr>
+<tr>
+<td><code>x-cfw-degrade-at</code></td>
+<td>the fraction of that meter&#39;s daily budget already spent</td>
+</tr>
+</tbody></table></div>
+<p>A <code>normal</code> site carries none of them, so their presence is the signal and no parsing is needed to
+tell the two states apart.</p>
+<p><code>readOnlyResponse()</code> had always named the band on a REFUSAL, so <code>read-only</code> was observable and
+<code>reduced</code> was not: a site spends the whole way from 80% of a daily quota to 95% while every response
+looks identical, and the first thing an operator saw was the 503 at the end of it. <code>degradeHeaders()</code>
+was written for exactly that and called by nothing.</p>
+<p>The band recovers on its own. Nothing persists the level, and the counter is keyed per UTC day, so
+midnight clears it with no flag to reset.</p>
+<p>Three timestamps that also had no reader are on <code>/serve-stats</code> now: <code>lastGitPoll</code>, <code>lastMirrorDrain</code>
+and <code>lastPageMirrorDrain</code>, each with its <code>*At</code>. Every one of those alarm units catches its own error
+so a failure cannot stop the chain, which is right and means a git poll that has been failing for a
+week otherwise looks identical to one that has never run.</p>
+<p><strong>A withdrawn replica lane is not on this list, and does not need to be.</strong> A lane that withdrew asks
+the primary for a fresh copy itself, and the primary queues the copy and arms an alarm to perform it,
+so there is nothing for an operator to drive. <code>/replica</code> stays diagnostic-only for a second reason:
+it also carries the path a lane uses to commit a batch it executed speculatively, which belongs to
+the pool rather than to whoever holds the owner token. Read the state through <code>/health</code> and
+<code>/serve-stats</code>.</p>
+<h2 id="the-admin-surface">The Admin Surface</h2>
+<p>The seven <code>/_cfw</code> pages take the same owner token. A browser cannot put a header on its own navigation,
+so <code>/_cfw/login</code> exchanges the token for a cookie: <code>HttpOnly</code>, <code>SameSite=Strict</code>, twelve hours,
+cleared by <code>/_cfw/logout</code>. A page reached without it redirects to the sign-in form and returns
+afterwards. A bearer header reaches the same pages, so a script needs no browser.</p>
+<p><strong><code>PW_DIAGNOSTICS</code> does not open these pages.</strong> It opens everything else it always opened; the surface
+is the one owner set it does not reach, because the pages install code and run privileged operations.
+<code>SameSite=Strict</code> is what stands in for a CSRF token: several owner routes act on a GET, so a
+cross-site request carrying the cookie would be enough to install a module. Strict means no
+cross-site request carries it, including a top-level link.</p>
+<h2 id="cron">Cron</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>DRUPAL_CRON</code></td>
+<td>on</td>
+<td>whether Drupal cron runs from the alarm; <code>0</code> turns it off</td>
+</tr>
+<tr>
+<td><code>CRON_INTERVAL_MS</code></td>
+<td>900,000</td>
+<td>minimum gap between firings</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_UNITS</code></td>
+<td>6</td>
+<td>hooks or queues one firing may run</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_ROWS</code></td>
+<td>500</td>
+<td>rows one firing may write</td>
+</tr>
+<tr>
+<td><code>CRON_MAX_MS</code></td>
+<td>500</td>
+<td>wall-clock ms one firing may occupy</td>
+</tr>
+<tr>
+<td><code>CRON_QUEUE_BATCH_SIZE</code></td>
+<td>5</td>
+<td>queue items drained per queue per firing</td>
+</tr>
+<tr>
+<td><code>UPDATE_FETCH_URL</code></td>
+<td>unset</td>
+<td>release-history origin the declared prefetch warms; unset is drupal.org</td>
+</tr>
+<tr>
+<td><code>GC_INTERVAL_MS</code></td>
+<td>3,600,000</td>
+<td>gap between garbage-collection passes</td>
+</tr>
+<tr>
+<td><code>CACHE_DATA_MAX_ROWS</code></td>
+<td>5,000</td>
+<td>row cap on <code>cache_data</code></td>
+</tr>
+<tr>
+<td><code>WATCHDOG_ROW_LIMIT</code></td>
+<td>unset</td>
+<td>row cap on <code>watchdog</code>; unset reads <code>dblog.settings</code> from the site</td>
+</tr>
+<tr>
+<td><code>KEEP_WARM_MS</code></td>
+<td>240,000</td>
+<td>idle alarm re-arm; NOT a keep-warm, see below</td>
+</tr>
+<tr>
+<td><code>SITE_WARM</code></td>
+<td>by plan</td>
+<td><code>1</code> warms, <code>0</code> never warms; unset warms a paid site and leaves a free one to the thermal policy</td>
+</tr>
+<tr>
+<td><code>WARM_INTERVAL_MS</code></td>
+<td>8,000</td>
+<td>the warm re-arm, KV-overridable; clamped under 10,000 only when <code>RETAIN_INTERPRETER=0</code></td>
+</tr>
+<tr>
+<td><code>RECYCLE_ABOVE_BYTES</code></td>
+<td>117440512</td>
+<td>drop the interpreter at the end of an invocation above this linear-memory reading; floor 32 MiB</td>
+</tr>
+<tr>
+<td><code>ISOLATE_ABOVE_BYTES</code></td>
+<td>130023424</td>
+<td>the same drop against the whole-isolate estimate (linear memory plus the JS side); floor 64 MiB</td>
+</tr>
+<tr>
+<td><code>FILL_SETTLE_MS</code></td>
+<td>60,000</td>
+<td>ms after a boot before the alarm runs PHP (fills, cron, reconcile); <code>0</code> is off</td>
+</tr>
+<tr>
+<td><code>RETAIN_INTERPRETER</code></td>
+<td>on</td>
+<td>keeps an evicted instance&#39;s interpreter for the next instance to adopt; <code>0</code> is off</td>
+</tr>
+<tr>
+<td><code>REPLICA_READ_ONLY</code></td>
+<td>off</td>
+<td><code>1</code> puts the object in replica mode; see below</td>
+</tr>
+<tr>
+<td><code>REPLICA_COUNT</code></td>
+<td>0</td>
+<td>replica lanes per site beyond the primary; 0 is one object per site</td>
+</tr>
+<tr>
+<td><code>REPLICA_LAG_MS</code></td>
+<td>30,000</td>
+<td>how long a serving lane may go without pulling the log; the bound on staleness</td>
+</tr>
+<tr>
+<td><code>REPLICA_AUTOSCALE</code></td>
+<td>on</td>
+<td>grow the pool when the site is contended; <code>0</code> pins it at <code>REPLICA_COUNT</code></td>
+</tr>
+<tr>
+<td><code>REPLICA_MAX_LANES</code></td>
+<td>32</td>
+<td>ceiling autoscaling will not grow past; <code>0</code> is the same as switching it off</td>
+</tr>
+<tr>
+<td><code>WRITE_FORWARD</code></td>
+<td>on</td>
+<td><code>0</code> makes a lane refuse a write instead of executing it and forwarding it to the primary</td>
+</tr>
+</tbody></table></div>
+<p><code>RECYCLE_ABOVE_BYTES</code> is the backstop for the isolate&#39;s 128 MiB limit, behind the primary defence.
+<code>USE_ZEND_ALLOC=0</code> means PHP returns nothing between requests, so demand inside one incarnation is
+cumulative; <code>/__migrate</code> and <code>/__firstrun</code> drop the interpreter when they finish, and this catches
+everything else. It must fire BETWEEN invocations: linear memory is reclaimed only when the old
+module is collected, so dropping mid-request holds both allocations at once. <code>/serve-stats</code> reports
+<code>recycles</code> and <code>lastRecycle</code>; an object recycling every request is paying a boot per page.</p>
+<p>The limit is per isolate, not per object, and an isolate can host several objects of one class.
+<code>/serve-stats</code> reports <code>isolate</code>: its <code>id</code>, the <code>interpreters</code> it holds and their <code>linearBytes</code>
+added together. Two interpreters do not fit 128 MiB, so <code>interpreters</code> above 1 is the thing to look
+for on a replica pool.</p>
+<p><code>RETAIN_INTERPRETER</code> keeps the interpreter in the isolate when the instance is evicted, so the next
+request skips the boot while the isolate survives: 61-169 ms against about 1-2.5 s measured, after gaps
+up to 150 s in most rounds. When the isolate is gone the next request boots as it would have anyway.
+An adopted interpreter is refused when the site committed a write since it was kept. <code>/serve-stats</code>
+reports <code>retention</code>.</p>
+<p><strong><code>REPLICA_READ_ONLY</code> is a SAFETY interlock.</strong> Setting it wraps every installed <code>cfw*</code> capability so
+the object physically cannot commit an authoritative write, and refuses anything unrecognised. That
+half works and is reported at <code>/serve-stats</code> under <code>replica</code>.</p>
+<p>A replica is started by a bulk copy and kept current by a log, both over <code>/__replica</code>:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>call</th>
+<th>on</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>GET ?action=snapshot</code></td>
+<td>primary</td>
+<td>the table plan; 409 when the primary&#39;s own identity is unminted</td>
+</tr>
+<tr>
+<td><code>GET ?action=snapshot&amp;table=&amp;offset=</code></td>
+<td>primary</td>
+<td>one page of one copyable table</td>
+</tr>
+<tr>
+<td><code>POST ?action=restore</code></td>
+<td>replica</td>
+<td>lands one chunk; <code>VERIFIED</code> when the whole copy has arrived</td>
+</tr>
+<tr>
+<td><code>GET ?action=log&amp;since=</code></td>
+<td>primary</td>
+<td>the records a replica at that generation still needs</td>
+</tr>
+<tr>
+<td><code>POST ?action=apply</code></td>
+<td>replica</td>
+<td>applies one record</td>
+</tr>
+<tr>
+<td><code>?action=stage&amp;to=</code></td>
+<td>either</td>
+<td>moves the stage, 409 on an illegal move</td>
+</tr>
+</tbody></table></div>
+<p>A replica refuses a request it may not answer with 421 and <code>x-cfw-requires-primary</code>, and refuses a
+stale one with 503 when the caller sent <code>x-cfw-require-generation</code>.</p>
+<h3 id="replica_count"><code>REPLICA_COUNT</code></h3>
+<p>How many lanes a site has beyond the primary. <strong>0 is the default and means one object per site</strong>, in
+which case every routing decision resolves to the primary and nothing changes.</p>
+<p><strong>One lane helps only once the single object is saturated.</strong> Measured through the front worker on
+authenticated pages: one lane serves 0.87x what no pool serves at 32 clients and 0.98x at 64, because
+affinity hashes over two buckets and the lane takes about 60% of the traffic onto an object whose
+Drupal caches are colder than the primary&#39;s while adding no parallelism. At 128 clients the same lane
+serves 2.06x, and at 512 a single object sheds every request as 503 while one lane still serves 426.
+Set this above 1 for a site that is not yet contended; autoscaling only provisions on sustained
+queueing, which is the regime where even one lane pays.</p>
+<p>Lane 0 is the primary; lanes 1..n are objects named <code>&lt;site&gt;#r&lt;lane&gt;</code>. <code>#</code> is outside the set
+<code>encodeSiteId()</code> keeps and outside its <code>_&lt;hex&gt;</code> escape, so a replica name cannot collide with a site
+id however a hostname is spelled.</p>
+<p>An object&#39;s role comes from its own name. <code>REPLICA_READ_ONLY</code> is deployment-wide and would make the
+primary read-only too, so raising <code>REPLICA_COUNT</code> cannot put an existing object into replica mode by
+accident. It tells the router how many lanes to spread across, and nothing else.</p>
+<p>A lane is chosen by hashing a stable key: the path for a request carrying a session, else the client
+address, else the path (<code>affinityKey()</code> in <code>src/ops/replica-routing.ts</code>). A shared-counter round robin
+produced a completely flat scaling curve on the rig while per-client affinity produced 1.00 / 1.80 /
+2.14; an authenticated session keys on the path so one editor&#39;s pages spread. A write spreads only
+where the lane can forward it; with <code>WRITE_FORWARD=0</code> it goes to the primary without asking a replica
+first.</p>
+<p><strong>Only the serving path spreads.</strong> <code>/serve</code> is an allow-list of one and every other route pins to the
+primary, because the two mistakes do not cost the same: a route wrongly pinned loses capacity nobody
+sees, and a route wrongly spread answers from a replica&#39;s copy. The routing rule read the method and
+never the path, so <code>/export</code> handed back one lane&#39;s database and <code>GET /migrate</code> re-ran migration on
+an object that is not the site. Every visitor path is rewritten to <code>/serve</code> before the router is
+asked, so the list needs no other entry.</p>
+<p>The router does not track which lanes are ready. A lane that is not <code>SERVING</code> answers 421 with
+<code>x-cfw-retry-safe: 1</code> and the front worker retries on the primary, so readiness needs no cache and no
+invalidation. It costs one extra hop, and only while a lane is not ready.</p>
+<h3 id="replica_autoscale"><code>REPLICA_AUTOSCALE</code></h3>
+<p>Raising <code>REPLICA_COUNT</code> by hand tells the ROUTER that lanes exist. It does not create them, so the
+lanes it routes to hold no data and answer 421 until somebody drives the provisioning loop.
+Autoscaling is the half that creates one.</p>
+<p>The signal is peak concurrent in-flight requests on the primary. A Durable Object runs one request at
+a time and a PHP render holds it for the whole render, so concurrency is the queue, and a queue is
+the only thing a pool can fix. The target is the <strong>minimum</strong> peak across three windows, minus one, so
+a single burst cannot provision a lane that then exists forever; one quiet window clears the run. The
+copy is driven a chunk at a time off the alarm, the same way a fresh site migrates, so no firing owns
+a whole table copy.</p>
+<p>An explicit <code>REPLICA_COUNT</code> is a floor rather than a ceiling: a site told to run 2 lanes runs at
+least 2 and may still grow. <code>REPLICA_AUTOSCALE=0</code> is how an operator pins the number instead.</p>
+<h3 id="replica_max_lanes"><code>REPLICA_MAX_LANES</code></h3>
+<p>The ceiling autoscaling will not grow past, defaulting to 32.</p>
+<p><strong>Throughput gives no reason to cap.</strong> Addressing objects directly and summing, efficiency against
+perfect scaling reads 100 / 95 / 90 / 85% at 8 / 16 / 32 / 48 replicas -- a flat ~5 points per
+doubling with no knee. That is a topology figure, and routed throughput is measured separately with
+a Worker-hosted generator whose own ceiling is established first.</p>
+<p><strong>Pin <code>REPLICA_AUTOSCALE=0</code> before measuring anything against lane count.</strong> Autoscaling builds lanes
+under exactly the load a rig offers, so a control arm provisioned with zero lanes answered from <code>r1</code>
+and <code>r2</code> on its first run. Read <code>x-cfw-lanes</code> back at drive time rather than trusting the number the
+rig set.</p>
+<p><strong>A pool is reached only by isolates that have already seen it.</strong> <code>believedLanes()</code> is per isolate
+and is set from the <code>x-cfw-lanes</code> the primary reports on a response, so the first request a cold
+isolate makes goes to the primary whatever the pool size, and the belief expires after
+<code>LANES_TRUST_MS</code>. Measured on a 4-lane site: five consecutive requests all answered <code>primary</code>, and
+twenty answered <code>primary 13 / r2 1 / r3 1 / r4 5</code>. Sustained traffic keeps every isolate warm and
+this is invisible; a low-rate or bursty client sees a larger share answered by the primary. Count
+distinct <code>x-cfw-replica</code> values across a burst to read a pool -- a single response cannot.</p>
+<p><strong>The hard ceiling is 256 and it is arithmetic.</strong> <code>replicaCount()</code> clamps to <code>ID_PARTITION_LANES</code>,
+which it imports rather than restates: a lane mints forwarded row ids from its residue class modulo
+the partition, the primary takes class 0, and past 256 two writers would share a class and mint the
+same id. The default of 32 is a cost bound below that, not a correctness one.</p>
+<p>An earlier default of 3 existed for a different reason and is worth recording, because it read as a
+performance limit and was not one. Warming is per OBJECT, so a warmed pool multiplied it: 32 idle
+lanes re-arming every 8 s is 345,600 rows a day to serve nothing, 3.5x free&#39;s entire daily budget. A
+lane the router is not choosing now falls back to the slow re-arm and hibernates, so an unused lane
+costs storage and replication catch-up rather than a warming chain. That per-lane idle cost is the
+bound that actually matters and it is not yet measured.</p>
+<h3 id="write_forward"><code>WRITE_FORWARD</code></h3>
+<p>Lets a pool lane execute a write and forward the statements to the primary rather than refusing it.
+On unless <code>0</code>, and reachable only where a pool already exists: every caller is behind a lane name or
+a non-zero <code>REPLICA_COUNT</code>, both off by default. A site with no pool is unaffected by this value.</p>
+<p>The lane runs the whole write locally, discards its own effect through the driver&#39;s <code>commit: false</code>
+path, and hands the statement list to the primary, which stays the sequencer. Ids are partitioned so
+that every writer holds a residue class no other writer mints -- lanes from their lane number, the
+primary from slice 0 -- and a lane records the ids it forwarded so it cannot repeat one before
+replication catches up.</p>
+<p>Two things are worth knowing before turning it off. A write reaches a lane at all only because this
+is on: with it off the router pins every POST to the primary, so the one object the pool exists to
+relieve keeps every form submission. And an unbuffered write -- one Drupal issues outside a
+transaction -- takes the transaction bridge on a lane rather than the exec bridge, because
+<code>cfwSqlExec</code> has no rollback and a write on it can be neither forwarded nor discarded. That routing
+lives in the driver; the host&#39;s guard refuses an exec write and fails over, which is what happens if
+the two ever disagree about whether a connection holds a residue class.</p>
+<h3 id="replica_lag_ms"><code>REPLICA_LAG_MS</code></h3>
+<p>A restored lane drives itself: reaching <code>VERIFIED</code> arms its alarm, each firing pulls
+<code>action=log</code> from the primary and applies it, and <code>admissionVerdict()</code> decides the promotion to
+<code>SERVING</code>. A lane below <code>SERVING</code> owns its alarm chain and re-arms every 2 s. One that is <code>WITHDRAWN</code>
+resets itself to <code>CREATED</code>, clears its torn-copy markers and asks the primary for a fresh copy, then
+re-arms and repeats the ask until the copy lands; the primary queues the lane in <code>cfw_meta</code> and takes
+a repair before growing the pool, on a quiet site as well as a busy one.</p>
+<p>Once a lane is <code>SERVING</code> it falls through to the ordinary alarm body, and this var is the bound on
+how far behind it may fall. Measured: without the tightening a serving lane re-arms at
+<code>KEEP_WARM_MS</code>, so it pulls the log every 240,000 ms and can serve a copy four minutes behind the
+primary while looking healthy; the fence refuses only a caller that states a freshness requirement,
+and a visitor states none. With it, 30,000. Clamped to 1,000..300,000; below a second a lane spends
+more on asking than on serving.</p>
+<p>Each round costs two Durable Object requests against the primary, so this is a cost knob as much as a
+freshness one.</p>
+<h3 id="creating-a-lane">Creating a Lane</h3>
+<p><code>GET /replica?action=provision&amp;lane=&lt;n&gt;</code> on the <strong>primary</strong>. It copies a bounded number of rows,
+answers with a cursor, and the caller passes that cursor back until <code>done</code>:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$SITE</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/replica?action=provision&#x26;lane=1"</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$SITE</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/replica?action=provision&#x26;lane=1&#x26;cursor=&#x3C;the cursor from the last answer>"</span></span></code></pre><p>It runs on the primary because that is the object a caller can reach; a lane has no route into it
+from outside. The lane needs no Drupal install of its own -- each chunk carries the table&#39;s DDL --
+and it reaches <code>VERIFIED</code> on the final chunk, which arms its alarm. From there it is self-driving.</p>
+<p><code>budget</code> sets rows per invocation and defaults to 4,000. The cursor carries the generation the copy
+began at, so a commit on the primary part-way through answers <code>torn</code>, which keeps the far end from
+refusing in a way that reads like a bug. Restart the copy; there is no resume.</p>
+<p><strong>A primary cannot be copied from until it has minted <code>system.private_key</code></strong>, which Drupal does on
+first use and never at install. <code>action=snapshot</code> answers 409 naming the gap;
+<code>\Drupal::service(&#39;private_key&#39;)-&gt;get()</code> on the primary closes it.</p>
+<p>Cron defaults to on. Leave it on unless a site has a reason not to: a module that depends on cron
+does not fail when cron never runs, it silently does nothing. Six of twenty-five surveyed contrib
+modules need it.</p>
+<h3 id="warming">Warming</h3>
+<p><strong>A Durable Object hibernates after 10 seconds of idle and hibernation discards in-memory state, so
+<code>this.php</code> dies there.</strong> Measured on a deployed worker: an object holding a 32 MB allocation and an
+id minted in its constructor kept ONE incarnation across 71 consecutive 8 s alarms, and at 12, 20, 30
+and 45 s the constructor ran again on every probe.</p>
+<p><code>KEEP_WARM_MS</code> ships at 240,000, which is 24x the threshold, so it re-arms an idle alarm and keeps
+nothing warm. The name is older than the measurement; it is an idle re-arm.</p>
+<p><code>SITE_WARM</code> re-arms at <code>WARM_INTERVAL_MS</code> instead. At 8,000 the object never hibernates, so every
+request finds the interpreter it left. A longer interval lets it hibernate, and the next instance then
+adopts the retained interpreter only when it lands in the same isolate; without retention
+(<code>RETAIN_INTERPRETER=0</code>) nothing can be adopted and the interval stays clamped below 10,000.</p>
+<p><strong>The default follows the economics.</strong> An explicit <code>SITE_WARM</code> always wins. Unset, a paid site warms:
+one site&#39;s 10,800 firings a day sit inside paid&#39;s included Durable Object requests and rows. Unset on
+free it is the thermal policy below, because the same firings are 10.8% of free&#39;s daily row and request
+budgets, and whether that buys enough is the operator&#39;s call. Both levers are on <code>/settings</code>. An idle
+tick charges one row, the <code>setAlarm</code> itself. What warming buys is the 1,398 ms
+cold boot on every page that renders, which is the authenticated tier; a cached page answers off SQL
+without booting PHP at all, so warming cannot make one faster by any amount.</p>
+<p><strong>Past hibernation the curve has one knee, at 30 s.</strong> Measured 2026-09-25 on paid throwaways: a page
+that needs PHP, requested after 150-300 s of idle. The 30-120 s rows come from 12 workers over four
+phases, rotated so every worker ran every interval (288 visits).</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>re-arm</th>
+<th>firings a day</th>
+<th>share of free&#39;s budgets</th>
+<th>paid, per site-month</th>
+<th>adopted</th>
+<th>the request</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>8 s (<code>SITE_WARM</code>)</td>
+<td>10,800</td>
+<td>10.8%</td>
+<td>$0.373</td>
+<td>always</td>
+<td>never hibernated: 156-371 ms</td>
+</tr>
+<tr>
+<td>30 s</td>
+<td>2,880</td>
+<td>2.9%</td>
+<td>$0.099</td>
+<td>36%</td>
+<td>100-692 ms adopted, ~2.1 s not</td>
+</tr>
+<tr>
+<td>60-120 s</td>
+<td>720-1,440</td>
+<td>0.7-1.4%</td>
+<td>$0.025-0.050</td>
+<td>14-15%</td>
+<td>106-888 ms adopted, ~2.2 s not</td>
+</tr>
+<tr>
+<td>240 s</td>
+<td>360</td>
+<td>0.4%</td>
+<td>$0.012</td>
+<td>~2%</td>
+<td>booted: 2-4 s</td>
+</tr>
+</tbody></table></div>
+<p>Past 10 s, adoption depends first on where the platform places the object. Four of the twelve
+workers never adopted at any interval; on the other eight, 30 s adopted 54% and 60-120 s 21-23%. Every
+visit that did not adopt found no retained interpreter in its isolate, so the code refused none. The
+same account also swings by the hour: 27 of 28 at 16:00 UTC, 0 of 60 at 19:00.</p>
+<p>A site that is not warming re-arms at 240 s, whether the thermal policy declined it or an operator
+set <code>SITE_WARM=0</code>, because that is the cheapest point and the thermal policy declines exactly the
+sites whose firings cost more than the boots they save. 60-120 s cost two to four times the firings
+for little more. An operator who wants the middle point sets <code>SITE_WARM=1</code> and
+<code>WARM_INTERVAL_MS=30000</code> on <code>/settings</code>; 30 s is also the shortest interval under $0.10 a month.</p>
+<p><strong>The interval is priced per site rather than flat.</strong> A flat 8 s re-arm is 10,800 object requests and
+10,800 rows a day whatever the traffic, 10.8% of the free daily budget for one site, and it is charged
+at both ends of the band it is only worth paying inside. <code>src/ops/thermal.ts</code> keeps a 64-entry ring of
+recent arrivals (in memory, so the decision costs no rows), estimates the probability of a render
+inside the hibernation threshold, and warms only while that probability times the 1,398 ms boot exceeds
+what a firing costs. Below roughly <strong>505 renders/day</strong> it declines; above roughly <strong>8,640</strong> the site
+never idles 10 s and is already resident, so the warming would be redundant rather than harmful.</p>
+<p><strong>An active session overrides the rate estimate, because the rate is the wrong predictor for one.</strong>
+<code>renderRate()</code> is a property of anonymous traffic: it decides how likely a visitor is to arrive. What
+decides whether an expensive render is imminent is whether somebody is signed in and working, and an
+editor on a quiet site sits far below the 505 renders/day crossing while producing exactly the requests
+a cold boot hurts most. Measured on the VPS comparison rig, an authenticated render is 31 ms on a warm
+object and 513 ms on a cold one. A compiled plan removes the render, not the boot: the first three
+requests of a session still render, and any request that falls through the plan tier pays whatever the
+object costs at that moment.</p>
+<p>So an authenticated render keeps the object warm for 30 minutes on its own. It is a window rather than
+a latch, so a session that ended stops paying within one window, and at the 8 s re-arm it costs 225
+firings, 225 requests and 225 rows, once. The signal is the uid Drupal reported rather than the
+presence of a cookie, so a stale cookie cannot arm it.</p>
+<p>An explicit <code>SITE_WARM</code> still wins in both directions, including over an active session. Setting it to
+<code>1</code> warms a site the estimate would decline, and <code>0</code> declines one the estimate would warm. The
+predictor decides only when the var is unset.</p>
+<p>After an editorial save the object prewarms <strong>one representative per route family</strong> rather than
+arbitrary URLs, because the page cache is keyed on the URL and what a visitor arriving on <code>/node/41</code>
+meets cold is the object, not the page.</p>
+<p>Duration is not the meter. An object waiting on an armed alarm is idle and eligible to hibernate, and
+an idle-eligible object is not billed for duration; warming spends requests and rows.</p>
+<p><code>CRON_INTERVAL_MS</code> is what makes the per-firing budget a budget. The alarm is not a clock, since it
+re-arms at +1 ms while a fill queue is draining, so &quot;once per alarm&quot; during an active fill is once
+per page, each one costing an interpreter unit and up to <code>CRON_MAX_ROWS</code> writes. At 15 minutes the
+worst case is 96 firings/day, so a site that hit the row cap every time spends 48,000 of the 100,000
+daily rows. Lowering it is the fastest way to burn the meter that binds regeneration.</p>
+<p>Cron renders against the site&#39;s origin, so links in mail it sends point at the site. See
+<a href="#site_origin"><code>SITE_ORIGIN</code></a>.</p>
+<h2 id="boot-and-storage">Boot and Storage</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>HEAP_SNAPSHOT</code></td>
+<td>on</td>
+<td>restore a stored wasm heap instead of booting the kernel; <code>0</code> disables</td>
+</tr>
+<tr>
+<td><code>HEAP_IMAGE</code></td>
+<td><strong>off</strong></td>
+<td>take that heap image in the first place; <code>1</code> enables. A restore costs more than a boot</td>
+</tr>
+<tr>
+<td><code>HEAP_RESTORE_CHUNKS</code></td>
+<td>all at once</td>
+<td>chunks of a snapshot one invocation may apply</td>
+</tr>
+<tr>
+<td><code>LAZY_MOUNT</code></td>
+<td><code>1</code> in the canonical config</td>
+<td>stream the pack per file instead of inflating it whole</td>
+</tr>
+<tr>
+<td><code>LAZY_FS_BUDGET_BYTES</code></td>
+<td>20 MiB, 4 MiB in the canonical config</td>
+<td>resident bytes the lazy filesystem keeps before evicting</td>
+</tr>
+<tr>
+<td><code>SITE_DB_PREFIX</code></td>
+<td>the packed default</td>
+<td>which database pack an object mounts</td>
+</tr>
+<tr>
+<td><code>SQL_CHUNK_PREFIX</code></td>
+<td><code>drupal-sql</code></td>
+<td>which asset directory the migration chunks are read from</td>
+</tr>
+<tr>
+<td><code>MIGRATE_ENGINE</code></td>
+<td><code>sql</code></td>
+<td><code>sql</code> replays chunks in JavaScript; <code>php</code> needs a <code>pdo_sqlite</code> the shipping binary does not carry</td>
+</tr>
+<tr>
+<td><code>MIGRATE_SELF_DRIVE</code></td>
+<td>on</td>
+<td>whether a partial migration re-arms its own alarm</td>
+</tr>
+<tr>
+<td><code>MIGRATE_CHUNKS_PER_INVOCATION</code></td>
+<td>1 on free, all on paid</td>
+<td>chunks replayed per invocation</td>
+</tr>
+</tbody></table></div>
+<h3 id="opcache_mode"><code>OPCACHE_MODE</code></h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>value</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>off</code></td>
+<td>default; opcache disabled</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td>opcache on with the file cache as its only backing store</td>
+</tr>
+<tr>
+<td><code>shm</code></td>
+<td>opcache on with shared memory as its backing store</td>
+</tr>
+<tr>
+<td><code>pack</code></td>
+<td>reads a file cache baked into the pack, read-only</td>
+</tr>
+</tbody></table></div>
+<p>The default is <code>off</code>, and the arms are measured. <code>file</code> writes 2,346 <code>.bin</code> files and 32,141,312
+bytes into the in-memory filesystem for a cache nothing ever reads, and <code>opcache_get_status()</code>
+reports opcache DISABLED on that arm because <code>file_cache_only=1</code> turns the shared-memory backend
+off. <code>shm</code> does accelerate (2,346 cached scripts, no filesystem writes) and puts its arena in PHP&#39;s
+linear memory, taking an object to 191.25 MiB against a 128 MiB isolate. <code>off</code> renders within 1 ms of
+<code>file</code> and leaves 37 MiB more room.</p>
+<p><code>pack</code> needs <code>bun scripts/bake-opcache.ts</code> first and mounts nothing without it. It loads the baked
+cache as a second layer and cuts a cold render&#39;s object CPU by roughly 500-900 ms (deployed, n=8
+per arm, with the levers swapped between deploys as a control). It holds 8.58 MB more of the isolate,
+and the visitor&#39;s wall time did not follow the CPU across the swap. Re-bake after any driver or
+composer change: scripts are never revalidated against their source, so the mount refuses a layer
+baked from other sources.</p>
+<h3 id="argon2"><code>ARGON2</code></h3>
+<p><code>1</code> hashes passwords with argon2id at m=19456 KiB, t=2, p=1, computed on the host. Default off.</p>
+<p>Turning it on is a migration: every bcrypt hash on the site reports as needing a rehash, and each
+account is upgraded at its owner&#39;s next login. Existing hashes keep working throughout; core&#39;s
+password service stays in place as the inner service and still owns bcrypt and legacy <code>$S$</code> hashes.
+Hashes are written in PHP&#39;s own <code>$argon2id$v=19$m=..,t=..,p=..$salt$tag</code> form, so a site that leaves
+this platform can verify them on any PHP with ext-argon2.</p>
+<p>A hash costs a 19 MiB transient allocation and two passes of CPU. That is more than a free-plan
+login invocation has.</p>
+<h3 id="shell_assembly"><code>SHELL_ASSEMBLY</code></h3>
+<p>Allows an authenticated GET to be answered from a stored shell with its personalised regions filled
+at the edge. On by default with no plan branch; <code>0</code> opts out, and an empty value is treated as
+unset. The row toll below is what a plan branch would have been about, and at one site it fits
+free&#39;s 100,000 rows/day. No visitor is served an assembly that has not been proven against their own
+render.</p>
+<p>A path with no stored shell is seeded from the next authenticated request, which is what lets
+assembly resume after an invalidation. Every bump purges every shell, because no Drupal cache tag
+reaches one, so without seeding the feature stops at the first content change until an operator
+re-harvests.</p>
+<p>An operator harvest takes two sessions of one role set and stores the shell only when both normalise
+to identical bytes. A seed takes one session, which widens what may be STORED and leaves what may be
+served where it was. A visitor whose permissions hash differs from the stored shell&#39;s falls through
+to an ordinary render.</p>
+<p>Each visitor&#39;s first request for a harvested path re-harvests under their own session and requires
+their normalised shell to equal the stored one byte for byte. That response carries
+<code>x-cfw-cache: VERIFY</code> and is answered from their own harvest; later requests carry
+<code>x-cfw-cache: ASSEMBLED</code>. A shell that disagrees is deleted and the reason is recorded in <code>cfw_meta</code>
+under <code>shellRefusal</code>.</p>
+<p>The proof is stored per <code>(path, permissions hash, uid)</code> and voided when the path is harvested
+again. It costs 40 to 52 rows written once per visitor and path, against 4 to 10 for each render it
+then replaces; an assembly writes none.</p>
+<p>A generation bump drops every stored shell, including a <code>cachetags</code> bump. A shell caches the shared
+region of a page and Drupal has no cache tag pointing at it, so nothing else would invalidate it.
+Assembly stops on that path until the shell is harvested again.</p>
+<p><code>HEAP_SNAPSHOT</code> gates the restore and <code>HEAP_IMAGE</code> gates the producer. <strong>The producer is off by
+default</strong>; <code>HEAP_IMAGE=1</code> opts back in.</p>
+<p>It is off because a restore costs more than the boot it replaces. Two deployed free workers differing
+only in these two vars, <code>cpuTime</code> on the cold render, nothing asked of either object during the idle:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>arm</th>
+<th>cpuTime (ms)</th>
+<th align="right">n</th>
+<th align="right">median</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>HEAP_IMAGE=1</code> and <code>HEAP_SNAPSHOT=1</code></td>
+<td>2020, 1908, 1937, 1561, 1912</td>
+<td align="right">5</td>
+<td align="right">1,912</td>
+</tr>
+<tr>
+<td>both <code>0</code></td>
+<td>1277, 1343, 1113, 1251</td>
+<td align="right">4</td>
+<td align="right">1,264</td>
+</tr>
+</tbody></table></div>
+<p>The ranges do not overlap, so a restore costs about 648 ms more than booting from scratch, and it
+consumes storage against an account-wide 5 GB cap. The cause of the extra time is not known. Checking
+the restored bytes is not it: that costs 13-20 ms for a 37 MB image
+(<code>node scripts/measure/heap-digest-cost.ts</code>).</p>
+<p><strong>The size of the image depends on when it is taken, and the producer takes the expensive one.</strong>
+<code>snapshotStep()</code> fires on an alarm arriving with no resident interpreter, so on a fresh site it
+captures the cold shape at 37,158,912 bytes. An image taken after a kernel boot and a serve is
+9,699,328. The measurement above is of the cold one, which is what ships, and a run against the
+post-serve image reads a 314.5 ms saving instead. <code>TECHNICAL_REPORT.md</code> carries both.</p>
+<p><code>snapshotStep()</code> still takes one image per pack generation from the alarm when opted in, and <code>/heap</code>
+reports <code>imagedGeneration</code>, <code>imageAttempts</code> and <code>lastHeapImage</code>. It never drops the interpreter: it
+runs before the fill loop and only when <code>this.php === null</code>. It also refuses to overwrite an image an
+operator took, since the GC keeps exactly one. When an image IS stored its chunks are deflated, which
+bounds the storage at 3,134,727 bytes rather than 11,206,656.</p>
+<p>The post-render image is not shipped and its safety is not established: byte-identical anonymous
+output is a first-order check, and it falls short of proving that no session-bearing state survives,
+which is the reason the code images before the first render.</p>
+<p><strong>What replaces this as the number to watch is the cold-encounter share</strong>, not the cold-boot duration.
+<code>src/ops/cold-encounter.ts</code> classifies every request the object handles and <code>/serve-stats</code> reports
+<code>coldOfPhp</code>, <code>coldOfObject</code> and <code>coldOfTraffic</code>. 1,264 ms is the floor for an object <code>thermal.ts</code>
+decided not to keep warm, and that policy already ships.</p>
+<p>Read <code>coldOfTraffic</code>, not <code>coldOfObject</code>. A plan hit, an isolate memo hit, a <code>caches.default</code> hit and
+a KV page read all return from the front worker, so the object&#39;s own denominator is the leftovers and
+a share taken against it reads several times high. The front worker reports what it absorbed on the
+next request that hops anyway, under <code>x-cfw-absorbed</code>, and <code>coldOfTraffic</code> is null until it has --
+because a worker too old to report and a site with nothing absorbed are otherwise the same reading.</p>
+<p><strong>A pack-generic image cannot ship in the bundle, and it fails on size.</strong> Two sites provisioned from
+one pack with the hash salt and pinned origin forced equal share 70.27% of pages once rendered, and
+the image is 2,588,005 bytes gzipped against roughly 355 KiB of headroom. Over by 7.3x even at
+perfect determinism. Delta encoding against a shared base, or shipping a base through the assets
+binding, are the surviving ideas and neither is priced.</p>
+<p><strong>Changing <code>LAZY_MOUNT</code>, <code>MIGRATE_ENGINE</code> or <code>SITE_DB_PREFIX</code> in a deploying config means changing
+<code>assets/.assetsignore</code> too.</strong> The shipping asset set is derived from the canonical values of those
+three; <code>tests/unit/runtime/assets-ignore.spec.ts</code> fails when the two disagree.</p>
+<h2 id="diagnostics">Diagnostics</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PW_DIAGNOSTICS</code></td>
+<td>off</td>
+<td>exposes <code>/sql</code>, <code>/restore</code>, <code>/php</code> and the rest of the diagnostic surface</td>
+</tr>
+<tr>
+<td><code>PHP_LOG_LEVEL</code></td>
+<td><code>info</code></td>
+<td>RFC 5424 ceiling on what PHP&#39;s log mirrors to <code>console.log</code></td>
+</tr>
+<tr>
+<td><code>PW_SQL_TRACE</code></td>
+<td>off</td>
+<td>logs every Drupal statement through <code>console.log</code></td>
+</tr>
+<tr>
+<td><code>PW_SQL_TRACE_FROM</code></td>
+<td>0</td>
+<td>first statement number to log</td>
+</tr>
+<tr>
+<td><code>MEMORY_TRACE</code></td>
+<td>off</td>
+<td>logs memory readings at each boot and invocation end, for a reset</td>
+</tr>
+</tbody></table></div>
+<h3 id="pw_diagnostics"><code>PW_DIAGNOSTICS</code></h3>
+<p><strong>One boolean that exposes arbitrary SQL against the site database (<code>/sql</code>), a whole-database
+overwrite (<code>/restore</code>) and arbitrary PHP (<code>/php</code>).</strong> Diagnostic routes fail closed without it.
+<code>bun run dev</code> sets it; a deployed configuration must not. It is absent from the KV override
+allow-list: KV is operator-writable, and every name on that list has a worst case of a slow site,
+with no change to what is reachable.</p>
+<h3 id="php_log_level"><code>PHP_LOG_LEVEL</code></h3>
+<p><code>off | error | warn | log | info | debug</code>, mapped onto RFC 5424 severities (lower is more severe), the
+same scale <code>CfwLogger</code> sends and Drupal&#39;s own <code>watchdog</code> uses. <code>warning</code> and <code>notice</code> are accepted as
+aliases for <code>warn</code> and <code>log</code>, and <code>all</code> for <code>debug</code>.</p>
+<p><code>CfwLogger</code> ships every Drupal log entry across the host bridge and the object mirrors it to
+<code>console.log</code> so it survives the isolate that produced it. Unfiltered, that is right for a ring
+buffer and wrong for a terminal: one page render on 8.5 emits several severity-7 deprecation notices
+with full stack traces, which is most of what a <code>wrangler dev</code> session prints. <code>info</code> is the default
+for that reason.</p>
+<p>An unrecognised value falls back to the default and raises no error. A fatal carries <code>level: &quot;error&quot;</code>
+with no severity and is derived from the name, so a missing field never drops it.</p>
+<p>Consumer: <code>src/ops/log-level.ts</code>.</p>
+<h3 id="pw_sql_trace"><code>PW_SQL_TRACE</code></h3>
+<p>Logs every statement Drupal issues. <code>console.log</code> survives an object reset, which is what makes it
+readable when the object dies mid-run. A <code>wrangler tail</code> has a 256 KB budget, so
+<code>PW_SQL_TRACE_FROM=&lt;n&gt;</code> spends it on the end of a long run instead of the beginning.</p>
+<h2 id="prefill-and-mirroring">Prefill and Mirroring</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PREFILL</code></td>
+<td>on for free, off for paid</td>
+<td>seed the serving table from <code>assets/prefill.json</code></td>
+</tr>
+<tr>
+<td><code>PREFILL_ON_SAVE</code></td>
+<td>on</td>
+<td>re-render invalidated paths after a content save</td>
+</tr>
+<tr>
+<td><code>PREFILL_ON_SAVE_LIMIT</code></td>
+<td>25</td>
+<td>paths one save may queue</td>
+</tr>
+<tr>
+<td><code>SAVE_DEBOUNCE_MS</code></td>
+<td>2000</td>
+<td>how long the refill after a save waits for the rest of a burst; <code>0</code> refills at once</td>
+</tr>
+<tr>
+<td><code>MIRROR_LIMIT</code></td>
+<td>per plan</td>
+<td>files one alarm firing may push to R2; capped at 25</td>
+</tr>
+<tr>
+<td><code>R2_WRITES_PER_MONTH</code></td>
+<td>900000</td>
+<td>R2 writes both mirrors may spend in a UTC month; <code>0</code> turns both off</td>
+</tr>
+<tr>
+<td><code>HTTP_DRAIN_ON_ALARM</code></td>
+<td>on</td>
+<td>drain queued outbound requests from the alarm</td>
+</tr>
+<tr>
+<td><code>HTTP_DRAIN_LIMIT</code></td>
+<td>per plan</td>
+<td>queued outbound requests one firing may fetch; capped at 25</td>
+</tr>
+</tbody></table></div>
+<p><code>PREFILL</code> is on for free because free is where a cold first request costs the most: a prefilled path
+is a hit on its first ever request. It is off during a bake, or every render would be a hit of the
+file being rebuilt.</p>
+<p><code>SAVE_DEBOUNCE_MS</code> holds the refill after a save for a short window, so a burst of saves costs one
+generation bump and one render of each affected page. A refill that ran between two saves would
+reopen the invalidation and make the second save pay for both again. The window starts at the first
+save and later saves do not extend it. A visitor who asks for an invalidated page is still served at
+once; only the pages nobody has asked for wait.</p>
+<p><code>R2_WRITES_PER_MONTH</code> caps what the file and page mirrors spend together. R2&#39;s allocation is
+1,000,000 Class A operations a month per account, and every put past it is billed; the default stops
+one site at 90% of that. The count is kept in <code>cfw_meta</code> under a key that names the month, so it
+resets on the first of each month. Deletes count as well, so the tally reads high. A spent budget
+leaves the rest of the queue in place and every file keeps serving from the object, which holds the
+bytes either way. <code>/serve-stats</code> reports the month&#39;s tally as <code>r2</code>. Set it to <code>0</code> to stop both
+mirrors while leaving <code>FILES</code> bound. On an account running several sites, divide the allocation
+between them.</p>
+<p><strong>Mirror to the optimum.</strong> Once R2&#39;s read meter binds, moving more traffic off-Worker spends a
+333,333/day meter to save a 100,000/day one. On the default traffic mix the peak is 0.769 off-Worker
+for 432,900 views/day, against 336,700 for mirroring everything, so maximising costs 96,200
+views/day.</p>
+<p>The optimum moves with the traffic mix and with CDN absorption, so compute it every time:
+<code>optimalOffWorker()</code> in <code>scripts/measure/free-envelope.ts</code> derives it from the same model every other
+caller uses. Raising absorption does not converge on &quot;mirror everything&quot;; at absorption 1, where R2
+reads cannot bind at all, the peak lands at 0.898 and is bound by rows.</p>
+<h2 id="files-and-images">Files and Images</h2>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>FILES_PUBLIC_URL</code></td>
+<td>unset</td>
+<td>origin a mirrored public file is linked from; unset uses the Worker</td>
+</tr>
+<tr>
+<td><code>IMAGE_ENGINE</code></td>
+<td><code>tinyimg</code></td>
+<td>which engine produces derivatives; <code>images</code> for Cloudflare Images</td>
+</tr>
+<tr>
+<td><code>EAGER_DERIVATIVES</code></td>
+<td>on</td>
+<td>render an upload&#39;s image styles on the rendering lanes; <code>0</code> off</td>
+</tr>
+</tbody></table></div>
+<h3 id="image-styles">Image Styles</h3>
+<p>A public image style&#39;s URL points at the Worker&#39;s delivery path, <code>/cfw-img/&lt;id&gt;/&lt;uri&gt;?&lt;transform&gt;</code>,
+where the front worker renders the derivative with tinyimg. The drupflare module rewrites the URL
+from the style&#39;s effect chain: scale, scale-and-crop, resize and convert each map to one transform.
+A chain that cannot be expressed as one transform, and any private file, keeps Drupal&#39;s stock URL.
+Before this, the toolkit copied the original to the derivative path and every style served the
+full-size source.</p>
+<p>With <code>RENDER_LANES</code> bound, an image written to <code>public://</code> is queued, and the next alarm renders
+every configured style at once on the rendering lanes, Durable Objects that hold no Drupal state.
+The results are stored under <code>public://cfw-derivatives/</code>, and the image route answers a stored copy
+in place of the source on the request it already makes, marked <code>x-cfw-image: STORED</code>. Measured on a
+deployed worker with the four shipped styles, n=5: the job took 984-1,718 ms on four lanes with five
+or six Durable Object requests, a stored first view answered in 41-91 ms, and the same style
+rendered on first view took up to 1,647 ms. Stored and rendered bytes were identical in all 20
+comparisons. Driven through the media form on a deployed worker, n=5, an upload answered 303 in
+750-939 ms and all four styles were stored 3.9-4.4 s after the POST. <code>EAGER_DERIVATIVES=0</code> returns
+to rendering on first view.</p>
+<h3 id="files_public_url"><code>FILES_PUBLIC_URL</code></h3>
+<p>Unset, every file is served through the Worker, which is correct and costs one Worker request per
+file. The front worker answers <code>/sites/default/files/&lt;path&gt;</code> from the object&#39;s file store and caches
+it for 300 seconds. Drupal has no route for a public file, so until this route existed every public
+original answered Drupal&#39;s 404 on a site with no mirror. PNG, JPEG, GIF, WebP and AVIF render inline;
+every other type, SVG and PDF included, is sent as a download under a sandboxing
+<code>Content-Security-Policy</code>, because the file shares the site&#39;s origin and its session cookie. Set to
+an R2 custom domain, a public file that has already mirrored to the <code>FILES</code> bucket is
+linked at that origin instead and costs <strong>no Worker request at all</strong>.</p>
+<p>That is one of only two paths on the platform that cost nothing. A zone Cache Rule is not one of them:
+the Worker runs before the cache is consulted, so a cache hit still spends an invocation. The two are
+a static asset and a hostname that is not routed to the Worker.</p>
+<p>Two files never get the external URL. A <code>private://</code> file is never linked externally at any setting,
+because the bucket has no session and the URL would bypass Drupal&#39;s access check. A public file that
+has not mirrored yet keeps the Worker URL, because the alternative is a 404 on a file the site holds.</p>
+<h3 id="image_engine"><code>IMAGE_ENGINE</code></h3>
+<p><code>tinyimg</code> is the default and runs in the front worker, where it never meets PHP&#39;s heap. It needs no
+zone, no binding and no subrequest, and it has no monthly cap.</p>
+<p>Cloudflare Images is reachable with <code>IMAGE_ENGINE=images</code>. It is the only one of the two that encodes
+AVIF, and it costs a zone with transformations enabled, does not exist on <code>*.workers.dev</code>, and caps at
+5,000 transformations a month. Against the four shipped image styles that is 1,250 images before a
+site stops generating derivatives.</p>
+<p><strong>The toolkit reports the engine&#39;s real format list</strong>, and that matters more than it sounds. All four
+shipped styles are <code>image_scale</code> plus <code>image_convert_avif</code>, and core&#39;s <code>AvifImageEffect</code> asks the
+toolkit whether AVIF is supported before using it, falling through to the style&#39;s configured fallback
+of <code>webp</code> when the answer is no. So core degrades on its own with no config change, provided the
+toolkit tells the truth. Claiming <code>avif</code> on the tinyimg engine produces a logged failure instead of a
+fallback.</p>
+<p>Measured on a deployed free worker, <code>cpuTime</code> amortised over 10 transforms per invocation, median of
+12, against a source-only control at 0 ms: thumbnail 36.3 ms, medium 48.6, large 63.5, wide 188.2.
+Styles at or below 480 px on the long edge are produced inline; larger ones go to the fill queue.</p>
+<p>gd is not an engine and is not planned. Built to native wasm and deployed beside tinyimg on the same
+3000x1571 JPEG, it used ~294 ms of CPU against tinyimg&#39;s ~184 ms, and it cannot write WebP. Code
+that calls PHP&#39;s <code>imagecreate*</code> functions directly finds them absent on this runtime.</p>
+<h2 id="outbound-mail">Outbound Mail</h2>
+<p>Drupal&#39;s mail plugin is <code>cfw_mail</code>, and it hands the message to the Worker. The Worker resolves one
+of three transports and commits the message to <code>cfw_mail_queue</code>; the alarm sends it. <code>src/ops/mail.ts</code>
+is the implementation.</p>
+<p><strong>The plugin is claimed by a config override that the module registers, not by <code>settings.php</code>.</strong>
+Assigning <code>system.mail:interface.default = cfw_mail</code> from <code>settings.php</code> names a plugin of a module a
+site may not have installed, and <code>MailManager</code> throws <code>PluginNotFoundException</code> on an unresolvable id,
+which answered 500 on <code>/user/password</code> for every site. <code>MailInterfaceOverride</code> can only run when
+<code>drupflare</code> is installed, and it yields to <code>smtp</code> on a site that has <code>smtp</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>MAIL_TRANSPORT</code></td>
+<td><code>auto</code></td>
+<td><code>auto</code>, <code>binding</code>, <code>api</code>, <code>smtp</code> or <code>off</code></td>
+</tr>
+<tr>
+<td><code>MAIL_FROM</code></td>
+<td>none</td>
+<td>the From for a message that carries none</td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_ON_ALARM</code></td>
+<td>on</td>
+<td>send queued mail from the alarm</td>
+</tr>
+<tr>
+<td><code>MAIL_DRAIN_LIMIT</code></td>
+<td>5</td>
+<td>messages one firing may send; capped at 25</td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_ACCOUNT_ID</code></td>
+<td>none</td>
+<td>the account the Email Sending REST API posts under</td>
+</tr>
+<tr>
+<td><code>CF_EMAIL_TOKEN</code></td>
+<td>none</td>
+<td>an API token with Email Sending: Edit; a secret, not a var</td>
+</tr>
+<tr>
+<td><code>SMTP_HOST</code></td>
+<td>none</td>
+<td>submission host for the third-party lane</td>
+</tr>
+<tr>
+<td><code>SMTP_PORT</code></td>
+<td>587/465</td>
+<td>587 for STARTTLS, 465 for implicit TLS</td>
+</tr>
+<tr>
+<td><code>SMTP_TLS</code></td>
+<td>starttls</td>
+<td><code>starttls</code>, <code>implicit</code> or <code>off</code></td>
+</tr>
+<tr>
+<td><code>SMTP_USER</code></td>
+<td>none</td>
+<td>submission user; omit for an unauthenticated relay</td>
+</tr>
+<tr>
+<td><code>SMTP_PASS</code></td>
+<td>none</td>
+<td>submission password; a secret</td>
+</tr>
+<tr>
+<td><code>SMTP_AUTH</code></td>
+<td><code>PLAIN</code></td>
+<td><code>PLAIN</code> or <code>LOGIN</code></td>
+</tr>
+</tbody></table></div>
+<p><code>auto</code> takes the first transport that is configured, in the order binding, api, smtp. The binding
+leads because it spends no credential.</p>
+<h3 id="the-smtp-modules-own-settings">The <code>smtp</code> Module&#39;s Own Settings</h3>
+<p>A site with <code>drupal/smtp</code> installed and configured needs none of the <code>SMTP_*</code> vars. The module
+installs on this runtime and its socket never runs, so its settings would otherwise sit unread while
+an operator typed the same relay a second time. Its
+<code>smtp.settings</code> is read and mapped onto the transport: <code>smtp_host</code>, <code>smtp_port</code>, <code>smtp_username</code>,
+<code>smtp_password</code> and <code>smtp_from</code> map across directly, and <code>smtp_protocol</code> maps <code>ssl</code> to implicit TLS,
+<code>tls</code> to STARTTLS and <code>standard</code> to no encryption. <code>smtp_on</code> turned off is honoured.</p>
+<p><strong>A var always wins over the setting it corresponds to.</strong> A var is set by whoever can deploy the
+Worker; the settings form is reachable by anyone who can get to a Drupal admin page. So the settings
+fill gaps only, and setting <code>SMTP_HOST</code> pins the relay regardless of what the site is configured
+with.</p>
+<h3 id="what-each-transport-reaches">What Each Transport Reaches</h3>
+<p><code>binding</code> uses a <code>send_email</code> binding named <code>SEND_EMAIL</code>, declared in your own Wrangler config. <code>api</code>
+uses the Email Sending REST API. Cloudflare applies the same limits to both, and to its own SMTP
+endpoint, so the choice between them comes down to credentials. Two account-level facts decide what
+either can reach:</p>
+<ul>
+<li><strong>A sending domain that is not onboarded</strong> reaches verified destination addresses only: the 200
+per account that somebody confirmed by clicking a link. Onboarding the domain with SPF and DKIM on
+Cloudflare DNS lifts that immediately.</li>
+<li><strong>Workers Free has no outbound Email Sending.</strong> The one carve-out is that sends to verified
+destination addresses are free on every plan, from your routing domains, against no quota.</li>
+</ul>
+<p>So a free site can mail its owner and cannot mail a visitor who just registered. Third-party SMTP is
+the only general answer on free, and a rejected Cloudflare send says so in its error text, with no
+status code to read.</p>
+<h3 id="smtp">SMTP</h3>
+<p><strong>A <code>send_email</code> binding can be added later, and it is not in the canonical config for a different
+reason than you would guess.</strong> Checked against Cloudflare&#39;s own configuration reference: <code>send_email</code>
+is an ordinary Wrangler array entry, so adding one is a redeploy rather than a recreate, and
+<code>allowed_destination_addresses</code> / <code>destination_address</code> narrow what it may reach. What stops it
+shipping by default is that its prerequisites are ACCOUNT state the control plane cannot provision
+on an operator&#39;s behalf -- Email Routing enabled, at least one verified destination address, and the
+sending domain onboarded -- which is the same shape that made <code>r2_buckets</code> refuse the one-click
+deploy. <code>api</code> needs none of that beyond the token <code>/setup/cf</code> already grants, so it is the transport
+the product provisions and the binding is an opt-in.</p>
+<p>Port 25 is blocked on Workers; <code>MAIL_TRANSPORT=smtp</code> with <code>SMTP_PORT=25</code> is refused by name, before
+any attempt. <code>smtp.mx.cloudflare.net</code> is refused too: it resolves inside <code>162.158.0.0/15</code>, a
+published Cloudflare range, and outbound TCP to those is blocked. Use <code>MAIL_TRANSPORT=api</code> or the
+binding for Cloudflare mail. <code>SMTP_TLS=off</code> together with <code>SMTP_USER</code> is refused, because it would
+put the relay password on the wire.</p>
+<p>SMTP is the only transport that opens an outbound TCP socket, and an outbound socket is on
+Cloudflare&#39;s list of conditions that prevent a Durable Object from hibernating. The object is
+therefore billed for compute duration for the length of the send, and the queue drains sequentially,
+so a batch is billed for the whole batch. The socket is closed in a <code>finally</code>, which caps the
+exposure at the send itself, well under the 15-minute maximum a connection can defer eviction by.
+The <code>api</code> and <code>binding</code> transports use <code>fetch</code>, which never holds an object in memory.</p>
+<h3 id="limits-and-what-a-refusal-means">Limits and What a Refusal Means</h3>
+<p>A message is refused at commit, where <code>CfwMail</code> logs the reason next to the operation that produced
+it, for: no recipient, no From, more than 50 recipients across To/Cc/Bcc, a subject over 998
+characters, headers over 16 KB, or a payload over 1,000,000 bytes. That last one derives from the
+Durable Object record ceiling of 2,199,995 bytes; Cloudflare&#39;s own 5 MiB is the looser of the two and
+never fires first.</p>
+<p>A failure after commit is only visible on <code>/__serve-stats</code>, under <code>mailQueue</code>, <code>lastMailDrain</code> and
+<code>lastMailDrainAt</code>. A failed send is not retried: a send is not idempotent, and a password reset
+delivered twice with two different one-time links is worse than one that did not arrive.</p>
+<p>Mail sent through the <code>send_email</code> binding shows as <strong>dropped</strong> in the Email Routing summary even
+when it was delivered. Read Email Sending metrics instead.</p>
+<h3 id="connecting-a-cloudflare-account">Connecting a Cloudflare Account</h3>
+<p>Two ways, both owner-authenticated. Pasting <code>CF_EMAIL_ACCOUNT_ID</code> and <code>CF_EMAIL_TOKEN</code> needs no
+setup. OAuth issues a short-lived scoped grant instead, revocable from the Cloudflare dashboard.</p>
+<p>Owner-authenticated means <code>Authorization: Bearer &lt;ownerToken&gt;</code>, the token <code>/firstrun</code> returns once
+when the site is claimed. Without it these routes answer 401 with a <code>WWW-Authenticate: Bearer</code>
+challenge. <code>README.md</code> covers claiming.</p>
+<p><code>GET /setup/cf?action=connect&amp;client_id=&lt;id&gt;</code> starts the flow and returns an authorize URL;
+<code>/setup/cf/callback</code> completes it; <code>?action=status</code> reports whether an account is connected and
+<code>?action=disconnect</code> revokes the grant at Cloudflare as well as forgetting it locally.</p>
+<p>OAuth needs a client the operator registers once, under <strong>Manage account &gt; OAuth clients</strong>, with
+<code>https://&lt;your-site&gt;/setup/cf/callback</code> as its redirect URI and <code>private</code> visibility. A redirect URI
+is registered against the client and every deployment answers on a different origin, so there is no
+shared client that could serve all of them. The flow is Authorization Code with PKCE (S256) and
+carries no client secret.</p>
+<p>The client ID is stored in the site&#39;s own database, away from KV. It carries no secret, and a KV
+writer who could change it would point the consent screen at an application they control.</p>
+<p>Scopes requested: <code>user:read</code>, <code>account:read</code>, <code>email:read</code>, <code>email:write</code>. Onboarding a sending
+domain additionally needs <strong>zone DNS write</strong>, which is why it is a separate opt-in step.</p>
+<h3 id="onboarding-a-sending-domain">Onboarding a Sending Domain</h3>
+<p><code>GET /setup/mail?zone=&lt;zone-id&gt;</code> reports which step the domain is waiting on;
+<code>?action=apply</code> creates the sending subdomain and writes the DNS records. Owner-authenticated, and
+safe to re-run: a settled zone costs zero API calls.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>stage</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>no-zone</code></td>
+<td>pick the zone this site sends from</td>
+</tr>
+<tr>
+<td><code>needs-subdomain</code></td>
+<td>create the sending subdomain on that zone</td>
+</tr>
+<tr>
+<td><code>needs-dns</code></td>
+<td>records still to write, counted in <code>waitingOn</code></td>
+</tr>
+<tr>
+<td><code>awaiting-verification</code></td>
+<td>click the link Cloudflare emailed to the destination address</td>
+</tr>
+<tr>
+<td><code>ready</code></td>
+<td>mail can send</td>
+</tr>
+</tbody></table></div>
+<p><code>settled</code> means re-running changes nothing; onboarding may still be unfinished.
+<code>awaiting-verification</code> is settled, because nothing more can be done from this side.</p>
+<p>A sending subdomain is zone-scoped. Six records are written: three MX and an SPF TXT on the
+return-path host, a DKIM TXT at <code>&lt;selector&gt;._domainkey</code>, and a DMARC TXT on the apex.</p>
+<p><strong>An existing DMARC record is reported, never overwritten.</strong> It states a policy for every mail
+stream on the domain, so replacing <code>p=none</code> with <code>p=reject</code> would tell receivers to bounce
+unauthenticated mail from senders that have nothing to do with this site. It appears under
+<code>advisories</code> with both values, and the flow still reaches <code>ready</code>.</p>
+<p>Destination-address verification is pollable: the address carries <code>status</code> and a <code>verified</code>
+timestamp, so the surface updates on its own.</p>
+<h2 id="outbound-tcp">Outbound TCP</h2>
+<p>Drupal reaches TCP through <code>Drupal\drupflare\Network\CfwTcp</code>, which declares a whole exchange and
+reads the answer on a later invocation. <code>src/ops/tcp.ts</code> runs it between PHP invocations, over
+<a href="https://github.com/gmitch215/edgeport">edgeport</a>. It shares the deferred HTTP tier&#39;s queue, cache
+and retry budget.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>REDIS_URL</code></td>
+<td>none</td>
+<td><code>redis://user:pass@host:6379/0</code>, or <code>rediss://</code> for TLS</td>
+</tr>
+<tr>
+<td><code>SYSLOG_URL</code></td>
+<td>none</td>
+<td><code>syslog://collector:514</code>, or <code>syslogs://</code> for RFC 5425</td>
+</tr>
+<tr>
+<td><code>SYSLOG_APP_NAME</code></td>
+<td><code>drupal</code></td>
+<td>APP-NAME on every record this site ships</td>
+</tr>
+</tbody></table></div>
+<p>Both carry credentials, so both are secrets and neither is a <code>vars</code> entry, and neither can be set
+from KV. A KV writer who could set <code>REDIS_URL</code> would receive whatever the site writes to it.</p>
+<p><strong>The endpoint belongs to the deployment, and never to the caller.</strong> Module code names a protocol and
+an operation; the host supplies the host, port and credentials. Arbitrary <code>host:port</code> TCP behind any
+code that can call a host function would be a port scanner and a protocol-smuggling surface.
+Administrative Redis commands (<code>FLUSHALL</code>, <code>CONFIG</code>, <code>EVAL</code>, <code>SCRIPT</code>, <code>SHUTDOWN</code> and the rest of the
+list in <code>src/ops/tcp.ts</code>) are refused before anything is dialled.</p>
+<p><strong>A Redis cache backend cannot be built on this tier</strong>, and it is served by a second one. A cache get
+has to answer inside the request that asked, and a deferred exchange always misses the first time.
+What this tier reaches is the deferrable half: a publish, a counter, a write nobody blocks on, or a
+read a later request can use.</p>
+<p><code>syslog</code> is the shape this tier serves without compromise, because syslog over TCP never replies.</p>
+<h3 id="the-parked-tier">The Parked Tier</h3>
+<p><code>drupal/redis</code> works unmodified, over a second mechanism. A trapped socket call freezes PHP where it
+stands, the Worker performs the exchange, and the call returns with the answer inside the same
+request. Predis speaks RESP over <code>stream_socket_client</code>, and that is the shape the park suspends
+under.</p>
+<p>It arms only when <code>REDIS_URL</code> is set, and it dials that endpoint and no other: the host and port the
+module asks for are checked for shape and then discarded, so a module that can build a string cannot
+choose a destination. A request naming a port other than the configured one is refused. Any stream
+the Worker did not open is handed back to PHP untouched, so arming does not disturb file writes in a
+render.</p>
+<p><strong>The Durable Object&#39;s own SQLite is still the faster cache backend and the recommended one.</strong> A
+parked get is a network round trip; a SQLite read is local. Measured from a Durable Object, a round
+trip is 1 ms to a same-region server and 53 ms to a distant one, and every cache operation pays one.
+Redis is here for a deployment that already has a server and wants Drupal pointed at it, not because
+it is quicker. The status report says so on any site that enables the module.</p>
+<p>A blocking outbound call over <strong>HTTP</strong> is served by replacing the transport rather than trapping it.
+PHP reaches HTTPS through a stream wrapper the runtime invokes from inside a C frame, and a park under
+one cannot resume, so Guzzle and Symfony&#39;s HTTP client are given a handler that yields from userland
+instead. <code>drupal/openid_connect</code> completes a login through its own client that way. A call made from
+inside an internal function such as <code>array_map</code> cannot park; it falls back to the deferred transport
+rather than failing. <code>TECHNICAL_REPORT.md</code> has the mechanism and the measured trip counts.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>PARK</code></td>
+<td>on</td>
+<td>whether the park may arm at all; anything but <code>1</code> routes renders around it</td>
+</tr>
+<tr>
+<td><code>SLEEP_BUDGET_MS</code></td>
+<td>2,000</td>
+<td>total ms PHP may wait through the park per request; an alarm gets 15x</td>
+</tr>
+</tbody></table></div>
+<p><code>sleep()</code>, <code>usleep()</code> and a Guzzle <code>delay</code> park for real, up to the budget. Past it, a sleep returns at
+once and records how much it was short, so a retry loop never holds a visitor longer than a slow render.</p>
+<h2 id="workers-ai">Workers AI</h2>
+<p>Inference is a queued tier over the same queue as outbound HTTP and TCP. A model call is declared,
+run between PHP invocations, and read on a later one. <code>src/ops/ai.ts</code> runs it.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>binding or var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>AI</code></td>
+<td>none</td>
+<td>the Workers AI binding; the tier is absent without it</td>
+</tr>
+<tr>
+<td><code>AI_MODELS</code></td>
+<td>four model ids</td>
+<td>comma-separated allow-list of model ids</td>
+</tr>
+</tbody></table></div>
+<p>The tier uses the binding. A REST call to <code>api.cloudflare.com</code> needs an <code>Authorization: Bearer</code>
+header and the account id in its URL, which would put the account token in a queue row; the binding
+carries its own authorisation.</p>
+<p><strong>Neurons are a fourth meter.</strong> 10,000 per day on Workers Free and Workers Paid alike, reset at
+00:00 UTC, and exhaustion arrives as HTTP 429 with error 3036, never as a bill. Neither the serving
+ceiling nor the regeneration ceiling sees it. <code>/ai</code> reports a projected cost per call, derived from
+Cloudflare&#39;s published per-model rate and an approximate token count; the binding returns no metered
+figure, so the projection is arithmetic and is labelled as such.</p>
+<p>Measured on a deployed free-plan site: a <code>llama-3.3-70b</code> completion projects to 102.62 neurons, which
+is <strong>97 completions a day</strong>. A <code>bge-m3</code> embedding of a short text projects to 0.01, and indexing 1,000
+nodes at 500 tokens each is about 5% of one day. Embedding-backed search fits the free allocation;
+chat completion overruns it.</p>
+<h3 id="two-catalogues">Two Catalogues</h3>
+<p>Cloudflare publishes two model lists and the difference matters to a site owner.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>catalogue</th>
+<th>what it is</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Workers AI, <code>/workers-ai/models/</code></td>
+<td>every entry Cloudflare-hosted; inference runs on Cloudflare hardware</td>
+</tr>
+<tr>
+<td>unified AI catalog, <code>/ai/models/</code></td>
+<td>the above plus third-party models reached through AI Gateway</td>
+</tr>
+</tbody></table></div>
+<p>The extra entries on the unified catalogue are external providers (OpenAI, Anthropic, Google, xAI)
+reached over AI Gateway and billed through it. A prompt sent to one leaves Cloudflare.</p>
+<p><code>Partner</code> is a separate axis. A Partner model on the Workers AI catalogue has proprietary weights and
+still runs on Cloudflare hardware: Deepgram, Leonardo, Black Forest Labs and NVIDIA all appear there.
+The privacy line runs between Cloudflare-hosted and external provider, and open-weight against
+partner is a different line entirely.</p>
+<p><code>AI_MODELS</code> is the control. Its default list is Cloudflare-hosted only.</p>
+<h3 id="what-this-tier-does-not-do">What This Tier Does Not Do</h3>
+<p><strong>No inline AI in a render.</strong> A block or field formatter calling a provider during a page render
+holds the object across the round trip, which makes it ineligible for hibernation and bills as wall
+clock. The surfaces this tier fits are the ones that already retry and already show progress:
+generation on save, moderation, alt text, summarisation, and embedding on the cron path.</p>
+<p><strong>No streaming.</strong> The unit this queue carries is a finished response body.</p>
+<h2 id="oidc-login">OIDC Login</h2>
+<p>A login is completed by the Worker. The callback is an ordinary request, so the token exchange and
+the <code>id_token</code> signature check happen in JavaScript before PHP is entered, and PHP is handed a
+decided result. <code>src/ops/oidc.ts</code> is the implementation.</p>
+<p>This route needs no module. <code>drupal/openid_connect</code> also works, through its own client: the
+<code>openssl_*</code> functions are bridged to the host&#39;s crypto and the token POST is parked. An unverified
+<code>id_token</code> is an unauthenticated login either way, so both paths verify the signature.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>setting</th>
+<th>where</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>oidc_issuer</code></td>
+<td><code>cfw_meta</code></td>
+<td>the provider&#39;s issuer URL; https, or a loopback host</td>
+</tr>
+<tr>
+<td><code>oidc_client_id</code></td>
+<td><code>cfw_meta</code></td>
+<td>the client registered with that provider</td>
+</tr>
+<tr>
+<td><code>OIDC_CLIENT_SECRET</code></td>
+<td>binding</td>
+<td>for a provider that issued one; a secret, not a var</td>
+</tr>
+</tbody></table></div>
+<p>The issuer and the client id sit in the object&#39;s own storage, and the secret is a binding. None of
+the three can be set from KV: a writer who could change the issuer would point the consent screen at
+a provider they control, and every login on the site would authenticate against it.</p>
+<p>Plain http is refused except on a loopback host, which is what lets a provider run on the same machine
+during development. A deployed Worker has no loopback to reach, so the exemption grants nothing there.</p>
+<p>Register <code>https://&lt;your-site&gt;/oidc?action=callback</code> as the redirect URI. <code>/oidc</code> starts a login and
+accepts an optional <code>return</code> path, which must be site-relative. It is a public route because a
+provider&#39;s redirect carries no header this Worker controls; <code>state</code> is what authenticates it.</p>
+<p>Completing a login also needs <code>drupal/externalauth</code> installed on the site, which is what maps the
+verified identity onto an account.</p>
+<p><code>/setup/oidc</code> reads and writes the two <code>cfw_meta</code> values, and <code>/_cfw/access</code> is the page over it.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>action</th>
+<th>method</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>?action=status</code></td>
+<td>GET</td>
+<td>the issuer, the client id, whether the secret binding is set, the redirect URI</td>
+</tr>
+<tr>
+<td><code>?action=save</code></td>
+<td>POST</td>
+<td>validates and stores the pair, then fetches the discovery document</td>
+</tr>
+<tr>
+<td><code>?action=clear</code></td>
+<td>GET</td>
+<td>forgets both, which turns login off</td>
+</tr>
+</tbody></table></div>
+<p>It is an <strong>owner</strong> route, so it takes the token minted at first run and refuses the admin page&#39;s
+weaker gate. Reading which provider is configured is harmless; choosing it is not.</p>
+<p>The issuer must be <code>https</code> and must carry no query or fragment: the discovery URL is built by
+appending a fixed path, so an issuer carrying either produces a URL nobody intended. A trailing slash
+is normalised away so that discovery and the later <code>iss</code> comparison agree on one spelling. Saving
+fetches the discovery document immediately and reports what it advertises, so a wrong issuer surfaces
+at configuration time, well before someone&#39;s first login. The secret is never read back.</p>
+<p><strong>The claims never travel in a URL.</strong> The browser carries a single-use ticket; the claims stay in the
+object&#39;s storage and the row is deleted before they are returned, so a second presentation of the
+same ticket finds nothing. A redirect lands in browser history, in a referrer and in any proxy log
+on the path.</p>
+<p>Five conditions refuse a login, each tested against real generated keys: a signature from a key
+outside the provider&#39;s JWKS, an issuer that is not the configured one, an audience belonging to
+another client of the same provider, an expired token, and a nonce from a different login. <code>none</code>
+and the HMAC algorithms are refused by omission.</p>
+<h2 id="git-remotes">Git Remotes</h2>
+<p>A site follows as many repositories as it is given. <code>src/ops/git-smart.ts</code> is the transport,
+<code>src/ops/git-provider.ts</code> the provider layer above it, <code>src/ops/git-sync.ts</code> the layout and diff, and
+<code>/_cfw/git</code> the page that drives all three.</p>
+<h3 id="the-transport">The Transport</h3>
+<p>Git&#39;s smart HTTP, so any host that serves a repository works. A poll is
+<code>GET /info/refs?service=git-upload-pack</code> and a pull is <code>POST /git-upload-pack</code> for one commit at
+depth 1; the packfile is parsed in the Worker, including both delta forms.</p>
+<p>The provider APIs are a layer above it and the transport depends on none of them. <code>generic</code> uses no
+API at all: branches and open requests both come out of the ref advertisement, since every provider
+publishes <code>refs/pull/N/head</code> or <code>refs/merge-requests/N/head</code>.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>provider</th>
+<th>API</th>
+<th>default host</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>github</code></td>
+<td>REST v3</td>
+<td><code>https://api.github.com</code></td>
+</tr>
+<tr>
+<td><code>gitlab</code></td>
+<td>REST v4</td>
+<td><code>https://gitlab.com</code></td>
+</tr>
+<tr>
+<td><code>bitbucket</code></td>
+<td>REST 2.0</td>
+<td><code>https://api.bitbucket.org</code></td>
+</tr>
+<tr>
+<td><code>gitea</code></td>
+<td>REST v1, Forgejo too</td>
+<td>none; the host is required</td>
+</tr>
+<tr>
+<td><code>generic</code></td>
+<td>none</td>
+<td>none; the host is required</td>
+</tr>
+</tbody></table></div>
+<h3 id="storage">Storage</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>setting</th>
+<th>where</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>git_remotes</code></td>
+<td><code>cfw_meta</code></td>
+<td>the configured remotes, as one JSON row</td>
+</tr>
+<tr>
+<td><code>git_token_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the access token for one remote</td>
+</tr>
+<tr>
+<td><code>git_email_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the Atlassian account email, Bitbucket only</td>
+</tr>
+<tr>
+<td><code>git_hooksecret_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the shared secret a delivery is verified against</td>
+</tr>
+<tr>
+<td><code>git_head_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the sha the last poll saw</td>
+</tr>
+<tr>
+<td><code>git_installedsha_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the sha whose files are actually mounted</td>
+</tr>
+<tr>
+<td><code>git_interval_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>poll cadence in minutes; <code>0</code> turns polling off</td>
+</tr>
+<tr>
+<td><code>git_backoff_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>epoch ms before which nothing polls this remote</td>
+</tr>
+<tr>
+<td><code>git_previewof_&lt;id&gt;</code></td>
+<td><code>cfw_meta</code></td>
+<td>the request being previewed instead of the branch</td>
+</tr>
+</tbody></table></div>
+<p>Module source lands in <code>cfw_module_file</code>, one row per file, with the remote id as the owning package.
+That is the same table <code>composer require</code> writes to, which is what makes a conflict detectable.</p>
+<p>All of it lives in the object&#39;s own storage and none of it can be set from KV: a writer who could
+change a remote would point the site at a repository they control, and a writer who could read a
+token would have push access to the operator&#39;s repository.</p>
+<h3 id="polling">Polling</h3>
+<p>The interval is per repository and defaults to 60 minutes, floored at 5. The alarm polls at most
+three due remotes per firing, oldest first, so one slow remote cannot starve the others. A 429 sets a
+backoff that honours <code>Retry-After</code> and otherwise doubles to an hour.</p>
+<h3 id="installing">Installing</h3>
+<p><code>selectFiles()</code> keeps PHP, YAML, Twig, JavaScript and CSS, and drops <code>tests/</code>, <code>vendor/</code>,
+<code>node_modules/</code>, <code>.github/</code> and dotfiles. Module names come from <code>*.info.yml</code>; a submodule inside
+another module&#39;s tree stays where it is and is mounted once.</p>
+<p>A pull is applied in one <code>transactionSync()</code> and then verified by booting the Drupal kernel. A boot
+failure restores the previous file set and records the reason on the remote.</p>
+<h3 id="what-gets-written-back">What Gets Written Back</h3>
+<p>A <strong>commit status</strong> on the pushed sha: a state, a context, a description and a link. All three
+providers support it and an access token can write it.</p>
+<p>GitHub&#39;s Checks API carries annotations and per-line output, and only a GitHub App can write one. A
+repository-scoped fine-grained token is refused with <code>Resource not accessible by personal access token</code> on both check-run endpoints and accepted on the status endpoint, so the product offers commit
+statuses and avoids the word &quot;checks&quot;.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>provider</th>
+<th>read the tree</th>
+<th>write a status</th>
+<th>create a webhook</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GitHub</td>
+<td><code>Contents: read</code></td>
+<td><code>Commit statuses: write</code></td>
+<td><code>Webhooks: write</code></td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>read_api</code></td>
+<td><code>api</code></td>
+<td><code>api</code>, Maintainer or Owner</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td><code>repository:read</code></td>
+<td><code>repository:read</code></td>
+<td><code>webhook</code></td>
+</tr>
+<tr>
+<td>Gitea, Forgejo</td>
+<td><code>read:repository</code></td>
+<td><code>write:repository</code></td>
+<td><code>write:repository</code></td>
+</tr>
+<tr>
+<td>Any git remote</td>
+<td>read access over HTTPS</td>
+<td>no API</td>
+<td>register by hand</td>
+</tr>
+</tbody></table></div>
+<p>GitLab has no scope narrower than <code>api</code> for writing a status. Bitbucket has no personal access
+token: an Atlassian API token authenticates as HTTP Basic with the account email as the username, so
+its row on the page asks for one. A plain remote has nowhere to put a status, so <code>statusRequest()</code>
+returns null for it.</p>
+<p>Gitea takes <code>state</code> on the way in and answers <code>status</code> on the way out, which matters when reading a
+status back through its API.</p>
+<h3 id="deliveries">Deliveries</h3>
+<p><code>/githook?remote=&lt;id&gt;</code> receives them. It takes no credential this Worker controls, so the signature
+is the whole of the authentication and an unverifiable delivery is refused.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>provider</th>
+<th>header</th>
+<th>what it proves</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GitHub</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>HMAC-SHA256 over the raw body</td>
+</tr>
+<tr>
+<td>Gitea, Forgejo</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>the same scheme, verified the same way</td>
+</tr>
+<tr>
+<td>Bitbucket</td>
+<td><code>X-Hub-Signature</code></td>
+<td>HMAC, method read from the header prefix</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>webhook-signature</code></td>
+<td>HMAC-SHA256, GitLab 19.0 and a feature flag</td>
+</tr>
+<tr>
+<td>GitLab</td>
+<td><code>X-Gitlab-Token</code></td>
+<td>the shared secret, in plaintext</td>
+</tr>
+<tr>
+<td>Any git remote</td>
+<td><code>X-Hub-Signature-256</code></td>
+<td>accepted if the sender can produce it; refused otherwise</td>
+</tr>
+</tbody></table></div>
+<p>GitLab installs before 19.0 send the secret in plaintext and cannot be HMAC-verified. Both forms are
+accepted, and the page shows which one the last delivery used, since the two differ in what they
+prove.</p>
+<p>A push to the tracked branch installs the commit inline and writes the result back as a status. A
+push to any other branch, a branch delete, and a push arriving while a request is being previewed all
+record the head and stop there.</p>
+<h2 id="database-updates">Database Updates</h2>
+<p><code>updb</code> slices Drupal&#39;s own update path across invocations. Every var here bounds one slice.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>UPDB_FLUSH_SPLIT</code></td>
+<td>on</td>
+<td>split a cache flush across invocations</td>
+</tr>
+<tr>
+<td><code>UPDB_ALLOW_UNBOUNDED</code></td>
+<td>off</td>
+<td>permit an update with no measurable bound</td>
+</tr>
+<tr>
+<td><code>UPDB_SNAPSHOT_MAX_ROWS</code></td>
+<td>none</td>
+<td>rows a pre-update snapshot may hold</td>
+</tr>
+<tr>
+<td><code>UPDB_RETRY_POLICY</code></td>
+<td>none</td>
+<td>how a failed slice is retried</td>
+</tr>
+<tr>
+<td><code>UPDB_ON_ABORT</code></td>
+<td>none</td>
+<td>what happens to a run that cannot continue</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_ATTEMPTS</code></td>
+<td>none</td>
+<td>attempts per slice</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_PASSES</code></td>
+<td>none</td>
+<td>passes over the update list</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_COLD_WAITS</code></td>
+<td>none</td>
+<td>consecutive cold-object waits tolerated</td>
+</tr>
+<tr>
+<td><code>UPDB_MAX_BEATS</code></td>
+<td>none</td>
+<td>alarm beats one run may consume</td>
+</tr>
+<tr>
+<td><code>UPDB_CHECK_REQUIREMENTS</code></td>
+<td>none</td>
+<td>run Drupal&#39;s own update requirements check first</td>
+</tr>
+</tbody></table></div>
+<p>Read <code>src/ops/updb.ts</code> before changing any of these; the defaults are what a sliced update was
+measured against.</p>
+<h2 id="pack-reconciliation">Pack Reconciliation</h2>
+<p>The pack delivers only at provisioning, so a fix that lands inside it reaches new sites and no
+existing one. Reconciliation is the delivery path for the rest.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>RECONCILE</code></td>
+<td>on</td>
+<td>brings an existing site up to the pack that ships today</td>
+</tr>
+</tbody></table></div>
+<p>Each step in <code>src/ops/reconcile.ts</code> carries an observation of the site&#39;s end state, asked before the
+step runs and again afterwards. So a site provisioned after a fix answers <code>satisfied</code> and is marked
+done without doing any work, and a step that ran and left the site still owing it is recorded as
+failed rather than applied. A step gets three attempts before it stops being retried and stays
+visible on the status report.</p>
+<p>A step that changes configuration or state runs through Drupal&#39;s own writers rather than SQL.
+<code>ConfigFactory::save()</code> already clears <code>cache_config</code> and invalidates <code>config:&lt;name&gt;</code>; a host
+re-deriving that list gets it wrong, and the copy it forgets is the one that made the original
+<code>cache.page.max_age</code> fix inert on every site.</p>
+<p>Every applied step drops the heap image, unconditionally. A restored kernel predates whatever the
+step just changed.</p>
+<p><code>GET /reconcile</code> reports every step and its standing. <code>POST /reconcile</code> drives one. The alarm chain
+drives it on its own; the route is for an operator who wants a fix now rather than at the next
+firing. Off is for a site being debugged against a known state, and leaving it off means a security
+fix in the pack never arrives.</p>
+<p>The D1 fleet inventory carries <code>reconcile_version</code> beside the pack generation. The pack generation
+says which pack a site was provisioned from and never moves afterwards, so on its own it cannot tell
+a patched old site from an unpatched one.</p>
+<h2 id="the-addressable-sweep">The Addressable Sweep</h2>
+<p>Page coverage is demand-driven: a URL renders when a visitor asks for it, and that visitor waits.
+The sweep enumerates the addressable space from the <code>router</code> table and the entity tables, ranks it,
+and queues the top of the list for the fill batch that already exists.</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>var</th>
+<th>default</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>SWEEP</code></td>
+<td>off</td>
+<td>enumerate and queue uncovered addressable URLs</td>
+</tr>
+<tr>
+<td><code>SWEEP_ROWS_FRACTION</code></td>
+<td>0.25</td>
+<td>share of the day&#39;s rows it may spend, 0.01-0.5</td>
+</tr>
+</tbody></table></div>
+<p>It never renders. Every path goes into the fill queue and the alarm&#39;s fill batch drains it under the
+memory break it already has, so the sweep cannot be the batch that crosses the isolate limit.</p>
+<p>The governor is the feature. It refuses below a remaining-budget floor, spends at most its declared
+fraction of the day&#39;s rows and Durable Object requests, resumes tomorrow when spent, and carries a
+cursor so a partial sweep does not repeat work. Enumeration reads the <code>router</code> table and the entity
+tables and never crawls the site&#39;s own links, which would walk the facet and pager space and spend
+the budget on URLs nobody requests.</p>
+<p>Off by default for a meter reason rather than caution: the row and DO quotas are account-wide and a
+site reads only its own, so four sweeping sites saturate the account while each one reads itself as
+healthy. <code>src/ops/fleet.ts</code> is the inventory a fleet-aware share would read.</p>
+<p><code>GET /sweep</code> reports coverage and the governor&#39;s last decision, including the reason when it
+declines. <code>GET /sweep?run=1</code> forces a step off its interval.</p>
+<h2 id="runtime-overrides">Runtime Overrides</h2>
+<p>The names on <code>KV_OVERRIDABLE</code> can be overridden from the <code>CONFIG_KV</code> namespace under the key
+<code>settings</code>, as one JSON object. One key covers them all: a single read is atomic, costs one of the
+100,000 daily KV reads instead of one per lever, and gives an operator one place to see every
+override in force.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">{ </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"RENDER_BUDGET_MS"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">4000</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"FILL_BATCH_SIZE"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">8</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">, </span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">"PREFILL"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">: </span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"0"</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8"> }</span></span></code></pre><p><code>GET /settings</code> prints the current list with the value in force and where it came from, which is the
+answer to keep rather than a count here. This page said eleven while the list held eighteen.</p>
+<h3 id="writing-them">Writing Them</h3>
+<p><code>GET /settings</code> reports every lever with its value and its source (<code>kv</code>, <code>var</code> or <code>default</code>);
+<code>PUT /settings</code> merges a JSON patch. Both take the owner token.</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OWNER_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://your-site/settings</span></span>
+<span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -X</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> PUT</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$OWNER_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> -H</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> 'content-type: application/json'</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  -d</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{"RENDER_BUDGET_MS": 4000, "PREFILL": "0"}'</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> https://your-site/settings</span></span></code></pre><p><code>resolvePlan()</code> and <code>resolveSettings()</code> had read these keys since they shipped and nothing in <code>src/</code>
+ever called <code>CONFIG_KV.put()</code>, so every name below was a knob that could only be turned by editing
+<code>wrangler.jsonc</code> and redeploying: a deploy to change a value the deploy exists to avoid.</p>
+<p>An unlisted name is refused and named in the reply rather than dropped in silence. The allow-list is
+enforced at the writer as well as the reader, because a reader-side filter makes an unlisted name
+inert while a writer-side one makes it unstorable, and a document written before another reader
+exists is a document that reader will trust.</p>
+<p>The route is answered by the front Worker with no object hop: <code>CONFIG_KV</code> is a front-Worker binding,
+so reaching it through the Durable Object would spend a request to get at a namespace the isolate
+already holds.</p>
+<h3 id="from-drupal-without-the-owner-token">From Drupal, Without the Owner Token</h3>
+<p>The same levers are editable at <code>/admin/config/drupflare/settings</code>, gated on the
+<code>administer drupflare site</code> permission. Each field holds the stored override, with the deployed value
+beside it and its source named, so an operator can tell an override they chose from a default nobody
+has looked at. Only the fields that changed are sent, because a patch carrying every field would turn
+a deployed value into a stored override by the act of pressing save.</p>
+<p>Every lever has a domain, <code>LEVER_DOMAINS</code> in <code>src/ops/plan.ts</code>: a flag is <code>0</code> or <code>1</code>, a number has
+the range its reader clamps to, and a fixed choice (<code>OPCACHE_MODE</code>, <code>MAIL_TRANSPORT</code>,
+<code>SITE_LOCATION_HINT</code>) is one of its listed values. The form offers a select or a bounded number
+field from it, and <code>writeSettings()</code> refuses a value outside it and names the reason, so a mistyped
+value cannot reach a reader. <code>LAZY_FS_BUDGET_BYTES</code> stops at 8 MiB, half of the 16 MiB a module
+install was measured to fail at.</p>
+<h3 id="the-three-permissions">The Three Permissions</h3>
+<div class="table"><table>
+<thead>
+<tr>
+<th>permission</th>
+<th>reaches</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>view drupflare status</code></td>
+<td>the runtime status page, read only</td>
+</tr>
+<tr>
+<td><code>administer drupflare site</code></td>
+<td>the levers, and the operations terminal&#39;s cache and queue work</td>
+</tr>
+<tr>
+<td><code>administer drupflare owner</code></td>
+<td>code delivery, including the terminal&#39;s <code>en</code> and package lines</td>
+</tr>
+</tbody></table></div>
+<p><code>administer drupflare owner</code> is granted at claim, through a <code>Site Owner</code> role given to the claimed
+account, and only an account that already holds it can grant it. Holding <code>administer permissions</code> is
+not enough: the permission forms disable its checkboxes, and a role or user save that adds or removes
+it is put back when the acting user lacks it. An administrator role carries every permission, so
+assigning one is the same grant. The owner token outranks all three and works when Drupal does not.</p>
+<p>A site created before the tiers reconciles onto them: the five older names map to the three, and
+uid 1 is given the owner role.</p>
+<p><strong><code>PLAN</code> is not on that form and cannot be written through it.</strong> Every lever there has a worst case
+of a slower site; <code>PLAN</code> selects a limits profile whose quotas are account-wide, while whoever
+reaches a Drupal form administers one tenant. It stays on the owner-token route above, and the host
+capability behind the form refuses it at every spelling.</p>
+<p><code>/admin/modules/drupflare</code> is the matching read-only page for code delivery: it names the three
+delivery paths and lists what has been delivered to this site. Delivering code stays an owner action
+on <code>/_cfw/git</code>, for the same tenancy reason. Within the operations terminal, <code>en</code> and any package
+line additionally require <code>administer drupflare owner</code>, so a site can grant the terminal without
+granting the ability to add code to the runtime.</p>
+<p><strong>Every one of them reaches a reader inside the Durable Object, and for a while only two did.</strong>
+<code>withSettings()</code> is applied in <code>src/site.ts</code>, to the front Worker&#39;s env, and the object receives its
+own copy of the bindings, so most of them were knobs nothing read: <code>RENDER_BUDGET_MS</code>,
+<code>FILL_BATCH_SIZE</code>, <code>HTTP_DRAIN_LIMIT</code>, <code>MIRROR_LIMIT</code>, <code>LAZY_FS_BUDGET_BYTES</code>
+and <code>PREFILL</code> are read in <code>src/site-do.ts</code> and only there. <code>adoptSettings()</code> now overlays every name
+on the allow-list, and is called from <code>alarm()</code> as well as <code>handle()</code>, because several of them are
+read on the fill chain and an alarm never passes through <code>handle()</code>. The fast storage lane adopts
+nothing and must not: it is await-free by construction and reads no lever.</p>
+<p>A lever is offered here first, then as a var. KV comes before <code>vars</code> so an operator can change a
+setting without a redeploy; the var is the fallback. That ordering applies to anything new, including
+values that look like deploy-time properties. <code>SITE_LOCATION_HINT</code> reads like one and behaves
+otherwise, since <code>DurableObjectNamespace.get()</code> takes the hint per call.</p>
+<p><strong>The list is an allow-list and it is a privilege boundary.</strong> KV is operator-writable, so merging an
+arbitrary object into the environment would let anyone with KV write set <code>PW_DIAGNOSTICS=1</code>. Every
+name here is a performance lever whose worst case is a slow site; none changes what is reachable.
+<code>PLAN</code> has its own key, its own resolver and its own authorisation, because it selects a whole
+profile. <code>writeSettings()</code> refuses it at any spelling: every other name has a worst case of a slow
+site, while the quotas <code>PLAN</code> models are account-wide and the actor setting it is one tenant. The mail credentials
+are absent for the same reason: <code>MAIL_TRANSPORT</code> only chooses between transports the deploy already
+configured, while a KV writer who could set <code>SMTP_HOST</code> would receive every password-reset link the
+site sends.</p>
+<p>A malformed document, an unknown key and a KV error all yield no overrides, and none of them throws.
+Values are read once per isolate per minute.</p>
+<h2 id="r2-page-origin-caching">R2 Page Origin Caching</h2>
+<p>Mirroring pages to R2 moves them off the Worker, and an R2 public bucket on a custom domain serves
+them. How much of that traffic Cloudflare&#39;s CDN absorbs in front of the bucket decides whether the
+off-Worker lever is worth anything: an absorbed read costs neither a Worker request nor an R2 Class B
+operation.</p>
+<p><strong>Absorption is 0 without a Cache Rule and about 7/8 with one.</strong> Measured with GET against
+a cold object each time:</p>
+<div class="table"><table>
+<thead>
+<tr>
+<th>Condition</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cache Rule on, cold object</td>
+<td>MISS, then <strong>7 / 7 HIT</strong></td>
+</tr>
+<tr>
+<td>Cache Rule off, cold object</td>
+<td>MISS, then <strong>7 / 7 DYNAMIC</strong></td>
+</tr>
+</tbody></table></div>
+<p>A second object under the same rule read 1 MISS, 7 HIT and 2 DYNAMIC across 10 requests, which is the
+same picture with two requests landing at a PoP that had not filled yet.</p>
+<p><strong>Measure with GET, never <code>curl -I</code>.</strong> HEAD is what <code>curl -I</code> sends, Cloudflare does not populate its
+cache from a HEAD, and every reading comes back <code>DYNAMIC</code>. That method produced the conclusion &quot;R2
+custom domains do not cache&quot;, which was an artifact of the instrument.</p>
+<h3 id="the-cache-rule">The Cache Rule</h3>
+<p>One rule, scoped to the CDN hostname and nothing else:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span>expression:        (http.host eq "drupflare-cdn.example.com")</span></span>
+<span class="line"><span>action:            set_cache_settings</span></span>
+<span class="line"><span>action_parameters: { "cache": true, "edge_ttl": { "mode": "override_origin", "default": 3600 } }</span></span></code></pre><p>In the dashboard it is <strong>Caching &gt; Cache Rules &gt; Create rule</strong>, with the hostname as the only
+condition and <strong>Eligible for cache</strong> plus an edge TTL override. Over the API it is
+<code>PUT /zones/{ZONE_ID}/rulesets/phases/http_request_cache_settings/entrypoint</code>.</p>
+<p><strong>A PUT to an entrypoint replaces every rule in it.</strong> Read the entrypoint first and merge; on a zone
+that has never had a cache-phase ruleset the entrypoint does not exist yet and creating it destroys
+nothing.</p>
+<p><strong>One zone-scoped permission creates it: <code>Zone &gt; Cache Rules &gt; Edit</code>.</strong> Cloudflare&#39;s documentation
+also lists the account-scoped <code>Account Rulesets: Edit</code> and <code>Account Filter Lists: Edit</code>; measured,
+this rule shape needs neither. That correction matters, because the account-scoped reading is what
+had rejected this lever as an account-wide write bought for one site.</p>
+<h3 id="smart-tiered-cache">Smart Tiered Cache</h3>
+<p>Every PoP fills independently, so a request reaching a cold PoP is a MISS and an R2 Class B read.
+Tiering routes a PoP miss through an upper tier instead of to the bucket, which changes absorption
+from per-PoP to hierarchical.</p>
+<p>Enable it at <strong>Caching &gt; Tiered Cache</strong>, or:</p>
+<pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e" tabindex="0"><code><span class="line"><span style="--shiki-light:#6F42C1;--shiki-dark:#B392F0">curl</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "https://api.cloudflare.com/client/v4/zones/</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$ZONE_ID</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">/cache/tiered_cache_smart_topology_enable"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --request</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> PATCH</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --header</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> "Authorization: Bearer </span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8">$CLOUDFLARE_API_TOKEN</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF">"</span><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF"> \</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-dark:#79B8FF">  --json</span><span style="--shiki-light:#032F62;--shiki-dark:#9ECBFF"> '{ "value": "on" }'</span></span></code></pre><p>The token needs <code>Zone Settings Write</code> or <code>Zone Write</code>. Tiered Cache and Smart Topology are both
+available on the Free plan; Generic Global, Regional and Custom topologies are Enterprise only.
+Cloudflare selects the upper tier automatically for a zone using R2 as an origin.</p>
+<h3 id="why-the-model-still-defaults-to-zero">Why the Model Still Defaults to Zero</h3>
+<p><code>cdnAbsorption</code> in <code>scripts/measure/free-envelope.ts</code> defaults to <strong>0</strong> and should stay there.</p>
+<p>Absorption follows the traffic, not the configuration. It is a function of reads per colo per TTL
+window, so a site at 10 views/day spread over 40 PoPs absorbs almost nothing and the same site at
+10,000 views/day absorbs nearly everything. Zero is the correct floor for a low-traffic site and for
+any site with no rule, and it is the only value that holds at every traffic level.</p>
+<p>So the 4.33x peak is reachable, at traffic high enough to keep PoPs warm, with one operator-applied
+rule. Report anything derived from a non-zero absorption as a range.</p>
+<p><strong><code>cdnAbsorption</code> is a code-level option.</strong> The command line takes <code>--visits</code>, <code>--dynamic</code> and
+<code>--warmth</code> only; absorption is passed to <code>envelope()</code>, <code>optimalOffWorker()</code> and <code>scoreWorkload()</code> in
+<code>scripts/measure/free-envelope.ts</code>, so a claim that depends on it comes from a caller that names the
+value, and never from the default run.</p>
+<p><strong>Drupflare does not create the rule.</strong> It is a change to a zone the operator owns, its value depends
+on traffic the product cannot see, and the model&#39;s default does not move until an operator says they
+applied it.</p>
+<h2 id="related">Related</h2>
+<ul>
+<li><code>docs/repository-layout.md</code> -- every path outside <code>src/</code> and how it arrives</li>
+<li><code>docs/building-from-source.md</code> -- the fifteen steps a source build runs</li>
+<li><code>docs/measurement-classes.md</code> -- which instrument may produce which class of number</li>
+<li><code>docs/recovery.md</code> -- which primitive answers which failure</li>
+<li><code>docs/external-database.md</code> -- why the site database lives in the Durable Object</li>
+</ul>
+			</div>
+		</main>
+		<footer>
+			<a href="https://github.com/drupflare/worker">github.com/drupflare/worker</a>
+		</footer>
+	</body>
+</html>

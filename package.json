@@ -46,6 +46,8 @@
 		"assets:driver": "bun scripts/gen-driver-assets.ts",
 		"gen:config": "bun scripts/gen-config.ts",
 		"gen:config:check": "bun scripts/gen-config.ts --check",
+		"gen:assets": "bun scripts/gen-assets.ts",
+		"gen:assets:check": "bun scripts/gen-assets.ts --check",
 		"assets:scrub": "bun scripts/scrub-pack-secrets.ts",
 		"assets:scrub:check": "bun scripts/scrub-pack-secrets.ts --check",
 		"pack:decoder": "bash scripts/build-zstd-decoder.sh",
@@ -91,8 +93,12 @@
 		"measure:unicode": "bun scripts/measure/unicode-corpus.ts",
 		"metrics": "bun scripts/measure/collect-metrics.ts",
 		"metrics:gate": "bun scripts/measure/metrics-gate.ts",
-		"docs:build": "typedoc",
+		"docs:build": "typedoc && bun scripts/docs/site.ts",
+		"docs:site": "bun scripts/docs/site.ts",
 		"docs:serve": "typedoc --watch",
+		"docs:php": "./.composer-vendor/bin/phpdoc -d src/site/php -t typedoc/php --cache-folder=.phpdoc/cache --title=\"drupflare/worker\" --template=\"clean\" && bash phpdoc-favicon.sh",
+		"lint:php": "./.composer-vendor/bin/phpcs",
+		"analyze:php": "./.composer-vendor/bin/phpstan analyse --memory-limit=1G",
 		"assets:agg": "bun scripts/pack-aggregates.ts"
 	},
 	"devDependencies": {
@@ -106,9 +112,12 @@
 		"@vitest/coverage-istanbul": "^4.1.11",
 		"husky": "^9.1.7",
 		"lint-staged": "^17.4.1",
+		"marked": "^18.0.14",
+		"marked-gfm-heading-id": "^4.1.4",
 		"prettier": "^3.9.6",
 		"prettier-plugin-organize-imports": "^4.3.0",
 		"prettier-plugin-sh": "^0.20.0",
+		"shiki": "^4.4.3",
 		"typedoc": "^0.28.20",
 		"typescript": "^5.9.3",
 		"vitest": "^4.1.11",
@@ -132,6 +141,6 @@
 		"php-wasm": "0.1.0"
 	},
 	"lint-staged": {
-		"*.{php,module,ts,js,mjs,css,md,json,jsonc}": "prettier --write"
+		"*.{php,module,ts,js,mjs,html,css,md,json,jsonc}": "prettier --write"
 	}
 }

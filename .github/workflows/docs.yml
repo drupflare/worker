@@ -24,8 +24,17 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 'latest'
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
       - name: Install Dependencies
         run: bun install --frozen-lockfile
+      - name: Install Composer Dependencies
+        run: composer install --no-interaction --no-progress
+      - name: Build the PHP Reference
+        run: bun run docs:php
       - name: Build Documentation
         run: bun run docs:build
       - name: Deploy Documentation

@@ -57,6 +57,8 @@ playwright-results/
 
 # typedoc output; built in CI and deployed to gh-pages, never committed to master
 typedoc/
+# phpdoc output and its cache, same rule
+.phpdoc/cache/
 
 # logs and scratch
 *.log

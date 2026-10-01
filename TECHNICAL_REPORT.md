@@ -481,7 +481,7 @@ wholesale. The machine name comes from the mount, not the directory.
 A composer `require` ships nothing: the packed tree is the vendor directory. `drupflare` requires
 `drupflare/stream-http` and its `HttpsStreamWrapper` extends the packaged class, so the packer mounts
 `../stream-http/src` at `libraries/drupflare-stream-http/src` and the PSR-4 root is registered in
-both autoloader sites -- `SETTINGS_OVERRIDE` in `src/site-do.ts` and the boot fragment in
+both autoloader sites -- `src/site/php/settings-override.php` and the boot fragment in
 `src/drupal/site-php.ts`.
 
 `tests/node/driver-pack.spec.ts` asserts the pack matches the modules on disk byte for byte.
@@ -3846,3 +3846,4384 @@ Forgejo, Keycloak, and GitLab CE behind `--profile heavy`. `tests/e2e/README.md`
 
 Deploys use a `cfw-*` name, are torn down immediately, and the worker list is verified back to its
 prior baseline.
+
+---
+
+## Design Records
+
+The v1.0.3 comment pass cut most source comments to a line or two, keeping each constraint and
+dropping the reasoning behind it. The reasoning is kept here, word for word as it stood in the
+source, grouped by the file it was attached to. A record is one of three kinds: an alternative that
+was tried or proposed and why it lost, a contract (what a crash leaves behind, what a caller may rely
+on), or the measurement that set a constant.
+
+A record describes the code as it stood when the comment was written. Where later work made part of
+one wrong, a **Superseded** note says what changed. Anything the sections above already cover is
+not repeated here.
+
+### `src/db/file-store.ts`
+
+#### Module overview
+
+Durable storage for Drupal's `public://` and `private://` files.
+
+Writing to `ctx.storage.sql` inverts that. It is synchronous from inside the Durable Object, so a
+write is durable the moment PHP returns, in the SAME store as the entity row that describes it.
+The two commit together or not at all. R2 then becomes an OFFLOAD -- worth doing because an R2
+object on a custom domain serves without invoking the Worker at all, which is the only lever on
+the serving ceiling -- rather than the thing durability depends on. A missing or failing bucket
+degrades to "served from the Durable Object", not to data loss.
+
+WHY CHUNKED. A Durable Object SQLite record is capped at 2,199,995 bytes, measured. A 3 MB image
+is an ordinary Drupal upload, so single-row storage would fail on real content. Chunks are also
+what make a large read divisible across invocations under a 10 ms cap.
+
+The slice of `ctx.storage.sql` this module uses.
+
+Structural rather than `SqlStorage`, so the store is drivable from anything that can run a
+statement -- which is what lets the gate lane test it against a real Durable Object handle
+without the two type surfaces having to agree on members nothing here touches.
+
+#### `MIRRORABLE_SCHEMES`
+
+The ONE scheme whose bytes may leave the Durable Object for a public bucket.
+
+Drupal's `private://` is not a naming convention, it is an access-control boundary: those files
+serve through `/system/files/`, a route that runs a per-user access check on every request
+(`CfwFileStreamWrapper::getExternalUrl()` builds that path). An R2 object has no user, so
+mirroring a private file publishes it permanently to anyone holding the URL -- an
+authentication bypass, and a worse one than serving a stale personalised page, because it does
+not expire and cannot be invalidated after the fact.
+
+So this is the file-side of the same rule `src/site.ts` enforces for renders: **anything whose
+correctness depends on knowing who is asking must not be answered by a layer that does not
+know.** It is a list rather than a `!== 'private'` test -- a scheme added later
+(`temporary://`, a contrib scheme) is refused until someone decides it is publishable, which is
+the direction a mistake should fail in.
+
+#### `drainMirrors`
+
+Pushes queued files to R2 and removes the ones that left.
+
+Serving a page from R2 on a custom domain costs **zero Worker requests**,
+which is the only lever on the serving ceiling -- every other optimisation moves CPU or rows
+while the ceiling stays at 3M visits/month. The queue existed and drained nowhere, so the
+ceiling stayed saturated.
+
+The refusal is re-checked here, having already been checked at enqueue, because of the boundary
+rule: `isMirrorable()` at enqueue guards the queue, and a queue row
+can outlive the state that admitted it. Only the check adjacent to the `put` guards the bucket.
+
+Sequential rather than concurrent. A pass runs inside one invocation against a 10 ms
+CPU budget, and `limit` is what bounds it; firing N puts at once would make the slowest one
+decide the invocation and remove the only control there is over that.
+
+### `src/db/heap-store.ts`
+
+#### `gcHeapSnapshots`
+
+Keeps the newest `keep` snapshots and deletes the rest.
+
+An unbounded snapshot table is the watchdog lesson repeated at 40 MB a row: the health ledger
+grew to 46% of the database before it was capped. Chunks go first so a crash between the two
+deletes leaves orphaned metadata rather than orphaned megabytes.
+
+### `src/db/migrate-sql.ts`
+
+#### `chunksPerInvocation()`
+
+```
+ * **FREE WAS 1, AND THE REASON IT GAVE WAS THE 10 ms CAP.** That premise is retracted in writing
+ * one file over: a single invocation reading 1,882 ms of `cpuTime` completed on a deployed free
+ * worker, so the cap does not bind an object invocation, which is where migration runs -- see
+ * `FREE_PROFILE` in `src/ops/plan-profile.ts`. At 1, a shipped pack of 75 chunks provisions a site
+ * over **75 separate
+ * Durable Object invocations**, each paying an alarm turnaround, a `setAlarm` row and a cursor row,
+ * while the new owner watches the `migrating` page refresh itself.
+ *
+ * **The real bound is SUBREQUESTS, and it was measured rather than reasoned.** `/migrate?all=1` on
+ * a deployed free worker failed with `Too many subrequests by single Worker invocation` -- free
+ * allows 50, and {@link assetChunkLoader} spends one `env.ASSETS.fetch()` per chunk plus one for a
+ * manifest that is memoised per incarnation. So N chunks costs at most N+1. That failure is also
+ * the positive evidence that the whole replay fits one invocation's CPU: nothing else stopped it.
+ *
+ * 40 leaves ten subrequests of headroom. The migration branch returns before any other alarm work
+ * runs, so nothing else is competing for them.
+ *
+ * Paid has a 30 s CPU budget and a 1,000-subrequest allowance, so the whole migration is one
+ * invocation and the chunking is only a crash-resume property there.
+```
+
+#### `SqlMigrator.step()`, already-migrated branch
+
+```
+// "already migrated" has to mean "already migrated THIS generation". It used to mean "the
+// cursor says done", which read the row without looking at whose it was -- so a restore, which
+// shares this one cursor row with the pack, was skipped on every site that had finished
+// migrating and reported `{ ok: true, done: true }` having replayed nothing. A rollback
+// reported success and changed no data. The namespaced `import:<id>:<gen>` generation was
+// written to prevent that and could not, because the branch never compared generations.
+```
+
+#### `SqlMigrator.reset()`
+
+```
+// `creates` rather than `tables`: the latter is a row-count map and omits every
+// table with no rows, including the synthesised `sessions`. Dropping only the
+// row-bearing tables left `sessions` behind and the next migration died on
+// "table sessions already exists"
+```
+
+### `src/db/pg-exec.ts`
+
+#### `DEFAULT_PG_DEPS`
+
+The real client, reached by a DYNAMIC import, and the reason is the lane split rather than size.
+
+A static `import { Client } from 'pg'` bundles correctly -- measured, esbuild produces a Worker
+that uploads, and `pg` costs 90 KiB of the 65,536 KiB ceiling. It also makes every vitest spec
+whose graph reaches this module fail to load at all: vite answers
+`SyntaxError: Cannot use import statement outside a module` for `pg`'s CommonJS entry. That is
+the gate-and-bundler disagreement this repository already has a rule about, arriving from the
+other side -- and `park-drive.ts` imports this file, so a static import would have taken every
+spec that reaches the park with it.
+
+Dynamic, the import is not evaluated until a deployment actually selects this backend, so the
+gate never resolves it and the bundler still does.
+
+#### Module overview
+
+`pg` is the client Cloudflare's own Hyperdrive documentation uses, and Hyperdrive itself supplies
+no client at all -- only the pooled endpoint and the string. The pooling is the reason a
+connection is made per call here rather than held: Cloudflare's guidance is a client per request
+because the underlying connection is pooled on their side, and a Durable Object holding an open
+socket is on the no-hibernation list, which bills duration for the whole time it is held.
+
+#### `backendExec()`
+
+`rowsWritten` comes from `rowCount` on a statement that returned no rows, which is what a write
+is; a SELECT reports its rows read instead. MEASURED against the rig's PostgreSQL 17.6 rather
+than assumed, because `pg` uses one field for both: `SELECT $1::int` answers
+`{rows: [{n: 7}], rowCount: 1}` and `INSERT INTO probe (id) VALUES ($1)` answers
+`{rows: [], rowCount: 1}`, so the row LIST is the only thing that separates them.
+
+### `src/db/wide-integers.ts`
+
+#### `repairWideIntegers()`
+
+Exact reads for SQLite INTEGERs wider than 2^53.
+
+##### What is actually broken
+
+`ctx.storage.sql` hands INTEGER columns back as JavaScript numbers, so a value above
+`Number.MAX_SAFE_INTEGER` has already lost precision before anything in this project sees it.
+Re-measured 2026-08-23 on workerd, unchanged from the first reading:
+
+| written               | read back             | `CAST(col AS TEXT)`   |
+| --------------------- | --------------------- | --------------------- |
+| `9007199254740993`    | `9007199254740992`    | `9007199254740993`    |
+| `9223372036854775807` | `9223372036854776000` | `9223372036854775807` |
+
+The storage is exact and the READ is lossy. The codec cannot help: by the time it runs the value
+is already a wrong double, and the `__phpint` envelope then carries the wrong number faithfully.
+
+##### Why this needs no SQL parser, which is what the item assumed
+
+The backlog scoped this as "the driver knows the schema, so it can rewrite `SELECT id` to a text
+cast for columns declared wide", and then listed the shapes such a rewrite has to survive --
+`SELECT *`, aliases, expressions, JOINs, `ORDER BY`, aggregates. That is a SQL parser, and it
+would cover the shapes it was written for and silently miss the rest.
+
+It is unnecessary. **The result rows already carry the output column names**, whatever produced
+them, so the exact values can be fetched by wrapping the ORIGINAL statement as a subquery and
+casting by name:
+
+```sql
+SELECT "a", CAST("b" AS TEXT) AS "b" FROM ( <the original statement, untouched> )
+```
+
+The inner statement keeps full 64-bit precision inside SQLite; only the outer projection crosses
+into JavaScript, and it crosses as TEXT. Aliases, aggregates and `SELECT *` all resolve to output
+names before this sees them, so every shape is covered by construction rather than by enumeration.
+
+##### And it costs nothing when nothing is wide
+
+Triggered by DETECTION, never by schema: the second read happens only when a returned value is an
+integer that a double cannot represent exactly. Drupal core never stores integers that wide, so on
+an ordinary site this never fires at all.
+
+`reread` runs the wrapper statement with the SAME bindings; it is injected rather than taken from
+a handle so the whole decision is drivable from a unit test with no Durable Object.
+
+#### `INT64_BOUND`
+
+`2 ** 64` rather than `2 ** 63`, and the extra bit is not slack. Rounding pushes a wide value
+PAST the signed bound on the way into a double -- measured, `9223372036854775807` arrives as
+`9223372036854776000`, which is larger than `2 ** 63` and would be excluded by the tighter
+guard. This bound also covers an unsigned 64-bit id, which contrib does store.
+
+### `src/db/write-tally.ts`
+
+#### `overheadShare()`
+
+```
+ * **This is not the index share, and it is not an upper bound on it either.** An earlier docblock
+ * here said it was, and the measurement falsified that: the recorded cold fill is 63 statements
+ * against 12 charged rows, so `explained` clamps to 12 and this returns **0** for a fill that
+ * `scripts/measure/index-audit.ts` decomposes as **9 of 12 rows index maintenance**. A write path
+ * with more no-op statements than rows will always read 0 here and look index-free.
+ *
+ * What it does bound is the opposite direction -- rows that arrived from FEWER statements than rows,
+ * which is a multi-row statement (`INSERT ... SELECT`, a `DELETE` clearing a bin) or a heavily
+ * indexed insert. Useful for spotting a burst; useless for pricing an index. Use
+ * `splitChargedRows()` with the schema's factors when the question is how much of a cost is index
+ * maintenance.
+```
+
+#### `routerRebuildPasses()`
+
+```
+ * **The default was 16 and the driver writes 1, so this returned `null` on every real enable.**
+ * Measured 2026-08-19 on a `token` install: **422 router statements over 420 routes**, 2,518 charged
+ * rows, 5.97 rows per statement -- one statement per route, not fourteen. The old default came from
+ * the 100-bound-parameter ceiling over a 7-column row, which is what the driver COULD batch rather
+ * than what it does. With `perPass` computed as 28 instead of 421, `422 / 28` is fractional and the
+ * function refused to answer -- so `/enable` has reported `routerRebuilds: null` for its whole life,
+ * and nobody noticed because a null reads as "not applicable" rather than as a broken instrument.
+ *
+ * The residual is reported rather than rejected. An enable pays one pass plus a handful of
+ * incidental statements, and demanding exact divisibility turned "1 rebuild, 1 statement
+ * unaccounted" into no answer at all. A caller that needs strictness reads `residual`.
+```
+
+#### `countingSql()`
+
+```
+ * That is not a rounding error. The `cfw_page` insert carries the whole rendered page -- 12,304
+ * bytes for the front page -- and `cfw_page` is indexed, so it is the single largest write in a
+ * fill. A fill measured at "12 rows" through the old instrument reported **0** for the statement
+ * that stores the product of the fill.
+```
+
+#### `chargeFactorsFromSchema()`
+
+```
+ * `PRAGMA index_list` is the engine's own answer, so implicit primary-key and UNIQUE indexes arrive
+ * as `sqlite_autoindex_*` rows without being inferred, and PARTIAL indexes are excluded on the
+ * engine's `partial` flag rather than on a regex over the DDL. `AUTOINCREMENT` is still read from the
+ * DDL text because no pragma reports it, and it costs a charged row of its own -- the
+ * `sqlite_sequence` rewrite measured in `tests/unit/db/index-charge-model.spec.ts`.
+ *
+ * `WITHOUT ROWID` is read from the DDL for the same reason and corrects the opposite error: the
+ * pragma reports the primary key as an autoindex there too, but the key IS the table, so adding a
+ * base row double-counts it.
+// (inline) Measured: such an insert charges 1 and this returned 2
+```
+
+#### `statementsByTable`
+
+write STATEMENTS per table, which rows alone cannot substitute for.
+
+Rows answer "how expensive", statements answer "how many times". The router rebuild is the
+case that forced this: a rebuild is one DELETE plus a fixed number of parameter-budgeted
+INSERTs, so statements-per-table divided by that fixed shape reads the number of REBUILDS
+directly. Inferring it from rows instead means dividing a measured total by a subtrahend
+nobody measured -- the exact error this project keeps finding.
+
+Counted for every write statement including no-ops, unlike `byTable`, because a statement
+that wrote nothing still happened.
+
+### `src/do/alarm.ts`
+
+#### `HeapRestoreIncomplete`
+
+Thrown while a chunked restore is still in flight, so no caller can execute PHP through a heap
+that is the right length and the wrong bytes.
+
+A named error rather than a boolean return because `ensurePhp()` has roughly a dozen call sites
+and a flag only works if every one of them remembers to read it. `LAZY_MOUNT` spent its entire
+life as unreachable code behind exactly that kind of unchecked condition.
+
+#### `heapRestoreChunkBudget()`
+
+How many chunks one invocation may apply, or `undefined` for all of them in one go.
+
+Unset is the whole snapshot at once, which is what every recorded restore measurement was taken
+on (memcpy 14-18 ms for 22.4 MB). The budget exists because a 10 ms free-plan invocation cannot
+be assumed to hold an arbitrary image: at 2 MiB a chunk, `HEAP_RESTORE_CHUNKS=2` is roughly 4 MB
+of memcpy per firing.
+
+#### `heapSnapshotEnabled()`
+
+Whether a boot restores a stored heap instead of booting the kernel. ON, with `HEAP_SNAPSHOT=0`
+to turn it off.
+
+It shipped opt-in with a precondition written into `ensurePhp()`: the standalone restore probe ran
+in one process with no Durable Object and no vrzno bridge in the image, so "until a host call is
+shown to round-trip through a restored heap, this must not be on by default." That precondition is
+now met -- `/heap?op=bridge` forces PHP to reach `cfwStats` through `vrzno_env()` on a restored
+image and it round-trips with 3 handles replayed and the digest equal, and an install then runs on
+that kernel and lands.
+
+Priced before flipping it, because the storage is not free: **31,784,960 bytes across 159 rows per
+site**, plus a 5,993 ms one-off to take the snapshot. What it buys is **2,310 ms (fast mode) to
+3,578 ms (slow mode)** off every install, n=8 per arm, present in BOTH modes of a bimodal
+population -- which is what makes it a result rather than an artefact of which mode was sampled.
+
+#### `AlarmClass`
+
+What an alarm lane actually achieved, as opposed to what it returned.
+
+This type exists because the same bug happened three times. Migration re-armed at +1 ms on a step
+that ERRORED, because an error return is non-null too. The fill head re-armed at +1 ms on a render
+that THREW, producing **196 firings in 14 seconds, every one reporting `outcome: ok`**. Both were
+fixed case by case, and both had the same shape: a non-null return read as work done.
+
+The re-arm delay is now a function of this classification and of nothing else, so the fast path
+cannot be reached without something having first said the work progressed. Queue depth is no longer
+sufficient -- it was what made the third instance possible, since a row that failed to be struck
+kept the queue non-empty and the chain fast forever.
+
+#### `restoreAlarmDecision()`
+
+What the alarm chain should do after one slice of a chunked restore.
+
+Extracted rather than left inline for the reason `migrateAlarmDelayMs` was extracted: the inline
+version of that decision shipped a branch that could never be taken, and nothing noticed because
+an inline ternary in `alarm()` has no unit test. This one carries the halt, which is the branch
+whose absence once spun an object at 1 ms forever and starved every gated request behind it.
+
+#### `migrateAlarmDelayMs()`
+
+How long to wait before the next migration alarm.
+
+Extracted for the same reason `cronAlarmDelayMs` and `updbAlarmDelayMs` exist: this is a
+three-branch decision that lived inline in `alarm()` as a ternary, and it was the only one of
+the three alarm chains with no unit test.
+
+That is how a real bug survived in it. The ternary read `pending.done`, but the caller hands it
+`{ migrate: out }`, so `done` was ALWAYS undefined: the idle branch was unreachable, and the
+firing that COMPLETED a migration re-armed at 1 ms instead of 240 s. Cheap in practice, because
+the next firing finds the cursor `done`, returns null and falls through to the fill loop -- but
+the branch was dead and the intent defeated. Taking the step result DIRECTLY rather than the
+wrapper is what makes that mistake unspellable here.
+
+### `src/do/capabilities.ts`
+
+#### region durable files
+
+```
+// FULLY SYNCHRONOUS, and unlike every capability above that is not a compromise. `cfwFetch`
+// and friends are split into a queue and a drain because the network cannot be awaited from
+// PHP; `ctx.storage.sql` needs no await at all from inside the Durable Object, so a file
+// write can report a real result -- durable, committed -- in the same call. That is the whole
+// reason `src/db/file-store.ts` stores in DO SQL and treats R2 as an offload: it is the only
+// arrangement where a synchronous stream wrapper can tell PHP the truth.
+//
+// Bytes cross as base64 in a string field rather than through the codec's bytes envelope,
+// because a stream wrapper reads and writes partial buffers and an explicit field keeps the
+// boundary readable at the one place a chunk is assembled.
+```
+
+#### `cfwFilePublicBase`
+
+```
+// The only structural serving lever. A zone Cache Rule cannot save an invocation because the
+// Worker runs before the cache is consulted, so exactly two paths cost zero Worker requests:
+// a static asset, and a hostname that is not routed to the Worker. An R2 custom domain is the
+// second. Worker requests at 100,000/day are what bind serving, so moving media off them is
+// the difference between the meter counting visitors and counting every image on the page.
+```
+
+#### `cfwSettings`
+
+```
+ * `set` cannot be synchronous: a KV write is I/O and `execSql()`-style host calls cannot
+ * await. So it validates in full, answers what it accepted and refused, and performs the
+ * write under `waitUntil`. That is honest rather than optimistic because the validation is
+ * the part that can fail on the caller's input; a KV put that fails afterwards leaves the
+ * previous value in force, which is the same state the caller was already in.
+```
+
+#### `cfwHealth`
+
+```
+ * `HealthLedger::record()` opens with `if (!Host::has('cfwHealth')) return false;` and
+ * nothing installed it, so every finding the PHP tripwires produced was dropped on the
+ * floor -- and `src/Health/` is 12 files whose entire output goes through this one call.
+```
+
+#### `cfwImageUrl`
+
+```
+// `CfwImageToolkit::getSupportedExtensions()` carried its own copy of the list and a
+// `=== 'images'` branch, which pinned the wasm arm's capability to whatever it was
+// when that line was written; tinyimg 1.1 added AVIF and every shipped style went on
+// degrading to webp
+```
+
+#### `cfwTcp`
+
+```
+// A non-200 body is the server's own sentence, and it has to arrive as `error`.
+// `runRedis()` answers a RESP error with 502 and the message as the body, while
+// `CfwTcp::redis()` reads `error` and falls back to a generic string -- so the
+// sentence was dropped between the two halves that exist to carry it. Found by
+// the first exchange against a real server; every mock had answered 200
+```
+
+#### `cfwMail`
+
+```
+ * This used to push onto `this.mails` and answer `{ok: true}` whenever `CFW_EMAIL_BINDING`
+ * was `'1'`, which gated a return value and not a transport -- nothing was ever sent.
+```
+
+### `src/do/fill.ts`
+
+#### `openFillWindow`
+
+Opens a warm window: one boot, then one fill per incoming WebSocket message, because each
+message resets the available CPU time. The alarm chain cannot do this -- it re-pays boot every
+firing, ~25x fewer fills on free.
+
+`server.accept()`, never `ctx.acceptWebSocket()`: hibernation would discard the interpreter
+the window exists to keep. A non-hibernatable object is billed for duration, so the window is
+scoped to a drain and closed.
+
+### `src/do/git.ts`
+
+#### `handleGit` case 'unpin'
+
+Releases the preview pin WITHOUT reaching the remote.
+
+`unpreview` re-syncs to the branch head, which needs a ref advertisement -- so a pin cannot be
+released while the remote is unreachable or its token has expired, and that is exactly the state an
+operator is trying to heal. A pin held against a dead remote stops the poller and the webhook
+indefinitely.
+
+Releasing without a sync leaves the site serving the request's files, which is what it was already
+serving. What changes is that the poller owns the branch again, so the NEXT successful poll
+converges it. Degraded rather than immediate, and it is the half that works with no network at all.
+
+### `src/do/health.ts`
+
+#### `observe()`: isolate memory reading
+
+The whole isolate. This read MEMFS resident bytes, for a reason that is half right: total linear
+memory moves only on a grow and two rungs reach the cap, so four rising readings of IT cannot
+happen. But MEMFS is capped at `LAZY_FS_BUDGET_BYTES` and saturates -- measured on a deployed object
+at 4,193,165 of 4,194,304 -- so four rising readings of that cannot happen either, and the finding was
+labelled `scope: 'linear-memory'` while watching neither. `isolateNow()` is linear plus the JS-side
+mount, which is the quantity the platform enforces and the only one here that both varies and matters.
+
+#### `supervise()`: why the alarm and not the request
+
+On the alarm and nowhere else. `recordFinding()` is a row write and rows written is the meter that
+binds the regeneration ceiling, so a per-request tripwire pass would spend the budget it exists to
+watch; and a waiting visitor outranks bookkeeping, which is the same rule that puts GC and cron after
+the fills. Error and above is a failure, not critical-only: keying the ladder on `quarantineDecision`
+alone would record an error-severity finding and then advance the state as though the pass were
+clean -- `bridge.asyncify_called` fires on a dead stream wrapper that kills the whole invocation, and
+three of those is a durable condition whatever its severity label says. `warn` is not a failure:
+budget pressure and a memory trend are things to watch at the next quiet moment, and striking on them
+would quarantine a healthy busy site.
+
+### `src/do/heap-image.ts`
+
+#### `snapshotStep`
+
+It never drops the interpreter, and two versions that did were both wrong. The image has to come
+from a boot out of the PACK with the kernel up and nothing rendered, so a resident interpreter
+is the wrong heap -- but taking it away to boot another holds two linear memories at once and
+destroys state its owner is still using.
+
+So it waits instead. `/__migrate`, `/__firstrun` and `/__enable` all drop when they finish and
+`recycleIfOversized()` drops above the threshold, so a provisioned site reaches an alarm with
+`php === null` as a matter of course. A site that never does simply never images, which `/heap`
+reports as `imagedGeneration: null`.
+
+#### `tryRestoreHeap`
+
+The fd table is asserted BEFORE the memcpy and the refusal is loud. Dropping
+`/dev/urandom`'s descriptor alone throws `RandomException`; dropping the three sqlite
+descriptors gives a locking-protocol error after an **80-120 second stall**, which on the edge
+is a hung request rather than an error. A refusal costs one boot; proceeding costs a hang.
+
+the boot path reads these tables before anything has written them, and it is the ONLY caller
+that can meet a table older than the code: a deployed object created `cfw_heap_snapshot`
+before `handle_table` existed, and `CREATE TABLE IF NOT EXISTS` does not add a column, so
+the first restore after the deploy refused with "no such column: handle_table". Measured on
+the edge, which is the only place a pre-existing table exists.
+
+the handle assertion, and the one the fd contract was missing. The heap holds
+`Module.targets` ids as integers, so every handle the booted kernel captured -- notably
+`CfwSqlClient::$execFunction` -- is a dead index in a fresh instance until it is
+re-registered at the SAME id. Without this a render dies as
+`TypeError: target is not a function`, measured on a deployed worker.
+Same discipline as the fd table: replay first, refuse before any bytes land, and name
+every failure at once. Restoring a heap whose handles could not be replayed is worse than
+not restoring, because the failure surfaces as an uncatchable throw from inside a render.
+
+#### snapshotHeap, live view
+
+The live view, not A COPY. `toStorableBytes()` exists to survive a `memory.grow()`
+invalidating a view, and nothing between here and the last chunk insert can grow the
+heap: no PHP runs, and there is no await. Copying spent a second 64 MB at exactly
+the moment the isolate had none -- measured `exceededMemory` on the edge.
+
+#### `corruptStoredChunk`
+
+This exists to make the refusal EXECUTABLE IN PRODUCTION rather than only in a test. The
+distinction is not pedantic here: `LAZY_MOUNT` was covered by tests and unreachable in the
+deployed worker for its entire life, and the failure this guards against -- a chunk that lands
+with the wrong bytes -- produces a heap of the right length that renders something subtly wrong
+with no error at all. The only convincing evidence that the guard works is watching a deployed
+object refuse a chunk it was actually asked to apply.
+
+### `src/do/invalidate.ts`
+
+#### `bumpGeneration()`, before `const now`
+
+```
+// SUPERSEDED, NOT DELETED, and this is the whole 503 storm.
+//
+// A bump used to empty `cfw_page`, so between the save and the refill there was nothing to
+// answer with and EVERY anonymous visitor got a 503 -- on the profile carrying 0.82 of the
+// traffic, after every content save, on every site. `PREFILL_ON_SAVE` re-queues what it
+// purged and that is correct, but it bounds how many pages come BACK; it cannot shorten a
+// window whose length is the fill cost times the queue position. Measured on a deployed
+// object: `/user/login` took three drain rounds to return, and a queue holding 15 entries
+// from one arm kept it 503 throughout -- which is why an intermittent login failure read as
+// a wrong password.
+//
+// The row is kept and marked instead. `serveFromStorage()` answers it as `AGED` inside
+// {@link AGED_SERVE_MAX_MS} and queues the refill, so the visitor gets content that is one
+// save old rather than an error. `putPage()` refuses any tier that is not HIT or RENDER, so
+// an aged body cannot reach `caches.default`, the KV tier or the isolate page memo.
+//
+// AND IT IS NOT MARKED PER PAGE ANY MORE, which is where the rows went. `UPDATE cfw_page SET
+// stale_at = ?` is charged per ROW, so a save reaching 34 pages spent 34 rows saying so --
+// on the meter that binds regeneration, before regenerating anything. A page already carries
+// the sum of its tags' invalidation counters, which is Drupal's own freshness test, so the
+// marking is derivable and `pageStaleness()` derives it. The write happens once, on the
+// serve that first meets the page stale, and a page refilled before anyone asks never pays
+// it at all: per transition rather than per save.
+//
+// A row with no usable checksum -- stored before the column existed, or rendered declaring
+// no tags -- cannot be derived and is still marked here. That is the fail-closed half, and
+// it is what the `tag_checksum IS NULL` filter selects.
+//
+// AND ONLY ON THE `cachetags` REASON. The checksum can speak for an invalidation Drupal
+// recorded as a tag; it cannot speak for a module install, a firstrun or a manual bump,
+// because none of those moves a counter. Deriving there would answer HIT for a page the
+// install changed -- so every other reason marks eagerly, exactly as before.
+```
+
+#### `bumpGeneration()`, shell purge
+
+```
+// A shell caches the whole shared region -- nav, blocks, footer, site name -- and Drupal
+// knows nothing about it, so no cache tag reaches it and nothing else would ever invalidate
+// it. It used to be purged on EVERY bump including `cachetags`, which meant assembly stopped
+// at the first content save on every live site and never restarted without a human.
+//
+// A `cachetags` bump fires on the FIRST tag written and the rest of the invocation's tags do
+// not exist yet, so it cannot decide anything about a shell either -- exactly the reason the
+// page purge above already passes `scopedTo: []` on that reason. `flushTagPurge()` runs
+// `purgeShellsForTags()` once the set is whole, and `drainPendingTags()` settles it at boot
+// if this invocation dies in between.
+```
+
+#### `purgeForTags()`
+
+```
+// APPLIED, and this is the only caller that may. `purgeShellsForTags()` refuses by default --
+// a tag on neither the shell nor one of its fragments drops the shell as unaccounted-for --
+// so it is only correct where the invalidated set is COMPLETE, which is here and not at the
+// `cachetags` bump. It was wired to nothing for as long as the bump was purging wholesale.
+```
+
+#### `purgeScopedPaths()`, fanout
+
+```
+// The fanout picks the policy. A node save touches a handful of pages and the write can pay
+// for their regeneration; a config change touches everything, and regenerating that eagerly
+// costs more of the daily row budget than the whole day's traffic. The lazy branch is not a
+// refusal -- those pages have a previous generation in KV and the stale tier serves it while
+// the visitor who asked queues the render
+// the third argument is whether the stale tier the lazy branch leaves those pages to exists
+// at all; without `PAGE_KV` bound it does not, and lazy would mean a cold render for every
+// visitor after a config change
+// WEIGHTED BY ROWS, not by page count. The thresholds were counts, and a page costs 2 rows
+// when its `dynamic_page_cache` entry survived the invalidation and 9 when it did not -- so
+// the same 34 pages is 68 rows or 306 depending on which set they are, and one count could
+// not be right for both
+```
+
+### `src/do/lanes.ts`
+
+#### `autoScaleStep()`, the idle-tick comment
+
+An idle tick must write nothing. Recording every window unconditionally charged a row on
+each of ~10,800 daily warming firings to say the site was quiet, which is the meter paying
+for its own bookkeeping. Only a CONTENDED window is stored, and one quiet window clears the
+run, so the sustained check means three contended firings with nothing quiet between
+
+#### `autoScaleStep()`, the queueing comment
+
+QUEUEING, measured, alongside the inflight proxy. `laneTimings` already records
+whether each request waited and for how long -- it was read only for reporting, and
+it is the quantity a lane actually removes
+
+#### `provisionLane()`, the fresh-copy comment
+
+A copy that starts at the beginning must drop what an earlier attempt left on the lane.
+
+`RESTORE_GENERATION_KEY` survives an interrupted copy, and `chunkRefusal()` compares every
+later chunk against it -- so a lane whose first attempt was cut short refuses the next one
+as torn, against a generation only `clearRestore()` can move. Nothing on this side ever
+sent `restart=1`, so the exit its docblock describes was reachable from a test and from no
+caller, and a lane wedged this way stayed wedged.
+
+The interruption is not exotic: `budget` bounds a copy to 4,000 rows per invocation, so any
+site bigger than that needs several, and the primary's own alarm chain commits between them.
+That moves `commitSeq()`, which tears the resume at the check above and sends the next
+attempt back to index 0 -- straight into the stale marker.
+
+#### `provisionLane()`, the sealed-first comment
+
+SEALED FIRST, then the LAST RECORD rather than the sequence; see `copyableGeneration()`.
+A lane landed at `commitSeq()` while the next record chained from one below it, and
+`planApply()` withdrew it as out of order on the first write after its copy
+
+### `src/do/levers.ts`
+
+#### `shellAssemblyEnabled`
+
+ON BY DEFAULT ON BOTH PLANS, and an explicit `SHELL_ASSEMBLY` still wins. `KV_OVERRIDABLE`
+carries it, so turning it off needs no redeploy.
+
+This used to be off on both plans on the reasoning that "the failure mode of a wrong shell is one
+visitor seeing another's page". That failure mode is real and it is also not what gates this
+lever, which is the distinction the old default missed. `assembleFor()` serves NO visitor until
+their own uid has passed `verifyShellFor()` -- a re-harvest of THEM, compared byte for byte
+against the stored shell, which on a mismatch deletes the shell, records the diverging offset and
+answers them from their own render. The two-session harvest authorises the STORE; the per-uid
+proof authorises the SERVE, and only the second stands between a visitor and someone else's page.
+Every other failure returns null and falls through to an ordinary render.
+
+The first request per `(path, role set, uid)` pays a 40-52 row toll and breaks even after 4-13.
+At one site that fits free's 100,000 rows/day, which is why there is no plan branch here.
+
+#### `prefillDefault`
+
+**ON by default for free, OFF for paid.** This is a contract change, not a
+convenience: a prefilled path is a **HIT on its first ever request**, so the cold contract that
+ten assertions were correctly asserting no longer holds by default. It was opt-in precisely
+because changing that silently broke them.
+
+So the switch is explicit and three-way, most specific first: `?prefill=1` / `?prefill=0` on the
+request, then a `PREFILL` env override, then the plan. Free gets it because free is where it
+decides whether the site works at all -- a prefilled page costs no PHP on the serving path, and
+a fill on free costs a 202 to the first visitor and rows against the binding meter. Paid can
+afford to render, and a paid operator asking for the cold contract should get it.
+
+#### `DEFAULT_MEMORY_CACHE_BINS`
+
+ON BY DEFAULT, AND IT SHIPPED OFF UNTIL THE COST WAS MEASURED RATHER THAN REASONED ABOUT. The
+saving was never in doubt: a real re-render charges 8 charged rows with the bin in SQL and 4 with
+it in memory, on the meter that binds regeneration. What was in doubt was the cost after an
+interpreter drop, since the bin dies with the interpreter -- and the argument for leaving it off
+was that a render which could no longer reassemble would pay more.
+
+It does not. Measured with both arms dropping the interpreter between two fills: **6 charged rows
+with the bin in SQL against 2 in memory**. A cold render REWRITES the SQL bin rather than reading
+it, so surviving the drop buys that render nothing, while the memory arm writes no SQL at all.
+The lever is cheaper in both states and the conditional default had no evidence under it.
+
+What it costs is latency on the first render after a drop, MEASURED 2026-09-24 on deployed
+workers forced to recycle after every request (medians, n=10 interleaved): a cold reassemble is
+1,324 ms against 1,073 with every bin in SQL, and a cold re-render 1,458 against 1,346. It stays
+the default because of the write budget. On a modelled free day -- the whole request allowance at
+a 4.38% render fraction, plus 50 saves each invalidating 34 pages, plus warming and those saves'
+own rows -- it takes rows written from 72% of the quota to 32%, the margin before read-only.
+
+`menu` JOINED ON 2026-09-23, chosen by a census rather than by being a Drupal cache bin. Of the
+reconstructible bins measured in the audit's sequence, it is the only one that writes on a warm
+re-render, the class carrying 70% of the steady-state mix, so it is the largest single step. It
+passed the same three checks this bin did: never a row more, the page identical in content, and
+an entry refused once its tag checksum moves through SQL alone. That last one matters most here,
+because a menu save invalidates every cached page.
+
+`render` and `discovery` were measured for the default on 2026-09-24 and both REFUSED, each on a
+cost the rows census cannot see. `render` passes the stale-entry check and fits the heap, and would
+take a fill 1.75 -> 1.50 rows -- but the first render after an interpreter drop is 2,696 ms with it
+in memory against 1,450 with it in SQL (medians, n=10 interleaved, deployed), because the SQL bin
+survives the drop and the memory one does not. That lifts a ceiling free traffic does not reach
+(the request allowance drives ~4,380 renders/day against 50,916) and charges every cold render
+1.25 s. `discovery` sat at its 64-entry bound, evicting, and cost 12.4 MiB of heap. Both stay
+available through `MEMORY_CACHE_BINS` for a site that is warm and write-heavy.
+
+#### `agedServeAllowed`
+
+`staleAllowed()`'s built-in deny-list is NOT applied, and that is a decision rather than an
+oversight. That list is calibrated for the KV tier, where a stale answer can be 24 hours old and
+`/user/login` is on it for good reason. Here the row is the current content superseded seconds
+ago by an unrelated save, and applying that list would keep the exact 503 this exists to remove --
+the login page was the symptom that started it. Only the OPERATOR's own `NEVER_STALE` entries are
+honoured, because those state an intent this cannot infer.
+
+### `src/do/outbound.ts`
+
+#### `ensureHttpTables`
+
+Keyed by METHOD+URL+BODY, not by URL. Both tables were `url TEXT PRIMARY KEY`, which is a live
+correctness bug rather than a POST-only gap: two deferred fetches to the same endpoint are one
+row, so the second overwrites the first and a caller can be handed a response fetched for
+somebody else. For a captcha verification that is one visitor receiving another's verdict.
+
+#### queueHttp, drain wake
+
+Wake the drain, or nothing does.
+
+Draining in alarm() is only half a fix: on an idle site the alarm re-arms at the
+240 s keep-warm interval, so a queued request waited up to four minutes. Measured --
+a serve-chain assertion sat on a 2-entry queue for 30 s and failed. Arming here
+makes the queue self-draining, which is the same reason the fill queue arms.
+
+#### `parkState`
+
+Lazy rather than installed with the other shims, because the probe RUNS PHP: at the point
+`installSign()` and friends are wired the interpreter cannot execute yet, so a probe there
+throws and reports `failed` on a build that parks perfectly well.
+
+**Arms only when an endpoint is configured**, so a site that never asked for Redis pays
+nothing and behaves exactly as it does today. An armed trap diverts every call to its name for
+the duration of a parked run -- including a file write, which is why the loop carries a
+passthrough branch -- and there is no reason to take that on for a site the loop would refuse
+on its first op anyway.
+
+The capability contract gates it, not the endpoint alone. `socket.outbound.blocking` is
+executed against the shipping interpreter, and it answers false while a resumed chain
+cannot complete -- so arming would divert a render into a park that delivers the host's
+value and then loses the rest of the program. When the vector passes this arms itself
+TWO CLASSES, armed independently, because they cost different things. `socket` serves
+`drupal/redis` and waits for the endpoint that would use it, since its read/write traps
+divert every file write inside a parked run. `fetch` serves the module's own Guzzle
+transport and needs no endpoint, because the destination is whatever the module asks for
+and the SSRF guard is what bounds it. Both stay gated on their capability: arming a class
+the park cannot serve routes every render through `cfw_park_run` for a yield that always
+falls back, and when `fetch` was armed unconditionally `serve-chain` read a render
+estimate of -1.
+
+#### `runJsonMaybeParked`
+
+Two paths on purpose. A parked render costs an extra `_run` per blocking call and rewrites the
+fragment through `zend_eval_string`, so a site with no Redis endpoint takes the path it always
+has and nothing about it changes.
+
+A parked run that does not finish still answers: the chain is unwound inside `drivePark`, so
+whatever the render managed to print is parsed, and only an unparseable answer falls back to a
+second unparked render.
+
+**The shell tier used `runJson` DIRECTLY AND THAT MADE IT EXCLUSIVE WITH REDIS.** With the
+socket class armed, a `cache_*` read inside `renderPlaceholder()` was not parked: it fell
+through to the real `stream_socket_client`, which cannot connect in workerd, so the fragment
+render reported `ok !== true` and `assembleFor()` returned null on every request. A site with
+Redis configured therefore never assembled a shell, degraded rather than broken, and nothing
+anywhere said so. All four shell-tier runs go through here now.
+
+#### performOutbound, timeout
+
+BOUNDED, because this runs on the alarm and the alarm is what fills pages. An outbound
+host that accepts a connection and never answers would otherwise hold the firing open,
+and the fill queued behind it never drains -- a visitor sees a permanent 503 caused by
+somebody else's server. 10 s is far above any of the declared endpoints and far below a
+stalled invocation.
+
+#### drainHttpQueue, prepared / six at a time
+
+PREPARED, NOT STARTED. This held a `run: Promise<TcpResult>` begun right here, so every
+queued URL opened at once and the chunked loop below only chunked the AWAITS -- while its
+comment said the batch "is chunked rather than opened all at once". At the paid
+`httpDrainLimit` that is 15 concurrent responses buffered whole on the JS heap, against a
+measured ~4 MiB of net isolate headroom; `/__ops` can raise it to 25.
+
+SIX AT A TIME, STARTED HERE. The published subrequest concurrency is 6 and that is what
+this loop now opens; serialising entirely would be wrong for the reason the old comment
+gave -- N queued URLs would cost N round trips in series and duration is billed on wall
+clock. Nothing in `performOutbound` touches SQL, which is what makes six at once safe.
+
+#### queueDeclaredFetches, hourly bound
+
+At most once an hour, and this bound is not cosmetic. Queued on every firing it wrote a
+row per declared URL per alarm on any site whose fetch never lands -- measured, rows
+per fill went 9 to 10 -- which spends the meter this whole tier is scored against to
+re-ask a question that already has an answer or already has a queue entry.
+
+### `src/do/provision.ts`
+
+#### `ensureServeTables()`
+
+```
+SQLite gives a rowid table's text key its own unique index, so one logical write is charged
+twice on the meter that binds regeneration. Storing the row inside the key's own B-tree charges
+once. Measured on `ctx.storage.sql`: insert 2 -> 1, update 1 either way, the serve HIT still
+reads one row, and 200 rows of 12 KB html cost +0.32% on disk. On a `warmReassemble` fill
+`cfw_page` is 2 of the 3 charged rows, so this is the cheapest class's largest single item.
+```
+
+```
+// Checked first, not attempted and caught. SQLite has no ADD COLUMN IF NOT EXISTS, and the
+// obvious try/catch runs a FAILING DDL on every `ensureServeTables()` -- which dirties
+// `sqlite_master` the same way a CREATE TABLE does, turns later reads in the same
+// transaction into speculative replays, and was measured taking the serve path into
+// `migrate: starting` on 2 of 3 runs. One `pragma_table_info` read instead
+```
+
+#### `migrateChunks()`
+
+```
+// NOT gated here: `fetch()` already runs the whole
+// router inside `this.gate.run()` (see the bottom of this class), so entering again
+// would be a nested non-reentrant acquire. The Gate is a FIFO promise chain, so the
+// inner entry awaits a release that only happens when the outer returns -- which is
+// waiting on the inner. I shipped that for an hour: every request hung past 90 s on a
+// fresh object and it read exactly like a platform fault.
+//
+// The alarm path is the one that needs an explicit acquire, because alarm() is NOT
+// gated as a whole -- it enters per fill. See migrateStepIfPending().
+```
+
+#### `migrateStepIfPending()`
+
+```
+// NO CURSOR STARTS A MIGRATION ONLY WHEN A VISITOR ASKED FOR ONE. Starting on any alarm
+// instead was measured hijacking 37 tests: the object migrated first and never reached the
+// quarantine check, the HTTP-queue drain or the deferred-POST drain, so an alarm asserting
+// any of those got a migration report. The marker keeps this alarm's contract as it was --
+// carry an IN-PROGRESS migration forward -- and makes provisioning an explicit request
+```
+
+```
+// Gated HERE and not in migrateChunks(), because alarm() is not gated as a whole
+// while fetch() is. Without this acquire a concurrent /migrate request and this alarm
+// both read the same cursor, both replay the same chunk, the loser hits a UNIQUE
+// constraint, and the cursor latches to `failed` -- after which /serve answers 503
+// forever. An intermittently-failing serve-chain assertion was pointing at it.
+```
+
+```
+// The digest the packed container was BAKED with, not the one that ships. They agree
+// only when `bun run assets:container` ran after the last `assets:driver`; stamping
+// the shipping one claimed a container current that could predate a hook, so the hook
+// stayed invisible on every fresh site. Without any stamp the reconcile step reads
+// `owed` on every fresh site and the first boot rebuilds at 1,024 ms against 86
+```
+
+#### `prefillServingTable`
+
+Loads the CI-rendered pages straight into the serving table.
+
+Default on for free, off for paid, overridable both ways. Pre-filling changes what a MISS means
+-- a prefilled path is a HIT on its first ever request -- so the switch is explicit per plan.
+An absent `prefill.json` is normal: a site that skipped the CI step just starts cold.
+
+Shared by both callers rather than living in the `/__migrate` route, where only a
+request-driven migration ever prefilled. A migration that completes on the ALARM chain is the
+default and the only path a deployed site takes, so a real deploy finished migrating with
+`cfw_page` empty and answered 503 until somebody happened to request a render.
+
+@param asked the `?prefill=` override: '1' forces on, '0' forces off, undefined defers to the plan
+
+### `src/do/reconcile.ts`
+
+#### `updbActive()`
+
+```
+// NO DDL ON A READ. This is asked from the alarm, where creating the tables is free, and
+// from the status report, where it is not: `Requirements` reaches it through the host and
+// an ordinary status render started dirtying `sqlite_master` for two tables a site with no
+// update run does not have. A site that has never run `updb` has no active run by
+// definition, so the absent table IS the answer
+```
+
+```
+// An ALLOWLIST of live phases, and both halves of that matter. The field is `phase`,
+// not `state` -- reading `run.state` gives undefined, which compared unequal to
+// every terminal name and made a COMPLETE run hold the alarm chain forever while
+// fills starved. And an allowlist means a phase added upstream later defaults to
+// "not active" rather than wedging the chain.
+//
+// UPDB_PHASES: planning, running, complete, halted, rolled_back, abandoned.
+```
+
+#### `updbAction()`
+
+```
+ * Beating was the only reachable entry point, so `/updb` could advance a run nothing
+ * created and an operator met `{"beat":"none","reason":"no-run"}` -- indistinguishable
+ * from "nothing to do". `prepare` is what closes that.
+```
+
+#### `sweepBeat()`
+
+```
+ * The sweep QUEUES paths and never renders one. That is what makes the isolate failure impossible
+ * rather than merely bounded: a `fillBatchSize` of 25 reset four freshly provisioned sites by
+ * crossing 128 MiB inside one invocation, and a step that adds no workload to any invocation can
+ * never be the batch that does it. The existing fill batch drains the queue under the
+ * `oversized()` break it already has.
+```
+
+#### `reconcileStepOnce()`
+
+One reconciliation step per firing, or null when this site is already at the shipping version.
+
+Null is the steady state and it costs one `cfw_meta` READ. `reconciled()` compares two integers
+and no step is asked anything, so a site that is current pays nothing per alarm for a mechanism
+that only matters the day a fix ships.
+
+A step that ran ALWAYS drops the interpreter and the heap image. A restored kernel predates
+whatever the step just changed, which is the shape of BUG 1, and making it unconditional means
+no future step's author can get the flag wrong.
+
+### `src/do/replication.ts`
+
+#### sealGeneration, branch `generation <= buffer.parent`
+
+A BUFFERED WRITE MUST GET A GENERATION, and returning here would silently lose it --
+the buffer is already cleared two lines up, so the statements would go nowhere and no
+replica would ever see the change.
+
+The branch was unreachable while `parent` was `commitSeq() - 1`, which is why it could
+be a bare return. `parent` is the last SEALED record now, so an invocation that wrote
+something authoritative WITHOUT invalidating anything lands here legitimately: the
+sequence only advances on an invalidation, and not every authoritative write is one.
+
+#### catchUpOnce, refusal branch
+
+A refusal ends the batch; IT DOES NOT UNDO THE RECORDS AHEAD OF IT, so
+everything already applied is owed the same bookkeeping the loop's normal
+exit performs. Without this a lane that applied a save and then met an
+overflow kept the pages that save invalidated, and reported a commit
+sequence behind the state it holds.
+
+#### catchUpOnce, lastWithdrawal
+
+KEPT SEPARATELY FROM `lastCatchUp`, which `requestReadmission()` overwrites
+with "stage CREATED needs a restore" on the very next firing -- so the
+reason a lane left the pool was unreadable by the time anyone looked, and a
+pool cycling out from under its own traffic showed only the symptom.
+
+#### bufferForReplication, parent
+
+THE LAST SEALED RECORD, never `commitSeq() - 1`. That subtraction assumed this
+invocation would seal at exactly the current sequence; `sealGeneration()` seals at
+whatever the sequence reached by the END of the invocation, so a buffer opened at 69
+could seal as `{parent: 68, generation: 70}` while record 69 already chained from 68.
+Two records then claimed the same parent, and a lane sitting on the first met the
+second as `out of order: applied 69, record builds on 68` -- which `catchUpOnce()`
+answers by withdrawing it into a full re-copy. Measured on a fresh 8-lane site: all
+eight started SERVING and all eight withdrew on that one sentence.
+
+The last record's generation IS the position a caught-up replica holds, so chaining to
+it makes `planApply()`'s `record.parent === pos.applied` exact by construction.
+
+### `src/do/serve.ts`
+
+#### `route()`, before `const arrivedAt`
+
+```
+// The queueing signal, taken before the gate because that is the only place it exists.
+// `ahead` is what a replica removes: an exact count of requests this one waits behind, with
+// no clock in it. See `noteLaneTiming()` for why the two durations beside it are floors.
+// **HOISTING `adoptSettings()` OUT OF THE GATE WAS TRIED AND REVERTED, and the reason is
+// worth more than the saving was.** `handle()` awaits it first, so once per isolate-minute a
+// gated request performs a real `CONFIG_KV.get()` while holding this object's single-threaded
+// lane -- 4-6 ms warm, 46-140 ms for a key the colo has not seen. Awaiting it up here
+// instead removes that, and it also inserts a microtask boundary into a stretch of `route()`
+// that is load-bearing precisely because it is synchronous:
+//
+// - the HERD check reads `renderFlights` and the leader registers its flight afterwards, so
+//   an await between them lets all N waiters miss the map. Measured: eight concurrent
+//   identical requests went from one render to EIGHT.
+// - `ahead` is read immediately before `gate.run()`, so an await between them makes every
+//   concurrent arrival see zero and the queueing signal report nothing.
+//
+// One KV read a minute against a herd collapse worth 16x on a burst is not a trade. If this
+// is worth revisiting, the shape is an out-of-band refresh that leaves the read path
+// synchronous, not a hoist.
+```
+
+#### `route()`, herd region
+
+```
+// Measured deployed: 16 concurrent authenticated readers on a path whose plan had not
+// compiled read p50 9,709 ms with `RENDER=16` and zero plan hits -- each paid its own ~2.5 s
+// render and they serialised on this object.
+//
+// The same coalescing in the FRONT WORKER was built and refuted: its map is per-isolate and
+// Cloudflare spreads concurrent requests across isolates, so 16 requests still produced 17
+// object hops. Here there is exactly one object per site, so every duplicate does arrive at
+// the same map -- which is the whole reason this belongs at the object and not above it.
+//
+// BEFORE the gate, or the waiters each take a gate slot and queue behind the leader anyway,
+// which is the cost this removes.
+```
+
+#### `route()`, fast-lane migratePartial condition
+
+```
+// A restore writes this cursor too. The gated lane has always refused a
+// half-migrated site, but this lane answers before the gate and never looked, so a
+// warm site returned 200 from `cfw_page` while a rollback was overwriting the
+// database underneath it -- measured. Unreachable on a FIRST migration, because the
+// pack ships no pages and `serveTablesReady` is false, which is why the migration
+// specs never saw it. One indexed read of a single row, no DDL and no await, so all
+// three fast-lane conditions still hold.
+```
+
+### `src/do/settings.ts`
+
+#### `SERVICES_YAML`
+
+Points Drupal's `page` bin at a null backend, and carries the file stream wrappers.
+
+`cache_page` is a second copy of bytes the object already stores in its own SQL, on a path that
+refuses to boot PHP at all -- measured at 12 rows per front-page fill, 4 of them this bin, and rows
+written is the meter that binds regeneration. `dynamic_page_cache` and `render` stay: warm, they let
+a fill reassemble rather than render, so nulling them trades 8 rows for a full render.
+
+A services file rather than `$settings['cache']['bins']`, because core registers
+`cache.backend.null` from a compiler pass and no yaml, so the settings route names a service that
+does not exist. Overriding `stream_wrapper.public` by tag is the same story: `public://` belongs to
+`StreamWrapperManager`, and a bare `stream_wrapper_register()` loses the race.
+
+The FILENAME is load-bearing. The shipped `settings.php` already appends this exact path
+unconditionally, and `getContainerCacheKey()` folds in the raw setting while `addServiceFiles()`
+filters to files that exist -- so creating it changes the container without moving the cache key.
+
+### `src/do/stats.ts`
+
+#### `noteLaneTiming()`
+
+```
+ * **The two durations are floors, not service times**, and this is the trap the render estimator
+ * at `estimateRenderMs()` already documents from a deployed measurement: the wall clock only
+ * advances during I/O, so a synchronous `php._run()` contributes ZERO to a `Date.now()` delta
+ * taken around it. A cold alarm fill once reported 117 ms for work that cost 1,398 ms of
+ * `cpuTime`. So `queueMs` counts only the holder's host crossings and `serviceMs` only this
+ * request's, and both understate by all the pure compute in between. Quote them as lower bounds
+ * or not at all; the honest absolutes are the client's own clock and `cpuTime` from a tail.
+```
+
+```
+// How the router finds out lanes exist. Autoscaling writes `lanes_provisioned` into this
+// object's own meta and the front worker reads only `REPLICA_COUNT` from env, so a
+// contended site copied its database into N objects and kept serving every request from
+// one. Reported here rather than fetched: the response is already paid for, the same way
+// the generation and the role set ride along
+```
+
+#### `serveStatsSync()`
+
+```
+// GUARDED, BECAUSE A READ MUST NOT RUN DDL. `storedBytes()` calls
+// `ensureFileTables()`, which is three `CREATE TABLE IF NOT EXISTS` statements.
+// That was harmless while nothing on a render path read these stats, and the
+// status report now does: `Requirements::dailyQuotaRows()` reaches
+// `serveStatsSync()` on an authenticated GET, so an ordinary page view started
+// dirtying `sqlite_master` for five tables it does not use. `replica-invariant`
+// caught it. `attributeSpend` reports a dimension with no counter as null with a
+// reason, so an absent table costs the line its value rather than the site a
+// hazard
+```
+
+```
+// The whole isolate, which nothing has ever reported. Every memory figure this project
+// has published measures wasm linear memory and subtracts it from 128 MiB to call the
+// rest headroom -- and that subtraction has no term for the JS side, which the same
+// ceiling covers. Reported as its three parts so a reader can see which one moved
+```
+
+```
+// rows written is the free plan's binding meter; GC and fills compete for it.
+// TWO figures: `rowsWritten` counts only what went through
+// execSql(), so it sees Drupal's statements and none of the host's, while
+// `rowsToday` comes from countingSql() wrapping the storage handle and is
+// therefore complete. The first is kept because measurements are pinned to
+// it; the second is the one a quota decision should use.
+```
+
+### `src/do/types.ts`
+
+#### `FillOutcome.bootedInFill`
+
+whether THIS fill also paid for the interpreter boot.
+
+Measured inside the fill rather than inferred from `!this.php` at the caller, because the two
+disagree and the deployed tail proved it: three paid cold-object renders reported a boot and
+cost 55/58/77 ms of cpuTime, while the alarms beside them cost 3,200/3,608/3,623 ms. The
+object looked cold when the decision was taken and an alarm had booted it by the time the
+render ran behind the gate, so the header credited the render with a boot it never paid for.
+
+NOT `booted`, which the warm-window reply already uses for "an interpreter is up" -- the two
+are near-opposites on a warm fill, and spreading this outcome over that field inverted it.
+
+#### `FillOutcome.roles`
+
+The role set this render was for, sorted, or undefined when the render did not report one.
+
+What the edge plan is keyed on. The plan tier used to key on the RAW COOKIE HEADER, so a site
+with 200 logged-in users and 50 authenticated paths held up to 10,000 plans instead of
+`role_sets x 50` -- and a key a colo has not seen costs 46-140 ms against 4-5 for a warm one,
+so a per-user key maximised the expensive case and a logout minted a fresh one.
+
+#### `FillOutcome.notReady`
+
+The render failed because the SITE is not ready, not because the render is broken.
+
+Today the one case is Drupal redirecting to `/core/install.php`, which is the database saying
+it has not been installed. The serve path answers an ordinary failure with 500 on the ground
+that "503 is right for a page that is coming; a page that threw gets the exception" -- and
+this is the first of those. It stayed invisible while free refused to render inline at all,
+because the refusal answered 503 before a render could report anything.
+
+#### `Payload`
+
+`any` values rather than `unknown`, with the trade named: each of these crosses a PHP or SQL
+boundary as arbitrary JSON whose shape depends on which fragment ran, several call sites ADD
+fields to one after the fact (`out.continuation`, `result.prefilled`), and `unknown` would turn
+roughly forty guarded reads into casts without making one of them safer.
+
+### `src/drupal/argon2-fix.ts`
+
+#### Module overview and `ARGON2_BRIDGE`
+
+argon2id password hashing, computed on the HOST side.
+
+##### The blocker that was recorded, and the one that is real
+
+argon2 was closed on memory: `PHP_PASSWORD_ARGON2_MEMORY_COST` defaults to 64 MiB, the isolate is
+128 MB shared between JS and wasm, and an install already peaked at ~115 MiB. That reasoning is
+correct about ONE mechanism -- an arena inside PHP's own heap, where `memory.grow` has no inverse,
+so the first hash would raise that object's floor for the rest of its life.
+
+It is not correct about argon2id. A JS-side arena is garbage-collected rather than permanent, and
+OWASP's floor is m=19456 KiB (19 MiB), t=2, p=1 rather than 64 MiB. Measured on a DEPLOYED
+throwaway (`cfw-arena-probe`, torn down), every OS page touched on both sides:
+
+| resident wasm         | transient JS arena     | result |
+| --------------------- | ---------------------- | ------ |
+| 96 MiB                | 19 / 32 / 48 / 64 MiB  | all ok |
+| 117 MiB (auth render) | 19 MiB                 | ok     |
+| --                    | 19 MiB x 10 in a row   | 10/10  |
+
+The first version of that probe touched one byte per 64 KiB wasm page, making 1 OS page in 16
+resident and understating the footprint 16-fold. These are from the corrected one.
+
+##### Why the hash is not computed in PHP
+
+Two reasons, and the memory one is the smaller. `password_hash()` is a built-in that cannot be
+redeclared, so a shim of the kind `curl-fix` and `openssl-fix` use is not available here -- the
+guard would never pass. Drupal's own seam is the `password` service, which
+`DrupflareServiceProvider` already alters, so `CfwPassword` in the sibling module calls the
+helpers below and core's `PhpPassword` never runs. That is an ordinary Drupal service swap rather
+than a patch, which is what an unmodified module requires.
+
+##### Why @noble/hashes rather than an implementation here
+
+Audited, dependency-free, synchronous TypeScript. The alternatives lose on this runtime for
+reasons that are not about quality: `hash-wasm` and `argon2-browser` instantiate their wasm from
+base64 on first call, which is REQUEST time, and workerd refuses codegen there -- the same rule
+that forces the interpreter to be instantiated at module scope. A hand-written BlaMka would be
+~250 lines of 64-bit arithmetic in a language without a 64-bit integer, to reproduce something
+already audited.
+
+#### `ARGON2_DEFAULTS`
+
+m=19456 KiB, t=2, p=1. OWASP lists m=47104/t=1 as the other equal-strength option; that one is
+46 MiB and has no reason to be preferred here, where the arena is the scarce thing. Anything
+BELOW this is not offered -- a weaker argon2 is worse than the bcrypt cost 12 already shipping,
+which is the objection that closed this item the first time and is still correct at 8 MiB.
+
+#### `ARGON2_FIX`
+
+NOT a `password_hash()` shim. That function is a built-in and always declared, so a conditional
+declaration would never bind -- the inert-shim-guard failure, arrived at from the other direction.
+Drupal's `password` service is the seam instead.
+
+The encoded form is PHP's own, `$argon2id$v=19$m=..,t=..,p=..$salt$tag` with unpadded base64, so a
+hash written here verifies on any ordinary PHP with ext-argon2 and a site can migrate off this
+platform without every password becoming unverifiable.
+
+### `src/drupal/iconv-fix.ts`
+
+#### `ICONV_STRRPOS`
+
+Corrects `iconv_strrpos()` in symfony/polyfill-iconv, which returns the wrong index whenever the
+last match sits at the start of the string.
+
+`Iconv.php:495` measures the wrong slice:
+
+    return false === $pos ? false
+      : self::iconv_strlen($pos ? substr($haystack, 0, $pos) : $haystack, 'utf-8');
+
+`$pos` is an OFFSET, so a match at index 0 is falsy and the ternary measures the whole haystack
+instead of an empty prefix. It answers `strlen()` where the extension answers 0. Measured on 8.5.7
+against the real extension:
+
+    iconv_strrpos('a', 'a')            native 0   polyfill 1
+    iconv_strrpos('ab\0cd', 'a')       native 0   polyfill 5
+    iconv_strrpos('AbC-123_xyz', 'A')  native 0   polyfill 11
+
+`iconv_strpos()` twelve lines above has the same ternary written the other way round and is
+correct, which is what makes this a slip rather than a policy. Present on upstream `main` as of
+2026-08-21, in v1.37.0.
+
+It reaches this project because the wasm build has neither extension: polyfill-mbstring's
+`mb_strrpos()`, `mb_strripos()`, `mb_strrchr()` and `mb_strrichr()` are all thin wrappers over
+`iconv_strrpos()`, so all four are wrong at index 0. No Drupal core path calls them -- the only
+non-test caller in the tree is `symfony/string`'s `CodePointString::indexOfLast()`, which core does
+not reach -- so this is a correctness fix for contrib rather than a live defect.
+
+### `src/drupal/mb-fix.ts`
+
+#### `MB_SANITIZE`
+
+The bug. Without the mbstring extension, Symfony's polyfill provides mb_*. Its mb_substr() is
+`return (string) iconv_substr(...)`, its mb_strlen() is `if (false !== $len = @iconv_strlen(...))`,
+and Symfony's *iconv* polyfill returns FALSE for any string that is not valid UTF-8. `(string) false`
+is `''`. So a stored value carrying one bad byte comes back BLANK where native PHP returns the text
+with the bad bytes replaced by '?'. Core calls mb_substr 50 times and mb_strtolower 66 times.
+
+The prescribed fix is wrong. AGENT-TECHNICAL_REPORT.md TASK C says "compile the real iconv extension
+into the wasm build" and calls it cheap. It would not work. Measured on native PHP 8.5.7 with the
+REAL iconv extension loaded:
+
+  iconv_substr("abc\xff\xfedef", 0, 100, 'UTF-8')  ->  false
+  iconv_strlen("abc\xff\xfedef", 'UTF-8')          ->  false
+  mb_substr("abc\xff\xfedef", 0, 100)              ->  'abc??def'
+
+Real iconv fails on invalid UTF-8 exactly like the polyfill does. It is real MBSTRING that
+substitutes. So compiling iconv in leaves the polyfill's `(string) false` intact and changes nothing.
+
+What this does: defines the affected mb_* functions BEFORE the polyfill's bootstrap runs, so its own
+function_exists() guards skip. Each one replaces invalid UTF-8 with '?' -- byte for byte what native
+mbstring's substitute character does -- and then delegates to the polyfill class for the real work.
+No vendor file is edited and no rebuild is needed.
+
+What it does not touch: mb_check_encoding() and mb_detect_encoding() must keep seeing the original
+bytes: sanitising first would make mb_check_encoding() answer TRUE for input that is invalid, which
+turns a correct answer into a wrong one. Both already agree with native.
+
+Compiling real mbstring in (--enable-mbstring --disable-mbregex) remains the durable fix; this is the
+one that works today and it is what the tests pin.
+
+INERT ON THE SHIPPING BUILD AS OF 2026-09-08: the guard is `!extension_loaded('mbstring')` and the
+long64 build carries the real extension; `loaded-extensions.spec.ts` says which build is which.
+
+#### `MB_ASCII`
+
+THE ASCII FAST PATH is not only a speed lever, though it is a large one -- the polyfill routes every
+call through iconv even for bytes it cannot possibly change. Drupal's hot `mb_strtolower` inputs are
+machine names, field names, langcodes and header names, all ASCII.
+
+`strtolower()` is safe to substitute only because this is PHP 8: it became locale-insensitive and
+ASCII-only in 8.2, so the C-locale trap that made this wrong on older builds is gone.
+
+THE FINAL SIGMA post-pass closes the divergence that has been on record longest. Lowercasing a
+word-final capital sigma must give U+03C2, and the polyfill's flat table gives U+03C3, so a Greek
+title produces a different search key, sort order and URL alias in wasm than on a normal host. The
+rule is contextual rather than per-codepoint, which is why a table cannot express it: sigma is final
+when a letter precedes it and none follows.
+
+### `src/drupal/openssl-fix.ts`
+
+#### Module overview and `SIGN_BRIDGE`
+
+`openssl_sign()` and `openssl_verify()` over `node:crypto`, synchronously.
+
+The premise this was scoped under was wrong. It read "crypto.subtle covers RS256/ES256 but is
+**async**, so it takes the queue/read-later pair", which would have made every signature a
+two-invocation round trip through a deferred queue. Measured 2026-08-23 in workerd: `node:crypto`
+exposes `createSign`/`createVerify` and they are SYNCHRONOUS -- a 2048-bit RS256 signature comes back
+in-line, 256 bytes. So this is an ordinary bridge like `cfwZlib`, not a deferred one.
+
+Why `openssl_*` rather than a new `cfwSign()` function. An unmodified module is the whole claim.
+`firebase/php-jwt`, Google's auth client and Stripe's webhook verifier all call
+`openssl_sign()`/`openssl_verify()` directly, so shimming the names PHP already uses makes them work
+untouched. A new function would have required every one of them to be patched.
+
+What is here now, and why it grew. The scope above was two functions and a note that the rest had "no
+caller in this project". Three of the four names `ShimRegistry` refused turned out to have a measured
+synchronous primitive behind them AND a named caller -- `openssl_pkey_get_public()` is what turns a
+JWKS entry into something `openssl_verify()` accepts, which is the missing step in every OIDC library.
+Measured in workerd, every call synchronous: `generateKeyPairSync` produced an RSA-2048 SPKI PEM of 451
+bytes, `createPublicKey({key: jwk, format: 'jwk'}).export()` returned bytes IDENTICAL to that PEM, and
+`privateEncrypt` returned 256.
+
+The symmetric half, key details and certificates are here too, because every SSO and OAuth library in
+real sites needs them: `openssl_encrypt`/`openssl_decrypt` (AES CBC, CTR, ECB and GCM) for
+defuse/php-encryption and xmlseclibs, `openssl_pkey_get_details` for league/oauth2-server and
+lcobucci/jwt, `openssl_x509_*` for php-saml, OAEP `openssl_public_encrypt` for XML encryption, and
+`openssl_pkey_derive` (ECDH) for web push. Each is one synchronous `node:crypto` call.
+
+What is still not here. `openssl_csr_new` and the PKCS#7/CMS family. `node:crypto` has no
+certificate-request primitive at all, so that one is absent rather than unimplemented, and it stays
+refused with the reason named. `openssl_x509_checkpurpose` needs a trust store and purpose table this
+runtime does not carry, so it answers -1 and records a degradation.
+
+#### `OPENSSL_FIX`
+
+`openssl_sign()` takes its signature by reference and returns a bool, which is the shape callers
+check; `openssl_verify()` returns 1, 0 or -1, where -1 is "an error occurred" rather than "invalid".
+Getting that tri-state wrong would make a failed verification look like a successful rejection, so the
+three are kept distinct. Keys and certificates are `OpenSSLAsymmetricKey` and `OpenSSLCertificate`
+objects, declared here because the extension that owns those names is absent; lcobucci/jwt and
+league/oauth2-server type against them, so a PEM string where an object belongs is a TypeError. Every
+function still accepts a PEM string, a `file://` path or the older two-key array wherever ext-openssl
+accepts a key.
+
+### `src/drupal/reconcile-php.ts`
+
+#### `reconcileRouterPhp`
+
+THE SHIPPED PACK HAS `drupflare` IN `core.extension` AND NONE OF ITS ROUTES. Measured 2026-09-09
+by rebuilding the pack database from `install-site-db.php` and diffing: the rebuilt file carries
+`drupflare.admin`, `drupflare.status`, `drupflare.ops_terminal` and `drupflare.oidc_complete`
+plus three menu links, and the shipped one carries zero of the seven. The module was enabled into
+the pack before those routes existed and `router` was never rebuilt after, so the Drupflare admin
+section, Runtime Status and the Operations Terminal answer 404 on every site.
+
+The container step next to this one cannot fix it: dropping `cache_container` makes the next boot
+rediscover HOOKS, and `router` is a table `RouteBuilder` writes rather than a cache Drupal
+rebuilds on demand.
+
+`setRebuildNeeded()` then `rebuildIfNeeded()` rather than `rebuild()` directly, because the
+unconditional form does the work again on a site that is already current, and this runs inside an
+alarm with a CPU budget.
+
+#### Module overview
+
+`system.performance:cache.page.max_age` was fixed correctly in the `config` table and stayed inert,
+because `cache_config` held its own serialized copy and Drupal reads the bin first. Every render on
+every site still answered `no-store` for the whole time the fix was believed shipped.
+
+`ConfigFactory::save()` writes the row, clears the bin and invalidates `config:<name>`, which is
+what makes the render caches downstream of it stale. State keeps a static cache and a
+`cache_bootstrap` copy and `State::set()` knows about both. A host re-deriving either list gets it
+wrong, and the copy it forgets is the one that made the original fix inert.
+
+### `src/drupal/site-php.ts`
+
+#### `renderPage`
+
+Renders one path and hands the HTML back, for the alarm to store.
+
+Separate from drupalRequest() because that one reports timings for measurement
+and this one produces a cache entry. Both empty the page bin first: the point of
+an alarm fill is to produce a fresh render, and PageCache would otherwise answer
+from its own memoized cid.
+
+`bins` names what is emptied, and it is load-bearing rather than cosmetic:
+`['page']` alone leaves `dynamic_page_cache` warm, so the page is REASSEMBLED
+from cached render arrays instead of rendered. That is the cheap path a
+pre-filled site takes on a MISS, and the two cost 4.3x different amounts, so a
+caller has to choose which one it is asking for.
+
+`destruct` defaults to FALSE on the render path, and that is a measured decision
+rather than an oversight.
+
+The hypothesis was that nothing ever completed the request lifecycle, so every
+`needs_destruction` CacheCollector discarded its accumulated entries instead of
+writing them, and the render paid to rebuild them every time. The mechanism is
+real. The payoff is not: with the five safe services destructing, a repeated
+anonymous front-page render costs **17 host statements against 15**, writes the
+**same 15 rows**, and returns the same 12,310 bytes. Cost, no benefit.
+
+The reason is the same property that made `$kernel->terminate()` dangerous here:
+the interpreter is PERSISTENT, so the collectors are already populated in memory
+and never re-read from cache. Persistence only pays for a fresh process. On this
+runtime the in-memory collector IS the cache.
+
+Still worth passing `true` on a WRITE path, where `router.builder`'s
+`rebuildIfNeeded()` and accumulated state flushes are correctness rather than
+speed. Unmeasured: whether persisted collectors pay for themselves on the COLD
+path, after a hibernation discards the interpreter.
+
+#### HTTP_CLIENT_CHECK fragment
+
+Does `Drupal::httpClient()` return a body, on the shipping binary?
+
+It did not, for the whole life of the project, and the comment saying it did is the finding:
+`DrupflareServiceProvider` left core's `StreamHandler` in place on a non-suspending build and
+called that "the behaviour that actually works today". It works for `file_get_contents()`. For
+Guzzle the fetch SUCCEEDS and the result is thrown away one line later --
+`StreamHandler::createStream()` reads `$http_response_header`, a magic local only PHP's own http
+wrapper populates, so `HeaderProcessor::parseHeaders([])` raises and every call rejects with
+`RequestException: An error was encountered while creating the response`.
+
+THE CONTROL IS WHAT THIS FRAGMENT ADDS. It drives core's handler over the same wrapper and
+the same cached row and requires it to STILL fail; a seam whose control goes green is measuring
+something other than the defect and must be thrown away rather than kept. The caller seeds
+`cfw_http_cache` itself, so nothing here touches the network.
+
+#### `accept`
+
+the raw `Accept` header, which decides the SHAPE of every AJAX response.
+
+`AjaxResponseSubscriber::onResponse()` wraps the JSON in a `<textarea>` and relabels it
+`text/html` whenever `Accept` contains `text/html` -- an IE9 iframe-upload workaround. Absent
+here, `Request::create()` fills in its own default of
+`text/html,application/xhtml+xml,...`, so EVERY Drupal AJAX response came back wrapped and
+`Drupal.AjaxError` fired on every one. Measured on Add field, where picking a field type is an
+AJAX POST: the admin got "Oops, something went wrong" and no field could be created.
+A browser asking for JSON sends `application/json, text/javascript`, which does not match.
+
+### `src/drupal/sodium-fix.ts`
+
+#### Module overview
+
+Replaces the `sodium_crypto_generichash*` family, which no build here can provide.
+
+BLAKE2b IS ABSENT FROM EVERY LAYER, MEASURED RATHER THAN ASSUMED. The shipping binary
+loads 25 extensions and `sodium` is not one of them, so `sodium_crypto_generichash()` is an
+undefined function. `ext-hash` IS loaded and offers 62 algorithms with no `blake*` among them --
+and that is a property of PHP rather than of this build, since native 8.5.7 with the full
+extension reports the same 0. workerd has none either: `node:crypto` answers "Digest method not
+supported" for `blake2b512` and `crypto.subtle` answers "Unrecognized or unimplemented digest
+algorithm". So there is nothing to fall back to and the digest has to be computed in JavaScript.
+
+WHY IT BLOCKS AN INSTALL RATHER THAN A FEATURE. A content-addressed store writes the digest into
+every frame header, so it IS the address: substituting sha256 is a different store rather than a
+downgrade, and a module of that shape does not install at all without this.
+
+`blakejs` is 12 KB of pure JavaScript with no dependencies, and synchronous -- the constraint
+`zlib-fix` names applies unchanged: the shipping build sets `ASYNCIFY=0`, so a host function
+that returned a Promise would hand PHP an object it can only stringify.
+
+THE AEAD IS THE OTHER HALF AND IT IS HERE TOO, over a different library for a reason. It is a
+CIPHER rather than a digest, so it shares no mechanism with the above: `crypto.subtle` offers
+AES-GCM and no XChaCha20-Poly1305, and the extended 24-byte nonce is what such a store picks
+the construction for. `@noble/ciphers` is the library `edgeport` assembles SSH's
+chacha20-poly1305 from, and it is synchronous.
+
+`extension_loaded('sodium')` stays FALSE either way, because the rest of the extension is not
+here and a stub extension entry is the shape that took the isolate down at exit 139.
+
+The Module key the PHP half resolves through `vrzno_env()`.
+
+#### `aeadHostCall()`
+
+One AEAD operation.
+
+THE TWO FAILURE MODES ARE KEPT APART AND THAT IS THE WHOLE CONTRACT. ext-sodium's `_decrypt()`
+returns FALSE when the tag does not verify and THROWS `SodiumException` when an argument is the
+wrong size, and a caller reads the difference: a FALSE means the frame failed authentication and
+should be swept, while a throw is a programming error. Collapsing them would make
+a mis-sized key look like a tampered frame and sweep a healthy store.
+
+#### `MAX_OPEN_STATES`
+
+How many incremental digests may be open at once.
+
+A state that is never finalised leaks its context for the life of the object, and a Durable
+Object outlives many requests. It refuses past the cap rather than evicting the oldest: an
+evicted context would make a later `final()` answer a digest computed over part of the message,
+and a wrong content address is worse than a failed one.
+
+#### `blake2bHostCall()`
+
+One BLAKE2b operation, decoded.
+
+Four ops rather than one, because `Hash::ofStream()` digests a 256 MiB object a megabyte at a
+time and must never hold the whole thing: `hash` is the one-shot, and `init`/`update`/`final`
+are the streaming form. The context stays here behind an integer handle for the reason
+`CurlShim` keeps a handle at all -- there is nothing for PHP to hold. Unlike CurlShim's array,
+this one cannot usefully be a PHP value: a BLAKE2b context is eight 64-bit words plus a 128-byte
+buffer, and crossing it through the codec on every 1 MiB chunk would encode and decode ~192 bytes
+of state per chunk to gain nothing PHP can read.
+
+A failure is a reply rather than a throw; the PHP half turns it into the `SodiumException`
+ext-sodium raises.
+
+##### inside blake2bHostCall(), the final-length comment
+
+libsodium fixes the digest length in the parameter block at init, so a different
+length here cannot produce that digest. ext-sodium answers 64 bytes anyway -- measured
+on 8.5.7, final($state, 64) on a state inited at 32 returns the 32-byte digest
+followed by 32 bytes of adjacent memory -- so this REFUSES where native leaks
+
+#### `SODIUM_FIX`
+
+The PHP half: the four functions, the six constants and `SodiumException`.
+
+Which functions: the `sodium_*` surface a content-addressed store reaches for. Six calls
+to `sodium_crypto_generichash()` and one each to `_init`, `_update` and `_final` -- so the
+one-shot and the streaming form are both reached, and `Hash::ofFile()` reaches the streaming one
+on every captured file.
+
+`extension_loaded('sodium')` STAYS FALSE. It is the guard this fragment is itself
+written under, and a stub extension entry is the exact shape that took the isolate down at exit
+139 when it was tried for mbstring. A caller testing for the extension gets an honest no; a
+caller calling the function gets a digest.
+
+NO `eval()`, following `zlib-fix` and `curl-fix`: a conditional declaration colliding with an
+internal function is deferred to runtime, so this compiles clean on a build that HAS ext-sodium
+and the branch never runs. That is what lets `tests/node/php-fragments.spec.ts` run `php -l` over
+the body rather than over a string literal.
+
+### `src/drupal/zlib-fix.ts`
+
+#### `DICTIONARY_OPS`
+
+The two ops a preset dictionary may be used with, and it is TWO rather than six.
+
+MEASURED, and the measurement chose the implementation. `node:zlib` honours `{ dictionary }`
+inside workerd -- 51 bytes to 15 on the probe input, `78bb` plus the dictionary's adler32 in the
+header -- so the capability costs no bundle bytes at all. `fflate` honours it too and its output
+is byte-identical, but the two differ on the case that matters: given the WRONG dictionary,
+`node:zlib` answers "Bad dictionary" and fflate returns plausible garbage that decompressed
+cleanly ("g else entirelyg else entirely..."). Silent corruption of a content-addressed frame is
+the failure this capability exists to enable a store to avoid, so the dictionary path goes
+through `node:zlib`. The six ops with no dictionary stay on fflate untouched.
+
+gzip is excluded because RFC1952 has no header field to signal a preset dictionary: fflate emits
+an ordinary gzip stream and `zlib.gunzipSync` answers "invalid distance too far back", so the
+frame is readable by nothing else.
+
+RAW deflate is excluded for the same reason as fflate. It interoperates fine, but a raw stream
+has no header, so there is nowhere to put the dictionary checksum and a wrong dictionary is
+undetectable. Six bytes of header is not worth that.
+
+#### `ZLIB_FIX`
+
+Defined only when the bridge resolves. Returning FALSE from every call on a host with no bridge
+would let `AssetDumper` write a zero-byte `.gz` next to a real `.css` and serve it as gzip, which
+is a broken site that looks fine in the logs. An undefined function is loud, and a build that has
+no bridge has no database either.
+
+Which functions: every zlib call site in Drupal 11.4.5 outside tests, found by grep over the whole
+tree: `Asset\AssetDumper::dump()` calls `gzencode($data, 9, FORCE_GZIP)`; `Component\Utility\UrlHelper`
+calls `gzcompress()` and `@gzuncompress()`. `gzdecode`, `gzdeflate` and `gzinflate` are carried because
+they are the inverses of the three that are reached and a codec that can encode a form it cannot decode
+is a defect, not a saving.
+
+What is not covered, all three out of reach of a synchronous bridge or off the served path: `gzopen()`
+and the rest of the stream family (`pear/archive_tar`, the update manager's tarballs),
+`gzencode`/`gzdecode` in `symfony/http-kernel`'s profiler storage, and the `compress.zlib://` stream
+wrapper named by `Core\Command\DbImportCommand`. A stream wrapper is a separate mechanism from a
+function, and none of the three runs while a page is being served.
+
+`cfw_zlib_dict()` is declared outside the extension guard. The shipping binary does load ext-zlib
+(one of the 25 extensions `get_loaded_extensions()` reports), so everything under
+`!extension_loaded('zlib')` is inert on the edge and exists for a `WITH_ZLIB=0` build. A dictionary is
+not something ext-zlib provides at any version, so a capability declared under that guard would have
+been a function nothing could ever reach.
+
+### `src/ops/admin-session.ts`
+
+#### Module overview
+
+The browser's way of presenting the owner token.
+
+A page cannot set an `Authorization` header on its own navigation, so the admin surface had two
+states and both were wrong: behind `PW_DIAGNOSTICS` it was reachable by anybody who could reach
+the worker, and without it every button called `window.prompt()` and pasted the token again. The
+Access page's Configure form could not work in either state, because a plain HTML POST has nowhere
+to put a bearer token.
+
+The cookie carries the token itself rather than a session id derived from it. A session id would
+need its own row and its own expiry in the object; the token already exists, already has a
+constant-time comparison, and is checked on exactly the hop that a session id would have cost.
+`HttpOnly` keeps it out of reach of page script, which is stronger than the prompt it replaces.
+
+#### `OWNER_FAIL_LIMIT`
+
+THE THREAT IS THE METER, NOT THE TOKEN. The owner token is 32 CSPRNG bytes and `tokenMatches()` is
+constant-time over its full width, so guessing it is not a practical attack and this is not a
+brute-force defence. What was unbounded is the COST of guessing: `ownerCredential()` resolves the
+site and fetches `/__ownercheck` on the Durable Object for every presented token, so an
+unauthenticated client could drive the object's request counter -- the meter the whole free-plan
+model is scored against -- at one request per HTTP request, for free, until the site degraded to
+read-only.
+
+12 rather than 3, because an operator with a stale cookie in an open tab should not lock themselves
+out of their own site: every navigation presents the same wrong token, and the window below is what
+clears it.
+
+#### `failures` map
+
+Per isolate, deliberately. A durable counter would need a row per attempt, which spends the meter
+this exists to protect -- the same self-defeating shape as the daily counters that were most of what
+they counted. An isolate-local bound does not stop a distributed attacker and is not meant to; it
+removes the amplification, which is the part that was free.
+
+### `src/ops/aggregates.ts`
+
+#### Module overview
+
+##### Why the page rather than the library list
+
+The obvious input is the render array's `#attached[library]`, and by the time a RESPONSE exists it
+is gone -- so the host cannot ask which libraries a page used. The page itself names every file,
+which is the same information from the other side, and it needs no PHP change to read.
+
+##### The safety rule, which is the whole design
+
+A library is replaced only when EVERY one of its files appears in the page, CONTIGUOUSLY and in
+declaration order. Anything else leaves that library's tags alone. That is what makes the failure
+mode "fewer libraries aggregated" rather than "a page missing rules": a partial replacement is
+exactly the broken-CSS page the last attempt at this shipped, and it looked faster.
+
+### `src/ops/ai.ts`
+
+#### Module overview
+
+Workers AI as a QUEUED tier, over the same queue the HTTP and TCP tiers already use.
+
+An inference call has the same shape every outbound call here has: PHP names the whole operation,
+the host runs it between invocations, and the answer is read on a later one. `drupal/ai`'s
+provider interface is synchronous and has no async form, which this tier satisfies by having the
+answer already.
+
+"The interpreter cannot await" was the stated reason and it expired. `ext/cfwpark` freezes the
+Zend continuation and resumes it after host-performed I/O, so an inference COULD block a render.
+Two things still say queue, and neither is about the interpreter. A generation is seconds rather
+than milliseconds, so an inline call spends the visitor's whole request on one field. And the
+neuron meter below is a hard 429, so an inline call fails a page for a quota the page did not
+need -- where a queued one degrades to nothing. Streaming is the case that stays genuinely
+closed: a park delivers one answer, not a stream, and that holds whatever the meters do.
+
+The `AI` binding, never the REST API. A REST call to `api.cloudflare.com` needs
+`Authorization: Bearer` and an account id in the URL, so the account token would have to be
+readable from the queue row; the binding carries its own authorisation and needs no header.
+
+Neurons are a FOURTH meter. 10,000/day on free and paid alike, reset at 00:00 UTC, and
+exhaustion is a hard 429 rather than a bill. Neither of RULE 0b's two ceilings sees it, so it is
+projected from the model and the workload the way the Images meter is -- see `neuronCost`.
+
+Degrades to nothing. No binding and every function here refuses with a reason, so the tier can
+ship before any account has enabled Workers AI.
+
+#### `DEFAULT_AI_MODELS`
+
+Short and weighted toward embeddings: at 1,075 neurons per 1M input tokens, indexing 1,000 nodes at
+500 tokens each is 538 neurons, about 5% of a day. A `llama-3.3-70b` completion is 129 neurons, so the
+same allocation buys 77 of them.
+
+### `src/ops/auth-budget.ts`
+
+#### Module overview
+
+A bounded daily allowance for AUTHENTICATED traffic, and a degrade ladder for past it.
+
+MEASURED WITH `bun scripts/measure/free-envelope.ts --visits=3000000 --dynamic=0.01`, and every
+number below is from that run rather than from arithmetic done here:
+
+| ceiling                      | value                              |
+| ---------------------------- | ---------------------------------- |
+| serving                      | 100,000/day, worker-bound, **1.00x** |
+| regeneration, windowed       | **10,866/day, rows-bound**         |
+| regeneration, alarm chain    | **10,866/day, rows-bound**         |
+
+At the default 25% reservation that splits as:
+
+| slice                        | rows/day | what it buys                              |
+| ---------------------------- | -------- | ----------------------------------------- |
+| authenticated                | 25,000   | **3,125 authenticated views/day**         |
+| anonymous regeneration       | 75,000   | **8,149 regenerations/day** (8.15x need)  |
+
+The anonymous side still clears the 1,000 regenerations/day a 3M-visit month needs at 1% dynamic,
+with 8.15x headroom, which is the property that makes the reservation safe to take.
+
+All of these describe `MEMORY_CACHE_BINS=none`, the conservative arm. The two regeneration rows
+are equal because the alarm chain was priced at 180 invocations per fill until 2026-09-23, a
+boot-slicing mechanism nothing performs; a deployed free worker drains a batch in one invocation.
+
+Paid has no reservation. The meters it is protecting do not bind there, and a limit that exists
+only to be never reached is a limit a reader has to explain later.
+
+#### `DAILY_ROWS_QUOTA`
+
+The two figures from `scripts/measure/free-envelope.ts` this module needs.
+
+Copied rather than imported, because of the bundle: `free-envelope.ts` carries an
+`import.meta.main` CLI block that reads `process.argv`, so importing it here would drag a script
+into the Worker. Copying a measured number is the drift hazard this project has been bitten by
+twice, so it is pinned instead: `tests/unit/auth-budget.spec.ts` asserts both against the script's
+own exports, and the spec fails the moment either moves.
+
+#### `ROWS_PER_AUTH_RENDER`
+
+`ROWS_PER_FILL.realRender`; both cache bins empty, which is what an authenticated view costs.
+
+It describes `MEMORY_CACHE_BINS=none`; with the shipping default an authenticated view is 2, and
+this tracks `ROWS_PER_FILL.realRender` rather than leading it.
+
+9 -> 8 on 2026-09-23, and the row that went was never PHP's: the audit harness deleted the page
+row inside its own tracked window before re-filling, and a DELETE is charged where a fill upserts.
+
+#### `SESSION_COOKIE_RE`
+
+Cookies that mean "this request belongs to a session".
+
+`SESS` over HTTP and `SSESS` over HTTPS, then **exactly 32 lowercase hex characters**.
+
+Read off the source; the first version of this was written from memory and was wrong in a way
+that mattered. `SessionConfiguration::getName()` is
+`($request->isSecure() ? 'SSESS' : 'SESS') . $this->getUnprefixedName($request)`
+(`drupal-src/core/lib/Drupal/Core/Session/SessionConfiguration.php:79`), and
+`getUnprefixedName()` ends `return substr(hash('sha256', $session_name), 0, 32);` at line 109 --
+**outside** its if/elseif/else, so all three branches hash. The test-user-agent branch and the
+`cookie_domain` branch produce 32 hex characters too. There is no unhashed form to be lenient
+about.
+
+The loose pattern that assumed otherwise matched `SESSION=`, which is a common cookie name in
+other frameworks. Every request carrying one would have been charged as authenticated and
+rendered, which destroys the allowance this module exists to enforce rather than protecting it.
+
+The safety argument that motivated the looseness is real but belongs elsewhere: an authenticated
+response must never reach the shared anonymous cache -- this project shipped that once, a render
+that kept uid 1 landing in the anonymous page cache at 90,038 bytes against 12,296. That is
+enforced STRUCTURALLY in `src/site.ts`, which refuses to cache when the request was authenticated
+or the response carries `Set-Cookie`, so it does not depend on this pattern being perfect.
+
+#### #region the contract with the Durable Object
+
+The counter needs durable state, which only the object has. Rather than the Worker asking for it
+-- a DO request spent to decide whether to spend a DO request -- the object reports it on the
+response to the hop the request was making anyway, exactly as the generation pointer already does.
+The Worker memoises that per UTC day, so once the allowance is gone it degrades at the edge with
+ZERO DO cost, which is the only version of this that actually protects the meter.
+
+### `src/ops/capability-contract.ts`
+
+#### VECTORS entry `socket.park.inline`
+
+EXECUTED, and it has to be: `function_exists('cfw_park_run')` was the obvious probe and it
+is the decorative kind. The first built revision of the extension exported every symbol
+and did not re-arm inside `cfw_park_resume`, so a chain parked ONCE and then ran its next
+trapped call for real -- silently, because a fall-through is the refusal path. Every
+multi-trip exchange, which is every real one, would have been broken on a build that
+probe called capable.
+
+**AND THE FIRST VERSION OF THIS PROBE ANSWERED TRUE ON A MECHANISM THAT CANNOT WORK.** It
+put both trapped calls directly in the eval body, which is the one frame `cfw_park_resume`
+DOES re-enter -- so it measured the narrow case and reported the capability. Real code
+parks inside a nested call: Predis reaches `fwrite` from `StreamConnection::write`, several
+frames down. The calls live in a function here for that reason, and the probe additionally
+requires the DELIVERED value rather than the state strings, because a chain can answer
+`DONE` having lost everything above the frame it resumed.
+
+It cleans up after itself either way: a build with no re-arm has already finished the chain
+by the time it answers, and one with the re-arm is resumed a second time here.
+
+#### VECTORS entry `files.realpath`
+
+probed on the METHOD. The first version of this row asked for a marker function
+`cfw_realpath_materialises()` that nothing declares -- a probe for a capability's
+advertisement rather than for the capability, which is the trap this whole file exists for
+
+#### VECTORS entry `runtime.mbstring.core_parity`
+
+literal characters, not '\\xC3\\x89': PHP single quotes do not interpret \\x, so the first
+version compared two 8-character ASCII strings and reported a parity failure that was
+entirely its own escaping
+
+#### VECTORS entry `media.getimagesize`
+
+`ShimRegistry` classified it REFUSE on "gd/libjpeg are not linked", and it is
+`ext/standard` -- it parses headers itself and never went through either. It is
+`CfwImageToolkit`'s only dimension source, so the wrong claim was load-bearing
+
+### `src/ops/catalog.ts`
+
+#### `SHIPPED_BLOCKING_SOCKET`
+
+```
+ * TRUE, measured 2026-09-08 on the long64 build carrying `ext/cfwpark`: PHP opens a socket, writes
+ * and reads twice, and receives `+OK|+PONG` from the rig's Redis -- five parks, each answered from
+ * JavaScript on a later `_run`. `park-interpreter.spec.ts` is the assertion, and it drives a real
+ * server rather than a stub.
+ *
+ * It was false until two defects in the extension were fixed, and both are worth knowing because
+ * each failed SILENTLY: `cfw_park_resume` did not re-arm, so every trip after the first ran the real
+ * function down the refusal path; and the safety predicate's floor was a frame belonging to the
+ * invocation that started the chain, so on a resume the walk went past the parked chain into reused
+ * VM stack memory -- reading first as a refusal, then as `memory access out of bounds`. A resumed
+ * chain now relinks its root to the resuming frame, which is what `zend_generator_resume` does.
+```
+
+#### `SHIPPED_BLOCKING_HTTP`
+
+```
+ * **AN UNQUALIFIED CALL INSIDE A NAMESPACE IS RESOLVED AT RUNTIME.** `call_user_func_array` normally
+ * leaves no frame at all -- `zend_compile_func_cufa` rewrites it to `ZEND_INIT_USER_CALL` -- but that
+ * rewrite needs the compiler to have resolved the name, and inside a namespace an unqualified call
+ * compiles to `ZEND_INIT_NS_FCALL_BY_NAME` instead. So the frame is real in every namespaced file,
+ * which is all of Drupal, and absent in the global namespace, which is where every harness that read
+ * this safe was written. Measured on native 8.5.7 as 3 frames against 2, and on this build through
+ * the shipping pack as one internal frame between `FormBuilder::retrieveForm` and its callback.
+ *
+ * `park_flatten()` in `ext/cfwpark` splices such a frame out of the chain rather than refusing it:
+ * the callee is relinked to the trampoline's caller and its `ZEND_CALL_TOP` cleared, so its return
+ * takes the path the VM already uses for a nested call. `array_map` and `usort` are still refused,
+ * which is the control that makes the change mean anything.
+ *
+ * The consequence is asserted end to end in `park-oidc.spec.ts`: a real authorization code from the
+ * rig Keycloak, exchanged by `drupal/openid_connect`'s own client inside the callback request.
+```
+
+#### `SHIPPED_CRON`
+
+```
+ * `cron` stays a literal, and the reason is worth stating: `async.cron` measures whether the
+ * RUNTIME declares cron to PHP, which it does not, while this flag means "the alarm exists and drives
+ * Drupal's cron", which it does. Two different questions with two different answers; collapsing them
+ * would refuse every cron module on a site where cron demonstrably runs.
+```
+
+### `src/ops/cf-oauth.ts`
+
+#### Module overview
+
+Attached to: the module overview (`@module`).
+
+Cloudflare OAuth 2.0, so an operator can grant drupflare access without pasting a long-lived token.
+
+Self-managed OAuth clients shipped 2026-06-03. Before that the only option was an API token, which
+is why the paste path exists and stays: this is an ADDITIONAL way in, never a replacement.
+
+##### The flow, and why it is the only one available
+
+Cloudflare supports **Authorization Code only** for third-party clients -- no Client Credentials,
+Implicit, Device Authorization or ROPC. Of the two variants, drupflare must use **PKCE with S256**
+rather than a client secret: the bundle is open source and self-hosted, so a secret compiled into
+it is a secret published to everyone who deploys it. PKCE needs no secret, which is exactly the
+property a distributed application needs.
+
+##### Why the operator registers their own client
+
+A redirect URI is registered against the client, and every drupflare deployment answers on a
+different origin -- `<name>.<subdomain>.workers.dev`, or a custom domain. One shared client cannot
+enumerate them in advance. Cloudflare's docs do not state whether redirect matching permits a
+wildcard, and the OAuth 2.0 Security BCP says it must not, so this is built to not depend on the
+answer: the operator creates a PRIVATE client on their own account, registers their own
+deployment's callback, and pastes the `client_id`. Private visibility is enough because they are a
+member of the account they are authorising -- the DNS-verified `public` visibility that a shared
+client would need is permanent and irreversible, and buys nothing here.
+
+##### Why the client id is NOT on the KV allow-list
+
+It looks like it belongs there -- it is not a credential, and an operator should be able to set it
+without a redeploy. It fails the allow-list's actual test, which is that every entry's worst case
+is a slow site. KV is operator-writable, and a writer who could set the client id could point the
+consent screen at an application they control: the operator would then read that app's name and
+logo on Cloudflare's own consent page and approve it. That is a phishing surface, not a slow site.
+
+So it is stored in the object's own `cfw_meta` and set through the owner-authenticated setup
+route, which gives the same no-redeploy property behind a credential the operator holds.
+`tests/unit/ops/cf-oauth.spec.ts` asserts it stays off `KV_OVERRIDABLE`.
+
+#### `CF_SCOPES`
+
+Scope names are the API-token permission names in `<name>:<read|write>` form. This list is the
+least that makes the mail path work: `user:read` identifies the account so the operator does not
+have to paste an account id alongside, and the two email scopes are what
+`POST /accounts/:id/email/sending/send` requires.
+
+`workers-platform:write` is ABSENT. drupflare is already deployed by the time a
+human sees the setup page, so a token that could rewrite the Worker buys nothing and would make a
+stolen token a remote-code-execution rather than a mail problem.
+
+### `src/ops/core-version.ts`
+
+#### Module overview
+
+Invalidates the cache rows that embed the Drupal core version, when that version changes.
+
+Two rows in the shipped database hard-code the core version as the `?v=` cache-buster on every asset
+URL, and both are permanent (`expire = -1`), so nothing evicts them:
+
+| table             | cid                    | version occurrences |
+| ----------------- | ---------------------- | ------------------- |
+| `cache_discovery` | `library_info:<theme>` | 298                 |
+| `cache_data`      | `fonts:<theme>:<hash>` | 4                   |
+
+Measured 2026-08-21 while rehearsing an 11.4.4 -> 11.4.5 upgrade. `core/misc/ajax.js` and
+`core/misc/details.js` both changed in that diff, so an upgraded site serves new JavaScript at a URL
+still advertising the old version -- and a browser holding the old copy has no reason to refetch.
+
+##### Why this is not solved by shipping the rows empty
+
+Deleting them from the pack would make EVERY site rebuild 89 KB of library discovery on its first
+render: a permanent cost on every deployment, to fix something that only occurs on an upgrade.
+Comparing versions costs one `cfw_meta` read once per object lifetime and pays the rebuild exactly
+when it is needed.
+
+##### Why the row is deleted rather than rewritten
+
+The stored value is a serialized PHP structure with the version threaded through hundreds of asset
+paths. Rewriting it means parsing and re-emitting Drupal's own serialization from JavaScript, which
+would be a second implementation of a format only Drupal owns. A delete makes Drupal rebuild it
+correctly on the next request, which is what its cache API is for.
+
+#### `needsInvalidation`
+
+A MISSING stored version is NOT an upgrade. Every database built before this existed has no key, and
+treating that as a change would make every site rebuild its library cache once on the deploy that
+introduced this. The first read records the shipped version and invalidates nothing.
+
+### `src/ops/crossings.ts`
+
+#### Module overview
+
+WHY IT EXISTS: the docs say an RPC method call on a Durable Object stub is its own RPC session
+and is BILLED AS A DO REQUEST. This project reaches the object through `stub.fetch()`, so one
+request is one billed request today -- but the PHP-to-host bridge INSIDE the object is a
+different surface, and nobody had counted it. That number has to exist before any RPC migration,
+or the migration silently converts a free inner call into a charged request.
+
+WHAT A CROSSING IS AND IS NOT. A `cfw*` call is a wasm import resolving to a JavaScript function
+in the same isolate. It costs CPU and it is NOT a DO request. So this instrument prices a
+REFACTOR RISK, not a live meter, and anything it reports should be read that way until a build
+actually moves a capability onto RPC.
+
+#### `rpcMigrationCost()`
+
+What an RPC migration would cost, in DO requests per fill. **MEASURED ON A DEPLOYED WORKER.**
+
+This was asserted, then withdrawn as an unestablished inference, then settled properly. The
+experiment: a throwaway worker with a Durable Object exposing an RPC method, a `fetch()`, and a
+loop that does the same work INSIDE one invocation. Each arm driven a distinct number of times
+against a fresh object, then read from `durableObjectsInvocationsAdaptiveGroups`, which is the
+billing-facing dataset:
+
+| arm                                  | driven | requests billed |
+| ------------------------------------ | -----: | --------------: |
+| `stub.ping()`, an RPC method         |      7 |           **7** |
+| `stub.fetch()`                       |     11 |          **11** |
+| N loops inside ONE invocation        |     13 |           **1** |
+
+Confirmed at n=25 on a first run, where both boundary arms billed 25.
+
+**The third row is the one that matters and it is why today's bridge is free.** `Host::call()` is
+a wasm import resolving to JavaScript inside the already-running object, on the far side of a
+boundary the `stub.fetch()` already crossed -- the same shape as the `inner` arm, which billed
+one request for thirteen operations. The first row is why the guard is real: a crossing
+re-expressed as an RPC method on a stub would be billed one-for-one.
+
+#### `CrossingTally.calls`
+
+Off by default and not a route: a cold fill crosses 233 times and each record decodes both sides
+of the payload, so leaving it on would put a diagnostic's allocation on every render.
+`tests/integration/statement-census.spec.ts` is what arms it.
+
+### `src/ops/deferred-post.ts`
+
+#### `deferredKey`
+
+**IT IS NOT A HASH.** The obvious design is
+`hash(method + url + body)`, and both available hashes are wrong here:
+
+  - A NON-CRYPTOGRAPHIC hash (FNV-1a, djb2) is forgeable. This key decides which cached response
+    a verification reads, so an attacker who can craft a body that collides with a known-good
+    verification gets that success served to their own submission. A captcha bypass through a
+    hash collision is a worse bug than the one the tier exists to fix.
+  - A CRYPTOGRAPHIC hash cannot be computed here. `crypto.subtle.digest` is async, and this key
+    has to be derived inside the synchronous `cfwQueueFetch` and `cfwHttpCacheGet` calls that PHP
+    makes. Shipping a synchronous SHA-256 to avoid that is a lot of code to reintroduce a
+    collision domain that does not have to exist.
+
+So the key is the exact tuple, LENGTH-PREFIXED. Collisions are impossible by construction rather
+than improbable, the derivation is trivially synchronous, and the cost is index size -- bounded by
+`MAX_DEFERRED_BODY`.
+
+**The length prefix is the security property, and a separator is not good enough.** The first
+version joined the fields with a NUL, reasoning that a NUL cannot appear in a method or a URL. It
+can appear in a BODY, and a body is attacker-controlled: two different (url, body) pairs can be
+made to serialise identically by moving the separator between them. That is the
+forgeable-collision hole this function exists to close, reintroduced by its own encoding, and the
+spec case named for it is what caught it.
+
+Length prefixes make the encoding injective for ANY field contents, because nothing has to guess
+where a field ends.
+
+#### `CRON_FETCH_TTL_MS`
+
+One hour was doing two jobs at once -- a garbage-collection bound AND a freshness contract -- and
+only the first is what it was chosen for. The consumers here are all `hook_cron`, and the observed
+cron period is hours rather than the configured 15 minutes, so at one hour the entry is expired at
+the exact moment anything asks: fetch, defer, throw, drain, expire, repeat. Measured gaps between
+`announcements_feed` rounds were 8,142 to 26,033 s, every one past the TTL.
+
+A day is chosen from the consumer rather than from the endpoint: `update` stores its own release
+data for 24 hours, so a fetch entry that outlives that is never the binding constraint.
+
+#### `NOT_KEYED`
+
+Under-keying is a DISCLOSURE -- serve one caller's authenticated response to another -- while
+over-keying only costs a fetch, so anything credential-bearing or representation-selecting stays in:
+`authorization`, `cookie`, `accept`, `accept-language` and every header this runtime has never heard of.
+A server that varies its body on `User-Agent` would be served the wrong variant here. The correct fix
+is `Vary` from the response, which needs a variant table rather than a longer deny-list; nothing has
+measured it as a real cost, so it is not built.
+
+#### `ResubmitPlan`
+
+Three honest options for a form POST whose validator needs a deferred verification: (1) reject the
+submission (visitor passed the captcha and is told they failed; never), (2) block the render until
+the alarm drains (impossible, the run is synchronous), (3) re-submit once automatically (chosen).
+The token survives the round trip because the SAME token is re-posted; a shim that minted a new token
+on re-submit would miss the cache every time and loop forever.
+
+### `src/ops/fanout.ts`
+
+#### Module overview
+
+How a content change is scheduled, from how many pages it invalidated.
+
+Once the dependency closure of a write is known, the expensive work can happen DURING the editorial
+operation rather than on the next visitor. For a CMS that is the right place to spend CPU: the write
+already carries an expensive human operation and nobody is waiting on it the way a reader is.
+
+What stops that being unconditional is that the closure is not always small. A node save touches the
+node page and the listings that carry it; a config change touches everything. Regenerating both
+eagerly turns the second into a stampede that costs more of the daily row budget than the whole day's
+traffic. So the fanout picks the policy, and there are exactly three.
+
+#### `ROWS_PER_TAGGED_PAGE`
+
+`ROWS_PER_FILL.realRender`, copied rather than imported: the measured table lives in
+`scripts/measure/free-envelope.ts` and a CLI script has no business in the Worker bundle. Pinned against
+the original in `tests/unit/ops/fanout.spec.ts`, the same arrangement `auth-budget.ts` uses for the two
+constants it copies. It describes `MEMORY_CACHE_BINS=none`; with the shipping default a tagged page is
+2, and the constant tracks `ROWS_PER_FILL.realRender` deliberately rather than leading it.
+
+#### `ROWS_PER_UNTAGGED_PAGE`
+
+`ROWS_PER_FILL.warmReassemble`. A `cachetags` bump leaves `dynamic_page_cache` alone except for
+tag-matched entries, so a page re-queued by a wholesale purge re-renders from a warm bin: it stores its
+row and writes nothing else. 2, priced on the front page: `/user/login` reassembles in one row and `/`
+in two, and the class takes the dearer path so it cannot undercut a real fill.
+
+#### FANOUT_SMALL_ROWS / FANOUT_MEDIUM_ROWS
+
+Fanout was a page count and a page is not a fixed cost. The two row constants differ by 4.5x, and
+across the whole measured table a fill is 2 to 91 rows -- so 8 pages is 16 rows or 728 depending on
+what those pages are, and one threshold could not be right for both. Expressed as rows, derived from
+the page counts at the tagged cost, so the decision is unchanged for the case the counts were chosen
+against and correct for the others.
+
+#### fanoutDecision: the lazy branch
+
+The lazy branch is not a refusal, and `stale` is what makes that true. A page that is not re-queued is
+not lost only because it has a previous generation in KV and the stale tier serves it while the
+visitor's own arrival queues the regeneration.
+
+That precondition was asserted and not checked. The stale tier is `readStalePage()`, which needs
+`PAGE_KV`, and the canonical `wrangler.jsonc` binds no such namespace -- so on the shipping config the
+branch degraded every invalidated page to a cold render or a `503 warming` after any change touching
+more than FANOUT_MEDIUM pages. With no stale tier the honest answer is one tier down: queue them and
+let the ordinary alarm chain drain them.
+
+### `src/ops/fragment-index.ts`
+
+#### Module overview
+
+Which fragment a cache tag reaches, and whether a fragment has changed at all.
+
+The `tag -> paths` index answers "which stored pages does this save invalidate". One level down
+sits the question it cannot: most of a page is unchanged by most saves, and on an authenticated
+render Drupal has already drawn the boundary -- every auto-placeholdered region is a BigPipe hole
+with its OWN cacheability, and `Renderer::renderPlaceholder()` keeps that metadata out of the
+response's.
+
+MEASURED ON THE SHIPPING PACK, which is what makes the split worth indexing. An anonymous render
+of `/` carries 10 cache tags and zero holes; the authenticated harvest of the same path carries
+**6** tags and 6 holes, and `local_task`, `config:system.menu.main` and `config:system.menu.account`
+appear only on the fragments. So a menu-item save invalidates every anonymous page on the site and
+touches no stored shell at all -- and today it drops every shell anyway, because
+`bumpGeneration()` has nothing finer to consult.
+
+##### The anonymous page tier has no seam, and that is structural
+
+`cfw_page` stores cookieless GETs, and BigPipe only placeholders a request that has a session:
+measured again here, a stored `/` row carries **zero** `data-big-pipe-placeholder-id` spans. There
+is nothing on an anonymous page to address, so this indexes the SHELL tier, which has the holes.
+
+##### Nothing here stores a fragment's bytes
+
+A fragment is personalised by construction -- that is what a hole is for -- so a content-addressed
+blob of one would be a store of one visitor's markup addressable by another, which is the
+disclosure this project has already shipped once. The row carries the ADDRESS and the tag list,
+never the markup, so the index has no reader to leak to.
+
+##### What the address costs, and why the generation is in it anyway
+
+The address is `sha256(plan + dependency values + generation)`, and an index pass whose address
+matches the stored one writes NOTHING. The generation moves on every save, so a save does
+re-address every fragment -- but re-indexing only happens at a HARVEST, and a harvest only happens
+when a shell was dropped. What the check removes is the repeat: `verifyShellFor()` re-harvests once
+per new `(path, role, uid)`, so a site with 50 editors re-indexes the same six fragments 50 times
+per path. At one row each that is 300 rows for one page; with the address it is 6.
+
+#### `shellVerdict`
+
+REFUSES ON AN UNKNOWN, which is a narrower rule than the one this shipped with. An unrecorded tag
+set still drops: a shell stored before the column existed cannot speak for itself, and that is a
+genuine unknown rather than a judgement.
+
+**A TAG ON NEITHER THE SHELL NOR A FRAGMENT NO LONGER DROPS, and the old rule made the whole
+scoped purge inert.** `shellTags` is Drupal's own `cacheTags` for the shell render, taken from the
+response's cacheability metadata rather than derived here -- the same set Drupal uses to decide
+whether its own `dynamic_page_cache` entry for that response is still valid. A tag outside it
+cannot invalidate that response by Drupal's rules, so dropping on one was stricter than Drupal
+itself.
+
+Measured with the old rule wired, on a fresh site: creating two users invalidates `user_list`, the
+front page's shell records six tags and none of them is `user_list`, and the shell was dropped
+with `user_list is not accounted for on this page`. Every save carries at least one tag no other
+page depends on, so the scoped purge behaved like the wholesale purge it replaces.
+
+A tag that belongs only to a FRAGMENT does not drop either. The fragment is not stored --
+`assembleFor()` renders every hole on every request -- so the invalidation reaches it through
+Drupal's own render cache on the next request, and the shell around it is unaffected.
+
+#### `tagChecksum`
+
+`DatabaseCacheTagsChecksum` decides a cache entry is valid by comparing the checksum it stored
+against this same sum, so a page whose sum has not moved cannot have been invalidated. Stored on
+the page row at fill time and compared at serve time, it replaces a WRITE per affected page with
+a READ per served page -- and the free plan allows 5,000,000 rows read a day against 100,000
+written.
+
+### `src/ops/image-transform.ts`
+
+#### Module overview
+
+Image derivatives, produced in the front worker rather than bought from a delivery product.
+
+##### Why the toolkit exists at all
+
+gd is not compiled in: it measured 684,821 bytes against a 3 MB gzipped bundle ceiling. So a
+Drupal image style cannot be applied in PHP here, and something else has to apply it.
+
+##### Why not Cloudflare Images
+
+`FREE_QUOTAS.imageTransformsPerMonth` is 5,000 and it is a CAP rather than a bill: the shipped
+standard profile has four image styles, so that is 1,250 images a month before a site stops
+generating derivatives at all. It also needs a zone with transformations enabled and does not
+exist on `*.workers.dev`, and both mechanisms have to FETCH the source, which no session travels
+with -- so a `private://` derivative was never reachable through either. It stays available
+behind a var for a zone that wants AVIF, which is the one format the wasm arm does not encode.
+
+##### The identity
+
+`sha256(original + normalised style)`, so a style change mints a new identity and derivatives
+already published stay addressable. The normalisation is what makes that true: two spellings of
+the same transform have to produce one identity or the cache never hits.
+
+> **Superseded:** the 3 MB gzipped bundle ceiling was removed on 2026-09-04, the identity is FNV-1a in `transformIdentity()` rather than sha256, and tinyimg 1.1 encodes AVIF, see `supportedExtensions()`.
+
+#### `readImageRequest()`
+
+Reads the request into one shape.
+
+BOTH SHAPES, and that is the bug this function was written for. PHP sends `{uri, transform}` and
+the host read `req.url ?? req.path` with `req.width`/`req.height`, so `cfwImageUrl` returned null
+on every call -- and both lanes passed, because neither put the two halves together.
+
+#### `INLINE_TRANSFORM_MAX_EDGE`
+
+The longest edge above which a derivative belongs on the fill queue rather than in a request.
+
+MEASURED ON A DEPLOYED FREE WORKER, `cpuTime` amortised over ten transforms per invocation,
+median of twelve invocations, with a source-only control reading 0: thumbnail 36.3 ms at 100px,
+medium 48.6 at 220, large 63.5 at 480, wide 188.2 at 1090. The laptop wall-clock figures the arm
+was scoped on -- 3 / 7 / 22 / 32 -- understate the edge by 6 to 12x, which is why 320 was the
+wrong number: it put `large` on the queue at 63 ms and left nothing but the two cheapest styles
+inline.
+
+480 IS THE MEASURED KNEE. Below it a derivative costs 36-64 ms, which a visitor can wait for
+once; above it 188 ms, which is the cost the alarm chain exists to absorb.
+
+#### `supportedExtensions()`
+
+The formats the toolkit may claim.
+
+AVIF IS THE WHOLE REASON THIS IS A FUNCTION. All four shipped styles are `image_scale` +
+`image_convert_avif`, and `AvifImageEffect::applyEffect()` calls `isAvifSupported()` first and
+falls through to its parent when the toolkit says no -- and the shipped fallback extension is
+`webp`, which the wasm arm encodes. So core degrades on its own with no config change, PROVIDED
+the toolkit tells the truth. Claiming `avif` while the engine cannot produce it makes the effect
+call `convert('avif')`, get FALSE, and log a failed derivative instead of falling back.
+
+IT TOOK THE ENGINE NAME AND NOTHING ELSE UNTIL TINYIMG 1.1, and that hardcoded the wasm arm's
+capability at the value it had when this was written. 1.1 encodes AVIF, so the refusal above
+expired and every one of those four styles was still quietly degrading to webp. `features` comes
+from the module itself (`TinyImgModule.features`), so the answer cannot go stale again -- pass it
+from `image-runtime.ts`, which is the only file that holds the module.
+
+@param features - what the loaded engine reports it can encode; the pre-1.1 set when omitted.
+
+### `src/ops/mail-onboard.ts`
+
+#### Module overview
+
+Onboards a sending domain, which is the whole gap between "mail refuses" and "mail works".
+
+`src/ops/mail.ts` picks a transport; every transport then fails the same way if the domain was
+never onboarded with Cloudflare. That is a DNS and account-state problem rather than a code one,
+and it is the last manual step in a one-click setup.
+
+##### What is automatable, measured against the live API rather than the docs
+
+A sending subdomain is **zone-scoped**: `/zones/{zone}/email/sending/subdomains`. The
+account-scoped path answers `Unable to authenticate request`, so a design that reached for
+`/accounts/{id}/...` would fail with an error that reads like a bad token.
+
+Its records are six: three MX on the return-path host, an SPF TXT beside them, a DKIM TXT at
+`<selector>._domainkey`, and a DMARC TXT on the apex. `dnsPlan()` diffs them against the zone.
+
+##### The one step that stays manual, and why that is fine
+
+A destination address is verified by clicking a link Cloudflare emails. That cannot be automated
+and should not be: it is the proof that whoever is configuring the site controls the inbox.
+Drupal's own email flow already expects click-to-verify, so it fits the model rather than
+fighting it.
+
+**It can be POLLED, which was an open question and is now answered.** A destination address
+carries both `status: "verified" | "unverified"` and a `verified` timestamp that is null until it
+happens -- read off the live account. So the setup page waits and lights up on its own instead of
+telling the operator to come back.
+
+##### Permission
+
+This needs **zone DNS write**, far broader than anything else drupflare asks for. It is opt-in and
+never required by a site that only serves pages, which is why it is a separate surface rather than
+part of the first-run claim.
+
+#### `senderDomainVerdict`
+
+A MISMATCH RESTRICTS DELIVERY RATHER THAN FAILING, which is why nothing noticed. Cloudflare will
+accept a send from a domain it has no SPF or DKIM for and then deliver it only to verified
+destination addresses -- so registration mail to a real visitor is accepted by the API and never
+arrives, and the site's own status says the transport is configured.
+
+#### `TokenGrants`
+
+A SHORT PERMISSION USED TO SURFACE AS THE WRONG STAGE. `listDestinations()` failing was swallowed
+-- `dests?.ok ? ... : undefined` -- so a token with no Email Routing read produced an undefined
+destination, which reads exactly like an unverified one, and the flow told the operator to click
+a link Cloudflare had never sent. The stage has to be able to say "this token cannot see".
+
+#### `onboardState`
+
+DNS propagation runs to 24 hours, and a flow that answers "failed" during a normal wait is a flow
+an operator will run again and again. `settled` is the only true/false here, and it means
+"re-running changes nothing" rather than "finished" -- `awaiting-verification` is settled and
+not finished.
+
+#### `dnsPlan`
+
+An existing record whose content DIFFERS is an update rather than a second create. Creating a
+second SPF TXT on one name is not a duplicate that gets ignored; it is two SPF records, which is a
+permerror under RFC 7208 and fails mail delivery for the whole domain.
+
+### `src/ops/module-rev.ts`
+
+#### `dropRevision()`
+
+Deletes a revision and the blobs no surviving manifest still names.
+
+The refcount is computed from every REMAINING manifest across every package rather than from a
+stored counter. A counter is one more thing to keep correct through a rollback, and the manifests
+are the truth; the cost is a scan of a table with at most `REVISION_RETENTION` rows per package.
+
+Refuses to drop the ACTIVE revision: that would leave the mounted tree with no record of where it
+came from, which is the state this table exists to prevent.
+
+### `src/ops/module-table.ts`
+
+#### `VERIFIED_BEHAVIOURS`
+
+Modules whose BEHAVIOUR the gate has asserted, with what was asserted.
+
+Under `wrangler dev` an enable killed the host process, so no follow-up request could be made and
+nothing could be verified. Re-run under `@cloudflare/vitest-pool-workers` that limit does not
+exist: an enable survives, a follow-up request answers, and TWO enables in one object survive --
+the exact case that killed wrangler dev hardest. The failure was miniflare's proxy controller, a
+component that only exists locally, and suspecting the instrument first was right.
+
+What that left was a configuration gap rather than a runtime one, and **the gap was closed by
+supplying the configuration rather than by waiting for it.** This block used to record `pathauto`
+as inert (no `pathauto.pattern.*` ships, so a node save produces no alias) and `token` as
+unverifiable for the same reason. A pattern is a config entity a SITE OWNER creates, so the test
+creates one; both are now verified against an alias the run generated.
+
+The distinction worth keeping: absent CONFIGURATION is a fixture gap a test can fill, absent CODE
+is not. Twelve rows here are in the second class -- see {@link SHIPPING_PACK_CONTRIB}.
+
+#### `SupportState`
+
+It claimed the spec "fails when README.md disagrees"; the spec compared this map against the SPEC
+FILES, so a `verified` row needed a run behind it and the published table needed nothing. Three
+rows were edited by hand on the strength of the guard described here. The comparison exists now.
+
+### `src/ops/package-install.ts`
+
+#### Module overview
+
+Resolving a package name to source, and turning that source into files the mount can serve.
+
+##### One pipeline, three callers
+
+`composer require`, a git-delivered custom module and `npm install` all want the same
+four steps: resolve a name to an archive URL, fetch it, filter what comes out, and write the files
+where the boot mount reads them. Building three of those would produce three sets of bugs, so this
+is the one, and the SOURCE is the only thing that differs.
+
+##### Why the host does this and not PHP
+
+PHP here cannot block on a socket, so a composer-shaped resolve-then-download is impossible inside
+one render. It is also unnecessary: the archive is an ordinary HTTPS GET, which the Worker does
+natively. The terminal parses intent in PHP and hands it over.
+
+##### The two repositories, which are not interchangeable
+
+Drupal modules are NOT on packagist. `repo.packagist.org/p2/drupal/token.json` answers
+"404 not found, no packages here"; the metadata lives on `packages.drupal.org`, which is the
+composer repository every Drupal site already has in its `composer.json`. Everything else resolves
+against packagist. Sending a `drupal/*` name to packagist is a silent "package does not exist",
+which reads as a typo.
+
+> **Superseded:** PHP can block on a socket since the Zend park shipped, so that reason no longer holds.
+
+#### `pickVersion()`
+
+Picks a version from a composer `p2` document.
+
+NEWEST STABLE unless a constraint names otherwise, and stable means no `-dev`, `-alpha`, `-beta`
+or `-RC` suffix. Both repositories list newest first, so this takes the first match rather than
+sorting -- a real version sort is `composer/semver`'s job and importing that reasoning here would
+be a second, worse copy of it.
+
+The constraint match is EXACT-OR-PREFIX rather than a range solver. A caret range
+needs a real semver implementation, and answering one wrongly would install a version the site
+cannot run. An unmatched constraint returns undefined, which the caller reports.
+
+> **Superseded:** ranges resolve through `satisfies()` in `composer-constraint.ts` now, so the exact-or-prefix paragraph no longer describes the code.
+
+#### `portFibers()`
+
+Points a delivered PHP file's Fibers at the runtime's synchronous shim.
+
+This interpreter has no Fiber backend, so the first `Fiber::start()` aborts the whole runtime
+(`missing function: getcontext`). `scripts/patch-drupal.mjs` rewrites core's five sites at pack
+time; a package installed later was never rewritten, and Varbase's `revolt/event-loop` aborted
+every page. Qualified references become `\PhpWasmSyncFiber`, and `use Fiber;` becomes an alias
+so unqualified ones follow. Code that needs a real suspension now fails as an ordinary error.
+
+### `src/ops/packagist.ts`
+
+#### `DRUPAL_METADATA_URL`
+
+Routed by vendor, and getting this wrong made the whole check answer `not-found` for the entire
+Drupal ecosystem. Drupal contrib is NOT on Packagist -- it is published to drupal.org's own
+Composer repository, which core's own `composer.json` adds as a second repository. Measured:
+
+  repo.packagist.org/p2/drupal/pathauto.json ................ 404
+  packages.drupal.org/8/p2/drupal/pathauto.json ............. 302 -> www.drupal.org, then 404
+  packages.drupal.org/files/packages/8/p2/drupal/pathauto.json  200 (the metadata)
+  repo.packagist.org/p2/symfony/yaml.json ................... 200
+
+So every `/installable?module=drupal/*` returned `not-found` with the plumbing working perfectly.
+`drupal/core*` is the exception inside the exception: core and its subtree packages ARE mirrored
+to Packagist, but drupal.org serves them too, so routing the whole `drupal/` vendor there is both
+correct and simpler than special-casing.
+
+#### `PLATFORM_PHP_VERSION`
+
+Was 8.3.0 while the shipping binary is 8.5 (`wrangler.jsonc` aliases `php-binary-raw.ts`; a deployed
+site reports `8.5.2` from `/php`), so anything requiring `>=8.4` was refused as unsatisfiable by a
+platform that satisfies it, silently.
+
+#### `NATIVE_PLATFORM`
+
+Function-name evidence cannot replace the loaded-extensions spec. `curl_init`, `mysqli_stmt_init` and
+`imagecreatetruecolor` all appear as strings in a binary that has none of those extensions, because
+opcache's optimizer carries a `func_info` table naming functions across every bundled extension.
+`ext-mbstring` was listed while `mb-fix.ts` existed because the build had no mbstring; it moved
+here on 2026-09-08 when the long64 build carried the real extension (`--enable-mbstring
+--disable-mbregex`; `mb_ereg*` still absent, needs oniguruma, core calls none of it).
+
+### `src/ops/page-memo.ts`
+
+#### Module overview
+
+Anonymous pages held in the isolate that is already answering the request.
+
+##### Why this tier exists
+
+`anon-cached` is 0.82 of the traffic weight and is answered by `caches.default`, which is the cheapest
+tier that leaves the isolate and is still an I/O. Measured on a deployed free worker, 2026-09-10: the
+whole request costs 0.70 ms of `cpuTime` at p50 and 7.9-14.0 ms of `x-worker-ms`, so an order of
+magnitude of the profile that decides the verdict is spent waiting for a read whose answer this isolate
+has usually just seen. Against a localhost nginx serving the same page in 2-3 ms, that read is the
+entire gap. The authenticated side already has this: `lookupEdgePlan` answers from isolate memory and
+reports `mem`. The anonymous side had no equivalent and is 27x the weight.
+
+##### Why serving one is safe
+
+The key is `pageKey()`, unchanged -- origin, site, GENERATION and path. So this adds no staleness that
+the tier below it does not already have: a bump moves the generation, a new generation is a new key,
+and an isolate learns the generation from `genMemo` within `GEN_BUCKET_MS`. An entry for a superseded
+generation is unreachable rather than stale, exactly as it is in `caches.default`.
+
+What it must never hold is a personalised page, and it cannot: the only caller is the branch guarded
+by `edgeWanted`, which is false for a session-carrying request, and the value stored is a body
+`caches.default` had already accepted -- so `putPage()`'s refusals have run.
+
+##### What bounds it
+
+Bytes and entries, with a clear rather than an LRU for the reason `genMemo` and the plan store use one:
+the working set is bounded by the traffic one isolate sees, and eviction accounting costs more than a
+refill. The TTL mirrors the `max-age` the edge entry carries, so nothing outlives the copy it was
+taken from.
+
+#### `Entry`
+
+The hit path did the header assembly, and it is the path that runs on every request: it spread
+`Object.fromEntries(held.headers)` into a fresh literal and then set five more keys, so a tier whose
+whole purpose is "no I/O at all" was materialising an array into an object and copying it on every
+hit. Built once at store time instead. A `Headers` instance because `new Response` accepts it directly
+and the caller must not be able to mutate what the memo holds (it is handed a clone).
+
+### `src/ops/park.ts`
+
+#### `PARK_TRAPS`
+
+```
+/**
+ * The trap classes a site may arm.
+ *
+ * TWO, and the one that is NOT here is worth recording. An `http` class trapping `curl_exec` was
+ * written and removed: **the shipping interpreter has no curl at all**, measured 2026-09-08 by
+ * booting it and reading the extension list, so `cfw_park_trap('curl_exec')` answers false. The
+ * earlier "Guzzle parks at `curl_exec`" reading came from a NATIVE php that has ext-curl, which is
+ * the wrong instrument. `curl_exec` also takes a `CurlHandle` rather than a URL, so its pending
+ * descriptor would carry an object the host cannot route on.
+ *
+ * Trapping `fopen` instead cannot work either, and the reason is the safety predicate rather than an
+ * omission: `HttpsStreamWrapper` is userland called from the INTERNAL `fopen`, so `park_refused()`
+ * counts that frame and declines -- correctly, since `fopen`'s C locals cannot survive the
+ * `longjmp`. So the `fetch` class does not trap Guzzle's transport at all. It gives the module's own
+ * handler a yield point, and that handler is plain userland, which is what makes the park safe
+ * there.
+ */
+```
+
+### `src/ops/plan-profile.ts`
+
+#### Module overview
+
+Before this, `PLAN=paid` reached exactly two decisions -- the migration slicer
+(`chunksPerInvocation`) and the prefill default -- while five others were flat constants chosen
+for a 10 ms cap. So a paid site paid for headroom and then behaved like a free one: batches of
+five, a 2 s inline budget, and a 503 to the first visitor of every cold URL.
+
+WHAT PAID ACTUALLY BUYS is a bigger per-invocation CPU budget (30 s against 10 ms) and a longer
+wall clock, so every knob here is either "how much work fits in one invocation" or "how long a
+visitor may wait". Nothing here touches the meters that bind the FREE ceiling -- rows written and
+request counts are the same on both plans, and a paid profile that wrote more rows per fill would
+be spending the wrong resource.
+
+THE ONE THAT MATTERS is {@link PlanProfile.bootInline}. A cold object refuses to render inline
+because `!this.php`, never because of a budget -- raising `RENDER_BUDGET_MS` from 2,000 to 25,000
+did not move it, because the estimate is only consulted once an interpreter exists. So on free the
+first visitor to a cold URL gets a 503 no matter what the budget says, and the fix is not a bigger
+number but permission to boot. That boot is ~1.4 s, which is why it stays off on free.
+
+#### `FREE_PROFILE`
+
+**`bootInline` WAS FALSE AND THE REASON EXPIRED.** It was set against a 10 ms per-invocation cap
+that a cold boot obviously cannot fit, and against an implicit alternative of "the chain fills it
+shortly". Both halves are now measured and both are wrong:
+
+- **The cap does not fail an object invocation.** A single invocation reading 1,882 ms of
+  `cpuTime` completed on a deployed FREE worker, and a boot runs in the object. (A Worker handler
+  running ~1.6 s burns back to back was cut to 10 ms, which is why this is scoped to the object.)
+- **The alternative is not a short wait.** Time-to-served for an anonymous miss on a cold object,
+  deployed: **19,004 ms, and only 4 of 8 paths served at all.** A cold boot plus render is ~3.8 s.
+  Refusing to boot does not save the visitor anything; it costs them 15 seconds and often the
+  page.
+
+So the refusal was comparing a cold boot against a fast chain that does not exist. `inlineBudgetMs`
+moves with it for the same reason -- it bounds the VISITOR'S PATIENCE rather than a billed
+resource (wall time is not charged against the CPU budget: 4 ms of Worker CPU against 827 ms of
+wall, measured), and 2 s of patience is the wrong bound when the alternative is 19 s of waiting.
+
+What still protects the object: `estimateRenderMs()` against this budget, the herd collapse (N
+concurrent identical misses cost ONE render), the daily row and request meters, and
+`degraded.render` which answers 503 rather than rendering once the quota is spent. Cold encounters
+are **0.13% of all visitor requests**, so this path is rare by construction.
+
+#### `PAID_PROFILE`
+
+THE BATCH IS SMALL, and the first version of this file got it wrong. A Durable Object
+is single-threaded and `php._run()` is synchronous, so a fill occupies the object for its whole
+duration and a queued cache HIT cannot be answered by EITHER lane while it runs. Measured on a
+deployed worker at `fillBatchSize: 25`: alarms cost 4,337-5,832 ms of cpuTime (n=6) and every
+`/__serve` racing them waited 5.0-6.8 s of wall (n=5). Nothing bounded it: a wall-clock guard
+cannot, because the clock does not advance across a synchronous `php._run()`. It simply made paid
+visitors wait seconds on an object that was filling.
+
+Throughput does not pay for that, because the alarm RE-ARMS IMMEDIATELY while the queue is
+non-empty: measured, consecutive firings 130-160 ms apart. So on paid, where DO requests are not
+the binding meter, many short alarms deliver the same fills per second as one long one and bound
+the worst HIT wait instead. At a measured 81 ms median per warm render (n=7, 67-107, uncontended),
+8 fills is roughly 650 ms of occupancy against 4.5 s.
+
+Subrequests are the reason the drain limits stay small-ish: an invocation gets 1,000 on paid
+against 50 on free, but a fill in the same firing has already spent several, and each mirror put
+carries a whole file through memory.
+
+**BATCHING DOES AMORTISE REAL COST, AND THAT IS NOT WHAT BOUNDS THIS NUMBER.** Measured
+2026-09-14 on a deployed free worker, n=5 per k, interleaved, every batch verified to drain
+exactly k in one invocation: per-page wall falls 109 ms at k=1 to 82 at k=5, 50 at k=10 and
+**42.9 at k=20**, a 2.54x saving with the curve still descending. Round-trip wall rather than
+`cpuTime`, because the tag rides the front-worker request and the observability record is the
+OBJECT's invocation, which carries no query -- the network term is near constant across the four
+arms, so the relation holds even though the absolutes carry it.
+
+It does not move either number above, and saying why is the point of recording it. That run drove
+an otherwise idle object, so it measured THROUGHPUT and the two constraints here are HIT LATENCY
+during a fill and the 128 MiB isolate -- a fill batch is N workloads inside ONE invocation, which
+is what reset four freshly provisioned sites at 25. A throughput figure cannot overrule a latency
+or a memory bound. What it does establish is that the cost is genuinely amortisable, so a future
+topology where a fill does not occupy the serving object has a measured reason to revisit this.
+
+### `src/ops/plan.ts`
+
+#### `siteScopedKey()`
+
+```
+ * **BOTH DOCUMENTS WERE DEPLOYMENT-WIDE.** `plan` and `settings` were literal keys, so the owner of
+ * ONE site could write levers every other site on the deployment reads -- and once the Drupal
+ * settings form landed, so could a site administrator holding `administer drupflare settings`, who
+ * is a tenancy level below even that. `KV_OVERRIDABLE`'s safety argument is "the worst case is a
+ * slow site", which is an argument about the writer's OWN site; applied across tenants it does not
+ * hold, and `PLAN` selects an account-wide limits profile on top.
+ *
+ * The global key is still READ, as the deployment-wide default, so an operator can set a fleet-wide
+ * value in the dashboard and an existing deployment keeps the values it already has. A per-site
+ * document overlays it. Writes only ever land on the per-site key.
+```
+
+#### `KV_OVERRIDABLE`
+
+```
+ * AN ALLOW-LIST, AND THIS IS A PRIVILEGE BOUNDARY RATHER THAN TIDINESS. KV is operator-writable, so
+ * merging an arbitrary object into the environment would let anyone with KV write set
+ * `PW_DIAGNOSTICS=1` -- which reaches `/sql` (arbitrary SQL against the site database) and
+ * `/restore` (a whole-database overwrite). Every name here is a performance lever whose worst case
+ * is a slow site; nothing here changes what is reachable.
+ *
+ * THE MAIL CREDENTIALS ARE ABSENT FOR THE SAME REASON `PW_DIAGNOSTICS` IS. `MAIL_TRANSPORT` and
+ * `MAIL_DRAIN_LIMIT` are here because their worst case is "no mail" or "slower mail", and both only
+ * choose between transports the DEPLOYER already configured. `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`,
+ * `CF_EMAIL_TOKEN`, `CF_EMAIL_ACCOUNT_ID` and `MAIL_FROM` must never join them: a KV writer who could
+ * set `SMTP_HOST` would receive every password-reset link the site sends, which is a reach rather
+ * than a slow site.
+```
+
+Inline entries (originals):
+
+```
+// the baked asset aggregates. It met this list's own test and was left off it, so `assets/agg/`
+// shipped built and there was no way to turn it on without a redeploy -- an oversight rather
+// than a decision. A wrong value is a fatter or slower page, never a changed reachability
+// ---
+// how often a warmed site fires, which is the warming cost curve: 8 s holds the object resident
+// on every request, and longer intervals trade firings for a chance of adopting the interpreter.
+// Worst case is a cold boot or a costlier site, never a changed reachability
+```
+
+#### `writeSettings()`
+
+```
+ * **THE FILTER IS ENFORCED HERE AND NOT ONLY IN {@link resolveSettings}, and that is a privilege
+ * boundary rather than belt-and-braces.** A reader-side filter makes an unlisted name inert; a
+ * writer-side filter makes it unstorable. Those differ the moment anything else grows a reader --
+ * a future surface reading the raw document would see whatever the last writer put there, and
+ * `KV_OVERRIDABLE`'s docblock explains what a `PW_DIAGNOSTICS` in that document would reach.
+```
+
+#### `withSettings()`
+
+```
+ * TWO CALLERS, and there have to be two. This one runs in `src/site.ts` against the FRONT worker's
+ * env, which is where `GEN_BUCKET_MS` and `SITE_LOCATION_HINT` are read. The Durable Object receives
+ * its own copy of the bindings and cannot see this, so it overlays its own in `adoptSettings()` --
+ * for the whole life of the convention it did not, and the levers read only inside the object
+ * were knobs that configured nothing.
+```
+
+#### `SETTINGS_KEY`
+
+The KV key holding runtime lever overrides, as one JSON object.
+
+One key rather than one per lever: a single read is atomic, costs one of the 100,000 daily KV
+reads instead of one per lever, and gives an operator one place to see every override in
+force. Counted nowhere in prose: this docblock said seven while the list held eighteen.
+
+### `src/ops/platform-limits.ts`
+
+#### Module overview
+
+Dynamic Worker concurrency is not among these, and the reason is worth keeping. Cloudflare
+raised the number of distinct Dynamic Workers one Durable Object may run concurrently, which would
+matter to a design that loaded code per request. This one has no worker-loader binding and no
+dispatch namespace, so that limit cannot bind here no matter what the number is. The general
+`io-context` class is a different failure and CAN appear: it fires when an I/O object
+outlives the request that created it, which a long-lived interpreter holding a socket is exactly
+the shape to do.
+
+### `src/ops/render-plan.ts`
+
+#### PlanSlot csrf kind
+
+MEASURED, and it is the whole reason a shared role-set plan could not compile an authenticated
+page. Two sessions of one role set rendering `/` differ in exactly this value and nothing else --
+103,697 bytes each, one varying token in two places, every `data-contextual-token` identical.
+Unlike the other kinds it cannot be generated, only substituted: the value belongs to the visitor
+being served, so fillSlots takes it from the caller and refuses without one.
+
+#### `anchorLine`
+
+Uniqueness in BOTH is what makes it an alignment point. Every repeated `</div>` is a candidate
+otherwise, and anchoring on one aligns two unrelated positions -- the census that first counted
+varying bytes this way reported ~40 KB varying on pages that vary by 43.
+
+#### `splitSpan`
+
+Bracketing between the first and last difference produces ONE region, so a page with two dynamic
+values hands the recognisers 4.6 KB of markup with a dom id at one end and a build id at the
+other -- opaque, and every form page carrying a view has that shape.
+
+### `src/ops/replica-routing.ts`
+
+#### `affinityKey`
+
+```
+/**
+ * The stable string a lane is chosen from.
+ *
+ * Anonymous requests spread by client address, then by path when they carry no address, so they
+ * still spread rather than piling onto whichever lane the empty string hashes to.
+ *
+ * A SESSION-CARRYING REQUEST IS KEYED ON THE PATH, so a page's readers share a lane. Measured over
+ * eight paths a run, two fresh sessions each, three lanes and the primary: keyed on the session the
+ * plan tier compiled on 5/8 and 4/8 paths, keyed on the path 6/8 -- and the trials that failed under
+ * the session key are the ones whose two sessions landed on different objects. It is a rate rather
+ * than a rule, because a split pair still compiles sometimes: the compile runs in the FRONT WORKER's
+ * isolate, so it sees both renders wherever they came from, and what a split costs it is agreement
+ * on the generation the two samples were taken at.
+ *
+ * The trade is per-page concurrency for authenticated readers, and it is the right way round: the
+ * anonymous slice is the bulk of the traffic and keeps spreading by address, while a plan HIT
+ * answers without rendering at all, which beats sharing a page's renders across lanes.
+ *
+ * **AN ANONYMOUS ONE-MACHINE CLIENT CANNOT SPREAD ACROSS A POOL.** It presents one address on every
+ * request, so the middle branch here returns one key however many paths it rotates through --
+ * measured on a local rig, an anonymous drive reported `x-cfw-replica` as `{r3: 662}`, one object
+ * for 100% of samples. Real traffic has the spread for free;
+ * `scripts/measure/v101-arms.ts --clients=N` is how a rig gets it.
+ *
+ * It does NOT explain a pool whose lanes answer nothing, and it was wrongly blamed for one. An
+ * AUTHENTICATED drive keys on the path, and the eight paths that rig rotates cover 4 of 4 buckets
+ * at 3 lanes and 6 of 8 at 7 -- computed against this file's own FNV-1a, offline, in twenty lines.
+ * The cause there was admission: a lane is refused until something mints `state:system.private_key`.
+ * Count the distinct objects in `x-cfw-replica` AND check the lanes reached `SERVING` before
+ * attributing a pool reading to routing.
+ */
+```
+
+#### `replicaCount`
+
+```
+/**
+ * How many replica lanes a site has, beyond the primary; unset, unparseable and negative are 0.
+ *
+ * **The ceiling is {@link ID_PARTITION_LANES}, and it is a mechanism rather than a taste.** This
+ * used to clamp at 32 on the reasoning that a larger pool is "past what the measured curve covers",
+ * which is a statement about what had been measured rather than a limit of anything. Removing it
+ * outright was worse: a lane mints forwarded ids from its residue class modulo
+ * `ID_PARTITION_LANES + 1`, so lane 257 wraps onto lane 0's class -- the PRIMARY's -- and two
+ * writers mint the same id. `write-forwarding.spec.ts` is what caught that, by comparing the
+ * router's reach against the partition rather than trusting either alone.
+ *
+ * So the number is bounded by the arithmetic that keeps ids disjoint, and the two are linked here
+ * rather than restated. `replica-demand.ts` carries a different and smaller ceiling:
+ * `REPLICA_MAX_LANES` bounds what AUTOSCALING creates, where the binding cost is per-lane idle
+ * storage and catch-up rather than correctness.
+ *
+ * What this number does is tell the ROUTER how many buckets to hash over, and setting it above the
+ * lanes a site has provisioned routes to objects that do not exist -- each one a wasted hop and a
+ * retry on the primary. That is an operator error a ceiling cannot prevent; `chooseTarget()` takes
+ * `max(this, believedLanes)` so the provisioned count is the floor either way.
+ */
+```
+
+#### chooseTarget input.hasSession
+
+```
+	/**
+	 * Whether the request already carries a session.
+	 *
+	 * A WRITE THAT CARRIES NO SESSION MAY ESTABLISH ONE, AND A LANE CANNOT. Forwarding executes the
+	 * write on the lane, discards its own effect and sends the statements to the primary -- but the
+	 * `Set-Cookie` handed back was minted during the lane's speculative run, so the client leaves
+	 * holding a session id the primary does not have. Observed over six consecutive logins on a
+	 * 4-lane site: five answered by the primary, one by `r3`, and after that one the PRIMARY itself
+	 * read `x-cfw-roles: anonymous` on 125 of 200 samples. It presents as "the site stopped
+	 * accepting the password".
+	 *
+	 * Login, registration and password reset are exactly the writes that arrive without a session,
+	 * so pinning on this covers the class without naming any route.
+	 */
+```
+
+### `src/ops/replica.ts`
+
+#### `enforceReadOnly()`, exec write
+
+```
+// AN EXEC WRITE IS NOT FORWARDABLE HERE AND THAT IS THE DRIVER'S JOB TO AVOID.
+// `cfwSqlExec` has no rollback, so there is no way to run this locally and discard
+// it; the driver replays an unbuffered write as a one-statement transaction so it
+// arrives on the branch above. Reaching this means the two disagree about whether
+// this connection holds a residue class, and a failover is the safe answer
+```
+
+#### `statementAllowedOnReplica()`
+
+```
+ * THE TWO ALLOW-LISTS HAVE TO MEET HERE, and they did not at first: `isProvenRead()` alone refuses
+ * `INSERT INTO cache_render`, which `isReplicaLocalTable()` calls local -- so a replica could not
+ * fill its own cache bins and would re-render every request, which is the entire thing it exists to
+ * avoid.
+```
+
+#### `compound()`
+
+```
+ * `sql.exec()` runs every statement in the string it is handed, and every classifier below reads the
+ * LEADING keyword -- so a compound describes only its first statement. `SELECT 1; DELETE FROM users`
+ * is a proven read and `INSERT INTO cache_render (...); DELETE FROM users` attributes to a
+ * replica-local table, and both then mutate authoritative state on a lane.
+```
+
+#### Module overview
+
+```
+ * The bridge surface is the reason this cannot enumerate: `CROSSING_NAMES` in `crossings.ts` is a
+ * hand-maintained list whose own docblock says a new capability should show up rather than be
+ * "counted by accident", and TWO have been added since without joining it -- `cfwOidcClaims`, which
+ * deletes a durable ticket, and `cfwTcp`, which queues an outbound exchange. Both mutate.
+```
+
+### `src/ops/replication-log.ts`
+
+#### Module overview
+
+How authoritative state reaches a replica, and why an interrupted delivery cannot be mistaken for
+a complete one.
+
+THE INVARIANT IS THAT A REPLICA IS FULLY VALID AT G OR KNOWN TO BE BELOW G, NEVER IN BETWEEN. A
+replica that has applied half of a generation is not "slightly stale"; it holds a state the primary
+was never in, and no fence expressed in generation numbers can describe it. So every path out of an
+interrupted apply lands on a number that is true, or on a refusal.
+
+Two mechanisms carry that, and they cover different failures:
+
+- A record that fits one transaction needs no marker. The apply and the position advance commit
+  together, so an interruption rolls both back and the replica is cleanly at the parent. This is
+  the common case and it costs nothing.
+- A record applied in CHUNKS cannot use that, because the chunks commit separately. An intent
+  marker is committed before the first chunk and cleared with the last, so a marker found on
+  restart means chunks landed and the position did not. That replica is untrusted until it
+  restores; it cannot resume, because nothing records which chunks committed.
+
+The marker is written only when it is load-bearing. Writing it for a single-transaction apply
+would charge a row to record something the transaction already guarantees.
+
+#### `LogRecord.overflowed`
+
+Set when the change was too large to log statement by statement.
+
+An overflowed record carries NO statements and cannot be applied; a replica meeting one has to
+restore. That is the safe direction: a truncated statement list would
+apply cleanly and leave the replica silently wrong, which is the one outcome the whole log
+exists to prevent.
+
+#### `LogPosition`
+
+Where a replica is in the log, as durable state.
+
+No schema version here. The object's pack generation is already recorded by the migrate
+cursor, and a copy kept alongside the log position would be a second source of truth that can
+disagree with the first. The applier is handed the live one.
+
+#### `positionalBindings()`
+
+A statement's bindings as `ctx.storage.sql` can take them: positional, and nothing else.
+
+DRUPAL BINDS BY NAME AND THE LOG CARRIED IT THROUGH. `Connection::merge()` compiles to a SELECT
+then an INSERT or an UPDATE, and only the INSERT binds positionally -- the UPDATE branch binds
+`{':db_condition_placeholder_0': 'node_list'}`, which is an OBJECT. `SqlStorage.exec()` takes
+`...bindings`, so applying one threw `Spread syntax requires ...iterable[Symbol.iterator] to be a
+function` and killed the catch-up. Every cache-tag invalidation takes that branch once the row
+exists, so any pool broke on the first repeat invalidation of any tag -- a node save.
+
+Rewritten rather than refused, because the statement is legitimate and the primary has already
+committed it. Tokens are read from the SQL IN ORDER, so the result does not depend on key order
+in the map, and a token with no value throws rather than binding a silent `undefined`: a wrong
+value replicated into a replica is worse than a refused record, which the fence can describe.
+
+#### `positionTrust()`
+
+Whether the replica's own position is a number anyone may act on.
+
+A surviving marker is the untrusted case and it is NOT resumable: the marker records which
+generation was being built, not which of its chunks committed, so there is no safe point to
+continue from. Recording per-chunk progress would make resume possible and is not built, because
+the recovery it replaces is a restore the replica can already perform.
+
+#### `markInflight()`
+
+Marks the position untrusted while a multi-transaction load is in flight.
+
+The same marker a chunked apply uses, and for the same reason: a bulk restore commits table by
+table, so an interruption leaves rows that landed and a position that did not. Sharing it rather
+than adding a second flag means {@link positionTrust} already refuses both, and there is one
+answer to "is this replica's number real" instead of two that can disagree.
+
+#### `planApply()`
+
+What to do with a delivered record.
+
+Order matters. A malformed or wrong-schema record is refused before anything looks at generation
+numbers, because its numbers are not evidence of anything. Only then does a re-delivery of an
+already-applied generation collapse to a no-op.
+
+`duplicate` is a SKIP rather than a re-apply. The statements in a record are not required to be
+idempotent -- an `UPDATE ... SET n = n + 1` is a legitimate authoritative write -- so replaying one
+at a generation the replica already passed would corrupt exactly the state this exists to carry.
+
+**A GENERATION NUMBER IDENTIFIES A POSITION IN ONE PRIMARY'S HISTORY AND NOTHING MORE.** Nothing
+here can tell a record from primary A apart from a record from primary B carrying the same number,
+so a replica pointed at a second primary would skip its records as duplicates and diverge in
+silence. What catches that is the fingerprint comparison at admission, which checks the RESULT
+rather than the sequence -- and it runs at admission only, so divergence that begins after a
+replica is already serving is not detected until it is re-admitted. Chaining each record to its
+parent's fingerprint would close it inside the log; it is not built, and this is the surviving
+objective rather than a settled one.
+
+#### `applyRecord()`
+
+Applies one record, or refuses it.
+
+The statements are the primary's authoritative writes and are NOT passed through the
+replica's read-only guard. That guard exists to stop a replica ORIGINATING an authoritative write;
+this is the one path by which such a write legitimately arrives, and gating it there would leave a
+replica able to receive only the writes it could have made itself.
+
+@param localSchema
+  The pack generation this object actually holds, read live rather than kept beside the position.
+@param chunkSize
+  Statements per transaction. The default applies the whole record in one, which is what makes an
+  interruption roll back cleanly. Pass a smaller number only when a record is too large to apply in
+  one invocation, and accept that an interruption then costs a restore.
+
+### `src/ops/shell-assembly.ts`
+
+#### Module overview
+
+Fragment assembly: an anonymous shell from cache, personalised holes filled at the edge.
+
+Authenticated HTML is never cached and must not be. What CAN be cached is the part of the page
+that is identical for everyone, with the per-user parts left as holes -- which is exactly the
+boundary Drupal already draws for BigPipe. `BigPipeStrategy` wraps every auto-placeholdered
+element in `<span data-big-pipe-placeholder-id="...">`, so the seams exist in the markup already
+and nothing here has to invent them.
+
+##### The dangerous half is deciding WHEN, not doing it
+
+Serving a shell that contains one visitor's content to another is the same defect as the static
+-state leaks, arriving through a different door. So {@link shellSafety} refuses by default and
+only permits a page it can positively account for: every personalised region must be inside a
+placeholder, and anything that looks like identity outside one disqualifies the page.
+
+The refusal is cheap -- the page just renders the way it does today. A wrong permit is a
+disclosure. That asymmetry is why every unknown here resolves to `unsafe`.
+
+#### `assemble`
+
+HTMLRewriter is the obvious tool and is the wrong one here. It streams, so it cannot report which
+placeholders went unfilled until the body is already on the wire -- and an unfilled hole is the
+case that has to be caught BEFORE anything is sent, because it means the shell and the fragment
+set disagree. Streaming is worth having later for byte latency; correctness comes first, and a
+cached shell is a string already in memory.
+
+AN UNFILLED PLACEHOLDER IS LEFT IN PLACE, never removed. Removing it would silently drop a
+region -- a visitor would see a page with their account menu simply absent, and nothing would
+report it. Left in place, it is an empty span that BigPipe's own JavaScript can still fill.
+
+#### `normaliseShell`
+
+The safety property is byte equality, not this pattern list. A list of markers is a guess about
+what varies, and a guess is not something to build against. The check that actually holds is
+differential: normalise the same page rendered for two different members of a role set, and REQUIRE
+the results to be byte-identical. Anything that varies by person and is not in the list above makes
+them differ, so the harvest refuses instead of storing a shell that leaks. {@link
+normalisedShellsAgree} is that check, and the harvest calls it. So this function may be incomplete
+without being unsafe. Adding a pattern turns a refusal into a shareable shell; omitting one costs a
+shell, never a disclosure.
+
+#### `rolesOf`
+
+A SHELL RESPONSE CARRIED NO ROLES AND THAT STARVED THE COMPILED-PLAN TIER. The edge plan
+compiles from three agreeing samples of `x-cfw-roles`, and `roleSeen` in the front worker is
+keyed by COOKIE rather than by path -- so one path answered `ASSEMBLED` was enough to make the
+whole session read `skip:roles-unknown` and never compile a plan for anything. `ASSEMBLED` still
+costs a Durable Object hop and a real fragment render; `PLAN` costs neither, so the cheaper tier
+was being locked out by the more expensive one.
+
+The render already computes this, so carrying it out is free. Anything not a list of strings
+yields nothing rather than a guess: a partial role set would compile a plan for the wrong
+audience, which is strictly worse than compiling none.
+
+### `src/ops/site-id.ts`
+
+#### Module overview
+
+Which site a request belongs to, when the caller did not say.
+
+`/serve?site=X` names the site explicitly and always wins. Everything else -- a visitor asking for
+`/about` on a real domain -- has to be resolved, and this is the only place that decides it. One
+object per site, and the object's NAME is the site identity, so a wrong answer here is a request
+served from a different site's database rather than an error.
+
+The `site` parameter is layer 0 and is REFUSED unless the caller opts in, because the catch-all
+resolves a URL whose query string belongs to the visitor. See {@link ResolveSiteOptions}.
+
+Five layers, and the ORDER follows from which of them can be absent:
+
+1. **KV**, keyed by host. Operator-writable at runtime, so two hostnames can share one site and a
+   site can be renamed without a redeploy. First because it is the only layer that can be changed
+   without shipping anything.
+2. **`SITE_ID`**, a var. The per-deployment answer, set at deploy time.
+3. **The deployment's primary site** (`src/ops/deployment-site.ts`). One deployment is one site,
+   so once a site has been claimed every unmapped host reaches it.
+4. **The hostname**, derived, only while nothing has been claimed: a fresh deploy serves the host
+   it was pointed at, and that is how its first site is made.
+5. **`site`**, the literal `src/site.ts` has always defaulted the `site` param to.
+
+THE OPTIONAL LAYERS COME FIRST BECAUSE THE GUARANTEED ONE WOULD SHADOW THEM. Derivation answers
+for every real host, so anything below it is unreachable on exactly the hosts it exists to
+configure -- a KV mapping consulted after derivation could never apply to a deployed site, which
+is the case it exists for. Ordering the two explicit layers above the inferred one is the
+same rule `resolveSiblings()` follows for the sibling checkouts.
+
+Layer 3 is also what makes layers 1 and 2 optional rather than nominally so: a deploy
+that sets neither still resolves, and `localhost` -- which names no site -- falls past derivation
+to the literal.
+
+#### `locationHint()`
+
+Where a site's Durable Object should be created, or undefined for "wherever it lands".
+
+**UNSET IS THE DEFAULT.** Placement follows the first request, which for a
+deploy-button site is wherever the deployer was. Guessing a region on their behalf trades latency
+for one audience against latency for every other, and a one-click product has no way to ask - so
+an owner who knows their audience pins it, and nobody else pays for a guess.
+
+**KV FIRST, THEN THE VAR**, which is the ladder `resolveSettings()` already implements:
+`SITE_LOCATION_HINT` is on {@link KV_OVERRIDABLE}, so it can be changed without a redeploy. That
+ordering is the convention for any lever offered here, not a special case for this one.
+
+IT ONLY APPLIES TO CREATION. Cloudflare uses the hint when the object is first instantiated and
+ignores it afterwards, so setting this on a site that already exists moves nothing.
+
+#### `encodeSiteId()`
+
+One host, one id, and no two hosts sharing one.
+
+`[^a-z0-9]+` collapsing to a dash made `a.b.example.com` and `a-b.example.com` the same id, and a
+site id IS the Durable Object's name -- so two unrelated hostnames pointed at one deployment
+shared one database. `.` and `-` are the ordinary furniture of a hostname and are now kept as
+themselves; anything else becomes `_<hex>`, which cannot be produced any other way because `_` is
+outside the kept set. That makes the mapping injective rather than merely tidier.
+
+Readable in a log, and safe everywhere it is used: a DO name takes any string, and the cache, KV,
+and R2 keys that carry it percent-encode their parts.
+
+#### `ResolveSiteOptions.allowParam`
+
+Whether `?site=` on the URL may name the site.
+
+TRUE ONLY WHERE THE QUERY STRING IS OURS. On `/serve` the caller built the URL and the
+parameter is an instruction; on a path the catch-all rewrote, the query belongs to Drupal and
+came from the visitor -- so honouring it means `https://customer-a.example/about?site=customer-b`
+serves customer B's database from customer A's hostname. Rewriting from the ORIGIN keeps the
+visitor's parameters out of `/serve`'s own, and this keeps them out of the resolution that
+chooses which object answers; both halves are needed.
+
+#### `mappedHost()`
+
+The host's KV mapping, or undefined; read at most once per host per {@link HOST_MEMO_MS}.
+
+MEASURED ON A DEPLOYED WORKER, and this is why it exists: one WARM `CONFIG_KV.get()` costs 4 ms
+at the median (a key the colo has not seen costs 46-140 ms), and a production page request made
+TWO of them for the same host -- once in the catch-all
+rewrite and again in `siteFor()` -- for 8.5 ms before any other tier was consulted. Every
+measurement deploy in this repo sets `PW_DIAGNOSTICS=1` and calls `/serve?site=X`, which takes the
+`param` branch above and reads 0, so no arm had ever priced the shape that ships.
+
+A THROWN READ IS NOT MEMOISED. A KV blip must cost the next request a retry rather than pin
+derivation for a minute.
+
+### `src/ops/site-origin.ts`
+
+#### Module overview
+
+The origin Drupal renders against, and why it is not simply the `Host` header.
+
+Every absolute URL Drupal emits -- the canonical tag, a form action, a `Location:`, the link in a
+password-reset mail -- is built from the request's scheme and host. The render fragments hardcoded
+`localhost`, so a deployed site told every visitor and every crawler that it lived on
+`http://localhost`, and a reset link mailed to a user pointed at their own machine.
+
+The inbound host is not automatically safe to use. An attacker who can set it can move a
+password-reset link onto a host they control and can poison a cache keyed by path alone. The
+defence here is that the origin is a property of the SITE rather than of the request:
+
+1. `SITE_ORIGIN` -- set at deploy time, wins outright, and is the answer for anyone who wants no
+   inference at all.
+2. The PIN, held in `cfw_meta`. Trust on first use, the same shape `/firstrun` already uses for
+   the owner token: the first request a site answers fixes its origin, and every later request is
+   measured against that rather than believed. A forged `Host` after the pin changes nothing.
+3. The observed origin, when there is no pin yet -- which is the request that sets the pin.
+4. `http://localhost`, only when nothing above produced a usable value.
+
+The window TOFU leaves open is the first request after a deploy, and it is closed from the other
+end: `/firstrun` re-pins, so claiming a site also fixes its origin.
+
+#### `normaliseOrigin`
+
+Accepts a full URL and discards everything after the authority, because an operator setting
+`SITE_ORIGIN` to `https://example.com/` should not get a double slash in every canonical tag. A bare
+hostname is accepted and assumed `https`, since that is the only thing a deployed site can mean.
+Anything that is not http or https is refused outright -- `javascript:` reaching a form action is the
+reason this is an allowlist rather than a blocklist.
+
+#### `aliasRewrite`
+
+The page store keys on path alone and every render uses the pinned origin, so one stored copy serves
+every host a site answers on. An alias visitor needs three things moved to its own host: the absolute
+URLs in the body (plain and JSON-escaped, since drupalSettings and AJAX carry the second), a `Location`
+that would send it to the canonical host, and the cookie `Domain` Drupal derives from the render host,
+which a browser refuses from any other host -- so a login on an alias never held. The session cookie
+NAME stays the canonical one, which is what the next render looks for, so one session works on every
+alias. The body is rewritten as a stream, so a BigPipe response still arrives progressively.
+
+### `src/ops/site-secrets.ts`
+
+#### Module overview
+
+Per-site secrets, minted in the Durable Object and never in the shipped payload.
+
+Workers assets are served PUBLICLY, and `.assetsignore` un-ignores the packs, so anything
+secret that ships in `assets/` is fetchable at a guessable URL by anyone -- and identical on
+every site deployed from that payload. Three secrets were in there:
+
+| secret               | where it shipped              | fix                                  |
+| -------------------- | ----------------------------- | ------------------------------------ |
+| `hash_salt`          | `drupal-pf/core.pf.bin`       | minted here, appended to settings.php |
+| `system.private_key` | `drupal-sql/0052.json`        | removed; Drupal regenerates it        |
+| admin bcrypt hash    | `drupal-sql/0064.json`        | blanked; `/firstrun` sets a real one  |
+
+Only the salt needs this module. Drupal already self-heals the private key --
+`PrivateKey::get()` calls `create()` and `set()` when state has none -- and a password has to
+come from the operator. A salt has no such mechanism: `Settings::getHashSalt()` throws when it
+is empty and nothing generates one outside the installer, which never runs here.
+
+The salt is what signs one-time login links, form tokens and `Crypt::hmacBase64`, so sharing it
+across sites lets anyone holding the payload mint a valid password-reset URL for any of them.
+
+@see src/site-do.ts, which appends {@link hashSaltAssignment} to settings.php at boot
+@see scripts/scrub-pack-secrets.ts, which removes the shipped salt from the pack
+
+#### `ensureOwnerToken()`
+
+Reads this site's owner token, minting one the first time.
+
+WHY A SECOND SECRET RATHER THAN REUSING `PW_DIAGNOSTICS`. Getting your data out required
+`PW_DIAGNOSTICS=1`, and that flag is one boolean over a set that also contains `/sql` (arbitrary
+SQL against the site database), `/restore` (a whole-database overwrite) and `/php`. So the
+supported way to leave was to expose a remote shell to the internet first. Export is an OWNER
+operation, not a diagnostic, and it needs a credential rather than a mode.
+
+Same mint and same storage as {@link ensureHashSalt}: per site, persisted, never in the payload.
+
+### `src/ops/state-fingerprint.ts`
+
+#### Module overview
+
+Admission compares a replica's fingerprint against the primary's for the generation the primary
+advertises. That comparison is a validation invariant rather than an optimisation: without it, "the
+replica applied every generation up to G" rests on the log having been complete and correctly applied,
+which is precisely the thing that can be wrong. A fingerprint checks the result instead of the process.
+
+1. Order independence. The digest must not depend on the order rows come back in. SQLite is free to
+   return them in any order absent an ORDER BY, and a replica that restored by a different path will
+   differ. So the rows are sorted here rather than trusted.
+2. Unambiguous framing. Joining fields with a separator makes `("ab", "c")` and `("a", "bc")` hash
+   identically for any separator that can appear in a value, and values here are arbitrary serialized
+   PHP. Every field is length-prefixed instead, which no value can forge.
+
+#### `FINGERPRINT_TABLES`
+
+`key_value` and `key_value_expire` only. The bulk tables are deliberately NOT covered: a content row
+differing between primary and replica is a replication lag question that the generation already
+answers, while an installation-global differing is a correctness failure the generation cannot see.
+Widening this to content would make the fingerprint disagree constantly for reasons that are not
+faults, and a check that cries wolf gets turned off. ORDER BY is present anyway, even though
+`canonicaliseState` sorts: an unordered read of a large table looks deterministic in a test and is not
+in production.
+
+#### `fingerprintState`
+
+SHA-256 through WebCrypto rather than a hand-rolled hash: this is a correctness comparison between two
+machines, and a 32-bit hash collides at a rate that would eventually admit a replica whose state
+differs. The cost is irrelevant because it runs at admission, not per request.
+
+#### `readStateRows`
+
+An un-restored object is exactly when this gets called, and a single UNION over both tables threw `no
+such table` on one -- so the route that exists to report a replica's state answered 500 for the state
+it is most often asked about. A missing table is reported rather than swallowed: zero rows because a
+table is empty and zero rows because it does not exist are different facts, and only the caller knows
+which of them should refuse.
+
+### `src/ops/state-inventory.ts`
+
+#### Module overview
+
+Which persistent state a replica may hold, at the granularity the state actually has.
+
+A TABLE IS NOT AN EFFECT, and this module exists because that was measured twice. `key_value`
+holds the disposable `update_fetch_task:*` queue in the same table as `state:system.private_key`,
+which Drupal mints lazily and keys CSRF tokens on -- two replicas each minting their own would
+issue tokens the others reject. A per-table verdict is wrong in whichever direction it is set, so
+classification here keys on `(table, collection, name)`.
+
+The second secret was found by enumerating rather than by reasoning: `state:system.cron_key` is
+the token in the cron URL, and nothing had named it. Assume the list is still incomplete -- that
+is what {@link UNKNOWN} and `tests/integration/state-inventory.spec.ts` are for.
+
+#### AUTHORITATIVE_TABLES entry `cfw_module_blob` / `cfw_module_rev`
+
+The uploaded module store, and it is AUTHORITATIVE where `cfw_module_file` is derived.
+
+The distinction is the whole reason the two are separate. `cfw_module_file` is the
+materialised tree and a revision can rebuild it; the blob and the manifest are the only copy
+of bytes that arrived from a developer's machine and exist nowhere else -- not in the pack, not
+on a registry, not on a git host. Calling either derived would let a replica originate one and
+would let a restore drop the module a site is running.
+
+#### AUTHORITATIVE_TABLES entry `sequences`
+
+THE ID GENERATOR, and the third lazily-dangerous value this inventory turned up.
+
+Two replicas each allocating from their own `sequences` would mint colliding entity ids, and
+nothing would error until the rows met. In the same family as the two secrets: the danger is
+that a replica can ORIGINATE the value rather than that it merely holds it.
+
+#### `AUTHORITATIVE_TABLE_PATTERNS`
+
+Patterns that make a table authoritative, applied only after every explicit list above.
+
+PATTERNS ARE ALLOWED HERE AND NOWHERE ELSE, because this is the direction that fails safely: a
+table wrongly matched costs a failover to the primary, while a table wrongly matched as local or
+derived lets a replica originate state. Entity storage is where the table count actually grows --
+a contrib module adds `node__field_x`, `node_revision__field_x` and so on -- and enumerating it
+would be a list nobody prunes.
+
+#### trailing comment at end of file
+
+`replicaMayOriginate()` and `replicaMayServe()` were here, exported, unit-tested and called by
+nothing, and both are DELETED rather than wired -- they read as the missing callers for two real
+decisions and are the wrong shape for either.
+
+`replicaMayOriginate()` looked like the predicate `originable()` in write-forwarding.ts should
+have used. It is not: it answers false for AUTHORITATIVE, which is every content table, and the
+lane id partition exists precisely so a lane CAN mint into those safely under a disjoint stride.
+Wiring it would have refused the feature it appeared to protect.
+
+`replicaMayServe()` is a DENY-list over statuses, and `src/ops/replica.ts` is deliberately two
+allow-lists and no deny-list, because an unknown effect has to fail closed by being absent from
+an allow-list rather than by being absent from a deny-list.
+
+What survives is `classifyState()`, which both were thin wrappers over and which
+`hazardClass()` in write-forwarding.ts does call.
+
+### `src/ops/supervisor.ts`
+
+#### Module overview
+
+The host half of the health layer: tripwires, the ledger, the breaker, quarantine.
+
+Half of this has to be JavaScript, for one reason:
+**a repair path must not depend on the subsystem it repairs.** PHP cannot observe a JS throw
+out of a wasm import (measured twice -- `@` and `catch (\Throwable)` are both useless, and the
+whole invocation dies), cannot observe its own isolate being killed, and cannot be trusted to
+fix itself once poisoned. Detection and repair for those classes live here.
+
+Every tripwire in this file corresponds to a defect this project has ALREADY SHIPPED and then
+found: a tripwire earns its place by having caught something real, so each one names its
+incident.
+
+Everything here is a pure function of an observation, so it is testable without a Durable
+Object, a wasm instance, or a clock. The wiring that gathers observations lives in
+`src/site-do.js`; this module never reads global state.
+
+#### `renderEmpty`
+
+A 200 response with a zero-byte body.
+
+THIS SHIPPED. Destructing `theme.registry` on a persistent interpreter made render 1 return
+12,304 bytes and every render after it return 0, while rows-written per render jumped 15 -> 85.
+A cache cannot tell an empty 200 from a real page, so it stores and re-serves it. This is the
+tripwire the whole "quarantine beats wrong output" rule exists for.
+
+#### `bridgeAsyncifyCalled`
+
+The Asyncify stub was reached.
+
+The glue calls `Asyncify.handleAsync(...)` from the http/https stream wrapper and from
+`vrzno_await`, and declares `Asyncify` nowhere, so it was a free identifier that `ASYNCIFY=0`
+compiled out. Reaching it threw `ReferenceError` out of a wasm import, which **PHP cannot catch
+at all** -- measured from two unrelated routes -- and killed the invocation. `stream_get_wrappers()`
+advertises http and https, so ordinary contrib code reaches for them.
+
+A PHP-side handler cannot see this: no PHP fatal, no printErr, Drupal's logger never runs. The
+counter on `globalThis` is the ONLY place it is observable, which is exactly why this tripwire
+is in the host and not in PHP.
+
+`warn` AND NOT `error`, because the severity above was calibrated to the paragraph above it and
+the stub is what stopped that being true. Reaching a free identifier killed the invocation;
+reaching the stub returns -1, `fopen()` returns false, and PHP handles it. Measured: with the
+three outbound-HTTPS cron hooks on and a cold fetch cache, the first round trips this 10 times,
+`error` starts at `reset`, three rounds reach `quarantine` and EVERY PAGE ANSWERS 503 -- so a
+newly provisioned site took itself down the first time cron ran, over a feed fetch that had
+already fallen back correctly. A graceful degradation must not escalate to an outage. An
+invocation that does die is caught by the tripwires that watch renders.
+
+#### `budgetPressure`
+
+A daily free-plan meter projected past its allowance.
+
+Rows written at 100,000/day is the meter that actually binds fills, and `setAlarm()` is itself
+one row written. The watchdog lesson is the reason this exists: an unbounded log table became
+**46% of the database** before anybody looked.
+
+#### `memoryTrendRising`
+
+Linear memory trending up across warm requests without rising every single time.
+
+The complement of `memoryHighwaterRising`, not a replacement for it. That check demands a
+strictly monotonic rise over the last four samples, which emscripten's geometric growth makes a
+reasonable shape to demand -- but it also means one plateau or one dip inside the window hides a
+real leak completely, and the lazy FS converges on the union of every route ever served, which
+climbs in steps rather than smoothly.
+
+So this one fits the whole ring and asks whether the rise beats the wobble, and it returns null
+whenever the strict check already fired: two findings for one leak would escalate the breaker
+twice as fast for no extra information.
+
+**Acts at the next quiet moment, never the next request.** Recycling the interpreter mid-traffic
+trades a leak nobody has noticed for a 4,019 ms boot every waiting request pays for, so the
+severity is `warn`: `initialRung('warn')` is `observe`, which schedules rather than
+resets.
+
+### `src/ops/sweep.ts`
+
+#### Module overview
+
+The addressable sweep: pre-render the tail on a declared budget instead of billing a visitor for it.
+
+Page coverage is demand-driven today. A URL renders when somebody asks, that visitor waits, and
+nothing knows what fraction of the site is covered or bounds what a crawler can make the site
+spend. Two renders of one anonymous entity page are byte-identical, so the question is never HOW
+the tail is produced -- only WHEN it is paid for and who waits.
+
+THE SWEEP QUEUES, IT NEVER RENDERS. Everything here writes `cfw_fill_queue` rows and stops; the
+existing alarm fill batch drains them under the `oversized()` guard it already has. That is what
+makes the isolate failure structurally impossible rather than bounded by a constant: a sweep adds
+no workload to any invocation, so it cannot be the batch that crosses 128 MiB.
+
+THE GOVERNOR IS THE FEATURE. Three bounds, each against a different failure: a floor it will not
+start below, a share of the DAY it may spend, and a share of what is LEFT it may take at once.
+
+#### `planSweep`
+
+How many pages this step may queue, and why not more.
+
+Three bounds, each against a different failure this project has already shipped:
+
+- the FLOOR, against a QA day that wrote 104,451 rows and put a site read-only at 104% of quota
+  with nothing on any admin page saying so. A sweep will not start where the ladder has already
+  stopped cron.
+- the DAILY cap, against the sweep pushing the site to the floor by taking a share of a shrinking
+  remainder forever. The share of what is left bounds one step; this bounds the day.
+- the BATCH, so `cfw_fill_queue` never grows past what the next firing drains, which is what the
+  cron branch's `queueDepth() === 0` yield depends on being true.
+
+The isolate limit is absent from that list on purpose: this queues rather than renders, so it adds
+no workload to any invocation and the existing `oversized()` break in the fill batch is what still
+bounds memory.
+
+#### `sweepEnabled`
+
+ON by default at a fleet-safe share; `SWEEP=0` turns it off.
+
+IT WAS OFF, and the reason was a meter rather than caution: the row and DO quotas are
+ACCOUNT-WIDE while `dailyRows()` counts one object, so the governor cannot see what the rest of
+the fleet has spent. At 25% of 100,000 rows per site, four sweeping sites saturate the account
+and each one reads its own meter as healthy. That is a real failure mode and it is not overridden
+here -- it is priced. An unasked-for sweep takes {@link UNASKED_ROWS_FRACTION} instead of the
+full share, so the number of sites it takes to saturate the account moves from 4 to 20, and an
+operator who asks for a sweep still gets the measured 25%.
+
+WHY IT IS WORTH DEFAULTING ON. A path nobody has rendered is the `anon-miss` slice, 0.095 of the
+traffic mix, and it is the one profile a render cannot win: measured deployed, a warm inline
+render answers in 474 ms against a well-configured VPS's 78 ms, and the wasm penalty alone
+(3.57x) puts ~278 ms out of reach. **A render cannot be made competitive, so it has to not
+happen.** A swept path is a HIT at ~1 ms. This is the only lever that changes that profile's
+outcome rather than its cost.
+
+The governor is unchanged and still the thing that bounds it: `sweepStep()` reads `rowsToday`
+against `rowsLimit` and `doToday` against `doLimit` every step, `sweepDue()` gates on an interval
+rather than firing per alarm, and a site with nothing uncovered does nothing at all.
+`src/ops/fleet.ts` remains the inventory that would let the full share be safe by default.
+
+### `src/ops/tcp.ts`
+
+#### Module overview
+
+The TCP tier of the CFW network capability: deferred, scripted, operator-scoped.
+
+**Imported from `edgeport/core`, not the package root**, which re-exports 20 namespaces it never
+imports: esbuild refuses that and vite tolerates it, so the gate stayed green while wrangler could
+not bundle.
+
+**THIS DOCBLOCK ASSERTED THAT A SESSION API CANNOT EXIST, AND THE SHIPPING BINARY HAS ONE.** The
+claim was that `Host::call()` is `$reply = $invoke($json)`, so a host function that awaits hands
+PHP a Promise it can only stringify, and a `read()` blocking for bytes that have not arrived is
+therefore impossible. That was true of a HOST FUNCTION and it was never a property of the
+interpreter: `ext/cfwpark` freezes the Zend continuation, `longjmp`s out of `pib_run`, and lets
+`src/ops/park-drive.ts` perform exactly `open` / `write` / `read` / `line` in JavaScript before
+resuming the same PHP chain. `drupal/redis` runs on it and is `verified`. The refusal closed a
+mechanism and took the objective with it, which is the failure this repository names most often.
+
+So this file is the DEFERRED tier, not the only tier. PHP declares a whole exchange, the exchange
+runs in JS between invocations, and the answer is readable on a later one -- the same
+cached -> deferred -> sync layering `cfwFetch` lives under, and the sync tier is `src/ops/park.ts`.
+The deferred tier survives on its own terms rather than as a consolation: a park is refused
+wherever the safety predicate cannot walk the frames, and **a refused park must degrade rather
+than fail**, so this is what it degrades to.
+
+**The ENDPOINT is the operator's, never the caller's.** A queued row names a host, so letting PHP
+choose one would put arbitrary `host:port` TCP behind any module that can call a host function --
+a port scanner and a protocol-smuggling surface, which is a strictly larger hole than the HTTP
+tier's SSRF because it is not confined to HTTP semantics. `REDIS_URL` and `SYSLOG_URL` supply the
+endpoint and the credentials; PHP supplies the operation and nothing else.
+
+Two protocols ship because two shapes exist, not to be a catalogue: `redis` has a reply and is
+therefore cached-or-deferred, `syslog` has none and is fire-and-forget. A third protocol is a
+registry entry.
+
+#### `tcpMethod()`
+
+The HTTP method a TCP operation borrows, so the deferred tier's budget and TTL apply unchanged.
+
+They are reused rather than duplicated: `attemptBudget()` already says a
+non-idempotent operation gets one attempt, and a Redis `INCR` replayed after a timeout is the same
+defect as a captcha token replayed -- the first attempt may have landed and only failed to return.
+
+### `src/ops/thermal.ts`
+
+#### Module overview
+
+Whether to keep an object resident, decided from arrivals rather than from a constant.
+
+##### What the flat interval costs and what it buys
+
+`WARM_INTERVAL_MS` is 8,000 because a Durable Object hibernates at 10 s of idle -- measured on a
+throwaway: re-armed every 8 s one incarnation survived 71 consecutive alarms; at 12, 20, 30 and 45
+the constructor ran again on every probe. So warming is 10,800 firings a day whatever the traffic,
+one Worker request and one row each, and what it removes is the 1,398 ms cold boot from pages that
+render. A cached page answers off `ctx.storage.sql` without booting PHP, so warming cannot make
+one faster by any amount.
+
+Retention added a middle: past 10 s the object hibernates, and its next instance adopts the
+interpreter when it lands in the same isolate, so an operator-set `WARM_INTERVAL_MS` above the
+threshold buys that chance at fewer firings. This module still solves only below the threshold.
+
+##### The band, and why a constant sits in the wrong place inside it
+
+Below about 505 renders/day the alarms cost more than the boots they save. Above about 8,640 the
+site never idles long enough to go cold, so the alarms are pure waste. A flat interval is only
+right in the middle of that band, and it is charged at both ends.
+
+##### The decision
+
+`P(next render within T) x C_cold > C_warm`. Everything on the left is observable from arrivals
+this object already counts, and everything on the right is measured. Modelled as a Poisson
+process: for rate `r` renders per second, `P(at least one within T) = 1 - exp(-r x T)`.
+
+A POISSON MODEL IS AN ASSUMPTION, not a measurement, and it is the one thing here that is not
+pinned. Real traffic is bursty, so the estimate is conservative in the direction that matters: a
+burst raises the observed rate and warming turns ON, and the error case is warming a site that
+would have idled -- the same thing the flat interval does unconditionally.
+
+#### `WARM_FIRING_COST_MS`
+
+NOT a duration -- an object waiting on an armed alarm is idle-eligible and not billed for
+duration. What a firing spends is one Worker request and one row, and the comparison has to be
+made in one currency.
+
+DERIVED FROM THE MEASURED BAND rather than chosen. The recorded crossing is ~505 renders/day:
+below it the alarms cost more than the boots they save. At that rate `r = 505 / 86400 =
+0.005845/s`, so `P(render within 10 s) = 1 - exp(-0.05845) = 0.05678`, and break-even means
+`P x COLD_BOOT_MS = C_warm` -- which puts `C_warm` at 79. A first version of this file carried
+130, invented, which moved the crossing to 845 renders/day and would have un-warmed a band the
+project had already measured as worth warming.
+
+#### `WARM_INTERVAL_VERIFIED_MS`
+
+8,000 against a 10,000 ms hibernation threshold: one incarnation survived 71 consecutive firings
+at this interval, and 12,000 lost the isolate on every probe. Nothing between 8,000 and 12,000
+was ever driven, so this is the largest interval with evidence behind it rather than the largest
+that works.
+
+#### `WARM_MARGIN_MIN_MS`
+
+The top of the band, and the margin is the only free parameter in the whole model.
+
+Any interval below the threshold prevents every cold boot equally well, so the benefit does not
+vary across the band and the cost is one firing per interval. That makes the optimum the LARGEST
+safe interval, not a point somewhere inside: at 9,500 a warmed site fires 9,094 times a day
+against 10,800, which is 1,706 rows returned.
+
+Whether 9,500 is safe is an empirical question about how late a Cloudflare alarm may fire, and
+this project has not measured it. So it is a ceiling to climb toward on observed evidence rather
+than a new default; `solveWarmInterval` is what does the climbing.
+
+#### `solveWarmInterval`
+
+SOLVED RATHER THAN PICKED, which is the whole item: `thermalRearmMs()` chose between two
+constants, and the one it chose when warming was the smallest interval anybody had evidence for.
+The band above it is worth 1,706 rows a day and nothing in this repository knows whether it is
+safe, so the object finds out for itself and pays for being wrong exactly once.
+
+Climbs one step after WARM_CLEAN_WINDOWS windows that ONE incarnation spanned, and
+retreats all the way to WARM_INTERVAL_VERIFIED_MS on a window it did not. The retreat is
+to the verified value rather than one step back because a broken chain says the current interval
+is unsafe on this object and the next-lower step has no more evidence behind it than the one that
+just failed.
+
+#### `RenderWindow`
+
+THE RING IS IN MEMORY AND DIES WITH THE INCARNATION, which made the whole decision unreachable in
+the band it was built for. Between 505 and 8,640 renders/day the object hibernates between
+renders, so every wake read an empty ring, `renderRate()` answered 0, and `warmDecision()` took
+its "no render in the window" branch every time. The branch could only ever fire on a site busy
+enough not to need it.
+
+A counter and a window start, in one `cfw_meta` row. Flushed on the window boundary rather than
+on the meter interval: the estimate only has to separate ~505/day from ~8,640/day, so a 15-minute
+bucket is enough resolution and caps this at 96 rows/day. The daily meters learned the other
+lesson the expensive way -- a counter written on every idle tick was 32.4% of free's row budget
+recording its own bookkeeping.
+
+#### `readRenderWindow`
+
+Two fields or four. The two-field form is what shipped, and it is read rather than discarded
+because discarding it would reset every warmed object's rate estimate on the deploy that added
+the interval -- which is the one reading the thermal decision cannot do without.
+
+#### warmDecision, active session branch
+
+AN ACTIVE SESSION BEATS THE RATE ESTIMATE, and the rate estimate is the wrong predictor for it.
+`renderRate` is a property of ANONYMOUS traffic: it is what decides whether a visitor is likely
+to arrive. What decides whether an expensive DO-required render is imminent is whether somebody
+is signed in and working, and an editor on a quiet site produces a rate far below the 505
+renders/day crossing while producing exactly the requests a cold boot hurts most. Measured on
+the comparison rig: an authenticated page costs 31 ms warm against 513 ms on a cold object.
+
+Bounded by a window rather than left latched, so a session that ended stops paying within one
+window. At the 8 s re-arm a 30-minute window is 225 firings, 225 requests and 225 rows, once.
+(sic: 30 min / 8 s is 225 firings as written in the source.)
+
+#### `routeFamilies`
+
+PREWARMING A FAMILY RATHER THAN A URL is the point. A visitor who arrives on `/node/41` after an
+editorial save meets a cold object even though `/node/40` is warm, because the page cache is keyed
+on the URL and the OBJECT is what was cold. The family is the first path segment, which is what
+Drupal's own routes are grouped by, so warming one member warms the interpreter every other member
+needs.
+
+### `src/ops/updb.ts`
+
+#### Module overview
+
+`updb` sliced across Durable Object invocations: the plan, the cursor, and the
+contract that makes a half-applied update impossible to produce silently.
+
+**The problem, in measured numbers.**
+
+A security release ships database updates. Applying them means every pending
+`hook_update_N()`, every pending `hook_post_update_NAME()`, and
+`drupal_flush_all_caches()` twice. Measured in this project (TECHNICAL_REPORT.md
+"Module installation"): the install-class workload is **1,344.7 ms of CPU and a
+78.5 MB peak**, of which `drupal_flush_all_caches()` alone is **282.9 ms in wasm
+/ 268.8 ms native, and the 78.5 MB peak is its**.
+
+The free plan gives **10 ms of CPU per invocation** -- for Durable Objects too,
+and explicitly including alarm invocations -- and **100,000 rows written per day**,
+which is the meter that actually binds. So `drupal_flush_all_caches()` is 28x one
+invocation's entire budget in a single synchronous call, and the whole workload is
+134x.
+
+Four platform facts constrain every possible answer, all measured here:
+
+  1. `ctx.storage.sql` is synchronous and only reachable from inside the DO.
+     There is no async seam to suspend at mid-update.
+  2. The object HIBERNATES after ~10 s idle and DISCARDS in-memory state,
+     including the interpreter, the mounted tree and the booted kernel.
+     Confirmed directly: `x-cfw-php-booted` flipped 1 -> 0 between two curls
+     seconds apart, and the JSPI park probe found a parked stack survives 6 s
+     and is gone at 10 s.
+  3. Neither clock works. In-PHP `microtime()` returns 0 on the edge, and
+     `Date.now()` is frozen during synchronous execution -- 16 assembly renders
+     reported wallMs 0 while tail charged them 27-120 ms. **So no loop in this
+     file may be driven by a clock.** The cost meter here is rows and statements
+     off the cursor, which our own bridge increments per statement.
+  4. A render cannot be interrupted once started: a `setTimeout(1)` raced
+     against a 119 ms render LOST, because the timer cannot fire until the wasm
+     call returns. Every budget decision is therefore a PRE-check, never a race.
+
+**The avenues, costed, and which one this file is.**
+
+**(a) One `hook_update_N` per invocation, cursor in DO storage.** Necessary
+skeleton, not sufficient on its own: it splits the TOTAL across invocations but
+enlarges none of them, exactly as the 20-hop measurement showed (142 ms of CPU
+for one request, no single hop over 10 ms). A single hook, or a single
+`drupal_flush_all_caches()`, still does not fit. **Adopted, plus (c).**
+
+**(b) A warm window held by an outbound WebSocket.** A socket holds the object
+alive for a documented 15 minutes, and each inbound message resets the 10 ms
+budget. Costed: 15 minutes of resident object is 0.25 h against the 28.2
+active-hours/day the 13,000 GB-s free duration allowance buys -- **0.9% of a day**,
+so duration is not the objection. **Rejected as the default anyway**, because the
+alarm chain already achieves the same thing for less: re-arming at +1 ms puts the
+next unit ~1 ms of wall clock later, which is three orders of magnitude inside the
+6-10 s eviction window, and costs 1 row written per re-arm instead of a held
+connection and a 15-minute ceiling. Kept as the escape hatch for the one case the
+alarm chain cannot cover: alarm delivery is documented best-effort, so a stalled
+chain needs an outside poke, and a socket is that poke.
+
+**(c) Split the indivisible-looking step until each piece is bounded.**
+`drupal_flush_all_caches()` is not one operation, it is eleven, and core names
+them (common.inc:408-475). `UPDB_FLUSH_STEPS` in src/updb-php.js runs them as
+eleven units in core's own order. This is the only avenue that attacks the
+single largest cost rather than relocating it. **Adopted.**
+
+**(d) Batch by measured cost rather than by count.** Adopted in a weak form,
+because of fact 3 above: there is no clock, so "cost" can only
+mean rows written and statements executed, and neither is CPU --
+`drupal_flush_all_caches()` is 282.9 ms across very few statements. So batching
+can amortise the re-arm row but cannot protect the CPU cap. `maxBeats` defaults to
+**1**, every unit records the rows and statements it actually cost so a future
+round has real per-unit data, and the docblock on `updbStep()` says plainly that
+raising it above 1 is a paid-plan setting.
+
+**(e) Run against a COPY of the database and swap atomically.** **Rejected**, and
+recorded so nobody re-derives it. Three findings kill it:
+  - Rows written is the binding meter, and a copy costs one written row per row
+    copied. The packed standard site is 1,342 rows, so copying THAT is 1.3% of a
+    day -- affordable. A small real site with content is 50k-200k rows, so one
+    copy is 50-200% of the daily allowance, and it fails by exhausting a meter
+    shared with the serving path.
+  - Size is not even the deciding objection. To run updates against the copy,
+    Drupal has to ADDRESS the copy, which means a table prefix, and the driver
+    **refuses prefixes** (DRIVER-NOTES.md). Copy-and-swap is therefore new driver
+    work, not new SQL.
+  - The swap needs `ALTER TABLE ... RENAME`, and DDL mid-flight dirties
+    `sqlite_master`, which turns every later read in a transaction into a
+    speculative replay -- the O(W x R) cost this project has already observed
+    wedging the local runtime badly enough that unrelated sites stopped
+    responding.
+  Replaced by (f) plus (g), which buy the same guarantee for a bounded price.
+
+**(f) A maintenance-mode gate.** Adopted, and it is the FIRST unit, not a wrapper:
+`maint_on` is seq 0 so the fence is durable before anything -- including the
+planning step, which writes (`_update_fix_missing_schema()` sets schema versions).
+`maint_off` is the last unit and restores the PRE-RUN value rather than forcing
+FALSE, which is what `DbUpdateController::batchFinished()` does through the
+session; here it comes out of the run row, so it survives an eviction a session
+would not.
+
+**(g) Bounded snapshots plus an export for rollback.** Adopted. `snapshot` (seq 1)
+copies the update system's own bookkeeping -- `key_value`, `key_value_expire`,
+`config`, `cachetags` -- with a row ceiling that refuses rather than quietly
+spending the day's writes. **Limitation:** that restores
+"which updates ran" and the config they changed, NOT what a hook did to
+`node_field_data`. Whole-site rollback is the R2 export, which
+`exportDatabase()`/`/export` already produces, and `requireExport` makes it a
+precondition of starting.
+
+**The choice, and what it costs.**
+
+A maintenance-fenced, JS-prechecked, TWO-BEAT alarm chain: one claim beat and one
+run beat per unit, plan and cursor in `ctx.storage.sql`, the flush split eleven
+ways, bookkeeping snapshotted, and **HALT rather than retry as the default
+response to anything unexpected.**
+
+Cost for a typical SA-CORE point release (0-3 `hook_update_N`, 0-2 post-updates),
+derived from the plan shape, not measured on the edge:
+
+  | | count |
+  | --- | --- |
+  | units: maint_on + snapshot + plan + 3 updates + 11 flush + 2 post + 11 flush + maint_off | 31 |
+  | DO invocations, at 2 beats per unit | 62 |
+  | rows written: ~2 bookkeeping + 1 setAlarm per beat | ~190 |
+  | fraction of the 100,000/day request allowance | 0.06% |
+  | fraction of the 100,000/day row allowance | 0.19% |
+
+So the chain itself is free. **The cost that is NOT free: boot.**
+A cold interpreter is 3,754 ms of cpuTime on the edge in one indivisible
+synchronous stretch -- 375x the free cap -- and no cursor design cuts that up.
+Therefore:
+
+  - On paid, this runs today, and its value is the never-half-applies contract
+    rather than the CPU split.
+  - **The site no longer passes `phpReady`, 2026-09-29**, because the 10 ms cap does not
+    fail a Durable Object invocation (a 1,882 ms one succeeded on free), so a cold unit
+    boots. The refusal below stays for a caller that passes it. It was written when
+    every unit had to fit 10 ms **provided the object is already
+    warm**, which is what the keep-warm alarm and (b) exist for. A chain that
+    starts cold cannot boot, so `updbStep()` refuses on a cold interpreter with
+    `reason: "cold-interpreter"` rather than burning an invocation that will be
+    killed. That refusal is bounded by `maxColdWaits` and then halts, so the halt
+    reason names the real blocker instead of a mystery stall.
+  - The lever that removes the last obstacle is a `-sJSPI` php-wasm build, which
+    is measured to work on deployed infrastructure for the slicing half but has no
+    binary yet. With it, boot becomes sliceable and the free-plan cold path opens.
+    Nothing in this file assumes it.
+
+**The resumability contract.**
+
+**Why two beats, and the thing that cannot be done at all.** A crash detector needs
+a marker that survives the crash. DO SQLite commits its implicit transaction at the
+END OF EACH EVENT -- measured here: a `BEGIN` in one `fetch()` was already committed
+before the `ROLLBACK` arrived in the next. So a marker written in the same event
+that enters PHP is worthless: it dies with the event it was meant to outlive. The
+claim must therefore commit in its OWN event, before the run event starts. That is
+the two-beat rhythm, and it is why the cost table above says 62 invocations.
+
+It is NOT sufficient, for a reason that is not obvious:
+**whatever state the run beat READS is also the state a killed run beat LEAVES.**
+Renaming it, pre-committing it, or moving the claim into the previous unit's commit
+all preserve that symmetry exactly. Within a store whose only durability boundary
+is "the event completed", a kill mid-event is undetectable from storage alone. The
+detector has to come from outside the event.
+
+So the detector here is **a single-use in-memory token**. The claim beat commits
+`attempts + 1` and then issues a token naming (run, seq, attempts). The run beat
+consumes the token before entering PHP. A beat that finds the unit `claimed` with
+no matching token knows a run was owed and cannot prove it did not happen, and
+**halts**.
+
+That is fail-closed, and it has one false positive: if the object is
+evicted between the claim beat and the run beat, the token goes with the
+interpreter and a unit that never ran is reported unverifiable. The chain re-arms
+at +1 ms specifically to make that window ~1 ms against a 6-10 s eviction timer,
+and a false positive costs an operator one decision while the alternative costs a
+half-applied schema. **The way to turn the false positive into a certainty is a
+Tail Worker reading the `exceededCpu` / `exceededMemory` outcome for the killed
+invocation** -- the only mechanism on this platform that observes a kill from
+outside it. That is a named follow-up, not something this file pretends to have.
+
+**What is written, per beat.**
+
+  claim beat: `cfw_updb_unit.state = 'claimed'`, `attempts = attempts + 1`,
+  `claimed_at`. Nothing else. No PHP is entered, so this beat cannot be killed by
+  CPU.
+
+  run beat, on a completed unit: in ONE `transactionSync` -- `state = 'done'`,
+  `finished`, `message`, `rows`, `statements`, `ended_at`; `cfw_updb_run.cursor_seq
+  = seq + 1`, `abort_list`, accumulated meters, `updated_at`. The bookkeeping
+  triple is atomic by construction rather than by trusting the event model.
+
+  run beat, on a partial unit (`finished < 1`): `state` goes back to `'pending'`,
+  `passes = passes + 1`, `sandbox` updated, cursor unchanged. Back to `pending`,
+  which is what keeps "state is `claimed` at claim time" an unambiguous crash
+  signal.
+
+**What happens when the object is evicted between two update hooks.** Nothing is
+lost and nothing is guessed. Every completed unit is `done` in durable SQL, the
+cursor points at the next one, the site is still fenced because maintenance mode
+is state in the database rather than memory, and the sandbox of a half-finished
+hook is base64 `serialize()` in the unit row -- which is core's own contract, since
+the batch API serializes the same array into the `batch` table between HTTP
+requests. The next alarm re-boots the interpreter and resumes at the cursor. The
+only thing eviction costs is the boot.
+
+**What happens when an invocation is KILLED mid-hook** (exceededCpu,
+exceededMemory, isolate death). Its writes never commit, so the unit is still
+`claimed` from the claim beat's commit -- and the token it would have consumed is
+either consumed already or gone with the isolate. Either way the next beat finds
+`claimed` with no valid token and **halts the run**: phase `halted`, reason
+`unit-unverifiable`, maintenance mode left ON, cursor left pointing at the unit
+that died. No retry, no advance, nothing silent.
+
+That default answers a question this platform cannot yet
+answer: whether a killed event's partial writes are discarded. The commit
+direction is measured; **the kill direction is NOT measured here and cannot be
+without a deploy.** If it turns out writes are discarded, re-running a killed unit
+is safe and `retryPolicy: "core"` becomes provably correct -- it already matches
+core, whose batch API re-runs an operation from its last persisted sandbox after a
+fatal. Until someone measures it, the default halts, because a fenced site with a
+precise cursor is strictly better than a site that silently re-ran half of
+`system_update_11201`.
+
+**Preconditions, checked in JS before PHP is entered at all.** This is what makes
+a refusal cost ~0 ms instead of a 3,754 ms boot:
+
+  - the run's `code_id` still matches. On this platform the PHP tree is a
+    versioned asset pack, so a deploy can swap the code under a live cursor --
+    a hazard a traditional host running update.php in one process does not have.
+  - maintenance mode is still ON, read straight out of `key_value` (collection
+    `state`, name `system.maintenance_mode`). Exempt for the two `maint_*` units.
+  - for an `update` unit with `expect_schema`, the module's installed version in
+    `key_value` (collection `system.schema`) equals it exactly. A mismatch means a
+    previous unit did not land, or something outside this run moved it.
+  - for a `post_update` unit, the function name does NOT already appear in
+    `key_value` (collection `post_update`, name `existing_updates`).
+  - the unit at the cursor is in a state the beat expects. Anything else is
+    `cursor-desync` and halts.
+
+Every one of those reads is 1-2 statements of plain SQL. Where a value cannot be
+parsed the answer is `null` and the gate REFUSES -- unknown beats incorrect, which
+is why the serialized-scalar reader below returns null rather than a guess.
+
+**Wiring** (src/site-do.js is not edited by this file):
+
+  import { updbStep, updbPrepare, updbStatus, updbAlarmDelayMs, updbOptions } from "./updb.js";
+
+in alarm(), alongside the existing fill batch
+  const step = await updbStep(
+    { sql: this.sql, runJson: (code) => this.runJson(code), phpReady: () => !!this.php,
+      txn: (fn) => this.ctx.storage.transactionSync(fn), nowMs: () => this.nowMs() },
+    updbOptions(this.env),
+  );
+  await this.ctx.storage.setAlarm(this.nowMs() + updbAlarmDelayMs(step, updbOptions(this.env)));
+
+The step function owns no transport, no alarm and no env of its own, exactly like
+`cronStep()`, so the same chain runs off an alarm, off a WebSocket message, or off
+one HTTP poke per beat in a test.
+
+### `src/ops/write-forwarding.ts`
+
+#### `ID_PARTITION_LANES`
+
+The lane count every residue class is computed against.
+
+A CONSTANT, NOT THE POOL SIZE, because no lane could learn the pool size and the partition was
+therefore absent on every deployed pool. `idPartition()` read `REPLICA_COUNT` from env, which the
+canonical `wrangler.jsonc` does not set, so a real lane was configured `lanes = 0`; the driver
+takes `$lane >= 1 && $lanes >= 1` as false and strides on nothing. The whole disjointness
+property -- the thing that makes a forwarded id safe to re-send on a conflict retry -- was
+unreachable in production while its unit tests passed on a hand-set `REPLICA_COUNT`.
+
+Fixed at {@link replicaCount}'s own ceiling, so the stride is 33 and lanes 1..32 hold distinct
+non-zero residues however many exist. Nothing has to be told the count, which is the point: a
+lane cannot read the primary's `lanes_provisioned` at all, because `cfw_meta` is replica-local by
+design and is deliberately not copied.
+
+> **Superseded:** the ceiling is 256 in the code and in docs/configuration.md; the 33 and 1..32 figures are stale.
+
+#### `originable()`
+
+Whether a reported table may stand on the allow-list at all; the primary re-applies this.
+
+**A LANE CANNOT MINT FOR A TABLE IT DOES NOT HOLD.** A residue class only keeps two writers apart
+when both count from the same base, and a lane's base is the maximum in its OWN copy. For a table
+the restore refuses to copy that maximum is zero, so the lane mints the first id in its class --
+`wid = lane` -- which the primary used when the site was new.
+
+`watchdog` is the case that proved it: `planRestore()` answers
+`copy: false, "an effect a replica must never perform"`, and a provisioned lane read
+`count 0, seq null` against a primary at 61. Every authenticated POST on a pooled site answered
+500 with `UNIQUE constraint failed: watchdog.wid`, because a login writes a dblog row.
+
+Refusing here sends the batch back for the primary to serve, which is the right answer twice over:
+the id becomes the primary's to allocate, and a PRIMARY_ONLY_SIDE_EFFECT is by definition work a
+lane was never allowed to perform.
+
+#### `writeForwardEnabled()`
+
+The refusal it replaces was not free. With forwarding off a POST pins to the primary, so the one
+object the pool exists to relieve keeps every form submission, and the lanes idle through exactly
+the load that made the operator add them.
+
+### `src/runtime/php-binary-85.ts`
+
+#### Module overview
+
+PHP 8.5, carrying every extension, reached through a brotli frame.
+
+NOT THE SHIPPING SEAM since 2026-09-04. Cloudflare removed the compressed size limit this frame
+existed to fit, so `php-binary-raw.ts` imports the binary uncompressed and startup fell from
+~106 ms to ~5 ms. This is kept as an experiment arm, named by the configs under
+`experiments/wrangler/`.
+
+THE exit(-2) ABORT DESCRIBED HERE IS FIXED. Deployed to a throwaway on
+2026-08-14 every request returned 1101 with `ExitStatus: Program terminated with exit(-2)` on both
+the stateless and durableObject events, aborting during startup before any route logic. Size, the
+recompression, the decoder and codegen were all ruled out.
+
+The cause was `opcache.file_cache`, which opcache reads during PHP's MODULE STARTUP -- inside the
+binary's constructor, before the mount sequence creates the directory. It was pointed at
+`/tmp/opcache`, which did not exist yet. `src/site-do.ts` now passes `/tmp`, which emscripten's
+MEMFS always creates, and carries the measurement: 1,301 `.bin` files across 425 directories after
+one render on a deployed 8.5 worker. It was dead config until 8.5 -- the 8.3 build contains zero
+occurrences of `Zend OPcache`, so every opcache ini line was silently ignored for the life of the
+project and went live the moment 8.5 made it mandatory.
+
+Read `src/site-do.ts` before removing any opcache ini line: `file_cache_only=1` makes the file
+cache opcache's ONLY backing store, so dropping the path may disable opcache rather than merely
+stop the writes. Removing opcache ini blind is what produced the abort.
+
+8.4 is absent: it costs 49,220 MORE compressed bytes than 8.5 while being 357,323
+smaller raw, because its data section is both larger and less compressible. Zero of the 73 packages
+in the shipped lock exclude 8.5.
+
+The binary lives in `.interp/` rather than `vendor/`, which holds unreproducible hand-built
+artifacts and is never written to.
+
+THE GLUE IS THE TUNED ONE, not the pristine download, and that is a memory decision rather than a
+packaging one. Emscripten emits its heap-growth step into `_emscripten_resize_heap` as a
+JavaScript literal, and its default of 0.20 takes an AUTHENTICATED render to 138.31 MiB against a
+128 MiB isolate -- measured, three workloads, `scripts/measure/growth-ladder.ts`. At 0.05 the
+worst of the three is 116.75 MiB. `restore-artifacts.ts` emits this file after verifying the
+pristine one against `cdn-manifest.json`; `tests/node/growth-glue.spec.ts` asserts the two differ
+at the growth site and nowhere else.
+
+THE INFLATE IS THE RUNTIME'S, not a decoder we ship, and the frame is brotli rather than zstd.
+
+Both halves are one change. `node:zlib` carries brotli and zstd, and workerd runs either
+synchronously at MODULE scope -- which is the only place they could be used, since codegen is
+forbidden at request time and the `new WebAssembly.Module` below has to happen at startup. Probed
+on the shipping workerd against both frames of this exact binary: 2,671,745 zstd and 2,485,488
+brotli, each inflating to the same 12,234,575 bytes, byte for byte identical, 4,118 exports.
+
+What that buys, on `wrangler deploy --dry-run` gzip figures:
+
+- the packed frame at 2,485,488 rather than 2,671,745, because brotli beats zstd on this binary
+- `zstddec.wasm` gone, 25,473 bytes that existed only because the pure-JS zstd decoder was slow
+- `fzstd` and cartridge's inflate helper gone with it
+
+A previous note here said the zstd frame header carries the inflated length and the decompressor
+pre-sizes from it. Brotli has no such field and `brotliDecompressSync` sizes its own output, so
+nothing is lost; `scripts/pack-wasm-brotli.ts` records why its cache key changed to match.
+
+NO `inflatedSize` cross-check, unlike the 8.3 seam. That binary is pinned in
+`vendor/` and never changes, so a hardcoded size is a real guard there. This one is fetched from
+phasm's newest artifact by `bun run fetch:interp85`, and two consecutive builds measured 12,218,400
+and 12,218,393 -- so a hardcoded size turns every upstream rebuild into a code edit that fails
+closed.
+
+**The STARTUP cost cannot be measured locally**, because the wall clock does not advance between
+I/O and a `Date.now()` delta around the inflate reads zero. Cloudflare reports it on upload, so a
+deploy is the instrument. Measured on a FREE throwaway carrying this seam and nothing else,
+2026-08-30: **104, 105, 107, 112 ms** (n=4, median 106) against a 1,000 ms limit. The
+zstd-through-wasm path it replaces read 233/234/246 (n=3), so native brotli is about half of it
+and spends a tenth of the budget.
+
+### `src/runtime/php-binary-o2.ts`
+
+#### Module overview
+
+> **Superseded:** the shipping seam is `php-binary-raw.ts`; this one is an alias target for the -O2 experiment configs.
+
+The shipping interpreter, and the one nothing in this document was measured on.
+
+2,876,855 gzipped -- 268,873 UNDER the 3 MB free ceiling, where `static-free-v1` is
+586,923 OVER it. It differs from the measured binary on three axes at once (RULE 0b-iii):
+
+| | `static-free-v1` (measured on) | `static-o2` (here) |
+| --- | --- | --- |
+| optimisation | `-Oz` | `-O2`, separately measured 3.9% faster |
+| SQLite | compiled in, ~614 KB | absent |
+| ext-yaml | absent | present, worth 241 ms of boot |
+
+It could not run Drupal until now: `MIGRATE_DB` reached for `new \PDO('sqlite:...')`
+once, at first run, and `pdo_sqlite` is not in this build. `src/migrate-sql.js` replays
+the site in JavaScript instead, so that last consumer is gone and this binary can run
+the real workload. Base ext-pdo IS present, so the class constants core's sqlite
+`Connection` references still resolve.
+
+Selected by aliasing `./php-binary.js` to this file; see the docblock there for why the
+alias cannot target the `.wasm` import directly.
+
+### `src/site-do.ts`
+
+#### `parkFetchDep`
+
+What a parked HTTP yield is performed with; the global `fetch` unless a test replaces it.
+
+The same injection `TcpDeps.connect` uses and for the same reason: stubbing `drivePark` itself
+would assert against a stub, while stubbing the FETCH runs the real classifier, the real
+outbound guard and the real resume.
+
+#### `cfwCanSuspend`
+
+Whether this binary can suspend, read by drupflare's service provider.
+
+`FetchHandler` needs `vrzno_await()`, which needs Asyncify or JSPI. The shipping build has
+neither and nothing defines a global `Asyncify`, so this reads false and the handler stays
+off; `ParkFetchHandler` answers HTTP through the park instead.
+
+The provider probes the binary rather than a settings flag, which would drift from the
+binary actually loaded.
+
+#### `flushDailyRows`
+
+Folds the writes accumulated since the last flush into a per-UTC-day total.
+
+Flushed on the alarm, never per write, and that is a correctness requirement rather than an
+optimisation: persisting the counter costs a row write, so a per-write flush would DOUBLE
+the number it is measuring. Once per firing it is one row against a batch of them, and that
+row is itself counted, so the meter includes its own cost.
+
+Keyed by UTC date because the limit is daily and the object is not. A Durable Object is
+evicted whenever Cloudflare likes, so an in-memory lifetime counter reports a fraction of
+the day and reads as healthy; the date key means an eviction loses at most the writes since
+the last alarm rather than the whole day.
+
+@returns the running total for today, after folding in whatever had accumulated.
+
+#### `cfCredentials`
+
+The Cloudflare API credentials, from the durable grant or from the deployed pair.
+
+**The grant was written to memory and read from memory only.** `/__cfoauth?action=callback`
+put the access token on `this.env`, which is one incarnation's overlay; the persisted copy was
+read by `status` and `disconnect` and by nothing that put it back. An object hibernates at
+about ten seconds idle, so the very next request had no token -- `/setup/mail` answered
+`no Cloudflare token; connect an account first` while `/setup/cf?action=status` answered
+`connected: true` at the same moment. Every consumer goes through here now.
+
+**And the grant never refreshed.** `refresh()` and `needsRefresh()` were exported, unit
+tested and called by nothing under `src/` -- `check:reachability` listed the second under
+"tested but never called". An expired grant's only recovery was re-consent. A refreshed set is
+persisted here so the next incarnation starts from it.
+
+A refresh failure is not an error: the stored access token may still have life in it, and the
+caller's own 401 is a better signal than a guess taken from a clock.
+
+#### `cfCredentialsSync`
+
+The same credentials without the refresh, for a caller that cannot await.
+
+ONE RULE FOR WHICH CREDENTIAL THIS SITE USES, and there were two. `cfCredentials()` prefers
+the durable grant and `mailEnv()` read only `this.env`, so a site whose Cloudflare account was
+connected through `/setup/cf` -- the documented path, and the one `/setup/mail` onboards
+against -- resolved its mail transport against a token that was never set. `auto` then walked
+past `api` to SMTP, found no `SMTP_HOST`, and refused with "no mail transport is configured"
+on a site that had just finished onboarding one.
+
+Skipping the refresh is safe here for the reason `cfCredentials()` already gives: an expired
+access token answers 401 and the caller's own 401 is a better signal than a guess taken from a
+clock. The drain refreshes before it resolves, because it is the path that can await.
+
+#### `setReplicaStage`
+
+Moves this object's replica stage, or refuses the move.
+
+**`replica_stage` was READ and written by nobody**, so every replica sat at `CREATED` forever
+and the stage machine was decoration. This is the writer, and it goes through
+{@link canTransition} rather than assigning, because the point of the machine is that each
+stage is the check that the next one's precondition holds -- an assignment that skips
+`VERIFIED` is exactly the bug the stages exist to make impossible.
+
+@returns the stage now in force; unchanged when the transition was refused.
+
+#### `idPartition`
+
+Which slice of the rowid space this object's driver mints from.
+
+The count is {@link ID_PARTITION_LANES} rather than the pool size, because a lane cannot learn
+the pool size: `cfw_meta` is replica-local, so the primary's `lanes_provisioned` never reaches
+it. `nextLaneId()` is the shared definition of what a slice means.
+
+The primary takes slice 0, and while it did not, a primary minting plain sequential ids walked
+through every class a lane had reserved and the forwarded row died on `UNIQUE constraint
+failed`. `planForward()` cannot catch that: it is optimistic concurrency on the parent
+generation, which is ordering, and says nothing about whether a minted id is free.
+Disjointness comes from the arithmetic, and only closes when every writer strides.
+
+Gated on the site HAVING a pool, because ids advance by the stride and a site that never
+provisions a lane would pay sparser ids for a partition with nothing to be disjoint from.
+
+#### `purgeAfterApply`
+
+Drops the derived caches a lane holds, once the primary's log has moved it past a generation.
+
+A LANE SERVED A STALE PAGE FOREVER WITHOUT THIS. Only the primary runs `bumpGeneration()`, and a
+lane's content arrives as replayed SQL that writes `node_field_data` and leaves the rendered
+HTML beside it untouched. `cfw_page` has no generation column and is read by path alone, so
+nothing else could have caught it. It stayed masked while provisioned lanes held no pages at
+all, because an empty cache cannot be stale.
+
+WHOLESALE, matching what the primary does for every reason but `cachetags`: the log carries
+statements rather than the tag set behind them, so a scoped purge has no scope to work from.
+
+A bump carrying no authoritative statement -- `/bump` by hand -- writes only `cfw_meta` and
+never reaches a lane. Content saves always carry one.
+
+@returns what each store gave up, for the pull loop to report.
+
+#### `FILL_BINS`
+
+The bins a fill empties on itself.
+
+`dynamic_page_cache` used to be here, on the meter that binds regeneration. Leaving it warm is
+**1.4x** on a site whose page table actually fills -- 5 charged rows against 7, byte-identical
+output -- and tag invalidation still reaches the warm entry through its checksum. The two
+things that DID depend on the purge are handled where they belong: a non-tag bump purges the
+bin itself, and `gcDynamicPageCache()` bounds it.
+
+The figure here was 2.37x AND THAT ARM STORED NOTHING. It reported the narrow arm at zero
+charged rows, which no working site reaches: `fillOne()` upserts `cfw_page` whenever the
+response is cacheable and that insert is the largest write in a fill.
+`tests/integration/fill-bins.spec.ts` derives the ratio and asserts the store is non-empty
+first, so an arm that measures nothing fails instead of reporting a number.
+
+#### `inlineBudgetMs`
+
+Wall-clock budget a MISS may spend rendering before it gives up on the
+visitor and hands the path to the alarm chain.
+
+2 s covers the whole measured first-render range -- 195 ms on minimal, 909 ms
+on standard, 1,636 ms observed here on a loaded machine -- and excludes the
+3,754 ms cold boot, which cannot be waited out. It bounds the visitor's
+patience, not a billed resource: wall time is not charged against the CPU
+budget (4 ms of Worker CPU against 827 ms of wall, measured).
+
+`budget` on the query string overrides so the fallback is testable, and 0
+disables inline rendering entirely, which restores the always-202 shape.
+
+Paid defaults to 10 s rather than 2 s, which only matters once an interpreter exists: a cold
+object refuses on `!this.php` before this number is ever consulted. See `bootInline`.
+
+#### `estimateRenderMs`
+
+What the next render on this instance is expected to cost, in ms.
+
+The budget has to be a PREDICTION, because a render cannot be interrupted once it starts:
+`php._run()` is one synchronous call into wasm, so no `setTimeout`, `AbortSignal` or
+`Promise.race` can preempt it. A 1 ms timer raced against a 119 ms render lost.
+
+So the decision is taken before the render starts, from what this instance has observed. The
+last render is the best predictor available, having met the same kernel state the next one will.
+
+Pessimistic before any evidence exists, because an object hibernates after ~10 s and discards
+`this.php`, the mounted tree and the booted kernel -- a cold instance is the common case, and it
+must not gamble a visitor's request on a multi-second boot.
+
+#### `neverMigrated`
+
+Whether this site has never been provisioned, so a page request has nothing to render from.
+
+No cursor at all is a different state from a half-finished one, and it was the state a fresh
+deploy sat in forever: `migrateStepIfPending()` returns null without a cursor, so the alarm
+chain never started, and `/serve` answered `warming` on every request for the life of the
+object. Provisioning happened only if somebody called `/migrate` by hand -- which is a
+DIAGNOSTIC route, so on the canonical config there was no way to do it at all.
+
+#### `adoptSettings`
+
+Overlays EVERY KV lever override onto this object's env.
+
+`withSettings()` is applied to the FRONT worker's env and the Durable Object receives its own
+copy of the bindings, so without this no KV lever reaches a reader inside this class -- and
+several are read here and only here.
+
+NO COUNT, deliberately: four places carried one and all four were wrong.
+`tests/node/kv-levers-read.spec.ts` asserts the property a count stood in for -- every name on
+the list reaches a reader, and no file cites a lever that no longer exists.
+
+Awaited HERE and never in `fetch()`, because the fast storage lane must stay await-free. That is
+safe: the fast lane is one indexed `cfw_page` read and consults no lever.
+
+Called from `alarm()` too, which is not optional -- the fill chain reads several of them and an
+alarm never passes through `handle()`.
+
+### `src/site/edge-cache.ts`
+
+#### `GEN_BUCKET_MS`
+
+Width of the window the generation pointer is discovered once per, in ms.
+
+The Worker needs the generation to build a cache key, and asking the DO for it every request would
+spend a DO request to save one. So the pointer is itself an edge-cache entry whose key contains the
+window index: the first request in a window reads the generation off a response it had to fetch
+anyway, and every later one reads the pointer for free.
+
+Bucketed rather than left to `max-age` expiry, because Cloudflare applies its own minimum TTLs and
+a pointer outliving its window would serve a stale generation indefinitely.
+
+Costs at most one extra DO request per window per colo, independent of traffic. A bump reaches
+other colos within two windows; the bumping colo sees it immediately.
+
+#### `asGeneration()`
+
+A generation, or undefined. Never a number that is not one.
+
+`Number(null)` is 0, not NaN, so reading a missing header straight into
+Number() produced a perfectly finite generation 0 -- and one request to a route
+that does not report a generation was enough to overwrite the pointer with 0 and
+make every later edge lookup build a key nothing was ever stored under. Caught
+by the integration test, which watched a HIT refuse to become an EDGE hit
+whenever a /serve-stats call sat between two serves.
+
+#### `putPage()`
+
+Stores a rendered page at the edge, or says why it did not.
+
+Only a real page is eligible: the guard is `status !== 200`, so the warming placeholder (a 503
+with Retry-After) and every other non-200 is refused. Caching a placeholder is how a site serves
+placeholders forever.
+
+`cache.put()` rejects several header combinations (206 responses, `Vary: *`, `Set-Cookie` without
+a matching `Cache-Control: private=set-cookie`), so the stored copy is built from an explicit
+allow-list rather than from whatever the DO sent, and a rejection degrades to "no edge cache"
+instead of failing the request.
+
+Every refusal is synchronous and the write is not, so this returns the write rather than awaiting
+it: an awaited `cache.put` of a 97 KB body costs 12.5 ms before the response leaves, and the same
+put handed to `waitUntil` costs 0. A stored page reports `deferred`, because "it was handed off"
+is what this function knows and "it landed" is not.
+
+@returns an x-cfw-edge-put value, and the write to defer when there is one
+
+##### inside putPage(), the authenticated refusal
+
+a structural refusal, not a cookie-pattern check. The shared key has no user in it, so a personalised
+response stored under it is served to the next anonymous visitor -- and this project has
+shipped exactly that: a render that kept uid 1 landed in the anonymous page cache at 90,038
+bytes against 12,296. Two independent signals, because either one alone can be wrong: the
+caller says the REQUEST was authenticated, and Set-Cookie says the RESPONSE is per-user.
+The header allow-list below would silently drop Set-Cookie, which makes the stored copy look
+anonymous while carrying somebody's page, so this refuses before that can happen.
+
+##### inside putPage(), the rejected memo seed
+
+**Seeding the isolate memo from here was tried and reverted.** The memo only ever warms from a
+`caches.default` HIT, so the isolate that just produced a page pays one `cache.match` on its
+next request for it. Seeding it here removes that read -- ONCE per isolate per page, after
+which the memo is warm either way -- and in exchange the EDGE tier stops being observable
+within an isolate at all: `serve-edge.spec.ts` polls for `x-cfw-cache: EDGE` and gets `MEM`
+forever, because `edge=0` declines the memo and the cache together. A 0.65 ms read taken once
+is not worth a tier nobody can see; the three tiers being distinguishable is what that spec
+exists for. Do not re-propose without a lever that separates the two.
+
+### `src/site/memos.ts`
+
+#### `laneKey()`
+
+The lane-count pointer, at the edge rather than only in this isolate's memory.
+
+`believedLanes()` is learned from an `x-cfw-lanes` header on a response the isolate has ALREADY
+received, so a cold isolate routes its first request to the primary whatever the pool size, and
+forgets again after `LANES_TRUST_MS`. Workers spawn isolates continuously, so under real spread
+load most requests arrive at an isolate that has never seen the pool -- and after a deploy, none
+of them has. Measured on a deployed 32-lane site: the primary's own `serveRequests` counter moved
+by 904 across a 904-request drive, so the pool served none of it, and an anonymous drive reported
+`answeredBy` as `{primary: 904}`.
+
+Same shape as the generation pointer above and for the same reason: a value every isolate can
+read before it decides anything, rather than one each isolate has to rediscover.
+
+#### `LANE_POINTER_TTL_S`
+
+How long the EDGE pointer lives, deliberately far longer than {@link LANES_TRUST_MS}.
+
+The two answer different questions and tying them together collapsed a pool under exactly the
+load it exists for. In-isolate belief is short so a SHRUNK pool stops being routed to quickly.
+The edge pointer is a hint, and the two ways it can be wrong are not symmetric:
+
+- **stale-high** (the pool shrank): a request hashes to a lane that no longer serves, the lane
+  refuses, and the router retries the primary. One wasted hop, on a path that already exists.
+- **stale-absent** (the pointer expired): every cold isolate believes there is no pool at all and
+  sends everything to the primary, which is the whole pool lost.
+
+Measured 2026-09-19: a 32-lane site answered 294 requests with **zero** served by lanes while all
+sampled lanes were `SERVING` and a manual request routed to `r30`. Under saturation the primary
+sheds, a shed answer carried no `x-cfw-lanes`, so nothing refreshed the pointer inside 60 s, and
+the pool went invisible precisely when it was needed. The shed path now carries the header too,
+which is the other half of this fix.
+
+#### the authenticated-allowance region
+
+Same trick as the generation pointer, and for the same reason: the Worker has to know how much of
+the authenticated allowance is gone BEFORE it decides whether to hop to the object, and asking the
+object would spend the DO request the reservation exists to protect. So the object reports the
+counter on the response to a hop that was happening anyway, and this memoises it per UTC day --
+the day the quotas actually reset on.
+
+Once the memo says the allowance is spent, every later authenticated request degrades at the edge
+with ZERO DO cost. That is the only version of this that protects the meter rather than measuring it.
+
+### `src/site/routes.ts`
+
+#### `PUBLIC_ROUTES`
+
+```
+/**
+ * Routes reachable without diagnostics and without a credential.
+ *
+ * `/firstrun` is here because provisioning is TRUST-ON-FIRST-USE, and the alternative was worse.
+ * The owner token is minted by that run and is the credential `/export` takes, so while `/firstrun`
+ * was diagnostic-gated the only way to obtain it was to first expose `/sql`, `/restore` and `/php`
+ * to the internet -- which made "a customer can leave" reachable only by opening a remote shell.
+ *
+ * The claim window is the UNPROVISIONED state and nothing else. Once `first_run_at` is set the
+ * object answers 409, and `?force=1` (which resets the admin password) requires the owner token or
+ * diagnostics -- enforced in the Durable Object, where the secret actually lives.
+ *
+ * `/setup/cf/callback` is PUBLIC because it cannot be anything else: it arrives as a redirect from
+ * Cloudflare's consent screen carrying no header drupflare controls. The `state` parameter is what
+ * authenticates it, matched constant-time against the pending record in the object. `/oidc` is
+ * public for the same reason, and a `__`-prefixed path could not have served it.
+ */
+```
+
+#### OWNER_ROUTES inline comments
+
+```
+	// what the object is actually doing: cached paths, queue depth, recycles, and the day's row and
+	// request spend. Diagnostic-only meant a site owner could not read their own meters without the
+	// flag that also opens `/sql`, which is the same trade `/export` was on
+	'/serve-stats',
+	'/setup/cf',
+	'/setup/mail',
+	'/setup/oidc',
+	'/git',
+	// EXTENSIBILITY, and it was half-delivered. `/git` could put a module's files on a site and
+	// `/installable` could say whether a package was installable, and there was no route that
+	// installed one and no route that turned one on -- `installPackage()` had no caller anywhere and
+	// `/enable` was diagnostic-only. Both take the owner token because both execute code the site
+	// did not ship with
+	'/installable',
+	'/install',
+	'/enable',
+	// SITE MAINTENANCE, which an owner could not perform on their own site. Clearing a cache,
+	// re-running a migration and forcing a fill were reachable only with `PW_DIAGNOSTICS=1`, so the
+	// supported way to purge your own page cache was to expose `/sql` to the internet first. An owner
+	// token is the narrower credential: it is per site, where the flag is per deployment
+	'/armfill',
+	'/invalidate',
+	'/bump',
+	'/migrate',
+	// the update chain the object already runs on its alarm, which nothing could drive or read.
+	// `site-do.ts` refused a sliced `updb` operation by naming "/updb" as its driver while no such
+	// route existed anywhere, which is a 501 pointing at a door that is not there
+	'/updb',
+	// The operation registry itself. It was diagnostic-only, so an owner token answered 404 and the
+	// only reader was the Commands page reaching `/__ops` internally -- which meant `drangler`
+	// could not list what a site can run without turning on the flag that also opens `/sql`.
+	'/ops',
+	// RECOVERY, and ONLY the half that does not take a payload. `/pitr` reads the platform's own
+	// 30-day bookmark window and schedules a restore from it; its docblock says there is no
+	// wrangler command and no dashboard button for that window, so without an owner-reachable
+	// route an operator cannot recover a site at all.
+	//
+	// **`/restore` STAYS DIAGNOSTIC-ONLY and was promoted here for one commit before this comment
+	// replaced it.** It replays SQL a caller supplies, which is the same shape as `/sql` rather
+	// than the same shape as `/pitr`: a bookmark names a state the platform already holds, a body
+	// names one the caller invents. `serve-edge.spec.ts` pins the pair and was right to.
+	'/pitr',
+	// FLEET RECONCILIATION. The pack delivers only at provisioning, so a fix that lands in it reaches
+	// new sites and no existing one. This reports what a site still owes and drives one step of it
+	'/reconcile',
+	// The addressable sweep. Coverage was demand-driven, so nothing knew how much of a site was
+	// covered and nothing bounded what an indexer could make it spend
+	'/sweep',
+	// The fill queue, and it is a RECOVERY route rather than a diagnostic one. A queue deeper than
+	// a batch can survive resets the isolate inside the alarm, which leaves the queue at its old
+	// depth and the next alarm attempting the same batch: measured on a deployed free worker at 103
+	// entries, every render answering 500 across three redeploys. `recycleIfOversized()` cannot
+	// reach it because it runs between invocations and the death is inside one. Draining the queue
+	// is the only lever an operator has, and until now there was none
+	'/queue',
+	// Uploaded module revisions. `/git` delivers a tree from a git host and `/install` delivers one
+	// from a registry; there was no way to deliver a tree that is on a developer's disk, and no
+	// history behind either -- `gitRestore()` restores within the same call and then the previous
+	// state is gone
+	'/modify',
+	// The runtime levers, which were readable from KV and writable by nobody. `resolvePlan()` and
+	// `resolveSettings()` have read the `plan` and `settings` keys since they shipped, and nothing
+	// in `src/` ever called `CONFIG_KV.put()` -- so changing a lever meant editing `wrangler.jsonc`
+	// and redeploying, which is a deploy to change a fact the deploy does not control. Owner rather
+	// than diagnostic for the reason `/serve-stats` is: a site owner tuning their own site should
+	// not need the flag that also opens `/sql`
+	'/settings',
+	// Which site this deployment serves on a host with no mapping. Answered in the Worker, beside
+	// `/settings`, because the document lives in CONFIG_KV
+	'/deployment',
+	// The product surfaces, and they are the one part of this set that `PW_DIAGNOSTICS` does NOT
+	// also reach. They used to sit in the diagnostic set alone, so the pages that install code were
+	// open to anybody who could reach a worker with the flag on, and each button's
+	// `window.prompt('Owner token')` was accepted without being checked against anything
+	...ADMIN_PAGES.map((p) => p.path)
+```
+
+### `src/vendor.d.ts`
+
+#### '*.mjs'
+
+The emscripten glue a `vendor/` or `assets/` build ships next to its `.wasm`.
+
+Declared because both directories are gitignored: on a machine that has never run
+`bun run vendor` -- CI, or this repo with four of the probe builds never rebuilt -- the
+specifier resolves to nothing and every importer fails to typecheck. The shape is the one
+emscripten emits for MODULARIZE=1, and it is what `PhpBase` calls.
+
+**Matches every `.mjs`, not just `*-worker.mjs`.** The narrower pattern was green locally and
+failed CI on three files it did not cover -- `vendor/php8.3-web.mjs` and the two
+`assets/sjlj/*sjlj.mjs` -- which broke `typecheck` AND `docs:build`, because typedoc resolves the
+same specifiers. Every `.mjs` imported anywhere in `src/` is emscripten glue of this shape, so
+the wildcard is accurate rather than a blanket `any`.
+

@@ -5,9 +5,9 @@ import { SIZE_CEILING, formatBundle, type BundleReport } from '../../scripts/mea
 /**
  * The arithmetic only. `measureBundle()` reads a directory, so it belongs to the node project;
  * what is pinned here is the reasoning that has already been got wrong twice.
+ *
+ * The verdict is on RAW now; gz is carried because the report still prints it.
  */
-
-/** the verdict is on RAW now; gz is carried because the report still prints it */
 function report(raw: number, gz = Math.round(raw / 3)): BundleReport {
 	return {
 		files: [{ name: 'site', raw, gz }],

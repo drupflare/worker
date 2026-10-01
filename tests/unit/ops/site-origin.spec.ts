@@ -35,17 +35,17 @@ describe('normalising', () => {
 	});
 
 	it('refuses anything that is not http or https, which is why this is an allowlist', () => {
-		expect(normaliseOrigin('javascript://example.com')).toBeNull();
-		expect(normaliseOrigin('data://x')).toBeNull();
-		expect(normaliseOrigin('ftp://example.com')).toBeNull();
+		expect(normaliseOrigin('javascript://example.com')).toBeUndefined();
+		expect(normaliseOrigin('data://x')).toBeUndefined();
+		expect(normaliseOrigin('ftp://example.com')).toBeUndefined();
 	});
 
 	it('refuses an empty, missing or hostless value', () => {
-		expect(normaliseOrigin('')).toBeNull();
-		expect(normaliseOrigin('   ')).toBeNull();
-		expect(normaliseOrigin(null)).toBeNull();
-		expect(normaliseOrigin(undefined)).toBeNull();
-		expect(normaliseOrigin('https://')).toBeNull();
+		expect(normaliseOrigin('')).toBeUndefined();
+		expect(normaliseOrigin('   ')).toBeUndefined();
+		expect(normaliseOrigin(null)).toBeUndefined();
+		expect(normaliseOrigin(undefined)).toBeUndefined();
+		expect(normaliseOrigin('https://')).toBeUndefined();
 	});
 });
 
@@ -104,7 +104,7 @@ describe('what may be pinned', () => {
 
 	it('refuses an unusable value rather than pinning garbage', () => {
 		expect(pinnable('')).toBe(false);
-		expect(pinnable(null)).toBe(false);
+		expect(pinnable(undefined)).toBe(false);
 		expect(pinnable('javascript://evil')).toBe(false);
 	});
 });

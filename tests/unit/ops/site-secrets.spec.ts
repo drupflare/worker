@@ -176,7 +176,7 @@ describe('bearerToken', () => {
 
 	it('returns null for anything that is not a bearer credential', () => {
 		for (const header of [null, '', 'abc123', 'Basic abc123', 'Bearer', 'Bearer   ']) {
-			expect(bearerToken(header), String(header)).toBeNull();
+			expect(bearerToken(header), String(header)).toBeUndefined();
 		}
 	});
 });

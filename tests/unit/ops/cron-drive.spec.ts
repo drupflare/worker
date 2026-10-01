@@ -48,7 +48,7 @@ describe('drupalCronEnabled', () => {
 		// it shipped off, and that made six surveyed contrib modules do nothing with no error
 		// anywhere: Scheduler never publishes, Search API never indexes, Simple XML Sitemap never
 		// generates. "cron has not run" and "there was nothing to do" look identical from outside
-		expect(drupalCronEnabled(null)).toBe(true);
+		expect(drupalCronEnabled(undefined)).toBe(true);
 		expect(drupalCronEnabled({})).toBe(true);
 		expect(drupalCronEnabled({ DRUPAL_CRON: undefined })).toBe(true);
 		expect(drupalCronEnabled({ DRUPAL_CRON: '' })).toBe(true);
@@ -69,7 +69,7 @@ describe('drupalCronEnabled', () => {
 
 describe('cronBudget', () => {
 	it('defaults to a budget under half a percent of the daily row ceiling', () => {
-		expect(cronBudget(null)).toEqual(DEFAULT_CRON_BUDGET);
+		expect(cronBudget(undefined)).toEqual(DEFAULT_CRON_BUDGET);
 		// 500 rows against the 100,000/day free ceiling is 0.5%, so cron firing on every alarm
 		// all day cannot by itself consume the regeneration budget
 		expect(DEFAULT_CRON_BUDGET.maxRows / 100_000).toBeLessThanOrEqual(0.005);
@@ -220,7 +220,7 @@ describe('the interval gate, which is what makes cron-on-by-default safe', () =>
 		// the first alarm on a fresh site carries the migration, the first fills and the first
 		// render; an interpreter unit added there buys nothing, because a site with no content has
 		// nothing to schedule, index or expire. The caller stamps the clock instead
-		expect(cronDue(null, 1_000_000, DEFAULT_CRON_INTERVAL_MS)).toBe(false);
+		expect(cronDue(undefined, 1_000_000, DEFAULT_CRON_INTERVAL_MS)).toBe(false);
 		expect(cronDue(Number.NaN, 1_000_000, DEFAULT_CRON_INTERVAL_MS)).toBe(false);
 	});
 

@@ -39,6 +39,8 @@ import {
 } from '../../../src/ops/mail';
 import { smtpServer } from '../../helpers/mock-socket';
 
+// #region stand-ins
+
 /**
  * The defect these exist for: `binary.cfwMail` pushed the message onto an in-memory array and
  * answered `{ok: true}` whenever `CFW_EMAIL_BINDING` was `'1'`. Nothing was sent, and every test
@@ -49,11 +51,7 @@ import { smtpServer } from '../../helpers/mock-socket';
  * still builds its own request and reads its own response; the SMTP lane still runs edgeport's real
  * greeting/EHLO/STARTTLS/AUTH/DATA against a scripted server, so removing the transport takes the
  * protocol transcript with it.
- */
-
-// #region stand-ins
-
-/**
+ *
  * The `MailSql` surface, matching the five statements the queue issues.
  *
  * `rows` is exposed so a spec can corrupt one the way only a partial write could; that branch is
@@ -569,7 +567,7 @@ describe("Cloudflare's per-message limits are named, not discovered at the relay
 		const refusal = mailLimitRefusal(message({ to: many, headers: { Cc: many } }), 100);
 		expect(refusal).toContain('52 recipients across To/Cc/Bcc');
 		// under the cap, nothing is refused
-		expect(mailLimitRefusal(message({ to: 'a@x.test' }), 100)).toBeNull();
+		expect(mailLimitRefusal(message({ to: 'a@x.test' }), 100)).toBeUndefined();
 	});
 
 	it('refuses a subject over 998 characters and headers over 16 KB', () => {

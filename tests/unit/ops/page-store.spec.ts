@@ -24,9 +24,9 @@ import { isFree, isPaid, planFlag } from '../../../src/ops/plan';
  * Most of what follows asserts that the tier DECLINES: absent binding, non-200, empty body.
  * A cache that stores when it should not is worse than one that never stores, because a stored 503
  * "warming" placeholder is served globally for a day.
+ *
+ * An in-memory KV with the three methods the tier uses, plus a record of what it was asked to do.
  */
-
-/** an in-memory KV with the three methods the tier uses, plus a record of what it was asked to do */
 function fakeKv(): PageKv & { store: Map<string, string>; puts: number; failNext?: boolean } {
 	const store = new Map<string, string>();
 	return {
@@ -87,7 +87,7 @@ describe('the plan predicate, extracted at its third use', () => {
 describe('the tier is on wherever the binding is', () => {
 	it('is off with no binding, whatever the plan says', () => {
 		expect(pageKvEnabled({ PLAN: 'paid' })).toBe(false);
-		expect(pageKvEnabled({ PLAN: 'paid', PAGE_KV: null })).toBe(false);
+		expect(pageKvEnabled({ PLAN: 'paid', PAGE_KV: undefined })).toBe(false);
 	});
 
 	it('is on for both plans with a binding', () => {
@@ -172,7 +172,7 @@ describe('reads and writes, including everything it refuses to store', () => {
 	it('misses on a different generation rather than serving a stale page', async () => {
 		const kv = fakeKv();
 		await writePage(paid(kv), 's', 7, '/', PAGE);
-		expect(await readPage(paid(kv), 's', 8, '/')).toBeNull();
+		expect(await readPage(paid(kv), 's', 8, '/')).toBeUndefined();
 	});
 
 	it('REFUSES a non-200, so a 503 warming placeholder is never cached globally', async () => {
@@ -209,19 +209,19 @@ describe('reads and writes, including everything it refuses to store', () => {
 			async put() {},
 			async delete() {}
 		};
-		await expect(readPage(paid(broken), 's', 7, '/')).resolves.toBeNull();
+		await expect(readPage(paid(broken), 's', 7, '/')).resolves.toBeUndefined();
 	});
 
 	it('treats an unparseable stored value as a miss', async () => {
 		const kv = fakeKv();
 		kv.store.set(pageKvKey('s', 7, '/'), 'not json');
-		expect(await readPage(paid(kv), 's', 7, '/')).toBeNull();
+		expect(await readPage(paid(kv), 's', 7, '/')).toBeUndefined();
 	});
 
 	it('treats a stored value without html as a miss rather than serving undefined', async () => {
 		const kv = fakeKv();
 		kv.store.set(pageKvKey('s', 7, '/'), JSON.stringify({ status: 200 }));
-		expect(await readPage(paid(kv), 's', 7, '/')).toBeNull();
+		expect(await readPage(paid(kv), 's', 7, '/')).toBeUndefined();
 	});
 
 	it('defaults a stored page missing its status and type rather than refusing it', async () => {

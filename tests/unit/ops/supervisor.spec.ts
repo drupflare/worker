@@ -44,9 +44,9 @@ import {
  * The ledger runs against the REAL `ctx.storage.sql` inside a real Durable Object, because the
  * thing being asserted is that a capped log table stays capped, and a fake would agree with
  * whatever the implementation happened to do.
+ *
+ * The ledger half, on real DO SQLite.
  */
-
-/** the ledger half, on real DO SQLite */
 async function withHealthSql<T>(fn: (sql: never) => T | Promise<T>): Promise<T> {
 	const id = env.SITE.newUniqueId();
 	const stub = env.SITE.get(id);
@@ -66,16 +66,16 @@ describe('render.empty: the zero-byte 200 that shipped', () => {
 	});
 
 	it('does not fire on a 200 that has a body', () => {
-		expect(renderEmpty({ status: 200, bytes: 12304, path: '/' })).toBeNull();
+		expect(renderEmpty({ status: 200, bytes: 12304, path: '/' })).toBeUndefined();
 	});
 
 	it('does not fire on an empty 503, which is a legitimate answer', () => {
 		// a half-migrated site answers 503 with Retry-After
-		expect(renderEmpty({ status: 503, bytes: 0, path: '/' })).toBeNull();
+		expect(renderEmpty({ status: 503, bytes: 0, path: '/' })).toBeUndefined();
 	});
 
 	it('does not fire on an empty 202, which is the placeholder', () => {
-		expect(renderEmpty({ status: 202, bytes: 0, path: '/' })).toBeNull();
+		expect(renderEmpty({ status: 202, bytes: 0, path: '/' })).toBeUndefined();
 	});
 });
 
@@ -102,25 +102,25 @@ describe('render.size_anomaly: the uid-1 disclosure', () => {
 				bytes: median * (SIZE_ANOMALY_FACTOR - 0.5),
 				medianBytes: median
 			})
-		).toBeNull();
+		).toBeUndefined();
 		expect(
 			renderSizeAnomaly({
 				status: 200,
 				bytes: median / (SIZE_ANOMALY_FACTOR - 0.5),
 				medianBytes: median
 			})
-		).toBeNull();
+		).toBeUndefined();
 	});
 
 	it('does not fire with no median yet, rather than treating 0 as the median', () => {
 		// dividing by an absent median is how a first request becomes an infinite ratio
-		expect(renderSizeAnomaly({ status: 200, bytes: 12304 })).toBeNull();
+		expect(renderSizeAnomaly({ status: 200, bytes: 12304 })).toBeUndefined();
 	});
 });
 
 describe('bridge.asyncify_called: the stub the glue falls back to', () => {
 	it('fires on any call at all', () => {
-		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })).not.toBeNull();
+		expect(bridgeAsyncifyCalled({ asyncifyCalls: 1 })).not.toBeUndefined();
 	});
 
 	// the stub returns -1 and fopen() returns false, which PHP handles, so this observes rather
@@ -131,23 +131,23 @@ describe('bridge.asyncify_called: the stub the glue falls back to', () => {
 	});
 
 	it('does not fire at zero', () => {
-		expect(bridgeAsyncifyCalled({ asyncifyCalls: 0 })).toBeNull();
+		expect(bridgeAsyncifyCalled({ asyncifyCalls: 0 })).toBeUndefined();
 	});
 
 	it('does not fire when the counter is absent', () => {
-		expect(bridgeAsyncifyCalled({})).toBeNull();
+		expect(bridgeAsyncifyCalled({})).toBeUndefined();
 	});
 });
 
 describe('bridge.mask_leaked and db.semaphore_dirty', () => {
 	it('fires on a non-zero mask depth', () => {
 		expect(bridgeMaskLeaked({ maskDepth: 2 })?.code).toBe('bridge.mask_leaked');
-		expect(bridgeMaskLeaked({ maskDepth: 0 })).toBeNull();
+		expect(bridgeMaskLeaked({ maskDepth: 0 })).toBeUndefined();
 	});
 
 	it('fires on a left-behind semaphore row', () => {
 		expect(dbSemaphoreDirty({ semaphoreRows: 1 })?.code).toBe('db.semaphore_dirty');
-		expect(dbSemaphoreDirty({ semaphoreRows: 0 })).toBeNull();
+		expect(dbSemaphoreDirty({ semaphoreRows: 0 })).toBeUndefined();
 	});
 });
 
@@ -159,13 +159,13 @@ describe('migrate.incomplete: half a database renders, which is the danger', () 
 	});
 
 	it('does not fire when the cursor is complete', () => {
-		expect(migrateIncomplete({ migrateChunk: 99, migrateChunks: 99 })).toBeNull();
+		expect(migrateIncomplete({ migrateChunk: 99, migrateChunks: 99 })).toBeUndefined();
 	});
 
 	it('does not fire when there is NO cursor at all', () => {
 		// "never started" and "half done" are different states, and conflating them would take
 		// every deploy predating the engine offline
-		expect(migrateIncomplete({})).toBeNull();
+		expect(migrateIncomplete({})).toBeUndefined();
 	});
 });
 
@@ -173,7 +173,7 @@ describe('updb.halted and pack.generation_mismatch', () => {
 	it.each(['planning', 'running', 'complete', 'rolled_back', 'abandoned'])(
 		'does not fire on phase %s',
 		(phase) => {
-			expect(updbHalted({ updbPhase: phase })).toBeNull();
+			expect(updbHalted({ updbPhase: phase })).toBeUndefined();
 		}
 	);
 
@@ -188,9 +188,9 @@ describe('updb.halted and pack.generation_mismatch', () => {
 	});
 
 	it('does not fire when they agree, or when either is unknown', () => {
-		expect(packGenerationMismatch({ packGeneration: 'a', dbGeneration: 'a' })).toBeNull();
-		expect(packGenerationMismatch({ packGeneration: 'a' })).toBeNull();
-		expect(packGenerationMismatch({})).toBeNull();
+		expect(packGenerationMismatch({ packGeneration: 'a', dbGeneration: 'a' })).toBeUndefined();
+		expect(packGenerationMismatch({ packGeneration: 'a' })).toBeUndefined();
+		expect(packGenerationMismatch({})).toBeUndefined();
 	});
 });
 
@@ -204,16 +204,16 @@ describe('memory.highwater_rising: trend, not threshold', () => {
 	it('does not fire when a sample dips, because wasm memory plateaus', () => {
 		// emscripten grows geometrically, so a flat stretch is the NORMAL shape and only a
 		// monotonic rise is evidence
-		expect(memoryHighwaterRising({ memorySamples: [64, 70, 70, 80, 86] })).toBeNull();
+		expect(memoryHighwaterRising({ memorySamples: [64, 70, 70, 80, 86] })).toBeUndefined();
 	});
 
 	it('does not fire on a high but flat reading', () => {
-		expect(memoryHighwaterRising({ memorySamples: [110, 110, 110, 110, 110] })).toBeNull();
+		expect(memoryHighwaterRising({ memorySamples: [110, 110, 110, 110, 110] })).toBeUndefined();
 	});
 
 	it('does not fire with too few samples to establish a trend', () => {
 		const short = Array.from({ length: MEMORY_RISE_SAMPLES - 1 }, (_, i) => i * 10);
-		expect(memoryHighwaterRising({ memorySamples: short })).toBeNull();
+		expect(memoryHighwaterRising({ memorySamples: short })).toBeUndefined();
 	});
 });
 
@@ -285,9 +285,9 @@ describe('the ring buffer the trend checks read from', () => {
 
 describe('fitTrend: the rise has to beat the wobble', () => {
 	it('refuses to claim a slope from too few samples', () => {
-		expect(fitTrend(undefined)).toBeNull();
+		expect(fitTrend(undefined)).toBeUndefined();
 		const short = Array.from({ length: TREND_MIN_SAMPLES - 1 }, (_, i) => i * 10);
-		expect(fitTrend(short)).toBeNull();
+		expect(fitTrend(short)).toBeUndefined();
 	});
 
 	it('reads a straight line exactly, with no residual', () => {
@@ -377,7 +377,7 @@ describe('memory.trend_rising: the leak the monotonic check cannot see', () => {
 	const stepped = [64, 80, 80, 96, 112, 112, 128, 144];
 
 	it('fires on a stepped rise that memoryHighwaterRising misses entirely', () => {
-		expect(memoryHighwaterRising({ memorySamples: stepped })).toBeNull();
+		expect(memoryHighwaterRising({ memorySamples: stepped })).toBeUndefined();
 		const f = memoryTrendRising({ memorySamples: stepped });
 		expect(f?.code).toBe('memory.trend_rising');
 		expect(f?.severity).toBe('warn');
@@ -387,21 +387,21 @@ describe('memory.trend_rising: the leak the monotonic check cannot see', () => {
 	it('stays quiet when the monotonic check already fired, so one leak is one finding', () => {
 		const monotonic = { memorySamples: [64, 70, 76, 80, 86] };
 		expect(memoryHighwaterRising(monotonic)?.code).toBe('memory.highwater_rising');
-		expect(memoryTrendRising(monotonic)).toBeNull();
+		expect(memoryTrendRising(monotonic)).toBeUndefined();
 	});
 
 	it('does not fire on a flat plateau, which is the NORMAL shape', () => {
-		expect(memoryTrendRising({ memorySamples: [110, 110, 110, 110, 110] })).toBeNull();
+		expect(memoryTrendRising({ memorySamples: [110, 110, 110, 110, 110] })).toBeUndefined();
 	});
 
 	it('does not fire on a series that only wobbles', () => {
-		expect(memoryTrendRising({ memorySamples: [100, 103, 99, 102, 101] })).toBeNull();
+		expect(memoryTrendRising({ memorySamples: [100, 103, 99, 102, 101] })).toBeUndefined();
 	});
 
 	it('does not fire with too few samples, or none at all', () => {
 		const short = Array.from({ length: TREND_MIN_SAMPLES - 1 }, (_, i) => 64 + i * 16);
-		expect(memoryTrendRising({ memorySamples: short })).toBeNull();
-		expect(memoryTrendRising({})).toBeNull();
+		expect(memoryTrendRising({ memorySamples: short })).toBeUndefined();
+		expect(memoryTrendRising({})).toBeUndefined();
 	});
 
 	it('reads a real ring rather than a hand-built array', () => {
@@ -560,6 +560,6 @@ describe('the ledger, on real ctx.storage.sql', () => {
 		expect(ledgerOversized({ ledgerRows: LEDGER_MAX_ROWS + 1 })?.code).toBe(
 			'health.ledger_oversized'
 		);
-		expect(ledgerOversized({ ledgerRows: LEDGER_MAX_ROWS })).toBeNull();
+		expect(ledgerOversized({ ledgerRows: LEDGER_MAX_ROWS })).toBeUndefined();
 	});
 });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isNeverDrupal, phpEntryRedirect } from '../../src/site';
+import { denyProbe } from '../../src/site/screen';
+import type { FrontContext } from '../../src/site/types';
 
 /**
  * Core links to `/update.php`, and this platform answered it with plain text.
@@ -38,14 +40,37 @@ describe('the core PHP entry points', () => {
 			'/admin.php',
 			'/shell.php'
 		]) {
-			expect(phpEntryRedirect(probe), probe).toBe(null);
+			expect(phpEntryRedirect(probe), probe).toBeUndefined();
 			// still denied, so the redirect did not widen what reaches the object
 			expect(isNeverDrupal(probe), probe).toBe(true);
 		}
 	});
 
 	it('does not redirect a path that was never denied in the first place', () => {
-		expect(phpEntryRedirect('/node/1')).toBe(null);
-		expect(phpEntryRedirect('/admin/modules')).toBe(null);
+		expect(phpEntryRedirect('/node/1')).toBeUndefined();
+		expect(phpEntryRedirect('/admin/modules')).toBeUndefined();
+	});
+});
+
+describe('the front worker deny stage', () => {
+	const at = (path: string, serving = true) => ({ serving, path }) as FrontContext;
+
+	it('redirects a linked entry point before it denies', () => {
+		const res = denyProbe(at('/update.php?x=1'), true);
+		expect(res?.status).toBe(302);
+		expect(res?.headers.get('location')).toBe('/admin/config/drupflare/status');
+		expect(res?.headers.get('x-cfw-deny')).toBe('php-entry-point');
+	});
+
+	it('answers a scanner probe with the cheap 404', () => {
+		const res = denyProbe(at('/wp-login.php'), true);
+		expect(res?.status).toBe(404);
+		expect(res?.headers.get('x-cfw-deny')).toBe('never-drupal');
+		expect(res?.headers.get('x-cfw-cache')).toBe('DENY');
+	});
+
+	it('passes an ordinary page and anything off the serving path', () => {
+		expect(denyProbe(at('/node/1'), false)).toBeUndefined();
+		expect(denyProbe(at('/wp-login.php', false), true)).toBeUndefined();
 	});
 });

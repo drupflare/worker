@@ -28,9 +28,9 @@ import {
  * SQLite -- is arithmetic that should not need a Durable Object to test.
  *
  * Each test here corresponds to a way this project has actually lost bytes, not to a coverage target.
+ *
+ * A heap with recognisable content in some pages and zeros in others.
  */
-
-/** a heap with recognisable content in some pages and zeros in others */
 function fixtureHeap(pages: Array<number | null>, pageBytes = 8): Uint8Array {
 	const heap = new Uint8Array(pages.length * pageBytes);
 	pages.forEach((fill, p) => {
@@ -505,13 +505,13 @@ describe('the vrzno handle table is part of a restore, and the restore probe mis
 	});
 
 	it('fails every handle when the binary has no table at all', () => {
-		const out = replayHandles(null, {}, [{ id: 1, name: GLOBAL_HANDLE_NAME }]);
+		const out = replayHandles(undefined, {}, [{ id: 1, name: GLOBAL_HANDLE_NAME }]);
 		expect(out.replayed).toEqual([]);
 		expect(out.failed[0]?.error).toContain('no vrzno handle table');
 	});
 
 	it('captures nothing, and refuses nothing, when the binary has no table', () => {
-		expect(captureHandles(null, {})).toEqual({ handles: [], unnameable: [] });
+		expect(captureHandles(undefined, {})).toEqual({ handles: [], unnameable: [] });
 	});
 
 	it('survives a Module key whose getter throws', () => {

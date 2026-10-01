@@ -45,9 +45,9 @@ describe('the attempt id a repeated POST carries', () => {
 		const id = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
 		expect(ATTEMPT_HEADER).toBe('x-cfw-attempt');
 		expect(attemptKey(id)).toBe(`attempt:${id}`);
-		expect(attemptKey(id.toUpperCase())).toBeNull();
-		expect(attemptKey('attempt:../x')).toBeNull();
-		expect(attemptKey('')).toBeNull();
-		expect(attemptKey(null)).toBeNull();
+		expect(attemptKey(id.toUpperCase())).toBeUndefined();
+		expect(attemptKey('attempt:../x')).toBeUndefined();
+		expect(attemptKey('')).toBeUndefined();
+		expect(attemptKey(null)).toBeUndefined();
 	});
 });

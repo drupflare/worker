@@ -161,11 +161,11 @@ describe('discovering which hooks this site has', () => {
 		['an empty site', { ok: true, shapes: {} }],
 		['nothing at all', null]
 	])('answers null for %s, so the caller keeps the list it has', (_label, payload) => {
-		expect(cronHooksFromList(payload)).toBe(null);
+		expect(cronHooksFromList(payload)).toBeUndefined();
 	});
 
 	it('uses the shipped list and asks for discovery when nothing is cached', () => {
-		const out = cronHooksFor(null, 'abc');
+		const out = cronHooksFor(undefined, 'abc');
 		expect(out.hooks).toEqual(KNOWN_CRON_HOOKS);
 		expect(out.stale).toBe(true);
 	});
@@ -310,7 +310,7 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 
 	it('forces warming on paid, leaves free to the thermal policy, and lets SITE_WARM win', () => {
 		expect(warmForced({}, true)).toBe(true);
-		expect(warmForced({}, false)).toBeNull();
+		expect(warmForced({}, false)).toBeUndefined();
 		expect(warmForced({ SITE_WARM: '0' }, true)).toBe(false);
 		expect(warmForced({ SITE_WARM: '1' }, false)).toBe(true);
 	});
@@ -335,9 +335,9 @@ describe('the warm re-arm has to beat the hibernation threshold', () => {
 	 * it cannot tell a stated 8,000 from an unset one.
 	 */
 	it('separates a stated interval from an unset one', () => {
-		expect(warmIntervalConfigured({})).toBeNull();
-		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '' })).toBeNull();
-		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: 'abc' })).toBeNull();
+		expect(warmIntervalConfigured({})).toBeUndefined();
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '' })).toBeUndefined();
+		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: 'abc' })).toBeUndefined();
 		expect(warmIntervalConfigured({ WARM_INTERVAL_MS: '6000' })).toBe(6000);
 		// still clamped without retention, because a stated value that cannot warm still cannot
 		expect(

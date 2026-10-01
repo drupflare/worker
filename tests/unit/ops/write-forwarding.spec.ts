@@ -315,7 +315,7 @@ describe('the ids a forwarded batch spent', () => {
 			{ sql: 'UPDATE watchdog SET type = ?', params: ['x'], table: 'watchdog' },
 			{ sql: 'INSERT INTO sessions ("sid") VALUES (?)', params: ['s'], table: 'sessions' }
 		]) {
-			expect(deferrable(statement), statement.sql).toBeNull();
+			expect(deferrable(statement), statement.sql).toBeUndefined();
 		}
 	});
 
@@ -390,7 +390,7 @@ describe('the ids a forwarded batch spent', () => {
 		).toEqual(expected);
 		expect(
 			cacheTagIncrement({ sql: 'DELETE FROM cachetags', params: [], table: 'cachetags' })
-		).toBeNull();
+		).toBeUndefined();
 		expect(
 			splitForward([
 				{

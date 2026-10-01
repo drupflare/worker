@@ -182,10 +182,10 @@ describe('warming while somebody is signed in', () => {
 
 	it('is never armed by a request Drupal answered as anonymous', () => {
 		// the signal comes from the uid Drupal reported, so a stale cookie cannot arm it; this pins
-		// the null path the caller uses for an anonymous render
-		expect(warmDecision(renders(1), now, { thresholdMs, lastAuthenticatedAt: null }).warm).toBe(
-			false
-		);
+		// the undefined path the caller uses for an anonymous render
+		expect(
+			warmDecision(renders(1), now, { thresholdMs, lastAuthenticatedAt: undefined }).warm
+		).toBe(false);
 	});
 });
 
@@ -277,7 +277,7 @@ describe('the render window that outlives an incarnation', () => {
 		'reads %p as nothing stored rather than as a rate',
 		(value) => {
 			// a malformed value must not become a rate; the failure mode is warming every site
-			expect(readRenderWindow(value)).toBeNull();
+			expect(readRenderWindow(value)).toBeUndefined();
 		}
 	);
 
@@ -303,7 +303,7 @@ describe('the render window that outlives an incarnation', () => {
 	});
 
 	it('starts a bucket when nothing is stored', () => {
-		expect(foldRenderWindow(null, 2, NOW)).toEqual(win(NOW, 2));
+		expect(foldRenderWindow(undefined, 2, NOW)).toEqual(win(NOW, 2));
 	});
 
 	/** the pair that is the whole point: the same site, decided with and without the survivor */

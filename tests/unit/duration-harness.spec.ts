@@ -6,7 +6,7 @@ import {
 	rebuildStatements,
 	restoreStatements,
 	stripAutoincrement
-} from '../../scripts/measure/autoinc-arm.js';
+} from '../../scripts/measure/autoinc-arm';
 import {
 	DO_GB_ALLOCATED,
 	WORKLOADS,
@@ -19,7 +19,7 @@ import {
 	sitesFor,
 	sumRows,
 	type PeriodicRow
-} from '../../scripts/measure/gbs-per-operation.js';
+} from '../../scripts/measure/gbs-per-operation';
 import {
 	percentile,
 	replicaFor,
@@ -27,7 +27,7 @@ import {
 	scalingEfficiency,
 	summarise,
 	type Sample
-} from '../../scripts/measure/replica-wake.js';
+} from '../../scripts/measure/replica-wake';
 
 /**
  * The arithmetic both duration harnesses rest on.

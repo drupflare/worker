@@ -74,7 +74,7 @@ const row = (over: Partial<FleetRow> = {}): FleetRow => ({
 
 describe('shouldReport, which IS the write budget', () => {
 	it('reports a site that has never reported', () => {
-		expect(shouldReport(null, row(), 1_000)).toBe(true);
+		expect(shouldReport(undefined, row(), 1_000)).toBe(true);
 	});
 
 	it('stays quiet when nothing moved and the heartbeat has not elapsed', () => {
@@ -209,7 +209,7 @@ describe('warmTargets', () => {
 	});
 
 	it('invents nothing on a bare deploy: no binding, no configured list, no sites', () => {
-		expect(warmTargets(null, [], NOW)).toEqual({
+		expect(warmTargets(undefined, [], NOW)).toEqual({
 			sites: [],
 			source: 'none',
 			unknown: [],
@@ -252,7 +252,7 @@ describe('warmTargets', () => {
 	});
 
 	it('trusts the configured list when there is no inventory to check it against', () => {
-		const t = warmTargets(null, ['a.example'], NOW);
+		const t = warmTargets(undefined, ['a.example'], NOW);
 		expect(t.sites).toEqual(['a.example']);
 		expect(t.source).toBe('configured');
 		expect(t.unknown).toEqual([]);

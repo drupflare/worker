@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import siteDoSource from '../../../src/site-do.ts?raw';
-import siteSource from '../../../src/site.ts?raw';
 import {
 	ADMIN_PAGES,
 	escapeHtml,
@@ -12,6 +10,7 @@ import {
 	renderThresholds,
 	SURFACE_PREFIX
 } from '../../../src/ui/admin';
+import { sourceOf } from '../../helpers/source-raw';
 
 /**
  * The product surfaces.
@@ -43,6 +42,10 @@ describe('escapeHtml', () => {
 		expect(escapeHtml('&lt;')).toBe('&amp;lt;');
 	});
 
+	it('writes a literal template token with a numeric entity for its underscore', () => {
+		expect(escapeHtml('__CFW_X__')).toBe('__CFW&#95;X__');
+	});
+
 	it('stringifies a non-string rather than throwing', () => {
 		expect(escapeHtml(42)).toBe('42');
 		expect(escapeHtml(null)).toBe('null');
@@ -60,7 +63,7 @@ describe('renderShell', () => {
 	it('marks exactly one page current', () => {
 		// scoped to the nav element: the stylesheet carries a `nav a[aria-current]` selector too, and
 		// counting that would make this pass for the wrong reason
-		const html = renderShell('deploy', '', null);
+		const html = renderShell('deploy', '');
 		const nav = html.slice(html.indexOf('<nav>'), html.indexOf('</nav>'));
 		expect(nav.match(/aria-current/g)).toHaveLength(1);
 		expect(nav).toContain(`href="${SURFACE_PREFIX}/deploy"`);
@@ -70,11 +73,11 @@ describe('renderShell', () => {
 		expect(renderShell('thresholds', '', { PLAN: 'paid' })).toContain('plan: paid');
 		expect(renderShell('thresholds', '', { PLAN: 'free' })).toContain('plan: free');
 		// an absent plan is free, never paid
-		expect(renderShell('thresholds', '', null)).toContain('plan: free');
+		expect(renderShell('thresholds', '')).toContain('plan: free');
 	});
 
 	it('is a complete document with a viewport, so it is usable on a phone', () => {
-		const html = renderShell('thresholds', '', null);
+		const html = renderShell('thresholds', '');
 		expect(html.startsWith('<!doctype html>')).toBe(true);
 		expect(html).toContain('name="viewport"');
 		expect(html.trimEnd().endsWith('</html>')).toBe(true);
@@ -83,14 +86,14 @@ describe('renderShell', () => {
 
 describe('renderThresholds', () => {
 	it('names the failure mode per meter, not just the number', () => {
-		const html = renderThresholds({}, null, { PLAN: 'free' });
+		const html = renderThresholds({}, undefined, { PLAN: 'free' });
 		// the distinction the whole module exists for
 		expect(html).toContain('stops working');
 		expect(html).toContain('refused, site stays up');
 	});
 
 	it('shows an unmeasured meter as unmeasured rather than healthy', () => {
-		const html = renderThresholds({}, null, { PLAN: 'free' });
+		const html = renderThresholds({}, undefined, { PLAN: 'free' });
 		expect(html).toContain('nothing measures this yet');
 	});
 
@@ -109,7 +112,7 @@ describe('renderThresholds', () => {
 	});
 
 	it('tells a visitor how to project their own configuration when none was given', () => {
-		expect(renderThresholds({}, null, { PLAN: 'free' })).toContain('images=2000');
+		expect(renderThresholds({}, undefined, { PLAN: 'free' })).toContain('images=2000');
 	});
 
 	it('escapes what it renders', () => {
@@ -120,7 +123,7 @@ describe('renderThresholds', () => {
 
 describe('renderExtend', () => {
 	it('reflects the query into the field ESCAPED', () => {
-		const html = renderExtend('"><script>alert(1)</script>', [], null, null);
+		const html = renderExtend('"><script>alert(1)</script>', [], undefined);
 		expect(html).not.toContain('<script>alert(1)');
 		expect(html).toContain('&lt;script&gt;');
 	});
@@ -128,8 +131,8 @@ describe('renderExtend', () => {
 	it('renders a verdict per entry', () => {
 		const html = renderExtend(
 			'drupal/pathauto',
-			[{ name: 'drupal/pathauto', version: '1.13.0', verdict: 'installable', reason: null }],
-			null,
+			[{ name: 'drupal/pathauto', version: '1.13.0', verdict: 'installable' }],
+			undefined,
 			{ PLAN: 'free' }
 		);
 		expect(html).toContain('drupal/pathauto');
@@ -137,46 +140,50 @@ describe('renderExtend', () => {
 	});
 
 	it('says nothing is checked rather than rendering an empty table', () => {
-		expect(renderExtend(null, [], null, null)).toContain('Nothing checked yet');
+		expect(renderExtend(undefined, [], undefined)).toContain('Nothing checked yet');
 	});
 
 	it('names the repository a drupal package resolves against', () => {
 		// which repository answers is the thing an operator needs when a verdict surprises them;
 		// this used to also pin a sentence of development narrative, which is not repository policy
-		expect(renderExtend(null, [], null, null)).toContain('packages.drupal.org/8');
+		expect(renderExtend(undefined, [], undefined)).toContain('packages.drupal.org/8');
 	});
 
 	it('warns on free that installing spends the SERVING ceiling', () => {
 		// a Workflow invocation is billed against the same daily quota as a visitor request
-		expect(renderExtend(null, [], null, { PLAN: 'free' })).toContain('serving ceiling');
-		expect(renderExtend(null, [], null, { PLAN: 'paid' })).not.toContain('serving ceiling');
+		expect(renderExtend(undefined, [], undefined, { PLAN: 'free' })).toContain(
+			'serving ceiling'
+		);
+		expect(renderExtend(undefined, [], undefined, { PLAN: 'paid' })).not.toContain(
+			'serving ceiling'
+		);
 	});
 
 	it('separates unverifiable from blocked, because they are different answers', () => {
-		expect(renderExtend(null, [], null, null)).toContain('not that the module is broken');
+		expect(renderExtend(undefined, [], undefined)).toContain('not that the module is broken');
 	});
 });
 
 describe('renderCommands', () => {
 	const entries = [
 		{ op: 'cr', label: 'rebuild caches', driver: 'the updb alarm chain', cost: '282.9 ms' },
-		{ op: 'cim', label: 'import config', driver: null, cost: null }
+		{ op: 'cim', label: 'import config' }
 	];
 
 	it('offers an operation that has a driver', () => {
-		const html = renderCommands(entries, null, null);
+		const html = renderCommands(entries);
 		expect(html).toContain('drush cr');
 		expect(html).toContain('the updb alarm chain');
 	});
 
 	it('lists an operation with NO driver and says so, rather than offering it', () => {
-		const html = renderCommands(entries, null, null);
+		const html = renderCommands(entries);
 		expect(html).toContain('drush cim');
 		expect(html).toContain('no driver exists yet');
 	});
 
 	it('counts how many can actually run, so the header does not overstate it', () => {
-		expect(renderCommands(entries, null, null)).toContain('1 of 2');
+		expect(renderCommands(entries)).toContain('1 of 2');
 	});
 
 	it('escapes the submitted command and the result', () => {
@@ -187,6 +194,14 @@ describe('renderCommands', () => {
 		);
 		expect(html).not.toContain('<img src=x');
 		expect(html).not.toContain('<script>x');
+	});
+
+	// a watchdog line quoting a failed template fill carries a literal token, and the page that shows
+	// it must still render
+	it('renders command output that contains a template token', () => {
+		const html = renderCommands(entries, 'unresolved template token __CFW_X__', '__CFW_Y__');
+		expect(html).toContain('__CFW&#95;X__');
+		expect(html).toContain('__CFW&#95;Y__');
 	});
 });
 
@@ -239,13 +254,13 @@ describe('renderDeploy: it must not render a button that lies', () => {
 	it('shows the outcome the OAuth return leg redirected with', () => {
 		// the callback used to answer raw JSON, so there was nowhere for an outcome to land
 		expect(renderDeploy({ connected: true }, 'Connected.')).toContain('Connected.');
-		expect(renderDeploy(null, 'state did not match')).toContain('state did not match');
+		expect(renderDeploy(undefined, 'state did not match')).toContain('state did not match');
 	});
 
 	it('still refuses to imply provisioning exists', () => {
 		const html = renderDeploy();
 		expect(html).toContain('no one-click deploy yet');
-		expect(renderExtend(null, [], null, null)).toContain('<button');
+		expect(renderExtend(undefined, [], undefined)).toContain('<button');
 	});
 
 	it('renders the requirement set instead, marking what needs a human', () => {
@@ -293,9 +308,9 @@ describe('the product surfaces stay out of Drupal url space', () => {
 
 	it('links nowhere under /admin, so no rendered page walks back into Drupal', () => {
 		const rendered = [
-			renderShell('thresholds', '', null),
-			renderExtend(null, [], null, null),
-			renderCommands([], null, null),
+			renderShell('thresholds', ''),
+			renderExtend(undefined, [], undefined),
+			renderCommands([]),
 			renderDeploy()
 		].join('\n');
 		expect(rendered).not.toMatch(/(href|action)="\/admin/);
@@ -303,19 +318,20 @@ describe('the product surfaces stay out of Drupal url space', () => {
 });
 
 describe('the surfaces stay honest against the code behind them', () => {
-	it('every admin route in site.ts is behind the diagnostic gate', () => {
+	it('every admin route in the route table is behind the diagnostic gate', () => {
 		// these pages drive /__ops, which runs cache rebuilds and module installs. Unauthenticated,
 		// that is a remote shell -- the exact defect site.ts already had once and fixed
-		const diag = siteSource.slice(
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
-			siteSource.indexOf('const ROUTES =')
+		const routes = sourceOf('src/site/routes.ts');
+		const diag = routes.slice(
+			routes.indexOf('const DIAGNOSTIC_ROUTES'),
+			routes.indexOf('const ROUTES =')
 		);
 		// spread from ADMIN_PAGES rather than written out, so the derivation is what is asserted;
 		// a page added to the table cannot miss the gate by being forgotten here
 		expect(diag).toContain('ADMIN_PAGES.map((p) => p.path)');
-		const pub = siteSource.slice(
-			siteSource.indexOf('const PUBLIC_ROUTES'),
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES')
+		const pub = routes.slice(
+			routes.indexOf('const PUBLIC_ROUTES'),
+			routes.indexOf('const DIAGNOSTIC_ROUTES')
 		);
 		for (const p of ADMIN_PAGES) expect(pub).not.toContain(`'${p.path}'`);
 	});
@@ -324,9 +340,10 @@ describe('the surfaces stay honest against the code behind them', () => {
 		// pinned against the object's own OPS_DRIVERS map, so the Commands page cannot drift into
 		// offering something that has no way to run. cex and cim were the two that read `null`; both
 		// are now paged through `/ops` and both name how
-		const region = siteDoSource.slice(
-			siteDoSource.indexOf('const OPS_DRIVERS'),
-			siteDoSource.indexOf('const OPS_DRIVERS') + 900
+		const limits = sourceOf('src/do/limits.ts');
+		const region = limits.slice(
+			limits.indexOf('const OPS_DRIVERS'),
+			limits.indexOf('const OPS_DRIVERS') + 900
 		);
 		for (const [, value] of region.matchAll(/^\t'?([a-z-]+)'?: (null|')/gm)) {
 			expect(value, 'an operation with no driver must still say so').not.toBe('undefined');

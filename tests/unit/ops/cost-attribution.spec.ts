@@ -348,7 +348,7 @@ describe('the month projection', () => {
 
 	it('clamps past the end of the month too', () => {
 		expect(projectMonth({ rowsToday: 1 }, 44).dayOfMonth).toBe(30);
-		expect(projectMonth({ rowsToday: 1 }, 44, null, 31).dayOfMonth).toBe(31);
+		expect(projectMonth({ rowsToday: 1 }, 44, undefined, 31).dayOfMonth).toBe(31);
 	});
 
 	it('never multiplies a figure that is already a whole month', () => {

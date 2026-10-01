@@ -119,7 +119,7 @@ describe('rollback refuses far more often than it fires', () => {
 
 	it('REFUSES when no restore point exists, and says why that is better', () => {
 		const { state, now } = held(ROLLBACK_DWELL_MS);
-		const d = shouldRollback(state, null, now);
+		const d = shouldRollback(state, undefined, now);
 		expect(d.rollback).toBe(false);
 		expect(d.reason).toContain('no restore point');
 		expect(d.reason).toContain('strictly better');

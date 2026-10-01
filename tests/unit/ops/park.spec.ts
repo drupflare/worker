@@ -285,13 +285,13 @@ describe('the image descriptor and its reply', () => {
 	});
 
 	it('refuses a format, an op list or a source it cannot run', () => {
-		expect(parseParkImage(packed({ ...op, format: 'bmp' }))).toBeNull();
+		expect(parseParkImage(packed({ ...op, format: 'bmp' }))).toBeUndefined();
 		expect(
 			parseParkImage(packed({ ...op, ops: new Array(33).fill({ op: 'scale' }) }))
-		).toBeNull();
-		expect(parseParkImage(packed({ ...op, source: 7 }))).toBeNull();
-		expect(parseParkImage(packed('text'))).toBeNull();
-		expect(parseParkImage('%%%')).toBeNull();
+		).toBeUndefined();
+		expect(parseParkImage(packed({ ...op, source: 7 }))).toBeUndefined();
+		expect(parseParkImage(packed('text'))).toBeUndefined();
+		expect(parseParkImage('%%%')).toBeUndefined();
 	});
 
 	it('answers the result as bytes, and a failure as an error the module can refuse on', async () => {
@@ -417,7 +417,7 @@ describe('the fetch descriptor parser', () => {
 		['an empty url', btoa(JSON.stringify({ url: '' }))],
 		['a url that is not a string', btoa(JSON.stringify({ url: 42 }))]
 	])('answers null on %s', (_name, input) => {
-		expect(parseParkFetch(input)).toBeNull();
+		expect(parseParkFetch(input)).toBeUndefined();
 	});
 });
 
@@ -432,7 +432,7 @@ describe('the socket target parser', () => {
 	});
 
 	it('REFUSES port 25, which Cloudflare blocks for ordinary Workers', async () => {
-		expect(parseSocketTarget('tcp://mail.example:25')).toBeNull();
+		expect(parseSocketTarget('tcp://mail.example:25')).toBeUndefined();
 		expect(parseSocketTarget('tcp://mail.example:587')).toEqual({
 			host: 'mail.example',
 			port: 587
@@ -441,7 +441,7 @@ describe('the socket target parser', () => {
 
 	it('rejects a missing, non-numeric or out-of-range port, and an empty host', async () => {
 		for (const bad of ['host', 'host:', 'host:abc', 'host:0', 'host:70000', ':6379']) {
-			expect(parseSocketTarget(bad), bad).toBeNull();
+			expect(parseSocketTarget(bad), bad).toBeUndefined();
 		}
 	});
 });
@@ -816,7 +816,7 @@ describe('parkEnabled', () => {
 	// what a site running no module that needs a blocking call uses to stop paying for it
 	it('is on when the var is absent, which is the shipping default', () => {
 		expect(parkEnabled(undefined)).toBe(true);
-		expect(parkEnabled(null)).toBe(true);
+		expect(parkEnabled(undefined)).toBe(true);
 		expect(parkEnabled({})).toBe(true);
 	});
 

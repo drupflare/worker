@@ -132,7 +132,7 @@ describe('the callback guard', () => {
 	});
 
 	it('refuses a callback with no flow in progress', () => {
-		const out = pendingMatches(null, 'the-state', 1_000);
+		const out = pendingMatches(undefined, 'the-state', 1_000);
 		expect(out.ok).toBe(false);
 	});
 
@@ -289,13 +289,13 @@ describe('resolveAccountId', () => {
 		expect(await resolveAccountId('t', fn)).toBe('acct-1');
 	});
 
-	it('returns null rather than a guess when the grant names no account', async () => {
+	it('returns undefined rather than a guess when the grant names no account', async () => {
 		const { fn } = capture(() => RESPONSE({ result: [] }));
-		expect(await resolveAccountId('t', fn)).toBeNull();
+		expect(await resolveAccountId('t', fn)).toBeUndefined();
 		const dead = (async () => {
 			throw new Error('down');
 		}) as unknown as typeof fetch;
-		expect(await resolveAccountId('t', dead)).toBeNull();
+		expect(await resolveAccountId('t', dead)).toBeUndefined();
 	});
 });
 

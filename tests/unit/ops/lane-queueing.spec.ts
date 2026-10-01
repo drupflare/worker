@@ -82,8 +82,8 @@ describe('the wait a lane would remove', () => {
 	it('is null when nothing queued, rather than zero', () => {
 		// zero would read as "a lane removes no wait", which is a different claim from "nothing has
 		// waited yet"
-		expect(meanWaitMs(windows({ queued: 0, waitedMs: 0 }))).toBeNull();
-		expect(meanWaitMs([])).toBeNull();
+		expect(meanWaitMs(windows({ queued: 0, waitedMs: 0 }))).toBeUndefined();
+		expect(meanWaitMs([])).toBeUndefined();
 	});
 
 	it('weights by waiters rather than by windows', () => {

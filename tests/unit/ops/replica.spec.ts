@@ -370,10 +370,12 @@ describe('an expiry sweep is not an authoritative write', () => {
 		expect(expiryGcTable(SWEEP)).toBe('sessions');
 		expect(expiryGcTable('delete from sessions where timestamp < ?')).toBe('sessions');
 		// anchored at both ends, so an extra predicate is a different statement
-		expect(expiryGcTable('DELETE FROM sessions WHERE timestamp < ? OR uid = ?')).toBeNull();
-		expect(expiryGcTable('DELETE FROM sessions WHERE sid = ?')).toBeNull();
-		expect(expiryGcTable('DELETE FROM users_field_data WHERE timestamp < ?')).toBeNull();
-		expect(expiryGcTable('INSERT INTO sessions (sid) VALUES (?)')).toBeNull();
+		expect(
+			expiryGcTable('DELETE FROM sessions WHERE timestamp < ? OR uid = ?')
+		).toBeUndefined();
+		expect(expiryGcTable('DELETE FROM sessions WHERE sid = ?')).toBeUndefined();
+		expect(expiryGcTable('DELETE FROM users_field_data WHERE timestamp < ?')).toBeUndefined();
+		expect(expiryGcTable('INSERT INTO sessions (sid) VALUES (?)')).toBeUndefined();
 	});
 
 	it('lets a replica sweep but never write a session row', () => {
@@ -416,7 +418,7 @@ describe('an expiry sweep is not an authoritative write', () => {
 			const column = rule.where.split(' ')[0];
 			const statement = `DELETE FROM "${rule.table}" WHERE "${column}" < ?`;
 			expect(expiryGcTable(statement), statement).toBe(
-				rule.table === 'queue' ? null : rule.table
+				rule.table === 'queue' ? undefined : rule.table
 			);
 		}
 	});

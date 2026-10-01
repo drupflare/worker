@@ -67,7 +67,7 @@ describe('parsing and matching REDIRECTS', () => {
 		const at = (p: string) => redirectMatch(rules, new URL(`https://x.test${p}`));
 		expect(at('/old')?.to).toBe('/new');
 		expect(at('/old/')?.to).toBe('/new');
-		expect(at('/old/more')).toBeNull();
+		expect(at('/old/more')).toBeUndefined();
 		expect(at('/docs/a/b?q=1')).toEqual({ to: '/help/a/b?q=1', status: 308 });
 	});
 
@@ -88,7 +88,7 @@ describe('the appliers', () => {
 		const rules = edgeRules({ REDIRECTS: [{ from: '/keep*', to: '/gone' }] }, (p) =>
 			p.startsWith('/keep-me')
 		);
-		expect(rules.redirect(new URL('https://x.test/keep-me'))).toBeNull();
+		expect(rules.redirect(new URL('https://x.test/keep-me'))).toBeUndefined();
 		expect(rules.redirect(new URL('https://x.test/keep-this'))?.status).toBe(301);
 	});
 });
@@ -97,7 +97,7 @@ describe('the levers as settings', () => {
 	const doc = JSON.stringify([{ from: '/a', to: '/b' }]);
 
 	it('refuses a document with a problem as a whole', () => {
-		expect(leverRefusal('REDIRECTS', doc)).toBeNull();
+		expect(leverRefusal('REDIRECTS', doc)).toBeUndefined();
 		expect(leverRefusal('REDIRECTS', '[{"from":"a","to":"/b"}]')).toMatch(/1 problem/);
 		expect(ruleDocumentRefusal('RESPONSE_HEADERS', '{')).toMatch(/not valid JSON/);
 	});

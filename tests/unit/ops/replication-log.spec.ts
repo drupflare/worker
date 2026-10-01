@@ -16,9 +16,9 @@ import {
  * never in between. Every case below ends by asserting which of those two it landed on, because an
  * interrupted apply that reports a plausible generation is the failure this exists to prevent -- it
  * passes the fence, passes admission, and serves a state the primary was never in.
+ *
+ * A store with real transaction semantics and a crash it can be told to take.
  */
-
-/** a store with real transaction semantics and a crash it can be told to take */
 function fakeStore(): LogStore & {
 	rows: string[];
 	kv: Map<string, string>;
@@ -76,7 +76,7 @@ function seeded(applied: number) {
 function apply(
 	store: LogStore,
 	rec: LogRecord,
-	opts: { localSchema?: string | null; chunkSize?: number } = {}
+	opts: { localSchema?: string; chunkSize?: number } = {}
 ) {
 	return applyRecord(store, rec, { localSchema: SCHEMA, ...opts });
 }
@@ -288,7 +288,7 @@ describe('schema mismatch', () => {
 	it('refuses when the replica does not know its own schema', () => {
 		const store = seeded(5);
 		// unknown is not agreement; the whole admission machine resolves an unknown toward the primary
-		expect(apply(store, record({ generation: 6 }), { localSchema: null }).action).toBe(
+		expect(apply(store, record({ generation: 6 }), { localSchema: undefined }).action).toBe(
 			'refuse'
 		);
 	});

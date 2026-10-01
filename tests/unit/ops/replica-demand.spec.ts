@@ -110,7 +110,9 @@ describe('a lane is sized against the rows it multiplies, not only the reads it 
 
 	it('refuses growth that read contention alone would have taken', () => {
 		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3 })).toBe(4);
-		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3, rows: half })).toBe(null);
+		expect(
+			nextLaneToProvision({ windows: flat(9), provisioned: 3, rows: half })
+		).toBeUndefined();
 		// the control: the same demand under a quiet write day still grows
 		const quiet = { ...half, today: 1_000, replicatedToday: 1_000 };
 		expect(nextLaneToProvision({ windows: flat(9), provisioned: 3, rows: quiet })).toBe(4);
@@ -148,8 +150,8 @@ describe('which lane to provision next', () => {
 	});
 
 	it('stops once the pool has caught up with the demand', () => {
-		expect(nextLaneToProvision({ windows: flat(4), provisioned: 3 })).toBe(null);
-		expect(nextLaneToProvision({ windows: flat(2), provisioned: 1 })).toBe(null);
+		expect(nextLaneToProvision({ windows: flat(4), provisioned: 3 })).toBeUndefined();
+		expect(nextLaneToProvision({ windows: flat(2), provisioned: 1 })).toBeUndefined();
 	});
 
 	it('provisions one lane at a time, so a copy is never started in parallel with itself', () => {
@@ -164,19 +166,19 @@ describe('which lane to provision next', () => {
 				provisioned: 0,
 				env: { REPLICA_AUTOSCALE: '0' }
 			})
-		).toBe(null);
+		).toBeUndefined();
 	});
 
 	it('honours a lowered cap', () => {
 		const env = { REPLICA_MAX_LANES: '1' };
 		expect(nextLaneToProvision({ windows: flat(9), provisioned: 0, env })).toBe(1);
-		expect(nextLaneToProvision({ windows: flat(9), provisioned: 1, env })).toBe(null);
+		expect(nextLaneToProvision({ windows: flat(9), provisioned: 1, env })).toBeUndefined();
 	});
 
 	it('never asks for a lane on a quiet site, which is every site most of the time', () => {
-		expect(nextLaneToProvision({ windows: flat(1, DEMAND_HISTORY), provisioned: 0 })).toBe(
-			null
-		);
-		expect(nextLaneToProvision({ windows: [], provisioned: 0 })).toBe(null);
+		expect(
+			nextLaneToProvision({ windows: flat(1, DEMAND_HISTORY), provisioned: 0 })
+		).toBeUndefined();
+		expect(nextLaneToProvision({ windows: [], provisioned: 0 })).toBeUndefined();
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { base64ToBytes, bytesToBase64 } from '../../../src/db/file-store.js';
+import { base64ToBytes, bytesToBase64 } from '../../../src/db/file-store';
 import {
 	AEAD_ABYTES,
 	AEAD_KEYBYTES,
@@ -7,7 +7,7 @@ import {
 	aeadHostCall,
 	installAead,
 	type AeadReply
-} from '../../../src/drupal/sodium-fix.js';
+} from '../../../src/drupal/sodium-fix';
 
 /**
  * XChaCha20-Poly1305, and the one property a caller actually depends on.

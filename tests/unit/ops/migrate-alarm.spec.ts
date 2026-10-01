@@ -45,10 +45,10 @@ describe('migrateAlarmDelayMs', () => {
 		expect(migrateAlarmDelayMs({ ok: false, done: true }, 2)).toBe(2000);
 	});
 
-	it('chains on a null or absent step rather than going idle', () => {
-		// the caller only reaches this with a non-null pending, but defaulting to the fast path
+	it('chains on an absent step rather than going idle', () => {
+		// the caller only reaches this with a pending step, but defaulting to the fast path
 		// keeps a missing field from silently parking the chain for four minutes
-		expect(migrateAlarmDelayMs(null)).toBe(1);
+		expect(migrateAlarmDelayMs(undefined)).toBe(1);
 		expect(migrateAlarmDelayMs()).toBe(1);
 	});
 

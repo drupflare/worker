@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { discoveryUrl, readOidcSetup } from '../../../src/ops/oidc.js';
+import { discoveryUrl, readOidcSetup } from '../../../src/ops/oidc';
 
 describe('reading what an operator typed into the OIDC form', () => {
 	it('accepts an https issuer and a client id', () => {

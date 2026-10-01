@@ -12,9 +12,9 @@ import { SURFACE_PREFIX } from '../../../src/ui/admin';
  * The direction matters and is asserted both ways: an owner token is NARROWER than the flag, because
  * it is per site, and adding a route here must not remove the flag's existing reach for anything
  * that already worked.
+ *
+ * The four that moved: ordinary maintenance an owner should not need diagnostics for.
  */
-
-/** the four that moved: ordinary maintenance an owner should not need diagnostics for */
 const MOVED = ['/armfill', '/invalidate', '/bump', '/migrate'] as const;
 
 /** the two that are new, so there is no caller to keep working and no diagnostics fallback */

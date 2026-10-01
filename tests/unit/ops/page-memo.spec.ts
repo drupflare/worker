@@ -29,13 +29,13 @@ describe('the isolate page memo', () => {
 	it('answers a stored key and reports nothing for one it has not seen', () => {
 		storePageMemo('k1', page(16), 1_000);
 		expect(lookupPageMemo('k1', 1_000)?.status).toBe(200);
-		expect(lookupPageMemo('k2', 1_000)).toBeNull();
+		expect(lookupPageMemo('k2', 1_000)).toBeUndefined();
 	});
 
 	it('stops serving at the TTL the edge entry it copied carries', () => {
 		storePageMemo('k1', page(16), 1_000);
-		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS - 1)).not.toBeNull();
-		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeNull();
+		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS - 1)).toBeDefined();
+		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeUndefined();
 		// and the expired entry is gone rather than merely unserved
 		expect(pageMemoStats().entries).toBe(0);
 	});
@@ -55,7 +55,7 @@ describe('the isolate page memo', () => {
 		for (let i = 0; i <= PAGE_MEMO_ENTRIES; i++) storePageMemo(`k${i}`, page(8), 1_000);
 		// the clear keeps the page that tripped it, so the request that paid for it is not wasted
 		expect(pageMemoStats().entries).toBe(1);
-		expect(lookupPageMemo(`k${PAGE_MEMO_ENTRIES}`, 1_000)).not.toBeNull();
+		expect(lookupPageMemo(`k${PAGE_MEMO_ENTRIES}`, 1_000)).toBeDefined();
 	});
 
 	it('clears rather than growing past the byte budget', () => {
@@ -69,9 +69,9 @@ describe('the isolate page memo', () => {
 	it('refuses a page bigger than the whole budget instead of emptying itself for it', () => {
 		storePageMemo('small', page(64), 1_000);
 		storePageMemo('huge', page(PAGE_MEMO_BYTES + 1), 1_000);
-		expect(lookupPageMemo('huge', 1_000)).toBeNull();
+		expect(lookupPageMemo('huge', 1_000)).toBeUndefined();
 		// the refusal must not cost the pages already held, which a store-then-clear would
-		expect(lookupPageMemo('small', 1_000)).not.toBeNull();
+		expect(lookupPageMemo('small', 1_000)).toBeDefined();
 	});
 });
 
@@ -102,15 +102,15 @@ describe('the response headers a MEM hit returns', () => {
 	});
 
 	it('answers null for a key it does not hold', () => {
-		expect(pageMemoHeaders('missing', 1_000)).toBeNull();
+		expect(pageMemoHeaders('missing', 1_000)).toBeUndefined();
 	});
 
 	it('answers null past the TTL, agreeing with the lookup rather than outliving it', () => {
 		// the two read the same store, so a header set surviving an expired entry would serve a
 		// dead page's headers beside a fresh body
 		storePageMemo('k1', page(16), 1_000);
-		expect(pageMemoHeaders('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeNull();
-		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeNull();
+		expect(pageMemoHeaders('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeUndefined();
+		expect(lookupPageMemo('k1', 1_000 + PAGE_MEMO_TTL_MS)).toBeUndefined();
 	});
 
 	it('survives the clear that keeps the page which tripped it', () => {

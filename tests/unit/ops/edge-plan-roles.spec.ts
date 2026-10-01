@@ -58,16 +58,16 @@ describe('the role set is the key', () => {
 
 	it('only knows a role set the object reported, and forgets it on a clock', () => {
 		const at = 1_000_000;
-		expect(believedRoles(ALICE, at)).toBeNull();
+		expect(believedRoles(ALICE, at)).toBeUndefined();
 		rememberRoles(ALICE, ROLES, at);
 		expect(believedRoles(ALICE, at + ROLE_TRUST_MS - 1)).toBe(ROLES);
-		expect(believedRoles(ALICE, at + ROLE_TRUST_MS)).toBeNull();
+		expect(believedRoles(ALICE, at + ROLE_TRUST_MS)).toBeUndefined();
 	});
 
 	it('records nothing for a session with no reported role set', () => {
 		// an empty value is "the object did not say", not a role set of its own
 		rememberRoles(ALICE, '', 1_000_000);
-		expect(believedRoles(ALICE, 1_000_000)).toBeNull();
+		expect(believedRoles(ALICE, 1_000_000)).toBeUndefined();
 	});
 });
 
@@ -77,10 +77,10 @@ describe('a plan is compiled only across two different sessions', () => {
 	it('waits rather than compiling from one session alone', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		// three renders, all Alice: enough samples and not enough witnesses
-		expect(noteEdgeRender(key, PATH, shared(0), 1000, ALICE)).toBeNull();
-		expect(noteEdgeRender(key, PATH, shared(1), 1000, ALICE)).toBeNull();
-		expect(noteEdgeRender(key, PATH, shared(1), 1000, ALICE)).toBeNull();
-		expect(lookupEdgePlan(key, 1000)).toBeNull();
+		expect(noteEdgeRender(key, PATH, shared(0), 1000, ALICE)).toBeUndefined();
+		expect(noteEdgeRender(key, PATH, shared(1), 1000, ALICE)).toBeUndefined();
+		expect(noteEdgeRender(key, PATH, shared(1), 1000, ALICE)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000)).toBeUndefined();
 	});
 
 	it('completes on the next session rather than starting over', () => {
@@ -90,7 +90,7 @@ describe('a plan is compiled only across two different sessions', () => {
 		noteEdgeRender(key, PATH, shared(1), 1000, ALICE);
 		// Bob's first render is the second witness, and it is the one that completes the pair
 		const plan = noteEdgeRender(key, PATH, shared(1), 1000, BOB);
-		expect(plan).not.toBeNull();
+		expect(plan).not.toBeUndefined();
 		expect(runEdgePlan(plan as RenderPlan)).toBe(shared(1));
 	});
 
@@ -106,16 +106,16 @@ describe('a plan is compiled only across two different sessions', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		noteEdgeRender(key, PATH, personal('Alice'), 1000, ALICE);
 		noteEdgeRender(key, PATH, personal('Alice'), 1000, ALICE);
-		expect(noteEdgeRender(key, PATH, personal('Bob'), 1000, BOB)).toBeNull();
-		expect(lookupEdgePlan(key, 1000)).toBeNull();
+		expect(noteEdgeRender(key, PATH, personal('Bob'), 1000, BOB)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000)).toBeUndefined();
 	});
 
 	it('never compiles from a render with no witness at all', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		noteEdgeRender(key, PATH, shared(0), 1000);
 		noteEdgeRender(key, PATH, shared(1), 1000);
-		expect(noteEdgeRender(key, PATH, shared(1), 1000)).toBeNull();
-		expect(lookupEdgePlan(key, 1000)).toBeNull();
+		expect(noteEdgeRender(key, PATH, shared(1), 1000)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000)).toBeUndefined();
 	});
 });
 
@@ -130,9 +130,9 @@ describe('and served only to a session that has agreed with it', () => {
 
 	it('serves the two sessions that produced it, which agreed by construction', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
-		expect(compiled(key)).not.toBeNull();
-		expect(lookupEdgePlan(key, 1000, ALICE)).not.toBeNull();
-		expect(lookupEdgePlan(key, 1000, BOB)).not.toBeNull();
+		expect(compiled(key)).not.toBeUndefined();
+		expect(lookupEdgePlan(key, 1000, ALICE)).not.toBeUndefined();
+		expect(lookupEdgePlan(key, 1000, BOB)).not.toBeUndefined();
 	});
 
 	/**
@@ -145,14 +145,14 @@ describe('and served only to a session that has agreed with it', () => {
 	it('refuses a session that has never rendered this page', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		compiled(key);
-		expect(lookupEdgePlan(key, 1000, CAROL)).toBeNull();
+		expect(lookupEdgePlan(key, 1000, CAROL)).toBeUndefined();
 	});
 
 	it('serves that session once its own render has agreed', () => {
 		const key = edgePlanKey(SITE, 1, ROLES, PATH);
 		compiled(key);
-		expect(noteEdgeRender(key, PATH, shared(1), 1000, CAROL)).toBeNull();
-		expect(lookupEdgePlan(key, 1000, CAROL)).not.toBeNull();
+		expect(noteEdgeRender(key, PATH, shared(1), 1000, CAROL)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000, CAROL)).not.toBeUndefined();
 	});
 
 	it('drops the plan for EVERYONE when a session disagrees', () => {
@@ -160,8 +160,8 @@ describe('and served only to a session that has agreed with it', () => {
 		compiled(key);
 		// Carol's page differs, which is evidence the shared region is not shared
 		noteEdgeRender(key, PATH, personal('Carol'), 1000, CAROL);
-		expect(lookupEdgePlan(key, 1000, CAROL)).toBeNull();
-		expect(lookupEdgePlan(key, 1000, ALICE)).toBeNull();
-		expect(lookupEdgePlan(key, 1000)).toBeNull();
+		expect(lookupEdgePlan(key, 1000, CAROL)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000, ALICE)).toBeUndefined();
+		expect(lookupEdgePlan(key, 1000)).toBeUndefined();
 	});
 });

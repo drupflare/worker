@@ -63,7 +63,7 @@ describe('the restore alarm decision, whose halt branch is the anti-starvation g
 	it('re-arms once more when the restore closed, so the blocked lanes get their own firing', () => {
 		// while the cursor is open ensurePhp() throws, so migration, updb and fill can each do nothing
 		// but raise. The firing that finishes the restore is what unblocks them
-		const d = restoreAlarmDecision(8, null);
+		const d = restoreAlarmDecision(8, undefined);
 		expect(d.action).toBe('unblocked');
 		expect(d.delayMs).toBe(1);
 	});
@@ -169,7 +169,7 @@ describe('the vrzno handle table is read off the binary by shape, not by hope', 
 		const found = await inObject(stub, (site) =>
 			site.handleIndex({ targets: fakeTargets() } as never)
 		);
-		expect(found).not.toBeNull();
+		expect(found).toBeDefined();
 	});
 
 	it('refuses a binary with no table rather than restoring against nothing', async () => {
@@ -181,8 +181,8 @@ describe('the vrzno handle table is read off the binary by shape, not by hope', 
 				targets: { byObject: { set() {} }, byInteger: { set() {} }, id: 0 }
 			} as never)
 		}));
-		expect(out.absent).toBeNull();
-		expect(out.halfShaped).toBeNull();
+		expect(out.absent).toBeUndefined();
+		expect(out.halfShaped).toBeUndefined();
 	});
 
 	it('pins every handle the interpreter mints, because the table holds WeakRefs', async () => {
@@ -266,7 +266,7 @@ describe('classifying an outcome, where all three historical bugs lived', () => 
 	});
 
 	it('does not mistake an idle lane for progress', () => {
-		expect(classifyAlarmOutcome(null)).toBe('idle');
+		expect(classifyAlarmOutcome(undefined)).toBe('idle');
 		expect(classifyAlarmOutcome(undefined)).toBe('idle');
 		expect(classifyAlarmOutcome({ skipped: 'migration incomplete' })).toBe('idle');
 		// `filled: null` is the fill lane saying the queue was empty

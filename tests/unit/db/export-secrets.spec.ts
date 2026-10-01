@@ -13,9 +13,9 @@ import {
  * existed, and three later ones could never have matched it: the SMTP password sits inside
  * `site_smtp_settings` as plaintext JSON, and the git provider token and webhook signing secret are
  * keyed by remote id, so their names are computed and no fixed string can name them.
+ *
+ * The row shape the dumper reads: `hex(k)` under `h<i>`, with `k` at index 0.
  */
-
-/** the row shape the dumper reads: `hex(k)` under `h<i>`, with `k` at index 0 */
 function metaRow(key: string): Record<string, unknown> {
 	const hex = [...new TextEncoder().encode(key)]
 		.map((b) => b.toString(16).padStart(2, '0'))

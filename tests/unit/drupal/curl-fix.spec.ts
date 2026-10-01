@@ -12,9 +12,9 @@ import { CURL_FIX, CURL_INERT, CURL_OPTIONS } from '../../../src/drupal/curl-fix
  * defined here but absent from `CurlShim::OPTIONS` would be accepted by a caller and then refused
  * at runtime; the reverse leaves a mapped option no caller can name. Both are the "silently
  * ignored option" failure `CurlShim`'s own docblock exists to prevent.
+ *
+ * The option ids `CurlShim::OPTIONS` maps, transcribed from the sibling.
  */
-
-/** the option ids `CurlShim::OPTIONS` maps, transcribed from the sibling */
 const SHIM_OPTION_IDS = [
 	10002, 10015, 10023, 10036, 47, 19913, 52, 80, 44, 42, 13, 155, 78, 156, 64, 81, 10065, 84, 32,
 	10102, 75, 99, 10018, 10005, 107, 10004, 20079, 20011, 2

@@ -11,8 +11,8 @@ import {
 	sessionCsrf,
 	unknownContext,
 	unservableSlots
-} from '../../../src/ops/render-plan.js';
-import { cacheTagsIn } from '../../../src/site-do.js';
+} from '../../../src/ops/render-plan';
+import { cacheTagsIn } from '../../../src/site-do';
 
 /**
  * The compiled render plan, its slot classifier and its VM.
@@ -72,21 +72,21 @@ describe('the session csrf token', () => {
 		const plan = compilePlan(page(TOKEN_A), page(TOKEN_B), '/');
 		for (const token of [TOKEN_A, TOKEN_B, randomBuildToken()]) {
 			const values = fillSlots(plan, { csrf: token });
-			expect(values).not.toBeNull();
+			expect(values).not.toBeUndefined();
 			expect(runPlan(plan, values as Record<string, string>)).toBe(page(token));
 		}
 	});
 
 	it('refuses to run without one rather than inventing a token Drupal would reject', () => {
 		const plan = compilePlan(page(TOKEN_A), page(TOKEN_B), '/');
-		expect(fillSlots(plan)).toBeNull();
-		expect(fillSlots(plan, { csrf: null })).toBeNull();
-		expect(fillSlots(plan, { csrf: 'too-short' })).toBeNull();
+		expect(fillSlots(plan)).toBeUndefined();
+		expect(fillSlots(plan, { csrf: undefined })).toBeUndefined();
+		expect(fillSlots(plan, { csrf: 'too-short' })).toBeUndefined();
 	});
 
 	it('reads the token out of a render, which is the only place it may come from', () => {
 		expect(sessionCsrf(page(TOKEN_A))).toBe(TOKEN_A);
-		expect(sessionCsrf('<html><body>no session here</body></html>')).toBeNull();
+		expect(sessionCsrf('<html><body>no session here</body></html>')).toBeUndefined();
 	});
 
 	it('leaves a base64url run with no logout marker opaque', () => {
@@ -164,21 +164,21 @@ describe('a slot with no generator refuses the whole plan', () => {
 		const plan = compilePlan(A, B, '/p');
 		expect(plan.slots.slot0).toEqual({ kind: 'unknown', bytes: 4 });
 		expect(unservableSlots(plan)).toEqual(['slot0']);
-		expect(fillSlots(plan)).toBeNull();
+		expect(fillSlots(plan)).toBeUndefined();
 	});
 
 	it('refuses when the two renders differ in length inside the span', () => {
 		// the runs cannot line up, so the span stays opaque rather than being split at a guess
 		const plan = compilePlan('<p>abc</p>', '<p>abcdef</p>', '/p');
 		expect(unservableSlots(plan).length).toBe(1);
-		expect(fillSlots(plan)).toBeNull();
+		expect(fillSlots(plan)).toBeUndefined();
 	});
 
 	it('refuses a base64url pair that is not a form_build_id', () => {
 		const t = randomBuildToken();
 		const u = randomBuildToken();
 		const shape = (x: string) => `<i>${x.toLowerCase()}</i><b>${x}</b>`;
-		expect(fillSlots(compilePlan(shape(t), shape(u), '/p'))).toBeNull();
+		expect(fillSlots(compilePlan(shape(t), shape(u), '/p'))).toBeUndefined();
 	});
 });
 
@@ -262,7 +262,7 @@ describe('htmlId is Drupal Html::getId, not toLowerCase', () => {
 		const b = 'e__f-'.padEnd(43, 'g');
 		const plan = compilePlan(form(a), form(b), '/user/login');
 		expect(planExplainsBoth(plan, form(a), form(b))).toBe(true);
-		expect(fillSlots(plan)).not.toBeNull();
+		expect(fillSlots(plan)).not.toBeUndefined();
 	});
 });
 
@@ -403,7 +403,7 @@ describe('a page carrying two dynamic values compiles to two regions, not one', 
 		const page = (v: string) => `<html><body><span data-hash="${v}">x</span></body></html>`;
 		const plan = compilePlan(page(hex('a1b2c3')), page(hex('d4e5f6')), '/p');
 		expect(unservableSlots(plan).length).toBe(1);
-		expect(fillSlots(plan)).toBeNull();
+		expect(fillSlots(plan)).toBeUndefined();
 	});
 
 	it('reports the markup either side of a refusal, and nothing for a named slot', () => {

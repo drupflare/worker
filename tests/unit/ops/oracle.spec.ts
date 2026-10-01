@@ -116,13 +116,13 @@ describe('and it falls back rather than failing closed', () => {
 	it('treats an unparseable or shapeless entry as a miss', async () => {
 		for (const bad of ['not json', { version: '1' }, { verdict: 'installable' }]) {
 			const hit = await readOracle({ ORACleKV: null } as never, 'a/b', CORE);
-			expect(hit).toBeNull();
+			expect(hit).toBeUndefined();
 			const hit2 = await readOracle(
 				{ ORACLE_KV: kv({ [oracleKey('a/b')]: bad }) },
 				'a/b',
 				CORE
 			);
-			expect(hit2, JSON.stringify(bad)).toBeNull();
+			expect(hit2, JSON.stringify(bad)).toBeUndefined();
 		}
 	});
 
@@ -132,7 +132,7 @@ describe('and it falls back rather than failing closed', () => {
 				throw new Error('KV unavailable');
 			}
 		};
-		await expect(readOracle({ ORACLE_KV: broken }, 'a/b', CORE)).resolves.toBeNull();
+		await expect(readOracle({ ORACLE_KV: broken }, 'a/b', CORE)).resolves.toBeUndefined();
 	});
 });
 

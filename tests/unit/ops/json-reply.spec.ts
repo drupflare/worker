@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseJsonReply } from '../../../src/ops/json-reply.js';
+import { parseJsonReply } from '../../../src/ops/json-reply';
 
 describe('parseJsonReply', () => {
 	it('reads a bare reply', () => {

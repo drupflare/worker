@@ -44,8 +44,8 @@ describe('the payload downgrade', () => {
 	});
 
 	it('refuses a payload it cannot read', () => {
-		expect(speculative('not json')).toBeNull();
-		expect(speculative(JSON.stringify({ nope: 1 }))).toBeNull();
+		expect(speculative('not json')).toBeUndefined();
+		expect(speculative(JSON.stringify({ nope: 1 }))).toBeUndefined();
 	});
 
 	it('does not mutate what the caller still holds', () => {

@@ -23,9 +23,9 @@ import {
  * of what follows asserts that a conflict is named, and that nothing degrades into a false yes --
  * a network failure, an unjudgeable constraint and a missing dependency must each land somewhere other
  * than `installable`.
+ *
+ * A p2 payload in the shape Packagist actually returns: newest first, under `packages[name]`.
  */
-
-/** a p2 payload in the shape Packagist actually returns: newest first, under `packages[name]` */
 function p2(name: string, versions: Array<{ version: string; require?: Record<string, string> }>) {
 	return { packages: { [name]: versions } };
 }

@@ -14,9 +14,9 @@ import { NOW_S, SCHEMA, type Sql, WATCHDOG_ROWS, seed, withSql } from '../../hel
  * lane -- and that stub is doing real work: `cronStep` decides whether to enter PHP AT ALL from
  * a SQL read, so the assertion "no PHP was entered" is the one that proves an empty queue costs
  * one read rather than a 4-second boot.
+ *
+ * The same DDL with `queue` left out, for the missing-table case.
  */
-
-/** the same DDL with `queue` left out, for the missing-table case */
 const SCHEMA_WITHOUT_QUEUE = SCHEMA.filter(
 	(ddl) => !/CREATE TABLE IF NOT EXISTS queue\b/.test(ddl)
 );

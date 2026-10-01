@@ -28,9 +28,9 @@ import { driveAlarms, freshSite, inObject, namedSite } from '../../helpers/serve
  * survives an eviction, and every interesting failure is a SQL-level one: the 2,199,995-byte record
  * ceiling, blobs coming back as ArrayBuffer rather than Uint8Array, `LIKE` treating `_` as a
  * wildcard. A stand-in would agree with every assertion here and prove none of them.
+ *
+ * Deterministic bytes, so a reassembly error shows up as a wrong value rather than a wrong length.
  */
-
-/** deterministic bytes, so a reassembly error shows up as a wrong value rather than a wrong length */
 function bytes(n: number, seed = 0): Uint8Array {
 	const out = new Uint8Array(n);
 	for (let i = 0; i < n; i++) out[i] = (i * 31 + seed) & 0xff;
@@ -51,13 +51,13 @@ describe('normalising a stream uri, because one file must have one key', () => {
 	it('REFUSES traversal rather than resolving it', () => {
 		// resolving would let `public://../private/secret` address another scheme's bytes, and no
 		// legitimate Drupal uri needs a parent segment
-		expect(normaliseUri('public://../private/secret.txt')).toBeNull();
-		expect(normaliseUri('public://a/../../b')).toBeNull();
+		expect(normaliseUri('public://../private/secret.txt')).toBeUndefined();
+		expect(normaliseUri('public://a/../../b')).toBeUndefined();
 	});
 
 	it('refuses anything that is not a stream uri', () => {
 		for (const bad of ['', 'public:/a', '/var/www/a.png', 'public', 'a.png']) {
-			expect(normaliseUri(bad), bad).toBeNull();
+			expect(normaliseUri(bad), bad).toBeUndefined();
 		}
 	});
 });
@@ -140,8 +140,8 @@ describe('storing and reading back, against real DO SQL', () => {
 				stat: statFile(site.sql, 'public://nope.txt')
 			};
 		});
-		expect(got.body).toBeNull();
-		expect(got.stat).toBeNull();
+		expect(got.body).toBeUndefined();
+		expect(got.stat).toBeUndefined();
 	});
 
 	it('SHRINKING an overwrite leaves no orphan chunks behind', async () => {
@@ -181,7 +181,7 @@ describe('storing and reading back, against real DO SQL', () => {
 			const lengths: number[] = [];
 			for (let seq = 0; ; seq++) {
 				const chunk = getFileChunk(site.sql, 'public://z.bin', seq);
-				if (chunk === null) break;
+				if (chunk === undefined) break;
 				lengths.push(chunk.length);
 			}
 			return lengths;
@@ -236,7 +236,7 @@ describe('deleting and moving', () => {
 			};
 		});
 		expect(got.moved).toBe(true);
-		expect(got.gone).toBeNull();
+		expect(got.gone).toBeUndefined();
 		expect(new Uint8Array(got.body)).toEqual(bytes(2_500, 6));
 	});
 
@@ -488,7 +488,7 @@ describe('what may leave the object, and what may never', () => {
 		// failure this module is arranged to prevent
 		expect(mirrorKey('public://a.png')).toBe('f/site/public/a.png');
 		expect(mirrorKey('private://a.png')).toBe('f/site/private/a.png');
-		expect(mirrorKey('nonsense')).toBeNull();
+		expect(mirrorKey('nonsense')).toBeUndefined();
 	});
 
 	/**
@@ -564,7 +564,7 @@ describe('draining the queue to R2', () => {
 		// configuration state and not an error
 		const out = await inObject(freshSite(), async (site) => {
 			putFile(site.sql, 'public://a.bin', bytes(16), { nowMs: 1 });
-			return drainMirrors(site.sql, null);
+			return drainMirrors(site.sql, undefined);
 		});
 		expect(out.noBucket).toBe(true);
 		expect(out.mirrored).toBe(0);
@@ -573,7 +573,7 @@ describe('draining the queue to R2', () => {
 	it('leaves the queue intact when there is no bucket, so nothing is lost', async () => {
 		const left = await inObject(freshSite(), async (site) => {
 			putFile(site.sql, 'public://a.bin', bytes(16), { nowMs: 1 });
-			await drainMirrors(site.sql, null);
+			await drainMirrors(site.sql, undefined);
 			return pendingMirrors(site.sql).length;
 		});
 		expect(left).toBe(1);

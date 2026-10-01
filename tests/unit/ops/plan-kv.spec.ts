@@ -52,7 +52,10 @@ describe('resolvePlan', () => {
 
 	it('falls back to the var when no namespace is bound at all', async () => {
 		// the shipping default: CONFIG_KV is optional, so an unprovisioned namespace is normal
-		expect(await resolvePlan({ PLAN: 'paid' }, null)).toEqual({ plan: 'paid', source: 'var' });
+		expect(await resolvePlan({ PLAN: 'paid' }, undefined)).toEqual({
+			plan: 'paid',
+			source: 'var'
+		});
 	});
 
 	it('SURVIVES a KV error rather than failing the request', async () => {
@@ -78,7 +81,7 @@ describe('resolvePlan', () => {
 	});
 
 	it('reports `default` when neither KV nor the var says anything', async () => {
-		expect(await resolvePlan({}, null)).toEqual({ plan: 'free', source: 'default' });
+		expect(await resolvePlan({}, undefined)).toEqual({ plan: 'free', source: 'default' });
 	});
 
 	it('memoises, so KV is not read once per request', async () => {
@@ -185,7 +188,7 @@ describe('the lever overrides, and the boundary they must not cross', () => {
 	});
 
 	it('yields nothing when no namespace is bound', async () => {
-		expect(await resolveSettings(null)).toEqual({});
+		expect(await resolveSettings(undefined)).toEqual({});
 	});
 
 	it('memoises on the same clock as the plan', async () => {
@@ -309,7 +312,7 @@ describe('writing the levers', () => {
 		expect(held.get(PLAN_KV_KEY)).toBe('paid');
 		expect(await resolvePlan({ PLAN: 'free' }, kv)).toEqual({ plan: 'paid', source: 'kv' });
 
-		await writePlan(kv, null);
+		await writePlan(kv, undefined);
 		// an empty override is not `free`; it defers, so the deployed var comes back into force
 		expect(await resolvePlan({ PLAN: 'paid' }, kv)).toEqual({ plan: 'paid', source: 'var' });
 	});
@@ -346,17 +349,17 @@ describe('writing the levers', () => {
 	});
 
 	it('accepts every domain kind at its edges', () => {
-		expect(leverRefusal('RENDER_BUDGET_MS', '0')).toBeNull();
-		expect(leverRefusal('RENDER_BUDGET_MS', '60000')).toBeNull();
+		expect(leverRefusal('RENDER_BUDGET_MS', '0')).toBeUndefined();
+		expect(leverRefusal('RENDER_BUDGET_MS', '60000')).toBeUndefined();
 		expect(leverRefusal('RENDER_BUDGET_MS', '60001')).toContain('between');
 		expect(leverRefusal('RENDER_BUDGET_MS', '-1')).toContain('whole number');
-		expect(leverRefusal('EDGE_PLAN', '0')).toBeNull();
-		expect(leverRefusal('MAIL_TRANSPORT', 'smtp')).toBeNull();
-		expect(leverRefusal('MEMORY_CACHE_BINS', 'none')).toBeNull();
-		expect(leverRefusal('MEMORY_CACHE_BINS', 'dynamic_page_cache, menu')).toBeNull();
+		expect(leverRefusal('EDGE_PLAN', '0')).toBeUndefined();
+		expect(leverRefusal('MAIL_TRANSPORT', 'smtp')).toBeUndefined();
+		expect(leverRefusal('MEMORY_CACHE_BINS', 'none')).toBeUndefined();
+		expect(leverRefusal('MEMORY_CACHE_BINS', 'dynamic_page_cache, menu')).toBeUndefined();
 		// empty clears the override, so it is never out of domain
-		expect(leverRefusal('OPCACHE_MODE', '')).toBeNull();
-		expect(leverRefusal('OPCACHE_MODE', null)).toBeNull();
+		expect(leverRefusal('OPCACHE_MODE', '')).toBeUndefined();
+		expect(leverRefusal('OPCACHE_MODE', null)).toBeUndefined();
 	});
 
 	it('names a domain for every lever, so the form never has to guess one', () => {
@@ -370,6 +373,6 @@ describe('writing the levers', () => {
 		const writable = { get: async () => null, put: async () => {} };
 		expect(canWriteKv(readOnly)).toBe(false);
 		expect(canWriteKv(writable)).toBe(true);
-		expect(canWriteKv(null)).toBe(false);
+		expect(canWriteKv(undefined)).toBe(false);
 	});
 });

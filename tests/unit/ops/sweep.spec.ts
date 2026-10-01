@@ -31,22 +31,6 @@ import {
 	type SweepSql
 } from '../../../src/ops/sweep';
 
-/**
- * The governor, and the enumeration that feeds it.
- *
- * The sweep is the easy half. Every assertion here that matters is about a bound: the floor it will
- * not start below, the share of the day it may spend, the share of what is left it may take at once,
- * and the fact that it queues rather than renders.
- */
-
-/**
- * A stand-in for the object's SQL surface.
- *
- * Tables are plain arrays and the six statements the module issues are matched by prefix, which is
- * the same trade `page-mirror.spec.ts` takes: the contract is the statements, not the engine.
- * `tests/node/sweep-enumerate.spec.ts` drives the identical calls against real SQLite, so a SQL
- * mistake this cannot see fails there.
- */
 type Row = Record<string, unknown>;
 
 /** the three `cfw_*` tables are always present, so a spec may read them back without a guard */
@@ -57,6 +41,20 @@ type FakeTables = {
 	[table: string]: Row[] | undefined;
 };
 
+/**
+ * The governor, and the enumeration that feeds it.
+ *
+ * The sweep is the easy half. Every assertion here that matters is about a bound: the floor it will
+ * not start below, the share of the day it may spend, the share of what is left it may take at once,
+ * and the fact that it queues rather than renders.
+ *
+ * A stand-in for the object's SQL surface.
+ *
+ * Tables are plain arrays and the six statements the module issues are matched by prefix, which is
+ * the same trade `page-mirror.spec.ts` takes: the contract is the statements, not the engine.
+ * `tests/node/sweep-enumerate.spec.ts` drives the identical calls against real SQLite, so a SQL
+ * mistake this cannot see fails there.
+ */
 function fakeSql(tables: FakeTables): SweepSql & { tables: FakeTables } {
 	return {
 		tables,
@@ -296,7 +294,7 @@ describe('orderCandidates', () => {
 	it('falls back to recency when nothing has been viewed', () => {
 		const older = candidate({ path: '/older', changedMs: 1 });
 		const newer = candidate({ path: '/newer', changedMs: 2 });
-		expect(orderCandidates([older, newer], null).map((c) => c.path)).toEqual([
+		expect(orderCandidates([older, newer], undefined).map((c) => c.path)).toEqual([
 			'/newer',
 			'/older'
 		]);
@@ -305,12 +303,15 @@ describe('orderCandidates', () => {
 	it('breaks a recency tie by depth, so the front page precedes a deep one', () => {
 		const deep = candidate({ path: '/a/b/c', depth: 3 });
 		const front = candidate({ path: '/', depth: 0 });
-		expect(orderCandidates([deep, front], null).map((c) => c.path)).toEqual(['/', '/a/b/c']);
+		expect(orderCandidates([deep, front], undefined).map((c) => c.path)).toEqual([
+			'/',
+			'/a/b/c'
+		]);
 	});
 
 	it('is deterministic when everything ties', () => {
 		const all = [candidate({ path: '/b' }), candidate({ path: '/a' })];
-		expect(orderCandidates(all, null).map((c) => c.path)).toEqual(['/a', '/b']);
+		expect(orderCandidates(all, undefined).map((c) => c.path)).toEqual(['/a', '/b']);
 	});
 });
 
@@ -501,7 +502,7 @@ describe('sweepEnabled', () => {
 		// it was off, and the reason was the account-wide quota rather than caution. That is priced
 		// now rather than overridden: an unasked sweep takes a fifth of the share, so it takes 20
 		// sweeping sites to saturate the account where it took 4
-		expect(sweepEnabled(null)).toBe(true);
+		expect(sweepEnabled(undefined)).toBe(true);
 		expect(sweepEnabled({})).toBe(true);
 		expect(sweepEnabled({ SWEEP: '' })).toBe(true);
 		expect(sweepEnabled({ SWEEP: '1' })).toBe(true);
@@ -512,7 +513,7 @@ describe('sweepEnabled', () => {
 	it('spends less when nobody asked for it than when an operator did', () => {
 		// the whole safety argument is this asymmetry, so assert BOTH sides rather than the default
 		// alone: a default that matched the asked-for share would reintroduce the refusal's cause
-		expect(sweepRowsFraction(null)).toBe(UNASKED_ROWS_FRACTION);
+		expect(sweepRowsFraction(undefined)).toBe(UNASKED_ROWS_FRACTION);
 		expect(sweepRowsFraction({})).toBe(UNASKED_ROWS_FRACTION);
 		expect(sweepRowsFraction({ SWEEP: '1' })).toBe(SWEEP_ROWS_FRACTION);
 		expect(UNASKED_ROWS_FRACTION).toBeLessThan(SWEEP_ROWS_FRACTION);
@@ -533,7 +534,7 @@ describe('sweepStep', () => {
 	const deps = (sql: SweepSql, over: Record<string, unknown> = {}) => ({
 		sql,
 		meters: meters(),
-		hits: null,
+		hits: undefined,
 		isUnstorable: () => false,
 		batch: 3,
 		generation: 1,

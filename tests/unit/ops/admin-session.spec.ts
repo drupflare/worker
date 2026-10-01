@@ -50,20 +50,20 @@ describe('reading the token a browser presented', () => {
 	});
 
 	it('answers null for absent, empty and malformed headers', () => {
-		expect(adminCookieToken(null)).toBe(null);
-		expect(adminCookieToken(undefined)).toBe(null);
-		expect(adminCookieToken('')).toBe(null);
-		expect(adminCookieToken('other=1')).toBe(null);
+		expect(adminCookieToken(null)).toBeUndefined();
+		expect(adminCookieToken(undefined)).toBeUndefined();
+		expect(adminCookieToken('')).toBeUndefined();
+		expect(adminCookieToken('other=1')).toBeUndefined();
 		// a bare name with no `=` must not be read as an empty token
-		expect(adminCookieToken(ADMIN_COOKIE)).toBe(null);
+		expect(adminCookieToken(ADMIN_COOKIE)).toBeUndefined();
 		// and an explicitly empty value is not a credential either
-		expect(adminCookieToken(`${ADMIN_COOKIE}=`)).toBe(null);
-		expect(adminCookieToken(`${ADMIN_COOKIE}=   `)).toBe(null);
+		expect(adminCookieToken(`${ADMIN_COOKIE}=`)).toBeUndefined();
+		expect(adminCookieToken(`${ADMIN_COOKIE}=   `)).toBeUndefined();
 	});
 
 	it('does not match a cookie whose name merely contains the admin one', () => {
-		expect(adminCookieToken(`not_${ADMIN_COOKIE}=x`)).toBe(null);
-		expect(adminCookieToken(`${ADMIN_COOKIE}_extra=x`)).toBe(null);
+		expect(adminCookieToken(`not_${ADMIN_COOKIE}=x`)).toBeUndefined();
+		expect(adminCookieToken(`${ADMIN_COOKIE}_extra=x`)).toBeUndefined();
 	});
 
 	it('decodes a token that had to be escaped', () => {
@@ -103,7 +103,7 @@ describe('signing out', () => {
 		const line = clearedAdminCookie(true);
 		expect(line.startsWith(`${ADMIN_COOKIE}=;`)).toBe(true);
 		expect(attrs(line)).toContain('max-age=0');
-		expect(adminCookieToken(line.split(';')[0] as string)).toBe(null);
+		expect(adminCookieToken(line.split(';')[0] as string)).toBeUndefined();
 	});
 
 	it('matches the signed-in cookie on every attribute that decides which one it replaces', () => {
@@ -126,14 +126,14 @@ describe('it cannot be confused with a Drupal login', () => {
 		// and an admin cookie read as one would route an operator through the authenticated tier
 		const header = adminSessionCookie(TOKEN, true).split(';')[0] as string;
 		expect(hasSessionCookie(header)).toBe(false);
-		expect(sessionCookieValue(header)).toBe(null);
+		expect(sessionCookieValue(header)).toBeUndefined();
 		expect(ADMIN_COOKIE.startsWith('SESS')).toBe(false);
 		expect(ADMIN_COOKIE.startsWith('SSESS')).toBe(false);
 	});
 
 	it('and a real Drupal session is not read as an admin credential', () => {
 		const drupal = 'SESS151749d32e3fc313fb079916b2be1784=a1e6dc0e3014b54559ced460160a32bb';
-		expect(adminCookieToken(drupal)).toBe(null);
+		expect(adminCookieToken(drupal)).toBeUndefined();
 		expect(hasSessionCookie(drupal)).toBe(true);
 	});
 });

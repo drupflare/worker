@@ -29,6 +29,8 @@ import {
 	updbStep
 } from '../../../src/ops/updb';
 
+// #region the real Durable Object, and a real Drupal-shaped schema
+
 /**
  * Ported from `scripts/test-updb.mjs` (364 hand-rolled assertions), and as with
  * `cron-gc.spec.ts` the point of the port is the FIXTURE.
@@ -67,11 +69,7 @@ import {
  * The most valuable block is `the chain cannot half-apply silently`: for every way a unit can
  * fail it asserts the run ends in a phase that is durable, named, still fenced by maintenance
  * mode, and pointing at the unit that failed.
- */
-
-// #region the real Durable Object, and a real Drupal-shaped schema
-
-/**
+ *
  * The `ctx.storage.sql` surface `src/ops/updb.js` consumes.
  *
  * Written out rather than left loose because the module is untyped JS, so a value off it
@@ -311,10 +309,10 @@ type Abandon = { ok: boolean; reason?: string; was?: string | null };
 
 type Token = { runId: string; seq: number; attempts: number; issuedAt: number };
 type Holder = {
-	get: () => Token | null;
+	get: () => Token | undefined;
 	set: (t: Token) => void;
 	clear: () => void;
-	peek: () => Token | null;
+	peek: () => Token | undefined;
 };
 
 type Meters = { rowsWritten: number; statements: number };
@@ -345,14 +343,14 @@ const beat = async (deps: Deps, options: object = {}) => updbStep(deps, options)
 
 /** a token holder the spec owns, so an eviction is simulated by handing over a fresh one */
 function holder(): Holder {
-	let v: Token | null = null;
+	let v: Token | undefined;
 	return {
 		get: () => v,
 		set: (x) => {
 			v = x;
 		},
 		clear: () => {
-			v = null;
+			v = undefined;
 		},
 		peek: () => v
 	};
@@ -543,7 +541,7 @@ describe('serializedScalar: unknown must beat incorrect', () => {
 		['a truncated int', 'i:11201'],
 		['a string whose byte length disagrees with its prefix', 's:2:"abc";']
 	])('refuses %s', (_label, blob) => {
-		expect(serializedScalar(blob)).toBeNull();
+		expect(serializedScalar(blob)).toBeUndefined();
 	});
 
 	// the prefix is BYTES, so a two-byte one-character string is correct, not corrupt.
@@ -565,14 +563,14 @@ describe('serializedScalar: unknown must beat incorrect', () => {
 });
 
 describe('the JS-only precondition reads, against the real engine', () => {
-	it('reads a schema version out of key_value, and null for an absent module', async () => {
+	it('reads a schema version out of key_value, and undefined for an absent module', async () => {
 		const [system, missing] = await withSite(({ sql }) => {
 			seedSite(sql);
 			return [readSchemaVersion(sql, 'system'), readSchemaVersion(sql, 'nope')];
 		});
 		expect(system).toBe(11100);
-		// an absent module is null, NOT 0: 0 is a real schema version
-		expect(missing).toBeNull();
+		// an absent module is undefined, NOT 0: 0 is a real schema version
+		expect(missing).toBeUndefined();
 	});
 
 	it('reads maintenance mode off a seeded site', async () => {
@@ -611,8 +609,8 @@ describe('the JS-only precondition reads, against the real engine', () => {
 		expect(out.badPrefix).toBe(false);
 		expect(out.exact).toBe(true);
 		expect(out.shorter).toBe(false);
-		// a non-array registry blob is null so the gate refuses instead of guessing
-		expect(out.notAnArray).toBeNull();
+		// a non-array registry blob is undefined so the gate refuses instead of guessing
+		expect(out.notAnArray).toBeUndefined();
 	});
 
 	// CONTROL: a substring search without the length prefix WOULD match the shorter name, so
@@ -623,11 +621,11 @@ describe('the JS-only precondition reads, against the real engine', () => {
 		).toBe(true);
 	});
 
-	it('reads maintenance as null when there is no key_value table at all', async () => {
+	it('reads maintenance as undefined when there is no key_value table at all', async () => {
 		// an unmigrated site has no key_value; reading that as "off" would let the gate think
 		// the fence was down and refuse for the wrong reason
 		const got = await withSite(({ sql }) => readMaintenanceMode(sql));
-		expect(got).toBeNull();
+		expect(got).toBeUndefined();
 	});
 
 	it("reads an absent ROW as off, which is Drupal's own default", async () => {
@@ -867,14 +865,14 @@ describe('the two-beat rhythm, and the cursor advancing', () => {
 		expect(out.afterClaim.attempts).toBe(1);
 		// the claim beat commits the claim and NOTHING else
 		expect(out.afterClaim.cursor).toBe(0);
-		expect(out.afterClaim.token).not.toBeNull();
+		expect(out.afterClaim.token).toBeDefined();
 
 		expect(out.b2.beat).toBe('run');
 		expect(out.b2.ran).toBe(true);
 		expect(out.afterRun.state).toBe('done');
 		expect(out.afterRun.cursor).toBe(1);
 		// single use: consumed before the interpreter was entered
-		expect(out.afterRun.token).toBeNull();
+		expect(out.afterRun.token).toBeUndefined();
 		expect(out.afterRun.maint).toBe(true);
 
 		expect(out.run.phase).toBe('complete');
@@ -1845,13 +1843,9 @@ describe('PHP fragments: the mistakes that break the bundle', () => {
 		expect((fragments[name]!.match(/echo json_encode\(/g) ?? []).length).toBe(1);
 	});
 
-	// eval'd through pib_run, so a top-level `use` is a parse error
-	it.each(names)('%s has no top-level use statement', (name) => {
-		expect(/^use\s+\\?[A-Z]/m.test(fragments[name]!)).toBe(false);
-	});
-
+	// a leading `use` is fine through pib_run; `php-fragments.spec.ts` lints that these parse
 	it.each(names)('%s catches Throwable at the top level', (name) => {
-		expect(fragments[name]).toContain('catch (\\Throwable $e)');
+		expect(/^\} catch \(Throwable \$e\)/m.test(fragments[name]!)).toBe(true);
 	});
 
 	describe('the update runner, which a previous round got wrong', () => {
@@ -1868,7 +1862,7 @@ describe('PHP fragments: the mistakes that break the bundle', () => {
 			['finished seeded to 1', "'finished' => 1"],
 			[
 				'update_do_one with the dependency map',
-				"update_do_one($module, $number, array_values($u['depMap']), $context)"
+				"update_do_one($module, (string) $number, array_values($u['depMap']), $context)"
 			],
 			['the sandbox serialized to base64', 'base64_encode($serialized)'],
 			['the installed version before', 'installedBefore'],

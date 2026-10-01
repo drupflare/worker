@@ -14,9 +14,9 @@ import { describe, expect, it } from 'vitest';
  * over. The one thing it does NOT do is distinguish `12345` from `'12345'`, so the
  * string-stays-string cases assert on `typeof` explicitly -- that is the case the old
  * `marshal()` could not express and the reason the codec was written.
+ *
+ * Round-trips a value and asserts it comes back structurally identical.
  */
-
-/** round-trips a value and asserts it comes back structurally identical */
 const trip = <T>(value: T): unknown => decode(encode(value));
 
 describe('codec: values that cross natively', () => {

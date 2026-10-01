@@ -47,9 +47,9 @@ import { describe, expect, it } from 'vitest';
  * is not a substitute for a build. If someone wants `PHP_INT_SIZE === 8` anyway, the build is the
  * only thing that settles what it costs in practice -- but it now has to argue past a measured 33%
  * rather than past an assumption that pointers were the problem.
+ *
+ * wasm32: pointers and size_t are 4 bytes, a double is 8, alignment equals size up to 8.
  */
-
-/** wasm32: pointers and size_t are 4 bytes, a double is 8, alignment equals size up to 8 */
 const PTR = 4;
 const SIZE_T = 4;
 const DOUBLE = 8;

@@ -83,7 +83,6 @@ describe('planProfile', () => {
 		for (const PLAN of [undefined, '', 'free', 'paidd', 'Paid ', 'pro', '1']) {
 			expect(planProfile({ PLAN }), String(PLAN)).toBe(FREE_PROFILE);
 		}
-		expect(planProfile(null)).toBe(FREE_PROFILE);
 		expect(planProfile()).toBe(FREE_PROFILE);
 	});
 });
@@ -95,7 +94,7 @@ describe('resolvePlanNumber', () => {
 	});
 
 	it('accepts the value as a number as well as a string, because wrangler sends strings', () => {
-		expect(resolvePlanNumber(7, 'httpDrainLimit', 25, null)).toBe(7);
+		expect(resolvePlanNumber(7, 'httpDrainLimit', 25, undefined)).toBe(7);
 	});
 
 	it('falls to the profile for absent, empty and unparseable values', () => {

@@ -49,19 +49,19 @@ describe('a miss falls back to the previous generation', () => {
 		expect((await readStalePage(env, SITE, 5, '/news'))?.behind).toBe(2);
 		// one more generation back is past the budget: each step is another KV read in front of the
 		// object hop it is trying to avoid
-		expect(await readStalePage(env, SITE, 6, '/news')).toBeNull();
+		expect(await readStalePage(env, SITE, 6, '/news')).toBeUndefined();
 		expect(STALE_GENERATION_DEPTH).toBe(2);
 	});
 
 	it('never reads a negative generation', async () => {
 		const { env } = fakeKv();
-		expect(await readStalePage(env, SITE, 0, '/news')).toBeNull();
+		expect(await readStalePage(env, SITE, 0, '/news')).toBeUndefined();
 	});
 
 	it('is a miss when nothing was ever stored for the path', async () => {
 		const { env } = fakeKv();
 		await writePage(env, SITE, 4, '/other', page('<p>other</p>'));
-		expect(await readStalePage(env, SITE, 5, '/news')).toBeNull();
+		expect(await readStalePage(env, SITE, 5, '/news')).toBeUndefined();
 	});
 });
 
@@ -75,7 +75,7 @@ describe('and the staleness is bounded by a clock as well as a counter', () => {
 		map.set(key, JSON.stringify(stored));
 		// a generation counter alone says "one content change behind" and nothing about how long
 		// ago; an abandoned site would otherwise serve last month's page forever
-		expect(await readStalePage(env, SITE, 5, '/news')).toBeNull();
+		expect(await readStalePage(env, SITE, 5, '/news')).toBeUndefined();
 	});
 
 	it('serves one inside it', async () => {
@@ -143,6 +143,6 @@ describe('the never-stale deny-list', () => {
 	it('is applied by the reader, not only exported', async () => {
 		const { env } = fakeKv();
 		await writePage(env, SITE, 4, '/user/login', page('<form>'));
-		expect(await readStalePage(env, SITE, 5, '/user/login')).toBeNull();
+		expect(await readStalePage(env, SITE, 5, '/user/login')).toBeUndefined();
 	});
 });

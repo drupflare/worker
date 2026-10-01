@@ -18,9 +18,9 @@ import {
  * when it could have served is capacity nobody notices. So every ambiguous input here asserts the
  * refusal, and a null on either side of a comparison is treated as a disagreement rather than as an
  * absence of one.
+ *
+ * A replica with everything, which every case below then takes one thing away from.
  */
-
-/** a replica with everything, which every case below then takes one thing away from */
 const ADMISSIBLE: AdmissionFacts = {
 	stage: 'CATCHING_UP',
 	presentState: MANDATORY_STATE.map((m) => ({ ...m })),

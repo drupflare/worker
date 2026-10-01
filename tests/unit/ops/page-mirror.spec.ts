@@ -121,7 +121,7 @@ describe('drainPageMirrors', () => {
 	it('reports noBucket rather than failing, because that is the free-tier default', async () => {
 		const sql = fakeSql();
 		queuePageMirror(sql, '/', 1, 1000);
-		const out = await drainPageMirrors(sql, null, () => page());
+		const out = await drainPageMirrors(sql, undefined, () => page());
 		expect(out.noBucket).toBe(true);
 		expect(out.mirrored).toBe(0);
 		expect(pageMirrorDepth(sql)).toBe(1);
@@ -152,7 +152,7 @@ describe('drainPageMirrors', () => {
 	it('refuses a task whose page row is gone, and drops it', async () => {
 		const sql = fakeSql();
 		queuePageMirror(sql, '/gone', 1, 1000);
-		const out = await drainPageMirrors(sql, { put: async () => {} } as never, () => null);
+		const out = await drainPageMirrors(sql, { put: async () => {} } as never, () => undefined);
 		expect(out.refused).toBe(1);
 		expect(out.mirrored).toBe(0);
 		expect(pageMirrorDepth(sql)).toBe(0);
@@ -235,7 +235,7 @@ describe('orderByViews', () => {
 	it('keeps queue order when nothing has been counted yet', () => {
 		// a freshly evicted object has no counts; that is a reason to fall back, not to refuse
 		expect(orderByViews(['/a', '/b'], new Map())).toEqual(['/a', '/b']);
-		expect(orderByViews(['/a', '/b'], null)).toEqual(['/a', '/b']);
+		expect(orderByViews(['/a', '/b'], undefined)).toEqual(['/a', '/b']);
 	});
 
 	it('sorts an uncounted path last but never drops it', () => {

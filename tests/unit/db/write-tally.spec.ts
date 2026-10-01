@@ -63,7 +63,7 @@ describe('the write target, for the forms Drupal actually emits', () => {
 			'COMMIT',
 			''
 		]) {
-			expect(writeTargetTable(sql), sql).toBeNull();
+			expect(writeTargetTable(sql), sql).toBeUndefined();
 		}
 	});
 });
@@ -194,13 +194,13 @@ describe('reading router rebuilds out of the statement shape', () => {
 		expect(routerRebuildPasses(t, 419)).toBe(8);
 	});
 
-	it('returns null when the router was never written', () => {
-		expect(routerRebuildPasses(emptyTally(), 419)).toBeNull();
-		expect(routerRebuilds(emptyTally(), 419)).toBeNull();
+	it('returns undefined when the router was never written', () => {
+		expect(routerRebuildPasses(emptyTally(), 419)).toBeUndefined();
+		expect(routerRebuilds(emptyTally(), 419)).toBeUndefined();
 	});
 
-	it('returns null on a zero route count rather than dividing by it', () => {
-		expect(routerRebuildPasses(rebuild(emptyTally(), 419), 0)).toBeNull();
+	it('returns undefined on a zero route count rather than dividing by it', () => {
+		expect(routerRebuildPasses(rebuild(emptyTally(), 419), 0)).toBeUndefined();
 	});
 
 	it('honours a different chunk size, since the ceiling is a platform number', () => {

@@ -209,7 +209,7 @@ describe('shellDecision', () => {
 		const d = shellDecision({
 			method: 'GET',
 			authenticated: true,
-			shell: null,
+			shell: undefined,
 			fragmentsAvailable: true
 		});
 		expect(d.assemble).toBe(false);

@@ -118,7 +118,7 @@ describe('parsing tolerates a bad object read instead of throwing', () => {
 
 	it('finds an entry by composer name', () => {
 		expect(findEntry(CATALOG, 'drupal/token')?.version).toBe('1.15.0');
-		expect(findEntry(CATALOG, 'drupal/nope')).toBeNull();
+		expect(findEntry(CATALOG, 'drupal/nope')).toBeUndefined();
 	});
 });
 
@@ -186,19 +186,18 @@ describe('and it REFUSES rather than mounting something that will break', () => 
 });
 
 describe('loading from R2 degrades to "no catalog" rather than to an error', () => {
-	it('returns null with no bucket bound', async () => {
-		expect(await loadCatalog(null)).toBeNull();
-		expect(await loadCatalog(undefined)).toBeNull();
+	it('returns undefined with no bucket bound', async () => {
+		expect(await loadCatalog(undefined)).toBeUndefined();
 	});
 
-	it('returns null when the object is absent', async () => {
+	it('returns undefined when the object is absent', async () => {
 		expect(
 			await loadCatalog({
 				async get() {
 					return null;
 				}
 			})
-		).toBeNull();
+		).toBeUndefined();
 	});
 
 	it('returns null on unparseable JSON, so the feature is absent not broken', async () => {
@@ -211,7 +210,7 @@ describe('loading from R2 degrades to "no catalog" rather than to an error', () 
 				};
 			}
 		};
-		expect(await loadCatalog(bucket)).toBeNull();
+		expect(await loadCatalog(bucket)).toBeUndefined();
 	});
 
 	it('parses a real catalog', async () => {

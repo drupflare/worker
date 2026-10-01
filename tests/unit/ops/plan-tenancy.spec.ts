@@ -48,7 +48,7 @@ describe('the KV documents are per site', () => {
 		expect(siteScopedKey(SETTINGS_KV_KEY, 'alpha')).toBe('settings:alpha');
 		expect(siteScopedKey(PLAN_KV_KEY, 'beta')).toBe('plan:beta');
 		expect(siteScopedKey(SETTINGS_KV_KEY, '')).toBe(SETTINGS_KV_KEY);
-		expect(siteScopedKey(SETTINGS_KV_KEY, null)).toBe(SETTINGS_KV_KEY);
+		expect(siteScopedKey(SETTINGS_KV_KEY, undefined)).toBe(SETTINGS_KV_KEY);
 	});
 
 	it('does not let one site write another site levers', async () => {

@@ -105,7 +105,7 @@ describe('the whole repair', () => {
 			return [];
 		});
 		expect(calls).toBe(0);
-		expect(out.repair).toBeNull();
+		expect(out.repair).toBeUndefined();
 	});
 
 	it('never re-reads a statement it cannot wrap', () => {
@@ -119,7 +119,7 @@ describe('the whole repair', () => {
 			}
 		);
 		expect(calls).toBe(0);
-		expect(out.repair).toBeNull();
+		expect(out.repair).toBeUndefined();
 	});
 
 	it('keeps the lossy value when the re-read throws, because this is the serving path', () => {
@@ -130,7 +130,7 @@ describe('the whole repair', () => {
 				throw new Error('no such column');
 			}
 		);
-		expect(out.repair).toBeNull();
+		expect(out.repair).toBeUndefined();
 		expect(out.rows[0]?.big).toBe(9_007_199_254_740_992);
 	});
 });

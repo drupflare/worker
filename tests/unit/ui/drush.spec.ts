@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDrush } from '../../../src/ui/admin.js';
+import { parseDrush } from '../../../src/ui/admin';
 
 describe('the Drush-shaped command field', () => {
 	it('routes a bare operation to the registry', () => {
@@ -68,9 +68,9 @@ describe('the Drush-shaped command field', () => {
 	});
 
 	it('reads nothing as nothing', () => {
-		expect(parseDrush(null)).toBeNull();
-		expect(parseDrush('')).toBeNull();
-		expect(parseDrush('   ')).toBeNull();
+		expect(parseDrush(undefined)).toBeUndefined();
+		expect(parseDrush('')).toBeUndefined();
+		expect(parseDrush('   ')).toBeUndefined();
 	});
 
 	it('tolerates the spacing a person actually types', () => {

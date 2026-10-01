@@ -37,15 +37,15 @@ describe('serializedInt: reading a PHP-serialized int out of config', () => {
 
 	// a bare `i:1000;` carries no key, so there is nothing to look up; null is correct
 	it('returns null for a bare int with no key around it', () => {
-		expect(serializedInt('i:1000;', 'row_limit')).toBeNull();
+		expect(serializedInt('i:1000;', 'row_limit')).toBeUndefined();
 	});
 
 	it('returns null rather than guessing when the key is absent', () => {
-		expect(serializedInt('a:1:{s:5:"other";i:5;}', 'row_limit')).toBeNull();
+		expect(serializedInt('a:1:{s:5:"other";i:5;}', 'row_limit')).toBeUndefined();
 	});
 
 	it('returns null on unparseable input', () => {
-		expect(serializedInt('not serialized at all', 'row_limit')).toBeNull();
+		expect(serializedInt('not serialized at all', 'row_limit')).toBeUndefined();
 	});
 
 	// serializeInt(value) emits a BARE `i:N;`, which is what key_value rows hold; it is not
@@ -399,12 +399,12 @@ describe('env plumbing', () => {
 
 	it('ignores nonsense rather than turning it into 0 or NaN', () => {
 		expect(cacheDataMaxRows({ CACHE_DATA_MAX_ROWS: 'abc' })).toBe(CACHE_DATA_DEFAULT_MAX_ROWS);
-		expect(watchdogRowLimitOverride({ WATCHDOG_ROW_LIMIT: 'abc' })).toBeNull();
+		expect(watchdogRowLimitOverride({ WATCHDOG_ROW_LIMIT: 'abc' })).toBeUndefined();
 	});
 
 	it('an absent env yields the defaults, and no override', () => {
 		expect(cacheDataMaxRows(undefined)).toBe(CACHE_DATA_DEFAULT_MAX_ROWS);
-		expect(watchdogRowLimitOverride(undefined)).toBeNull();
-		expect(cronOptions(undefined).rowLimit).toBeNull();
+		expect(watchdogRowLimitOverride(undefined)).toBeUndefined();
+		expect(cronOptions(undefined).rowLimit).toBeUndefined();
 	});
 });

@@ -82,7 +82,7 @@ describe('an expired entry is served rather than thrown, while the drain refresh
 	});
 
 	it('treats a missing or non-finite expiry as gone on both sides', () => {
-		expect(isServableStale(null, now)).toBe(false);
+		expect(isServableStale(undefined, now)).toBe(false);
 		expect(isServableStale({ expiresAt: Number.NaN }, now)).toBe(false);
 		expect(isServableStale({ expiresAt: Number.POSITIVE_INFINITY }, now)).toBe(false);
 	});

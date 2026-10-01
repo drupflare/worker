@@ -36,12 +36,12 @@ describe('the queued Workers AI tier', () => {
 		it('claims nothing that belongs to another tier', () => {
 			for (const other of ['https://example.com/', 'tcp+redis://host:6379/', '']) {
 				expect(isAiUrl(other), other).toBe(false);
-				expect(aiModelOf(other), other).toBeNull();
+				expect(aiModelOf(other), other).toBeUndefined();
 			}
 		});
 
 		it('reports the tier absent when no binding is bound', () => {
-			expect(aiEnabled(null)).toBe(false);
+			expect(aiEnabled(undefined)).toBe(false);
 			expect(aiEnabled({})).toBe(false);
 			expect(aiEnabled({ AI: { run: async () => null } })).toBe(true);
 		});
@@ -79,7 +79,7 @@ describe('the queued Workers AI tier', () => {
 	describe('the neuron projection', () => {
 		it('prices a completion and an embedding from the published rates', () => {
 			const chat = neuronCost(model, 1_000, 500);
-			expect(chat).not.toBeNull();
+			expect(chat).toBeDefined();
 			// 1,000 in at 26,668/1M plus 500 out at 204,805/1M
 			expect(chat?.neurons).toBeCloseTo(26.668 + 102.4025, 2);
 			expect(chat?.perDay).toBe(Math.floor(NEURONS_PER_DAY / (chat?.neurons as number)));
@@ -91,7 +91,7 @@ describe('the queued Workers AI tier', () => {
 		});
 
 		it('returns null for a model it has no rate for, so silence is never read as free', () => {
-			expect(neuronCost('@cf/unpriced/model', 1_000, 500)).toBeNull();
+			expect(neuronCost('@cf/unpriced/model', 1_000, 500)).toBeUndefined();
 		});
 
 		it('has a rate for every model on the default allow-list', () => {

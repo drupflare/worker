@@ -29,7 +29,6 @@ describe('the ceiling', () => {
 	it('falls back to the default for an unset, empty or unknown value', () => {
 		const fallback = phpLogCeiling(DEFAULT_PHP_LOG_LEVEL);
 		expect(phpLogCeiling(undefined)).toBe(fallback);
-		expect(phpLogCeiling(null)).toBe(fallback);
 		expect(phpLogCeiling('')).toBe(fallback);
 		expect(phpLogCeiling('verbose')).toBe(fallback);
 	});

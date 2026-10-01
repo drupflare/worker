@@ -32,9 +32,9 @@ import { MB_FIX, MB_SANITIZE } from '../../../src/drupal/mb-fix';
  * The anti-vacuity job that control did is taken over by the two tests in
  * "mb-fix: the controls" -- the naive one-?-per-bad-byte rule is asserted to be WRONG, and
  * `mb_check_encoding()` is asserted to stay unsanitised.
+ *
+ * Hex string -> bytes, so the fixtures read the way `bin2hex()` printed them.
  */
-
-/** hex string -> bytes, so the fixtures read the way `bin2hex()` printed them */
 const fromHex = (hex: string): Uint8Array =>
 	new Uint8Array((hex.match(/../g) ?? []).map((h) => parseInt(h, 16)));
 
@@ -276,7 +276,8 @@ describe('mb-fix: the controls', () => {
 	// the sync guard that replaces the live PHP oracle: sanitize() above is a copy, so pin
 	// it to the shipped PHP's decision table rather than trusting the copy to stay in sync
 	it('mirrors the shipped PHP lead-byte table', () => {
-		const src = MB_SANITIZE.replace(/\s+/g, ' ');
+		// lowercased on both sides: prettier writes hex digits in lowercase
+		const src = MB_SANITIZE.replace(/\s+/g, ' ').toLowerCase();
 		const table = [
 			'($b >= 0xC2 && $b <= 0xDF) { $need = 1; $lo1 = 0x80; $hi1 = 0xBF; }',
 			'($b === 0xE0) { $need = 2; $lo1 = 0xA0; $hi1 = 0xBF; }',
@@ -287,13 +288,13 @@ describe('mb-fix: the controls', () => {
 			'($b >= 0xF1 && $b <= 0xF3) { $need = 3; $lo1 = 0x80; $hi1 = 0xBF; }',
 			'($b === 0xF4) { $need = 3; $lo1 = 0x80; $hi1 = 0x8F; }'
 		];
-		for (const branch of table) expect(src).toContain(branch);
+		for (const branch of table) expect(src).toContain(branch.toLowerCase());
 		// a NEW lead range added to the PHP without being mirrored here fails on this count
 		expect(src.match(/\$need = \d/g)?.length).toBe(table.length);
 		// and the resume rule itself: one "?" then advance by what was consumed
 		// $sub defaults to "?" and is only ever passed by the TITLE path, which needs the
 		// substituted run to be case-IGNORABLE while the word boundaries are found
-		expect(src).toContain('function cfw_mb_sanitize($s, $sub = "?")');
+		expect(src).toContain("function cfw_mb_sanitize($s, $sub = '?')");
 		expect(src).toContain('else { $out .= $sub; $i += $consumed; }');
 	});
 });

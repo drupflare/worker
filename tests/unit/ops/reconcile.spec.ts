@@ -45,9 +45,9 @@ import {
  *
  * Everything here is about one property: a step's success condition is the site's END STATE, never
  * that the step ran. Two Outstanding Bugs closed on the weaker assertion and neither site converged.
+ *
+ * A sql seam over plain maps, so a step's observation is drivable without a database.
  */
-
-/** a sql seam over plain maps, so a step's observation is drivable without a database */
 function fakeSql(tables: Record<string, Record<string, unknown>[]>): ReconcileSql & {
 	deleted: string[];
 } {
@@ -110,7 +110,10 @@ function fakeSql(tables: Record<string, Record<string, unknown>[]>): ReconcileSq
 	};
 }
 
-function fakeHost(claimedAtMs: number | null, meta: Record<string, string> = {}): ReconcileHost {
+function fakeHost(
+	claimedAtMs: number | undefined,
+	meta: Record<string, string> = {}
+): ReconcileHost {
 	return {
 		claimedAtMs: () => claimedAtMs,
 		meta: (k) => meta[k] ?? null,
@@ -135,12 +138,12 @@ describe('reading the two copies of a config object', () => {
 		expect(configMaxAge(sql)).toEqual({ config: 300, cached: 0 });
 	});
 
-	it('reports an absent cache bin as null rather than as zero', () => {
+	it('reports an absent cache bin as undefined rather than as zero', () => {
 		const sql = fakeSql({
 			config: [{ name: 'system.performance', data: performanceRow(300) }],
 			cache_config: []
 		});
-		expect(configMaxAge(sql)).toEqual({ config: 300, cached: null });
+		expect(configMaxAge(sql)).toEqual({ config: 300, cached: undefined });
 	});
 
 	/**
@@ -183,7 +186,7 @@ describe('a serialized integer is parsed, not cast', () => {
 	});
 
 	it('refuses a serialized STRING that a REPLACE-based cast would read as a number', () => {
-		expect(serialisedInt('s:10:"1786258127";')).toBeNull();
+		expect(serialisedInt('s:10:"1786258127";')).toBeUndefined();
 	});
 });
 
@@ -192,7 +195,7 @@ describe("the bake's own history", () => {
 
 	it('defers on an unclaimed site, because no row can be shown to be foreign', () => {
 		const sql = fakeSql({ watchdog: [{ timestamp: 1_000 }] });
-		expect(step.verdict(sql, fakeHost(null)).state).toBe('deferred');
+		expect(step.verdict(sql, fakeHost(undefined)).state).toBe('deferred');
 	});
 
 	it('owes a claimed site whose log predates it', () => {
@@ -232,15 +235,15 @@ describe('the container step, which is the general close for a hook added after 
 	it('warms discovery on an update, once, and boots nothing on a fresh site', () => {
 		const update = fakeHost(1_000, { driver_digest: 'stale' });
 		step.sql?.(fakeSql({ cache_container: [{ cid: 'x' }] }), update);
-		const code = step.php?.(update) ?? null;
+		const code = step.php?.(update);
 		expect(code).toContain('plugin.manager.');
 		// read once: a retried step must not warm again on a stale marker
-		expect(step.php?.(update) ?? null).toBeNull();
+		expect(step.php?.(update)).toBeUndefined();
 
 		// THE CONTROL: no recorded digest is a fresh site, whose migration chain boots nothing
 		const fresh = fakeHost(1_000, {});
 		step.sql?.(fakeSql({ cache_container: [{ cid: 'x' }] }), fresh);
-		expect(step.php?.(fresh) ?? null).toBeNull();
+		expect(step.php?.(fresh)).toBeUndefined();
 	});
 
 	it('drops the container and records the digest in the same apply', () => {
@@ -345,8 +348,8 @@ describe('the packed container file', () => {
 		};
 		expect(packedContainerFor(file, 'd', 'b')?.[0]?.cid).toBe('c');
 		// a variant with no rows is not a container
-		expect(packedContainerFor(file, 'd', 'a')).toBeNull();
-		expect(packedContainerFor(null, 'd', 'b')).toBeNull();
+		expect(packedContainerFor(file, 'd', 'a')).toBeUndefined();
+		expect(packedContainerFor(undefined, 'd', 'b')).toBeUndefined();
 	});
 
 	it('round-trips bytes through base64', () => {
@@ -370,7 +373,7 @@ describe('the owner-tier step', () => {
 	};
 
 	it('waits for a claim, since there is no owner before one', () => {
-		expect(step.verdict(fakeSql({ config: [] }), fakeHost(null)).state).toBe('deferred');
+		expect(step.verdict(fakeSql({ config: [] }), fakeHost(undefined)).state).toBe('deferred');
 	});
 
 	it('owes a role still holding a retired name, matched exactly', () => {
@@ -425,7 +428,7 @@ describe('the unread node index step', () => {
 				{ type: 'index', name: 'node_field_data_node__status_type' }
 			]
 		});
-		const verdict = step.verdict(sql, fakeHost(null));
+		const verdict = step.verdict(sql, fakeHost(undefined));
 		expect(verdict.state).toBe('owed');
 		// no claim is needed: an index is schema, not something a birthday decides
 		expect(step.php).toBeUndefined();
@@ -436,7 +439,7 @@ describe('the unread node index step', () => {
 		const sql = fakeSql({
 			sqlite_master: [{ type: 'index', name: 'node_field_data_node__status_type' }]
 		});
-		expect(step.verdict(sql, fakeHost(null)).state).toBe('satisfied');
+		expect(step.verdict(sql, fakeHost(undefined)).state).toBe('satisfied');
 	});
 });
 
@@ -478,7 +481,7 @@ describe('the image toolkit step', () => {
 	it('is satisfied on cfw_images, and waits for the claim or for drupflare', () => {
 		expect(step.verdict(site('cfw_images'), fakeHost(1_000)).state).toBe('satisfied');
 		// the claim selects the toolkit on a fresh site, which ships naming gd
-		expect(step.verdict(site('gd'), fakeHost(null)).state).toBe('deferred');
+		expect(step.verdict(site('gd'), fakeHost(undefined)).state).toBe('deferred');
 		expect(step.verdict(site('gd', ['system']), fakeHost(1_000)).state).toBe('deferred');
 	});
 });
@@ -621,7 +624,7 @@ describe('planning, which is what makes the chain sliceable', () => {
 	});
 
 	it('waits on a deferred step rather than calling it a failure', () => {
-		const planned = planReconcile(CLEAN_RECONCILE, fakeSql({}), fakeHost(null), [
+		const planned = planReconcile(CLEAN_RECONCILE, fakeSql({}), fakeHost(undefined), [
 			alwaysDeferred
 		]);
 		expect(planned).toMatchObject({ action: 'wait', reason: 'waiting' });
@@ -757,7 +760,7 @@ describe('the status report', () => {
 			watchdog: [],
 			cache_container: [{ cid: 'x' }]
 		});
-		const report = reconcileReport(CLEAN_RECONCILE, sql, fakeHost(null));
+		const report = reconcileReport(CLEAN_RECONCILE, sql, fakeHost(undefined));
 		expect(report.packVersion).toBe(PACK_VERSION);
 		expect(report.steps.map((s) => s.id)).toEqual(RECONCILE_STEPS.map((s) => s.id));
 		expect(report.steps.find((s) => s.id === 'page-max-age')?.state).toBe('owed');
@@ -770,7 +773,7 @@ describe('the status report', () => {
 			applied: [],
 			failed: { 'page-max-age': { attempts: 2, reason: 'x' } }
 		};
-		const report = reconcileReport(state, fakeSql({}), fakeHost(null));
+		const report = reconcileReport(state, fakeSql({}), fakeHost(undefined));
 		expect(report.steps.find((s) => s.id === 'page-max-age')?.detail).toContain('attempt 2');
 	});
 });
@@ -815,11 +818,11 @@ describe('the router rebuild reaches the local tasks too', () => {
 	 */
 	it('clears the local task definitions in the same pass as the router and the menu links', () => {
 		const php = reconcileRouterPhp('https://example.test');
-		expect(php).toContain("\\Drupal::service('router.builder')");
-		expect(php).toContain("\\Drupal::service('plugin.manager.menu.link')->rebuild()");
+		expect(php).toContain("Drupal::service('router.builder')");
+		expect(php).toContain("Drupal::service('plugin.manager.menu.link')->rebuild()");
 		// the half that was missing
 		expect(php).toContain(
-			"\\Drupal::service('plugin.manager.menu.local_task')->clearCachedDefinitions()"
+			"Drupal::service('plugin.manager.menu.local_task')->clearCachedDefinitions()"
 		);
 	});
 

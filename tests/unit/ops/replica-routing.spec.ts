@@ -44,11 +44,11 @@ describe('a replica name cannot be a site name', () => {
 	});
 
 	it('refuses a name that is not a replica', () => {
-		expect(replicaOf(SITE)).toBeNull();
+		expect(replicaOf(SITE)).toBeUndefined();
 		// lane 0 is the primary and is never addressed by a replica name
-		expect(replicaOf(`${SITE}#r0`)).toBeNull();
-		expect(replicaOf('#r1')).toBeNull();
-		expect(replicaOf(`${SITE}#rx`)).toBeNull();
+		expect(replicaOf(`${SITE}#r0`)).toBeUndefined();
+		expect(replicaOf('#r1')).toBeUndefined();
+		expect(replicaOf(`${SITE}#rx`)).toBeUndefined();
 	});
 });
 
@@ -295,7 +295,7 @@ describe('which lane answers', () => {
 
 	// a lane would run the whole request, be refused, and hand it back for the primary to re-run
 	it('pins a write a lane always refuses, and still spreads the rest', () => {
-		const write = (visitorPath: string, contentType: string | null, i: number) =>
+		const write = (visitorPath: string, contentType: string | undefined, i: number) =>
 			chooseTarget({
 				site: SITE,
 				method: 'POST',
@@ -314,10 +314,10 @@ describe('which lane answers', () => {
 			expect(write('/admin/modules', 'application/x-www-form-urlencoded', i).role).toBe(
 				'primary'
 			);
-			expect(write('/admin/modules/uninstall', null, i).role).toBe('primary');
-			expect(write('/admin/config/drupflare/settings', null, i).role).toBe('primary');
+			expect(write('/admin/modules/uninstall', undefined, i).role).toBe('primary');
+			expect(write('/admin/config/drupflare/settings', undefined, i).role).toBe('primary');
 		}
-		expect(originationRoute('/admin/modulesx', null)).toBeNull();
+		expect(originationRoute('/admin/modulesx', undefined)).toBeUndefined();
 		const seen = new Set<number>();
 		for (let i = 0; i < 200; i++) {
 			seen.add(write('/node/1/edit', 'application/x-www-form-urlencoded', i).lane);

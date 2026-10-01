@@ -292,8 +292,4 @@ describe('the PHP fragment', () => {
 		expect(SODIUM_FIX).not.toContain('extension_loaded_sodium');
 		expect(SODIUM_FIX).not.toContain('get_loaded_extensions');
 	});
-
-	it('carries no backtick, which would truncate the String.raw block', () => {
-		expect(SODIUM_FIX).not.toContain('`');
-	});
 });

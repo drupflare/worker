@@ -79,9 +79,9 @@ describe('addressing a repository', () => {
 		).toBe('trunk');
 	});
 
-	it('returns null rather than a wrong branch when the field is missing', () => {
-		for (const p of PROVIDERS) expect(defaultBranchRequest(remote(p)).pick({})).toBeNull();
-		expect(defaultBranchRequest(remote('github')).pick(null)).toBeNull();
+	it('returns undefined rather than a wrong branch when the field is missing', () => {
+		for (const p of PROVIDERS) expect(defaultBranchRequest(remote(p)).pick({})).toBeUndefined();
+		expect(defaultBranchRequest(remote('github')).pick(null)).toBeUndefined();
 	});
 
 	it('separates the providers that have an API from the one that does not', () => {
@@ -250,7 +250,7 @@ describe('open requests', () => {
 describe('commit status write-back', () => {
 	const status = (...a: Parameters<typeof statusRequest>) => {
 		const post = statusRequest(...a);
-		if (post === null) throw new Error('that provider has no status endpoint');
+		if (post === undefined) throw new Error('that provider has no status endpoint');
 		return post;
 	};
 
@@ -294,14 +294,14 @@ describe('commit status write-back', () => {
 
 	// a plain remote has nowhere to put a status, and guessing a URL would post to a stranger
 	it('refuses rather than inventing an endpoint for a plain remote', () => {
-		expect(statusRequest(remote('generic'), 'sha', 'success', '', '')).toBeNull();
+		expect(statusRequest(remote('generic'), 'sha', 'success', '', '')).toBeUndefined();
 	});
 });
 
 describe('creating a webhook', () => {
 	const hook = (...a: Parameters<typeof createHookRequest>) => {
 		const post = createHookRequest(...a);
-		if (post === null) throw new Error('that provider has no hook endpoint');
+		if (post === undefined) throw new Error('that provider has no hook endpoint');
 		return post;
 	};
 
@@ -334,7 +334,7 @@ describe('creating a webhook', () => {
 	});
 
 	it('refuses for a plain remote, which the operator registers by hand', () => {
-		expect(createHookRequest(remote('generic'), 'https://s.test/h', 'sec')).toBeNull();
+		expect(createHookRequest(remote('generic'), 'https://s.test/h', 'sec')).toBeUndefined();
 	});
 });
 
@@ -557,9 +557,9 @@ describe('what an operator pastes', () => {
 	});
 
 	it('refuses what is not a repository at all', () => {
-		expect(parseRemote('', 'github')).toBeNull();
-		expect(parseRemote('   ', 'github')).toBeNull();
-		expect(parseRemote('https://github.com/', 'github')).toBeNull();
+		expect(parseRemote('', 'github')).toBeUndefined();
+		expect(parseRemote('   ', 'github')).toBeUndefined();
+		expect(parseRemote('https://github.com/', 'github')).toBeUndefined();
 	});
 });
 
@@ -663,8 +663,8 @@ describe('Gitea, Forgejo and a plain remote', () => {
 	});
 
 	it('refuses owner/repo where there is no host to attach it to', () => {
-		expect(parseRemote('owner/repo', 'gitea')).toBeNull();
-		expect(parseRemote('owner/repo', 'generic')).toBeNull();
+		expect(parseRemote('owner/repo', 'gitea')).toBeUndefined();
+		expect(parseRemote('owner/repo', 'generic')).toBeUndefined();
 		expect(parseRemote('owner/repo', 'github')).toEqual({ repo: 'owner/repo' });
 	});
 

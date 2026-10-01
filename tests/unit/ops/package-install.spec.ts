@@ -94,7 +94,7 @@ describe('resolving a name to a repository', () => {
 		expect(asksForBranch('2.x-dev')).toBe(true);
 		expect(asksForBranch('^1.0@dev')).toBe(true);
 		expect(asksForBranch('^1.0')).toBe(false);
-		expect(asksForBranch(null)).toBe(false);
+		expect(asksForBranch(undefined)).toBe(false);
 	});
 
 	it('points a delivered file at the Fiber shim, qualified and aliased, and leaves the rest', () => {
@@ -150,8 +150,8 @@ describe('resolving a name to a repository', () => {
 		expect(fallbackMetadataUrl('composer', 'drupal/rat')).toBe(
 			'https://repo.packagist.org/p2/drupal/rat.json'
 		);
-		expect(fallbackMetadataUrl('composer', 'psr/log')).toBeNull();
-		expect(fallbackMetadataUrl('npm', 'drupal/rat')).toBeNull();
+		expect(fallbackMetadataUrl('composer', 'psr/log')).toBeUndefined();
+		expect(fallbackMetadataUrl('npm', 'drupal/rat')).toBeUndefined();
 	});
 
 	it("mounts by composer's own type rather than by guessing from the name", () => {
@@ -208,11 +208,11 @@ describe('picking a version', () => {
 				'drupal/tool': [{ version: '2.0.0' }]
 			}
 		};
-		expect(pickVersion(ctx, 'drupal/context', null, '11.4.7')?.version).toBe('5.0.0-rc2');
-		expect(pickVersion(ctx, 'drupal/context', null, '9.5.0')?.version).toBe('4.1.0');
+		expect(pickVersion(ctx, 'drupal/context', undefined, '11.4.7')?.version).toBe('5.0.0-rc2');
+		expect(pickVersion(ctx, 'drupal/context', undefined, '9.5.0')?.version).toBe('4.1.0');
 		expect(pickVersion(ctx, 'drupal/context')?.version).toBe('5.0.0-rc2');
-		expect(pickVersion(ctx, 'drupal/old', null, '11.4.7')?.version).toBe('1.0.0');
-		expect(pickVersion(ctx, 'drupal/tool', null, '11.4.7')?.version).toBe('2.0.0');
+		expect(pickVersion(ctx, 'drupal/old', undefined, '11.4.7')?.version).toBe('1.0.0');
+		expect(pickVersion(ctx, 'drupal/tool', undefined, '11.4.7')?.version).toBe('2.0.0');
 	});
 
 	it('reads a stability flag the way composer does, for that package only', () => {
@@ -227,7 +227,7 @@ describe('picking a version', () => {
 		expect(pickVersion(alpha, 'drupal/openid_connect', '^3.0@alpha')?.version).toBe(
 			'3.0.0-alpha7'
 		);
-		expect(pickVersion(alpha, 'drupal/openid_connect', '^3.0')).toBeNull();
+		expect(pickVersion(alpha, 'drupal/openid_connect', '^3.0')).toBeUndefined();
 		expect(pickVersion(alpha, 'drupal/openid_connect')?.version).toBe('2.2.0');
 	});
 
@@ -268,7 +268,7 @@ describe('picking a version', () => {
 			}
 		};
 		const range = '>=2.0.0-beta5 || ^2';
-		expect(pickVersion(clone, 'drupal/entity_clone', range)).toBeNull();
+		expect(pickVersion(clone, 'drupal/entity_clone', range)).toBeUndefined();
 		expect(pickVersion(clone, 'drupal/entity_clone', range, undefined, 'dev')?.version).toBe(
 			'2.2.0-beta1'
 		);
@@ -289,7 +289,7 @@ describe('picking a version', () => {
 				]
 			}
 		};
-		expect(pickVersion(crop, 'drupal/image_widget_crop', '^2.4')).toBeNull();
+		expect(pickVersion(crop, 'drupal/image_widget_crop', '^2.4')).toBeUndefined();
 		expect(
 			pickVersion(crop, 'drupal/image_widget_crop', '^2.4', undefined, 'dev')?.version
 		).toBe('dev-2.x');
@@ -302,15 +302,15 @@ describe('picking a version', () => {
 	it('REFUSES a constraint it cannot match rather than installing something else', () => {
 		// a caret range needs a real semver solver; answering one wrongly installs a version the
 		// site cannot run, which is worse than reporting that the constraint was not understood
-		expect(pickVersion(doc, 'drupal/token', '9.9')).toBeNull();
+		expect(pickVersion(doc, 'drupal/token', '9.9')).toBeUndefined();
 	});
 
 	it('answers null for a package the document does not carry', () => {
-		expect(pickVersion(doc, 'drupal/absent')).toBeNull();
-		expect(pickVersion(null, 'drupal/token')).toBeNull();
+		expect(pickVersion(doc, 'drupal/absent')).toBeUndefined();
+		expect(pickVersion(null, 'drupal/token')).toBeUndefined();
 		expect(
 			pickVersion({ packages: { 'drupal/token': 'not a list' } }, 'drupal/token')
-		).toBeNull();
+		).toBeUndefined();
 	});
 });
 
@@ -364,7 +364,7 @@ describe('reading the archive location', () => {
 	});
 
 	it('answers null when there is no archive at all', () => {
-		expect(distOf({ version: '1.0.0' }, 'x/y')).toBeNull();
+		expect(distOf({ version: '1.0.0' }, 'x/y')).toBeUndefined();
 	});
 });
 
@@ -830,8 +830,8 @@ describe('a branch with no dist', () => {
 		).toBe('https://codeload.github.com/acme/lib/zip/main');
 		expect(
 			branchArchive({ source: { url: 'https://git.unl.edu/x/y.git', reference: 'a' } })
-		).toBeNull();
-		expect(branchArchive({})).toBeNull();
+		).toBeUndefined();
+		expect(branchArchive({})).toBeUndefined();
 	});
 });
 
@@ -843,7 +843,7 @@ describe('a drupal.org submodule', () => {
 			require: { 'drupal/flowdrop': '^2', 'drupal/core': '^11.3' }
 		};
 		expect(isMetapackage(sub)).toBe(true);
-		expect(distOf(sub, 'drupal/flowdrop_ui_components')).toBeNull();
+		expect(distOf(sub, 'drupal/flowdrop_ui_components')).toBeUndefined();
 		expect(Object.keys(packageRequirements(sub))).toEqual(['drupal/flowdrop', 'drupal/core']);
 	});
 
@@ -916,8 +916,8 @@ describe('the autoload a build delivers with a vendor package', () => {
 	});
 
 	it('is none when none was sent', () => {
-		expect(parseAutoloadDeclaration(undefined)).toBeNull();
-		expect(parseAutoloadDeclaration(null)).toBeNull();
+		expect(parseAutoloadDeclaration(undefined)).toBeUndefined();
+		expect(parseAutoloadDeclaration(null)).toBeUndefined();
 	});
 
 	it('refuses a mount outside vendor and libraries, a climbing path and a bad name', () => {

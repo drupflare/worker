@@ -113,8 +113,8 @@ describe('the queue url', () => {
 			expect(tcpProtocolOf(url)).toBe(protocol);
 		}
 		expect(isTcpUrl('https://example.com/')).toBe(false);
-		expect(tcpProtocolOf('https://example.com/')).toBeNull();
-		expect(tcpProtocolOf('tcp+memcache://h:1/')).toBeNull();
+		expect(tcpProtocolOf('https://example.com/')).toBeUndefined();
+		expect(tcpProtocolOf('tcp+memcache://h:1/')).toBeUndefined();
 	});
 });
 

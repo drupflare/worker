@@ -65,8 +65,8 @@ describe('the backend is selected, and says so when it cannot be', () => {
 		expect(dialectOf('postgresql://u:p@h:5432/d')).toBe('postgres');
 		expect(dialectOf('mysql://u:p@h:3306/d')).toBe('mysql');
 		// a second knob that can disagree with the string is a knob that will, so there is none
-		expect(dialectOf('redis://h:6379')).toBeNull();
-		expect(dialectOf('')).toBeNull();
+		expect(dialectOf('redis://h:6379')).toBeUndefined();
+		expect(dialectOf('')).toBeUndefined();
 	});
 
 	it('refuses a connection string naming neither database', () => {
@@ -210,7 +210,7 @@ describe('the parked statement, decoded and performed', () => {
 	it.each([['not base64'], [b64({ params: [] })], [b64({ sql: '' })], [b64([1, 2])]])(
 		'reads %p as unreadable rather than as a partial statement',
 		(packed) => {
-			expect(parseParkSql(packed as string)).toBeNull();
+			expect(parseParkSql(packed as string)).toBeUndefined();
 		}
 	);
 

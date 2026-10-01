@@ -11,9 +11,7 @@ import { BOOT_PHASES, bootPhaseFragment } from '../../../src/drupal/site-php';
  *
  * `tests/node/php-fragments.spec.ts` runs each of these through `php -l`; this file asserts what is
  * IN them.
- */
-
-/**
+ *
  * The fragment with its comments removed.
  *
  * The first version of the negative assertions below matched the WORD `$kernel->boot()` anywhere in
@@ -47,13 +45,15 @@ describe('the boot phases are cumulative, which is what makes the subtraction me
 
 	it('every phase from kernel-new onward constructs the kernel', () => {
 		for (const phase of BOOT_PHASES.slice(BOOT_PHASES.indexOf('kernel-new'))) {
-			expect(bootPhaseFragment(phase), phase).toContain('new \\Drupal\\Core\\DrupalKernel');
+			const php = bootPhaseFragment(phase);
+			expect(php, phase).toContain('use Drupal\\Core\\DrupalKernel;');
+			expect(php, phase).toContain('new DrupalKernel');
 		}
 	});
 
 	it('the autoload phase stops before constructing a kernel', () => {
 		const src = codeOnly(bootPhaseFragment('autoload'));
-		expect(src).not.toContain('new \\Drupal\\Core\\DrupalKernel');
+		expect(src).not.toContain('new DrupalKernel');
 		expect(src).not.toContain('$kernel->boot()');
 	});
 

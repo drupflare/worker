@@ -2,7 +2,7 @@ import { _mergeLayerIndexes, _normaliseLayers } from '@drupflare/cartridge/fs';
 import { describe, expect, it } from 'vitest';
 import lazyFsSource from '../../../node_modules/@drupflare/cartridge/src/lazy-fs.ts?raw';
 import mountSource from '../../../node_modules/@drupflare/cartridge/src/mount.ts?raw';
-import siteDoSource from '../../../src/site-do.ts?raw';
+import { siteDoFiles } from '../../helpers/source-raw';
 
 /**
  * `mountDrupalLazy()` needs a real emscripten `FS` and a real `env.ASSETS`, neither of which
@@ -21,12 +21,15 @@ import siteDoSource from '../../../src/site-do.ts?raw';
  * Assertions are quote-agnostic and whitespace-tolerant: an earlier source
  * assertion in this repo hardcoded double quotes and reported a phantom wiring failure the
  * moment prettier switched the repo to single ones.
+ *
+ * The region of a source file between two markers, so an assertion cannot match elsewhere.
  */
-
-/** the region of a source file between two markers, so an assertion cannot match elsewhere */
-function between(source: string, from: string, to: string): string {
-	const start = source.indexOf(from);
-	const end = source.indexOf(to, start + 1);
+function between(source: string, from: string | RegExp, to: string | RegExp): string {
+	const at = (text: string, marker: string | RegExp) =>
+		typeof marker === 'string' ? text.indexOf(marker) : text.search(marker);
+	const start = at(source, from);
+	const after = at(source.slice(start + 1), to);
+	const end = after < 0 ? -1 : start + 1 + after;
 	expect(start).toBeGreaterThan(-1);
 	expect(end).toBeGreaterThan(start);
 	return source.slice(start, end);
@@ -75,10 +78,18 @@ describe('the lazy mount does not fetch a database nobody can open', () => {
 
 describe('both mounts answer the database question the same way', () => {
 	it('gives the lazy and streaming call sites the same condition', () => {
-		const region = between(siteDoSource, 'this.mountInfo =', 'this.mountInfo.driver');
+		// the receiver is `this` in the class and `site` in a function moved out of it
+		const boot = siteDoFiles().find(({ text }) =>
+			/\b(?:this|site)\.mountInfo\.driver/.test(text)
+		);
+		const region = between(
+			boot?.text ?? '',
+			/\bconst lazyOptions =/,
+			/\b(?:this|site)\.mountInfo\.driver/
+		);
 		// two call sites, one condition; they diverged once and that is the bug being pinned
 		const matches = region.match(
-			/database:\s*migrateEngine\(null,\s*this\.env\)\s*===\s*'php'/g
+			/database:\s*migrateEngine\(undefined,\s*(?:this|site)\.env\)\s*===\s*'php'/g
 		);
 		expect(matches).not.toBeNull();
 		expect(matches).toHaveLength(2);

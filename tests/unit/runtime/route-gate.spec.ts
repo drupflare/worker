@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import binary85Source from '../../../src/runtime/php-binary-85.ts?raw';
 import binaryO2Source from '../../../src/runtime/php-binary-o2.ts?raw';
 import binaryRawSource from '../../../src/runtime/php-binary-raw.ts?raw';
-import siteDoSource from '../../../src/site-do.ts?raw';
-import siteSource from '../../../src/site.ts?raw';
 import wranglerSource from '../../../wrangler.jsonc?raw';
+import { frontText, sourceOf } from '../../helpers/source-raw';
 
 /**
  * The diagnostic gate, pinned at the source and at the shipping config.
@@ -23,20 +22,24 @@ import wranglerSource from '../../../wrangler.jsonc?raw';
  */
 
 describe('the route gate lets a visitor in and keeps a shell out', () => {
+	// the route sets are declared in src/site/routes.ts; the gate that reads them is in the front worker
+	const routes = sourceOf('src/site/routes.ts');
+	const frontSource = frontText();
+
 	it('declares public and diagnostic routes as separate sets', () => {
-		expect(/const PUBLIC_ROUTES = new Set\(/.test(siteSource)).toBe(true);
-		expect(/const DIAGNOSTIC_ROUTES = new Set\(/.test(siteSource)).toBe(true);
+		expect(/const PUBLIC_ROUTES = new Set\(/.test(routes)).toBe(true);
+		expect(/const DIAGNOSTIC_ROUTES = new Set\(/.test(routes)).toBe(true);
 	});
 
 	it('puts serve in the public set and NOT in the diagnostic set', () => {
-		const pub = siteSource.slice(
-			siteSource.indexOf('const PUBLIC_ROUTES'),
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES')
+		const pub = routes.slice(
+			routes.indexOf('const PUBLIC_ROUTES'),
+			routes.indexOf('const DIAGNOSTIC_ROUTES')
 		);
 		expect(pub).toContain("'/serve'");
-		const diag = siteSource.slice(
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
-			siteSource.indexOf('const ROUTES =')
+		const diag = routes.slice(
+			routes.indexOf('const DIAGNOSTIC_ROUTES'),
+			routes.indexOf('const ROUTES =')
 		);
 		expect(/'\/serve'/.test(diag)).toBe(false);
 	});
@@ -44,22 +47,22 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 	it.each(['/php', '/sql', '/export', '/savenode', '/nativefetch'])(
 		'keeps %s behind the diagnostic gate',
 		(route) => {
-			const diag = siteSource.slice(
-				siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
-				siteSource.indexOf('const ROUTES =')
+			const diag = routes.slice(
+				routes.indexOf('const DIAGNOSTIC_ROUTES'),
+				routes.indexOf('const ROUTES =')
 			);
 			expect(diag).toContain(`'${route}'`);
 		}
 	);
 
 	it('puts /firstrun in the PUBLIC set and takes it out of the diagnostic one', () => {
-		const pub = siteSource.slice(
-			siteSource.indexOf('const PUBLIC_ROUTES'),
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES')
+		const pub = routes.slice(
+			routes.indexOf('const PUBLIC_ROUTES'),
+			routes.indexOf('const DIAGNOSTIC_ROUTES')
 		);
-		const diag = siteSource.slice(
-			siteSource.indexOf('const DIAGNOSTIC_ROUTES'),
-			siteSource.indexOf('const ROUTES =')
+		const diag = routes.slice(
+			routes.indexOf('const DIAGNOSTIC_ROUTES'),
+			routes.indexOf('const ROUTES =')
 		);
 		expect(pub).toContain("'/firstrun'");
 		expect(/'\/firstrun'/.test(diag)).toBe(false);
@@ -69,7 +72,9 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 		// the exact shape matters: an unconditional `PW_DIAGNOSTICS !== '1'` return is the bug, and
 		// the flag has to be read from `env` rather than from a module-scope constant
 		expect(
-			/!PUBLIC_ROUTES\.has\([^)]+\)\s*&&\s*env\?\.PW_DIAGNOSTICS\s*!==\s*'1'/.test(siteSource)
+			/!PUBLIC_ROUTES\.has\([^)]+\)\s*&&\s*env\?\.PW_DIAGNOSTICS\s*!==\s*'1'/.test(
+				frontSource
+			)
 		).toBe(true);
 	});
 
@@ -77,15 +82,16 @@ describe('the route gate lets a visitor in and keeps a shell out', () => {
 		// the surface installs code, so it is the one owner set the flag must not reach. Behavioural
 		// coverage is `tests/integration/admin-surface.spec.ts`; this pins the shape the gate needs,
 		// because an `||` that fell out of the condition reads as a harmless simplification
-		const at = siteSource.indexOf('const surface = SURFACE_ROUTES.has(');
-		const gate = at < 0 ? '' : siteSource.slice(at, siteSource.indexOf('const lane =', at));
+		const entry = sourceOf('src/site/entry.ts');
+		const at = entry.indexOf('const surface = SURFACE_ROUTES.has(');
+		const gate = at < 0 ? '' : entry.slice(at, entry.indexOf('f.ownerToken = ownerToken', at));
 		expect(gate, 'the surface check is not in the gate').toContain('surface ||');
 		expect(gate).toContain('ownerCredential(');
 	});
 
 	it('still refuses an unknown path before either check', () => {
-		const unknownAt = siteSource.indexOf('if (!ROUTES.has(');
-		const gateAt = siteSource.indexOf('!PUBLIC_ROUTES.has(');
+		const unknownAt = frontSource.indexOf('if (!ROUTES.has(');
+		const gateAt = frontSource.indexOf('!PUBLIC_ROUTES.has(');
 		expect(unknownAt).toBeGreaterThan(-1);
 		expect(gateAt).toBeGreaterThan(unknownAt);
 	});
@@ -159,7 +165,7 @@ describe('the shipping config does not enable diagnostics', () => {
 		const alias = /"(\.\/[^"]*php-binary[^"]*)":/.exec(wranglerSource);
 		expect(alias, 'wrangler.jsonc aliases no php-binary specifier').not.toBeNull();
 		const specifier = alias![1]!.replace(/^\.\//, './');
-		const imported = /from\s+'(\.\/runtime\/php-binary[^']*)'/.exec(siteDoSource);
+		const imported = /from\s+'(\.\/runtime\/php-binary[^']*)'/.exec(sourceOf('src/site-do.ts'));
 		expect(imported, 'src/site-do.ts imports no binary seam').not.toBeNull();
 		expect(imported![1]).toBe(specifier);
 	});

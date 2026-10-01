@@ -34,9 +34,9 @@ import { SHIPPED } from '../../helpers/shipped-ddl';
  * The per-route figures are pinned exactly rather than bounded, because they are the whole finding
  * and a bound would let the asymmetry drift unnoticed. If Cloudflare changes how index entries are
  * billed, this file going red is the correct outcome: every conclusion above moves with it.
+ *
+ * The router table exactly as the pack ships it; `index-audit.spec.ts` holds it to that.
  */
-
-/** the router table exactly as the pack ships it; `index-audit.spec.ts` holds it to that */
 const ROUTER_DDL = SHIPPED['router']?.ddl as string[];
 
 /** the index as core declares it, kept only as the control that prices the partial form */

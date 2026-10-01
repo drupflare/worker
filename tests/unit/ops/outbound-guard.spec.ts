@@ -26,7 +26,7 @@ describe('what PHP may make the Worker fetch', () => {
 		// 223 is the last unicast /8; 224 begins multicast
 		'https://223.255.255.255/'
 	])('allows %s', (url) => {
-		expect(refuseOutbound(url)).toBe(null);
+		expect(refuseOutbound(url)).toBeUndefined();
 	});
 
 	it.each([
@@ -74,7 +74,7 @@ describe('what PHP may make the Worker fetch', () => {
 		['a blob url', 'blob:https://example.com/x']
 	])('refuses %s', (_label, url) => {
 		const refusal = refuseOutbound(url);
-		expect(refusal, `${url} was allowed`).not.toBe(null);
+		expect(refusal, `${url} was allowed`).toBeDefined();
 		expect(refusal!.reason).not.toBe('');
 	});
 

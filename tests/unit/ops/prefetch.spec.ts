@@ -25,7 +25,7 @@ describe('what the host can name without running Drupal', () => {
 		);
 		// an empty override is not an override
 		expect(releaseHistoryUrl('drupal', '')).toContain('updates.drupal.org');
-		expect(releaseHistoryUrl('drupal', null)).toContain('updates.drupal.org');
+		expect(releaseHistoryUrl('drupal', undefined)).toContain('updates.drupal.org');
 	});
 
 	it('always warms core, which is the project every site has', () => {

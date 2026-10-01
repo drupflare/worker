@@ -13,9 +13,9 @@ import {
  * `current`. A site nothing has checked and a site checked and found clean are the same bytes to a
  * reader that does not distinguish them, and reporting the first as the second tells an operator
  * something false about a security question.
+ *
+ * The cell shape the host reads: a state row holds a PHP-serialized string.
  */
-
-/** the cell shape the host reads: a state row holds a PHP-serialized string */
 function cell(json: string): string {
 	return `s:${new TextEncoder().encode(json).length}:"${json}";`;
 }

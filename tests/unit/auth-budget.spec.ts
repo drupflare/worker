@@ -22,7 +22,7 @@ import {
 	spendForToday,
 	utcDayKey
 } from '../../src/ops/auth-budget';
-import siteSource from '../../src/site.ts?raw';
+import { frontText, sourceOf } from '../helpers/source-raw';
 
 /**
  * The authenticated allowance, and the ladder that keeps the site from going dark.
@@ -211,7 +211,7 @@ describe('authAllowance: the reservation splits the meter', () => {
 		// a typo must not silently hand out an unreserved budget
 		expect(authAllowance({}).enforced).toBe(true);
 		expect(authAllowance({ PLAN: 'PAIDD' }).enforced).toBe(true);
-		expect(authAllowance(null).enforced).toBe(true);
+		expect(authAllowance(undefined).enforced).toBe(true);
 	});
 });
 
@@ -233,7 +233,7 @@ describe('spendForToday: the UTC rollover', () => {
 	});
 
 	it('treats a missing or malformed record as zero for today', () => {
-		expect(spendForToday(null, noon).renders).toBe(0);
+		expect(spendForToday(undefined, noon).renders).toBe(0);
 		expect(spendForToday({ day: '2026-08-13', renders: NaN }, noon).renders).toBe(0);
 		expect(spendForToday({ day: '2026-08-13', renders: -5 }, noon).renders).toBe(0);
 	});
@@ -316,9 +316,9 @@ describe('decideAuthMode: the ladder, and it never goes dark', () => {
 	});
 
 	it('renders when the counter has never been read, rather than assuming the worst', () => {
-		// null means "the object has not told us yet". Degrading on that would make the FIRST
+		// undefined means "the object has not told us yet". Degrading on that would make the FIRST
 		// authenticated request of every isolate stale, which is a worse failure than one over-spend
-		expect(decideAuthMode(get, null, free, now).mode).toBe('render');
+		expect(decideAuthMode(get, undefined, free, now).mode).toBe('render');
 	});
 });
 
@@ -347,9 +347,9 @@ describe('the Durable Object contract: one codec, two callers', () => {
 	it('answers null when the object reported nothing, NOT a fresh budget', () => {
 		// "did not say" and "said zero" lead to different decisions; collapsing them is how a missing
 		// header reads as an unspent allowance forever
-		expect(parseAuthSpend(new Headers())).toBeNull();
-		expect(parseAuthSpend(new Headers({ [AUTH_DAY_HEADER]: '2026-08-13' }))).toBeNull();
-		expect(parseAuthSpend(new Headers({ [AUTH_SPENT_HEADER]: '5' }))).toBeNull();
+		expect(parseAuthSpend(new Headers())).toBeUndefined();
+		expect(parseAuthSpend(new Headers({ [AUTH_DAY_HEADER]: '2026-08-13' }))).toBeUndefined();
+		expect(parseAuthSpend(new Headers({ [AUTH_SPENT_HEADER]: '5' }))).toBeUndefined();
 	});
 
 	it('rejects a malformed count rather than reading it as zero', () => {
@@ -358,12 +358,14 @@ describe('the Durable Object contract: one codec, two callers', () => {
 				parseAuthSpend(
 					new Headers({ [AUTH_DAY_HEADER]: '2026-08-13', [AUTH_SPENT_HEADER]: bad })
 				)
-			).toBeNull();
+			).toBeUndefined();
 		}
 	});
 });
 
-describe('the wiring in src/site.ts', () => {
+describe('the wiring in the front worker', () => {
+	const frontSource = frontText();
+
 	/**
 	 * SOURCE ASSERTIONS, and the same bracket `runtime/route-gate.spec.ts` uses for the same stated
 	 * reason: the decision sits in the Worker's `fetch`, ahead of any binding, so what a running
@@ -382,35 +384,40 @@ describe('the wiring in src/site.ts', () => {
 
 	it('decides authenticated-ness BEFORE the DO hop', () => {
 		// after the hop the DO request is already spent, so the reservation would buy nothing
-		const decidedAt = siteSource.indexOf('isAuthenticatedRequest(request)');
-		// `stubOf()`, because the stub is built lazily now: the tier answering 82% of traffic
-		// returns without a Durable Object stub ever being constructed
-		const hopAt = siteSource.indexOf('await stubOf().fetch(innerRequest)');
+		const front = sourceOf('src/site.ts');
+		const decidedAt = front.indexOf('decideAllowance(f');
+		const hopAt = front.indexOf('sendHop(f');
 		expect(decidedAt).toBeGreaterThan(-1);
 		expect(hopAt).toBeGreaterThan(-1);
 		expect(decidedAt).toBeLessThan(hopAt);
+		expect(sourceOf('src/site/allowance.ts')).toContain('isAuthenticatedRequest(request)');
+		// `stubOf()`, because the stub is built lazily now: the tier answering 82% of traffic
+		// returns without a Durable Object stub ever being constructed
+		expect(sourceOf('src/site/hop.ts')).toContain('await stubOf().fetch(innerRequest)');
 	});
 
 	it('reads the memoised spend before deciding, so degrading costs no DO request', () => {
-		const readAt = siteSource.indexOf('await readAuthSpend(');
-		const decideAt = siteSource.indexOf('decideAuthMode(request');
+		const allowance = sourceOf('src/site/allowance.ts');
+		const readAt = allowance.indexOf('await readAuthSpend(');
+		const decideAt = allowance.indexOf('decideAuthMode(request');
 		expect(readAt).toBeGreaterThan(-1);
 		expect(readAt).toBeLessThan(decideAt);
 	});
 
 	it('keeps a personalised request out of every shared read tier', () => {
 		// edgeWanted gates both the edge cache and the KV tier, so one guard covers both reads
-		expect(/edgeWanted\s*=\s*serving[\s\S]{0,120}!personalised/.test(siteSource)).toBe(true);
+		expect(/edgeWanted\s*=\s*serving[\s\S]{0,120}!personalised/.test(frontSource)).toBe(true);
 	});
 
 	it('refuses to STORE a personalised page in the edge cache, structurally', () => {
 		// two independent signals: the request was authenticated, and the response is per-user
-		expect(/if \(isAuthenticated\) return \w*\(?'skipped:authenticated'/.test(siteSource)).toBe(
+		const edgeCache = sourceOf('src/site/edge-cache.ts');
+		expect(/if \(isAuthenticated\) return \w*\(?'skipped:authenticated'/.test(edgeCache)).toBe(
 			true
 		);
 		expect(
 			/if \(res\.headers\.has\('set-cookie'\)\) return \w*\(?'skipped:set-cookie'/.test(
-				siteSource
+				edgeCache
 			)
 		).toBe(true);
 	});
@@ -423,10 +430,9 @@ describe('the wiring in src/site.ts', () => {
 	 * WRITE for the caller to defer.
 	 */
 	it('keeps every store refusal ahead of the deferred write', () => {
-		const body = siteSource.slice(
-			siteSource.indexOf('function putPage('),
-			siteSource.indexOf('export default {')
-		);
+		// `putPage` is the last declaration in its file
+		const edgeCache = sourceOf('src/site/edge-cache.ts');
+		const body = edgeCache.slice(edgeCache.indexOf('function putPage('));
 		const lastRefusal = body.lastIndexOf("'skipped:set-cookie'");
 		const write = body.indexOf('cache.put(');
 		expect(lastRefusal).toBeGreaterThan(-1);
@@ -436,21 +442,21 @@ describe('the wiring in src/site.ts', () => {
 	});
 
 	it('refuses to STORE a personalised page in KV too, because that key has no user in it either', () => {
-		expect(/serving && personalised[\s\S]{0,200}skipped:authenticated/.test(siteSource)).toBe(
+		expect(/serving && personalised[\s\S]{0,200}skipped:authenticated/.test(frontSource)).toBe(
 			true
 		);
-		expect(/serving && res\.headers\.has\('set-cookie'\)/.test(siteSource)).toBe(true);
+		expect(/serving && res\.headers\.has\('set-cookie'\)/.test(frontSource)).toBe(true);
 	});
 
 	it('never goes dark: a spent read falls through as anonymous rather than refusing', () => {
 		// stale mode strips the session so the object answers the public page
-		expect(siteSource).toContain("innerRequest.headers.delete('cookie')");
+		expect(frontSource).toContain("innerRequest.headers.delete('cookie')");
 	});
 
 	it('refuses a spent WRITE with a retry time rather than a blank page', () => {
-		const readOnly = siteSource.slice(
-			siteSource.indexOf("if (authMode === 'read-only')"),
-			siteSource.indexOf('// in stale mode the request is served as ANONYMOUS')
+		const readOnly = frontSource.slice(
+			frontSource.indexOf("if (authMode === 'read-only')"),
+			frontSource.indexOf('// in stale mode the request is served as ANONYMOUS')
 		);
 		expect(readOnly).toContain('status: 503');
 		// the quotas refill at midnight UTC, so that is the only correct retry time
@@ -459,19 +465,20 @@ describe('the wiring in src/site.ts', () => {
 	});
 
 	it('charges the object only for a render, never for a stale fallthrough', () => {
-		const region = siteSource.slice(
-			siteSource.indexOf('const innerRequest'),
-			siteSource.indexOf('const doCache =')
+		const hop = sourceOf('src/site/hop.ts');
+		const region = hop.slice(
+			hop.indexOf('const innerRequest'),
+			hop.indexOf('return { innerRequest, buffered, attempt }')
 		);
 		expect(/if \(personalised\)[\s\S]{0,240}AUTH_REQUEST_HEADER/.test(region)).toBe(true);
 	});
 
 	it('marks a personalised response uncacheable by anything downstream', () => {
-		expect(/if \(authenticated\)[\s\S]{0,320}private, no-store/.test(siteSource)).toBe(true);
+		expect(/if \(authenticated\)[\s\S]{0,320}private, no-store/.test(frontSource)).toBe(true);
 	});
 
 	it('reports the mode on the response, so a measurement can see which rung it took', () => {
-		expect(siteSource).toContain('AUTH_MODE_HEADER');
-		expect(siteSource).toContain('AUTH_REASON_HEADER');
+		expect(frontSource).toContain('AUTH_MODE_HEADER');
+		expect(frontSource).toContain('AUTH_REASON_HEADER');
 	});
 });

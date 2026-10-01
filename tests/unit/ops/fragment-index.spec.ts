@@ -16,9 +16,9 @@ import {
  * `tests/integration/fragment-index.spec.ts`; a fake here would be a test of the fake. What a fake
  * IS good for is the filter on top of a full scan, which is where a tag belonging to one fragment
  * and not its sibling is decided.
+ *
+ * The `exec(text, ...params)` shape, answering canned rows so the FILTER is what is asserted.
  */
-
-/** the `exec(text, ...params)` shape, answering canned rows so the FILTER is what is asserted */
 function canned(rows: Record<string, Record<string, unknown>[]>): FragmentSql {
 	return {
 		exec(sql: string) {

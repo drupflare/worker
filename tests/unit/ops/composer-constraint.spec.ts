@@ -29,13 +29,13 @@ describe('parsing, including the forms a lock file actually mixes', () => {
 
 	it('refuses a dev branch, which has no numeric ordering at all', () => {
 		// judging `dev-main` against `^1.0` would be inventing an order; the caller must ask a human
-		expect(parseVersion('dev-main')).toBeNull();
-		expect(parseVersion('1.x-dev')).toBeNull();
+		expect(parseVersion('dev-main')).toBeUndefined();
+		expect(parseVersion('1.x-dev')).toBeUndefined();
 	});
 
 	it('refuses junk rather than parsing it as 0', () => {
 		for (const raw of ['', '   ', 'latest', 'not-a-version']) {
-			expect(parseVersion(raw), raw).toBeNull();
+			expect(parseVersion(raw), raw).toBeUndefined();
 		}
 	});
 

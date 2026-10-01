@@ -104,8 +104,8 @@ describe('the statement target table', () => {
 	});
 
 	it('answers null for a statement naming no table', () => {
-		expect(targetTable('PRAGMA index_list(x)')).toBeNull();
-		expect(targetTable('')).toBeNull();
+		expect(targetTable('PRAGMA index_list(x)')).toBeUndefined();
+		expect(targetTable('')).toBeUndefined();
 	});
 
 	it('calls a write a write from its text rather than from what it changed', () => {

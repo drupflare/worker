@@ -54,7 +54,7 @@ describe('deriving a site from the request host', () => {
 		// a site called `localhost` is a real object holding real data whose name means nothing, and
 		// every developer on every machine would share it
 		for (const host of ['localhost', 'localhost:8787', '127.0.0.1:8787', '[::1]:8787']) {
-			expect(siteFromHost(host), host).toBeNull();
+			expect(siteFromHost(host), host).toBeUndefined();
 		}
 	});
 
@@ -104,8 +104,8 @@ describe('deriving a site from the request host', () => {
 	});
 
 	it('answers null rather than an empty name for a host that is not one', () => {
-		expect(siteFromHost('')).toBeNull();
-		expect(siteFromHost('   ')).toBeNull();
+		expect(siteFromHost('')).toBeUndefined();
+		expect(siteFromHost('   ')).toBeUndefined();
 	});
 });
 
@@ -364,7 +364,7 @@ describe('the durable object location hint', () => {
 		expect(locationHint()).toBeUndefined();
 		expect(locationHint({})).toBeUndefined();
 		expect(locationHint({ SITE_LOCATION_HINT: '' })).toBeUndefined();
-		expect(locationHint({ SITE_LOCATION_HINT: null })).toBeUndefined();
+		expect(locationHint({ SITE_LOCATION_HINT: undefined })).toBeUndefined();
 	});
 
 	it('accepts every region Cloudflare names', () => {

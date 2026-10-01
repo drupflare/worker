@@ -29,9 +29,9 @@ import wranglerSource from '../../../wrangler.jsonc?raw';
  * them -- true, and irrelevant, because nothing serves a file out of the PHP MEMFS over HTTP either.
  * So the asset layer is the only thing that can answer them, and until it did every stylesheet,
  * script and font on every page 404'd.
+ *
+ * Every path the shipping runtime fetches through ASSETS, with the call site that fetches it.
  */
-
-/** Every path the shipping runtime fetches through ASSETS, with the call site that fetches it. */
 const SHIPPING = [
 	['/driver.json', 'mountDriver, src/runtime/mount.ts'],
 	['/prefill.json', 'prefill seed, src/site-do.ts'],

@@ -68,7 +68,7 @@ describe('the packed day row', () => {
 			'-1:2:3:0,0,0,0',
 			null
 		]) {
-			expect(readDayMeters(raw), `read ${raw} as a row`).toBeNull();
+			expect(readDayMeters(raw), `read ${raw} as a row`).toBeUndefined();
 		}
 	});
 
